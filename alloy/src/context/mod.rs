@@ -53,6 +53,8 @@ pub struct Context {
   // count/time), exposed through the accessors below for diagnostics. See
   // RasterStats for what each one means.
   stats: Arc<RasterStats>,
+  // Frames submitted so far, as a count (see `submitted_frames`).
+  submitted_frames: std::sync::atomic::AtomicU64,
   pub textures: TextureRegistry,
   // UI-side mirror of the raster thread's shader map (see TargetMirror):
   // enough to validate the fire-and-forget updates - params, sampler
@@ -195,6 +197,7 @@ impl Context {
     Context {
       raster_tx,
       stats,
+      submitted_frames: std::sync::atomic::AtomicU64::new(0),
       textures: TextureRegistry::new(),
       targets: RefCell::new(HashMap::new()),
       shader_sources: RefCell::new(HashMap::new()),
@@ -306,6 +309,23 @@ impl Context {
     self.stats.sample()
   }
 
+  /// Frames whose GPU work has completed, as a count: every frame numbered
+  /// below it has retired (see `RasterStats::retired_frames`). A live read,
+  /// published by the raster thread as its fences signal.
+  pub fn retired_frames(&self) -> u64 {
+    self.stats.retired_frames.load(std::sync::atomic::Ordering::Acquire)
+  }
+
+  /// Frames handed to the raster thread so far, as a count: one past the
+  /// highest frame number any `submit` carried (0 before the first). With
+  /// `retired_frames` it says whether the GPU is done with everything
+  /// submitted: it is once the two counts are equal. What a resource's
+  /// release is stamped with (the resource pool's `retire`): the frames
+  /// that may still read it are the ones submitted before the release.
+  pub fn submitted_frames(&self) -> u64 {
+    self.submitted_frames.load(std::sync::atomic::Ordering::Acquire)
+  }
+
   /// The per-target pass counters as the raster thread last published them
   /// (see TargetCounters): a shared snapshot, cloned by reference.
   pub fn target_counters(&self) -> std::sync::Arc<Vec<crate::raster::TargetCounters>> {
@@ -322,10 +342,29 @@ impl Context {
   /// instant the frame is expected to reach the screen (the frame signal's
   /// reference plus the cadence hold; the virtual frame time headless):
   /// the deadline the raster thread latches video frames against (see
-  /// yuv.rs). Err means the raster thread is gone and the engine should
-  /// shut down.
-  pub fn submit(&self, dl: DisplayList, damage: crate::PresentDamage, present_at: Instant) -> Result<(), ()> {
-    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: false, damage, present_at }).map_err(|_| ())
+  /// yuv.rs). `frame` is the number of the UI frame that built the list
+  /// (the present index the frame loop stamped the frame signal with; a
+  /// submit outside the frame protocol passes the number of the frame it
+  /// repaints): the raster thread publishes the frame's GPU completion
+  /// under it (`retired_frames`), so it must never exceed the number of a
+  /// UI frame computed after this call. Err means the raster thread is gone
+  /// and the engine should shut down.
+  pub fn submit(
+    &self,
+    dl: DisplayList,
+    damage: crate::PresentDamage,
+    present_at: Instant,
+    frame: u64,
+  ) -> Result<(), ()> {
+    self.note_submitted(frame);
+    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: false, damage, present_at, frame }).map_err(|_| ())
+  }
+
+  // The submitted count (see `submitted_frames`), raised ahead of the send
+  // so a reader on this thread never sees a frame retire before it was
+  // submitted.
+  fn note_submitted(&self, frame: u64) {
+    self.submitted_frames.fetch_max(frame + 1, std::sync::atomic::Ordering::AcqRel);
   }
 
   /// Submit a frame whose display list is the same list as the previous
@@ -336,9 +375,16 @@ impl Context {
   /// resolve; it tracks that itself. Never send this for a rebuilt list:
   /// a wrong clean claim presents a stale frame. `damage` covers the GPU
   /// content that changed behind the unchanged list (texture nodes showing
-  /// fresh uploads). `present_at` as for `submit`.
-  pub fn submit_clean(&self, dl: DisplayList, damage: crate::PresentDamage, present_at: Instant) -> Result<(), ()> {
-    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: true, damage, present_at }).map_err(|_| ())
+  /// fresh uploads). `present_at` and `frame` as for `submit`.
+  pub fn submit_clean(
+    &self,
+    dl: DisplayList,
+    damage: crate::PresentDamage,
+    present_at: Instant,
+    frame: u64,
+  ) -> Result<(), ()> {
+    self.note_submitted(frame);
+    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: true, damage, present_at, frame }).map_err(|_| ())
   }
 
   /// Rebind the raster thread's context to the window's current EGL surface.

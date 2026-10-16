@@ -92,7 +92,7 @@ function App() {
   const LOGO = 96
   let tiles = createTileLayer(LOGO, LOGO, [atlas], { chunkTiles: 4, label: "cam-tiles" })
   for (let i = 0; i < 4; i++) tiles.setTile(i, i, i === 2 ? fullFrame(atlas) : frames[i % 4]!)
-  tiles.addViewer().setCamera({}, 4 * LOGO, 4 * LOGO)
+  tiles.createView({ width: 4 * LOGO, height: 4 * LOGO, label: "cam-tiles" })
 
   let failures: string[] = []
   let check = (ok: boolean, what: string) => {
@@ -177,7 +177,7 @@ function App() {
       return
     }
     let img = readTexture(chunk.texture!)
-    let n = tiles.oversample
+    let n = tiles.density
     // Tile (2, 2) center at (240, 240) of the chunk's own pixels.
     check(alphaAt(img, 2.5 * LOGO, 2.5 * LOGO, n) > 0, "tile bakes opaque with the pinned identity camera rotation")
     check(alphaAt(img, 2.5 * LOGO, 0.5 * LOGO, n) === 0, "empty cell stays clear")

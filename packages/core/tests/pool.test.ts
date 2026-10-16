@@ -4,7 +4,8 @@
 // destroyer registered for its kind, drain frees everything oldest first
 // and leaves the pool usable, a cap of 0 frees at once, a kind's
 // destroyer is registered once per pool and a give under an unregistered
-// kind throws, and the options are validated.
+// kind throws, the options are validated, and with `retire` an id comes
+// out only once the GPU is done with the frames submitted before its give.
 // Pure-module input only, so it runs headless on flux: `sol test
 // packages/core`.
 
@@ -92,4 +93,39 @@ test("a kind's destroyer is registered once per pool, the same function again is
 test("the options are validated", () => {
   expect(() => createResourcePool({ cap: -1 })).toThrow()
   expect(() => createResourcePool({ cap: 1.5 })).toThrow()
+})
+
+test("with retire, a take hands out only ids the GPU is done with: given at a submitted count the retired count has reached, warmest first", () => {
+  let submitted = 10
+  let retired = 9
+  let freed: number[] = []
+  let p = createResourcePool({ cap: 8, retire: { submitted: () => submitted, retired: () => retired } })
+  p.destroyWith("a", id => freed.push(id))
+  // Given with ten frames submitted and nine retired: the tenth may still
+  // read it.
+  p.give("a", 1)
+  expect(p.take("a")).toBe(undefined)
+  expect(p.size).toBe(1)
+  // The tenth retires: the id is free to write.
+  retired = 10
+  expect(p.take("a")).toBe(1)
+  // Two gives under different stamps: the younger one waits, the older
+  // one comes out first although it is colder.
+  p.give("a", 2)
+  submitted = 12
+  p.give("a", 3)
+  expect(p.take("a")).toBe(2)
+  expect(p.take("a")).toBe(undefined)
+  retired = 12
+  expect(p.take("a")).toBe(3)
+  // The cap and drain ignore retirement: an unretired id past the cap is
+  // freed, which the GL driver orders behind the frames reading it.
+  expect(freed).toEqual([])
+  p.drain()
+  expect(p.size).toBe(0)
+})
+
+test("retire is validated", () => {
+  expect(() => createResourcePool({ cap: 1, retire: { submitted: () => 0 } as never })).toThrow()
+  expect(() => createResourcePool({ cap: 1, retire: { retired: () => 0 } as never })).toThrow()
 })

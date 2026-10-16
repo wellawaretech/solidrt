@@ -26,11 +26,13 @@ copy one and adapt it.
   prop - transform writes, never a re-bake) while the residency gate
   brings the chunks near the view in and takes the far ones out (their
   targets through the resource pool), a north-up minimap as a second
-  composite of the same layer (`<TileLayer layer>`, a second viewer), a
+  view of the same layer (`<TileLayer layer>`, minifying the bake through
+  the chunks' mip chain), a
   `maxTexels` budget of 40 chunks that the gate evicts past (the minimap's
   far chunks stall, holes rather than blur), and a timer editing tiles to
   show that a `setTile` batch re-bakes only the resident chunks it
-  touches. Read `/gpu?label=tile-world` (the `groups` footprint) and
+  touches, paced under the bake budget (`setBakeBudget`, nearest the
+  ship first). Read `/gpu?label=tile-world` (the `groups` footprint) and
   `/stats` (regionsResident, residentWeight, app.poolHits) while it
   flies. Debug commands `state` and `cell`.
 - `anim.tsx` - frame animation with `createAnimation`: three sprites share

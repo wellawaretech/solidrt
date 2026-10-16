@@ -257,7 +257,7 @@ too. Nothing streaming-shaped is private to tiles.ts except the bake.
    each resident chunk at EVERY image of itself that intersects the view,
    so a view wider than the world shows the world repeated and the seam
    is two leaves of the same texture. This closes the "wrapping tile
-   world" case of [2d-wrap-around](../backlog/2d-wrap-around.md).
+   world" case of [2d-wrap-around](2d-wrap-around.md).
 4. **The residency gate**, shared with 3d and specified in
    [spatial-residency-gate](spatial-residency-gate.md): the tile layer
    registers its chunk grid with `createGrid({ origin, cell: [chunkW,
@@ -353,4 +353,4 @@ its threshold is unmeasured.
   composite below the density minifies the bake at the leaf at level 0,
   Impeller's C API sampling no mip chain, which aliases past about 2x
   under: the proper answer is the tile layer rendering through VIEWS like
-  the sprite layer, okf/backlog/2d-tile-views.md.
+  the sprite layer, okf/done/2d-tile-views.md.

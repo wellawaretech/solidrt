@@ -1,22 +1,27 @@
 // A layer's views: every rendering of a layer's world is a view - one
-// draw target holding ONE entry over the layer's pipeline and instance
-// buffers, with a camera and a viewport of its own - and a layer has no
-// output but its views (Unity's scene renders only through Cameras,
+// draw target with a camera and a viewport of its own - and a layer has
+// no output but its views (Unity's scene renders only through Cameras,
 // Godot's World2D only through Viewports; @solidrt/3d's scene.createView
 // one dimension down). The window-filling main view, the minimap, the
 // radar strip, the zoomed inset, two split-screen panes: all the same
-// object. No sprite is mirrored, no record is written twice, and the
-// core's key-order gather (the entry's instanceOrder) happens in the
-// buffers at publish: ONE entry per buffer declares the order - the first
-// live view's, re-homed to the next when that view goes - and every other
-// entry reads the buffers already sorted. The layer fans buffer swaps
-// (growth), the instance count and the tint out to every view through
-// the registry below; the camera and the viewport are each view's own
-// params, so a view costs no per-frame JS beyond its camera writes.
-// Pointer events run the layer's dispatch (dispatch.ts) with the view's
-// camera undone over the layer's pick, the view as the root of the walk:
-// a sprite under a minimap gets its ordinary handlers, and the view's
-// listeners are the last stop.
+// object, on every layer kind.
+//
+// The VIEW SHELL (createViewShell) is what the kinds share: the target,
+// its size and oversample, the camera and its params write, projection,
+// and the pointer dispatch with the view as the root of the walk. What
+// a view DRAWS is the kind's: a sprite or record layer draws ONE entry
+// over the layer's pipeline and instance buffers per view (createViews
+// below: the core's key-order gather happens in the buffers at publish,
+// ONE entry per buffer declares the order - the first live view's,
+// re-homed to the next when that view goes - and every other entry reads
+// the buffers already sorted; the layer fans buffer swaps, the instance
+// count and the tint out to every view), while a tile layer draws one
+// entry per resident chunk image (tiles.ts). The camera and the viewport
+// are each view's own params, so a view costs no per-frame JS beyond its
+// camera writes. Pointer events run the layer's dispatch (dispatch.ts)
+// with the view's camera undone over the layer's pick, the view as the
+// root of the walk: a sprite under a minimap gets its ordinary handlers,
+// and the view's listeners are the last stop.
 import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawBuffers, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
 import type { BufferId, DrawId, InstanceOrder, RenderPipelineId, ShaderParams, TextureBindings, TextureId } from "@solidrt/core/gpu"
 import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera } from "./camera.ts"
@@ -39,12 +44,13 @@ export type ViewOptions = {
 }
 
 /**
- * A view of a layer (LayerBase.createView): the viewport contract -
- * texture, size, oversample, camera and pointer dispatch - over the
- * layer's sprites, with a camera of its own. The sprites are the layer's:
- * add, write and pick through the layer, tint through the layer (every
- * view follows it). `dispose` is idempotent; views also die with their
- * layer.
+ * A view of a layer (LayerBase.createView, TileLayer.createView): the
+ * viewport contract - texture, size, oversample, camera and pointer
+ * dispatch - over the layer's world, with a camera of its own. The
+ * sprites are the layer's: add, write and pick through the layer, tint
+ * through the layer (every view follows it); a tile view hits no sprite,
+ * so its `pick` is empty and its listeners see every event over the
+ * world. `dispose` is idempotent; views also die with their layer.
  */
 export type ViewHandle = {
   /** The view's output: an ordinary texture id (`<texture src>`). */
@@ -91,7 +97,7 @@ export type ViewHandle = {
   unproject(x: number, y: number): [number, number]
   /** The layer's pick through this view: the view pixel unprojected, the
    * sprites' screen-size floors measured at this camera's zoom - what
-   * the pointer walk hits. */
+   * the pointer walk hits. Empty on a tile view. */
   pick(x: number, y: number): Sprite[]
   /**
    * handlers for a leaf whose LAYOUT size differs from the view size
@@ -103,9 +109,124 @@ export type ViewHandle = {
   dispose(): void
 }
 
-// What a layer hands its views: the pipeline and quad every entry draws
-// with, the atlases, the key order one entry declares, and live reads of
-// the state the layer fans out.
+/** What a layer kind hands the view shell: how its target is made and
+ * how its camera is spelled, plus the hooks the kind acts on. */
+export type ViewShellDeps = {
+  label: string
+  /** The layer's pick, `zoom` the camera zoom its floors are measured at. */
+  pick: (x: number, y: number, zoom: number) => Sprite[]
+  /** The shared params the kind's vertex stage reads for a camera:
+   * cameraParams for the sprite stage, the tile stage's own split. */
+  cameraParams: (camera: CameraState) => ShaderParams
+  /** Create the view's draw target of `width` x `height` TEXELS seeded
+   * with `params` (the viewport, the camera, the kind's own). */
+  createTarget: (width: number, height: number, params: ShaderParams, opts: { clearColor: [number, number, number, number]; label: string }) => TextureId
+  /** After the camera, the size or the oversample changed (the tile
+   * layer pushes its gate view and its density wish here). */
+  changed?: (view: ViewHandle) => void
+  /** Before the view's target is destroyed. */
+  disposing?: (view: ViewHandle) => void
+}
+
+/**
+ * The view shell: a draw target with a camera, a viewport and the
+ * pointer dispatch, the ViewHandle every layer kind returns. The kind
+ * adds its entries to `view.texture` after this returns.
+ */
+export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHandle {
+  let width = opts.width
+  let height = opts.height
+  if (!(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0)) {
+    throw new Error(`createView: width and height must be positive integers, got ${width} x ${height}`)
+  }
+  let oversample = opts.oversample ?? 1
+  checkOversample("createView", oversample, width, height)
+  let label = opts.label ?? `${deps.label}-view`
+  let cam = defaultCamera()
+  if (opts.camera) {
+    checkCamera(opts.camera)
+    applyCamera(cam, opts.camera)
+  }
+  let texture = deps.createTarget(width * oversample, height * oversample, { uViewport: [width, height], ...deps.cameraParams(cam) }, { clearColor: opts.clearColor ?? [0, 0, 0, 0], label })
+  let thrash = thrashSentinel(`view "${label}"`)
+  let disposed = false
+  let listeners = new Set<LayerPointerListener>()
+  let view: ViewHandle = {
+    texture,
+    handlers: undefined as unknown as LayerHandlers,
+    size: () => ({ width, height }),
+    setSize(w, h) {
+      if (disposed || (w === width && h === height)) return
+      checkOversample("setSize", oversample, w, h)
+      width = w
+      height = h
+      setTargetSize(texture, w * oversample, h * oversample)
+      setTargetParams(texture, { uViewport: [w, h] })
+      deps.changed?.(view)
+    },
+    listen(listener) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    get oversample() {
+      return oversample
+    },
+    setOversample(n) {
+      if (disposed || n === oversample) return
+      checkOversample("setOversample", n, width, height)
+      thrash()
+      oversample = n
+      setTargetSize(texture, width * n, height * n)
+      deps.changed?.(view)
+    },
+    setCamera(update) {
+      if (disposed) return
+      checkCamera(update)
+      applyCamera(cam, update)
+      setTargetParams(texture, deps.cameraParams(cam))
+      deps.changed?.(view)
+    },
+    camera() {
+      return { ...cam }
+    },
+    project(x, y) {
+      return projectCamera(cam, x, y)
+    },
+    unproject(x, y) {
+      return unprojectCamera(cam, x, y)
+    },
+    pick(x, y) {
+      let [wx, wy] = unprojectCamera(cam, x, y)
+      return deps.pick(wx, wy, cam.zoom)
+    },
+    handlersFor(layout) {
+      return dispatch(layout)
+    },
+    dispose() {
+      if (disposed) return
+      disposed = true
+      listeners.clear()
+      deps.disposing?.(view)
+      // The entries die with their target.
+      destroyTexture(texture)
+    },
+  }
+  let dispatch = spriteDispatch({
+    size: () => [width, height],
+    camera: () => cam,
+    pick: deps.pick,
+    root: view,
+    listeners,
+  })
+  view.handlers = dispatch(null)
+  return view
+}
+
+// What a sprite or record layer hands its views: the pipeline and quad
+// every entry draws with, the atlases, the key order one entry declares,
+// and live reads of the state the layer fans out.
 export type ViewDeps = {
   label: string
   pipeline: RenderPipelineId
@@ -143,8 +264,10 @@ export type Views = {
   dispose(): void
 }
 
-type ViewRecord = { texture: TextureId; entry: DrawId; dispose(): void }
+type ViewRecord = { view: ViewHandle; entry: DrawId }
 
+/** The sprite and record layers' views: one entry over the layer's
+ * instance buffers per view, the key order on one of them. */
 export function createViews(deps: ViewDeps): Views {
   let views = new Set<ViewRecord>()
   // The one entry declaring the key order (null until a view exists, or
@@ -163,130 +286,48 @@ export function createViews(deps: ViewDeps): Views {
     if (deps.order === undefined) return
     let next = views.values().next().value
     if (!next) return
-    removeDraw(next.texture, next.entry)
-    next.entry = entryFor(next.texture, deps.order)
+    removeDraw(next.view.texture, next.entry)
+    next.entry = entryFor(next.view.texture, deps.order)
     ordered = next
   }
   return {
     create(opts) {
-      let width = opts.width
-      let height = opts.height
-      if (!(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0)) {
-        throw new Error(`createView: width and height must be positive integers, got ${width} x ${height}`)
-      }
-      let oversample = opts.oversample ?? 1
-      checkOversample("createView", oversample, width, height)
-      let label = opts.label ?? `${deps.label}-view`
-      let cam = defaultCamera()
-      if (opts.camera) {
-        checkCamera(opts.camera)
-        applyCamera(cam, opts.camera)
-      }
-      let texture = createDrawTarget(
-        width * oversample,
-        height * oversample,
-        { uViewport: [width, height], ...cameraParams(cam), uTint: deps.tint(), ...deps.params() },
-        { textures: deps.textures, clearColor: opts.clearColor ?? [0, 0, 0, 0], label, autoFree: false },
-      )
-      let order = ordered === null ? deps.order : undefined
-      let entry = entryFor(texture, order)
-      let thrash = thrashSentinel(`view "${label}"`)
-      let disposed = false
-      let listeners = new Set<LayerPointerListener>()
-      let record: ViewRecord = {
-        texture,
-        entry,
-        dispose() {
-          if (disposed) return
-          disposed = true
-          listeners.clear()
+      let record: ViewRecord = { view: undefined as unknown as ViewHandle, entry: 0 as DrawId }
+      let view = createViewShell(opts, {
+        label: deps.label,
+        pick: deps.pick,
+        cameraParams,
+        createTarget: (w, h, params, o) => createDrawTarget(w, h, { ...params, uTint: deps.tint(), ...deps.params() }, { textures: deps.textures, clearColor: o.clearColor, label: o.label, autoFree: false }),
+        disposing() {
           views.delete(record)
           // The entry dies with its target, releasing the buffers' order.
-          destroyTexture(texture)
           if (ordered === record) {
             ordered = null
             rehome()
           }
         },
-      }
-      if (order !== undefined) ordered = record
-      let view: ViewHandle = {
-        texture,
-        handlers: undefined as unknown as LayerHandlers,
-        size: () => ({ width, height }),
-        setSize(w, h) {
-          if (disposed || (w === width && h === height)) return
-          checkOversample("setSize", oversample, w, h)
-          width = w
-          height = h
-          setTargetSize(texture, w * oversample, h * oversample)
-          setTargetParams(texture, { uViewport: [w, h] })
-        },
-        listen(listener) {
-          listeners.add(listener)
-          return () => {
-            listeners.delete(listener)
-          }
-        },
-        get oversample() {
-          return oversample
-        },
-        setOversample(n) {
-          if (disposed || n === oversample) return
-          checkOversample("setOversample", n, width, height)
-          thrash()
-          oversample = n
-          setTargetSize(texture, width * n, height * n)
-        },
-        setCamera(update) {
-          if (disposed) return
-          checkCamera(update)
-          applyCamera(cam, update)
-          setTargetParams(texture, cameraParams(cam))
-        },
-        camera() {
-          return { ...cam }
-        },
-        project(x, y) {
-          return projectCamera(cam, x, y)
-        },
-        unproject(x, y) {
-          return unprojectCamera(cam, x, y)
-        },
-        pick(x, y) {
-          let [wx, wy] = unprojectCamera(cam, x, y)
-          return deps.pick(wx, wy, cam.zoom)
-        },
-        handlersFor(layout) {
-          return dispatch(layout)
-        },
-        dispose: record.dispose,
-      }
-      let dispatch = spriteDispatch({
-        size: () => [width, height],
-        camera: () => cam,
-        pick: deps.pick,
-        root: view,
-        listeners,
       })
-      view.handlers = dispatch(null)
+      let order = ordered === null ? deps.order : undefined
+      record.view = view
+      record.entry = entryFor(view.texture, order)
+      if (order !== undefined) ordered = record
       views.add(record)
       return view
     },
     setBuffers(instanceBuffers) {
-      for (let v of views) setDrawBuffers(v.texture, v.entry, { buffers: [deps.quad, ...instanceBuffers] })
+      for (let v of views) setDrawBuffers(v.view.texture, v.entry, { buffers: [deps.quad, ...instanceBuffers] })
     },
     setCount(count) {
-      for (let v of views) setDrawRange(v.texture, v.entry, { instanceCount: count })
+      for (let v of views) setDrawRange(v.view.texture, v.entry, { instanceCount: count })
     },
     setTint(tint) {
-      for (let v of views) setTargetParams(v.texture, { uTint: tint })
+      for (let v of views) setTargetParams(v.view.texture, { uTint: tint })
     },
     setParams(params) {
-      for (let v of views) setTargetParams(v.texture, params)
+      for (let v of views) setTargetParams(v.view.texture, params)
     },
     dispose() {
-      for (let v of [...views]) v.dispose()
+      for (let v of [...views]) v.view.dispose()
     },
   }
 }

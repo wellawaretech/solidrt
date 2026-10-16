@@ -268,6 +268,28 @@ declare module "flux:gpu" {
     | "bc7-rgba8-srgb"
   export type TextureFormatOption = { format?: TextureFormat }
   /**
+   * Frames whose GPU work has completed, as a count: every frame numbered
+   * below it (the `frame` an onFrame callback receives) has retired. A
+   * frame in flight still samples the textures and reads the buffers it
+   * was drawn with, and writing one of those (an upload, a render into a
+   * target, a resize) before the frame retires makes a tiled driver drain
+   * its queue first - tens of milliseconds on a phone GPU. So a resource
+   * is free to write once every frame submitted before its release has
+   * retired: `retiredFrames() >= submittedFrames()` as of the release;
+   * the resource pool in @solidrt/core/gpu applies the rule to what it
+   * hands out. Advances as the runtime's present fences signal (headless,
+   * after each frame's own bounded wait); a frame the GPU is still on
+   * advances nothing.
+   */
+  export function retiredFrames(): number
+  /**
+   * Frames handed to the GPU so far, as a count: one past the highest
+   * frame number submitted (a frame the demand gate skipped submits
+   * nothing). Equal to `retiredFrames()` when the GPU is done with
+   * everything; the difference is the frames in flight.
+   */
+  export function submittedFrames(): number
+  /**
    * This device's hard ceilings, queried once at startup: process constants.
    * Every create and bind validates against them at the call site, so an
    * oversize target throws naming the limit instead of failing later as a

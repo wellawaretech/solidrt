@@ -70,6 +70,9 @@ pub(crate) struct Gui {
   /// standing demand `frame::draw` re-requests past its gate, the way
   /// `ticking` is, and the reasons it already reported.
   pub(crate) motion: Cell<NativeMotion>,
+  /// The number of the latest frame `frame::deliver` handed to JS (see
+  /// `frame::current_frame`).
+  pub(crate) frame: Cell<u64>,
 }
 
 /// What `frame::advance` found still running, per mover.
@@ -228,6 +231,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
           ticks: RefCell::new(Vec::new()),
           ticking: RefCell::new(Vec::new()),
           motion: Cell::new(NativeMotion::default()),
+          frame: Cell::new(0),
         })))
         .expect("store gui state");
     })

@@ -133,10 +133,10 @@ Shaped, not started.
   the layer's whole budget; a packer that allocates runtime images into a few
   pages needs a sub-rect texture upload in core first.
 - **[2D layer views, the additive half - tile-layer views, the layers bitmask, into tiling, per-view tint](backlog/2d-layer-views-additive.md)** [2026-09-07]
-  A view of a sprite or record layer exists (2d-layer-views), but a tile map
-  cannot be shown twice, a minimap cannot admit marker sprites only, several
-  views cannot share one atlas target, and a view cannot tint itself apart
-  from the layer. Each is an additive step on the landed view contract.
+  A view of every layer kind exists (2d-layer-views, 2d-tile-views), but a
+  minimap cannot admit marker sprites only, several views cannot share one
+  atlas target, and a view cannot tint itself apart from the layer. Each is an
+  additive step on the landed view contract.
 - **[2d skeletal sprites - skinned deformation over the spatial palette sink](backlog/2d-skeletal-sprites.md)** [2026-09-02]
   The 2d package has flipbook animation only; Spine/DragonBones-class skeletal
   characters (bone hierarchies deforming a textured mesh) have no path, even
@@ -150,19 +150,16 @@ Shaped, not started.
   core's ordered gather so instanceCount shrinks to the visible prefix,
   re-evaluated whenever the camera or any pose moved, switched on past a
   measured record count
-- **[The tile layer renders through views, so a minimap minifies the bake correctly](backlog/2d-tile-views.md)** [2026-10-14]
-  A tile layer composites its chunk textures as d-texture leaves, which
-  Impeller samples at level 0 only, so a second composite well below the bake
-  density (a minimap at a tenth of the main view's zoom) aliases; the sprite
-  layer and the 3d scene already render through views (one draw target per
-  camera with its own oversample), and the tile layer should too, sampling
-  mip-chained chunk targets in its own pipeline
-- **[Wrap-around worlds in 2d - recipes exist but live nowhere, and a wrapping tile world has no seam answer](backlog/2d-wrap-around.md)** [2026-08-31]
-  A toroidal world (Asteroids screen wrap, an endlessly repeating tile map) is
-  expressible today only by app-side recipes nothing documents - position
-  modulo that must SNAP (native transitions animate the wrap jump across the
-  world), ghost copies at the seams - and the chunked tile layer has no way to
-  draw the seam at all.
+- **[A streaming tile world hitches on the tablet whenever a RESIDENT chunk re-bakes, a write into a texture the frames in flight still sample](backlog/2d-tile-world-frame-hitches.md)** [2026-10-16]
+  The tiles example on the SM-T500 shows 50 to 67 ms gaps a few times a
+  second; measured 2026-10-16 with a probe matrix and a sched/gfx trace, the
+  trigger is the beacon blink's re-bake of resident chunks, a batch of GPU
+  passes the Adreno 610 pays beside a near-budget frame (0.7 to 1.7 ms each,
+  plus a ~27 ms drain when the target is one the in-flight frames sample);
+  fixed by baking into retired targets (the pool ages its gives by the frames
+  in flight) and pacing bakes to a per-frame budget shared by every tile layer
+  (default one), which reads clean on the tablet; the TV reading and the
+  startup burst remain.
 - **[Environment tier leftovers - SH9, aoMap, packed .sol3e, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
   HDR probes and sky bakes); what Three, Unity and Godot ship on top of the
@@ -341,6 +338,15 @@ Shaped, not started.
   on a half pixel and reads as a soft second row whatever the box does;
   browsers snap border widths to whole device pixels (at least one), and the
   box kinds' strokes should too.
+- **[The cadence hold locks in above 1 on Android because the step-down predicts from a CPU term the hold itself inflates](backlog/cadence-hold-dvfs-lock-in.md)** [2026-10-16]
+  The tiles example's startup burst raises the hold (SM-T500 to 3, Pixel 7 to
+  4 then 3) and it stays there for minutes of flight the device could run at
+  full rate (the Pixel at 30 fps with a 1.3 ms GPU frame); under the hold the
+  controller's CPU term reads 9 to 25 ms against 3 to 5 at hold 1 because the
+  span it measures (signal to swap call) holds the buffer-queue wait a held
+  display causes, so the step-down prediction never fits; a step down tried on
+  a timeout, reverted by the measured rule as today, would break the lock-in
+  at one hitch per try.
 - **[Native modules cannot read camera frames](backlog/camera-frame-tap.md)** [2026-10-08]
   alloy's camera pump holds every frame as upright RGBA on the CPU and hands
   it only to the texture upload and the QR decoder, so a custom runtime module
@@ -1049,6 +1055,13 @@ Finished, kept for the reasoning.
   at defaults, but neither the tile nor the layer exposes it, so day/night,
   damage states, team colours, biome shifts and fog-of-war dimming all fall
   back to atlas duplication or an overlay rect.
+- **[The tile layer renders through views, so a minimap minifies the bake correctly](done/2d-tile-views.md)** [2026-10-16]
+  A tile layer composites its chunk textures as d-texture leaves, which
+  Impeller samples at level 0 only, so a second composite well below the bake
+  density (a minimap at a tenth of the main view's zoom) aliases; the sprite
+  layer and the 3d scene already render through views (one draw target per
+  camera with its own oversample), and the tile layer should too, sampling
+  mip-chained chunk targets in its own pipeline
 - **[Tile world bounds - bounded contract or additive path to unbounded](done/2d-tile-world-bounds.md)** [2026-08-31]
   Decide whether the TileLayer's creation-fixed cols x rows grid is the
   contract, or sketch the additive route to an unbounded world before
@@ -1058,6 +1071,12 @@ Finished, kept for the reasoning.
   - has no path: apps re-project laid-out <text> elements per camera change,
   which works for tens of labels and not at all for thousands; give the layer
   an atlas-text answer.
+- **[Wrap-around worlds in 2d - recipes exist but live nowhere, and a wrapping tile world has no seam answer](done/2d-wrap-around.md)** [2026-10-16]
+  A toroidal world (Asteroids screen wrap, an endlessly repeating tile map) is
+  expressible today only by app-side recipes nothing documents - position
+  modulo that must SNAP (native transitions animate the wrap jump across the
+  world), ghost copies at the seams - and the chunked tile layer has no way to
+  draw the seam at all.
 - **[The 3d agent doc is 1900 lines under four headings](done/3d-agents-doc-navigability.md)** [2026-09-08]
   packages/3d/AGENTS.md is excellent material presented as a wall - four
   top-level headings across 1910 lines, with individual APIs documented inside

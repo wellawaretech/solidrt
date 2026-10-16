@@ -1,9 +1,9 @@
 // The baked tile layer: an unbounded grid of atlas frames rendered into
-// CHUNKED `render: "manual"` targets and composited as a handful of quads -
-// never a quad per tile. On tiled GPUs the budget is primitive count, so a
-// 100x100 world must not be 10,000 quads per frame; baked, it is a few
-// chunk textures, and scrolling is a transform on the composite (see
-// <TileLayer> in components/tile-layer.tsx), never a repaint.
+// CHUNKED `render: "manual"` targets and shown through VIEWS as a handful
+// of quads - never a quad per tile. On tiled GPUs the budget is primitive
+// count, so a 100x100 world must not be 10,000 quads per frame; baked, it
+// is a few chunk textures, and scrolling is a camera write on a view,
+// never a repaint.
 //
 // Cells are unbounded (any integer, negative included; a `wrap` period
 // makes them modular, `bounds` clamps them) and live in a sparse map of
@@ -18,29 +18,55 @@
 // its OWN pixel size anchored to the cell's bottom-left, so oversized,
 // isometric and hex tiles are expressible, and the overhang bakes into the
 // owning chunk (its target is chunk size plus the layer's max overhang on
-// every side, the composite overlaps leaves by that margin).
+// every side, the views overlap the quads by that margin).
+//
+// Views: the layer renders only through its views (createView, the
+// sprite layer's contract one layer kind over; views.ts holds the shell).
+// A view is a draw target holding one entry per resident chunk image over
+// the chunk-quad pipeline (tile-pipeline.ts): the entry binds the chunk's
+// baked target and carries its chunk indices, the view's shared params
+// carry the camera, so a camera move is one params write and no entry
+// changes. Entries are kept in row-major world order (a lower row's
+// overhang draws over the row above, Tiled's and Godot's y-order), and the
+// set follows residency: an entry comes when a chunk acquires its target
+// and goes when it releases it. Under `wrap` a chunk has one entry per
+// IMAGE of itself inside the view's world box, so the seam is two entries
+// over one texture; the image set depends on the camera only through
+// four integers (the chunk-index range the view's box covers), compared
+// on every camera write and rebuilt on a change - a scroll costs no JS
+// until the view crosses an image boundary. Chunk targets carry a mip
+// chain by default, so a view below the bake density (a minimap at a
+// tenth of the main zoom) minifies without aliasing.
 //
 // Residency: the layer is a HANDLER over the core's residency gate
 // (flux:spatial createGrid, the Residency section of @solidrt/3d's
-// AGENTS.md): its chunk grid is a grid of regions, a viewer (addViewer; the
-// component pushes its camera as one) wants the chunks near its view, and
-// the gate's enter and leave events drive the GPU side. On ENTER a chunk
-// takes a records buffer and a target from the shared pool
-// (createResourcePool in @solidrt/core/gpu), uploads its records and bakes
-// in the same frame's publish pass; on LEAVE they go back to the pool and
-// the records stay on the CPU (~5 KB a chunk) - or go too under `retain:
-// "none"`, where `fill` regenerates the chunk on the next enter. The gate
-// decides when (hysteresis, the union over viewers, the paced budget); the
-// layer never does. A layer with no viewer bakes nothing.
+// AGENTS.md): its chunk grid is a grid of regions, every view is a viewer
+// wanting the chunks near its viewport (its camera is pushed to the gate
+// as an orthographic view), and the gate's enter and leave events drive
+// the GPU side. On ENTER a chunk takes a records buffer and a target from
+// the shared pool (createResourcePool in @solidrt/core/gpu), uploads its
+// records and bakes in the same frame's publish pass; on LEAVE they go
+// back to the pool and the records stay on the CPU (~5 KB a chunk) - or
+// go too under `retain: "none"`, where `fill` regenerates the chunk on
+// the next enter. The gate decides when (hysteresis, the union over
+// views, the paced budget); the layer never does. A layer with no view
+// bakes nothing.
 //
 // setTile and setTiles batch; the flush (ahead of the frame's paint, or at
 // a microtask outside a frame) publishes and re-bakes ONLY dirty resident
-// chunks. A layer nobody edits and nobody moves over costs nothing per
-// frame.
-import { displayScale, getOwner, onBeforeRender, onCleanup, runWithOwner, windowSize } from "@solidrt/core"
+// chunks and syncs the views' entries, and it is ONE flush for every tile
+// layer in the app: the re-bakes of drawn chunks are paced under the bake
+// budget (setBakeBudget, the gate's residency budget one level up: bakes
+// per frame, nearest a view's eye first, the rest wait a frame showing
+// their last bake), because a tiled GPU pays each bake beside the frame
+// and a batch of them past a handful overruns it. A layer nobody edits
+// and nobody moves over costs nothing per frame.
+import { displayScale, getOwner, onBeforeRender, onCleanup, runWithOwner, untrack, windowSize } from "@solidrt/core"
 import {
+  addDraw,
   beginBufferWrite,
   createBuffer,
+  createDrawTarget,
   createResourcePool,
   createShaderTarget,
   destroyBuffer,
@@ -50,21 +76,26 @@ import {
   layoutFields,
   layoutStride,
   limits,
+  removeDraw,
   renderTarget,
   setDraw,
+  setDrawOrder,
+  setDrawTextures,
   setTargetParams,
   setTargetSize,
   writeBuffer,
   writeRecord,
 } from "@solidrt/core/gpu"
-import type { AttributeAccess, BufferId, FilterMode, ResourcePool, ShaderParams, TextureId, VertexAttribute } from "@solidrt/core/gpu"
+import type { AttributeAccess, BufferId, DrawId, ResourcePool, ShaderParams, TextureId, VertexAttribute } from "@solidrt/core/gpu"
+import { requestFrame } from "flux:rendertree"
 import * as spatial from "flux:spatial"
 import type { GridId, ViewKey } from "flux:spatial"
+import { registerStat } from "sol:dev"
 import { on } from "sol:events"
 import { checkAtlases, frameIndex } from "./atlas.ts"
 import type { Atlas } from "./atlas.ts"
-import { checkCamera } from "./camera.ts"
-import type { CameraUpdate } from "./camera.ts"
+import { unprojectCamera } from "./camera.ts"
+import type { CameraState } from "./camera.ts"
 import { isFrame, writeFrame } from "./frames.ts"
 import type { Frame } from "./frames.ts"
 import { atlasBindings, RECORD_ATTRIBUTES } from "./glsl.ts"
@@ -74,8 +105,11 @@ import type { Material } from "./material.ts"
 import { pickOversample } from "./oversample-math.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 import { INSTANCE_FLOATS } from "./records.ts"
+import { CHUNK_SAMPLER, tileCameraParams, tilePipeline } from "./tile-pipeline.ts"
 import { cellSymmetry, checkCell, checkRect, checkTileRect, chunkKey, eachChunkSlice, flagsOf, floorDiv, footprint, indexOf, isClearIndex, mod, slotOf } from "./tiles-math.ts"
 import type { TileRect } from "./tiles-math.ts"
+import { createViewShell } from "./views.ts"
+import type { ViewHandle, ViewOptions } from "./views.ts"
 
 const RESOLVED = Promise.resolve()
 
@@ -90,6 +124,10 @@ const DEFAULT_LEAVE_CHUNKS = 1.5
 // the chunk's buffers each): what a camera sweeping back and forth reuses
 // before a chunk is created again.
 const POOL_CHUNKS = 16
+// What a mip chain adds to a target's level-0 texels (the geometric sum
+// of the quarter-size levels): what a chunk weighs against `maxTexels`
+// with its chain on.
+const MIP_CHAIN_FACTOR = 4 / 3
 
 export type Tint = [number, number, number, number]
 
@@ -108,22 +146,15 @@ export type TileLayerOptions = {
    * cell render nothing, so this is not a layer background). */
   chunkClearColor?: [number, number, number, number]
   /**
-   * Sampler filter for the baked chunk textures at composite time; default
-   * "linear", which with `oversample` is the proper resample at any scale.
-   * Hard pixels belong to the ATLAS sampler (createAtlas `filter:
-   * "nearest"`), not here: "nearest" on the chunks snaps texels to uneven
-   * widths at a fractional scale.
-   */
-  filter?: FilterMode
-  /**
    * What the cells look like: the layer's material (see
    * SpriteLayerOptions.material), fixed at creation; default `unlit()`.
    * Its blend is how the cells bake into their chunks ("add" for a glow
    * or light map baked over the transparent chunk clear), its params and
    * textures reach every chunk target, its instance buffers are a style
    * record per cell (`setTile`'s `style`). A tile layer BAKES, so a
-   * param change re-renders every resident chunk, like the tint:
-   * animated uniforms belong on a sprite layer.
+   * param change re-bakes every resident chunk, like the tint (under the
+   * bake budget, see setBakeBudget): animated uniforms belong on a
+   * sprite layer.
    */
   material?: Material
   /** Uniform values seeded on every chunk over the material's own; see
@@ -132,32 +163,32 @@ export type TileLayerOptions = {
   /**
    * Pin the bake density: target texels per world pixel in the chunks
    * (positive integer). Absent (the default), the layer picks it from its
-   * VIEWERS: the largest device pixels per world pixel any viewer reports
-   * with its camera (`setCamera`'s `deviceScale` times the camera zoom),
-   * rounded up, with a shrink hysteresis, bounded by `maxOversample`, by
-   * `maxPixels` and the window's own pixel count per chunk, and by
-   * `maxTexels` (a chunk must fit the budget). One density serves every
-   * composite of the layer: a composite below it minifies the bake at
-   * the leaf (level 0, linear), which aliases past about 2x under. See
-   * TileLayer.setOversample.
+   * VIEWS: the largest target texels per world pixel any view asks for
+   * (its oversample times its camera zoom), rounded up, with a shrink
+   * hysteresis, bounded by `maxDensity`, by the window's own pixel count
+   * per chunk, and by `maxTexels` (a chunk must fit the budget). One
+   * density serves every view of the layer; a view below it minifies the
+   * bake through the chunks' mip chain (`mipmap`). See
+   * TileLayer.setDensity.
    */
-  oversample?: number
+  density?: number
   /**
    * Cap on the auto-picked density (integer >= 1): chunks stay adaptive
    * up to it, never above. A tile world's texture memory is resident
    * chunks x n squared, so this is the lever that bounds it on
-   * high-scale displays without giving up adaptivity. Ignored under a
-   * pinned `oversample`.
+   * high-scale displays without giving up adaptivity; a chunk is
+   * world-sized, so the cap is one cost on every device. Ignored under a
+   * pinned `density`.
    */
-  maxOversample?: number
+  maxDensity?: number
   /**
-   * Cap on a chunk target's texel count under the auto pick, the budget
-   * form of `maxOversample`: the pick stays under it on any display (the
-   * window's own pixel count caps it always). Ignored under a pinned
-   * `oversample`; the same name and meaning as `<SpriteLayer>`'s and the
-   * 3d `<Scene>`'s.
+   * Whether the chunk targets carry a mip chain (default true): the core
+   * regenerates it after every bake, so a view below the bake density -
+   * a minimap at a tenth of the main view's zoom - minifies the bake
+   * without aliasing. A chain adds a third to a chunk's texels, counted
+   * against `maxTexels`; a world no view ever minifies may drop it.
    */
-  maxPixels?: number
+  mipmap?: boolean
   /**
    * Chunk edge in TILES; default sized so a chunk is ~512px (under `wrap`,
    * the largest divisor of both periods not above that). The tuning knob
@@ -186,9 +217,9 @@ export type TileLayerOptions = {
   bounds?: TileRect
   /**
    * A torus: cell coordinates are modular in these periods (cells), so
-   * `setTile(cols + 1, row)` writes cell 1 and the composite repeats the
-   * world where the view crosses the seam (every image of a resident
-   * chunk that intersects the view). Both periods must be whole chunks
+   * `setTile(cols + 1, row)` writes cell 1 and a view repeats the world
+   * where it crosses the seam (every image of a resident chunk inside
+   * the view is drawn). Both periods must be whole chunks
    * (`chunkTiles` divides them; the default is picked to). Not with
    * `bounds`.
    */
@@ -197,7 +228,7 @@ export type TileLayerOptions = {
    * World pixels a frame may extend past its cell (a frame draws at its
    * own pixel size, anchored to the cell's bottom-left, so an oversized
    * tile reaches right and up): every chunk target is chunk size plus
-   * this margin on every side and the composite overlaps leaves by it.
+   * this margin on every side and the views overlap the quads by it.
    * Default: the largest overhang in the `frames` table as its frames
    * lie (a transposed non-square frame covers `fh x fw`, so give the
    * margin explicitly to transpose one), else 0. A frame exceeding the
@@ -214,16 +245,17 @@ export type TileLayerOptions = {
   leave?: number
   /**
    * The layer's texture budget in texels: the most its resident chunks
-   * may hold at once, counted as chunk targets at the current oversample
-   * (a resident chunk with no cells holds no texture but counts as one).
+   * may hold at once, counted as chunk targets at the current density,
+   * mip chain included (a resident chunk with no cells holds no texture
+   * but counts as one).
    * Past it the residency gate evicts the chunk least needed, the
    * furthest from any viewer in `leave`s, for one more needed; a chunk
    * nothing can make room for waits, wanted, until a view moves
    * (flux:spatial setResidencyLimit). Must hold at least one chunk
    * (throws otherwise); the default is no budget. A budget bounds the
-   * resident COUNT, not the quality: oversample stays what the viewport
-   * asks (`maxOversample` / `maxPixels` bound that), so a world that fills
-   * the budget shows holes at its far edge rather than blur everywhere.
+   * resident COUNT, not the quality: the density stays what the views
+   * ask (`maxDensity` bounds that), so a world that fills the budget
+   * shows holes at its far edge rather than blur everywhere.
    */
   maxTexels?: number
   /**
@@ -271,9 +303,11 @@ export type TileChunk = {
   readonly y: number
   readonly width: number
   readonly height: number
-  /** The baked target while the chunk is resident and holds a cell, else
-   * null. The texture is `width + 2 * overhang` wide (times the
-   * oversample) with its top-left at `x - overhang, y - overhang`. */
+  /** The chunk's target while it is resident and holds a cell, else null:
+   * baked at the flush of the frame its enter lands in, and after an edit
+   * showing its last bake until the re-bake's turn under the bake budget
+   * (setBakeBudget). The texture is `width + 2 * overhang` wide (times
+   * the density) with its top-left at `x - overhang, y - overhang`. */
   readonly texture: TextureId | null
 }
 
@@ -298,28 +332,6 @@ export type TileCellOptions = {
   style?: ArrayLike<number>
 }
 
-/**
- * A viewer of the layer: a camera over a viewport whose chunks the
- * residency gate keeps resident (addViewer). A chunk is wanted while any
- * viewer wants it.
- */
-export type TileViewer = {
-  /**
-   * The camera over a `width` x `height` viewport (world pixels at zoom
-   * 1), pushed to the residency gate as an orthographic view at the
-   * layer's flush (the frame's publish pass, a microtask outside one):
-   * call it on every camera or viewport change. Absent camera fields read as the
-   * defaults (projectCamera's rule). `deviceScale` is the device pixels
-   * one viewport pixel covers (display scale times any ancestor fit,
-   * default 1): times the camera zoom it is this viewer's wish for the
-   * bake density, and the layer bakes at the largest wish (see
-   * TileLayerOptions.oversample).
-   */
-  setCamera(camera: CameraUpdate, width: number, height: number, deviceScale?: number): void
-  /** Stop viewing: chunks only this viewer wanted leave. */
-  dispose(): void
-}
-
 export type TileLayer = {
   /** The atlases the layer bakes from, as declared at creation: every
    * frame set names one of their textures (see LayerBase.atlases). */
@@ -333,7 +345,7 @@ export type TileLayer = {
   /** Chunk edge in cells. */
   readonly chunkTiles: number
   /** Chunk size in world pixels (chunkTiles * tile size): a chunk's rect,
-   * before the overhang margin and the oversample. */
+   * before the overhang margin and the density. */
   readonly chunkW: number
   readonly chunkH: number
   /** The overhang margin in world pixels (see TileLayerOptions.overhang). */
@@ -342,24 +354,36 @@ export type TileLayer = {
   readonly bounds: TileRect | null
   readonly wrap: { cols: number; rows: number } | null
   /** Target texels per world pixel, the bake density in force (pinned, or
-   * the viewers' pick); see setOversample. */
-  readonly oversample: number
+   * the views' pick); see setDensity. */
+  readonly density: number
   /**
    * Pin the bake density at `n` target texels per world pixel (positive
-   * integer): every resident chunk resizes in place and re-bakes once;
-   * world pixels, records and the camera are untouched, and the viewers'
-   * wishes stop applying. Throws past `maxTexels` (a chunk must fit the
-   * budget). `null` returns the density to the viewers' pick
-   * (TileLayerOptions.oversample).
+   * integer): every resident chunk re-bakes once at the new size, under
+   * the bake budget nearest a view first (the picture sharpens outward
+   * over a few frames); world pixels, records and the cameras are
+   * untouched, and the views' wishes stop applying. Throws past
+   * `maxTexels` (a chunk must fit the budget). `null` returns the density
+   * to the views' pick (TileLayerOptions.density).
    */
-  setOversample(n: number | null): void
+  setDensity(n: number | null): void
+  /** Whether the chunk targets carry a mip chain, as declared at
+   * creation (TileLayerOptions.mipmap). */
+  readonly mipmap: boolean
   /**
-   * Add a viewer: a camera over a viewport whose nearby chunks the gate
-   * keeps resident. `<TileLayer>` adds one for its camera; imperative use
-   * adds its own, since a layer with no viewer bakes nothing. Disposed
-   * with the layer.
+   * A view of the world: the sprite layer's createView one layer kind
+   * over - a draw target with a camera and a viewport of its own, shown
+   * as `view.texture` (`<texture src>`; `<TileLayer>` is the component
+   * form) and the viewer the residency gate keeps chunks resident around:
+   * the view's camera over its viewport is pushed to the gate on every
+   * camera, size or oversample write, and `oversample * zoom` is its wish
+   * for the bake density (the layer bakes at the largest wish). A layer
+   * with no view bakes nothing. The view draws one quad per resident
+   * chunk image, sampling the bake, so a camera move costs one params
+   * write; its `pick` is empty (a tile view hits no sprite) and its
+   * listeners see every pointer event over the world in world pixels.
+   * Disposed with the layer.
    */
-  addViewer(): TileViewer
+  createView(opts: ViewOptions): ViewHandle
   /** The resident chunks (entered, not left), in no particular order: a
    * fresh array. A resident chunk holding no cell has no texture. */
   resident(): TileChunk[]
@@ -376,7 +400,9 @@ export type TileLayer = {
    * cell's current tint; a cell set from empty starts at [1, 1, 1, 1]).
    * Batched; the flush ahead of the frame's paint (the microtask, outside
    * a frame) publishes and re-bakes ONLY the resident chunks that changed,
-   * however many tiles did. A write to a non-resident chunk is records
+   * however many tiles did - at most the bake budget of them per frame
+   * (setBakeBudget), nearest a view first, the rest showing their last
+   * bake until their turn. A write to a non-resident chunk is records
    * only: it bakes when the chunk enters.
    */
   setTile(col: number, row: number, frame: Frame | null, opts?: TileCellOptions): void
@@ -410,23 +436,23 @@ export type TileLayer = {
   /**
    * Tint the whole layer, [r, g, b, a] in 0..1: a uniform multiplied over
    * every cell's own tint (day/night, a dimmed parallax plane). Not a
-   * record write - resident chunks re-render GPU-side with nothing
-   * re-uploaded - but each write does re-render every resident chunk, so
-   * animate it coarsely, not per frame.
+   * record write - resident chunks re-bake GPU-side with nothing
+   * re-uploaded - but each write does re-bake every resident chunk
+   * (under the bake budget, so a layer of many chunks takes a few frames
+   * to roll over, nearest a view first), so animate it coarsely, not per
+   * frame.
    */
   setTint(tint: [number, number, number, number]): void
   /**
    * Write uniform values to every resident chunk (the material's prelude
    * uniforms, over its own `params`): LayerBase.setParams for a baked
-   * layer, so each write re-renders every resident chunk, like setTint -
-   * drive it from slow state, not per frame. Absent names keep their
-   * values; a name the program does not declare is skipped.
+   * layer, so each write re-bakes every resident chunk under the bake
+   * budget, like setTint - drive it from slow state, not per frame.
+   * Absent names keep their values; a name the program does not declare
+   * is skipped.
    */
   setParams(params: ShaderParams): void
   dispose(): void
-  /** Internal: the composites' change hook (any resident chunk's texture
-   * came or went). Returns the unsubscribe. */
-  _watch(fn: () => void): () => void
 }
 
 type Chunk = TileChunk & {
@@ -450,9 +476,35 @@ type Chunk = TileChunk & {
   /** Records changed since the last flush (a tint-only or resize re-bake
    * renders without re-uploading them). */
   wrote: boolean
+  /** The target and buffers have never been drawn by a view: the pending
+   * bake may write them in place. Once drawn, a re-bake takes a retired
+   * set from the pool and swaps, since the frames in flight still read
+   * the old one. */
+  fresh: boolean
 }
 
 type ChunkStyle = { bytes: Uint8Array; buffer: BufferId | null; fields: AttributeAccess[]; floats: Float32Array | null }
+
+// A view's draw entry over one chunk image: the entry and the chunk
+// target it binds (a chunk back from the pool may hold another id).
+type ImageEntry = { draw: DrawId; texture: TextureId }
+
+// One view of the layer: the shell, its gate key, its entries by image
+// key, and under wrap the chunk-index range its world box covers
+// ([c0, c1, r0, r1], the image set's only camera dependence).
+type TileView = {
+  view: ViewHandle
+  key: ViewKey | null
+  entries: Map<number, ImageEntry>
+  range: [number, number, number, number] | null
+  /** The entry set may have changed (residency, a write, a range
+   * change): sync at the flush. */
+  dirty: boolean
+}
+
+// An image wanted by a view: its key and its chunk indices (the
+// canonical chunk's offset by whole periods under wrap).
+type Image = { key: number; col: number; row: number; chunk: Chunk }
 
 // One style stream of the material as the tile layer keeps it: the
 // layout, the blank record, and the stride.
@@ -476,13 +528,18 @@ function freeBuffer(id: number): void {
 }
 
 // The gate's events are routed to the layer owning the grid: one lazy
-// subscription per event, keyed by grid id.
+// subscription per event, keyed by grid id. The frame's start is
+// subscribed beside them, for the bake budget's accounting.
 let handlers = new Map<GridId, { enter(i: number, j: number): void; leave(i: number, j: number): void }>()
 let subscribed = false
 
 function subscribe(): void {
   if (subscribed) return
   subscribed = true
+  on("frameStart", () => {
+    bakesSpentInFrame = bakesSpentForNext
+    bakesSpentForNext = 0
+  })
   on("spatialRegionEnter", (event: { grid?: GridId; cell?: [number, number, number] }) => {
     if (event.grid === undefined || event.cell === undefined) return
     handlers.get(event.grid)?.enter(event.cell[0], event.cell[1])
@@ -491,6 +548,151 @@ function subscribe(): void {
     if (event.grid === undefined || event.cell === undefined) return
     handlers.get(event.grid)?.leave(event.cell[0], event.cell[1])
   })
+}
+
+// ---- The bake budget ---------------------------------------------------
+//
+// A bake is a render pass into a chunk target that the frame's picture
+// then samples, and a tiled GPU pays it beside the frame: on an Adreno
+// 610 at a 15 ms base frame a bake costs 0.7 to 1.7 ms, one a frame
+// holds 60 fps with no missed present, and two or four a frame miss
+// presents as an unpaced ten-chunk batch does (50 to 67 ms gaps;
+// okf/backlog/2d-tile-world-frame-hitches.md). So bakes are PACED, the
+// way the gate paces enters: one budget of bakes per frame for every
+// tile layer in the app (the gate's residency budget one level up; two
+// layers edited together spend it, never each their own). A chunk's
+// first bake, its appearance, is never held back - the gate's enter
+// budget paced it, and a hole is worse than a late refresh - but it
+// spends the budget; the re-bakes of drawn chunks take what is left,
+// nearest a view's eye first across the layers, and the rest wait a
+// frame showing their last bake.
+
+// Bakes per frame when no app set a budget: one, what the low-end baseline
+// (an Adreno 610 at a near-budget frame) holds clean, measured 2026-10-16
+// on the tiles example; an app on desktop-class GPUs raises it.
+const DEFAULT_BAKE_BUDGET = 1
+let bakeBudget = DEFAULT_BAKE_BUDGET
+// The budget is spent per frame of GPU work. The bakes a frame's publish
+// pass issues join that frame's work; the bakes a flush between frames
+// issues (a write outside a frame, at its microtask) join the NEXT
+// frame's. So the spend has two slots, and the next frame's start carries
+// the second over into the first. Every frame that runs resets the spend,
+// whether or not it drew: the bakes themselves demand the draw, and a
+// frame whose publish pass found no budget left would otherwise never
+// see a new one.
+let bakesSpentInFrame = 0
+let bakesSpentForNext = 0
+// Which slot the flush under way charges (set by flushLayers).
+let flushInFrame = false
+// Every layer's bakes so far, and the re-bakes waiting on the budget as
+// of the last flush: the stats (`app.tileBakes`, `app.tileBakesWaiting`).
+let bakesTotal = 0
+let bakesWaiting = 0
+registerStat("tileBakes", () => bakesTotal)
+registerStat("tileBakesWaiting", () => bakesWaiting)
+
+/**
+ * The chunk bakes per frame every tile layer in the app spends together
+ * (default 1): a chunk's first bake always runs and counts, the re-bakes
+ * of drawn chunks (a `setTile` into one, `setTint`, `setParams`,
+ * `setDensity`) take what is left, nearest a view's eye first, and the
+ * rest wait a frame showing their last bake. The lever against the frame
+ * hitch a batch of bakes causes on a tiled GPU: the default holds on the
+ * low-end baseline, a desktop app may raise it, and `Infinity` runs every
+ * bake in the frame it was asked in. A layer's default pool holds sixteen
+ * chunks' worth, so a budget past that churns the pool on a whole-layer
+ * re-bake: pass a deeper `pool`. A positive integer or Infinity; throws
+ * otherwise.
+ */
+export function setBakeBudget(bakes: number): void {
+  if (!((Number.isInteger(bakes) && bakes >= 1) || bakes === Infinity)) {
+    throw new Error(`setBakeBudget: bakes per frame must be a positive integer or Infinity, got ${bakes}`)
+  }
+  bakeBudget = bakes
+}
+
+function bakesSpent(): number {
+  return flushInFrame ? bakesSpentInFrame : bakesSpentForNext
+}
+function spendBake(): void {
+  if (flushInFrame) bakesSpentInFrame++
+  else bakesSpentForNext++
+  bakesTotal++
+}
+
+// One flush for every tile layer: a layer registers its part here, a
+// write outside a frame runs it at the microtask (between frames: the
+// checkpoint comes after a frame's whole closure), and the publish pass of
+// every frame runs it ahead of the paint while anything is pending, so a
+// tile set anywhere in the frame's JS is baked for that frame's picture.
+// The hook is installed once, outside any owner (a layer may outlive the
+// owner it was created in), and is a flag check when nothing is pending.
+type LayerFlush = {
+  /** Whether a view of the layer moved since the last flush (the spatial
+   * core is flushed once for every layer then). */
+  takeViewsDirty(): boolean
+  /** Bake the layer's fresh dirty chunks now and list its drawn dirty
+   * chunks as candidates for the budget. */
+  prepare(out: Candidate[]): void
+  bake(chunk: Chunk): void
+  /** Bring the views whose entry set changed up to date. */
+  sync(): void
+}
+// A drawn chunk waiting to re-bake: its urgency (the layer's measure,
+// comparable across layers), its key for a stable order, and its layer.
+type Candidate = { urgency: number; key: number; flusher: LayerFlush; chunk: Chunk }
+let flushers = new Set<LayerFlush>()
+let flushPending = false
+let flushHooked = false
+
+function scheduleFlush(): void {
+  if (flushPending) return
+  flushPending = true
+  RESOLVED.then(() => flushLayers(false))
+  if (flushHooked) return
+  flushHooked = true
+  runWithOwner(null, () =>
+    onBeforeRender(
+      () => {
+        if (flushPending) flushLayers(true)
+      },
+      { publish: true },
+    ),
+  )
+}
+
+// `inFrame`: the frame's publish pass (the bakes join this frame's GPU
+// work), else the microtask between frames (they join the next frame's).
+function flushLayers(inFrame: boolean): void {
+  if (!flushPending) return
+  flushPending = false
+  flushInFrame = inFrame
+  // The residency pass runs at the flush; its events arrive with the next
+  // frame, which the flush requests when something changed.
+  let moved = false
+  for (let f of flushers) if (f.takeViewsDirty()) moved = true
+  if (moved) spatial.flush()
+  let candidates: Candidate[] = []
+  for (let f of flushers) f.prepare(candidates)
+  // Most urgent first; ties by chunk key, so the order is the same every
+  // frame.
+  candidates.sort((a, b) => a.urgency - b.urgency || a.key - b.key)
+  let i = 0
+  for (; i < candidates.length && bakesSpent() < bakeBudget; i++) candidates[i]!.flusher.bake(candidates[i]!.chunk)
+  bakesWaiting = candidates.length - i
+  if (bakesWaiting > 0) {
+    // The rest bake next frame: the flush stays pending for its publish
+    // pass, and the frame is demanded (the loop is demand-driven; a
+    // still picture would otherwise never bake them).
+    flushPending = true
+    requestFrame()
+  }
+  for (let f of flushers) f.sync()
+}
+
+/** The signed distance `d` folded into the nearest image of a period. */
+function wrapDelta(d: number, period: number): number {
+  return d - Math.round(d / period) * period
 }
 
 /** The greatest common divisor of two positive integers. */
@@ -504,26 +706,23 @@ function frameSize(frame: Frame, atlas: Atlas): [number, number] {
   return [Math.abs(frame.u1 - frame.u0) * atlas.width, Math.abs(frame.v1 - frame.v0) * atlas.height]
 }
 
-// The orthographic view a viewer pushes: world pixels to clip through the
-// camera mapping (projectCamera) with the viewport's center at the view
-// origin, so the gate's eye (the point enters are paced by) is the
-// viewport center, and clip x/y spanning the viewport. Column-major, the
-// core's matrix layout; the plane is z = 0 and the view direction -z.
-function viewMatrices(camera: CameraUpdate, width: number, height: number, view: Float32Array, proj: Float32Array): void {
-  let zoom = camera.zoom ?? 1
-  let rotation = camera.rotation ?? 0
-  let c = Math.cos(rotation)
-  let s = Math.sin(rotation)
-  let camX = camera.x ?? 0
-  let camY = camera.y ?? 0
+// The orthographic view a view pushes to the gate: world pixels to clip
+// through the camera mapping (projectCamera) with the viewport's center at
+// the view origin, so the gate's eye (the point enters are paced by) is
+// the viewport center, and clip x/y spanning the viewport. Column-major,
+// the core's matrix layout; the plane is z = 0 and the view direction -z.
+function viewMatrices(camera: CameraState, width: number, height: number, view: Float32Array, proj: Float32Array): void {
+  let zoom = camera.zoom
+  let c = Math.cos(camera.rotation)
+  let s = Math.sin(camera.rotation)
   view.fill(0)
   view[0] = zoom * c
   view[1] = zoom * s
   view[4] = -zoom * s
   view[5] = zoom * c
   view[10] = 1
-  view[12] = (camera.pivotX ?? 0) - width / 2 - zoom * (c * camX - s * camY)
-  view[13] = (camera.pivotY ?? 0) - height / 2 - zoom * (s * camX + c * camY)
+  view[12] = camera.pivotX - width / 2 - zoom * (c * camera.x - s * camera.y)
+  view[13] = camera.pivotY - height / 2 - zoom * (s * camera.x + c * camera.y)
   view[15] = 1
   proj.fill(0)
   proj[0] = 2 / width
@@ -535,8 +734,9 @@ function viewMatrices(camera: CameraUpdate, width: number, height: number, view:
 /**
  * Create a baked tile layer of `tileW` x `tileH` pixel cells, every cell
  * drawing one atlas frame at the frame's own size, baked into chunk
- * textures the residency gate brings and takes as viewers move, and
- * composited as a few quads (`<TileLayer>`). Cells are unbounded; a world
+ * textures the residency gate brings and takes as its views move, and
+ * shown through views as a few quads (`createView`, `<TileLayer>`).
+ * Cells are unbounded; a world
  * finite by design passes `bounds`, a torus `wrap`. `atlases` is the list
  * of tilesets the cells draw from, bound together in every chunk bake
  * (see createSpriteLayer). Disposed automatically with the owning
@@ -618,30 +818,28 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
   if (targetW > limits.maxTextureSize || targetH > limits.maxTextureSize) {
     throw new Error(`createTileLayer: chunk target ${targetW} x ${targetH} exceeds maxTextureSize ${limits.maxTextureSize}; lower chunkTiles`)
   }
-  let oversample = opts?.oversample ?? 1
-  checkOversample("createTileLayer", oversample, targetW, targetH)
-  // Pinned by the option (and by setOversample), else the viewers' pick.
-  let pinned = opts?.oversample !== undefined
-  let maxOversample = opts?.maxOversample
-  let maxPixels = opts?.maxPixels
-  if (maxOversample !== undefined && !(Number.isInteger(maxOversample) && maxOversample >= 1)) {
-    throw new Error(`createTileLayer: maxOversample must be a positive integer, got ${maxOversample}`)
+  let density = opts?.density ?? 1
+  checkOversample("createTileLayer", density, targetW, targetH, "density")
+  // Pinned by the option (and by setDensity), else the views' pick.
+  let pinned = opts?.density !== undefined
+  let maxDensity = opts?.maxDensity
+  if (maxDensity !== undefined && !(Number.isInteger(maxDensity) && maxDensity >= 1)) {
+    throw new Error(`createTileLayer: maxDensity must be a positive integer, got ${maxDensity}`)
   }
-  if (maxPixels !== undefined && !(Number.isFinite(maxPixels) && maxPixels > 0)) {
-    throw new Error(`createTileLayer: maxPixels must be a positive number, got ${maxPixels}`)
-  }
-  let thrash = thrashSentinel(`tile layer "${label}"`)
+  let mipmap = opts?.mipmap ?? true
+  let thrash = thrashSentinel(`tile layer "${label}"`, "density", "maxDensity")
   let enter = opts?.enter ?? DEFAULT_ENTER_CHUNKS * Math.max(chunkW, chunkH)
   let leave = opts?.leave ?? Math.max(enter, DEFAULT_LEAVE_CHUNKS * Math.max(chunkW, chunkH))
   if (!(Number.isFinite(enter) && enter >= 0 && Number.isFinite(leave) && leave >= enter)) {
     throw new Error(`createTileLayer: enter must be non-negative and leave at least enter, got ${enter} and ${leave}`)
   }
   // A chunk's cost to the residency limits: its target's texels at the
-  // current oversample (the grid's weight, re-pushed on setOversample).
-  let chunkTexels = (n: number) => targetW * n * (targetH * n)
+  // current density, the mip chain included (the grid's weight,
+  // re-pushed on setDensity).
+  let chunkTexels = (n: number) => Math.ceil(targetW * n * (targetH * n) * (mipmap ? MIP_CHAIN_FACTOR : 1))
   let maxTexels = opts?.maxTexels
-  if (maxTexels !== undefined && !(Number.isFinite(maxTexels) && maxTexels >= chunkTexels(oversample))) {
-    throw new Error(`createTileLayer: maxTexels must hold at least one chunk (${chunkTexels(oversample)} texels at oversample ${oversample}), got ${maxTexels}`)
+  if (maxTexels !== undefined && !(Number.isFinite(maxTexels) && maxTexels >= chunkTexels(density))) {
+    throw new Error(`createTileLayer: maxTexels must hold at least one chunk (${chunkTexels(density)} texels at density ${density}), got ${maxTexels}`)
   }
   let retain = opts?.retain ?? "records"
   if (retain !== "records" && retain !== "none") throw new Error(`createTileLayer: retain must be "records" or "none", got ${JSON.stringify(retain)}`)
@@ -663,77 +861,207 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
   let pool: ResourcePool = opts?.pool ?? createResourcePool({ cap: POOL_CHUNKS * (2 + shapes.length), autoFree: false })
   pool.destroyWith(TARGET_KIND, freeTarget)
   pool.destroyWith(BUFFER_KIND, freeBuffer)
-  let targetClass = `${TARGET_KIND}:${gpu.pipeline}`
+  // Sampling is creation-time state on a target, so a chain and a
+  // chainless target are two classes.
+  let targetClass = `${TARGET_KIND}:${gpu.pipeline}:${mipmap ? "mip" : "flat"}`
   let bufferClass = (bytes: number) => `${BUFFER_KIND}:${bytes}`
+  // The views' pipeline, shared by every tile layer.
+  let quadPipe = tilePipeline()
 
   let disposed = false
-  let scheduled = false
-  // A viewer's view changed since the last flush: the spatial core is
+  // A view's camera changed since the last flush: the spatial core is
   // flushed there, once, so the residency pass runs in the frame's
   // publish pass beside the bakes (as a sprite layer's sync flushes it),
   // never once per camera write.
   let viewsDirty = false
-  // The publish pass of every frame runs the pending flush ahead of the
-  // paint, so a tile set anywhere in the frame's JS is baked for that
-  // frame's picture; the microtask stays for writes made outside a frame.
-  // Registered outside any owner: dispose unhooks it (an autoFree: false
-  // layer outlives the owner it was created in).
-  let unhook = runWithOwner(null, () =>
-    onBeforeRender(
-      () => {
-        if (scheduled) flush()
-      },
-      { publish: true },
-    ),
-  )
   // chunkKey -> chunk: every chunk the layer knows (written or resident).
   let chunks = new Map<number, Chunk>()
-  let dirtyChunks: Chunk[] = []
-  let watchers = new Set<() => void>()
-  let viewers = new Set<TileViewer>()
+  // The wanted chunks (entered, not left): what every per-resident walk
+  // covers, so a world of ten thousand written chunks costs nothing per
+  // enter, leave or view sync beyond the chunks on screen.
+  let resident = new Set<Chunk>()
+  // The chunks with a bake pending: the fresh ones bake at the next
+  // flush, the drawn ones when the bake budget reaches them.
+  let dirty = new Set<Chunk>()
+  let views = new Set<TileView>()
   // usedRect's cache: undefined when a write invalidated it.
   let used: TileRect | null | undefined = null
 
-  let notify = () => {
-    for (let w of watchers) w()
+  // A chunk's texture came or went: every view's entry set is stale.
+  let markViews = () => {
+    for (let tv of views) tv.dirty = true
+    scheduleFlush()
   }
-  let schedule = () => {
-    if (scheduled) return
-    scheduled = true
-    RESOLVED.then(flush)
-  }
-  let flush = () => {
-    scheduled = false
-    if (disposed) return
-    if (viewsDirty) {
-      viewsDirty = false
-      // The pass runs at the flush; its events arrive with the next
-      // frame, which the flush requests when something changed.
-      spatial.flush()
+  // Publish and bake one chunk. A re-bake of a chunk the views have drawn
+  // swaps to a retired set from the pool first: the frames in flight
+  // still sample its target and its bake still reads its buffers, and a
+  // write into either makes the driver drain the GPU behind them (27 ms
+  // on an Adreno 610, the hitch of
+  // okf/backlog/2d-tile-world-frame-hitches.md); the views rebind to the
+  // new set. Then the records go up if they changed, and the pass runs.
+  let bakeChunk = (chunk: Chunk) => {
+    dirty.delete(chunk)
+    chunk.dirty = false
+    if (!chunk.fresh) {
+      giveResources(chunk)
+      takeResources(chunk)
+      for (let tv of views) tv.dirty = true
     }
-    let baked = dirtyChunks
-    dirtyChunks = []
-    for (let chunk of baked) {
-      if (!chunk.dirty) continue
-      chunk.dirty = false
-      // A chunk that left before its bake: nothing to bake (the cancel).
-      if (chunk.texture === null || chunk.buffer === null || chunk.records === null) continue
-      if (chunk.wrote) {
-        chunk.wrote = false
-        let out = beginBufferWrite(chunk.buffer)
-        out.set(chunk.records)
-        endBufferWrite(chunk.buffer, chunk.records.byteLength)
-        for (let style of chunk.styles) writeBuffer(style.buffer!, style.bytes)
+    if (chunk.wrote) {
+      chunk.wrote = false
+      let out = beginBufferWrite(chunk.buffer!)
+      out.set(chunk.records!)
+      endBufferWrite(chunk.buffer!, chunk.records!.byteLength)
+      for (let style of chunk.styles) writeBuffer(style.buffer!, style.bytes)
+    }
+    renderTarget(chunk.texture!)
+    chunk.fresh = false
+    spendBake()
+  }
+  // How needed a chunk's re-bake is, the gate's measure (RegionMargins
+  // urgency): the distance from the chunk's center to the nearest view's
+  // eye (the viewport center in world pixels; under wrap, to the nearest
+  // image of the chunk) in `leave`s, dimensionless so layers in different
+  // units compare; the raw distance under a zero band.
+  let urgencyOf = (chunk: Chunk): number => {
+    let cx = chunk.x + chunk.width / 2
+    let cy = chunk.y + chunk.height / 2
+    let nearest = Infinity
+    for (let tv of views) {
+      if (tv.key === null) continue
+      let { width, height } = tv.view.size()
+      let [ex, ey] = unprojectCamera(tv.view.camera(), width / 2, height / 2)
+      let dx = cx - ex
+      let dy = cy - ey
+      if (wrap !== null) {
+        dx = wrapDelta(dx, wrap.cols * tileW)
+        dy = wrapDelta(dy, wrap.rows * tileH)
       }
-      renderTarget(chunk.texture)
+      nearest = Math.min(nearest, Math.hypot(dx, dy))
     }
+    return leave > 0 ? nearest / leave : nearest
+  }
+  // The layer's part in the shared flush (flushLayers).
+  let flusher: LayerFlush = {
+    takeViewsDirty() {
+      if (!viewsDirty) return false
+      viewsDirty = false
+      return true
+    },
+    prepare(out) {
+      if (disposed) return
+      for (let chunk of dirty) {
+        // A chunk that left before its bake: nothing to bake (the cancel).
+        if (chunk.texture === null || chunk.buffer === null || chunk.records === null) {
+          dirty.delete(chunk)
+          chunk.dirty = false
+          continue
+        }
+        if (chunk.fresh) bakeChunk(chunk)
+        else out.push({ urgency: urgencyOf(chunk), key: chunk.key, flusher, chunk })
+      }
+    },
+    bake: bakeChunk,
+    sync() {
+      if (disposed) return
+      for (let tv of views) if (tv.dirty) syncView(tv)
+    },
+  }
+  flushers.add(flusher)
+
+  // The images a view wants, in draw order: one per resident chunk with
+  // a texture, or under wrap one per image of it whose chunk indices
+  // fall in the view's range; row-major by world row then column, so a
+  // lower row's overhang draws over the row above and a wider frame's
+  // right overhang under its right neighbour - the leaf composite's
+  // order, exact across the seam at any view size.
+  let wantedImages = (tv: TileView): Image[] => {
+    let out: Image[] = []
+    for (let chunk of resident) {
+      if (chunk.texture === null) continue
+      if (wrap === null) {
+        out.push({ key: chunk.key, col: chunk.chunkCol, row: chunk.chunkRow, chunk })
+        continue
+      }
+      if (tv.range === null) continue
+      let [c0, c1, r0, r1] = tv.range
+      let pc = wrap.cols / chunkTiles
+      let pr = wrap.rows / chunkTiles
+      let iy0 = Math.ceil((r0 - chunk.chunkRow) / pr)
+      let iy1 = Math.floor((r1 - chunk.chunkRow) / pr)
+      let ix0 = Math.ceil((c0 - chunk.chunkCol) / pc)
+      let ix1 = Math.floor((c1 - chunk.chunkCol) / pc)
+      for (let iy = iy0; iy <= iy1; iy++) {
+        for (let ix = ix0; ix <= ix1; ix++) {
+          let col = chunk.chunkCol + ix * pc
+          let row = chunk.chunkRow + iy * pr
+          out.push({ key: chunkKey(col, row), col, row, chunk })
+        }
+      }
+    }
+    return out.sort((a, b) => a.row - b.row || a.col - b.col)
+  }
+  // Bring a view's entries to the wanted set: add the missing (binding
+  // the chunk's current target), rebind one whose chunk came back from
+  // the pool under another id, remove the gone, and re-issue the order.
+  let syncView = (tv: TileView) => {
+    tv.dirty = false
+    let wanted = wantedImages(tv)
+    let keep = new Set<number>()
+    let order: DrawId[] = []
+    for (let im of wanted) {
+      let texture = im.chunk.texture!
+      let entry = tv.entries.get(im.key)
+      if (entry === undefined) {
+        let draw = addDraw(tv.view.texture, quadPipe.pipeline, { uChunk: [im.col, im.row] }, { textures: { [CHUNK_SAMPLER]: texture }, buffers: [quadPipe.quad], vertexCount: 4, label: `${label}-chunk` })
+        entry = { draw, texture }
+        tv.entries.set(im.key, entry)
+      } else if (entry.texture !== texture) {
+        setDrawTextures(tv.view.texture, entry.draw, { [CHUNK_SAMPLER]: texture })
+        entry.texture = texture
+      }
+      keep.add(im.key)
+      order.push(entry.draw)
+    }
+    for (let [key, entry] of tv.entries) {
+      if (keep.has(key)) continue
+      removeDraw(tv.view.texture, entry.draw)
+      tv.entries.delete(key)
+    }
+    setDrawOrder(tv.view.texture, order)
+  }
+  // Under wrap, the chunk-index range of the images intersecting the
+  // view's world box (its corners unprojected): an image at chunk column
+  // C spans [C * chunkW - overhang, (C + 1) * chunkW + overhang) in x,
+  // likewise in y. Four integers: the image set's whole camera
+  // dependence, so a scroll inside the same range changes no entry.
+  let viewRange = (tv: TileView): [number, number, number, number] => {
+    let cam = tv.view.camera()
+    let { width, height } = tv.view.size()
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (let [sx, sy] of [
+      [0, 0],
+      [width, 0],
+      [0, height],
+      [width, height],
+    ]) {
+      let [wx, wy] = unprojectCamera(cam, sx!, sy!)
+      minX = Math.min(minX, wx)
+      maxX = Math.max(maxX, wx)
+      minY = Math.min(minY, wy)
+      maxY = Math.max(maxY, wy)
+    }
+    return [Math.floor((minX - overhang) / chunkW), Math.ceil((maxX + overhang) / chunkW) - 1, Math.floor((minY - overhang) / chunkH), Math.ceil((maxY + overhang) / chunkH) - 1]
   }
   let touch = (chunk: Chunk, wroteRecords = true) => {
     if (wroteRecords) chunk.wrote = true
     if (chunk.dirty) return
     chunk.dirty = true
-    dirtyChunks.push(chunk)
-    schedule()
+    dirty.add(chunk)
+    scheduleFlush()
   }
 
   // The chunk at canonical chunk indices, made on first contact: no
@@ -762,6 +1090,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
       wanted: false,
       dirty: false,
       wrote: false,
+      fresh: false,
     }
     chunks.set(key, chunk)
     return chunk
@@ -780,27 +1109,32 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     })
     return chunk.records
   }
-  // Take the chunk's GPU side from the pool (or create it) and queue its
-  // upload and bake; the composites learn of the texture.
-  let acquire = (chunk: Chunk) => {
-    if (chunk.texture !== null || chunk.records === null) return
-    let bytes = chunk.records.byteLength
-    // Every chunk resource carries the LAYER's label, so the inventory's
-    // group under it (/gpu `groups`) is the layer's footprint.
+  // The chunk's GPU side from the pool (or created): its records buffer,
+  // its style buffers and a target at the current density, params and
+  // draw set; a fresh set, never drawn, with the records still to upload.
+  // The pool hands out only ids retired from the frames in flight
+  // (createResourcePool's `retire`), so nothing here is read by a frame
+  // the GPU is still on. Every chunk resource carries the LAYER's label,
+  // so the inventory's group under it (/gpu `groups`) is the layer's
+  // footprint.
+  let takeResources = (chunk: Chunk) => {
+    let bytes = chunk.records!.byteLength
     let buffer = (pool.take(bufferClass(bytes)) as BufferId | undefined) ?? createBuffer(bytes, { label, autoFree: false })
     chunk.buffer = buffer
     for (let style of chunk.styles) {
       style.buffer = (pool.take(bufferClass(style.bytes.byteLength)) as BufferId | undefined) ?? createBuffer(style.bytes.byteLength, { label, autoFree: false })
     }
     let buffers = [gpu.quad, buffer, ...chunk.styles.map(s => s.buffer!)]
-    let w = targetW * oversample
-    let h = targetH * oversample
+    let w = targetW * density
+    let h = targetH * density
     let texture = pool.take(targetClass) as TextureId | undefined
     if (texture !== undefined) {
       if (targetSizes.get(texture) !== w * h) setTargetSize(texture, w, h)
       setTargetParams(texture, targetParams())
       setDraw(texture, { buffers, instanceCount: perChunk })
     } else {
+      // Linear with the chain: the views resample the bake at any zoom;
+      // hard pixels belong to the atlas sampler.
       texture = createShaderTarget(gpu.pipeline, w, h, targetParams(), {
         label,
         buffers,
@@ -808,21 +1142,20 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
         instanceCount: perChunk,
         textures,
         clearColor: opts?.chunkClearColor ?? [0, 0, 0, 0],
-        filter: opts?.filter,
+        mipmap,
         render: "manual",
         autoFree: false,
       })
     }
     targetSizes.set(texture, w * h)
     chunk.texture = texture
-    touch(chunk)
-    notify()
+    chunk.fresh = true
+    chunk.wrote = true
   }
-  // Give the chunk's GPU side back to the pool; its records stay (the
-  // caller drops them under retain "none").
-  let release = (chunk: Chunk) => {
-    if (chunk.texture === null) return
-    pool.give(targetClass, chunk.texture)
+  // Give the chunk's GPU side back to the pool, which keeps it from the
+  // next take until the frames in flight have retired.
+  let giveResources = (chunk: Chunk) => {
+    pool.give(targetClass, chunk.texture!)
     pool.give(bufferClass(chunk.records!.byteLength), chunk.buffer!)
     for (let style of chunk.styles) {
       pool.give(bufferClass(style.bytes.byteLength), style.buffer!)
@@ -830,9 +1163,25 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     }
     chunk.texture = null
     chunk.buffer = null
+    chunk.fresh = false
+  }
+  // Take the chunk's GPU side and queue its upload and bake; the views
+  // learn of the texture.
+  let acquire = (chunk: Chunk) => {
+    if (chunk.texture !== null || chunk.records === null) return
+    takeResources(chunk)
+    touch(chunk)
+    markViews()
+  }
+  // Give the chunk's GPU side back; its records stay (the caller drops
+  // them under retain "none").
+  let release = (chunk: Chunk) => {
+    if (chunk.texture === null) return
+    giveResources(chunk)
+    dirty.delete(chunk)
     chunk.dirty = false
     chunk.wrote = false
-    notify()
+    markViews()
   }
   // The chunk's object is let go of when nothing remains to remember: no
   // records, not wanted.
@@ -847,6 +1196,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     let chunk = chunkAt(i, j)
     if (chunk.wanted) return
     chunk.wanted = true
+    resident.add(chunk)
     if (chunk.records === null && fill !== undefined) fill(chunk)
     if (chunk.count > 0) acquire(chunk)
     layer.onEnter?.(chunk)
@@ -856,6 +1206,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     let chunk = chunks.get(chunkKey(i, j))
     if (!chunk || !chunk.wanted) return
     chunk.wanted = false
+    resident.delete(chunk)
     release(chunk)
     if (retain === "none" && chunk.records !== null) {
       chunk.records = null
@@ -876,7 +1227,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
         ? undefined
         : [floorDiv(bounds.col, chunkTiles), floorDiv(bounds.row, chunkTiles), 0, floorDiv(bounds.col + bounds.cols - 1, chunkTiles), floorDiv(bounds.row + bounds.rows - 1, chunkTiles), 0],
     wrap: wrap === null ? undefined : [wrap.cols / chunkTiles, wrap.rows / chunkTiles, 0],
-    weight: chunkTexels(oversample),
+    weight: chunkTexels(density),
     limit: maxTexels,
     label,
   })
@@ -973,43 +1324,70 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     }
   }
 
-  // Re-bake every resident chunk at density `n`: resizing a target
-  // re-renders it, but a manual target's content is its last bake, so
-  // each resident chunk is marked for the flush; pooled targets resize on
-  // their next take. The limits weigh a chunk at its new size.
+  // Re-bake every resident chunk at density `n`: each resident chunk is
+  // marked for the flush (the bake budget paces them, nearest a view
+  // first), where a drawn chunk swaps to a target at the new size
+  // (takeResources sizes it) and a never-drawn one, resized here in
+  // place, bakes into its own; pooled targets resize on their next take.
+  // The limits weigh a chunk at its new size.
   let applyDensity = (n: number) => {
-    if (n === oversample) return
+    if (n === density) return
     thrash()
-    oversample = n
-    for (let chunk of chunks.values()) {
+    density = n
+    for (let chunk of resident) {
       if (chunk.texture === null) continue
-      setTargetSize(chunk.texture, targetW * n, targetH * n)
-      targetSizes.set(chunk.texture, targetW * n * (targetH * n))
+      if (chunk.fresh) {
+        setTargetSize(chunk.texture, targetW * n, targetH * n)
+        targetSizes.set(chunk.texture, targetW * n * (targetH * n))
+      }
       touch(chunk, false)
     }
     spatial.setGridWeight(grid, chunkTexels(n))
   }
-  // Each viewer's wish for the density: device pixels per world pixel.
-  let wishes = new Map<TileViewer, number>()
-  // The viewers' pick: the largest wish, rounded up, bounded by the caps
+  // Each view's wish for the density: its target texels per world pixel
+  // (oversample times zoom).
+  let wishes = new Map<TileView, number>()
+  // The views' pick: the largest wish, rounded up, bounded by the cap
   // and the window's pixel count per chunk, with the shrink hysteresis
   // (oversample-math.ts); under `maxTexels` the pick is clamped so a
   // chunk always fits the budget (the fit rounds up and could not
-  // otherwise). Nothing to pick from before the first viewer reports.
+  // otherwise). Nothing to pick from before the first view reports.
   let resolve = () => {
     if (pinned || wishes.size === 0) return
     let scale = 0
     for (let w of wishes.values()) scale = Math.max(scale, w)
-    let win = windowSize()
-    let ds = displayScale()
+    // Untracked: a view's camera write runs inside an effect, and the
+    // window follows through the components' layout, not through here.
+    let win = untrack(windowSize)
+    let ds = untrack(displayScale)
     let budget = win.width * ds * (win.height * ds)
-    if (maxPixels !== undefined) budget = Math.min(budget, maxPixels)
     if (maxTexels !== undefined) budget = Math.min(budget, maxTexels)
-    let n = pickOversample(oversample, scale, targetW, targetH, budget, limits.maxTextureSize, maxOversample)
+    let n = pickOversample(density, scale, targetW, targetH, budget, limits.maxTextureSize, maxDensity)
     if (n === null) return
-    if (maxTexels !== undefined) n = Math.max(1, Math.min(n, Math.floor(Math.sqrt(maxTexels / (targetW * targetH)))))
+    if (maxTexels !== undefined) n = Math.max(1, Math.min(n, Math.floor(Math.sqrt(maxTexels / chunkTexels(1)))))
     applyDensity(n)
   }
+  // A view's camera, size or oversample changed: its gate view, its
+  // density wish and, under wrap, its image range follow.
+  let viewChanged = (tv: TileView) => {
+    if (tv.key === null || disposed) return
+    let cam = tv.view.camera()
+    let { width, height } = tv.view.size()
+    viewMatrices(cam, width, height, gateView, gateProj)
+    spatial.setView(tv.key, gateView, gateProj)
+    viewsDirty = true
+    scheduleFlush()
+    wishes.set(tv, tv.view.oversample * cam.zoom)
+    resolve()
+    if (wrap === null) return
+    let range = viewRange(tv)
+    let last = tv.range
+    if (last !== null && last[0] === range[0] && last[1] === range[1] && last[2] === range[2] && last[3] === range[3]) return
+    tv.range = range
+    tv.dirty = true
+  }
+  let gateView = new Float32Array(16)
+  let gateProj = new Float32Array(16)
 
   let layer: TileLayer = {
     atlases,
@@ -1022,65 +1400,55 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     overhang,
     bounds,
     wrap,
-    get oversample() {
-      return oversample
+    get density() {
+      return density
     },
-    setOversample(n) {
+    mipmap,
+    setDensity(n) {
       if (disposed) return
       if (n === null) {
         pinned = false
         resolve()
         return
       }
-      checkOversample("setOversample", n, targetW, targetH)
+      checkOversample("setDensity", n, targetW, targetH, "density")
       if (maxTexels !== undefined && maxTexels < chunkTexels(n)) {
-        throw new Error(`setOversample: maxTexels ${maxTexels} holds no chunk at oversample ${n} (${chunkTexels(n)} texels); raise it or pin lower`)
+        throw new Error(`setDensity: maxTexels ${maxTexels} holds no chunk at density ${n} (${chunkTexels(n)} texels); raise it or pin lower`)
       }
       pinned = true
       applyDensity(n)
     },
-    addViewer() {
-      if (disposed) throw new Error("addViewer: the layer is disposed")
-      let key: ViewKey | null = spatial.allocViewKey()
-      let view = new Float32Array(16)
-      let proj = new Float32Array(16)
-      let viewer: TileViewer = {
-        setCamera(camera, width, height, deviceScale = 1) {
-          if (key === null || disposed) return
-          checkCamera(camera)
-          if (!(width > 0 && height > 0 && Number.isFinite(width) && Number.isFinite(height))) {
-            throw new Error(`setCamera: the viewport must be a positive size, got ${width} x ${height}`)
-          }
-          if (!(Number.isFinite(deviceScale) && deviceScale > 0)) {
-            throw new Error(`setCamera: deviceScale must be a positive number, got ${deviceScale}`)
-          }
-          viewMatrices(camera, width, height, view, proj)
-          spatial.setView(key, view, proj)
-          viewsDirty = true
-          schedule()
-          wishes.set(viewer, deviceScale * (camera.zoom ?? 1))
-          resolve()
-        },
-        dispose() {
-          if (key === null) return
-          viewers.delete(viewer)
-          wishes.delete(viewer)
-          if (!disposed) {
-            spatial.setView(key, null)
+    createView(vopts) {
+      if (disposed) throw new Error("createView: the layer is disposed")
+      let tv: TileView = { view: undefined as unknown as ViewHandle, key: spatial.allocViewKey(), entries: new Map(), range: null, dirty: true }
+      tv.view = createViewShell(vopts, {
+        label,
+        pick: () => [],
+        cameraParams: cam => tileCameraParams(cam, chunkW, chunkH),
+        // uTint is the VIEW's tint over the bake (identity until a
+        // per-view tint exists); the layer's tint is baked into the chunks.
+        createTarget: (w, h, params, o) => createDrawTarget(w, h, { ...params, uChunkRect: [chunkW, chunkH, overhang, 0], uTint: [1, 1, 1, 1] }, { clearColor: o.clearColor, label: o.label, autoFree: false }),
+        changed: () => viewChanged(tv),
+        disposing() {
+          views.delete(tv)
+          wishes.delete(tv)
+          // The entries die with the target.
+          tv.entries.clear()
+          if (tv.key !== null && !disposed) {
+            spatial.setView(tv.key, null)
             viewsDirty = true
-            schedule()
+            scheduleFlush()
             resolve()
           }
-          key = null
+          tv.key = null
         },
-      }
-      viewers.add(viewer)
-      return viewer
+      })
+      views.add(tv)
+      viewChanged(tv)
+      return tv.view
     },
     resident() {
-      let out: TileChunk[] = []
-      for (let chunk of chunks.values()) if (chunk.wanted) out.push(chunk)
-      return out
+      return [...resident]
     },
     setTile(col, row, frame, opts) {
       if (disposed) return
@@ -1269,9 +1637,11 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
       checkTint("setTint", next)
       if (next[0] === tint[0] && next[1] === tint[1] && next[2] === tint[2] && next[3] === tint[3]) return
       tint = next
-      for (let chunk of chunks.values()) {
+      // A drawn chunk's swap at the flush takes a target carrying the new
+      // params (targetParams); a never-drawn one takes them in place.
+      for (let chunk of resident) {
         if (chunk.texture === null) continue
-        setTargetParams(chunk.texture, { uTint: tint })
+        if (chunk.fresh) setTargetParams(chunk.texture, { uTint: tint })
         touch(chunk, false)
       }
     },
@@ -1279,22 +1649,24 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
       if (disposed) return
       checkParams("setParams", next)
       Object.assign(params, next)
-      for (let chunk of chunks.values()) {
+      for (let chunk of resident) {
         if (chunk.texture === null) continue
-        setTargetParams(chunk.texture, next)
+        if (chunk.fresh) setTargetParams(chunk.texture, next)
         touch(chunk, false)
       }
     },
     dispose() {
       if (disposed) return
       disposed = true
-      unhook()
+      flushers.delete(flusher)
+      dirty.clear()
       handlers.delete(grid)
       spatial.destroyGrid(grid)
-      for (let viewer of [...viewers]) viewer.dispose()
+      // The views first: their entries bind the chunk targets.
+      for (let tv of [...views]) tv.view.dispose()
       // The resident chunks' GPU side is destroyed outright: a shared pool
       // is not the place for a dying layer's resources.
-      for (let chunk of chunks.values()) {
+      for (let chunk of resident) {
         if (chunk.texture === null) continue
         freeTarget(chunk.texture)
         destroyBuffer(chunk.buffer!)
@@ -1303,13 +1675,9 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
         chunk.buffer = null
       }
       chunks.clear()
+      resident.clear()
       if (ownPool) pool.drain()
       spatial.flush()
-      watchers.clear()
-    },
-    _watch(fn) {
-      watchers.add(fn)
-      return () => watchers.delete(fn)
     },
   }
 

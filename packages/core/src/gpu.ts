@@ -60,7 +60,8 @@
 import { createEffect, createSignal, getOwner, onCleanup, untrack } from "@solidjs/signals"
 import * as gpu from "flux:gpu"
 import { registerStat } from "sol:dev"
-import { poolStats } from "./pool.ts"
+import { createResourcePool as createPool, poolStats } from "./pool.ts"
+import type { ResourcePool, ResourcePoolOptions } from "./pool.ts"
 
 // The create* helpers accept { autoFree: false } to opt out of the
 // owner-scoped auto-free, for resources whose lifetime is managed by hand
@@ -188,8 +189,45 @@ export { addDraw, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDr
 // LRU past its cap, drained with its owner. The 2d tile layer's chunks and
 // a 3d region's geometry both go through it, a shared pool needs nothing
 // from its maker, and no consumer keeps a free list of its own.
-export { createResourcePool, poolStats } from "./pool.ts"
-export type { ResourcePool, ResourcePoolOptions } from "./pool.ts"
+export { poolStats }
+export type { ResourcePool, ResourcePoolOptions }
+
+/**
+ * Frames whose GPU work has completed, as a count: every frame numbered
+ * below it (the `frame` an onFrame callback receives) has retired. A frame
+ * in flight still samples the textures and reads the buffers it was drawn
+ * with, and writing one of those (an upload, a render into a target, a
+ * resize) before it retires makes a tiled driver drain its queue first:
+ * 27 ms per write measured on an Adreno 610
+ * (okf/backlog/2d-tile-world-frame-hitches.md). The rule: a resource is
+ * free to write once every frame submitted before its release has
+ * retired, `retiredFrames() >= submittedFrames()` as of the release.
+ * Published by the raster thread as its present fences signal (headless,
+ * after each frame's own bounded wait); a frame the GPU is still on, a
+ * fence that timed out, advances nothing.
+ */
+export function retiredFrames(): number {
+  return gpu.retiredFrames()
+}
+
+/**
+ * Frames handed to the GPU so far, as a count (a frame the demand gate
+ * skipped submits nothing). `submittedFrames() - retiredFrames()` is the
+ * frames in flight; zero means the GPU is done with everything.
+ */
+export function submittedFrames(): number {
+  return gpu.submittedFrames()
+}
+
+/**
+ * A resource pool over this runtime's GPU ids (pool.ts): `take` hands out
+ * only ids whose release every frame submitted before it has retired
+ * (`retire` on `submittedFrames` and `retiredFrames`, overridable by the
+ * options). Everything else is pool.ts's.
+ */
+export function createResourcePool(opts: ResourcePoolOptions): ResourcePool {
+  return createPool({ retire: { submitted: submittedFrames, retired: retiredFrames }, ...opts })
+}
 // The pools' traffic in the stats query's `app` block (sol:dev
 // registerStat), summed over every pool: a world's reuse rate as one
 // number. Registered once per engine, here, since the pool module itself

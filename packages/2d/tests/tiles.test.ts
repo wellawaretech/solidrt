@@ -59,8 +59,9 @@ test("chunkKey is one-to-one over chunk pairs and throws beyond the addressable 
       seen.set(key, `${cc},${cr}`)
     }
   }
-  expect(() => chunkKey(2 ** 25, 0)).toThrow()
-  expect(() => chunkKey(0, -(2 ** 25))).toThrow()
+  expect(() => chunkKey(2 ** 24, 0)).toThrow()
+  expect(() => chunkKey(0, -(2 ** 24))).toThrow()
+  expect(chunkKey(2 ** 24 - 1, -(2 ** 24 - 1)) === chunkKey(-(2 ** 24 - 1), 2 ** 24 - 1)).toBe(false)
 })
 
 test("eachChunkSlice: the slices cover the rect exactly once, stay inside their own chunk, and arrive chunk rows outer", () => {

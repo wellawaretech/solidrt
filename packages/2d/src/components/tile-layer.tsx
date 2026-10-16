@@ -1,26 +1,31 @@
-import { callRef, createEffect, createMemo, createSignal, followBox, For, onCleanup, pct, untrack } from "@solidrt/core"
-import type { VoidComponent } from "@solidrt/core"
-import type { FilterMode, ResourcePool, ShaderParams, TextureId } from "@solidrt/core/gpu"
+import { callRef, createEffect, onCleanup, untrack } from "@solidrt/core"
+import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
+import type { ResourcePool, ShaderParams } from "@solidrt/core/gpu"
 import type { Atlas } from "../atlas.ts"
 import type { Material } from "../material.ts"
-import { unprojectCamera } from "../camera.ts"
 import type { CameraUpdate } from "../camera.ts"
 import type { Frame } from "../frames.ts"
 import { createTileLayer } from "../tiles.ts"
 import type { TileChunk, TileLayer as TileLayerHandle, TileRect } from "../tiles.ts"
+import { feedPointer } from "../views.ts"
+import type { ViewHandle } from "../views.ts"
+import { PointerContext, ViewportContext, ViewportSizeContext } from "./context.ts"
+import { createViewFill, FILL_INITIAL_SIZE } from "./fill.ts"
+import type { OutputLeaf } from "./fill.ts"
+import type { LayerPointerProps } from "./sprite-layer.tsx"
 
 /**
  * The tile layer's camera - the same CameraUpdate vocabulary as the sprite
  * layer (see camera.ts for the pivot/rotation semantics and the
  * heading-upward convention), so one signal drives a whole rotating scene
- * across both layers. Here the camera is a transform on the composite and
+ * across both layers. Here the camera is the view's in-shader mapping and
  * the view the residency gate keeps chunks resident around, never a
  * re-bake; projectCamera/unprojectCamera are the same mapping as plain
  * functions.
  */
 export type TileCamera = CameraUpdate
 
-export type TileLayerProps = {
+export type TileLayerProps = LayerPointerProps & {
   /** Cell pixel size - creation-fixed. Required unless `layer` is given. */
   tileW?: number
   tileH?: number
@@ -31,19 +36,19 @@ export type TileLayerProps = {
   atlases?: Atlas[]
   /**
    * An existing layer (createTileLayer) to show instead of making one: a
-   * second composite of the same world under a camera of its own (a
-   * minimap beside the main view; the layer's chunks are resident where
-   * any composite wants them). Its lifetime, its hooks (`onEnter`,
-   * `onLeave`) and its cells stay its maker's, so the creation props and
-   * the hook props throw with it.
+   * second view of the same world under a camera of its own (a minimap
+   * beside the main view; the layer's chunks are resident where any view
+   * wants them). Its lifetime, its hooks (`onEnter`, `onLeave`) and its
+   * cells stay its maker's, so the creation props and the hook props
+   * throw with it.
    */
   layer?: TileLayerHandle
   /** The frames table `setTiles`' index cells name (a tileset, `grid()`'s
    * array); see TileLayerOptions. Fixed at creation. */
   frames?: Frame[]
   /** Per-chunk clear color (the name says the scope: chunks holding no
-   * cell render nothing, so a full-bleed ground color belongs on the
-   * container behind the layer). */
+   * cell render nothing, so a full-bleed ground color is the view's
+   * `clearColor`, or the container behind the leaf). */
   chunkClearColor?: [number, number, number, number]
   /** The material the cells bake with (see TileLayerOptions.material):
    * its blend, its look, its per-cell style record; default `unlit()`.
@@ -53,35 +58,19 @@ export type TileLayerProps = {
    * a prop, over the material's own). Live, merge semantics; each change
    * re-bakes every resident chunk - slow state, not per frame. */
   params?: ShaderParams
-  /** Sampler filter for the baked chunk textures at composite time; default
-   * "linear" (hard pixels belong to the atlas sampler, see TileLayerOptions). */
-  filter?: FilterMode
   /**
    * Pin the bake density, target texels per world pixel (live for a
    * layer of the component's own). Absent, the LAYER picks it from its
-   * viewers: every composite reports its device pixels per world pixel
-   * (its viewport's on-screen scale times the camera zoom) and the layer
-   * bakes at the largest, so a main view and a minimap of one world
-   * never contend (TileLayerOptions.oversample). Creation-fixed with the
-   * two caps below; with `layer` they belong to its maker.
+   * views: every view asks for its oversample times its camera zoom and
+   * the layer bakes at the largest, so a main view and a minimap of one
+   * world never contend (TileLayerOptions.density). `maxDensity` caps
+   * the pick and `mipmap` (default true) keeps a mip chain on the
+   * chunks, so a view below the density minifies without aliasing; both
+   * creation-fixed. With `layer` all three belong to its maker.
    */
-  oversample?: number
-  /**
-   * Cap on the auto-picked density (integer >= 1): chunks stay adaptive
-   * up to it, never above. A tile world's texture memory is resident
-   * chunks x n squared, so this is the lever that bounds it on
-   * high-scale displays without giving up adaptivity. Ignored under a
-   * pinned `oversample`.
-   */
-  maxOversample?: number
-  /**
-   * Cap on a baked chunk's texel count under the auto pick, the budget
-   * form of `maxOversample`: the pick stays under it on any display (the
-   * window's own pixel count caps it always). Ignored under a pinned
-   * `oversample`; same name and meaning as `<SpriteLayer>`'s and the 3d
-   * `<Scene>`'s.
-   */
-  maxPixels?: number
+  density?: number
+  maxDensity?: number
+  mipmap?: boolean
   /** Chunk edge in tiles (default ~512px worth); see TileLayerOptions. */
   chunkTiles?: number
   /**
@@ -105,55 +94,104 @@ export type TileLayerProps = {
   /** The resource pool the layer's chunks take their buffers and targets
    * from (TileLayerOptions.pool); the layer's own by default. */
   pool?: ResourcePool
-  /**
-   * Pan/zoom/rotate over the world: a transform on the composite and the
-   * view the gate keeps chunks resident around, never a re-bake. The
-   * component clips to its own box, the viewport.
-   */
-  camera?: TileCamera
-  /** The viewport's layout size. Absent, the component FILLS its parent's
-   * box (give it a sized parent, as on the web). */
-  width?: number
-  height?: number
   /** The layer's residency hooks (TileLayer.onEnter / onLeave), for a
    * layer of the component's own. */
   onEnter?: (chunk: TileChunk) => void
   onLeave?: (chunk: TileChunk) => void
   /** The layer's label for a layer of the component's own (its chunk
-   * resources in the inventory), and the viewport view's `label` either
-   * way. */
+   * resources in the inventory), and the view's `label` either way. */
   label?: string
+  /** The layer: cells, tint, createView. */
   ref?: (layer: TileLayerHandle) => void
+  /**
+   * View pixels of the component's view - give both, or neither. Omitted,
+   * the view FILLS: the built-in leaf is laid out at 100% of its parent's
+   * box (give it a sized parent, as on the web) and the view sizes to
+   * that box, so view pixels are the leaf's own coordinates - the auto
+   * oversample still supplies display density on top. Fill or fixed is
+   * decided at mount, as `<SpriteLayer>`'s. With a function `output` the
+   * view follows the leaf you `ref` (OutputLeaf).
+   */
+  width?: number
+  height?: number
+  /**
+   * Pan/zoom/rotate over the world (view.setCamera as a prop): a shared
+   * params write on the view and the view the gate keeps chunks resident
+   * around, never a re-bake. Partial, absent keys keep their values. A
+   * `<Camera2d>` child writes the same state - use one form, not both.
+   */
+  camera?: TileCamera
+  /** The view's clear color: the ground every chunk draws over, so a
+   * full-bleed backdrop belongs here. */
+  clearColor?: [number, number, number, number]
+  /**
+   * Target texels per view pixel. Absent, the component picks it every
+   * layout from the built-in leaf's on-screen size (display scale, any
+   * designSize fit, layout scaling), as `<SpriteLayer>` does; with a
+   * function `output` there is no built-in leaf, so set it yourself.
+   * `maxOversample` caps the pick, `maxPixels` is the budget form (the
+   * same knobs as `<SpriteLayer>`'s and `<View2d>`'s).
+   */
+  oversample?: number
+  maxOversample?: number
+  maxPixels?: number
+  /** The component's view (texture, camera, handlers) for imperative use
+   * outside the tree; inside, `useSpriteLayer().viewport` is the same. */
+  viewRef?: (view: ViewHandle) => void
+  /**
+   * The view's leaf. Absent: a built-in `<texture>` leaf carrying the
+   * view's handlers. A function: compose the leaf yourself - called once
+   * (untracked) with the view's texture id and the leaf contract, its
+   * return renders in place of the built-in leaf; `ref={leaf.ref}` on
+   * the leaf you render makes a fill-mode view follow it,
+   * `{...leaf.handlers}` routes the view's pointer events through it
+   * scaled to its layout, and `leaf.size()` sizes a post chain's targets.
+   */
+  output?: (texture: TextureId, leaf: OutputLeaf) => Element
+  /**
+   * Pointer events (default on): the built-in leaf carries the view's
+   * handlers, so the view's own handlers and a `<Camera2d>` child receive
+   * input. `false` detaches them. Built-in leaf only: with a function
+   * `output` the leaf is yours and so is the spread, and the prop throws.
+   */
+  events?: boolean
+  /**
+   * The pointer feed of the view (createPointerFeed), fed from the
+   * view's root - every event over the world, since a tile view hits no
+   * sprite - so an input map over it drives the `<Camera2d>` child;
+   * inside, `useSpriteLayer().pointer` is this feed. Fixed at creation.
+   */
+  pointer?: PointerFeed
 }
 
-/** One leaf of the composite: a resident chunk's texture at one image of
- * its rect (several under wrap), in world pixels at zoom 1. */
-type Image = { key: string; texture: TextureId; x: number; y: number }
+// The props that describe a layer the component creates - meaningless,
+// hence rejected, on an adopted one (`layer`), which was created already.
+const CREATION_PROPS = ["tileW", "tileH", "atlases", "frames", "material", "chunkTiles", "bounds", "wrap", "overhang", "enter", "leave", "maxTexels", "retain", "fill", "pool", "density", "maxDensity", "mipmap", "chunkClearColor"] as const
 
 /**
- * Shows a baked tile layer (createTileLayer) through a camera: a clipping
- * `<view>` sized to its box (the viewport, filling its parent when
- * unsized) composites each resident chunk as a `d-texture` leaf placed
- * RELATIVE to the camera (world minus camera in JS, so the transform's
- * floats stay small however far the world reaches), inside a carrier
- * `<view>` with the camera's pivot, rotation and zoom - a handful of
- * quads however many tiles exist, the leaves in row-major order so a
- * lower row's overhang draws over the row above. The component pushes
- * its camera over its viewport to the residency gate (layer.addViewer),
- * which brings the chunks near the view and takes the far ones; under
- * `wrap` every image of a resident chunk that intersects the view is a
- * leaf, so the seam is two leaves of one texture. A layout component:
- * the viewport is laid out, so it cannot sit inside a d-* subtree. Tiles
- * are data, not children: write them through `ref` with `setTile` and
- * `setTiles` - there is no `<Tile>` component on purpose (a component per
- * tile would re-introduce the per-element cost the bake removes).
+ * Owns a tile layer (over `atlases`; or adopts an existing one through
+ * `layer`, owning only what follows) and one view of it (layer.createView),
+ * composited as an ordinary `<texture>` leaf so the output takes layout,
+ * transforms, blendMode and pointer events like any element - or hand
+ * `output` the texture id and compose it yourself. The leaf fills its
+ * parent's box when unsized, exactly as `<SpriteLayer>`'s own view does.
+ * The camera is the view's: a camera move is one params write and the
+ * gate's cue, never a re-bake, and under `wrap` the view draws every
+ * image of a resident chunk inside it, so the seam is two quads over one
+ * texture. A second `<TileLayer layer={handle}>` is a second view of the
+ * same world (a minimap); a `<Camera2d>` child drives this view's camera.
+ * A layout component: it cannot sit inside a d-* subtree; `output` with
+ * a `<d-texture>` is the detached form. Tiles are data, not children:
+ * write them through `ref` with `setTile` and `setTiles` - there is no
+ * `<Tile>` component on purpose (a component per tile would re-introduce
+ * the per-element cost the bake removes).
  */
-export let TileLayer: VoidComponent<TileLayerProps> = props => {
+export let TileLayer: ParentComponent<TileLayerProps> = props => {
   let own = untrack(() => props.layer === undefined)
   let layer = untrack(() => {
     if (props.layer !== undefined) {
-      if (props.tileW !== undefined || props.tileH !== undefined || props.atlases !== undefined || props.frames !== undefined || props.material !== undefined || props.chunkTiles !== undefined || props.bounds !== undefined || props.wrap !== undefined || props.fill !== undefined || props.oversample !== undefined || props.maxOversample !== undefined || props.maxPixels !== undefined) {
-        throw new Error("TileLayer: `layer` adopts an existing layer, so the creation props (tileW, tileH, atlases, frames, material, chunkTiles, bounds, wrap, fill, oversample, maxOversample, maxPixels) have nothing to apply to")
+      for (let name of CREATION_PROPS) {
+        if (props[name] !== undefined) throw new Error(`TileLayer: layer adopts an existing layer - ${name} was fixed when it was created`)
       }
       if (props.onEnter !== undefined || props.onLeave !== undefined) throw new Error("TileLayer: with `layer` the residency hooks belong to the layer's maker (layer.onEnter / onLeave)")
       return props.layer
@@ -163,10 +201,9 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
       chunkClearColor: props.chunkClearColor,
       material: props.material,
       params: props.params,
-      filter: props.filter,
-      oversample: props.oversample,
-      maxOversample: props.maxOversample,
-      maxPixels: props.maxPixels,
+      density: props.density,
+      maxDensity: props.maxDensity,
+      mipmap: props.mipmap,
       chunkTiles: props.chunkTiles,
       tint: props.tint,
       frames: props.frames,
@@ -185,14 +222,11 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
   if (own) {
     layer.onEnter = chunk => untrack(() => props.onEnter)?.(chunk)
     layer.onLeave = chunk => untrack(() => props.onLeave)?.(chunk)
-  }
-  callRef(() => props.ref, layer)
-  if (own) {
     // A pin given later pins; taking it away hands the density back to
-    // the viewers' pick (the creation option is the initial pin).
+    // the views' pick (the creation option is the initial pin).
     createEffect(
-      () => props.oversample,
-      n => layer.setOversample(n ?? null),
+      () => props.density,
+      n => layer.setDensity(n ?? null),
       { defer: true },
     )
     createEffect(
@@ -209,104 +243,123 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
       { defer: true },
     )
   }
-  let margin = layer.overhang
-  let leafW = layer.chunkW + 2 * margin
-  let leafH = layer.chunkH + 2 * margin
-  // The viewport: the root's layout box, followed, and its device pixels
-  // per layout pixel (the display scale times any ancestor fit), which
-  // with the camera zoom is this composite's wish for the bake density;
-  // the layer picks the largest wish over its viewers. Rotation is not a
-  // resolution factor and never enters.
-  let root: { id: number } | undefined
-  let sameSize = (a: { width: number; height: number }, b: { width: number; height: number }) => a.width === b.width && a.height === b.height
-  let [viewport, setViewport] = createSignal({ width: 0, height: 0 }, { equals: sameSize })
-  let [deviceScale, setDeviceScale] = createSignal(1)
-  followBox("TileLayer", () => root, box => {
-    setViewport({ width: box.layout.width, height: box.layout.height })
-    if (box.layout.width > 0 && box.layout.height > 0) setDeviceScale(Math.max(box.device.width / box.layout.width, box.device.height / box.layout.height))
+  callRef(() => props.ref, layer)
+  // Fill vs fixed view is decided at mount, as SpriteLayer's: both width
+  // and height (fixed view pixels) or neither (fill).
+  let fill = untrack(() => {
+    if ((props.width === undefined) !== (props.height === undefined)) {
+      throw new Error("TileLayer: width and height come together - give both (fixed view) or neither (fill)")
+    }
+    return props.width === undefined
   })
-  // The viewer: the camera over the viewport and the scale, pushed on
-  // every change of any; the gate and the density pick do the rest.
-  let viewer = layer.addViewer()
-  onCleanup(() => viewer.dispose())
-  createEffect(
-    () => [props.camera, viewport(), deviceScale()] as const,
-    ([camera, size, scale]) => {
-      if (size.width > 0 && size.height > 0) viewer.setCamera(camera ?? {}, size.width, size.height, scale)
-    },
+  // The view: the initial props seed it, the effects follow changes only
+  // (`defer`).
+  let view = untrack(() =>
+    layer.createView({
+      width: props.width ?? FILL_INITIAL_SIZE,
+      height: props.height ?? FILL_INITIAL_SIZE,
+      camera: props.camera,
+      oversample: props.oversample,
+      clearColor: props.clearColor,
+      label: props.label,
+    }),
   )
-  // The resident chunks with a texture, row-major: the layer says when the
-  // set changed (a texture came or went, from the gate's events or a
-  // write, never inside an owner, hence the internal-state signal).
-  let [version, setVersion] = createSignal(0, { ownedWrite: true })
-  onCleanup(layer._watch(() => setVersion(v => v + 1)))
-  let shown = createMemo(() => {
-    version()
-    return layer
-      .resident()
-      .filter(c => c.texture !== null)
-      .sort((a, b) => a.row - b.row || a.col - b.col)
-  })
-  let camX = () => props.camera?.x ?? 0
-  let camY = () => props.camera?.y ?? 0
-  // The leaves: one per resident chunk, at its rect minus the margin; under
-  // wrap, one per image of the chunk inside the view's world AABB (the
-  // viewport's corners unprojected through the camera), the period in
-  // world pixels along each axis. Keyed, so a camera move re-places the
-  // leaves instead of recreating them.
-  let images = createMemo((): Image[] => {
-    let list = shown()
-    let wrap = layer.wrap
-    if (wrap === null) return list.map(c => ({ key: `${c.col},${c.row}`, texture: c.texture!, x: c.x - margin, y: c.y - margin }))
-    let size = viewport()
-    let camera = props.camera ?? {}
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
-    for (let [sx, sy] of [
-      [0, 0],
-      [size.width, 0],
-      [0, size.height],
-      [size.width, size.height],
-    ]) {
-      let [wx, wy] = unprojectCamera(camera, sx!, sy!)
-      minX = Math.min(minX, wx)
-      maxX = Math.max(maxX, wx)
-      minY = Math.min(minY, wy)
-      maxY = Math.max(maxY, wy)
-    }
-    let periodX = wrap.cols * layer.tileW
-    let periodY = wrap.rows * layer.tileH
-    let out: Image[] = []
-    for (let c of list) {
-      let lx = c.x - margin
-      let ly = c.y - margin
-      // The leaf at image (ix, iy) spans [lx + ix * periodX, + leafW): the
-      // images whose span overlaps the AABB.
-      let ix0 = Math.floor((minX - leafW - lx) / periodX) + 1
-      let ix1 = Math.ceil((maxX - lx) / periodX) - 1
-      let iy0 = Math.floor((minY - leafH - ly) / periodY) + 1
-      let iy1 = Math.ceil((maxY - ly) / periodY) - 1
-      for (let iy = iy0; iy <= iy1; iy++) {
-        for (let ix = ix0; ix <= ix1; ix++) {
-          out.push({ key: `${c.col},${c.row},${ix},${iy}`, texture: c.texture!, x: lx + ix * periodX, y: ly + iy * periodY })
-        }
+  createEffect(
+    () => [props.width, props.height] as const,
+    ([w, h]) => {
+      if ((w === undefined) !== (h === undefined) || (w === undefined) !== fill) {
+        throw new Error("TileLayer: fill/fixed is mount-fixed - width/height cannot appear or disappear")
       }
-    }
-    return out.sort((a, b) => a.y - b.y || a.x - b.x)
-  })
-  // World -> screen: p maps to pivot + R(rotation) * zoom * (p - camera) -
-  // projectCamera (camera.ts): the leaves sit at (p - camera), the carrier
-  // rotates and scales them about its own origin and sits at the pivot.
-  // tests/camera.test.ts holds the two spellings together.
+      if (!fill) view.setSize(w!, h!)
+    },
+    { defer: true },
+  )
+  createEffect(
+    () => props.camera,
+    camera => {
+      if (camera) view.setCamera(camera)
+    },
+    { defer: true },
+  )
+  createEffect(
+    () => props.oversample,
+    n => {
+      if (n !== undefined) view.setOversample(n)
+    },
+    { defer: true },
+  )
+  callRef(() => props.viewRef, view)
+  // An adopted layer outlives the component, so its view must not: a
+  // layer of the component's own takes the view with it.
+  if (!own) onCleanup(() => view.dispose())
+  let pointer = untrack(() => props.pointer) ?? null
+  if (pointer) onCleanup(feedPointer(view, pointer))
+  // The view's own handlers at the root of the walk; the props are read
+  // per event, so a handler prop may change without re-registering.
+  onCleanup(
+    view.listen({
+      onPointerDown: e => props.onPointerDown?.(e),
+      onPointerMove: e => props.onPointerMove?.(e),
+      onPointerUp: e => props.onPointerUp?.(e),
+      onPointerCancel: e => props.onPointerCancel?.(e),
+      onWheel: e => props.onWheel?.(e),
+      onTap: e => props.onTap?.(e),
+    }),
+  )
+  let output = untrack(() => props.output)
+  let events = untrack(() => props.events) !== false
+  // `events` wires the built-in leaf; with output the leaf and its spread
+  // are the app's, so the prop has nothing to apply to and throws (the
+  // dev validation policy).
+  if (output && untrack(() => props.events) !== undefined) {
+    throw new Error("TileLayer: events applies to the built-in leaf - with output, spread leaf.handlers on your leaf, or leave them off")
+  }
+  // A feed on a built-in leaf carrying no handlers listens at a root no
+  // event reaches: a contradiction, so it throws instead of feeding
+  // nothing.
+  if (pointer !== null && !events && !output) {
+    throw new Error(
+      "TileLayer: a pointer feed with events={false} receives nothing - the feed listens at the view's root, which only the leaf's handlers reach; keep events on, or compose the leaf with output and spread leaf.handlers on it",
+    )
+  }
+  let leafNode: { id: number } | undefined
+  // The view follows the leaf (fill.ts): its size from the leaf's layout
+  // box in fill mode, its auto oversample from the leaf's on-screen box in
+  // both - the built-in leaf, or the one `output` refs.
+  let follow = createViewFill(
+    "TileLayer",
+    view,
+    () => leafNode,
+    fill ? null : () => ({ width: props.width!, height: props.height! }),
+    () => ({ oversample: props.oversample, maxOversample: props.maxOversample, maxPixels: props.maxPixels }),
+    output !== undefined,
+  )
+  let viewHandlers = fill || output ? view.handlersFor(follow.layout) : view.handlers
+  let leaf: OutputLeaf = { ref: (n: { id: number }) => (leafNode = n), handlers: viewHandlers, size: follow.size, deviceSize: follow.deviceSize }
   return (
-    <view ref={(n: { id: number }) => (root = n)} label={props.label} width={props.width ?? pct(100)} height={props.height ?? pct(100)} overflow="clip" flexShrink={0}>
-      <view position="absolute" originX={0} originY={0} rotate={props.camera?.rotation ?? 0} scale={props.camera?.zoom ?? 1} x={props.camera?.pivotX ?? 0} y={props.camera?.pivotY ?? 0}>
-        <For each={images()} keyed={im => im.key}>
-          {im => <d-texture src={im().texture} x={im().x - camX()} y={im().y - camY()} w={leafW} h={leafH} />}
-        </For>
-      </view>
-    </view>
+    <ViewportContext value={view}>
+      <ViewportSizeContext value={follow.viewportSize}>
+        <PointerContext value={pointer}>
+          {output ? (
+            untrack(() => output(view.texture, leaf))
+          ) : (
+            <texture
+              ref={leaf.ref}
+              src={view.texture}
+              width={fill ? "100%" : props.width}
+              height={fill ? "100%" : props.height}
+              contain={fill ? "size" : undefined}
+              onPointerDown={events ? viewHandlers.onPointerDown : undefined}
+              onPointerMove={events ? viewHandlers.onPointerMove : undefined}
+              onPointerUp={events ? viewHandlers.onPointerUp : undefined}
+              onPointerCancel={events ? viewHandlers.onPointerCancel : undefined}
+              onPointerLeave={events ? viewHandlers.onPointerLeave : undefined}
+              onWheel={events ? viewHandlers.onWheel : undefined}
+            />
+          )}
+          {props.children}
+        </PointerContext>
+      </ViewportSizeContext>
+    </ViewportContext>
   )
 }

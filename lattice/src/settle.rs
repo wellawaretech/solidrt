@@ -9,11 +9,15 @@
 //   frame, so it is work waiting that no frame request stands for), no idle
 //   callback waits for the idle period a frame brings, and
 // - no frame is demanded (the request latch, which a tree write, a running
-//   transition and an `onFrame` callback all set).
+//   transition and an `onFrame` callback all set), and
+// - the raster thread has run every command sent to it: a submitted frame
+//   is work in flight until it is drawn and its GPU work has completed,
+//   which is when the frame retires (`retiredFrames`) and what a test
+//   reads next (a texture, the resource pool's hand-outs) sees.
 //
-// The loop waits for the first and runs a frame for the other two, until all
-// three hold at once: settling work can start more, and a frame can start
-// work. It owns no frame source: a stepped host passes the step that asks
+// The loop waits for the first and the last and runs a frame for the other
+// two, until all four hold at once: settling work can start more, and a
+// frame can start work. It owns no frame source: a stepped host passes the step that asks
 // for one, a client on a display passes nothing and the display's frames
 // come by themselves.
 
@@ -28,6 +32,16 @@ use tokio::sync::oneshot;
 /// past any transition an app runs, short enough that a runaway frame
 /// callback fails promptly.
 pub(crate) const DEFAULT_MAX_MS: f64 = 5000.0;
+
+/// How often the raster queue is re-read while it is the one thing left
+/// to drain: the raster thread signals no waiter on this side, and a
+/// headless frame runs in a few milliseconds.
+const RASTER_POLL: Duration = Duration::from_millis(1);
+
+/// The longest a settle on an app-time cap waits for the raster thread to
+/// drain, on the wall: app time does not pass while nothing runs a frame,
+/// so this bounds a raster thread that never answers (a lost GPU).
+const RASTER_DRAIN_MAX: Duration = Duration::from_secs(5);
 
 /// What bounds a settle.
 pub(crate) enum Cap<'a> {
@@ -45,6 +59,9 @@ pub(crate) struct Unsettled {
   pub demand: Vec<String>,
   pub timer_due: bool,
   pub idle_due: bool,
+  /// Raster commands sent and not yet run (a frame being drawn, an
+  /// upload); 0 where no GUI is installed.
+  pub raster_queue: usize,
 }
 
 impl Unsettled {
@@ -54,11 +71,18 @@ impl Unsettled {
       demand: flux::gui::frame::demand(ctx),
       timer_due: flux::timer_due(ctx),
       idle_due: flux::idle_due(ctx),
+      raster_queue: flux::gui::alloy_context(ctx).map_or(0, |atx| atx.raster_counters().queue),
     }
   }
 
   fn at_rest(&self) -> bool {
-    self.in_flight.is_empty() && self.demand.is_empty() && !self.timer_due && !self.idle_due
+    self.in_flight.is_empty() && self.demand.is_empty() && !self.timer_due && !self.idle_due && self.raster_queue == 0
+  }
+
+  /// Only the raster thread is still busy: nothing to run a frame for,
+  /// just a drain to wait out.
+  fn raster_only(&self) -> bool {
+    self.in_flight.is_empty() && self.demand.is_empty() && !self.timer_due && !self.idle_due && self.raster_queue > 0
   }
 
   /// What is left, as a sentence part: "frames are still demanded by
@@ -76,6 +100,9 @@ impl Unsettled {
     }
     if !self.in_flight.is_empty() {
       parts.push(format!("still in flight: {}", flux::describe_in_flight(&self.in_flight)));
+    }
+    if self.raster_queue > 0 {
+      parts.push(format!("the raster thread still has {} command(s) to run", self.raster_queue));
     }
     parts.join("; ")
   }
@@ -134,7 +161,20 @@ pub(crate) async fn settle(ctx: &Ctx<'_>, cap: Cap<'_>, step: Option<&dyn Fn()>)
       }
       None => landed.await,
     }
-    let state = Unsettled::read(ctx);
+    let mut state = Unsettled::read(ctx);
+    // Only the GPU side left: wait it out rather than spend frames on it.
+    let drain_started = Instant::now();
+    while state.raster_only() {
+      let left = match wall_left(&cap) {
+        Some(left) => left.min(RASTER_DRAIN_MAX.saturating_sub(drain_started.elapsed())),
+        None => RASTER_DRAIN_MAX.saturating_sub(drain_started.elapsed()),
+      };
+      if left.is_zero() {
+        return Err(state);
+      }
+      tokio::time::sleep(RASTER_POLL.min(left)).await;
+      state = Unsettled::read(ctx);
+    }
     if state.at_rest() {
       return Ok(());
     }

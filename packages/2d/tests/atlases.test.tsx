@@ -132,7 +132,7 @@ test("the record layer and the tile layer draw from several atlases too", async 
     let tiles = createTileLayer(SIZE / 2, SIZE, sheets, { chunkTiles: 2, frames: [fullFrame(sheets[0]!), fullFrame(sheets[2]!)], label: "multi-tiles" })
     tiles.setTile(0, 0, fullFrame(sheets[1]!))
     tiles.setTiles(1, 0, 1, 1, [1])
-    tiles.addViewer().setCamera({}, SIZE, SIZE)
+    tiles.createView({ width: SIZE, height: SIZE })
     return { layer, view, tiles, atlases, sheets, texture: view.texture }
   })
   await app.settle()

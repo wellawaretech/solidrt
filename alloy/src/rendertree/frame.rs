@@ -82,6 +82,7 @@ impl<'d> PendingFrame<'d> {
     platform: &PlatformContext,
     alloy: &crate::Context,
     present_at: std::time::Instant,
+    frame: u64,
   ) -> Result<Commit<'d>, ()> {
     let content_changed = composite::apply_content_changes(tree, platform, alloy);
 
@@ -110,6 +111,7 @@ impl<'d> PendingFrame<'d> {
             c.dl.clone(),
             crate::PresentDamage::from_frame(damage, platform.display_scale()),
             present_at,
+            frame,
           )?;
           // The reuse path skips paint_phase, which runs this sweep itself -
           // run it here too so a destroy with no other tree change (its
@@ -167,6 +169,7 @@ impl FrameBuilder<'_> {
     platform: &PlatformContext,
     alloy: &crate::Context,
     present_at: std::time::Instant,
+    frame: u64,
   ) -> Result<(), ()> {
     let FrameBuilder { driver, mut builder } = self;
     if let Some(dl) = builder.build() {
@@ -177,7 +180,12 @@ impl FrameBuilder<'_> {
         window: platform.window_size(),
         scale: platform.display_scale(),
       });
-      alloy.submit(dl, crate::PresentDamage::from_frame(tree.frame_damage(), platform.display_scale()), present_at)?;
+      alloy.submit(
+        dl,
+        crate::PresentDamage::from_frame(tree.frame_damage(), platform.display_scale()),
+        present_at,
+        frame,
+      )?;
     }
     Ok(())
   }

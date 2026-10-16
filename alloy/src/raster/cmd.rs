@@ -112,8 +112,10 @@ pub(crate) enum RasterCmd {
   /// present-only resubmit of the previous frame's unchanged display list
   /// (see `Context::submit_clean`). `present_at` is when the frame is
   /// expected to reach the screen: the deadline video frames are latched
-  /// against (see yuv.rs).
-  Frame { dl: DisplayList, tree_clean: bool, damage: PresentDamage, present_at: std::time::Instant },
+  /// against (see yuv.rs). `frame` is the number of the UI frame that built
+  /// the list (the present index the frame loop stamped it with), what the
+  /// frame's completion is published under (see `RasterStats::retired_frames`).
+  Frame { dl: DisplayList, tree_clean: bool, damage: PresentDamage, present_at: std::time::Instant, frame: u64 },
   /// Register the UI-side frame-request latch for missed-present (jank)
   /// accounting: the raster thread samples it (never consumes) at present
   /// time to tell a demanded gap from an idle one. Forwarded by the platform

@@ -106,10 +106,24 @@ Design points to settle:
   say so.
 - Depth range is the other half of large worlds and a separate item:
   [gpu-depth-func](gpu-depth-func.md) (reversed-z).
-- The 2d side: [2d-baked-layers](../done/2d-baked-layers.md) stage B2 part 4
-  fixes the same limit for tiles with chunk-local record coordinates. If
-  the render origin lands in the spatial core, the 2d sprite layer's
-  camera can take it too.
+- The 2d side, half done. The tile layer is exact at any distance:
+  records are chunk-local ([2d-baked-layers](../done/2d-baked-layers.md)
+  stage B2) and a tile view's stage takes the camera SPLIT by chunk
+  (`uOrigin`, the chunk the camera point lies in, plus the remainder in
+  world px; `tileCameraParams` in packages/2d/src/tile-pipeline.ts) so it
+  subtracts small exact integers before scaling to pixels - a render
+  origin that re-snaps on every camera write at no cost, because a
+  chunk entry carries only its indices. The SPRITE and record layers
+  still write the camera as raw world floats (`cameraParams` in
+  packages/2d/src/camera.ts: `uCamera.xy` is the camera point, the stage
+  computes `world - uCamera.xy` in f32), so a sprite population 10^7 px
+  out shimmers exactly as a 3d scene does. Its fix is this item's shape
+  one dimension down: the pose record (`iPos`, core-written from the
+  spatial arena) and the camera both relative to a per-view origin, the
+  origin snapped to a coarse grid so a camera move stays one shared
+  write; the tile view's split is the spelling to copy. If the render
+  origin lands in the spatial core, the sprite layer's pose sink takes it
+  for free.
 
 Additive: an app that stays near the origin sees no change, and nothing
 in the public API changes shape.

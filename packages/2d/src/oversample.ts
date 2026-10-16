@@ -10,14 +10,15 @@ import { frameTime } from "@solidrt/core"
 import { limits } from "@solidrt/core/gpu"
 import { fitOversampleWithin } from "./oversample-math.ts"
 
-/** Validate an oversample against the target it scales; throws (dev policy). */
-export function checkOversample(verb: string, n: number, width: number, height: number): void {
+/** Validate an oversample (or the tile layer's bake density, `name`)
+ * against the target it scales; throws (dev policy). */
+export function checkOversample(verb: string, n: number, width: number, height: number, name = "oversample"): void {
   if (!(Number.isInteger(n) && n >= 1)) {
-    throw new Error(`${verb}: oversample must be a positive integer, got ${n}`)
+    throw new Error(`${verb}: ${name} must be a positive integer, got ${n}`)
   }
   let max = limits.maxTextureSize
   if (width * n > max || height * n > max) {
-    throw new Error(`${verb}: ${width} x ${height} at oversample ${n} exceeds maxTextureSize ${max}`)
+    throw new Error(`${verb}: ${width} x ${height} at ${name} ${n} exceeds maxTextureSize ${max}`)
   }
 }
 
@@ -44,13 +45,15 @@ const THRASH_WINDOW_MS = 1000
 
 /**
  * The thrash sentinel: each layer calls the returned hook on every ACTUAL
- * oversample change, and bunched changes warn once per layer. Every change
- * resizes and redraws the layer's targets (a tile layer re-bakes every
- * resident chunk), so a scale sweeping an integer boundary every frame is
- * this package's most expensive silent mistake - worth a console line the
- * moment it happens rather than a profiling session later.
+ * oversample change (`knob` names it: the tile layer's bake density is
+ * `density`, capped by `maxDensity`), and bunched changes warn once per
+ * layer. Every change resizes and redraws the layer's targets (a tile
+ * layer re-bakes every resident chunk), so a scale sweeping an integer
+ * boundary every frame is this package's most expensive silent mistake -
+ * worth a console line the moment it happens rather than a profiling
+ * session later.
  */
-export function thrashSentinel(what: string): () => void {
+export function thrashSentinel(what: string, knob = "oversample", cap = "maxOversample"): () => void {
   let stamps: number[] = []
   let warned = false
   return () => {
@@ -61,11 +64,11 @@ export function thrashSentinel(what: string): () => void {
     if (stamps.length < THRASH_CHANGES) return
     warned = true
     console.warn(
-      `Oversample thrash: ${what} changed oversample ${THRASH_CHANGES} times within a second. ` +
+      `Oversample thrash: ${what} changed ${knob} ${THRASH_CHANGES} times within a second. ` +
         `Every change resizes and redraws the layer's targets (a tile layer re-bakes every ` +
         `resident chunk). The usual cause is an animated transform or camera sweeping the ` +
-        `measured scale across integer boundaries; pin \`oversample\`, or bound the sweep ` +
-        `with \`maxOversample\`. Warned once per layer.`,
+        `measured scale across integer boundaries; pin \`${knob}\`, or bound the sweep ` +
+        `with \`${cap}\`. Warned once per layer.`,
     )
   }
 }

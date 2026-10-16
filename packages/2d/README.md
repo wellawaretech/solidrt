@@ -62,9 +62,10 @@ on the layer because the layer is the batch), sprite pointer events, the
 baked tile layer, frame animation, key ordering, world-space text (a sprite
 font over the runtime's glyph engine is one more atlas, a run of text a
 group of glyph sprites: `createSpriteFont`, `addText`, `<Text2d>`), and
-the component face. Staged
-next: streaming tile worlds and the retro presets (pixel canvas, palette
-and scanline passes) - see `okf/backlog/`.
+the component face. The tile
+layer streams its world by camera (the core's residency gate) and
+renders through views like the sprite layer; what is still open is in
+`okf/backlog/`.
 
 The full model and the sharp edges are in [AGENTS.md](AGENTS.md); runnable
 patterns in [examples/](examples/).

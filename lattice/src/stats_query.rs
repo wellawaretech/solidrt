@@ -38,6 +38,8 @@ pub(crate) struct StatsQuery<'a> {
   pub(crate) window: Option<&'a crate::frame_history::WindowSummary>,
   pub(crate) counts: Option<(usize, usize)>,
   pub(crate) raster: Option<alloy::RasterCounters>,
+  /// Frames submitted to the raster thread so far (alloy `Context::submitted_frames`).
+  pub(crate) submitted_frames: Option<u64>,
   pub(crate) residency: Option<alloy::spatial::ResidencyStats>,
   /// The mixer's counters; None until the audio device has been opened.
   pub(crate) audio: Option<alloy::audio::AudioStats>,
@@ -98,6 +100,10 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
     put("cameraUploaded", rc.camera_uploaded.into());
     put("cameraSkipped", rc.camera_skipped.into());
     put("fenceTimeouts", rc.fence_timeouts.into());
+    put("retiredFrames", rc.retired_frames.into());
+    if let Some(submitted) = r.submitted_frames {
+      put("submittedFrames", submitted.into());
+    }
     put("contextLosses", rc.context_losses.into());
     put("missedPresents", rc.missed_presents.into());
     put("cadenceHold", rc.cadence_hold.into());

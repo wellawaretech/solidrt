@@ -14,8 +14,8 @@
 // 3d record mesh's verbs (records/updateRecords/setRecordCount). The baked
 // tile layer (createTileLayer/TileLayer) is the static sibling: a tile
 // world baked into chunk textures the core's residency gate brings and
-// takes as the camera moves, composited as a few quads, re-baked on
-// change. What any layer's pixels look like is its MATERIAL
+// takes as the camera moves, drawn through its views as a few quads,
+// re-baked on change. What any layer's pixels look like is its MATERIAL
 // (material.ts): the stock `unlit()` with its blend and its
 // prelude/surface slot, or a shaderMaterialClass over the layer's GLSL
 // set (`@solidrt/2d/glsl`), with per-sprite style records in any vertex
@@ -78,8 +78,8 @@ export { feedPointer } from "./views.ts"
 export { moveAndSlide } from "./collision.ts"
 export type { MoveLayer } from "./collision.ts"
 export type { ViewHandle, ViewOptions } from "./views.ts"
-export { createTileLayer, TILE_FLIP_X, TILE_FLIP_Y, TILE_TRANSPOSE } from "./tiles.ts"
-export type { TileCellOptions, TileChunk, TileLayer as TileLayerHandle, TileLayerOptions, TileRect, TileViewer } from "./tiles.ts"
+export { createTileLayer, setBakeBudget, TILE_FLIP_X, TILE_FLIP_Y, TILE_TRANSPOSE } from "./tiles.ts"
+export type { TileCellOptions, TileChunk, TileLayer as TileLayerHandle, TileLayerOptions, TileRect } from "./tiles.ts"
 
 export type { NodeMotionSpec, NodeTransitionSpec } from "flux:spatial"
 export { fullFrame, grid, isFrame, namedFrames } from "./frames.ts"

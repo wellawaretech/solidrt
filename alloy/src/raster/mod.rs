@@ -75,6 +75,17 @@ pub struct RasterStats {
   /// within the fence timeout, i.e. the GPU is over budget and pacing was
   /// lost for that frame.
   pub(crate) fence_timeouts: AtomicU64,
+  /// Frames whose GPU work has completed, as a count: every frame numbered
+  /// below it (the UI frame number a `RasterCmd::Frame` carries) has
+  /// retired, since the GL stream completes in order. Published when a
+  /// present fence signals (the pacing wait, the video-plane finish), and
+  /// after the bounded wait a headless or capture frame does in place of a
+  /// present. A fence that times out publishes nothing: the frame is still
+  /// on the GPU. What a resource's safe-to-write age is read from (the
+  /// resource pool's `retire` in @solidrt/core): a frame in flight samples
+  /// the textures and buffers it was drawn with, and writing one of those
+  /// before it retires makes a tiled driver drain the queue first.
+  pub(crate) retired_frames: AtomicU64,
   /// GL contexts lost and recovered in process (okf/done/gpu-context-loss.md):
   /// a device removal, a driver reset, a forced loss. Each one rebuilt
   /// every GPU resource and asked the app for the content it alone holds.
@@ -184,6 +195,9 @@ pub struct RasterCounters {
   pub idle_ticks: u64,
   /// Present-fence timeouts: frames where the GPU was over budget.
   pub fence_timeouts: u64,
+  /// Frames whose GPU work has completed, as a count: every frame numbered
+  /// below it has retired (see `RasterStats::retired_frames`).
+  pub retired_frames: u64,
   /// GL contexts lost and recovered in process.
   pub context_losses: u64,
   /// Presents missed while a next frame was demanded - the direct jank
@@ -226,6 +240,7 @@ impl RasterStats {
       queue: self.queue_depth.load(Ordering::Acquire),
       idle_ticks: self.idle_ticks.load(Ordering::Relaxed),
       fence_timeouts: self.fence_timeouts.load(Ordering::Relaxed),
+      retired_frames: self.retired_frames.load(Ordering::Acquire),
       context_losses: self.context_losses.load(Ordering::Relaxed),
       missed_presents: self.missed_presents.load(Ordering::Relaxed),
       cadence_hold: self.cadence_hold.load(Ordering::Relaxed),
@@ -256,6 +271,7 @@ impl RasterStats {
       queue_depth: AtomicUsize::new(0),
       idle_ticks: AtomicU64::new(0),
       fence_timeouts: AtomicU64::new(0),
+      retired_frames: AtomicU64::new(0),
       context_losses: AtomicU64::new(0),
       missed_presents: AtomicU64::new(0),
       cadence_hold: AtomicU32::new(1),
@@ -446,8 +462,9 @@ pub(crate) struct RasterState {
   // runs 2-3 deep, desktop driver queues similarly), and that queue depth is
   // direct input-to-photon latency; the fences cap undisplayed frames in
   // flight below the driver's own depth. Empty in capture mode, which never
-  // presents.
-  present_fences: std::collections::VecDeque<glow::Fence>,
+  // presents. Each fence carries the number of the UI frame it follows, what
+  // `RasterStats::retired_frames` is published from when it signals.
+  present_fences: std::collections::VecDeque<(u64, glow::Fence)>,
   // Pixel-unpack buffers per-frame uploads stage through (see UploadStaging).
   staging: gl::UploadStaging,
   // GL-side view of every registered texture (id -> name + dims), for sampler
@@ -770,7 +787,7 @@ impl RasterState {
         let cmd_start = std::time::Instant::now();
         self.harvest_pass_timings();
         match cmd {
-          RasterCmd::Frame { dl, tree_clean, damage, present_at } => {
+          RasterCmd::Frame { dl, tree_clean, damage, present_at, frame } => {
             // A load-shed frame that was not clean still changed the tree:
             // the frame that draws in its place must not skip the resolve.
             if !tree_clean {
@@ -780,7 +797,7 @@ impl RasterState {
             // place, so its changes still reach the screen.
             self.damage.fold(damage);
             if self.sink.headless() || Some(i) == last_frame {
-              match self.frame(dl, present_at) {
+              match self.frame(dl, present_at, frame) {
                 Ok(()) => {}
                 Err(FrameExit::MainGone) => break 'outer,
                 // The context is gone: rebuild everything behind the same

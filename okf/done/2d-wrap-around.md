@@ -2,6 +2,7 @@
 title: Wrap-around worlds in 2d - recipes exist but live nowhere, and a wrapping tile world has no seam answer
 description: A toroidal world (Asteroids screen wrap, an endlessly repeating tile map) is expressible today only by app-side recipes nothing documents - position modulo that must SNAP (native transitions animate the wrap jump across the world), ghost copies at the seams - and the chunked tile layer has no way to draw the seam at all.
 created: 2026-08-31
+completed: 2026-10-16
 ---
 
 # Wrap-around worlds in 2d
@@ -51,8 +52,8 @@ be drawn twice (two leaves offset by the world width); a CHUNKED world has
 no recipe - it wants either duplicated seam-adjacent chunk leaves or
 modular chunk addressing in a camera-anchored composite. That composite is
 exactly the shape the unbounded-world extension already sketches
-([2d-tile-world-bounds](../done/2d-tile-world-bounds.md) kept it additive,
-landing with [2d-baked-layers](../done/2d-baked-layers.md) stage B2's residency) -
+([2d-tile-world-bounds](2d-tile-world-bounds.md) kept it additive,
+landing with [2d-baked-layers](2d-baked-layers.md) stage B2's residency) -
 a torus is "unbounded with modular coordinates", so wrap should be decided
 WITH that work, not bolted on after.
 
@@ -68,3 +69,18 @@ Staged, smallest first:
    transitioned sprites raised against the spatial core.
 3. **Tile wrap**: folded into the unbounded-world/B2 design as a modular
    coordinate mode of the camera-anchored composite - not designed here.
+
+## Outcome
+
+Closed 2026-10-16. Stage 3 landed first: `wrap: { cols, rows }` on the
+tile layer with [2d-baked-layers](2d-baked-layers.md) stage B2
+(2026-10-14), and with [2d-tile-views](2d-tile-views.md) the seam is
+drawn by the view itself, one entry per image of a resident chunk inside
+the view's world box, in exact painter's order. Stage 1 landed with the
+same change: the three recipes (repeat background, modulo plus ghost
+copies with the transition trap, the tile torus) are the "Wrap-around
+worlds" section of packages/2d/AGENTS.md. Stage 2 (a ghost-copy helper,
+a snap write bypassing a declared transition) is a deliberate non-goal
+until an app brings a wrapping entity under springs; the snap write is
+one line in ideas.md. The `<texture>` element's repeat mode stays
+[texture-tile-mode](../backlog/texture-tile-mode.md).

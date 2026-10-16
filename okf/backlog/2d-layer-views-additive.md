@@ -1,6 +1,6 @@
 ---
 title: 2D layer views, the additive half - tile-layer views, the layers bitmask, into tiling, per-view tint
-description: A view of a sprite or record layer exists (2d-layer-views), but a tile map cannot be shown twice, a minimap cannot admit marker sprites only, several views cannot share one atlas target, and a view cannot tint itself apart from the layer. Each is an additive step on the landed view contract.
+description: A view of every layer kind exists (2d-layer-views, 2d-tile-views), but a minimap cannot admit marker sprites only, several views cannot share one atlas target, and a view cannot tint itself apart from the layer. Each is an additive step on the landed view contract.
 created: 2026-09-07
 ---
 
@@ -12,12 +12,9 @@ created: 2026-09-07
 the sprite and record layers. What a full minimap over a tile-map game
 still lacks, each a separate additive step on that contract:
 
-- Tile-layer views. A `<TileLayer>` composites baked chunk targets as
-  `d-texture` leaves inside one `<view>` carrying the camera transform;
-  showing the same world twice is a second `<view>` over the SAME chunk
-  textures under another camera - JSX only, no GPU work, no re-bake.
-  Today the component owns its one `<view>`, so an app cannot ask for
-  two.
+- Tile-layer views landed 2026-10-16 with
+  [2d-tile-views](../done/2d-tile-views.md): `layer.createView` on the
+  tile layer, the same `ViewHandle`, `<TileLayer layer>` the second view.
 - The `layers` bitmask. A markers-only minimap (the player, the
   objectives, no scenery) needs the selection vocabulary settled in
   [3d-view-mesh-selection](../done/3d-view-mesh-selection.md): `layers`

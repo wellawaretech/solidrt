@@ -88,6 +88,17 @@ the three has that gate in the engine.
 - **Pooling as the engine's**: a freed region's buffers and meshes go to a
   free list the next region takes, instead of dispose-and-create per
   approach - the rule 2d stage B2 states for chunks.
+- **No write into what a frame in flight reads.** A model upload, a
+  buffer write or a resize into a resource the last one or two presented
+  frames still read makes a tiled driver drain its queue first: 27 ms per
+  write on an Adreno 610, the hitch of
+  [2d-tile-world-frame-hitches](2d-tile-world-frame-hitches.md). The pool
+  (`createResourcePool` in @solidrt/core/gpu) hands out only resources
+  the GPU is done with (released at a `submittedFrames` count that
+  `retiredFrames`, published from the raster thread's present fences,
+  has reached), and a region that changes while
+  resident takes a retired set and swaps, as the tile layer's re-bake
+  does, instead of writing in place.
 - A worked example walking a world several times larger than what is
   resident at once, the resident set and frame times read back through
   the control API.

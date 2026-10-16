@@ -85,9 +85,11 @@ impl RasterState {
   /// Draw the frame's display list to the window backbuffer and hand it on:
   /// present in interactive mode, leave it in the offscreen surface in the
   /// headless mode. Then notify the main loop, which only does frame
-  /// bookkeeping (fps, FrameRendered). Err means the main loop is gone and
+  /// bookkeeping (fps, FrameRendered). `frame` is the UI frame number the
+  /// list was built under, what its GPU completion is published as (see
+  /// `RasterStats::retired_frames`). Err means the main loop is gone and
   /// this thread should exit.
-  pub(super) fn frame(&mut self, dl: DisplayList, present_at: std::time::Instant) -> Result<(), FrameExit> {
+  pub(super) fn frame(&mut self, dl: DisplayList, present_at: std::time::Instant, frame: u64) -> Result<(), FrameExit> {
     // A context lost since the last present fails every allocation the
     // frame makes, so the draw never reaches the swap where the loss would
     // otherwise be found: ask first (a flag read).
@@ -152,11 +154,18 @@ impl RasterState {
     if drawn {
       self.draw_overlay(size);
     }
+    // A frame that is not presented has no present fence to retire it: a
+    // headless or capture frame is read back, and the readback would sync
+    // anyway, so it waits for its own work here (bounded, like the pacing
+    // wait) and publishes its completion the way a present's fence does.
+    if drawn && self.sink.headless() {
+      self.finish_gpu_work(frame);
+    }
     if self.sink == FrameSink::Window {
       let present_start = std::time::Instant::now();
       let mut presented = false;
       if drawn {
-        match self.present() {
+        match self.present(frame) {
           Presented::Yes => presented = true,
           Presented::Lost(detail) => return Err(FrameExit::ContextLost(detail)),
           Presented::No => {
@@ -172,7 +181,7 @@ impl RasterState {
               own_damage = PresentDamage::Full;
               route = WindowRoute::whole(fast_path);
               if self.draw_to_window(&dl, size, route) {
-                match self.present() {
+                match self.present(frame) {
                   Presented::Yes => presented = true,
                   Presented::Lost(detail) => return Err(FrameExit::ContextLost(detail)),
                   Presented::No => {}
@@ -259,7 +268,7 @@ impl RasterState {
   /// okf/backlog/idle-tick-gpu-backlog-runaway.md, present-fence finding).
   fn await_present_fence(&mut self) {
     while self.present_fences.len() >= PRESENT_FENCE_DEPTH {
-      let fence = self.present_fences.pop_front().expect("len checked above");
+      let (frame, fence) = self.present_fences.pop_front().expect("len checked above");
       let status = unsafe {
         let status =
           glow::HasContext::client_wait_sync(&self.gl, fence, glow::SYNC_FLUSH_COMMANDS_BIT, PRESENT_FENCE_TIMEOUT_NS);
@@ -267,7 +276,7 @@ impl RasterState {
         status
       };
       match status {
-        glow::ALREADY_SIGNALED | glow::CONDITION_SATISFIED => {}
+        glow::ALREADY_SIGNALED | glow::CONDITION_SATISFIED => self.publish_retired(frame),
         status => {
           if status == glow::TIMEOUT_EXPIRED {
             self.stats.fence_timeouts.fetch_add(1, Ordering::Relaxed);
@@ -286,6 +295,15 @@ impl RasterState {
         }
       }
     }
+  }
+
+  /// Publish that UI frame `frame` has completed on the GPU, and with it
+  /// every frame before it (the GL stream completes in order): the count of
+  /// retired frames becomes at least `frame + 1`. Never moves backwards; a
+  /// fence that signals out of number order (a frame resubmitted under an
+  /// older number) cannot lower it.
+  fn publish_retired(&self, frame: u64) {
+    self.stats.retired_frames.fetch_max(frame + 1, Ordering::Release);
   }
 
   /// Clear the window backbuffer and swap it once, before any frame exists.
@@ -327,7 +345,7 @@ impl RasterState {
   /// the swap's EGL error names it, or the reset status does, which is the
   /// only signal when a context-level loss keeps swapping (ANGLE, measured)
   /// - is reported for recovery: see okf/done/gpu-context-loss.md.
-  fn present(&mut self) -> Presented {
+  fn present(&mut self, frame: u64) -> Presented {
     // A video plane beneath the window is composited with it in one atomic
     // commit, and that commit waits for every buffer in it to be ready. A
     // window buffer queued with GPU work still outstanding therefore holds
@@ -341,7 +359,7 @@ impl RasterState {
     // plane pays it for nothing, which is a refinement, not a defect
     // (okf/notes/android-video-plane-compositing.md).
     if crate::video_plane_active() {
-      self.finish_gpu_work();
+      self.finish_gpu_work(frame);
     }
     // The id this swap's buffer is queued under, asked before the swap.
     self.frame_timestamps.before_present();
@@ -354,7 +372,7 @@ impl RasterState {
       // PRESENT_FENCE_DEPTH. A failed fence_sync just means no pacing this
       // frame: same behavior as before this mechanism existed.
       if let Ok(fence) = unsafe { glow::HasContext::fence_sync(&self.gl, glow::SYNC_GPU_COMMANDS_COMPLETE, 0) } {
-        self.present_fences.push_back(fence);
+        self.present_fences.push_back((frame, fence));
         // Flush the fence into the command stream now. ANGLE/D3D11 defers a
         // post-swap fence's submission (~2 swaps) and its glClientWaitSync
         // never blocks (the flush bit does not rescue it), so without this
@@ -409,8 +427,9 @@ impl RasterState {
   /// the buffer the swap queues carries none of it into the compositor's
   /// commit. Bounded by the same timeout as the pacing wait: a GPU over
   /// budget loses the protection for this frame rather than stalling the
-  /// raster thread, and counts as a fence timeout like any other.
-  fn finish_gpu_work(&mut self) {
+  /// raster thread, and counts as a fence timeout like any other. On
+  /// completion UI frame `frame`, whose work this is, is published retired.
+  fn finish_gpu_work(&mut self, frame: u64) {
     let fence = match unsafe { glow::HasContext::fence_sync(&self.gl, glow::SYNC_GPU_COMMANDS_COMPLETE, 0) } {
       Ok(fence) => fence,
       Err(_) => return,
@@ -421,8 +440,12 @@ impl RasterState {
       glow::HasContext::delete_sync(&self.gl, fence);
       status
     };
-    if status == glow::TIMEOUT_EXPIRED {
-      self.stats.fence_timeouts.fetch_add(1, Ordering::Relaxed);
+    match status {
+      glow::ALREADY_SIGNALED | glow::CONDITION_SATISFIED => self.publish_retired(frame),
+      glow::TIMEOUT_EXPIRED => {
+        self.stats.fence_timeouts.fetch_add(1, Ordering::Relaxed);
+      }
+      _ => {}
     }
   }
 

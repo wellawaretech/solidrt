@@ -253,9 +253,10 @@ fn damaged_extent(tree: &RenderTree, id: u64) -> cull::Extent {
 /// the render thread: the minimal "draw the tree once" path. Unlike the runner's
 /// frame loop it carries no demand gating, retained-list reuse, post-layout hook
 /// or stats overlay (all of which are policy); it is what a flux + alloy app
-/// calls each frame to put the current tree on screen. Returns the frame's paint
-/// stats.
-pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::Context) -> PaintStats {
+/// calls each frame to put the current tree on screen. `frame` is the
+/// caller's frame number for the submit (see `Context::submit`): count your
+/// frames and pass the count. Returns the frame's paint stats.
+pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::Context, frame: u64) -> PaintStats {
   // The runner's frame loop drains content changes itself, ahead of its
   // display-list reuse check; this path is the frame producer for everything
   // else, so it must apply them too.
@@ -268,7 +269,7 @@ pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::
   if let Some(dl) = builder.build() {
     let damage = crate::PresentDamage::from_frame(tree.frame_damage(), platform.display_scale());
     // No frame signal behind this path: the frame presents as soon as it can.
-    if alloy.submit(dl, damage, crate::clock::now()).is_err() {
+    if alloy.submit(dl, damage, crate::clock::now(), frame).is_err() {
       log::warn!("rendertree::render: render thread unavailable, dropping frame");
     }
   }

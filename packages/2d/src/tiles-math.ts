@@ -22,12 +22,15 @@ export function mod(a: number, n: number): number {
 }
 
 // Chunk indices are packed into one number as a map key: this many chunks
-// each side of the origin along either axis, exact in a double.
-const CHUNK_KEY_SPAN = 2 ** 26
+// each side of the origin along either axis, exact in a double - and, at
+// half of it, exact in the float32 a view's entry carries them in.
+const CHUNK_KEY_SPAN = 2 ** 25
 
 /** One number keying the chunk at (chunkCol, chunkRow): the sparse chunk
- * map's key. Indices beyond 2^25 chunks from the origin throw (a world
- * 10^7 cells across stays far inside). */
+ * map's key. Indices beyond 2^24 chunks from the origin throw (a world
+ * 10^7 cells across stays far inside; 2^24 is where a float32 stops
+ * holding every integer, and a view's chunk-quad stage reads the
+ * indices as floats). */
 export function chunkKey(chunkCol: number, chunkRow: number): number {
   let half = CHUNK_KEY_SPAN / 2
   if (!(chunkCol > -half && chunkCol < half && chunkRow > -half && chunkRow < half)) {

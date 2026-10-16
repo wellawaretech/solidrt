@@ -307,7 +307,7 @@ test("a tile layer bakes with the material: a per-cell style, and a param change
     layer.setTile(0, 0, fullFrame(atlas), { style: [1] })
     layer.setTile(1, 0, fullFrame(atlas))
     layer.setTiles(0, 1, 2, 1, [fullFrame(atlas), fullFrame(atlas)], { style: [1] })
-    layer.addViewer().setCamera({}, 16, 16)
+    layer.createView({ width: 16, height: 16 })
     return <view width={SIZE} height={SIZE} />
   })
   await app.settle()

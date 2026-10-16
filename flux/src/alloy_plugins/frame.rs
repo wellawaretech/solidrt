@@ -119,10 +119,20 @@ pub fn on_advance(ctx: &Ctx<'_>, reason: &'static str, run: impl for<'js> FnMut(
 /// motion's reports then wait for the next delivery.
 pub fn deliver(ctx: &Ctx<'_>, frame: u64, now_ms: f64, timer_now_ms: f64) {
   crate::standards_plugins::time::advance_virtual_time(ctx, timer_now_ms);
+  if let Some(gui) = super::try_gui(ctx) {
+    gui.frame.set(frame);
+  }
   crate::emit_event(ctx, "frameStart", frame_payload(ctx, frame, now_ms));
   spatial::deliver_motion(ctx);
   raf::flush(ctx, now_ms);
   crate::emit_event(ctx, "render", frame_payload(ctx, frame, now_ms));
+}
+
+/// The number of the latest frame delivered to JS (`deliver`): what a draw
+/// outside the frame protocol (`sol:render`'s direct `render`) submits
+/// under, since it repaints that frame's state. 0 before any delivery.
+pub fn current_frame(ctx: &Ctx<'_>) -> u64 {
+  super::try_gui(ctx).map_or(0, |gui| gui.frame.get())
 }
 
 fn frame_payload<'js>(ctx: &Ctx<'js>, frame: u64, now_ms: f64) -> Object<'js> {
@@ -161,7 +171,16 @@ pub fn idle(ctx: &Ctx<'_>, until: Option<Instant>) {
 /// JS run between the phases may write properties. `present_at` is when
 /// the frame is expected to reach the screen: the deadline the raster
 /// thread latches video frames against, and the one the gate peeks with.
-pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl FnOnce(Option<Frame<'_>>) -> R) -> R {
+/// `frame` is the frame's number (the present index the runner stamped
+/// it with, what JS reads as `frameNumber()`), what the raster thread
+/// publishes its GPU completion under (`retiredFrames`).
+pub fn draw<R>(
+  ctx: &Ctx<'_>,
+  extra_demand: bool,
+  present_at: Instant,
+  frame: u64,
+  f: impl FnOnce(Option<Frame<'_>>) -> R,
+) -> R {
   let Some(s) = tree::try_state(ctx) else {
     return f(None);
   };
@@ -248,7 +267,7 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl F
       reasons.push("a streaming camera".to_string());
     }
   }
-  f(Some(Frame { pending, tree: &s.tree, platform: &s.gui.platform, atx: &s.gui.alloy, present_at }))
+  f(Some(Frame { pending, tree: &s.tree, platform: &s.gui.platform, atx: &s.gui.alloy, present_at, frame }))
 }
 
 /// Why the app wants another frame, as of now: empty when it wants none.
@@ -285,6 +304,7 @@ pub struct Frame<'a> {
   platform: &'a PlatformContext,
   atx: &'a alloy::Context,
   present_at: Instant,
+  frame: u64,
 }
 
 impl<'a> Frame<'a> {
@@ -292,11 +312,11 @@ impl<'a> Frame<'a> {
   /// display list resubmitted (`Reused`) or the build handle. `Err` means the
   /// render thread is gone.
   pub fn commit(self) -> Result<Commit<'a>, ()> {
-    let Frame { pending, tree, platform, atx, present_at } = self;
-    let commit = pending.commit(&mut tree.borrow_mut(), platform, atx, present_at)?;
+    let Frame { pending, tree, platform, atx, present_at, frame } = self;
+    let commit = pending.commit(&mut tree.borrow_mut(), platform, atx, present_at, frame)?;
     Ok(match commit {
       rendertree::Commit::Reused { content_changed } => Commit::Reused { content_changed },
-      rendertree::Commit::Build(builder) => Commit::Build(Build { builder, tree, platform, atx, present_at }),
+      rendertree::Commit::Build(builder) => Commit::Build(Build { builder, tree, platform, atx, present_at, frame }),
     })
   }
 }
@@ -320,6 +340,7 @@ pub struct Build<'a> {
   platform: &'a PlatformContext,
   atx: &'a alloy::Context,
   present_at: Instant,
+  frame: u64,
 }
 
 impl Build<'_> {
@@ -333,8 +354,8 @@ impl Build<'_> {
 
   /// `Err` means the render thread is gone.
   pub fn finish(self) -> Result<(), ()> {
-    let Build { builder, tree, platform, atx, present_at } = self;
-    let result = builder.finish(&tree.borrow(), platform, atx, present_at);
+    let Build { builder, tree, platform, atx, present_at, frame } = self;
+    let result = builder.finish(&tree.borrow(), platform, atx, present_at, frame);
     result
   }
 }

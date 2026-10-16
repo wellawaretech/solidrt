@@ -173,7 +173,7 @@ test("a tile layer takes the material too, baking its cells with its blend", asy
     let atlas = createAtlas({ width: 8, height: 8, data: new Uint8Array(8 * 8 * 4).fill(255) }, { label: "tiles-add-atlas" })
     layer = createTileLayer(8, 8, [atlas], { chunkTiles: 2, material: unlit({ blend: "add" }), label: "tiles-add" })
     layer.setTile(0, 0, fullFrame(atlas), { tint: HALF })
-    layer.addViewer().setCamera({}, 16, 16)
+    layer.createView({ width: 16, height: 16 })
     return <view width={SIZE} height={SIZE} />
   })
   await app.settle()

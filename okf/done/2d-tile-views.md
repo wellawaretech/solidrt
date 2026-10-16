@@ -2,6 +2,7 @@
 title: The tile layer renders through views, so a minimap minifies the bake correctly
 description: A tile layer composites its chunk textures as d-texture leaves, which Impeller samples at level 0 only, so a second composite well below the bake density (a minimap at a tenth of the main view's zoom) aliases; the sprite layer and the 3d scene already render through views (one draw target per camera with its own oversample), and the tile layer should too, sampling mip-chained chunk targets in its own pipeline
 created: 2026-10-14
+completed: 2026-10-16
 ---
 
 # The tile layer renders through views
@@ -60,3 +61,62 @@ mipmap option, the pool class), a chunk-quad pipeline beside `glsl.ts`,
 `packages/2d/src/components/tile-layer.tsx`, the tests in
 `tests/tiles-residency.test.tsx`, `packages/2d/AGENTS.md` (Scrolling and
 the camera, the component props).
+
+## Outcome
+
+Landed 2026-10-16 as shaped, with these decisions on top:
+
+- The view shell (target, size, oversample, camera, dispatch) moved out
+  of the sprite layer's views into `createViewShell` in views.ts, so
+  both kinds return the one `ViewHandle` type and `createCamera2d`,
+  `feedPointer` and `<Camera2d>` work on a tile view unchanged. A tile
+  view's `pick` is empty; its listeners see every event in world px.
+- `addViewer`/`TileViewer` are gone: the view IS the viewer (its camera
+  pushed to the gate on every camera, size or oversample write, its wish
+  for the bake `oversample * zoom`). The bake density is `density` /
+  `maxDensity` / `setDensity` (the word `oversample` means texels per
+  view pixel everywhere a view exists); the layer's `maxPixels` and
+  `filter` options went with the leaf composite.
+- Mip chains are on by default (`mipmap: false` opts out), not switched
+  on by a minifying view: sampling is creation-time state on a target,
+  so the switch would have meant re-baking the world when a minimap
+  first appeared. The chain weighs a third more against `maxTexels`.
+- One chunk-quad pipeline per process (tile-pipeline.ts); the camera
+  reaches the stage split by chunk (`uOrigin` + the remainder) so a
+  world 10^7 px out stays exact in float32, which also tightened the
+  addressable world to 2^24 chunks per side (the float32 integer limit).
+- Under `wrap` a chunk has one entry per image inside the view's world
+  box, in row-major world order (exact painter's order at any view
+  size); the image set depends on the camera through four integers (the
+  chunk-index range the box covers), compared on every camera write and
+  rebuilt on a change. The in-shader image window considered first was
+  dropped: it could not keep the seam's overhang order once a view
+  showed the world repeated.
+- `<TileLayer>` became `<SpriteLayer>`'s shape: the view props (fill or
+  fixed, camera, clearColor, oversample knobs, viewRef, output, events,
+  pointer, the on* handlers) and `<Camera2d>` children.
+
+Verified: the residency suite over the view target (seam, overhang, a
+checker world at 1/16 zoom resolving to mid-gray through the chain and
+to whole cells without it), the whole 2d suite (148), camera-probe
+CAMERA-OK, and the tiles example through the control API: both views
+drawing every resident chunk, the minimap at a tenth of the zoom clean.
+
+Tablet (SM-T500, 2000x1200 at display scale 1.5, the tiles example,
+2026-10-16), five-second windows once the startup bakes settled, main
+view at the auto oversample 2 (2666x1600):
+
+| path | fps | missed presents / 5 s | GPU ms per frame | CPU p95 ms |
+|---|---|---|---|---|
+| views (this item) | 60 | 7 to 11 | 15.2 | 2.5 to 3.4 |
+| old leaf composite (A/B by stash) | 55 to 58 | 21 to 27 | 10.6 to 11.4 | 10.4 to 11.2 |
+
+The hitches an observer sees (50 to 67 ms gaps every one to three
+seconds, on both paths; 100 ms on the old one) line up with chunk
+enters (about six per second as the ship flies): a bake landing on a
+frame near the budget. The view path spends more GPU (the 4.3 MP
+intermediate target, 1.8x the screen's pixels because the 1.5x display
+scale rounds up to oversample 2) and far less CPU (no per-frame leaf
+re-placement); mips cost under 1 ms of the GPU time. At oversample 1
+the view path reads 58 fps and 14 ms GPU. The hitches are their
+own item: [2d-tile-world-frame-hitches](../backlog/2d-tile-world-frame-hitches.md).

@@ -406,6 +406,7 @@ fn stats(ctx: Ctx<'_>, window_ms: Option<f64>, window_frames: Option<u32>) -> fl
     window: window.as_ref(),
     counts: flux::gui::tree::node_counts(&ctx),
     raster: atx.as_ref().map(|atx| atx.raster_counters()),
+    submitted_frames: atx.as_ref().map(|atx| atx.submitted_frames()),
     residency: atx.as_ref().map(|atx| atx.spatial().residency_stats()),
     audio: atx.as_ref().and_then(|atx| atx.audio_stats()),
     app: Some(crate::plugins::dev::read_stats(&ctx)),

@@ -900,6 +900,8 @@ impl ModuleDef for GpuModule {
     decl.declare("copyTexture")?;
     decl.declare("captureSnapshot")?;
     decl.declare("readTexture")?;
+    decl.declare("retiredFrames")?;
+    decl.declare("submittedFrames")?;
     decl.declare("limits")?;
     Ok(())
   }
@@ -948,6 +950,8 @@ impl ModuleDef for GpuModule {
     exports.export("copyTexture", Function::new(ctx.clone(), copy_texture)?)?;
     exports.export("captureSnapshot", Function::new(ctx.clone(), capture_snapshot)?)?;
     exports.export("readTexture", Function::new(ctx.clone(), read_texture)?)?;
+    exports.export("retiredFrames", Function::new(ctx.clone(), retired_frames)?)?;
+    exports.export("submittedFrames", Function::new(ctx.clone(), submitted_frames)?)?;
 
     // The device ceilings, process constants queried once at raster startup
     // (module evaluate runs at import time, warming alloy's UI-side cache
@@ -1940,6 +1944,18 @@ fn capture_snapshot<'js>(ctx: Ctx<'js>, node_id: u64) -> rquickjs::Result<Promis
   // The capture is serviced during a paint; make sure one happens.
   st.gui.platform.request_frame();
   Ok(promise)
+}
+
+/// Frames whose GPU work has completed, as a count (alloy's
+/// `Context::retired_frames`): every frame numbered below it has retired.
+fn retired_frames(ctx: Ctx<'_>) -> u64 {
+  state(&ctx).gui.alloy.retired_frames()
+}
+
+/// Frames handed to the raster thread so far, as a count (alloy's
+/// `Context::submitted_frames`).
+fn submitted_frames(ctx: Ctx<'_>) -> u64 {
+  state(&ctx).gui.alloy.submitted_frames()
 }
 
 /// Read back any registered texture's current RGBA8 pixels (tightly packed,

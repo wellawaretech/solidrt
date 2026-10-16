@@ -1,7 +1,7 @@
 // The baked tile layer as a STREAMING world: an unbounded grid of cells
 // (negative cells included) baked into chunk textures that the core's
 // residency gate brings in as the camera approaches and takes out as it
-// leaves, composited as a few quads under a clipping viewport. The
+// leaves, drawn through a view as a few quads. The
 // camera flies a ship-style path - a fixed screen pivot near the bottom
 // of the viewport, the world panning and ROTATING under it so the flight
 // heading always points up (the <TileLayer> camera prop with rotation and
@@ -11,15 +11,15 @@
 // from the resource pool when the ship comes back round.
 //
 // The whole world sits 10^7 px from the origin: records are chunk-local,
-// so it bakes as crisp as one at the origin, and the composite subtracts
-// the camera in JS so the leaf transforms stay small. A MINIMAP in the
-// corner is a second composite of the same layer (`<TileLayer layer>`)
-// under a north-up, zoomed-out camera: a second viewer, so the world is
-// resident where either view wants it. The layer carries a texture
-// BUDGET (`maxTexels`, 40 chunks' worth): the gate evicts the chunk
-// furthest from either view for one more needed and the minimap's far
-// chunks wait, stalled, so its edge shows holes rather than the main
-// view blurring.
+// so it bakes as crisp as one at the origin, and the view's stage takes
+// the camera split by chunk so its floats stay small. A MINIMAP in the
+// corner is a second view of the same layer (`<TileLayer layer>`) under
+// a north-up, zoomed-out camera, so the world is resident where either
+// view wants it, minifying the bake through the chunks' mip chain. The
+// layer carries a texture BUDGET (`maxTexels`, 40 chunks' worth): the
+// gate evicts the chunk furthest from either view for one more needed
+// and the minimap's far chunks wait, stalled, so its edge shows holes
+// rather than the main view blurring.
 //
 // The world is seeded by ONE setTiles rect write over a Uint32Array of
 // frame indices (-1 where the world is empty; those chunks never allocate
@@ -27,8 +27,10 @@
 // flipped and transposed through the index bits. A timer edits tiles
 // while it runs: beacon markers along the road's center line blink, and
 // each blink's batch of setTile calls re-bakes only the RESIDENT chunks
-// the beacons land in - a beacon in a chunk that left is a record write
-// and bakes when the chunk comes back.
+// the beacons land in, paced under the bake budget (setBakeBudget: one
+// a frame, nearest the ship first, the rest showing their last bake a
+// frame longer) - a beacon in a chunk that left is a record write and
+// bakes when the chunk comes back.
 //
 // The atlas is the core logo sliced 2x2 by grid() into 48 px frames, the
 // cell size (a frame bakes at its own size); a real game would slice a
@@ -65,6 +67,8 @@ const SEED_REACH = 64
 // The texture budget in chunks: the ring's near side under the main view
 // plus the minimap's middle, never the whole ring.
 const BUDGET_CHUNKS = 40
+// What a chunk's mip chain adds to its level-0 texels.
+const MIP_CHAIN = 4 / 3
 // The minimap: its viewport in layout px and its zoom (world px to view
 // px), covering about four chunks across.
 const MINIMAP_SIZE = 200
@@ -80,17 +84,17 @@ function App() {
   let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
   let frames = grid(atlas, 2, 2)
 
-  // The layer is made here, not by a component, so two composites can
-  // show it: the main view and the minimap both adopt it.
+  // The layer is made here, not by a component, so two views can show
+  // it: the main view and the minimap both adopt it.
   let chunkPx = CHUNK_TILES * TILE
   let layer = createTileLayer(TILE, TILE, [atlas], {
     frames,
     chunkTiles: CHUNK_TILES,
-    maxTexels: BUDGET_CHUNKS * chunkPx * chunkPx,
+    maxTexels: Math.ceil(BUDGET_CHUNKS * chunkPx * chunkPx * MIP_CHAIN),
     // Bake at one texel per world pixel on any display: the ship view is
     // at zoom 0.9, so native density, and the budget above is sized for
-    // it (a chunk weighs oversample squared).
-    maxOversample: 1,
+    // it (a chunk weighs density squared, plus its chain).
+    maxDensity: 1,
     label: "tile-world",
   })
   let enters = 0
@@ -130,7 +134,7 @@ function App() {
   // The ship flies the ring: camera x/y follow the circle, rotation keeps
   // the heading pointing screen-up, the pivot pins the ship's world point
   // near the viewport bottom. Per-frame camera motion is one signal write
-  // feeding the transform and the viewer - never a re-bake.
+  // feeding the view's camera and the gate - never a re-bake.
   let [camera, setCamera] = createSignal<TileCamera>({})
   let lastTick = 0
   onFrame((tick, _frame, rate) => {

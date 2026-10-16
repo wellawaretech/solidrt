@@ -1,8 +1,9 @@
 // Differential check for the camera mapping (camera.ts): projectCamera
-// against an oracle that spells the mapping the way <TileLayer> does with
-// element transforms (origin at the camera point, rotate + scale there,
-// translate the camera point onto the pivot), so the exported function and
-// the component's view props cannot drift; unprojectCamera as the exact
+// against an oracle that spells the mapping as element transforms would
+// (origin at the camera point, rotate + scale there, translate the
+// camera point onto the pivot - a second, independent spelling of the
+// same convention), so the exported function cannot drift from the
+// documented semantics; unprojectCamera as the exact
 // round-trip inverse; plus the documented conventions as hand-written
 // cases. Pure-module input only (camera.ts imports no GUI), so it runs
 // headless on flux: `sol test packages/2d`. The random inputs come from
@@ -29,9 +30,9 @@ function close(a: [number, number], b: [number, number]): boolean {
   return Math.abs(a[0] - b[0]) <= EPS && Math.abs(a[1] - b[1]) <= EPS
 }
 
-// Oracle: the <view> props exactly as <TileLayer> in components/tile-layer.tsx sets
-// them, applied with element-transform semantics (rotate + scale about the
-// origin point, then the x/y translation). If either spelling changes, the
+// Oracle: the mapping as a carrier <view>'s props would spell it, applied
+// with element-transform semantics (rotate + scale about the origin
+// point, then the x/y translation). If either spelling changes, the
 // sweep below catches the drift.
 function viewOracle(camera: CameraUpdate, worldX: number, worldY: number): [number, number] {
   let originX = camera.x ?? 0

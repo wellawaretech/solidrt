@@ -289,7 +289,11 @@ when exactly one client is connected.
   number, null where a reader failed), the core's resource pools among
   them (`poolHits`, `poolMisses`, cumulative takes that found an id or
   created one, so hits over the two is the reuse rate; `poolHeld`, ids
-  waiting in pools now);
+  waiting in pools now); `submittedFrames` and `retiredFrames` are the
+  frames handed to the GPU and the frames whose GPU work has completed
+  (the difference is the frames in flight, zero at rest; the pools hand
+  out only what was released at a submitted count the retired count has
+  reached);
   `slowFrames`,
   `gpuFrameExecMsPerFrame`, `fenceTimeoutsPerSec` and `rasterCmdMsPerSec`
   say why. A snapshot capture stalls the frame it lands in (a blocking

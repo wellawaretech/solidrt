@@ -523,8 +523,9 @@ fn request_frame(ctx: Ctx<'_>) {
 // contents are still sampled at the raster flush); the call itself is the
 // demand, so the gate never skips it.
 fn render(ctx: Ctx<'_>) {
-  // No frame signal behind this path: the frame presents as soon as it can.
-  super::frame::draw(&ctx, true, alloy::clock::now(), |frame| {
+  // No frame signal behind this path: the frame presents as soon as it can,
+  // under the number of the frame whose state it repaints.
+  super::frame::draw(&ctx, true, alloy::clock::now(), super::frame::current_frame(&ctx), |frame| {
     let Some(frame) = frame else { return };
     match frame.commit() {
       Err(()) => log::warn!("render: render thread unavailable, dropping frame"),
