@@ -17,7 +17,7 @@ use crate::gpu::{
 use std::rc::Rc;
 
 impl RasterState {
-  pub(super) fn create_texture(
+  pub(crate) fn create_texture(
     &mut self,
     id: u64,
     width: u32,
@@ -241,7 +241,7 @@ impl RasterState {
   /// program, replying with the reflected uniform and attribute tables for
   /// the UI-side validation mirror. The UI side validated the ids and stage kinds against
   /// its mirror; a miss here means the mirrors diverged.
-  pub(super) fn link_program(
+  pub(crate) fn link_program(
     &mut self,
     id: u64,
     vertex: u64,
@@ -330,7 +330,7 @@ impl RasterState {
   /// Inventory the GPU resources this thread tracks: registered textures,
   /// vertex buffers, and shader/pipeline targets with their bookkeeping.
   /// Sorted by id for stable output.
-  pub(super) fn resources(&self) -> GpuResources {
+  pub(crate) fn resources(&self) -> GpuResources {
     let mut textures: Vec<GpuTextureInfo> = self
       .textures
       .iter()

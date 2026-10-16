@@ -264,7 +264,7 @@ impl RasterState {
   }
 
   #[allow(clippy::too_many_arguments)]
-  pub(super) fn create_shader_texture(
+  pub(crate) fn create_shader_texture(
     &mut self,
     id: u64,
     width: u32,

@@ -12,6 +12,9 @@
 
 mod opus;
 mod opusfile;
+// The Opus discard rule has two users, video's audio track and the WebM clip
+// decoder below, both video's; an audio-only build has nothing to trim.
+#[cfg(feature = "video")]
 pub(crate) mod trim;
 mod wav;
 #[cfg(feature = "video")]

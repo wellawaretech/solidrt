@@ -285,16 +285,31 @@ pub fn apply_jsx(
     }
   }
 
-  // A view has no paint of its own (ViewOwnProps): its fill is a child draw
-  // primitive. The same "Unknown property" prefix, so core warns and
-  // continues; the hint saves the trip to the types.
-  if matches!(el.kind, ElementKind::View(_)) && paint::is_paint_prop(name) {
-    return Err(format!(
-      "Unknown property '{name}': a view has no paint; put the fill on a child <rect> (or <d-rect>)"
-    ));
+  // A view or a window has no paint of its own (ViewOwnProps, WindowProps):
+  // the fill is a child draw primitive. The web's background props land
+  // here too, being what a backdrop is reached for as. The same "Unknown
+  // property" prefix, so core warns and continues; the hint saves the trip
+  // to the types.
+  let container = match el.kind {
+    ElementKind::View(_) => Some("view"),
+    ElementKind::Window(_) => Some("window"),
+    _ => None,
+  };
+  if let Some(container) = container {
+    if paint::is_paint_prop(name) || is_web_background_prop(name) {
+      return Err(format!(
+        "Unknown property '{name}': a {container} has no paint; put the fill on a child <rect> (or <d-rect>) covering it"
+      ));
+    }
   }
 
   Err(format!("Unknown property '{name}'"))
+}
+
+// The CSS names for a backdrop, which have no counterpart here: a fill is
+// always a draw primitive's `color`.
+fn is_web_background_prop(name: &str) -> bool {
+  matches!(name, "background" | "backgroundColor")
 }
 
 fn detached_only_geometry(kind: &ElementKind, name: &str) -> bool {

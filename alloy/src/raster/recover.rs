@@ -29,7 +29,7 @@ impl RasterState {
   /// when the platform cannot provide one (the caller exits, as a confirmed
   /// loss always did). On return the state awaits the UI thread's resync
   /// (`RasterCmd::Resync`), and the main loop holds the restore report.
-  pub(super) fn recover(self, detail: String) -> Result<RasterState, String> {
+  pub(crate) fn recover(self, detail: String) -> Result<RasterState, String> {
     log::error!("[alloy] GPU context lost: {detail}; recovering");
     self.stats.context_losses.fetch_add(1, Ordering::Relaxed);
     let RasterState {

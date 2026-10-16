@@ -1190,3 +1190,42 @@ fn resolve_entry_buffers(buffers: &HashMap<u64, Rc<GpuBuffer>>, ids: BufferIds) 
   };
   Ok(EntryBuffers { buffers, index })
 }
+
+/// The seam tests/context_loss.rs drives the recovery through: the registry
+/// writes the command loop makes inline (a buffer, a compiled stage), and
+/// reads of the state the rebuild leaves behind.
+#[cfg(test)]
+impl RasterState {
+  pub(crate) fn test_create_buffer(&mut self, id: u64, data: &[u8], label: Option<String>) -> Result<(), String> {
+    let buffer = GpuBuffer::new(&self.gl, data, label)?;
+    self.buffers.insert(id, Rc::new(buffer));
+    Ok(())
+  }
+
+  pub(crate) fn test_compile_stage(
+    &mut self,
+    id: u64,
+    stage: crate::gpu::ShaderStage,
+    source: &str,
+  ) -> Result<(), String> {
+    let compiled = gl::compile_stage(&self.gl, stage, source, true)?;
+    self.stages.insert(id, compiled);
+    Ok(())
+  }
+
+  pub(crate) fn awaiting_resync(&self) -> bool {
+    self.awaiting_resync
+  }
+
+  pub(crate) fn is_dirty(&self, id: u64) -> bool {
+    self.dirty.contains(&id)
+  }
+
+  pub(crate) fn texture_name(&self, id: u64) -> Option<glow::Texture> {
+    self.textures.get(&id).map(|t| t.gl_texture)
+  }
+
+  pub(crate) fn buffer_name(&self, id: u64) -> Option<glow::Buffer> {
+    self.buffers.get(&id).map(|b| b.vbo)
+  }
+}
