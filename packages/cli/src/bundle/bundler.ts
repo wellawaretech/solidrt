@@ -199,7 +199,7 @@ export function findIsolateModules(root: string): IsolateModule[] {
 }
 
 /** The manifest asset path of an isolate bundle. */
-export function isolateAssetPath(id: string, ext: "js" | "bin"): string {
+export function isolateAssetPath(id: string, ext: "js" | "fluxbc"): string {
   return `isolates/${id}.${ext}`
 }
 

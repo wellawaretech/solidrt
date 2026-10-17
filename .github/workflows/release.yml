@@ -108,11 +108,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          passed=$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --workflow ci.yml --status success --json databaseId --jq length)
-          if [ "$passed" = "0" ]; then
-            echo "::error::CI has not passed on $GITHUB_SHA"
-            exit 1
+          set -eu
+          runs=$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --workflow ci.yml --json status,conclusion,url)
+          if [ "$(jq -r '[.[] | select(.conclusion == "success")] | length' <<< "$runs")" != "0" ]; then
+            echo "CI passed on $GITHUB_SHA"
+            exit 0
           fi
+          running=$(jq -r '.[] | select(.status != "completed") | .url' <<< "$runs" | head -n 1)
+          failed=$(jq -r '.[] | select(.status == "completed") | .url' <<< "$runs" | head -n 1)
+          if [ -n "$running" ]; then
+            echo "::error::CI is still running on $GITHUB_SHA: wait for it, then dispatch again ($running)"
+          elif [ -n "$failed" ]; then
+            echo "::error::CI did not pass on $GITHUB_SHA ($failed)"
+          else
+            echo "::error::No CI run on $GITHUB_SHA: push it to main first"
+          fi
+          exit 1
 
   build-linux:
     needs: prepare

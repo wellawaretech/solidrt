@@ -40,7 +40,7 @@ export function buildPackFolder(mode: Mode, bytecode: Buffer, isolates: { id: st
   let projectDir = mode.projectDir ?? dirname(mode.entry)
   let { assets, fonts, icon } = collectAssets(mode.projectDir)
   let copies = assets.map((a) => ({ from: join(projectDir, a.path), to: a.path }))
-  let files = isolates.map((i) => ({ to: isolateAssetPath(i.id, "bin"), bytes: i.bytecode }))
+  let files = isolates.map((i) => ({ to: isolateAssetPath(i.id, "fluxbc"), bytes: i.bytecode }))
   for (let f of files) assets.push({ path: f.to, sha256: hashHex(f.bytes), size: f.bytes.length })
   assets.sort((a, b) => (a.path < b.path ? -1 : 1))
 
