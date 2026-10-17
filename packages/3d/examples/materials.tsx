@@ -124,7 +124,7 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene clearColor={[0.06, 0.06, 0.09, 1]} samples={4} label="materials">
+        <Scene clearColor={[0.06, 0.06, 0.09, 1]} label="materials">
           <PerspectiveCamera fov={50} position={[0, 2.8, 5.2]} lookAt={[0, 0.5, 0]} />
           <HemisphereLight sky={[0.3, 0.33, 0.4]} ground={[0.1, 0.09, 0.08]} />
           <Group rotation={[0, t() / 2, 0]}>

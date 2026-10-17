@@ -95,7 +95,7 @@ function App() {
       }}
     >
       <view width={pct(100)} height={pct(100)}>
-        <Scene clearColor={[0.1, 0.11, 0.14, 1]} samples={4} label="normals">
+        <Scene clearColor={[0.1, 0.11, 0.14, 1]} label="normals">
           <PerspectiveCamera fov={40} position={[0, 1.6, 8.5]} lookAt={[0, 0, 0]} />
           <HemisphereLight sky={[0.35, 0.38, 0.45]} ground={[0.12, 0.1, 0.08]} />
           <DirectionalLight direction={[0.4, -0.7, -0.6]} color={[1, 0.95, 0.85]} intensity={0.9} />

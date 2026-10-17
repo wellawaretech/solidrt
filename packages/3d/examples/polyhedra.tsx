@@ -35,7 +35,7 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene clearColor={[0.07, 0.07, 0.1, 1]} samples={4} label="polyhedra">
+        <Scene clearColor={[0.07, 0.07, 0.1, 1]} label="polyhedra">
           <PerspectiveCamera fov={45} position={[0, 4.6, 6.8]} lookAt={[0, 0.1, 0]} />
           <HemisphereLight sky={[0.35, 0.38, 0.45]} ground={[0.12, 0.1, 0.08]} />
           <Group rotation={[0, t() / 3, 0]}>

@@ -34,8 +34,9 @@ pub use resources::{
 };
 pub use spec::{DepthStorage, DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use texture::{
-  check_cube_faces, mip_levels, mip_size, SamplerFilter, SamplerOptions, SamplerOverride, SamplerState, SamplerWrap,
-  TextureBox, TextureEntry, TextureFormat, TextureRect, TextureRegistry, TextureShape, CUBE_FACES, MIN_ANISOTROPY,
+  check_cube_faces, mip_levels, mip_size, SamplerFilter, SamplerOptions, SamplerOverride, SamplerState, SamplerUpdate,
+  SamplerWrap, TextureBox, TextureEntry, TextureFormat, TextureRect, TextureRegistry, TextureShape, CUBE_FACES,
+  MIN_ANISOTROPY,
 };
 #[cfg(test)]
 pub use vocab::merge_bindings;

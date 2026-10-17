@@ -12,8 +12,10 @@
 //
 // Sampling is a per-texture property declared at creation: `filter`
 // ("linear" default | "nearest"), `wrap` ("clamp" default | "repeat"),
-// `mipmap` (default false) and `anisotropy` (default 1 = off; pair it with
-// mipmap) on every create* helper. One state for every
+// `mipmap` (default false), `anisotropy` (default 1 = off; pair it with
+// mipmap) and `baseLevel` (default 0, the first level sampled; needs
+// mipmap) on every create* helper, and every axis but the chain changes
+// later through `setTextureSampling`. One state for every
 // consumer - `<texture>` display and shader sampling both follow it - so a
 // nearest texture upscales with hard pixels everywhere (the retro/pixel-art
 // path: render small, display big). `mipmap: true` keeps a mip chain the
@@ -75,9 +77,10 @@ import type { ResourcePool, ResourcePoolOptions } from "./pool.ts"
 export type CreateOptions = { autoFree?: boolean; label?: string }
 
 // Sampling options every texture-producing create* helper accepts, applied at
-// creation as a property of the texture id (there is no set-sampler-later).
-export type SamplerOptions = { filter?: gpu.FilterMode; wrap?: gpu.WrapMode; mipmap?: boolean; anisotropy?: number }
-export type { FilterMode, WrapMode, TextureBinding, TextureBindings } from "flux:gpu"
+// creation as a property of the texture id; `setTextureSampling` changes
+// every axis but the mip chain later (SamplerUpdate).
+export type SamplerOptions = { filter?: gpu.FilterMode; wrap?: gpu.WrapMode; mipmap?: boolean; anisotropy?: number; baseLevel?: number }
+export type { FilterMode, SamplerUpdate, WrapMode, TextureBinding, TextureBindings } from "flux:gpu"
 
 // Pixel format option for the pixel-upload creates (createTexture,
 // createCubeTexture, createTexture3D, createArrayTexture,
@@ -133,7 +136,9 @@ export {
   resizeTexture,
   setTargetParams,
   setTargetRect,
+  setTargetSamples,
   setTargetSize,
+  setTextureSampling,
   setTargetTextures,
   uploadTexture,
 } from "flux:gpu"

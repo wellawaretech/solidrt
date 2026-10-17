@@ -46,7 +46,7 @@ use super::cells::{Cell, CellKind, CellRequest, Hint, Rasterizer};
 use super::fonts::{Face, FaceId, FontSet};
 use super::shape::{Fallback, ShapeStyle, ShapedGlyphs};
 use super::worker::{CellJob, CellWorker, JobPriority};
-use crate::gpu::{CoveragePolicy, SamplerFilter, SamplerState, SamplerWrap, MIN_ANISOTROPY};
+use crate::gpu::{CoveragePolicy, SamplerState};
 use crate::Context;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -391,12 +391,7 @@ impl TextAtlas {
   /// samples, or None when the GPU refused the texture (logged once).
   pub fn flush(&mut self, ctx: &Context) -> Option<u64> {
     if self.texture.is_none() && !self.texture_failed {
-      let sampler = SamplerState {
-        filter: SamplerFilter::Linear,
-        wrap: SamplerWrap::Clamp,
-        mipmap: false,
-        anisotropy: MIN_ANISOTROPY,
-      };
+      let sampler = SamplerState::default();
       match create_texture(ctx, &mut self.packer, sampler, ATLAS_LABEL) {
         Ok(texture) => self.texture = Some(texture),
         Err(e) => {

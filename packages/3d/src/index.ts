@@ -13,6 +13,10 @@ export { createDirectionalLight, createHemisphereLight, createPointLight, create
 // The shader-source caps, also on the /glsl subpath next to the sources they size.
 export { MAX_CASCADES, MAX_LIGHTS, MAX_SHADOW_MAPS, MAX_SHADOW_TAPS } from "./glsl.ts"
 export type { ShadowQuality } from "./scene-shadows.ts"
+export { DEFAULT_SHADOW_CAMERA } from "./light.ts"
+// The quality table every knob defaults from (okf/plans/3d-quality-tier.md).
+export { QUALITY_TIERS, resolveQuality } from "./quality.ts"
+export type { QualityInput, QualityRow } from "./quality.ts"
 export type {
   DirectionalLight as DirectionalLightNode,
   DirectionalLightOptions,

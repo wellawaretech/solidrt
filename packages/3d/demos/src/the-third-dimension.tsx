@@ -27,12 +27,14 @@ import {
   env,
   flush,
   onFrame,
+  quality,
   render,
   safeArea,
+  setQuality,
   untrack,
   windowSize,
 } from "@solidrt/core"
-import type { PointerEvent, PointerFeed, TextureId } from "@solidrt/core"
+import type { PointerEvent, PointerFeed, Quality, TextureId } from "@solidrt/core"
 import { createDrawTarget, glsl, limits, setTargetSize } from "@solidrt/core/gpu"
 import {
   Group,
@@ -530,6 +532,10 @@ function App() {
       <Scene
         width={targetSize().main.width}
         height={targetSize().main.height}
+        // The panels supersample (MIN_RENDER_SCALE) and the leaf's linear
+        // sampler averages that down, so the quality row's MSAA would be a
+        // second anti-aliasing pass over the first: one mechanism at a time.
+        samples={1}
         label="scene"
         background={BACKDROP_FRAGMENT}
         camera={CAMERA}
@@ -773,11 +779,22 @@ registerDebug("shadow", (args?: Record<string, unknown>) => {
 })
 
 // Pixels per logical unit the scene renders at (0 follows the display): the
-// quality/throughput knob, and the A/B for "is this pass fill-bound?".
+// throughput knob of this demo's own supersampling floor, and the A/B for
+// "is this pass fill-bound?".
 registerDebug("renderScale", (args?: Record<string, unknown>) => {
   if (typeof args?.scale === "number") setRenderScale(clamp(args.scale, 0, 4))
   flush()
   return { scale: renderScale() }
+})
+
+// The app quality tier (@solidrt/core setQuality): the one knob a device
+// class turns - the shadow kernel, map sizes, LOD, MSAA and texture
+// sampling all follow its row. `{ tier: "low" }` is the SM-T500 and TV
+// setting; the demo's explicit shadow map size stays its own.
+registerDebug("quality", (args?: Record<string, unknown>) => {
+  if (typeof args?.tier === "string") setQuality(args.tier as Quality)
+  flush()
+  return { tier: quality() }
 })
 
 render(() => <App />)

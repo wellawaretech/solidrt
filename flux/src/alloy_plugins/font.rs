@@ -21,7 +21,7 @@ use alloy::rendertree::text::glyphs::{
 };
 use alloy::rendertree::text::{prepare_units, Fallback, RunStyle};
 use alloy::rendertree::Text;
-use alloy::{SamplerFilter, SamplerState, SamplerWrap, TextureFormat, MIN_ANISOTROPY};
+use alloy::{SamplerState, TextureFormat};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent};
@@ -193,12 +193,10 @@ fn create_font<'js>(ctx: Ctx<'js>, face: OptArg<Object<'js>>, options: OptArg<Ob
     fonts.resolve(&style.font_family).ok_or_else(|| throw_str(&ctx, "createFont: no fonts are registered"))?
   };
   let sampler = SamplerState {
-    filter: SamplerFilter::Linear,
-    wrap: SamplerWrap::Clamp,
     // A distance field is sampled at every zoom, so it minifies through a
     // chain by default; a mask is drawn 1:1.
     mipmap: mipmap.unwrap_or(matches!(kind, CellKind::Msdf { .. })),
-    anisotropy: MIN_ANISOTROPY,
+    ..SamplerState::default()
   };
   let max_side = st.gui.alloy.gpu_limits().max_texture_size;
   let id = st.next_id.get();

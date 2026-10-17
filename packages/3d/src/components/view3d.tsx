@@ -16,7 +16,8 @@ export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMa
    * both, or neither. Omitted, the view FILLS exactly as a `<Scene>`
    * does: the leaf lays out at 100% of its sized parent and the target
    * follows its on-screen box in device pixels, `renderScale` and
-   * `maxPixels` over it, the leaf `output` refs followed the same way.
+   * `maxPixels` over it (`maxPixels` defaults to the scene's quality
+   * row's cap), the leaf `output` refs followed the same way.
    * Fill or fixed is decided at mount; a tile of `into` has its rect, so
    * it gives both. */
   width?: number
@@ -194,7 +195,10 @@ export let View3d: ParentComponent<View3dProps> = props => {
   // size in fixed mode until an output leaf is ref'd.
   let leafLayout = () => (leafNode && getLayoutBox(leafNode)) || (fill ? { width: 0, height: 0 } : { width: props.width!, height: props.height! })
   // Fill sizing: the view follows the leaf's on-screen box (fill.ts).
-  let fillReads = fill ? createFill("View3d", view, () => leafNode, () => ({ renderScale: props.renderScale, maxPixels: props.maxPixels }), output !== undefined) : null
+  // The scene's quality row caps a fill view that sets no `maxPixels`.
+  let fillReads = fill
+    ? createFill("View3d", view, () => leafNode, () => ({ renderScale: props.renderScale, maxPixels: props.maxPixels ?? ctx.quality().maxPixels ?? undefined }), output !== undefined)
+    : null
   // Pointer events on the leaf: the built-in fixed leaf is laid out at the
   // target size, so the plain handlers; otherwise scaled from the
   // laid-out box per event.
@@ -209,7 +213,7 @@ export let View3d: ParentComponent<View3dProps> = props => {
   // The fill leaf is size-contained, as Scene's: it adds nothing to its
   // ancestors, so the target's pixels never pin them.
   return (
-    <SceneContext value={{ scene: ctx.scene, parent: ctx.parent, viewport: view, pointer, viewportSize: leaf.size }}>
+    <SceneContext value={{ scene: ctx.scene, parent: ctx.parent, viewport: view, pointer, viewportSize: leaf.size, quality: ctx.quality }}>
       {output ? (
         untrack(() => output(view.texture, leaf))
       ) : (

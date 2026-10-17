@@ -17,7 +17,8 @@ import type { Material } from "./material.ts"
 import { updateCamera } from "./camera.ts"
 import type { Camera } from "./camera.ts"
 import { worldInto } from "./node.ts"
-import type { CastingLight, Light } from "./light.ts"
+import { DEFAULT_SHADOW_CAMERA } from "./light.ts"
+import type { CastingLight, DirectionalLight, Light } from "./light.ts"
 import type { Mesh } from "./mesh.ts"
 
 // How a cascaded light slices the camera range: 0 uniform, 1
@@ -99,6 +100,11 @@ export type ShadowSystemDeps<V extends ShadowView> = {
   camera: Camera
   /** The scene target's current size (the cascade fit's aspect). */
   targetSize(): { width: number; height: number }
+  /** The scene's quality row's shadow defaults: the map edge of a light
+   * that sets no `mapSize`, the cascade count of a directional light
+   * that sets neither `cascades` nor a `camera` box. Read per settle, so
+   * a row change settles through `invalidate`. */
+  defaults(): { mapSize: number; cascades: number }
   /** Base debug label ("scene" by default). */
   label: string
   /** Make one shadow view for `light`: a tile of `into` drawing the
@@ -199,10 +205,16 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
     let cell = Math.max(1, Math.floor(maxSize * scale))
     return { cols, cell, scale, width: cols * cell, height: rows * cell }
   }
+  // A light's map edge: its own, else the quality row's.
+  let mapSizeOf = (l: CastingLight): number => l.shadow.mapSize ?? deps.defaults().mapSize
+  // A directional light's cascade count: its own; else one map when it
+  // authored a box (the box is its frustum, which cascades would ignore),
+  // else the quality row's.
+  let cascadesOf = (l: DirectionalLight): number => l.shadow.cascades ?? (l.shadow.camera !== null ? 1 : deps.defaults().cascades)
   // A caster's tile count: a directional light brings its cascades, a
   // point light its six faces, a spot exactly one map.
   let shadowTiles = (l: CastingLight): number =>
-    l.type === "directional" ? l.shadow.cascades : l.type === "point" ? POINT_FACES.length : 1
+    l.type === "directional" ? cascadesOf(l) : l.type === "point" ? POINT_FACES.length : 1
   let eachSlot = (fn: (slot: number, lightIndex: number, shadow: Shadow, cascade: number) => void): void => {
     let slot = 0
     let i = 0
@@ -297,7 +309,7 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
       return error
     }
     let maxSize = 1
-    for (let l of casters) maxSize = Math.max(maxSize, l.shadow.mapSize)
+    for (let l of casters) maxSize = Math.max(maxSize, mapSizeOf(l))
     let lay = shadowLayout(tiles, maxSize)
     if (shadowAtlas === null) {
       shadowAtlas = {
@@ -317,7 +329,7 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
     }
     let k = 0
     for (let l of casters) {
-      let size = Math.max(1, Math.floor(l.shadow.mapSize * lay.scale))
+      let size = Math.max(1, Math.floor(mapSizeOf(l) * lay.scale))
       let shadow = shadows.get(l)
       let fresh: ShadowRect[] = []
       for (let c = 0; c < shadowTiles(l); c++, k++) {
@@ -401,7 +413,7 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
       return
     }
     if (!cascaded) {
-      let c = light.shadow.camera
+      let c = light.shadow.camera ?? DEFAULT_SHADOW_CAMERA
       updateCamera(shadow.views[0]!.camera, {
         position: [m[12], m[13], m[14]],
         target: [m[12] + d[0], m[13] + d[1], m[14] + d[2]],

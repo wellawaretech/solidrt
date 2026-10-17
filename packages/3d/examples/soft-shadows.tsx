@@ -252,7 +252,7 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)} onPointerDown={() => setQuality(q => QUALITIES[(QUALITIES.indexOf(q) + 1) % QUALITIES.length] ?? "medium")}>
-        <Scene ref={s => (scene = s)} clearColor={[0.5, 0.6, 0.75, 1]} samples={4} layers={SCENE_LAYERS} shadows={{ quality: quality() }} label="soft-shadows">
+        <Scene ref={s => (scene = s)} clearColor={[0.5, 0.6, 0.75, 1]} layers={SCENE_LAYERS} shadows={{ quality: quality() }} label="soft-shadows">
           <PerspectiveCamera fov={CAMERA_FOV} near={CAMERA_NEAR} far={CAMERA_FAR} position={CAMERA_POSITION} lookAt={CAMERA_TARGET} />
           <HemisphereLight sky={[0.3, 0.32, 0.36]} ground={[0.12, 0.11, 0.1]} />
           <DirectionalLight

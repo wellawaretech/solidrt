@@ -17,9 +17,14 @@ const ALL_LAYERS = 0xffffffff
  * Three's DirectionalLightShadow camera. Everything outside it is lit. */
 export type ShadowCamera = { left: number; right: number; top: number; bottom: number; near: number; far: number }
 
+/** The box a directional light without a `camera` option renders its one
+ * map from: +-5 world units, 0.5..500 deep. */
+export const DEFAULT_SHADOW_CAMERA: ShadowCamera = { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 500 }
+
 export type ShadowOptions = {
-  /** Shadow map resolution in texels, square (default 1024). */
-  mapSize?: number
+  /** Shadow map resolution in texels, square; null (the default) is the
+   * scene's quality tier's (QualityRow.mapSize: 512, 1024 or 2048). */
+  mapSize?: number | null
   /** Depth bias against acne, in the map's 0..1 depth (default 0). */
   bias?: number
   /** Offset a receiving point along its normal before the lookup, in
@@ -34,19 +39,26 @@ export type ShadowOptions = {
    * a light with a size (`angularSize`, `sourceRadius`) it is the FLOOR
    * the penumbra never narrows below (HDRP's min filter size). */
   radius?: number | null
-  /** The light frustum; absent keys keep the defaults +-5, 0.5..500.
-   * Ignored by a cascaded light (its frustums follow the scene camera). */
-  camera?: Partial<ShadowCamera>
-  /** Split the shadow into this many cascades (1..MAX_CASCADES, default
-   * 1 = the `camera` box). With more, the light renders one map per slice
-   * of the SCENE camera's frustum (near .. far, tightest first), each
-   * `mapSize` texels wide and fitted every time the camera or the light
-   * moves, and a receiver samples the tightest one that has the point:
-   * sharp contact shadows near the camera and coarser ones toward the
-   * horizon, for a scene the box cannot cover at one map's resolution.
-   * Views (`scene.createView`) sample the same maps, fitted to the scene
-   * camera, not their own. Each cascade is a tile of the atlas. */
-  cascades?: number
+  /** The light frustum of a one-map (box) light; absent keys keep the
+   * current values, which start at DEFAULT_SHADOW_CAMERA (+-5, 0.5..500).
+   * Null returns to the default box. Setting one makes the light a box
+   * light unless `cascades` says otherwise (below); ignored by a cascaded
+   * light (its frustums follow the scene camera). */
+  camera?: Partial<ShadowCamera> | null
+  /** Split the shadow into this many cascades (1..MAX_CASCADES; 1 = the
+   * `camera` box). With more, the light renders one map per slice of the
+   * SCENE camera's frustum (near .. far, tightest first), each `mapSize`
+   * texels wide and fitted every time the camera or the light moves, and
+   * a receiver samples the tightest one that has the point: sharp contact
+   * shadows near the camera and coarser ones toward the horizon, for a
+   * scene the box cannot cover at one map's resolution. Views
+   * (`scene.createView`) sample the same maps, fitted to the scene
+   * camera, not their own. Each cascade is a tile of the atlas. Null (the
+   * default) is the scene's quality tier's count (QualityRow.cascades)
+   * for a light that authored no `camera` box, and 1 for one that did:
+   * an authored box is the light's frustum, and the tier never silently
+   * replaces it. `splits` needs an explicit count. */
+  cascades?: number | null
   /** How far from the scene camera a cascaded light shadows, in world
    * units (default null = the camera's far). The cascades span
    * near..distance and a point past it is lit, so pulling it in sharpens
@@ -95,7 +107,18 @@ export type DirectionalLight = SceneNode & {
    * `receiveShadow: false`). */
   castShadow: boolean
   /** The resolved shadow options (read; write through setLight). */
-  shadow: { mapSize: number; bias: number; normalBias: number; radius: number | null; camera: ShadowCamera; cascades: number; distance: number | null; splits: number[] | null }
+  shadow: {
+    mapSize: number | null
+    bias: number
+    normalBias: number
+    radius: number | null
+    /** The authored box, or null for a light that set none (the default
+     * box when it renders one map; see ShadowOptions.camera). */
+    camera: ShadowCamera | null
+    cascades: number | null
+    distance: number | null
+    splits: number[] | null
+  }
 }
 
 /** A spot light node: a cone of light from the node's WORLD position
@@ -140,14 +163,15 @@ export type SpotLight = SceneNode & {
    * the default when 0). One map, one shadow slot. */
   castShadow: boolean
   /** The resolved shadow options (read; write through setLight). */
-  shadow: { mapSize: number; bias: number; normalBias: number; radius: number | null; near: number }
+  shadow: { mapSize: number | null; bias: number; normalBias: number; radius: number | null; near: number }
 }
 
 /** The perspective-map shadow options a spot or point light takes. */
 export type SpotShadowOptions = {
-  /** Shadow map resolution in texels, square (default 1024). A point
-   * light renders SIX maps at this size, one per face. */
-  mapSize?: number
+  /** Shadow map resolution in texels, square; null (the default) is the
+   * scene's quality tier's (QualityRow.mapSize). A point light renders
+   * SIX maps at this size, one per face. */
+  mapSize?: number | null
   /** Depth bias against acne, in the map's 0..1 depth (default 0). Note
    * a perspective map's depth is nonlinear: `normalBias` is the knob to
    * reach for first. */
@@ -193,7 +217,7 @@ export type PointLight = SceneNode & {
    * default when 0), so give a casting bulb a distance. */
   castShadow: boolean
   /** The resolved shadow options (read; write through setLight). */
-  shadow: { mapSize: number; bias: number; normalBias: number; radius: number | null; near: number }
+  shadow: { mapSize: number | null; bias: number; normalBias: number; radius: number | null; near: number }
 }
 
 /** The ambient term: a sky/ground gradient by the WORLD normal's
@@ -316,22 +340,35 @@ function checkSourceRadius(radius: number): number {
   return radius
 }
 
+function checkMapSize(mapSize: number | null): number | null {
+  if (mapSize === null) return null
+  if (!(Number.isInteger(mapSize) && mapSize >= 1)) throw new Error("shadow.mapSize must be a positive integer, or null for the scene tier's")
+  return mapSize
+}
+
 function mergeShadow(into: DirectionalLight["shadow"], update: ShadowOptions): void {
-  if (update.mapSize !== undefined) into.mapSize = update.mapSize
+  if (update.mapSize !== undefined) into.mapSize = checkMapSize(update.mapSize)
   if (update.bias !== undefined) into.bias = update.bias
   if (update.normalBias !== undefined) into.normalBias = update.normalBias
   if (update.radius !== undefined) into.radius = checkRadius(update.radius)
-  if (update.camera !== undefined) {
+  if (update.camera === null) {
+    into.camera = null
+  } else if (update.camera !== undefined) {
     // Only the keys with a value: an undefined one is absent and keeps
-    // the extent, which the light projection reads as is.
+    // the extent, which the light projection reads as is. The first
+    // write authors the box, starting from the default one.
+    let camera = into.camera ?? { ...DEFAULT_SHADOW_CAMERA }
     for (let key of Object.keys(update.camera) as (keyof ShadowCamera)[]) {
       let value = update.camera[key]
-      if (value !== undefined) into.camera[key] = value
+      if (value !== undefined) camera[key] = value
     }
+    into.camera = camera
   }
   if (update.cascades !== undefined) {
     let n = update.cascades
-    if (!Number.isInteger(n) || n < 1 || n > MAX_CASCADES) throw new Error("shadow.cascades must be an integer from 1 to " + MAX_CASCADES)
+    if (n !== null && (!Number.isInteger(n) || n < 1 || n > MAX_CASCADES)) {
+      throw new Error("shadow.cascades must be an integer from 1 to " + MAX_CASCADES + ", or null for the scene tier's")
+    }
     into.cascades = n
   }
   if (update.distance !== undefined) {
@@ -351,8 +388,11 @@ function mergeShadow(into: DirectionalLight["shadow"], update: ShadowOptions): v
     into.splits = s === null ? null : [...s]
   }
   // Checked after both merge: cascades and splits may arrive in one update.
-  if (into.splits !== null && into.splits.length !== into.cascades - 1) {
-    throw new Error("shadow.splits must hold cascades - 1 fractions (" + (into.cascades - 1) + " for " + into.cascades + " cascades), got " + into.splits.length)
+  if (into.splits !== null) {
+    if (into.cascades === null) throw new Error("shadow.splits places explicit cascades - give cascades with it")
+    if (into.splits.length !== into.cascades - 1) {
+      throw new Error("shadow.splits must hold cascades - 1 fractions (" + (into.cascades - 1) + " for " + into.cascades + " cascades), got " + into.splits.length)
+    }
   }
 }
 
@@ -365,7 +405,7 @@ export function createDirectionalLight(opts: DirectionalLightOptions = {}): Dire
   light.angularSize = opts.angularSize !== undefined ? checkAngularSize(opts.angularSize) : 0
   light.layers = opts.layers !== undefined ? checkMask(opts.layers, "createDirectionalLight") : ALL_LAYERS
   light.castShadow = opts.castShadow === true
-  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, radius: null, camera: { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 500 }, cascades: 1, distance: null, splits: null }
+  light.shadow = { mapSize: null, bias: 0, normalBias: 0, radius: null, camera: null, cascades: null, distance: null, splits: null }
   if (opts.shadow !== undefined) mergeShadow(light.shadow, opts.shadow)
   return light
 }
@@ -384,13 +424,13 @@ export function createSpotLight(opts: SpotLightOptions = {}): SpotLight {
   light.decay = opts.decay ?? 2
   light.sourceRadius = opts.sourceRadius !== undefined ? checkSourceRadius(opts.sourceRadius) : 0
   light.castShadow = opts.castShadow === true
-  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, radius: null, near: 0.5 }
+  light.shadow = { mapSize: null, bias: 0, normalBias: 0, radius: null, near: 0.5 }
   if (opts.shadow !== undefined) mergeSpotShadow(light.shadow, opts.shadow)
   return light
 }
 
 function mergeSpotShadow(into: SpotLight["shadow"], update: SpotShadowOptions): void {
-  if (update.mapSize !== undefined) into.mapSize = update.mapSize
+  if (update.mapSize !== undefined) into.mapSize = checkMapSize(update.mapSize)
   if (update.bias !== undefined) into.bias = update.bias
   if (update.normalBias !== undefined) into.normalBias = update.normalBias
   if (update.radius !== undefined) into.radius = checkRadius(update.radius)
@@ -411,7 +451,7 @@ export function createPointLight(opts: PointLightOptions = {}): PointLight {
   light.decay = opts.decay ?? 2
   light.sourceRadius = opts.sourceRadius !== undefined ? checkSourceRadius(opts.sourceRadius) : 0
   light.castShadow = opts.castShadow === true
-  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, radius: null, near: 0.5 }
+  light.shadow = { mapSize: null, bias: 0, normalBias: 0, radius: null, near: 0.5 }
   if (opts.shadow !== undefined) mergeSpotShadow(light.shadow, opts.shadow)
   return light
 }

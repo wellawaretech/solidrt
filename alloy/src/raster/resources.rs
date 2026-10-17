@@ -120,6 +120,21 @@ impl RasterState {
     }
   }
 
+  /// Apply a validated sampling change (see `Context::set_texture_sampling`)
+  /// to the id's texture, and to its target record when the id renders:
+  /// what a pass resolves at bind and what the inventory reports. The
+  /// id's dependents re-render, since a filter change changes what they
+  /// sample.
+  pub(super) fn set_texture_sampling(&mut self, id: u64, sampler: SamplerState) -> Result<(), String> {
+    let gpu = self.textures.get_mut(&id).ok_or_else(|| format!("texture {id} not found"))?;
+    gpu.set_sampler(&self.gl, sampler);
+    if let Some(shader) = self.shaders.get_mut(&id) {
+      shader.set_sampler(sampler);
+    }
+    self.dirty.insert(id);
+    Ok(())
+  }
+
   pub(super) fn update_texture(&mut self, id: u64, pixels: &[u8]) -> Result<(), String> {
     // Destructured so the texture lookup and the staging buffers are
     // borrowed as the separate fields they are.

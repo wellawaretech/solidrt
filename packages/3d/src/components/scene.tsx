@@ -1,4 +1,4 @@
-import { callRef, createEffect, createRenderEffect, createSignal, getLayoutBox, onCleanup, untrack } from "@solidrt/core"
+import { callRef, createEffect, createMemo, createRenderEffect, createSignal, getLayoutBox, onCleanup, quality, untrack } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { createFill, FILL_INITIAL_SIZE } from "./fill.ts"
@@ -8,6 +8,8 @@ import { createScene } from "../scene.ts"
 import { feedPointer } from "../scene-pointer.ts"
 import type { BlendSpace, BloomOptions, EnvironmentOptions, FogOptions, ResolveInput, Scene as SceneHandle, SkyboxOptions, ToneMapping } from "../scene.ts"
 import type { ShadowQuality } from "../scene-shadows.ts"
+import { resolveQuality } from "../quality.ts"
+import type { QualityInput } from "../quality.ts"
 import type { ScenePointerEvent, SceneTapEvent, SceneWheelEvent } from "../node.ts"
 import type { CameraUpdate } from "../camera.ts"
 
@@ -36,7 +38,8 @@ export type SceneProps = ScenePointerProps &
    * in device pixels - display scale, designSize fits and ancestor
    * transforms included - so a bare `<Scene>` renders at native density on
    * any display, and viewport-relative camera controls scale with the box;
-   * `renderScale` and `maxPixels` scale and cap that size. With `output`
+   * `renderScale` and `maxPixels` scale and cap that size (`maxPixels`
+   * defaults to the quality row's cap: 1 Mpx at low, none above). With `output`
    * the target follows the leaf you `ref` (OutputLeaf). Fill or fixed is
    * decided at mount. Fixed, the leaf's own width/height are layout, so
    * render size and display size separate by hand.
@@ -86,10 +89,22 @@ export type SceneProps = ScenePointerProps &
   toneMapping?: ToneMapping
   /** Output exposure (scene.setExposure), default 1. Reactive. */
   exposure?: number
+  /** The scene's quality (scene.setQuality as a prop; see
+   * SceneOptions.quality): a tier name or a row object over the app tier
+   * (core's `quality()`). Absent, the scene follows the app tier. Every
+   * quality knob - the shadow kernel, a light's map size and cascades,
+   * `lodBias`, the LOD cross-fade, `samples`, a fill scene's `maxPixels`,
+   * a probe's size - defaults from the row; each knob's own prop is the
+   * override. Reactive, the app tier too. */
+  quality?: QualityInput
+  /** The LOD size multiplier (scene.setLodBias as a prop): below 1 hands
+   * over to far levels sooner. Default the quality row's. Reactive. */
+  lodBias?: number
   /** Scene-wide shadow settings: `quality` (scene.setShadowQuality) is
-   * the soft shadow kernel's tier, "hard" | "low" | "medium" (default) |
-   * "high" - the tap count every light with a `radius` above 1 or a
-   * size spends, "hard" the one tap for all of them. Reactive. */
+   * the soft shadow kernel's tier, "hard" | "low" | "medium" | "high" -
+   * the tap count every light with a `radius` above 1 or a size spends,
+   * "hard" the one tap for all of them. Default the quality row's.
+   * Reactive. */
   shadows?: { quality?: ShadowQuality }
   /** The buffer's blend space (SceneOptions.blendSpace), default
    * "linear"; fixed at creation. "display" blends sRGB-encoded values
@@ -105,8 +120,9 @@ export type SceneProps = ScenePointerProps &
    * `samples`. */
   depth?: true | "texture"
   label?: string
-  /** Multisample count (1, 2, 4 or 8; default 1): anti-aliased mesh edges.
-   * Fixed at creation. */
+  /** Multisample count (1, 2, 4 or 8): anti-aliased mesh edges. Default
+   * the quality row's (1 / 4 / 4; 1 with `depth: "texture"`). Reactive
+   * (scene.setSamples: the target's storage is reallocated in place). */
   samples?: 1 | 2 | 4 | 8
   ref?: (scene: SceneHandle) => void
   /**
@@ -198,6 +214,8 @@ export let Scene: ParentComponent<SceneProps> = props => {
       toneMapping: props.toneMapping,
       exposure: props.exposure,
       shadows: props.shadows,
+      quality: props.quality,
+      lodBias: props.lodBias,
       blendSpace: props.blendSpace,
       resolve: props.resolve,
       bloom: props.bloom,
@@ -268,9 +286,30 @@ export let Scene: ParentComponent<SceneProps> = props => {
   )
   createEffect(
     () => props.shadows?.quality,
-    q => scene.setShadowQuality(q ?? "medium"),
+    q => scene.setShadowQuality(q ?? null),
     { defer: true },
   )
+  createEffect(
+    () => props.quality,
+    q => scene.setQuality(q ?? null),
+    { defer: true },
+  )
+  createEffect(
+    () => props.lodBias,
+    b => scene.setLodBias(b ?? null),
+    { defer: true },
+  )
+  createEffect(
+    () => props.samples,
+    s => {
+      if (s !== undefined) scene.setSamples(s)
+    },
+    { defer: true },
+  )
+  // The row in force, reactive, for the fill cap and the children's
+  // context: the scene's own resolution is the same function over the
+  // same inputs.
+  let row = createMemo(() => resolveQuality(props.quality, quality()))
   createEffect(
     () => props.bloom,
     b => scene.setBloom(b ?? null),
@@ -337,7 +376,9 @@ export let Scene: ParentComponent<SceneProps> = props => {
   let leafLayout = () => (leafNode && getLayoutBox(leafNode)) || (fill ? { width: 0, height: 0 } : { width: props.width!, height: props.height! })
   // Fill sizing: the target follows the leaf's on-screen box (fill.ts),
   // the built-in leaf or the one `output` refs.
-  let fillReads = fill ? createFill("Scene", scene, () => leafNode, () => ({ renderScale: props.renderScale, maxPixels: props.maxPixels }), output !== undefined) : null
+  let fillReads = fill
+    ? createFill("Scene", scene, () => leafNode, () => ({ renderScale: props.renderScale, maxPixels: props.maxPixels ?? row().maxPixels ?? undefined }), output !== undefined)
+    : null
   // Pointer events on the leaf: the built-in fixed leaf is laid out at the
   // target size, so the plain handlers (no layout read per event);
   // otherwise scaled from the laid-out box per event.
@@ -355,7 +396,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
   // an indefinite height would come out square). The leaf adds nothing to
   // its ancestors, exactly as an empty view at 100% would.
   return (
-    <SceneContext value={{ scene, parent: scene.root, viewport: scene, pointer, viewportSize: leaf.size }}>
+    <SceneContext value={{ scene, parent: scene.root, viewport: scene, pointer, viewportSize: leaf.size, quality: row }}>
       {output ? (
         untrack(() => output(scene.texture, leaf))
       ) : (

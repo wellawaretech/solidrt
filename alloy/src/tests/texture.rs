@@ -115,18 +115,31 @@ fn texture_exposes_its_paint() {
 fn sampler_state_parses_options_and_defaults() {
   use crate::gpu::texture::{SamplerFilter, SamplerOptions, SamplerState, SamplerWrap};
 
-  let parse =
-    |filter, wrap, mipmap, anisotropy| SamplerState::parse(&SamplerOptions { filter, wrap, mipmap, anisotropy });
+  let parse = |filter, wrap, mipmap, anisotropy| {
+    SamplerState::parse(&SamplerOptions { filter, wrap, mipmap, anisotropy, base_level: None })
+  };
   let state = parse(None, None, None, None).expect("defaults parse");
   assert_eq!(
     state,
-    SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: false, anisotropy: 1 }
+    SamplerState {
+      filter: SamplerFilter::Linear,
+      wrap: SamplerWrap::Clamp,
+      mipmap: false,
+      anisotropy: 1,
+      ..SamplerState::default()
+    }
   );
 
   let state = parse(Some("nearest"), Some("repeat"), Some(true), Some(8.0)).expect("explicit values parse");
   assert_eq!(
     state,
-    SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Repeat, mipmap: true, anisotropy: 8 }
+    SamplerState {
+      filter: SamplerFilter::Nearest,
+      wrap: SamplerWrap::Repeat,
+      mipmap: true,
+      anisotropy: 8,
+      ..SamplerState::default()
+    }
   );
 
   let state = parse(Some("linear"), None, Some(false), None).expect("partial options parse");
@@ -171,7 +184,8 @@ fn sampler_cache_index_is_a_bijection() {
     for wrap in [SamplerWrap::Clamp, SamplerWrap::Repeat] {
       for mipmap in [false, true] {
         for slot in 0..ANISOTROPY_LEVELS {
-          let state = SamplerState { filter, wrap, mipmap, anisotropy: MIN_ANISOTROPY << slot };
+          let state =
+            SamplerState { filter, wrap, mipmap, anisotropy: MIN_ANISOTROPY << slot, ..SamplerState::default() };
           let i = SamplerCache::index(state);
           assert!(i < SamplerCache::COUNT, "{state:?} indexes past the cache");
           assert!(!seen[i], "{state:?} collides with an earlier state at slot {i}");
@@ -191,12 +205,24 @@ fn sampler_override_composes_and_merges() {
   use crate::gpu::texture::{SamplerFilter, SamplerOverride, SamplerState, SamplerWrap};
   use crate::gpu::{merge_bindings, TextureBinding};
 
-  let own = SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Clamp, mipmap: true, anisotropy: 4 };
+  let own = SamplerState {
+    filter: SamplerFilter::Nearest,
+    wrap: SamplerWrap::Clamp,
+    mipmap: true,
+    anisotropy: 4,
+    ..SamplerState::default()
+  };
   let o = SamplerOverride::parse(Some("linear"), None).expect("filter-only override parses");
   assert_eq!(o, SamplerOverride { filter: Some(SamplerFilter::Linear), wrap: None });
   assert_eq!(
     own.overridden(&o),
-    SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: true, anisotropy: 4 }
+    SamplerState {
+      filter: SamplerFilter::Linear,
+      wrap: SamplerWrap::Clamp,
+      mipmap: true,
+      anisotropy: 4,
+      ..SamplerState::default()
+    }
   );
   assert!(SamplerOverride::parse(None, None).expect("empty override parses").is_empty());
   assert_eq!(own.overridden(&SamplerOverride::default()), own);
@@ -268,7 +294,7 @@ fn compressed_formats_size_by_block_and_chain() {
     assert_eq!(format.chain_byte_len(5, 3), 32 + 16 + 16);
     let state = SamplerState::parse_for(
       format,
-      &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: Some(8.0) },
+      &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: Some(8.0), base_level: None },
     )
     .expect("linear, mipmap and anisotropy parse");
     assert_eq!(state.filter, SamplerFilter::Linear);
@@ -308,17 +334,21 @@ fn integer_format_samples_like_the_32bit_floats() {
   assert!(!TextureFormat::Rgba32f.is_uint());
   assert!(!format.filterable());
   assert!(format.sample_only());
-  let state =
-    SamplerState::parse_for(format, &SamplerOptions { filter: None, wrap: None, mipmap: None, anisotropy: None })
-      .expect("defaults parse");
+  let state = SamplerState::parse_for(
+    format,
+    &SamplerOptions { filter: None, wrap: None, mipmap: None, anisotropy: None, base_level: None },
+  )
+  .expect("defaults parse");
   assert_eq!(state.filter, SamplerFilter::Nearest);
   let linear = SamplerState::parse_for(
     format,
-    &SamplerOptions { filter: Some("linear"), wrap: None, mipmap: None, anisotropy: None },
+    &SamplerOptions { filter: Some("linear"), wrap: None, mipmap: None, anisotropy: None, base_level: None },
   );
   assert!(linear.expect_err("linear refused").contains("nearest-only"));
-  let mip =
-    SamplerState::parse_for(format, &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: None });
+  let mip = SamplerState::parse_for(
+    format,
+    &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: None, base_level: None },
+  );
   assert!(mip.expect_err("mipmap refused").contains("mip"));
 }
 
@@ -333,7 +363,7 @@ fn half_float_and_srgb_sample_like_byte_formats() {
   for format in [TextureFormat::Rgba16f, TextureFormat::Rgba8Srgb] {
     let state = SamplerState::parse_for(
       format,
-      &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: Some(4.0) },
+      &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: Some(4.0), base_level: None },
     )
     .expect("linear, mipmap and anisotropy parse");
     assert_eq!(state.filter, SamplerFilter::Linear);
@@ -374,7 +404,7 @@ fn float_formats_sample_nearest_only() {
   use crate::gpu::texture::{SamplerFilter, SamplerOptions, SamplerState, TextureFormat};
 
   let parse = |format, filter, mipmap, anisotropy| {
-    SamplerState::parse_for(format, &SamplerOptions { filter, wrap: None, mipmap, anisotropy })
+    SamplerState::parse_for(format, &SamplerOptions { filter, wrap: None, mipmap, anisotropy, base_level: None })
   };
   let state = parse(TextureFormat::R32f, None, None, None).expect("float defaults parse");
   assert_eq!(state.filter, SamplerFilter::Nearest);

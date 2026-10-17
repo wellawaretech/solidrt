@@ -18,7 +18,7 @@ use super::prev_framebuffer;
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
 use super::storage::{
   attach_cube_face, attach_storage, create_cube_storage, create_depth_texture, create_mesh_storage,
-  create_target_texture, DepthAttachment, MeshStorage, Msaa,
+  create_target_texture, make_msaa, DepthAttachment, MeshStorage, Msaa,
 };
 use crate::gpu::resources::GpuDrawInfo;
 use crate::gpu::spec::DepthStorage;
@@ -847,16 +847,32 @@ impl ShaderTexture {
     (self.passes.get(), self.pass_issue_micros.get(), self.pass_exec_micros.get(), self.vertices.get())
   }
 
-  /// Recreate the render target at a new size, keeping the compiled programs,
-  /// FBO, entries, and draw state; the caller re-renders afterwards. The old
-  /// target texture is NOT deleted here: Impeller owns its GL name via the
-  /// adopted Texture handle (see register_shader_target), which dies with the
-  /// UI side's last reference once the registry entry is replaced. On error
-  /// the old target is left attached and the shader stays usable at its
-  /// previous size.
-  pub fn resize(&mut self, gl: &glow::Context, width: u32, height: u32) -> Result<(), String> {
+  /// Recreate the render target at a new size - and, with `samples`, over
+  /// new multisample storage at that count (1 = none) - keeping the
+  /// compiled programs, FBO, entries, and draw state; the caller re-renders
+  /// afterwards. The old target texture is NOT deleted here: Impeller owns
+  /// its GL name via the adopted Texture handle (see register_shader_target),
+  /// which dies with the UI side's last reference once the registry entry
+  /// is replaced. On error the old target is left attached and the shader
+  /// stays usable at its previous size and sample count. A count the driver
+  /// refuses falls back to single-sample with a warning, the create's rule.
+  pub fn reshape(&mut self, gl: &glow::Context, width: u32, height: u32, samples: Option<u32>) -> Result<(), String> {
     if self.region.is_some() {
       return Err("sub-targets resize through set_region_rect".to_string());
+    }
+    if samples.is_some() && self.mesh().is_none() {
+      return Err("a fragment shader texture has no multisample storage".to_string());
+    }
+    // The current multisample storage, borrowed: the names stay the mesh's
+    // until a successful reshape at a new count retires them.
+    let borrow = |m: &Msaa| match m {
+      Msaa::InTile { fns, samples } => Msaa::InTile { fns, samples: *samples },
+      Msaa::Explicit { fbo, color, samples } => Msaa::Explicit { fbo: *fbo, color: *color, samples: *samples },
+    };
+    let old_depth = self.mesh().and_then(|m| m.depth);
+    if samples.is_some_and(|s| s >= 2) && matches!(old_depth, Some(DepthAttachment::Texture(_))) {
+      // Gated UI-side; backstopped here like the create.
+      return Err("a depth texture cannot be multisampled (samples must be 1 with depth \"texture\")".to_string());
     }
     unsafe {
       let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
@@ -865,8 +881,6 @@ impl ShaderTexture {
       // incomplete; on failure size everything back to the old target so the
       // shader keeps rendering at its previous size. The storage view borrows
       // this target's GL names (no ownership: nothing is deleted through it).
-      let mesh = self.mesh();
-      let old_depth = mesh.and_then(|m| m.depth);
       // A depth texture follows the color target's rule: a fresh name at the
       // new size (the old one is Impeller-owned once adopted, so it is
       // neither respecified nor deleted here). Renderbuffer depth is resized
@@ -881,17 +895,37 @@ impl ShaderTexture {
         },
         other => other,
       };
-      let mut storage = MeshStorage {
-        target,
-        fbo: self.fbo,
-        depth,
-        msaa: mesh.and_then(|m| m.msaa.as_ref()).map(|m| match m {
-          Msaa::InTile { fns, samples } => Msaa::InTile { fns, samples: *samples },
-          Msaa::Explicit { fbo, color, samples } => Msaa::Explicit { fbo: *fbo, color: *color, samples: *samples },
-        }),
+      let delete_new = |gl: &glow::Context| {
+        gl.delete_texture(target);
+        if let (Some(DepthAttachment::Texture(tex)), true) = (depth, depth != old_depth) {
+          gl.delete_texture(tex);
+        }
       };
-      let result = attach_storage(gl, &storage, width, height, self.format);
+      // Fresh multisample names at the new count, or the current storage.
+      let msaa = match samples {
+        Some(s) => match make_msaa(gl, s) {
+          Ok(msaa) => msaa,
+          Err(e) => {
+            delete_new(gl);
+            return Err(e);
+          }
+        },
+        None => self.mesh().and_then(|m| m.msaa.as_ref()).map(borrow),
+      };
+      let mut storage = MeshStorage { target, fbo: self.fbo, depth, msaa };
+      let mut result = attach_storage(gl, &storage, width, height, self.format);
+      if let (Err(e), Some(_)) = (&result, samples) {
+        if let Some(fresh) = storage.msaa.take() {
+          log::warn!("[shader] {}x multisampling unavailable ({e}); target renders single-sample", fresh.samples());
+          fresh.delete(gl);
+          result = attach_storage(gl, &storage, width, height, self.format);
+        }
+      }
       if let Err(e) = &result {
+        if samples.is_some() {
+          // The rollback re-attaches the storage the mesh still owns.
+          storage.msaa = self.mesh().and_then(|m| m.msaa.as_ref()).map(borrow);
+        }
         storage.target = self.target;
         storage.depth = old_depth;
         if let Err(rollback) = attach_storage(gl, &storage, self.width, self.height, self.format) {
@@ -901,10 +935,7 @@ impl ShaderTexture {
       let result = result.map_err(|e| format!("shader framebuffer incomplete after resize: {e}"));
       gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
       if let Err(e) = result {
-        gl.delete_texture(target);
-        if let (Some(DepthAttachment::Texture(tex)), true) = (depth, depth != old_depth) {
-          gl.delete_texture(tex);
-        }
+        delete_new(gl);
         return Err(e);
       }
       self.target = target;
@@ -912,9 +943,23 @@ impl ShaderTexture {
       self.height = height;
       if let TargetKind::Mesh(m) = &mut self.kind {
         m.depth = depth;
+        if samples.is_some() {
+          // The new count took: the old explicit names are no longer
+          // attached anywhere.
+          if let Some(old) = m.msaa.take() {
+            old.delete(gl);
+          }
+          m.msaa = storage.msaa;
+        }
       }
       Ok(())
     }
+  }
+
+  /// Change the declared sampling of this target's output in place (see
+  /// `Context::set_texture_sampling`).
+  pub fn set_sampler(&mut self, sampler: crate::gpu::SamplerState) {
+    self.sampler = sampler;
   }
 
   /// Release GL resources owned by this target (FBO, depth renderbuffer, and

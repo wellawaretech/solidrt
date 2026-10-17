@@ -5,6 +5,7 @@ import type { Scene as SceneHandle } from "../scene.ts"
 import type { CameraState, CameraUpdate } from "../camera.ts"
 import type { Hit, QueryOptions, ScreenRay } from "../scene.ts"
 import type { Vec3 } from "../math.ts"
+import type { QualityRow } from "../quality.ts"
 
 /** The camera state a camera control drives: the scene, or a view (both
  * expose setCamera, camera(), size(), and the projection the control
@@ -29,6 +30,10 @@ export type SceneCtx = {
    * What a HUD or a per-pixel material under the owner sizes from without
    * polling. */
   viewportSize: () => { width: number; height: number }
+  /** The scene's quality row, reactive (the `<Scene quality>` prop over
+   * the app tier): what a `<View3d>` defaults its fill cap from, and what
+   * a component under the scene reads to scale its own work by. */
+  quality: () => QualityRow
 }
 export let SceneContext = createContext<SceneCtx>()
 
@@ -53,7 +58,7 @@ export function useScene(): SceneCtx {
 // (probes/3d-instance-mount-bench.tsx has the per-row cost).
 export function provide(ctx: SceneCtx, parent: SceneNode, props: { children?: Element }): Element | undefined {
   if (!("children" in props)) return undefined
-  return <SceneContext value={{ scene: ctx.scene, parent, viewport: ctx.viewport, pointer: ctx.pointer, viewportSize: ctx.viewportSize }}>{props.children}</SceneContext>
+  return <SceneContext value={{ scene: ctx.scene, parent, viewport: ctx.viewport, pointer: ctx.pointer, viewportSize: ctx.viewportSize, quality: ctx.quality }}>{props.children}</SceneContext>
 }
 
 /** What a `<Lod>` hands its children: a direct child with `lodSize`

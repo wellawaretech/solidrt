@@ -112,7 +112,7 @@ function App() {
       }}
     >
       <view width={pct(100)} height={pct(100)}>
-        <Scene clearColor={[0.1, 0.11, 0.14, 1]} environment={{ cube }} samples={4} label="wireframe">
+        <Scene clearColor={[0.1, 0.11, 0.14, 1]} environment={{ cube }} label="wireframe">
           <PerspectiveCamera fov={40} position={[center[0] + radius * 1.4, center[1] + radius * 1.1, center[2] + radius * 2.2]} lookAt={center} />
           <DirectionalLight direction={[0.5, -0.8, 0.3]} color={[1, 0.95, 0.85]} intensity={0.9} />
           <Mesh geometry={grid} material={helperLines} position={[0, b[1]!, 0]} />

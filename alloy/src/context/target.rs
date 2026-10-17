@@ -33,7 +33,7 @@ impl Context {
     label: Option<String>,
   ) -> Result<u64, String> {
     let limits = self.gpu_limits();
-    limits.check_texture_size(width, height)?;
+    limits.check_target(width, height, &sampler)?;
     limits.check_texture_units(textures.len())?;
     for b in textures {
       self.check_depth_binding(b)?;
@@ -135,7 +135,7 @@ impl Context {
   /// program and pipeline die with the target.
   pub fn create_pipeline_texture(&self, mut spec: PipelineSpec) -> Result<u64, String> {
     let limits = self.gpu_limits();
-    limits.check_texture_size(spec.target.width, spec.target.height)?;
+    limits.check_target(spec.target.width, spec.target.height, &spec.target.sampler)?;
     limits.check_texture_units(spec.entry.textures.len())?;
     for b in &spec.entry.textures {
       self.check_depth_binding(b)?;
@@ -231,7 +231,7 @@ impl Context {
   /// creating a target compiles nothing.
   pub fn create_shader_target(&self, pipeline: u64, spec: TargetSpec, mut entry: DrawSpec) -> Result<u64, String> {
     let limits = self.gpu_limits();
-    limits.check_texture_size(spec.width, spec.height)?;
+    limits.check_target(spec.width, spec.height, &spec.sampler)?;
     limits.check_texture_units(entry.textures.len())?;
     for b in &entry.textures {
       self.check_depth_binding(b)?;
@@ -293,7 +293,7 @@ impl Context {
     depth: DepthStorage,
     format: TextureFormat,
   ) -> Result<u64, String> {
-    self.gpu_limits().check_texture_size(spec.width, spec.height)?;
+    self.gpu_limits().check_target(spec.width, spec.height, &spec.sampler)?;
     // rgba8 is the one format Impeller displays and reads back; rgba8-srgb
     // (encodes on write) and rgba16f (keeps the range: HDR views, bakes)
     // make a sampler-only target - a pass source, never a `<texture>`.
@@ -372,7 +372,7 @@ impl Context {
     // An sRGB target encodes on write (GLES), so a pass writes linear light
     // into it as into any other; half float keeps the range (HDR probes).
     self.gpu_limits().check_render_format(format)?;
-    self.gpu_limits().check_cube_map_size(size)?;
+    self.gpu_limits().check_cube_target(size, &spec.sampler)?;
     validate_load(&spec)?;
     if !spec.manual {
       return Err("a cube draw target is manual: render it face by face with renderTarget(id, face)".to_string());

@@ -42,7 +42,7 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene clearColor={[0.02, 0.02, 0.03, 1]} samples={4} label="lamps">
+        <Scene clearColor={[0.02, 0.02, 0.03, 1]} label="lamps">
           <PerspectiveCamera fov={50} position={[0, 5, 8]} lookAt={[0, 0.5, 0]} />
           <HemisphereLight sky={[0.05, 0.05, 0.06]} ground={[0.02, 0.02, 0.02]} />
           <Group ref={g => (swing = g)} position={[0, 5, 0]}>

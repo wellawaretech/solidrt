@@ -93,7 +93,6 @@ function App() {
         <Scene
           background={SKY}
           toneMapping="aces"
-          samples={4}
           label="bloom"
           ref={lit}
           pointer={pointer}

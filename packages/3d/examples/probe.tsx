@@ -87,7 +87,7 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene clearColor={[0.05, 0.05, 0.06, 1]} samples={4} label="probe-demo" ref={s => (scene = s)} pointer={pointer}>
+        <Scene clearColor={[0.05, 0.05, 0.06, 1]} label="probe-demo" ref={s => (scene = s)} pointer={pointer}>
           <OrbitCamera input={input} target={[0, 0, 0]} azimuth={0.5} elevation={0.2} distance={4} />
           <HemisphereLight sky={[0.6, 0.65, 0.7]} ground={[0.3, 0.28, 0.26]} intensity={0.6} />
           <DirectionalLight direction={[0.4, -0.8, 0.3]} intensity={0.8} />

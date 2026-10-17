@@ -121,10 +121,10 @@ fn collect_textures(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Res
   decode_texture_bindings(&value).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
 }
 
-// Decode the { filter?, wrap?, mipmap?, anisotropy? } sampling options every
-// create path accepts ("linear"/"nearest", "clamp"/"repeat", bool, number >= 1;
-// defaults linear/clamp/false/1); an unknown value throws at the create call
-// site. Resolved against the texture's format: float formats default to
+// Decode the { filter?, wrap?, mipmap?, anisotropy?, baseLevel? } sampling
+// options every create path accepts ("linear"/"nearest", "clamp"/"repeat",
+// bool, number >= 1, integer >= 0; defaults linear/clamp/false/1/0); an
+// unknown value throws at the create call site. Resolved against the texture's format: float formats default to
 // nearest and refuse linear/mipmap/anisotropy (alloy's parse_for invariant);
 // paths without a format option are always rgba8.
 fn collect_sampler(
@@ -145,19 +145,20 @@ fn collect_sampler_defaulting(
   api: &str,
   mipmap_default: Option<bool>,
 ) -> rquickjs::Result<alloy::SamplerState> {
-  let (filter, wrap, mipmap, anisotropy) = match opts {
+  let (filter, wrap, mipmap, anisotropy, base_level) = match opts {
     Some(o) => (
       o.get::<_, Option<String>>("filter")?,
       o.get::<_, Option<String>>("wrap")?,
       o.get::<_, Option<bool>>("mipmap")?,
       o.get::<_, Option<f64>>("anisotropy")?,
+      o.get::<_, Option<f64>>("baseLevel")?,
     ),
-    None => (None, None, None, None),
+    None => (None, None, None, None, None),
   };
   let mipmap = mipmap.or(mipmap_default);
   let state = alloy::SamplerState::parse_for(
     format,
-    &alloy::SamplerOptions { filter: filter.as_deref(), wrap: wrap.as_deref(), mipmap, anisotropy },
+    &alloy::SamplerOptions { filter: filter.as_deref(), wrap: wrap.as_deref(), mipmap, anisotropy, base_level },
   )
   .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
   // Not invalid (GL accepts it), but almost always a forgotten flag: the
@@ -891,6 +892,8 @@ impl ModuleDef for GpuModule {
     decl.declare("setTargetParams")?;
     decl.declare("setTargetTextures")?;
     decl.declare("setTargetSize")?;
+    decl.declare("setTargetSamples")?;
+    decl.declare("setTextureSampling")?;
     decl.declare("setTargetRect")?;
     decl.declare("setDrawTextures")?;
     decl.declare("setDrawRange")?;
@@ -941,6 +944,8 @@ impl ModuleDef for GpuModule {
     exports.export("setTargetParams", Function::new(ctx.clone(), set_target_params)?)?;
     exports.export("setTargetTextures", Function::new(ctx.clone(), set_target_textures)?)?;
     exports.export("setTargetSize", Function::new(ctx.clone(), set_target_size)?)?;
+    exports.export("setTargetSamples", Function::new(ctx.clone(), set_target_samples)?)?;
+    exports.export("setTextureSampling", Function::new(ctx.clone(), set_texture_sampling)?)?;
     exports.export("setTargetRect", Function::new(ctx.clone(), set_target_rect)?)?;
     exports.export("setDrawTextures", Function::new(ctx.clone(), set_draw_textures)?)?;
     exports.export("setDrawRange", Function::new(ctx.clone(), set_draw_range)?)?;
@@ -1813,6 +1818,39 @@ fn set_target_size(ctx: Ctx<'_>, id: u64, width: u32, height: u32) -> rquickjs::
 // setTargetRect(id, { x, y, width, height }): move and resize a
 // sub-target's rectangle in its parent (top-left origin). Every key is
 // required; the parent re-renders in full.
+// Give a mesh target new multisample storage at `samples` in place: the
+// resize path with the count changed, everything else carried over.
+fn set_target_samples(ctx: Ctx<'_>, id: u64, samples: u32) -> rquickjs::Result<()> {
+  let st = state(&ctx);
+  st.gui.alloy.set_target_samples(id, samples).map_err(|e| throw_str(&ctx, &format!("setTargetSamples: {e}")))?;
+  st.gui.platform.request_frame();
+  Ok(())
+}
+
+// Change a texture's declared sampling in place: { filter?, wrap?,
+// anisotropy?, baseLevel? }, each given or kept (the create options'
+// vocabulary). The mip chain is storage, fixed at creation, so `mipmap`
+// throws here.
+fn set_texture_sampling(ctx: Ctx<'_>, id: u64, update: Object<'_>) -> rquickjs::Result<()> {
+  if update.get::<_, Option<Value>>("mipmap")?.is_some_and(|v| !v.is_undefined()) {
+    return Err(throw_str(&ctx, "setTextureSampling: mipmap is the chain's storage, fixed at creation"));
+  }
+  let filter = update.get::<_, Option<String>>("filter")?;
+  let wrap = update.get::<_, Option<String>>("wrap")?;
+  let anisotropy = update.get::<_, Option<f64>>("anisotropy")?;
+  let base_level = update.get::<_, Option<f64>>("baseLevel")?;
+  let st = state(&ctx);
+  st.gui
+    .alloy
+    .set_texture_sampling(
+      id,
+      &alloy::SamplerUpdate { filter: filter.as_deref(), wrap: wrap.as_deref(), anisotropy, base_level },
+    )
+    .map_err(|e| throw_str(&ctx, &format!("setTextureSampling: {e}")))?;
+  st.gui.platform.request_frame();
+  Ok(())
+}
+
 fn set_target_rect(ctx: Ctx<'_>, id: u64, rect: Object<'_>) -> rquickjs::Result<()> {
   let mut values = [0f64; 4];
   for (slot, key) in values.iter_mut().zip(["x", "y", "width", "height"]) {

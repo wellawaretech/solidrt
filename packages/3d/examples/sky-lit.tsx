@@ -78,7 +78,7 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene background={SKY} toneMapping="aces" samples={4} label="sky-lit" ref={lit} pointer={pointer}>
+        <Scene background={SKY} toneMapping="aces" label="sky-lit" ref={lit} pointer={pointer}>
           <OrbitCamera input={input} target={[0, 0, 0]} azimuth={0.3} elevation={0.15} distance={7} />
           {spheres.map(s => (
             <Mesh geometry={geometry} material={s.material} position={s.position} />

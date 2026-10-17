@@ -96,7 +96,7 @@ function App() {
           if (e.pointerType === "mouse") lockPointer(true)
         }}
       >
-        <Scene clearColor={[0.6, 0.72, 0.88, 1]} samples={4} label="first-person" pointer={pointer}>
+        <Scene clearColor={[0.6, 0.72, 0.88, 1]} label="first-person" pointer={pointer}>
           <PerspectiveCamera fov={70} near={0.1} far={60} />
           <FirstPersonCamera input={input} ref={c => (camera = c)} position={[0, EYE, 7]} clampPosition={inside} />
           <HemisphereLight sky={[0.5, 0.56, 0.68]} ground={[0.25, 0.22, 0.18]} />

@@ -42,7 +42,7 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene clearColor={[0.55, 0.65, 0.8, 1]} samples={4} label="shadows">
+        <Scene clearColor={[0.55, 0.65, 0.8, 1]} label="shadows">
           <PerspectiveCamera fov={45} position={[0, 4, 7]} lookAt={[0, 0.5, 0]} />
           <HemisphereLight sky={[0.45, 0.5, 0.6]} ground={[0.2, 0.18, 0.15]} />
           <DirectionalLight

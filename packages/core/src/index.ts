@@ -7,6 +7,8 @@ export { onFrame, frameTime, onBeforeRender, onLayout, onResize, onWindowFocus, 
 export type { BackEvent, BeforeRenderOptions, ContextRestoredEvent, FrameOptions, LifecycleHandler } from "./window"
 export { windowSize, safeArea, displayScale, windowFocused, keyboardHeight, lockPointer, pointerLocked } from "./window"
 export { env } from "./environment"
+export { quality, setQuality, QUALITIES } from "./quality"
+export type { Quality } from "./quality"
 export type { InputDevices, SystemTheme, Orientation, Visibility, Launch } from "./environment"
 export { gamepads } from "./gamepad"
 export type { GamepadState } from "./gamepad"

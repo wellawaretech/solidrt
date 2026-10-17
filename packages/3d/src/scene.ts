@@ -38,12 +38,14 @@
 // and pointer subsystems are scene-shadows.ts / scene-pointer.ts,
 // built here with the scene's seams as their deps.
 
-import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, renderTarget, screenSizeScale, setDrawBuffers, setDrawParams, setDrawRange, setDrawTextures, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
+import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, renderTarget, screenSizeScale, setDrawBuffers, setDrawParams, setDrawRange, setDrawTextures, setTargetParams, setTargetRect, setTargetSamples, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { BindDrawOptions, Impact as CoreImpact, NodeId, QueryFilter } from "flux:spatial"
 import type { BufferId, DrawId, FilterMode, InstanceOrder, ProgramId, RenderPipelineId, ShaderParams, TextureBindings, TextureId, WrapMode } from "@solidrt/core/gpu"
-import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core"
+import { createEffect, getOwner, onBeforeRender, onCleanup, quality as appQuality, runWithOwner, untrack } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
+import { checkQualityInput, resolveQuality, sameQuality } from "./quality.ts"
+import type { QualityInput, QualityRow } from "./quality.ts"
 import { copy, mat4, transformPoint } from "./math.ts"
 import { linearColor, premultipliedColor } from "./color.ts"
 import type { Mat4, Quat, Vec3, Vec4 } from "./math.ts"
@@ -449,16 +451,28 @@ export type SceneOptions = {
    * is no resolve), and rejects resolve, bloom, toneMapping, exposure
    * and reflection probes. */
   blendSpace?: BlendSpace
-  /** LOD quality knob, default 1: every measured projected size is
-   * multiplied by it before the level select, so below 1 the groups hand
-   * over to their far levels sooner (Unity's lodBias). Live via
-   * scene.setLodBias; views and shadow tiles follow it. */
+  /** The scene's quality: a tier name ("low" | "medium" | "high", that
+   * tier's row of QUALITY_TIERS whatever the app's tier is) or a row
+   * object whose missing fields are the app tier's (core's `quality()`).
+   * Absent, the scene follows the app tier. Every quality knob below and
+   * on the lights defaults from the row - the shadow kernel tier, a
+   * light's `mapSize` and `cascades`, `lodBias`, the LOD cross-fade,
+   * `samples`, a fill scene's `maxPixels`, a probe's size - and each
+   * knob's own option is the override. Live via scene.setQuality, and
+   * with the app tier when created under an owner. */
+  quality?: QualityInput
+  /** LOD quality knob: every measured projected size is multiplied by it
+   * before the level select, so below 1 the groups hand over to their
+   * far levels sooner (Unity's lodBias). Default: the quality row's
+   * (0.7 / 1 / 1.5). Live via scene.setLodBias; views and shadow tiles
+   * follow it. */
   lodBias?: number
   /** Scene-wide shadow settings. `quality` is the soft shadow kernel's
-   * tier (default "medium"; see ShadowQuality): the taps every casting
-   * light spends per receiving fragment and the filter width of a light
-   * that sets no `shadow.radius` (Unity's Low/Medium/High tents), "hard"
-   * the one hardware tap for all of them. Live via scene.setShadowQuality. */
+   * tier (see ShadowQuality): the taps every casting light spends per
+   * receiving fragment and the filter width of a light that sets no
+   * `shadow.radius` (Unity's Low/Medium/High tents), "hard" the one
+   * hardware tap for all of them. Default: the quality row's (hard /
+   * medium / high). Live via scene.setShadowQuality. */
   shadows?: { quality?: ShadowQuality }
   /** The scene target's layer mask (bitmask, default 1): the scene draws
    * the meshes whose `layers` intersect it. Live via scene.setLayers. */
@@ -489,8 +503,11 @@ export type SceneOptions = {
   autoFree?: boolean
   filter?: FilterMode
   wrap?: WrapMode
-  /** Multisample count of the target (1, 2, 4 or 8; default 1). Storage-only
-   * anti-aliasing of mesh edges; see createDrawTarget. */
+  /** Multisample count of the target (1, 2, 4 or 8). Storage-only
+   * anti-aliasing of mesh edges; see createDrawTarget. Default: the
+   * quality row's (1 / 4 / 4), or 1 with `depth: "texture"` (no
+   * multisampled sampleable depth; an explicit count above 1 with it
+   * throws). Live via scene.setSamples. */
   samples?: 1 | 2 | 4 | 8
   /** Where a per-scene budget error goes: the light cap and the
    * shadow-slot budget are checked over the settled set at the sync and
@@ -531,6 +548,9 @@ export type ViewOptions = {
   depth?: true | "texture"
   /** The view buffer's clear, an sRGB color like the scene's. */
   clearColor?: [number, number, number, number]
+  /** Multisample count of the view's own target; default the scene's
+   * quality row's (1 with `depth: "texture"`; a tile has the atlas's).
+   * Live via view.setSamples. */
   samples?: 1 | 2 | 4 | 8
   filter?: FilterMode
   wrap?: WrapMode
@@ -579,6 +599,11 @@ export type ViewHandle = {
   /** Current camera state, exactly scene.camera. */
   camera(): CameraState
   setSize(width: number, height: number): void
+  /** The view target's multisample count from now on (ViewOptions.samples
+   * live): the storage is reallocated under the same id. The view stops
+   * following the scene's quality row for it. Throws on a tiled view (the
+   * atlas's), a `depth: "texture"` view above 1. */
+  setSamples(samples: 1 | 2 | 4 | 8): void
   /** The view's target size in pixels, as setSize/setRect last left it. */
   size(): { width: number; height: number }
   /** Move and resize a view created `into` an atlas (top-left origin);
@@ -631,7 +656,8 @@ export type ViewHandle = {
 export type ReflectionProbeOptions = {
   /** Where the probe looks out from, world space (live via setPosition). */
   position: Vec3
-  /** Face edge in texels; default 128 (Unity's probe default). */
+  /** Face edge in texels; default the scene's quality row's probeSize (64
+   * / 128 / 256; Unity's probe default is 128), fixed at creation. */
   size?: number
   /** The face cameras' near and far planes (defaults 0.1 and 100). */
   near?: number
@@ -691,9 +717,6 @@ const PROBE_FACE_UP: Vec3[] = [
   [0, 1, 0],
   [0, 1, 0],
 ]
-// Default face edge of a reflection probe (Unity's default resolution),
-// and of a baked background (the bake tool's default).
-const PROBE_SIZE = 128
 // A cube face spans a quarter turn.
 const PROBE_FOV = 90
 export type Scene = {
@@ -839,13 +862,30 @@ export type Scene = {
   setBloom(bloom: BloomOptions | null): void
   /** The LOD quality knob (SceneOptions.lodBias): a multiplier on every
    * measured projected size, for the scene, its views and its shadow
-   * tiles. Below 1 switches to far levels sooner. */
-  setLodBias(bias: number): void
+   * tiles. Below 1 switches to far levels sooner. Null hands the knob
+   * back to the quality row. */
+  setLodBias(bias: number | null): void
   /** The soft shadow kernel's quality tier (SceneOptions.shadows.quality):
-   * "hard" | "low" | "medium" | "high". One light-set write
-   * (`uShadowSearchTaps` / `uShadowFilterTaps`, and `uShadowRadius` for
-   * the lights on the tier's width); no program recompiles. */
-  setShadowQuality(quality: ShadowQuality): void
+   * "hard" | "low" | "medium" | "high", or null for the quality row's.
+   * One light-set write (`uShadowSearchTaps` / `uShadowFilterTaps`, and
+   * `uShadowRadius` for the lights on the tier's width); no program
+   * recompiles. */
+  setShadowQuality(quality: ShadowQuality | null): void
+  /** The scene target's multisample count from now on (SceneOptions.samples
+   * live): the storage is reallocated under the same id, every entry and
+   * binding kept. The scene stops following the quality row for it.
+   * Throws above 1 on a `depth: "texture"` scene. */
+  setSamples(samples: 1 | 2 | 4 | 8): void
+  /** The scene's quality (SceneOptions.quality) from now on: a tier name,
+   * a row object over the app tier, or null to follow the app tier. Live:
+   * what the new row changes is applied - the shadow kernel (one light-set
+   * write), the LOD bias and cross-fade, the multisample storage of the
+   * scene and of the views that set none, the shadow atlas (map sizes and
+   * cascade counts re-settle) - and what an explicit option or setter
+   * already fixed stays. Probes keep the size they were made at. */
+  setQuality(quality: QualityInput | null): void
+  /** The quality row in force: every knob's current default (a copy). */
+  quality(): QualityRow
   /** Stagger (ms) on the scene's root node, live (SceneOptions.stagger
    * is its creation form): null removes it. The 2d layer's setStagger. */
   setStagger(ms: number | null): void
@@ -1032,7 +1072,8 @@ export type Scene = {
   /**
    * Bake the background into an environment: a reflection probe at the
    * origin that sees no mesh (layer mask 0), so its six `size` faces
-   * (default 128) hold the background alone - the GLSL sky or the skybox,
+   * (default the quality row's probeSize) hold the background alone - the
+   * GLSL sky or the skybox,
    * exactly as the scene draws it, LINEAR like every buffer (a sky
    * fragment writes light, never display pixels) - then GGX-prefiltered
    * into the chain
@@ -1179,6 +1220,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   if (depthMode === "texture" && (opts?.samples ?? 1) > 1) {
     throw new Error('createScene: depth "texture" cannot combine with samples (no multisampled sampleable depth) - render larger and display smaller instead')
   }
+  // The quality row every unset knob defaults from: the scene's own input
+  // (a tier name or a row over the app tier) resolved against the app
+  // tier (core's quality()), re-resolved when either changes
+  // (applyQuality, below). The knobs an option fixes keep their explicit
+  // value beside it (the *Explicit variables).
+  checkQualityInput(opts?.quality, "createScene")
+  let qualityInput: QualityInput | null = opts?.quality ?? null
+  let row: QualityRow = resolveQuality(qualityInput, untrack(appQuality))
+  let samplesExplicit: 1 | 2 | 4 | 8 | null = opts?.samples ?? null
+  // A sampleable depth is single-sample, whatever the row says.
+  let samples = samplesExplicit ?? (depthMode === "texture" ? 1 : row.samples)
   // The scene target's layer mask; shadow views follow it (a mesh the
   // scene cannot see must not darken it).
   let sceneMask = checkMask(opts?.layers ?? 1, "createScene")
@@ -1203,7 +1255,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     depth: depthMode,
     format: display ? "rgba8" : bufferFormat(),
     clearColor: bufferClear(opts?.clearColor, display),
-    samples: opts?.samples,
+    samples,
     filter: display ? opts?.filter : undefined,
     wrap: display ? opts?.wrap : undefined,
     label,
@@ -1308,10 +1360,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // SPOT_PENUMBRA_MIN floors the cone's inner-outer cosine window so a
   // hard rim (penumbra 0) is still a defined smoothstep edge pair.
   const SPOT_PENUMBRA_MIN = 1e-3
-  let shadowQuality: ShadowQuality = opts?.shadows?.quality ?? "medium"
-  if (SHADOW_QUALITY_TIERS[shadowQuality] === undefined) {
-    throw new Error('createScene: shadows.quality must be "hard", "low", "medium" or "high", got ' + shadowQuality)
+  let shadowQualityExplicit: ShadowQuality | null = opts?.shadows?.quality ?? null
+  if (shadowQualityExplicit !== null && SHADOW_QUALITY_TIERS[shadowQualityExplicit] === undefined) {
+    throw new Error('createScene: shadows.quality must be "hard", "low", "medium" or "high", got ' + shadowQualityExplicit)
   }
+  // The kernel tier in force: the explicit one, else the row's.
+  let shadowQuality = (): ShadowQuality => shadowQualityExplicit ?? row.shadows
   let writeLights = () => {
     lightsDirty = false
     let sky: Vec3 = [0, 0, 0]
@@ -1330,7 +1384,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // the no-hemisphere default; the shader only ANDs the bit pattern).
     let masks: number[] = []
     let hemiMask = -1
-    let tier = SHADOW_QUALITY_TIERS[shadowQuality]
+    let tier = SHADOW_QUALITY_TIERS[shadowQuality()]
     let count = 0
     for (let light of lights) {
       if (light.type === "hemisphere") {
@@ -1549,6 +1603,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     /** Whether the view set its own bloom (the `bloom` option or
      * view.setBloom): the scene's setBloom then skips it. */
     ownBloom: boolean
+    /** Whether the view's multisample count follows the scene's quality
+     * row: a 2D target of its own (not a tile, a probe or a shadow tile)
+     * that neither set `samples` nor keeps a sampleable depth, until
+     * view.setSamples fixes one. */
+    rowSamples: boolean
     width: number
     height: number
     /** Debug label: the option, else the scene's plus -view/-probe. */
@@ -1812,7 +1871,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
             depth: tiled ? undefined : (vopts.depth ?? true),
             format: tiled ? undefined : display ? "rgba8" : bufferFormat(),
             clearColor: bufferClear(vopts.clearColor, display),
-            samples: vopts.samples,
+            // The row's count for a target of the view's own; a tile has
+            // the atlas's, a sampleable depth is single-sample.
+            samples: tiled ? undefined : vopts.samples ?? ((vopts.depth ?? true) === "texture" ? 1 : row.samples),
             filter: display ? vopts.filter : undefined,
             wrap: display ? vopts.wrap : undefined,
             label: viewLabel,
@@ -1827,7 +1888,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // A shadow tile measures LOD by the scene camera; every other view
     // by its own, under the scene's bias.
     if (shadowFilter !== null) spatial.setLodReference(buffer, texture)
-    else spatial.setLodBias(buffer, lodBias)
+    else {
+      spatial.setLodBias(buffer, lodBias)
+      spatial.setLodFade(buffer, row.lodFade)
+    }
     let v: ViewRecord = {
       texture: buffer,
       // A shadow view is depth only, a probe's faces are read as a cube,
@@ -1838,6 +1902,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           ? makeResolve(buffer, vopts.width, vopts.height, vopts.resolve, { filter: vopts.filter, wrap: vopts.wrap }, viewLabel)
           : null,
       ownBloom: vopts.bloom !== undefined,
+      rowSamples: !tiled && cube === null && shadowLight === null && vopts.samples === undefined && (vopts.depth ?? true) !== "texture",
       width: vopts.width,
       height: vopts.height,
       label: viewLabel,
@@ -1883,6 +1948,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     lights,
     camera,
     targetSize: () => ({ width, height }),
+    defaults: () => ({ mapSize: row.mapSize, cascades: row.cascades }),
     label,
     makeView,
     disposeView,
@@ -1908,9 +1974,56 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     projScratch.set(cam.proj)
     spatial.setView(target, viewScratch, projScratch)
   }
-  let lodBias = opts?.lodBias ?? 1
-  if (!(lodBias > 0 && Number.isFinite(lodBias))) throw new Error("createScene: lodBias must be a positive number, got " + lodBias)
+  let lodBiasExplicit: number | null = opts?.lodBias ?? null
+  if (lodBiasExplicit !== null && !(lodBiasExplicit > 0 && Number.isFinite(lodBiasExplicit))) {
+    throw new Error("createScene: lodBias must be a positive number, got " + lodBiasExplicit)
+  }
+  // The bias in force: the explicit one, else the row's.
+  let lodBias = lodBiasExplicit ?? row.lodBias
   spatial.setLodBias(texture, lodBias)
+  spatial.setLodFade(texture, row.lodFade)
+  // Push a bias to the scene and every view measuring by its own camera
+  // (a shadow tile measures by the scene's, through its LOD reference).
+  let applyLodBias = (bias: number) => {
+    lodBias = bias
+    spatial.setLodBias(texture, bias)
+    for (let v of views) if (v.shadowFilter === null && !v.disposed) spatial.setLodBias(v.texture, bias)
+  }
+  // Re-resolve the quality row (the scene's input over the app tier) and
+  // apply what changed, each knob only where no explicit option or setter
+  // fixed it: the kernel tier rides the next light-set write, the LOD bias
+  // and fade are target state, the sample counts reallocate the targets'
+  // storage under their ids, and a map size or cascade count re-settles
+  // the shadow set. Probes keep the size they were made at (a cube is
+  // create-once; a re-bake is the app's call).
+  let applyQuality = () => {
+    if (disposed) return
+    let next = resolveQuality(qualityInput, untrack(appQuality))
+    if (sameQuality(next, row)) return
+    let prev = row
+    row = next
+    if (shadowQualityExplicit === null && next.shadows !== prev.shadows) lightsDirty = true
+    if (lodBiasExplicit === null && next.lodBias !== prev.lodBias) applyLodBias(next.lodBias)
+    if (next.lodFade !== prev.lodFade) {
+      spatial.setLodFade(texture, next.lodFade)
+      for (let v of views) if (v.shadowFilter === null && !v.disposed) spatial.setLodFade(v.texture, next.lodFade)
+    }
+    if (next.samples !== prev.samples) {
+      if (samplesExplicit === null && depthMode !== "texture") {
+        samples = next.samples
+        setTargetSamples(texture, samples)
+      }
+      for (let v of views) if (v.rowSamples && !v.disposed) setTargetSamples(v.texture, next.samples)
+    }
+    if (next.mapSize !== prev.mapSize || next.cascades !== prev.cascades) {
+      for (let light of lights) if (light.type !== "hemisphere" && light.castShadow) shadowSys.invalidate(light)
+    }
+    hooks._schedule()
+  }
+  // Under an owner the scene follows the app tier live (the `<Scene>`
+  // component's case); an imperative scene outside one re-resolves on
+  // its own setQuality.
+  if (getOwner()) createEffect(() => appQuality(), () => applyQuality(), { defer: true })
   let sync = () => {
     scheduled = false
     if (disposed) return
@@ -2536,24 +2649,47 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       scene.setParams(fogParams(fog))
     },
     setLodBias(bias) {
-      if (!(bias > 0 && Number.isFinite(bias))) throw new Error("scene.setLodBias: bias must be a positive number, got " + bias)
-      if (disposed || bias === lodBias) return
-      lodBias = bias
-      spatial.setLodBias(texture, bias)
-      // Shadow tiles take the scene's through their LOD reference.
-      for (let v of views) if (v.shadowFilter === null && !v.disposed) spatial.setLodBias(v.texture, bias)
+      if (bias !== null && !(bias > 0 && Number.isFinite(bias))) {
+        throw new Error("scene.setLodBias: bias must be a positive number or null (the quality row's), got " + bias)
+      }
+      if (disposed) return
+      lodBiasExplicit = bias
+      let next = bias ?? row.lodBias
+      if (next === lodBias) return
+      applyLodBias(next)
       hooks._schedule()
     },
     setShadowQuality(quality) {
-      if (SHADOW_QUALITY_TIERS[quality] === undefined) {
-        throw new Error('scene.setShadowQuality: expected "hard", "low", "medium" or "high", got ' + quality)
+      if (quality !== null && SHADOW_QUALITY_TIERS[quality] === undefined) {
+        throw new Error('scene.setShadowQuality: expected "hard", "low", "medium", "high" or null (the quality row\'s), got ' + quality)
       }
-      if (disposed || quality === shadowQuality) return
-      shadowQuality = quality
+      if (disposed) return
+      let before = shadowQuality()
+      shadowQualityExplicit = quality
+      if (shadowQuality() === before) return
       // The tap counts and the tier's radius ride the light set's write.
       lightsDirty = true
       hooks._schedule()
     },
+    setSamples(count) {
+      if (count !== 1 && count !== 2 && count !== 4 && count !== 8) throw new Error("scene.setSamples: expected 1, 2, 4 or 8, got " + count)
+      if (depthMode === "texture" && count > 1) {
+        throw new Error('scene.setSamples: depth "texture" cannot combine with samples (no multisampled sampleable depth) - render larger and display smaller instead')
+      }
+      if (disposed) return
+      samplesExplicit = count
+      if (count === samples) return
+      samples = count
+      setTargetSamples(texture, count)
+      hooks._schedule()
+    },
+    setQuality(quality) {
+      checkQualityInput(quality, "scene.setQuality")
+      if (disposed) return
+      qualityInput = quality ?? null
+      applyQuality()
+    },
+    quality: () => ({ ...row }),
     lodLevel(group) {
       if (disposed || group._node === null) return null
       return spatial.lodLevel(group._node, texture)
@@ -2763,6 +2899,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           setResolveBloom(v.resolve, v.texture, v.width, v.height, bloom)
           hooks._schedule()
         },
+        setSamples(count) {
+          if (count !== 1 && count !== 2 && count !== 4 && count !== 8) throw new Error("view.setSamples: expected 1, 2, 4 or 8, got " + count)
+          if (vopts.into !== undefined) throw new Error("view.setSamples: a tiled view renders into the atlas, whose samples are the atlas's")
+          if (handle.depthTexture !== null && count > 1) {
+            throw new Error('view.setSamples: depth "texture" cannot combine with samples (no multisampled sampleable depth)')
+          }
+          if (v.disposed) return
+          v.rowSamples = false
+          setTargetSamples(v.texture, count)
+          hooks._schedule()
+        },
         setRect(rect) {
           if (v.disposed) return
           setTargetRect(v.texture, rect)
@@ -2848,7 +2995,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       let { cube, setPosition, update, dispose } = makeProbe(popts, checkMask(popts.layers ?? 1, "createReflectionProbe"))
       return { cube, setPosition, update, dispose }
     },
-    bakeBackground(size = PROBE_SIZE) {
+    bakeBackground(size = row.probeSize) {
       if (disposed) throw new Error("bakeBackground: the scene is disposed")
       if (background === null) throw new Error("scene.bakeBackground: the scene has no background to bake")
       if (!Number.isInteger(size) || size < 1) throw new Error("scene.bakeBackground: size must be a positive integer, got " + size)
@@ -2907,7 +3054,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // the public object plus `finish`, which keeps the prefiltered chain and
   // drops everything else - the bake's one-shot use.
   let makeProbe = (popts: ReflectionProbeOptions, mask: number): ReflectionProbe & { finish(): TextureId } => {
-      let size = popts.size ?? PROBE_SIZE
+      let size = popts.size ?? row.probeSize
       if (!Number.isInteger(size) || size < 1) throw new Error("createReflectionProbe: size must be a positive integer, got " + size)
       let prefilter = popts.prefilter !== false
       let v = makeView(

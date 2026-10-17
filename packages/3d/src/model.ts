@@ -19,10 +19,12 @@
 
 import { file } from "flux:fs"
 import * as spatial from "flux:spatial"
-import { decodeImage, getOwner, isDisposed, isKtx2, onCleanup, runWithOwner, transcodeTexture } from "@solidrt/core"
+import { createEffect, createRoot, decodeImage, getOwner, isDisposed, isKtx2, onCleanup, quality as appQuality, runWithOwner, transcodeTexture, untrack } from "@solidrt/core"
 import type { Owner } from "@solidrt/core"
-import { createMutableTexture, createTexture, destroyTexture } from "@solidrt/core/gpu"
+import { createMutableTexture, createTexture, destroyTexture, setTextureSampling } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
+import { mipLevels } from "./environment-bake.ts"
+import { QUALITY_TIERS, textureSampling } from "./quality.ts"
 import { gltfExternalUris, modelImageUses, parseGltf } from "./gltf.ts"
 import type { ModelClip, ModelData, ModelExtras, ModelMaterial } from "./gltf.ts"
 import { decodeModel } from "./model-file.ts"
@@ -37,11 +39,33 @@ import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
 import { refreshJointBounds, unbindSkeleton } from "./skeleton.ts"
 import type { WornPiece } from "./skeleton.ts"
 
-/** Anisotropic filtering level for a model's textures: the engines' usual
- * default (Godot ships 2x, Unity's quality presets 2-8x) - enough to keep a
- * tiled surface legible at a grazing angle, cheap on every GPU. Clamped to
- * the device by the runtime. */
-const MODEL_ANISOTROPY = 4
+// A model's textures sample as the APP tier's row says (QualityRow's
+// anisotropy and mipLimit): a texture is id state shared by every scene
+// that draws the model, so no scene's own row can set it - the reason the
+// tier is app-wide, as Unity's texture quality is. Every live model texture
+// is registered here with its chain length, and one app-lifetime effect
+// re-samples them all when the tier changes (setTextureSampling, in
+// place). Created under no owner, like core's device facts: the first
+// model is usually made inside a component, and the follower belongs to
+// the app, not to whoever loaded first.
+let liveTextures = new Map<TextureId, number>()
+let following = false
+function followTier(): void {
+  if (following) return
+  following = true
+  runWithOwner(null, () =>
+    createRoot(() =>
+      createEffect(
+        () => appQuality(),
+        tier => {
+          let row = QUALITY_TIERS[tier]
+          for (let [id, levels] of liveTextures) setTextureSampling(id, textureSampling(row, levels))
+        },
+        { defer: true },
+      ),
+    ),
+  )
+}
 
 /** A glTF material's uploaded textures, by phong()/standard() option name;
  * null where the material has none. */
@@ -162,9 +186,10 @@ export async function transcodeModelImages(data: ModelData): Promise<ModelData> 
 
 /**
  * Build the scene object for parsed model data: upload its images (repeat
- * wrap, mipmapped, MODEL_ANISOTROPY; the base color and emissive images
- * as "rgba8-srgb" since glTF stores those sRGB-encoded, the data maps as
- * rgba8), make a material per glTF material, the file's node hierarchy as
+ * wrap, mipmapped, the app quality tier's anisotropy and mip limit - a
+ * tier change re-samples them in place; the base color and emissive
+ * images as "rgba8-srgb" since glTF stores those sRGB-encoded, the data
+ * maps as rgba8), make a material per glTF material, the file's node hierarchy as
  * nested Groups, and a mesh per part under its node. Synchronous - the
  * data is already in memory.
  *
@@ -176,17 +201,31 @@ export async function transcodeModelImages(data: ModelData): Promise<ModelData> 
 export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   let label = opts.label
   let uses = modelImageUses(data)
+  followTier()
+  let row = QUALITY_TIERS[untrack(appQuality)]
   let textures: TextureId[] = data.images.map((image, i) => {
-    let sampling = { wrap: "repeat" as const, anisotropy: MODEL_ANISOTROPY, autoFree: false, label: label ? label + "-" + image.name : image.name }
+    let sampling = { wrap: "repeat" as const, autoFree: false, label: label ? label + "-" + image.name : image.name }
+    // The chain the tier's mip limit is held inside: a compressed image
+    // carries its own (or none), a decoded one gets the full chain.
+    let upload = (width: number, height: number, mipmap: boolean, make: (levels: number) => TextureId): TextureId => {
+      let levels = mipmap ? mipLevels(Math.max(width, height)) : 1
+      let id = make(levels)
+      liveTextures.set(id, levels)
+      return id
+    }
     let ready = data.textures?.[i]
     if (ready !== undefined) {
-      return createTexture(ready.data, ready.width, ready.height, { ...sampling, format: ready.format, mipmap: ready.mipmap })
+      return upload(ready.width, ready.height, ready.mipmap, levels =>
+        createTexture(ready.data, ready.width, ready.height, { ...sampling, ...textureSampling(row, levels), format: ready.format, mipmap: ready.mipmap }),
+      )
     }
     if (isKtx2(image.bytes)) {
       throw new Error("createModel: image '" + image.name + "' is a KTX2 compressed texture, which is transcoded before the model is created: await transcodeModelImages(data) first (loadModel and loadGltf do)")
     }
     let decoded = decodeImage(image.bytes)
-    return createTexture(decoded.data, decoded.width, decoded.height, { ...sampling, format: uses[i]!.srgb ? "rgba8-srgb" : "rgba8", mipmap: true })
+    return upload(decoded.width, decoded.height, true, levels =>
+      createTexture(decoded.data, decoded.width, decoded.height, { ...sampling, ...textureSampling(row, levels), format: uses[i]!.srgb ? "rgba8-srgb" : "rgba8", mipmap: true }),
+    )
   })
   let make = opts.material ?? ((m: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean, morphed: boolean, instanced: boolean): Material => {
     // An emissive factor of zero is emission OFF (the glTF product rule:
@@ -391,7 +430,10 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       if (part.instances !== undefined) disposeInstances(part.mesh as InstancedMesh)
       disposeGeometry(part.mesh.geometry)
     }
-    for (let id of textures) destroyTexture(id)
+    for (let id of textures) {
+      liveTextures.delete(id)
+      destroyTexture(id)
+    }
     textures.length = 0
     // The nodes' weights textures (the parts' entries are off the scene
     // with the remove above).

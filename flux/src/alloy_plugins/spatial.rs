@@ -96,6 +96,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("setBounds")?;
     decl.declare("setView")?;
     decl.declare("setLodBias")?;
+    decl.declare("setLodFade")?;
     decl.declare("lodLevel")?;
     decl.declare("setLodReference")?;
     decl.declare("setCull")?;
@@ -167,6 +168,7 @@ impl ModuleDef for SpatialModule {
     exports.export("setBounds", Function::new(ctx.clone(), set_bounds)?)?;
     exports.export("setView", Function::new(ctx.clone(), set_view)?)?;
     exports.export("setLodBias", Function::new(ctx.clone(), set_lod_bias)?)?;
+    exports.export("setLodFade", Function::new(ctx.clone(), set_lod_fade)?)?;
     exports.export("lodLevel", Function::new(ctx.clone(), lod_level)?)?;
     exports.export("setLodReference", Function::new(ctx.clone(), set_lod_reference)?)?;
     exports.export("setCull", Function::new(ctx.clone(), set_cull)?)?;
@@ -609,6 +611,13 @@ fn lod_level(ctx: Ctx<'_>, id: u64, target: u64) -> rquickjs::Result<Option<u32>
 /// The bias every projected size measured on a target is multiplied by.
 fn set_lod_bias(ctx: Ctx<'_>, target: u64, bias: f64) -> rquickjs::Result<()> {
   super::gui(&ctx).alloy.spatial().set_lod_bias(target, bias as f32);
+  Ok(())
+}
+
+/// Whether a target cross-fades LOD levels (default true); false switches
+/// hard at every threshold there.
+fn set_lod_fade(ctx: Ctx<'_>, target: u64, enabled: bool) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().set_lod_fade(target, enabled);
   Ok(())
 }
 

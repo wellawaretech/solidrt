@@ -6,7 +6,7 @@
 //! ("framebuffer incomplete 0x8cd6", a silently garbage draw) surfacing
 //! later on the raster thread.
 
-use super::texture::TextureFormat;
+use super::texture::{SamplerState, TextureFormat};
 
 /// The device ceilings alloy validates against. Plain Copy data, so one value
 /// crosses the raster channel and lands in the UI-side cache.
@@ -107,6 +107,24 @@ impl GpuLimits {
     Ok(())
   }
 
+  /// Check a render target's output size and declared sampling together,
+  /// the one gate every target create passes: the size against the device
+  /// ceiling (`check_texture_size`), and no base level - a target's output
+  /// is its level 0 (a chain, when it keeps one, regenerates from it after
+  /// every render), so the mip limit is a data texture's knob and is
+  /// refused here as `set_texture_sampling` refuses it later.
+  pub fn check_target(&self, width: u32, height: u32, sampler: &SamplerState) -> Result<(), String> {
+    self.check_texture_size(width, height)?;
+    check_target_sampler(sampler)
+  }
+
+  /// `check_target` for a cube draw target: the face edge against the cube
+  /// map ceiling, the sampling as above.
+  pub fn check_cube_target(&self, size: u32, sampler: &SamplerState) -> Result<(), String> {
+    self.check_cube_map_size(size)?;
+    check_target_sampler(sampler)
+  }
+
   /// Check a texture's mip request against its format: the chain comes from
   /// glGenerateMipmap, which needs a color-renderable format, and half float
   /// is renderable only through an extension. A compressed format's chain
@@ -191,4 +209,13 @@ impl GpuLimits {
     }
     Ok(())
   }
+}
+
+/// The sampling rule a render target adds to the size check (see
+/// `GpuLimits::check_target`).
+fn check_target_sampler(sampler: &SamplerState) -> Result<(), String> {
+  if sampler.base_level > 0 {
+    return Err("a render target's output is its level 0; baseLevel applies to data textures".to_string());
+  }
+  Ok(())
 }

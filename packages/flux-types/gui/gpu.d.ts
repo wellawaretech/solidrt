@@ -143,8 +143,24 @@ declare module "flux:gpu" {
    * today, no error). Only meaningful with `mipmap: true` (it filters
    * through the chain), ignored by the `<texture>` display draw like the
    * chain itself. Below 1 or non-finite throws.
+   *
+   * `baseLevel` (default 0) is the first mip level the texture samples
+   * (Unity's mipmap limit): 1 skips the full-size level and samples from
+   * the half-size one down, a quarter of the texel bandwidth and memory
+   * traffic for every tap - the texture quality knob a low tier turns.
+   * Needs `mipmap: true` and a level the chain has (an integer below the
+   * level count), else throws; a render target's output is its level 0, so
+   * targets refuse it. Every sampling axis but `mipmap` changes later with
+   * {@link setTextureSampling}.
    */
-  export type SamplerOptions = { filter?: FilterMode; wrap?: WrapMode; mipmap?: boolean; anisotropy?: number }
+  export type SamplerOptions = { filter?: FilterMode; wrap?: WrapMode; mipmap?: boolean; anisotropy?: number; baseLevel?: number }
+  /**
+   * A change to a texture's declared sampling ({@link setTextureSampling}):
+   * each field given replaces the current value, absent keeps it, in the
+   * {@link SamplerOptions} vocabulary. `mipmap` is not here: the chain is
+   * storage, fixed at creation.
+   */
+  export type SamplerUpdate = { filter?: FilterMode; wrap?: WrapMode; anisotropy?: number; baseLevel?: number }
   /**
    * One `textures` binding value: a texture id, sampled with the texture's
    * own declared state, or `{ id, filter?, wrap? }` to sample that id with a
@@ -1364,6 +1380,28 @@ declare module "flux:gpu" {
    * which carries seed pixels instead.)
    */
   export function setTargetSize(id: TextureId, width: number, height: number): void
+  /**
+   * Give a mesh target (a draw target, shader target or pipeline texture)
+   * new multisample storage at `samples` (1, 2, 4 or 8) in place: the
+   * {@link setTargetSize} path with the count changed, so the id, programs,
+   * params, bindings and draw state all carry over and the target
+   * re-renders. Clamped and falling back like the create's `samples`.
+   * Throws for a cube draw target, a sub-target (its storage is the
+   * parent's), a fragment shader texture (no multisample storage), or a
+   * `depth: "texture"` target above 1.
+   */
+  export function setTargetSamples(id: TextureId, samples: 1 | 2 | 4 | 8): void
+  /**
+   * Change a texture's declared sampling in place ({@link SamplerUpdate}):
+   * every consumer follows - shader sampling, the `<texture>` display
+   * draw's filter, the base level - and the targets sampling the id
+   * re-render. The same format rules as creation (a float texture stays
+   * nearest-only), the mip chain fixed as created, a depth texture's
+   * sampling fixed, and `baseLevel` above 0 refused on a render target.
+   * The live form of the create options; a quality tier re-samples the
+   * textures it created through it.
+   */
+  export function setTextureSampling(id: TextureId, update: SamplerUpdate): void
   /**
    * Move and resize a sub-target's rectangle in its parent (top-left
    * origin; every key required). The parent re-renders in full at the next

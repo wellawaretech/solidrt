@@ -89,5 +89,5 @@ export let Shot: ParentComponent<ShotProps> = props => {
     },
   )
   onCleanup(() => shots.remove(name, { blend: untrack(() => props.blend) }))
-  return <SceneContext value={{ scene: ctx.scene, parent: ctx.parent, viewport, pointer: ctx.pointer, viewportSize: ctx.viewportSize }}>{props.children}</SceneContext>
+  return <SceneContext value={{ scene: ctx.scene, parent: ctx.parent, viewport, pointer: ctx.pointer, viewportSize: ctx.viewportSize, quality: ctx.quality }}>{props.children}</SceneContext>
 }

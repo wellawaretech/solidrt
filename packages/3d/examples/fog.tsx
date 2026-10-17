@@ -161,7 +161,7 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)} onPointerDown={() => setMode(m => MODES[(MODES.indexOf(m) + 1) % MODES.length] ?? "linear")}>
-        <Scene ref={s => (scene = s)} clearColor={[SKY[0], SKY[1], SKY[2], 1]} fog={fog()} samples={4} label="fog">
+        <Scene ref={s => (scene = s)} clearColor={[SKY[0], SKY[1], SKY[2], 1]} fog={fog()} label="fog">
           <PerspectiveCamera fov={55} near={0.5} far={FAR} position={EYE} lookAt={lookAt()} />
           <HemisphereLight sky={[0.55, 0.62, 0.75]} ground={[0.28, 0.24, 0.2]} />
           <DirectionalLight color={[0.9, 0.85, 0.75]} rotation={[-0.9, 0.6, 0]} />

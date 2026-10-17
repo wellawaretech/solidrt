@@ -23,7 +23,7 @@ mod players;
 mod residency;
 mod transitions;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub use bvh::{ray_box_distance, Box3};
 pub use collide::{Impact, Overlap, Volume};
@@ -858,6 +858,10 @@ pub struct Spatial {
   /// Per target, the target whose view its LOD measurement follows
   /// instead of its own (`set_lod_reference`).
   lod_references: HashMap<u64, u64>,
+  /// Targets whose LOD groups switch hard whatever band they declare
+  /// (`set_lod_fade(target, false)`): no cross-fade draws both levels of a
+  /// group there.
+  lod_hard: HashSet<u64>,
   /// Targets whose view changed since the last flush: every group is
   /// re-measured on them by the LOD pass.
   lod_dirty: Vec<u64>,
@@ -1329,6 +1333,7 @@ impl Spatial {
       None => {
         self.lod_bias.remove(&target);
         self.lod_references.remove(&target);
+        self.lod_hard.remove(&target);
         (None, None, None)
       }
     };
@@ -1377,6 +1382,18 @@ impl Spatial {
         v.bias = bias;
         self.view_moved(target);
       }
+    }
+  }
+
+  /// Whether `target` cross-fades LOD levels at all (default true): false
+  /// makes every group's band 0 there, a hard switch at each threshold -
+  /// the quality switch a low tier turns, since inside a fading band both
+  /// levels of a group draw. Forgotten with the view (`set_view` None). A
+  /// change re-measures the target.
+  pub fn set_lod_fade(&mut self, target: u64, enabled: bool) {
+    let changed = if enabled { self.lod_hard.remove(&target) } else { self.lod_hard.insert(target) };
+    if changed {
+      self.view_moved(target);
     }
   }
 
@@ -1973,7 +1990,8 @@ impl Spatial {
         }
         let old = known.map(|k| group.states[k]).unwrap_or(LodState { target, ..LOD_UNSET });
         let c = projected_size(&view, center, radius);
-        let (level, weight) = select_level(&group.levels, group.fade, old.level, c);
+        let fade = if self.lod_hard.contains(&target) { 0.0 } else { group.fade };
+        let (level, weight) = select_level(&group.levels, fade, old.level, c);
         let new = LodState { target, level, weight };
         if new == old {
           continue;

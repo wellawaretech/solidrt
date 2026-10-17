@@ -198,13 +198,14 @@ impl RasterState {
     id: u64,
     width: u32,
     height: u32,
+    samples: Option<u32>,
   ) -> Result<cmd::TargetHandles, String> {
     let shader = self.shaders.get_mut(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
     // An unadopted target's old name is this thread's to free once the
     // resize has allocated the new one (Impeller frees every adopted name).
     let unadopted = self.unadopted.contains(&id);
     let old_name = self.textures.get(&id).map(|old| old.gl_texture);
-    shader.resize(&self.gl, width, height)?;
+    shader.reshape(&self.gl, width, height, samples)?;
     let shader = self.shaders.get(&id).expect("shader present after resize");
     let size = ISize::new(width as i64, height as i64);
     let gpu = GpuTexture {

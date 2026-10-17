@@ -473,6 +473,11 @@ declare module "flux:spatial" {
    * across setView writes; a target measuring by a reference takes the
    * reference's. */
   export function setLodBias(target: TextureId, bias: number): void
+  /** Whether `target` cross-fades LOD levels at all (default true): false
+   * makes every group's band 0 there, a hard switch at each threshold (a
+   * fading band draws both levels of a group - the cost a quality tier
+   * turns off). Forgotten with the view; a change re-measures the target. */
+  export function setLodFade(target: TextureId, enabled: boolean): void
   /** The level a LOD group (setLod) draws on `target`: the index into its
    * levels, the level count when culled past the last threshold, null
    * before the target measured it. Throws for a node without levels. A

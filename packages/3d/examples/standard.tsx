@@ -115,7 +115,7 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene background={{ cube }} environment={{ cube }} samples={4} label="standard-demo" pointer={pointer}>
+        <Scene background={{ cube }} environment={{ cube }} label="standard-demo" pointer={pointer}>
           <OrbitCamera input={input} target={center} azimuth={0.25} elevation={0.15} distance={9} />
           <HemisphereLight sky={[0.5, 0.6, 0.8]} ground={[0.3, 0.27, 0.24]} intensity={0.5} />
           <DirectionalLight

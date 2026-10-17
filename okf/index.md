@@ -48,6 +48,14 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
+- **[One quality tier for the whole 3d package](plans/3d-quality-tier.md)** [2026-10-16]
+  The package's quality knobs each stand alone - shadows.quality, lodBias,
+  samples, the fill density (renderScale / maxPixels), the lights' map sizes
+  and cascade counts - so an app that wants "low-end" or "high-end" sets five
+  things in five places and a knob it forgets keeps the medium default; one
+  tier every knob defaults from, each knob an override, as Unity's quality
+  settings and Godot's project settings do, and the question whether the tier
+  lives on the Scene or on the app as a device profile.
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -224,14 +232,6 @@ Shaped, not started.
   real-world meshes (Draco/meshopt), tangents and the second UV set,
   per-material samplers, merge-by-material and runtime decoding of fetched
   content (morph targets have their own item).
-- **[One quality tier for the whole 3d package](backlog/3d-quality-tier.md)** [2026-10-16]
-  The package's quality knobs each stand alone - shadows.quality, lodBias,
-  samples, the fill density (renderScale / maxPixels), the lights' map sizes
-  and cascade counts - so an app that wants "low-end" or "high-end" sets five
-  things in five places and a knob it forgets keeps the medium default; one
-  tier every knob defaults from, each knob an override, as Unity's quality
-  settings and Godot's project settings do, and the question whether the tier
-  lives on the Scene or on the app as a device profile.
 - **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
   Four independent mechanisms silently drop a mesh from a target - frustum
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the

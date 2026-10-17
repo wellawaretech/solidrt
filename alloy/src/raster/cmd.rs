@@ -370,7 +370,20 @@ pub(crate) enum RasterCmd {
   /// next flush. Replies with the adopted handle(s) so the UI side
   /// re-registers them under the same ids (the depth texture, when the
   /// target has one, gets a fresh name too).
-  ResizeShaderTexture { id: u64, width: u32, height: u32, reply: mpsc::Sender<Result<TargetHandles, String>> },
+  /// `samples` Some = new multisample storage at that count as well
+  /// (`set_target_samples`; a mesh target only), None keeps the current.
+  ResizeShaderTexture {
+    id: u64,
+    width: u32,
+    height: u32,
+    samples: Option<u32>,
+    reply: mpsc::Sender<Result<TargetHandles, String>>,
+  },
+  /// Change a texture's declared sampling in place (validated UI-side, see
+  /// `Context::set_texture_sampling`): the state passes resolve at bind, the
+  /// base level on the object, and a target's declared output sampling when
+  /// the id is one. Fire-and-forget; marks the id's dependents dirty.
+  SetTextureSampling { id: u64, sampler: SamplerState },
   /// Set a pipeline target's draw range (resolved and validated UI-side, see
   /// `Context::set_draw`) and mark it dirty.
   SetDraw { id: u64, range: DrawRange },

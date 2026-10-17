@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::gpu::{
-  check_cube_faces, SamplerState, TextureBinding, TextureBox, TextureEntry, TextureFormat, TextureRect, TextureShape,
+  check_cube_faces, mip_levels, SamplerState, SamplerUpdate, TextureBinding, TextureBox, TextureEntry, TextureFormat,
+  TextureRect, TextureShape,
 };
 use crate::raster::RasterCmd;
 use crate::yuv::{self, LatchedFrame, YuvLatchShared, YuvLayout, YuvMatrix, YuvRange};
@@ -195,6 +196,7 @@ impl Context {
     limits.check_texture_size(width, height)?;
     limits.check_upload_format(format)?;
     limits.check_mipmap(format, sampler.mipmap)?;
+    sampler.check_chain(if sampler.mipmap { mip_levels(width.max(height)) } else { 1 })?;
     // A create at a fresh id cannot be referenced by anything yet; a replace
     // at a live id (stream resize, camera format change) is a content change
     // behind that id like any other.
@@ -249,6 +251,7 @@ impl Context {
     // Only a GENERATED chain needs the format to be color-renderable; an
     // explicit one is plain uploads.
     limits.check_mipmap(format, sampler.mipmap && levels == 1)?;
+    sampler.check_chain(if sampler.mipmap { mip_levels(size) } else { 1 })?;
     if levels > 1 && !sampler.mipmap {
       return Err("an explicit mip chain is sampled through mipmap: true".to_string());
     }
@@ -304,6 +307,7 @@ impl Context {
     }
     limits.check_upload_format(format)?;
     limits.check_mipmap(format, sampler.mipmap)?;
+    sampler.check_chain(if sampler.mipmap { shape.mip_levels(width, height, depth) } else { 1 })?;
     let expected = format.byte_len(width, height) * depth as usize;
     if pixels.len() != expected {
       return Err(format!(
@@ -530,6 +534,41 @@ impl Context {
     self.create_texture_at(id, width, height, &pixels[..frame_size], sampler, format, None)
   }
 
+  /// Change a texture's declared sampling in place (`set_texture_sampling`):
+  /// the filter, wrap, anisotropy and base level, each given or kept, in
+  /// the create options' vocabulary and under the same format rules; the
+  /// mip chain is storage and stays as created. Every consumer follows -
+  /// the sampler object a pass resolves at bind, the `<texture>` display
+  /// draw's filter, the base level on the object - and the targets sampling
+  /// the id re-render. A depth texture's sampling is fixed (NEAREST is its
+  /// one complete state), and a render target's output is its level 0, so
+  /// a base level above 0 is refused there. The caller must request a
+  /// frame.
+  pub fn set_texture_sampling(&self, id: u64, update: &SamplerUpdate<'_>) -> Result<(), String> {
+    let Some(entry) = self.textures.get(id) else {
+      return Err(format!("texture {id} not found"));
+    };
+    if let Some(owner) = self.depth_owner(id) {
+      return Err(format!("texture {id} is target {owner}'s depth texture; its sampling is fixed (nearest, clamp)"));
+    }
+    let sampler = entry.sampler().updated(entry.format, update)?;
+    if sampler.base_level > 0 {
+      if self.targets.borrow().contains_key(&id) {
+        return Err(format!(
+          "texture {id} is a render target, whose output is its level 0; baseLevel applies to data textures"
+        ));
+      }
+      sampler.check_chain(entry.shape.mip_levels(entry.width, entry.height, entry.depth))?;
+    }
+    if sampler == entry.sampler() {
+      return Ok(());
+    }
+    self.send(RasterCmd::SetTextureSampling { id, sampler });
+    self.textures.replace_sampler(id, sampler);
+    self.note_content(id);
+    Ok(())
+  }
+
   /// Create a planar YUV texture (see yuv.rs): plane textures for `layout`
   /// (two double-buffered sets, see YuvGroup) plus a conversion shader
   /// target sampling them, whose RGBA output id is returned - usable
@@ -693,7 +732,49 @@ impl Context {
       return self.set_target_rect(id, x, y, width, height);
     }
     self.gpu_limits().check_texture_size(width, height)?;
-    let handles = self.rpc(|reply| RasterCmd::ResizeShaderTexture { id, width, height, reply })??;
+    self.reshape_target(id, width, height, None)
+  }
+
+  /// Give a mesh target (a draw target, a shader target, a pipeline
+  /// texture) new multisample storage at `samples` (1 = single-sample),
+  /// under the same id and at its current size: the resize path's
+  /// reallocation with the sample count changed, so everything a resize
+  /// keeps is kept here too, and the output re-renders at the next dirty
+  /// flush. The count is clamped and falls back like the create's (a
+  /// refused configuration renders single-sample with a warning); the
+  /// create's exclusions hold - no cube target, no sub-target (its storage
+  /// is the parent's), no depth texture above one sample - and a
+  /// fullscreen fragment shader texture has no multisample storage to
+  /// change. The caller must request a frame.
+  pub fn set_target_samples(&self, id: u64, samples: u32) -> Result<(), String> {
+    let Some(entry) = self.textures.get(id) else {
+      if self.sub_targets.borrow().contains_key(&id) {
+        return Err(format!("target {id} is a sub-target: its storage is its parent's, set the samples there"));
+      }
+      return Err(format!("target {id} not found"));
+    };
+    if !self.targets.borrow().contains_key(&id) {
+      return Err(format!("texture {id} is not a render target"));
+    }
+    if entry.shape == TextureShape::Cube {
+      return Err(format!("target {id} is a cube draw target: create-once, its storage does not change"));
+    }
+    if !matches!(samples, 1 | 2 | 4 | 8) {
+      return Err(format!("samples must be 1, 2, 4 or 8, got {samples}"));
+    }
+    if samples >= 2 && self.depth_of(id).is_some() {
+      return Err(
+        "depth \"texture\" cannot be multisampled (a multisampled depth texture is not sampleable); use samples 1"
+          .to_string(),
+      );
+    }
+    self.reshape_target(id, entry.width, entry.height, Some(samples))
+  }
+
+  /// The id-stable storage reallocation behind `resize_target` and
+  /// `set_target_samples`: new size, and a new sample count when given.
+  fn reshape_target(&self, id: u64, width: u32, height: u32, samples: Option<u32>) -> Result<(), String> {
+    let handles = self.rpc(|reply| RasterCmd::ResizeShaderTexture { id, width, height, samples, reply })??;
     let (sampler, format) =
       self.textures.get(id).map(|e| (e.sampler(), e.format)).unwrap_or((SamplerState::default(), TextureFormat::Rgba8));
     let entry = match handles.color {

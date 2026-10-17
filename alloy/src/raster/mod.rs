@@ -1022,8 +1022,13 @@ impl RasterState {
           RasterCmd::UpdateShaderTextures { id, textures } => {
             self.entry_write(id, "shader texture rebind", |_, shader| shader.set_sampler_bindings(&textures));
           }
-          RasterCmd::ResizeShaderTexture { id, width, height, reply: tx } => {
-            reply(tx, self.resize_shader_texture(id, width, height));
+          RasterCmd::ResizeShaderTexture { id, width, height, samples, reply: tx } => {
+            reply(tx, self.resize_shader_texture(id, width, height, samples));
+          }
+          RasterCmd::SetTextureSampling { id, sampler } => {
+            if let Err(e) = self.set_texture_sampling(id, sampler) {
+              log::warn!("[alloy] texture sampling change failed: {e}");
+            }
           }
           RasterCmd::SetDraw { id, range } => {
             self.entry_write(id, "draw update", |_, shader| shader.set_draw(range));

@@ -43,7 +43,9 @@ impl SamplerCache {
         for mipmap in [false, true] {
           for slot in 0..ANISOTROPY_LEVELS {
             let anisotropy = MIN_ANISOTROPY << slot;
-            let state = SamplerState { filter, wrap, mipmap, anisotropy };
+            // The base level is texture-object state, not the sampler's:
+            // one object serves every base level.
+            let state = SamplerState { filter, wrap, mipmap, anisotropy, ..SamplerState::default() };
             let mag = match filter {
               SamplerFilter::Linear => glow::LINEAR,
               SamplerFilter::Nearest => glow::NEAREST,
@@ -234,6 +236,14 @@ pub struct GpuTexture {
   pub label: Option<String>,
 }
 
+/// Set the bound texture object's first sampled level (`TEXTURE_BASE_LEVEL`,
+/// the one sampling axis that is object state rather than a sampler
+/// object's; see `SamplerState::base_level`). Written unconditionally (GL's
+/// default is 0) so the create paths and a live change share one call.
+unsafe fn set_base_level(gl: &glow::Context, target: u32, level: u8) {
+  gl.tex_parameter_i32(target, glow::TEXTURE_BASE_LEVEL, i32::from(level));
+}
+
 /// Rebuild the mip chain of `texture` from its level 0 (glGenerateMipmap
 /// allocates the levels on first use). Raster-thread GL; restores the
 /// texture binding it touches.
@@ -319,6 +329,7 @@ impl GpuTexture {
       let filter = fallback_filter(format);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
+      set_base_level(gl, glow::TEXTURE_2D, sampler.base_level);
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
       GpuTexture { gl_texture, width, height, depth: 1, shape: TextureShape::D2, sampler, format, label: None }
     }
@@ -375,6 +386,7 @@ impl GpuTexture {
       let filter = fallback_filter(format);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
+      set_base_level(gl, glow::TEXTURE_2D, sampler.base_level);
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
       Ok(GpuTexture { gl_texture, width, height, depth: 1, shape: TextureShape::D2, sampler, format, label: None })
     }
@@ -429,6 +441,9 @@ impl GpuTexture {
       if sampler.mipmap && levels == 1 {
         gl.generate_mipmap(glow::TEXTURE_CUBE_MAP);
       }
+      // After the chain exists: a raised base level would derive it from
+      // the level the id starts at (see generate_chain).
+      set_base_level(gl, glow::TEXTURE_CUBE_MAP, sampler.base_level);
       gl.bind_texture(glow::TEXTURE_CUBE_MAP, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
       Ok(GpuTexture {
         gl_texture,
@@ -486,6 +501,7 @@ impl GpuTexture {
       let filter = fallback_filter(format);
       gl.tex_parameter_i32(target, glow::TEXTURE_MIN_FILTER, filter as i32);
       gl.tex_parameter_i32(target, glow::TEXTURE_MAG_FILTER, filter as i32);
+      set_base_level(gl, target, sampler.base_level);
       gl.bind_texture(target, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
       let texture = GpuTexture { gl_texture, width, height, depth, shape, sampler, format, label: None };
       texture.upload_inner(gl, Some(pixels), ISize::new(width as i64, height as i64));
@@ -625,6 +641,7 @@ impl GpuTexture {
         gl.tex_storage_2d(glow::TEXTURE_2D, levels as i32, internal, width as i32, height as i32);
         gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
         gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
+        set_base_level(gl, glow::TEXTURE_2D, sampler.base_level);
         gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
         GpuTexture { gl_texture, width, height, depth: 1, shape, sampler, format, label: None }
       },
@@ -651,6 +668,7 @@ impl GpuTexture {
         }
         gl.tex_parameter_i32(glow::TEXTURE_CUBE_MAP, glow::TEXTURE_MIN_FILTER, filter as i32);
         gl.tex_parameter_i32(glow::TEXTURE_CUBE_MAP, glow::TEXTURE_MAG_FILTER, filter as i32);
+        set_base_level(gl, glow::TEXTURE_CUBE_MAP, sampler.base_level);
         gl.bind_texture(glow::TEXTURE_CUBE_MAP, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
         GpuTexture { gl_texture, width, height, depth: 1, shape, sampler, format, label: None }
       },
@@ -663,6 +681,7 @@ impl GpuTexture {
         gl.tex_storage_3d(target, levels as i32, internal, width as i32, height as i32, depth as i32);
         gl.tex_parameter_i32(target, glow::TEXTURE_MIN_FILTER, filter as i32);
         gl.tex_parameter_i32(target, glow::TEXTURE_MAG_FILTER, filter as i32);
+        set_base_level(gl, target, sampler.base_level);
         gl.bind_texture(target, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
         GpuTexture { gl_texture, width, height, depth, shape, sampler, format, label: None }
       },
@@ -681,7 +700,43 @@ impl GpuTexture {
     unsafe {
       let prev = gl.get_parameter_i32(binding_query(self.shape));
       gl.bind_texture(target, Some(self.gl_texture));
-      gl.generate_mipmap(target);
+      self.generate_chain(gl, target);
+      gl.bind_texture(target, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+    }
+  }
+
+  /// glGenerateMipmap on the bound `target`, from level 0. GL derives the
+  /// chain from BASE_LEVEL down, so a raised base level is dropped to 0
+  /// for the call and restored after it; left in place, every level under
+  /// it would be derived from the level the id starts sampling at, and
+  /// that level itself would keep its stale content.
+  unsafe fn generate_chain(&self, gl: &glow::Context, target: u32) {
+    let base = self.sampler.base_level;
+    if base > 0 {
+      set_base_level(gl, target, 0);
+    }
+    gl.generate_mipmap(target);
+    if base > 0 {
+      set_base_level(gl, target, base);
+    }
+  }
+
+  /// Change the id's declared sampling in place (`set_texture_sampling`):
+  /// the state shader passes resolve to a sampler object at bind, plus the
+  /// one axis that is texture-object state, the base level, applied to the
+  /// object now. The chain is storage and does not change here (the mip
+  /// flag is kept by the UI side).
+  pub fn set_sampler(&mut self, gl: &glow::Context, sampler: SamplerState) {
+    let base_changed = sampler.base_level != self.sampler.base_level;
+    self.sampler = sampler;
+    if !base_changed {
+      return;
+    }
+    let target = bind_target(self.shape);
+    unsafe {
+      let prev = gl.get_parameter_i32(binding_query(self.shape));
+      gl.bind_texture(target, Some(self.gl_texture));
+      set_base_level(gl, target, sampler.base_level);
       gl.bind_texture(target, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
     }
   }
@@ -728,7 +783,7 @@ impl GpuTexture {
         gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
       }
       if self.sampler.mipmap {
-        gl.generate_mipmap(target);
+        self.generate_chain(gl, target);
       }
       gl.bind_texture(target, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
       // No glFinish: the texture is sampled later on this same (single) GL

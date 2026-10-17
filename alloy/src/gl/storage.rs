@@ -34,6 +34,40 @@ impl Msaa {
       Msaa::InTile { samples, .. } | Msaa::Explicit { samples, .. } => *samples,
     }
   }
+
+  /// Delete the GL names this storage owns: the explicit flavor's FBO and
+  /// color renderbuffer (the in-tile flavor owns none).
+  pub(super) unsafe fn delete(self, gl: &glow::Context) {
+    if let Msaa::Explicit { fbo, color, .. } = self {
+      gl.delete_framebuffer(fbo);
+      gl.delete_renderbuffer(color);
+    }
+  }
+}
+
+/// The multisample storage for `samples`x (None at 1): the count clamped
+/// to the device maximum, the in-tile flavor where the extension exists,
+/// else the explicit one with fresh names (attached and sized by
+/// `attach_storage`). Creation and a live sample-count change share it.
+pub(super) fn make_msaa(gl: &glow::Context, samples: u32) -> Result<Option<Msaa>, String> {
+  unsafe {
+    let max_samples = gl.get_parameter_i32(glow::MAX_SAMPLES).max(1);
+    let samples = (samples as i32).min(max_samples);
+    if samples < 2 {
+      return Ok(None);
+    }
+    if let Some(fns) = crate::gl::msrtt() {
+      return Ok(Some(Msaa::InTile { fns, samples }));
+    }
+    match (gl.create_framebuffer(), gl.create_renderbuffer()) {
+      (Ok(fbo), Ok(color)) => Ok(Some(Msaa::Explicit { fbo, color, samples })),
+      (Ok(fbo), Err(e)) => {
+        gl.delete_framebuffer(fbo);
+        Err(format!("glGenRenderbuffers failed: {e}"))
+      }
+      (Err(e), _) => Err(format!("glGenFramebuffers failed: {e}")),
+    }
+  }
 }
 
 /// Target texture + FBO shared by every target kind: allocation only, nothing
@@ -156,9 +190,8 @@ impl MeshStorage {
       Some(DepthAttachment::Texture(tex)) => gl.delete_texture(tex),
       None => {}
     }
-    if let Some(Msaa::Explicit { fbo, color, .. }) = self.msaa {
-      gl.delete_framebuffer(fbo);
-      gl.delete_renderbuffer(color);
+    if let Some(msaa) = self.msaa {
+      msaa.delete(gl);
     }
     gl.delete_framebuffer(self.fbo);
     gl.delete_texture(self.target);
@@ -210,25 +243,14 @@ pub(super) fn create_mesh_storage(
       },
     };
     let mut storage = MeshStorage { target, fbo, depth, msaa: None };
-
-    let max_samples = gl.get_parameter_i32(glow::MAX_SAMPLES).max(1);
-    let samples = (samples as i32).min(max_samples);
-    if samples >= 2 {
-      storage.msaa = match crate::gl::msrtt() {
-        Some(fns) => Some(Msaa::InTile { fns, samples }),
-        None => match (gl.create_framebuffer(), gl.create_renderbuffer()) {
-          (Ok(msaa_fbo), Ok(color)) => Some(Msaa::Explicit { fbo: msaa_fbo, color, samples }),
-          (Ok(msaa_fbo), Err(e)) => {
-            gl.delete_framebuffer(msaa_fbo);
-            storage.delete(gl);
-            return Err(format!("glGenRenderbuffers failed: {e}"));
-          }
-          (Err(e), _) => {
-            storage.delete(gl);
-            return Err(format!("glGenFramebuffers failed: {e}"));
-          }
-        },
-      };
+    storage.msaa = match make_msaa(gl, samples) {
+      Ok(msaa) => msaa,
+      Err(e) => {
+        storage.delete(gl);
+        return Err(e);
+      }
+    };
+    if storage.msaa.is_some() {
       match attach_storage(gl, &storage, width, height, format) {
         Ok(()) => {
           gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
@@ -236,9 +258,8 @@ pub(super) fn create_mesh_storage(
         }
         Err(e) => {
           log::warn!("[shader] {samples}x multisampling unavailable ({e}); target renders single-sample");
-          if let Some(Msaa::Explicit { fbo: msaa_fbo, color, .. }) = storage.msaa.take() {
-            gl.delete_framebuffer(msaa_fbo);
-            gl.delete_renderbuffer(color);
+          if let Some(msaa) = storage.msaa.take() {
+            msaa.delete(gl);
           }
         }
       }

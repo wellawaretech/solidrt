@@ -152,7 +152,7 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene clearColor={[0.08, 0.08, 0.11, 1]} samples={4} label="morph">
+        <Scene clearColor={[0.08, 0.08, 0.11, 1]} label="morph">
           <PerspectiveCamera fov={45} position={[0, 2.4, 5.5]} lookAt={[0, 0.5, 0]} />
           <HemisphereLight sky={[0.35, 0.38, 0.45]} ground={[0.12, 0.1, 0.08]} />
           <DirectionalLight position={[-2, 5, -3]} direction={[2, -5, 3]} color={[1, 0.95, 0.85]} intensity={1} castShadow shadow={{ normalBias: 0.02, camera: { near: 1, far: 20 } }} />

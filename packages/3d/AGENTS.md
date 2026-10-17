@@ -230,6 +230,52 @@ knob is needed. Probe faces set no frustum (six cameras, one target).
 Shadow tiles cull casters against their light frustum, which is what
 makes `shadow.distance` and cascades cheaper.
 
+### Quality
+
+One tier, every knob. `setQuality("low" | "medium" | "high")` in
+@solidrt/core is the app's statement of the device's budget - Unity's
+quality level and Godot's `.mobile` overrides as one reactive value
+(`quality()`), default "medium", and nothing picks it for you: a GPU
+name is not a budget, and a measured default waits on a startup cost
+probe. The package maps the tier to a ROW of `QUALITY_TIERS`
+(quality.ts), and every quality knob defaults from the row; each knob's
+own option stays the override, so what an app sets explicitly never
+moves:
+
+| knob | low | medium | high | override |
+|---|---|---|---|---|
+| shadow kernel (`shadows.quality`) | hard | medium | high | the Scene option |
+| light `mapSize` | 512 | 1024 | 2048 | the light's `shadow.mapSize` |
+| directional `cascades` | 1 | 2 | 2 | `shadow.cascades`; a light that authored a `camera` box stays one map |
+| `lodBias` | 0.7 | 1 | 1.5 | the Scene option |
+| LOD cross-fade | off | on | on | none - the row's call |
+| `samples` (scene and views) | 1 | 4 | 4 | the Scene / View option, live |
+| fill `maxPixels` | 1 Mpx | none | none | the Scene / View3d prop |
+| model texture anisotropy | 1 | 4 | 16, device-clamped | none - id state every scene shares |
+| model texture mip limit (`baseLevel`) | 1 | 0 | 0 | none |
+| probe `size` | 64 | 128 | 256 | the probe option; fixed at creation |
+
+Low is the Adreno 610 tablet and Mali-T860 TV class (the soft kernel
+is half a 2 Mpx frame there, MSAA 4x ~9 ms, the fill cap the last
+lever), high the laptop and Pixel 7 class; the rows and their
+measurements are in okf/plans/3d-quality-tier.md. A scene may say its
+own: `<Scene quality="low">` is that row whatever the app tier (a
+thumbnail scene), `quality={{ samples: 8 }}` a row object over the app
+tier; spread a row for a custom level, `{ ...QUALITY_TIERS.high,
+samples: 8 }`. `scene.quality()` is the row in force,
+`useScene().quality()` its reactive form under the scene, for the app's
+own work to scale by. Everything follows live: a tier change rewrites
+the light set (the kernel), the LOD bias and fade (target state),
+reallocates the multisample storage of the scene and of the views that
+set none under their ids (`setTargetSamples`; `scene.setSamples` /
+`view.setSamples` are the explicit forms), re-settles the shadow atlas
+(map sizes, cascade counts) and re-samples every model texture in place
+(`setTextureSampling`); probes keep the size they were baked at (a cube
+is create-once; bake again to follow). A `createScene` outside a
+reactive owner takes the tier at creation and follows it through its
+own `setQuality`. Text, the 2d layers and the UI do not read the tier
+yet.
+
 ### Level of detail
 
 LOD is the core's too, beside culling: a group's level is picked per
@@ -279,8 +325,9 @@ is drawn at). Records are
 target-agnostic, so instances pick by the SCENE camera and every view
 draws that choice; instanced levels switch hard (`fade` is refused).
 `scene.setLodBias` (Unity's lodBias) multiplies every measured size:
-below 1 hands over sooner, the one-line quality knob for a low-end
-device. Picking and collision see the level the queried target draws
+below 1 hands over sooner; default the quality row's (0.7 / 1 / 1.5,
+see Quality), which at low also switches every band hard (no
+cross-fade: inside a band both levels draw). Picking and collision see the level the queried target draws
 (`scene.pick`/overlap/sweep/moveAndSlide the scene's, `view.pick` the
 view's); a collider that must not follow the camera is its own undrawn
 mesh on a collision layer. Nested groups chain. Mesh simplification is
@@ -373,7 +420,9 @@ shadow })`, `setLight`) makes the scene own an internal
 `createView({ depth: "texture", overrideMaterial: depth pass })` drawing
 the `castShadow` meshes (`<Mesh castShadow>`, `setCastShadow`) from an
 orthographic camera at the light's WORLD position along its world
-direction, `shadow.camera` (+-5, 0.5..500 by default) as the frustum,
+direction, `shadow.camera` (DEFAULT_SHADOW_CAMERA, +-5 and 0.5..500,
+for a light that authors none - which the quality row then gives
+cascades instead, below) as the frustum,
 re-placed whenever the light's world matrix moves - by a JS write or
 by native motion (a transition on the light or an ancestor, a clip
 player), in the frame the lighting moves.
@@ -432,8 +481,9 @@ narrows below (HDRP's min filter size) and `SHADOW_MAX_TEXELS` (8) the
 cap - an edge wider than that stays hard, so a coarse map caps the
 softness; the real sun's 0.53 only shows on a map whose texel is under
 a centimetre per metre of caster height. The scene's `shadows: {
-quality }` ("hard" | "low" | "medium" (default) | "high";
-`setShadowQuality`, live, one light-set write) sets how many taps both
+quality }` ("hard" | "low" | "medium" | "high"; default the quality
+row's - hard at low, else the tier's name; `setShadowQuality`, live,
+one light-set write) sets how many taps both
 regimes spend (8/8, 16/16, 24/32 search/filter) and the width of every
 light without a radius (`hard` is the one tap for every light whatever
 its radius or size - the low-end profile's switch). Every tap wider than one compares against the RECEIVER PLANE
@@ -451,7 +501,10 @@ and `tests/soft-shadows.test.tsx` measures the foot-to-tip widening. Each face m
 samples - without the guard band every seam shows a lit slit - and
 PCF taps clamp at face-tile edges, so a face seam hardens slightly
 instead of bleeding into the neighbour.
-`shadow: { cascades: N }` (1..MAX_CASCADES = 4) replaces the box with
+`shadow: { cascades: N }` (1..MAX_CASCADES = 4; default the quality
+row's 1 / 2 / 2 for a light that authored no `camera` box, and 1 for
+one that did - an authored box is the light's frustum, never silently
+replaced) replaces the box with
 N maps fitted to slices of the SCENE camera's frustum (near ..
 `shadow.distance`, default the camera far; the practical split, or
 `shadow.splits` - `N - 1` ascending fractions of that range, Godot's
@@ -463,10 +516,11 @@ tightest map that covers the point, fading into the next over the
 map's outer 10% (`SHADOW_BLEND`) so the hand-over is a band, not a
 seam; contact shadows stay sharp near the camera while the horizon
 still has coarse ones, and pulling `distance` in sharpens all of them.
-The box is the honest tier for a bounded scene; cascades are for a
+A box is the honest frustum for a bounded scene; cascades are for a
 scene that outgrows it, at N times the shadow fill. Every map is a
 TILE of the scene's one shadow atlas (a `depth: "texture"` draw target,
-a grid of cells the largest `mapSize` wide, scaled down uniformly
+a grid of cells the largest `mapSize` (default the quality row's 512 /
+1024 / 2048) wide, scaled down uniformly
 against `limits.maxTextureSize`), so N maps are ONE pass: the atlas
 depth binds as the target-level `uShadowAtlas` of the scene and every
 non-shadow view (a white texel when nothing casts), and a second time
@@ -731,8 +785,8 @@ through its debug commands, and `camera-components.test.tsx` drives
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `renderScale?`, `maxPixels?` (fill-mode density: a scale over the tracked device pixels and a cap on their count, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (FogOptions: linear `{ color, near, far }` or exp2 `{ color, density }`, either plus `height`/`heightFalloff` - see Fog), `toneMapping?` (`"none"` default, `"aces"`, `"agx"` or `"neutral"`), `exposure?` (default 1), `shadows?` (`{ quality? }`: "hard" | "low" | "medium" | "high", the soft shadow kernel's tap tier, reactive), `bloom?` (`{ threshold?, intensity?, radius? }`, the stock bloom on the resolve, reactive), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture, leaf)` (compose the leaf yourself; `leaf.ref`, `leaf.handlers`, `leaf.size()`, `leaf.deviceSize()` - see Output composition; `events` then throws), `resolve?` (the source, `{ source, textures }`, or a function of the buffer id returning either; fixed at creation - see Color), `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
-| `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width?`, `height?` (target pixels, live - both, or neither = FILL exactly as Scene's: the leaf fills its sized parent and the view follows it; a tile of `into` gives both), `renderScale?`, `maxPixels?` (fill-mode density, as Scene's), `x?`, `y?` (the tile's top-left in `into`, live; throw without `into`), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture, leaf)` (as Scene's; else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `resolve?` (as Scene's; not with `into`), `bloom?` (BloomOptions overrides the scene's, null turns it off in this view, absent follows the scene; not with `into`), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
+| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `renderScale?`, `maxPixels?` (fill-mode density: a scale over the tracked device pixels and a cap on their count, below; the cap defaults to the quality row's), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (FogOptions: linear `{ color, near, far }` or exp2 `{ color, density }`, either plus `height`/`heightFalloff` - see Fog), `toneMapping?` (`"none"` default, `"aces"`, `"agx"` or `"neutral"`), `exposure?` (default 1), `quality?` (a tier name or a row object over the app tier, every knob's default - see Quality; reactive, the app tier too), `lodBias?` (reactive; default the row's), `shadows?` (`{ quality? }`: "hard" | "low" | "medium" | "high", the soft shadow kernel's tap tier, default the row's, reactive), `bloom?` (`{ threshold?, intensity?, radius? }`, the stock bloom on the resolve, reactive), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA; default the row's, live - the storage is reallocated in place), `label?`, `ref?(scene)`, `output?(texture, leaf)` (compose the leaf yourself; `leaf.ref`, `leaf.handlers`, `leaf.size()`, `leaf.deviceSize()` - see Output composition; `events` then throws), `resolve?` (the source, `{ source, textures }`, or a function of the buffer id returning either; fixed at creation - see Color), `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
+| `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width?`, `height?` (target pixels, live - both, or neither = FILL exactly as Scene's: the leaf fills its sized parent and the view follows it; a tile of `into` gives both), `renderScale?`, `maxPixels?` (fill-mode density, as Scene's), `x?`, `y?` (the tile's top-left in `into`, live; throw without `into`), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `filter?`, `wrap?` (createView's, fixed), `samples?` (default the scene's quality row's; live), `ref?(view)`, `output?(texture, leaf)` (as Scene's; else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `resolve?` (as Scene's; not with `into`), `bloom?` (BloomOptions overrides the scene's, null turns it off in this view, absent follows the scene; not with `into`), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, the bubbling pointer events (below: down/move/up/wheel/tap from a hit descendant; a group is never the struck node, so it takes no `onPointerEnter`/`onPointerLeave` - `Lod` likewise), `ref?(node)` |
 | `Lod` | a Group whose direct children carrying `lodSize` (a prop every node component takes: the projected size below which that child hands over, see Level of detail) are its levels, sorted by size, never by JSX position; plus `fade?` (the cross-fade band fraction, default 0); a child without `lodSize` is drawn always |
 | `InstancedLod` | as InstancedMesh minus `material`, plus `levels` (`[{ geometry, material, size }]` nearest first, fixed at creation; instanced materials as InstancedMesh's), `castShadow?` (every level); `<Instance>` children populate it as under `InstancedMesh`, each drawing the level its own projected size picks |
@@ -743,8 +797,8 @@ through its debug commands, and `camera-components.test.tsx` drives
 | `RecordMesh` | as Mesh, plus `records` (the per-instance records in the material's first instance layout, an ArrayBufferView; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks), `instanceOrder?` (draw the records in key order, fixed at creation - see "Instance order"), `transfer?` (hand the records to the engine at creation, the write-once form - a later `records` value then throws; see "Instance order"); the record buffers are component-owned and freed on unmount |
 | `SplatMesh` | as Mesh, plus `data` (a baked SplatData from loadSplat; write-once under the default transfer - swap clouds by remounting), `count?` (splats drawn, default all; records are importance-sorted at bake, so a prefix is the scene at that size), `material?` (a fork of the stock splat class) and `transfer?` (default true: records go to the engine, halving residency; see "Splats"); bounds, the back-to-front instance order and the stock material come from the bake |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |
-| `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `sourceRadius?` (world units, default 0 = a point source; above 0 contact-hardening soft shadows), `castShadow?`, `shadow?` (mapSize, bias, normalBias, radius, near), `ref?(light)` |
-| `PointLight` | transforms as Group (position is what matters), `color?`, `intensity?`, `distance?`, `decay?`, `sourceRadius?` (as SpotLight), `castShadow?` (six face maps, six shadow slots), `shadow?` (mapSize, bias, normalBias, radius, near), `ref?(light)` |
+| `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `sourceRadius?` (world units, default 0 = a point source; above 0 contact-hardening soft shadows), `castShadow?`, `shadow?` (mapSize - default the quality row's -, bias, normalBias, radius, near), `ref?(light)` |
+| `PointLight` | transforms as Group (position is what matters), `color?`, `intensity?`, `distance?`, `decay?`, `sourceRadius?` (as SpotLight), `castShadow?` (six face maps, six shadow slots), `shadow?` (mapSize - default the quality row's -, bias, normalBias, radius, near), `ref?(light)` |
 
 ### Output composition
 
@@ -815,10 +869,11 @@ holds, and one number holds one cost on every device, which a scale
 cannot (a 0.7 that suits a laptop panel is wasted on a phone and too
 much on a 4K screen); a fill-rate-bound main pass of ~11 ms at 3.4 Mpx
 on an iGPU drops to ~5 ms capped at ~1.9 Mpx with no visible loss under
-a HUD. The default is native density with no cap, as Unity and Godot
-default (r3f clamps its dpr to 2): the runtime picks no budget, because
-only the app knows its scene's cost, so a weak 3x phone renders nine
-pixels per logical one until the app says `maxPixels`. Neither knob
+a HUD. The default cap is the quality row's: none at medium and high
+(native density, as Unity and Godot default; r3f clamps its dpr to 2),
+1 Mpx at low - the 720p-class count games render at on that GPU class;
+`maxPixels` on the Scene or View3d overrides it, since beyond the tier
+only the app knows its scene's cost. Neither knob
 touches the leaf's layout, pointer events or the camera controls:
 `handlersFor` scales events by target over layout box and the orbit
 control divides by `size().height`, both invariant under the scale. The
@@ -1946,7 +2001,7 @@ last one the bake convolves; a `mipmap: true` cube from six faces
 (equirectToCube, a JS-baked sky) merely box-filters that chain, so its
 rough reflections are sharper than they should be and its diffuse term
 is a coarse average - fine for a sky gradient, wrong for a photograph.
-A 128 environment (2 MiB, the default) lights any surface; for a
+A 128 environment (2 MiB, the medium row's default) lights any surface; for a
 mirror-finish showpiece bake at 256, and for a crisp backdrop pair it
 with a separate hi-res LDR skybox (a 2k panorama through equirectToCube)
 as `background` while the .sol3e stays the `environment`. Scene-level like Three's
@@ -2052,7 +2107,8 @@ a procedural sky lights the scene with no light nodes, and the runtime
 way to turn a hi-res LDR skybox into a properly convolved environment
 (the `mipmap: true` box chain above is the sharper, cheaper
 alternative). A snapshot at the probe format (half float where
-renderable; default size 128): bake again when the sky changes, and
+renderable; default size the quality row's probeSize, 64 / 128 / 256):
+bake again when the sky changes, and
 destroy the old cube - it is not auto-freed (an environment normally
 lives as long as the app). A buffer is UNCLAMPED (the clamp sits in the
 resolve's encode), so a sky's sun disc of 40.0
@@ -2556,7 +2612,8 @@ its true roots; a hierarchy reaching a node twice (a cycle) throws.
 #### createModel
 
 `createModel(data, { material?, label?, autoFree? })` - uploads the images (repeat
-wrap, mipmapped, 4x anisotropic; each texture is labeled `<label>-<image name>`, so the
+wrap, mipmapped, at the app quality tier's anisotropy and mip limit, re-sampled in
+place when the tier changes - see Quality; each texture is labeled `<label>-<image name>`, so the
 `/gpu` inventory names the image), makes one material per glTF material (default `standard`
 with the file's color, maps, normal scale, metalness/roughness and
 packed map, emissive and transparency - the glTF material model, so a
@@ -3407,8 +3464,9 @@ successors) as ordinary content, the model-loading split repeated:
   (directional, degrees) and `sourceRadius` (spot/point, world units)
   make the penumbra follow the caster-to-receiver distance; `shadow.radius`
   is the uniform blur and, under a size, the floor. Both widen through
-  the scene's `shadows.quality` tier, which is where a low-end profile
-  turns every shadow hard in one write. The penumbra is capped at
+  the scene's `shadows.quality` tier, which the quality row sets - hard
+  at low, so the one write a low-end profile needs is the app tier
+  (Quality). The penumbra is capped at
   `SHADOW_MAX_TEXELS` map texels, so a coarse map (a wide box camera, a
   far cascade) caps the softness, and a blocker outside that search
   radius leaves its edge hard; raise `mapSize` or pull the frustum in

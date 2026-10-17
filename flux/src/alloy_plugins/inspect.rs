@@ -198,7 +198,7 @@ fn binding_json(b: &alloy::TextureBinding) -> (String, serde_json::Value) {
 }
 
 /// A texture's declared sampling in the create option's own vocabulary
-/// (`{ filter, wrap, mipmap, anisotropy }`), the one place the JSON spelling
+/// (`{ filter, wrap, mipmap, anisotropy, baseLevel }`), the one place the JSON spelling
 /// of a SamplerState lives: every inventory site that reports one calls
 /// this, so a new sampling axis is added here once.
 fn sampler_json(s: &alloy::SamplerState) -> serde_json::Value {
@@ -207,6 +207,7 @@ fn sampler_json(s: &alloy::SamplerState) -> serde_json::Value {
     "wrap": s.wrap.name(),
     "mipmap": s.mipmap,
     "anisotropy": s.anisotropy,
+    "baseLevel": s.base_level,
   })
 }
 

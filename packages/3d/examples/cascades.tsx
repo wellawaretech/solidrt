@@ -105,7 +105,6 @@ function App() {
         <Scene
           clearColor={[SKY[0], SKY[1], SKY[2], 1]}
           fog={{ color: SKY, near: FOG_NEAR, far: FOG_FAR }}
-          samples={4}
           label="cascades"
         >
           <PerspectiveCamera fov={50} near={0.5} far={FAR} position={eye()} lookAt={ahead()} />

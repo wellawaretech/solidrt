@@ -32,6 +32,15 @@ pub struct SamplerState {
   /// device clamp lives where the sampler objects are built: without
   /// `GL_EXT_texture_filter_anisotropic` every level samples as 1.
   pub anisotropy: u8,
+  /// The first mip level the id samples (Unity's mipmap limit, a texture
+  /// quality knob): 0 is the full-size level, 1 skips it and samples from
+  /// the half-size level down, a quarter of the texel bandwidth and
+  /// memory traffic for every tap. Texture-object state
+  /// (`TEXTURE_BASE_LEVEL`), so it is applied to the object rather than
+  /// through a sampler object; only meaningful with a chain (`mipmap`),
+  /// and below the chain's level count - both validated UI-side. A render
+  /// target's output is its level 0 and refuses a base level.
+  pub base_level: u8,
 }
 
 /// The anisotropy level range: 1 is off, 16 is the most any GL exposes
@@ -64,6 +73,7 @@ impl SamplerState {
     wrap: SamplerWrap::Clamp,
     mipmap: false,
     anisotropy: MIN_ANISOTROPY,
+    base_level: 0,
   };
 
   /// The cache slot of an anisotropy level: log2 of the (power-of-two) level.
@@ -79,6 +89,7 @@ impl Default for SamplerState {
       wrap: SamplerWrap::default(),
       mipmap: false,
       anisotropy: MIN_ANISOTROPY,
+      base_level: 0,
     }
   }
 }
@@ -516,6 +527,19 @@ pub struct SamplerOptions<'a> {
   pub wrap: Option<&'a str>,
   pub mipmap: Option<bool>,
   pub anisotropy: Option<f64>,
+  pub base_level: Option<f64>,
+}
+
+/// A change to a texture's declared sampling after creation
+/// (`set_texture_sampling`): every field optional, absent = keep the
+/// current value. The mip flag is not here: the chain is storage, fixed at
+/// creation.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SamplerUpdate<'a> {
+  pub filter: Option<&'a str>,
+  pub wrap: Option<&'a str>,
+  pub anisotropy: Option<f64>,
+  pub base_level: Option<f64>,
 }
 
 /// A per-binding deviation from a texture's declared sampling: the filter
@@ -569,6 +593,7 @@ impl SamplerState {
       wrap: o.wrap.unwrap_or(self.wrap),
       mipmap: self.mipmap,
       anisotropy: self.anisotropy,
+      base_level: self.base_level,
     }
   }
 
@@ -579,27 +604,13 @@ impl SamplerState {
   /// engines' clamp-not-error semantics: a level is a wish, the hardware
   /// quantizes it anyway). Below 1 or non-finite is the one error.
   pub fn parse(opts: &SamplerOptions<'_>) -> Result<Self, String> {
-    let SamplerOptions { filter, wrap, mipmap, anisotropy } = *opts;
-    let filter = match filter {
-      None | Some("linear") => SamplerFilter::Linear,
-      Some("nearest") => SamplerFilter::Nearest,
-      Some(other) => return Err(format!("unknown filter '{other}' (expected \"linear\" or \"nearest\")")),
-    };
-    let wrap = match wrap {
-      None | Some("clamp") => SamplerWrap::Clamp,
-      Some("repeat") => SamplerWrap::Repeat,
-      Some(other) => return Err(format!("unknown wrap '{other}' (expected \"clamp\" or \"repeat\")")),
-    };
-    let anisotropy = match anisotropy {
-      None => MIN_ANISOTROPY,
-      Some(a) if a.is_finite() && a >= f64::from(MIN_ANISOTROPY) => {
-        // Round down to the power of two at or below, capped at the ceiling.
-        let level = a.min(f64::from(MAX_ANISOTROPY)) as u8;
-        1 << (u8::BITS - 1 - level.leading_zeros())
-      }
-      Some(a) => return Err(format!("anisotropy {a} must be a number >= 1 (1 = off, up to 16)")),
-    };
-    Ok(SamplerState { filter, wrap, mipmap: mipmap.unwrap_or(false), anisotropy })
+    let SamplerOptions { filter, wrap, mipmap, anisotropy, base_level } = *opts;
+    let filter = parse_filter(filter)?.unwrap_or(SamplerFilter::Linear);
+    let wrap = parse_wrap(wrap)?.unwrap_or(SamplerWrap::Clamp);
+    let anisotropy = parse_anisotropy(anisotropy)?.unwrap_or(MIN_ANISOTROPY);
+    let mipmap = mipmap.unwrap_or(false);
+    let base_level = parse_base_level(base_level, mipmap)?.unwrap_or(0);
+    Ok(SamplerState { filter, wrap, mipmap, anisotropy, base_level })
   }
 
   /// Parse the app-facing options against the texture's declared format.
@@ -609,24 +620,114 @@ impl SamplerState {
   /// is their portable contract - see `TextureFormat::filterable`).
   pub fn parse_for(format: TextureFormat, opts: &SamplerOptions<'_>) -> Result<Self, String> {
     let mut state = Self::parse(opts)?;
-    if !format.filterable() {
-      if opts.filter.is_none() {
-        state.filter = SamplerFilter::Nearest;
-      }
-      if state.filter == SamplerFilter::Linear {
-        return Err(format!(
-          "{} textures sample nearest-only (no linear filtering for 32-bit float or integer texels in core GLES 3.0); drop filter: \"linear\"",
-          format.name()
-        ));
-      }
-      if state.mipmap {
-        return Err(format!("{} textures cannot carry a mip chain; drop mipmap: true", format.name()));
-      }
-      if state.anisotropy > MIN_ANISOTROPY {
-        return Err(format!("{} textures sample nearest-only; drop anisotropy", format.name()));
-      }
+    if !format.filterable() && opts.filter.is_none() {
+      state.filter = SamplerFilter::Nearest;
     }
+    state.check_format(format)?;
     Ok(state)
+  }
+
+  /// This state with `update`'s given fields replaced (`set_texture_sampling`):
+  /// the same vocabulary and quantization as `parse`, the same format rule
+  /// as `parse_for`, the mip flag kept (it is storage).
+  pub fn updated(self, format: TextureFormat, update: &SamplerUpdate<'_>) -> Result<Self, String> {
+    let SamplerUpdate { filter, wrap, anisotropy, base_level } = *update;
+    let state = SamplerState {
+      filter: parse_filter(filter)?.unwrap_or(self.filter),
+      wrap: parse_wrap(wrap)?.unwrap_or(self.wrap),
+      mipmap: self.mipmap,
+      anisotropy: parse_anisotropy(anisotropy)?.unwrap_or(self.anisotropy),
+      base_level: parse_base_level(base_level, self.mipmap)?.unwrap_or(self.base_level),
+    };
+    state.check_format(format)?;
+    Ok(state)
+  }
+
+  /// The base level must name a level the chain has: `levels` is the id's
+  /// level count (`mip_levels` of its edge, 1 without a chain).
+  pub fn check_chain(&self, levels: u32) -> Result<(), String> {
+    if u32::from(self.base_level) >= levels {
+      return Err(format!(
+        "baseLevel {} is past the mip chain ({levels} level{}, 0..{})",
+        self.base_level,
+        if levels == 1 { "" } else { "s" },
+        levels - 1
+      ));
+    }
+    Ok(())
+  }
+
+  /// A non-filterable format (the 32-bit floats, the integer format)
+  /// refuses linear, mipmaps and anisotropy outright: nearest/texelFetch is
+  /// their portable contract (see `TextureFormat::filterable`).
+  fn check_format(&self, format: TextureFormat) -> Result<(), String> {
+    if format.filterable() {
+      return Ok(());
+    }
+    if self.filter == SamplerFilter::Linear {
+      return Err(format!(
+        "{} textures sample nearest-only (no linear filtering for 32-bit float or integer texels in core GLES 3.0); drop filter: \"linear\"",
+        format.name()
+      ));
+    }
+    if self.mipmap {
+      return Err(format!("{} textures cannot carry a mip chain; drop mipmap: true", format.name()));
+    }
+    if self.anisotropy > MIN_ANISOTROPY {
+      return Err(format!("{} textures sample nearest-only; drop anisotropy", format.name()));
+    }
+    Ok(())
+  }
+}
+
+/// "linear" | "nearest"; None stays None (the caller's default).
+fn parse_filter(filter: Option<&str>) -> Result<Option<SamplerFilter>, String> {
+  match filter {
+    None => Ok(None),
+    Some("linear") => Ok(Some(SamplerFilter::Linear)),
+    Some("nearest") => Ok(Some(SamplerFilter::Nearest)),
+    Some(other) => Err(format!("unknown filter '{other}' (expected \"linear\" or \"nearest\")")),
+  }
+}
+
+/// "clamp" | "repeat"; None stays None.
+fn parse_wrap(wrap: Option<&str>) -> Result<Option<SamplerWrap>, String> {
+  match wrap {
+    None => Ok(None),
+    Some("clamp") => Ok(Some(SamplerWrap::Clamp)),
+    Some("repeat") => Ok(Some(SamplerWrap::Repeat)),
+    Some(other) => Err(format!("unknown wrap '{other}' (expected \"clamp\" or \"repeat\")")),
+  }
+}
+
+/// A number >= 1, rounded down to a power of two and capped at
+/// MAX_ANISOTROPY (the engines' clamp-not-error semantics: a level is a
+/// wish, the hardware quantizes it anyway). Below 1 or non-finite is the
+/// one error; None stays None.
+fn parse_anisotropy(anisotropy: Option<f64>) -> Result<Option<u8>, String> {
+  match anisotropy {
+    None => Ok(None),
+    Some(a) if a.is_finite() && a >= f64::from(MIN_ANISOTROPY) => {
+      let level = a.min(f64::from(MAX_ANISOTROPY)) as u8;
+      Ok(Some(1 << (u8::BITS - 1 - level.leading_zeros())))
+    }
+    Some(a) => Err(format!("anisotropy {a} must be a number >= 1 (1 = off, up to 16)")),
+  }
+}
+
+/// A non-negative integer naming the first level sampled, which needs a
+/// chain to pick from: a level above 0 without `mipmap` is the error (the
+/// chain's length is checked where the id's size is known, `check_chain`).
+fn parse_base_level(base_level: Option<f64>, mipmap: bool) -> Result<Option<u8>, String> {
+  match base_level {
+    None => Ok(None),
+    Some(l) if l.is_finite() && l >= 0.0 && l.fract() == 0.0 && l <= f64::from(u8::MAX) => {
+      if l > 0.0 && !mipmap {
+        return Err(format!("baseLevel {l} needs a mip chain to pick a level from; set mipmap: true"));
+      }
+      Ok(Some(l as u8))
+    }
+    Some(l) => Err(format!("baseLevel {l} must be a non-negative integer (0 = the full-size level)")),
   }
 }
 
@@ -762,6 +863,26 @@ impl TextureRegistry {
       width: old.width,
       height: old.height,
       sampler: old.sampler,
+      format: old.format,
+      shape: old.shape,
+      depth: old.depth,
+    };
+    entries.insert(id, Rc::new(entry));
+    self.generation.set(self.generation.get().wrapping_add(1));
+  }
+
+  /// Give `id`'s entry a new declared sampling, every other fact unchanged
+  /// (`set_texture_sampling`): a fresh entry like `replace_handle`, and
+  /// the generation bump, since a retained display list drew the id with
+  /// its old filter. An id the registry no longer knows is skipped.
+  pub fn replace_sampler(&self, id: u64, sampler: SamplerState) {
+    let mut entries = self.entries.borrow_mut();
+    let Some(old) = entries.get(&id) else { return };
+    let entry = TextureEntry {
+      impeller: old.impeller.clone(),
+      width: old.width,
+      height: old.height,
+      sampler,
       format: old.format,
       shape: old.shape,
       depth: old.depth,
