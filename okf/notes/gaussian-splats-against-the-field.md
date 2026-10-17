@@ -63,9 +63,11 @@ points, all of which need compute:
 
 ## Shortcuts in the shipped implementation
 
-- The records are resident twice: the engine's sort-key copy (32 bytes
-  per splat) and the texture. The key needs only the 12-byte position.
-  [../backlog/splat-key-copy.md](../backlog/splat-key-copy.md).
+- The engine's sort-key copy is the records' key column (the 12-byte
+  position per splat, read off the block at the hand-off), beside the
+  texture; the data textures fill in row bands straight from the block,
+  so loading holds one band in flight, not a padded copy of each block.
+  [../done/splat-key-copy.md](../done/splat-key-copy.md).
 - The sort blocks the UI thread. Its per-re-sort spike at 1M was never
   isolated (the JS p50 hides a periodic spike) - the one cost of this
   design that is not measured.

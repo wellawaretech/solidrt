@@ -1181,9 +1181,14 @@ fn create_volume(
 // signals intent to update it later via uploadTexture. The seed buffer may be
 // larger than one frame (uploadTexture takes an offset), so only require that
 // the first frame fits.
+// A mutable texture seeded with `data`, or - `data` null or undefined -
+// allocated at its size with unspecified contents, for a texture its
+// owner fills through uploadTexture before anything samples it (a large
+// block uploaded in row bands, a stream whose producer writes the first
+// frame).
 fn create_mutable_texture(
   ctx: Ctx<'_>,
-  data: Value<'_>,
+  data: OptArg<Value<'_>>,
   width: u32,
   height: u32,
   opts: OptArg<Object<'_>>,
@@ -1198,10 +1203,16 @@ fn create_mutable_texture(
       ),
     ));
   }
-  let data = PixelData::collect(&ctx, data, format, "createMutableTexture")?;
-  let all = data.bytes(&ctx, "createMutableTexture")?;
   let frame_size = format.byte_len(width, height);
-  if all.len() < frame_size {
+  let seed = match data.0 {
+    Some(value) if !value.is_null() => Some(PixelData::collect(&ctx, value, format, "createMutableTexture")?),
+    _ => None,
+  };
+  let all = match &seed {
+    Some(data) => data.bytes(&ctx, "createMutableTexture")?,
+    None => &[],
+  };
+  if seed.is_some() && all.len() < frame_size {
     return Err(throw_str(
       &ctx,
       &format!("createMutableTexture: need at least {frame_size} bytes ({}), got {}", format.name(), all.len()),
@@ -1209,7 +1220,7 @@ fn create_mutable_texture(
   }
   let sampler = collect_sampler(&ctx, &opts.0, format, "createMutableTexture")?;
   let label = collect_label(&opts.0)?;
-  let pixels = &all[..frame_size];
+  let pixels = if seed.is_some() { &all[..frame_size] } else { all };
   let st = state(&ctx);
   let id = st
     .gui
@@ -1583,15 +1594,38 @@ fn write_buffer(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: OptArg<
 }
 
 // Hand a buffer's full record set to the engine (the record-transfer
-// form): the core's order mirror takes ownership of the bytes, so the app
-// keeps no copy - the ordered entry sorts and republishes from the mirror
+// form): the core's order mirror takes ownership of a copy, so the app
+// keeps none - the ordered entry sorts and republishes from the mirror
 // (first publish at attach, re-sorts on direction changes, prefix
-// republishes on instance-count changes). No frame request: nothing draws
-// until an entry attaches over the buffer, and that attach requests one.
-fn transfer_records(ctx: Ctx<'_>, id: u64, records: TypedArray<'_, u8>) -> rquickjs::Result<()> {
+// republishes on instance-count changes). The optional key ({ stride,
+// position | field }: the record's byte stride and the key's float
+// offset) is the index form's: the mirror then keeps the records' key
+// column only. Only the object shape is checked here; the values are
+// alloy's. No frame request: nothing draws until an entry attaches over
+// the buffer, and that attach requests one.
+fn transfer_records(
+  ctx: Ctx<'_>,
+  id: u64,
+  records: TypedArray<'_, u8>,
+  key: OptArg<Object<'_>>,
+) -> rquickjs::Result<()> {
+  let key = match &key.0 {
+    None => None,
+    Some(o) => {
+      let Some(stride) = o.get::<_, Option<f64>>("stride")? else {
+        return Err(throw_str(&ctx, "transferRecords: the record key needs a stride (bytes per record)"));
+      };
+      let field = o.get::<_, Option<f64>>("field")?;
+      let position = o.get::<_, Option<f64>>("position")?;
+      Some(
+        alloy::KeyColumn::parse(stride, field, position)
+          .map_err(|e| throw_str(&ctx, &format!("transferRecords: {e}")))?,
+      )
+    }
+  };
   let bytes = bytes_of(&ctx, &records, "transferRecords")?;
   let st = state(&ctx);
-  st.gui.alloy.instance_order_records(id, bytes).map_err(|e| throw_str(&ctx, &format!("transferRecords: {e}")))?;
+  st.gui.alloy.instance_order_records(id, bytes, key).map_err(|e| throw_str(&ctx, &format!("transferRecords: {e}")))?;
   Ok(())
 }
 

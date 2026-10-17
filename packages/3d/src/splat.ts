@@ -14,7 +14,7 @@
 // the view direction.
 
 import { file } from "flux:fs"
-import { createTexture, limits } from "@solidrt/core/gpu"
+import { createMutableTexture, limits, uploadTexture } from "@solidrt/core/gpu"
 import type { TextureBindings, TextureId, VertexAttribute } from "@solidrt/core/gpu"
 import { mergeGeometries, plane } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
@@ -324,34 +324,65 @@ export type SplatMeshOptions = {
   label?: string
 }
 
+// The most bytes one band of a data texture upload carries: a block
+// uploads as row bands straight from its source view, so this bounds the
+// load's transient memory (one band in flight) where a padded whole-block
+// copy would hold the block twice.
+const SPLAT_UPLOAD_BAND_BYTES = 4 << 20
+
 // A data texture from a texel block (SPLAT_TEXEL_BYTES per texel, `count`
-// x `texels` of them): the block padded to whole rows of the device
-// width, uploaded as rgba32ui. The pad copy is the one per-cloud copy
-// loading makes (native, tens of ms at 1M), and it is transient.
+// x `texels` of them), rgba32ui: allocated at its size, then filled in
+// place from the block - whole rows of the device width in bands, the
+// tail of the last row as a partial rect. No padded copy: a bake's bytes
+// or the .sol3s payload upload as they are, and the texels past the
+// block (the rest of the last row) are never fetched - every id the
+// shader sees is below the count or the sentinel.
 function splatTexture(block: Uint8Array, texels: number, count: number, label: string): TextureId {
   let { width } = textureWidth()
-  let rows = Math.max(1, Math.ceil((count * texels) / width))
+  let total = count * texels
+  let rows = Math.max(1, Math.ceil(total / width))
   if (rows > limits.maxTextureSize) {
     throw new Error("createSplatMesh: " + count + " splats need a " + width + "x" + rows + " " + label + " texture; this device allows " + limits.maxTextureSize + " rows")
   }
-  let padded = new Uint32Array(rows * width * (SPLAT_TEXEL_BYTES / 4))
-  new Uint8Array(padded.buffer).set(block.subarray(0, count * texels * SPLAT_TEXEL_BYTES))
-  return createTexture(padded, width, rows, { format: "rgba32ui", autoFree: false, label })
+  let id = createMutableTexture(null, width, rows, { format: "rgba32ui", autoFree: false, label })
+  let rowBytes = width * SPLAT_TEXEL_BYTES
+  let bandRows = Math.max(1, Math.floor(SPLAT_UPLOAD_BAND_BYTES / rowBytes))
+  let fullRows = Math.floor(total / width)
+  for (let y = 0; y < fullRows; y += bandRows) {
+    let height = Math.min(bandRows, fullRows - y)
+    uploadTexture(id, texelWords(block, y * rowBytes, height * rowBytes), { x: 0, y, width, height })
+  }
+  let tail = total - fullRows * width
+  if (tail > 0) {
+    uploadTexture(id, texelWords(block, fullRows * rowBytes, tail * SPLAT_TEXEL_BYTES), { x: 0, y: fullRows, width: tail, height: 1 })
+  }
+  return id
+}
+
+// `bytes` of `block` from `at` as the Uint32Array an rgba32ui upload
+// takes: a view when the range sits on a word boundary (a bake's buffer
+// and the .sol3s payload do), a copy of just that range otherwise.
+function texelWords(block: Uint8Array, at: number, bytes: number): Uint32Array {
+  let offset = block.byteOffset + at
+  if (offset % 4 === 0) return new Uint32Array(block.buffer, offset, bytes / 4)
+  return new Uint32Array(block.slice(at, at + bytes).buffer)
 }
 
 /**
  * A mesh drawing a baked splat cloud (loadSplat, or parseSplat at bake
  * scale): a record mesh in the indexed form over the stock splat material
- * for the cloud's SH degree - the records handed to the engine as the
- * depth-sort key source AND uploaded once as the rgba32ui record texture
- * the vertex stage fetches by id, the SH block (when baked) as a second
- * texture, SPLAT_GROUP splats per drawn instance of the merged-quad
+ * for the cloud's SH degree - the records' centers kept by the engine as
+ * the depth-sort key (12 bytes per splat, read off the record block at
+ * creation) AND the block uploaded once, in place and in row bands, as
+ * the rgba32ui record texture the vertex stage fetches by id, the SH
+ * block (when baked) as a second texture, SPLAT_GROUP splats per drawn
+ * instance of the merged-quad
  * geometry, the cloud's header bounds as the picking and cull box, and
  * the core-side back-to-front order on the splat centers materialized as
  * the id stream (a camera turn re-sorts and republishes 4 bytes per splat
  * core-side with no publish from JS; an order-preserving move uploads
  * nothing). The cloud is write-once: treat `data` as consumed and let it
- * go (the engine holds its own copy; the fetched bytes free with it), and
+ * go (the engine holds the centers; the fetched bytes free with it), and
  * swap clouds by a new mesh. disposeInstances frees the id buffer, the
  * engine copy and both textures. One caveat carried from the capture
  * side: captures are TRAINED against sRGB blending, so show a capture in

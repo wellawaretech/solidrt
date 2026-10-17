@@ -40,8 +40,9 @@ export const SPLAT_SH_TEXELS = [0, 2, 3, 6]
 /** The record as a byte layout, in texel order: the center and packed
  * color (texel A), then the covariance halves - iCovA (xx, xy, xz, yy),
  * iCovB (yz, zz) - and the spare word (texel B). The core's depth sort
- * keys on iCenter at this stride; the shader reads the same bytes as two
- * uvec4 texels. */
+ * keys on iCenter at this stride (the hand-off declares that column and
+ * the engine keeps those 12 bytes per splat, nothing else of the record);
+ * the shader reads the same bytes as two uvec4 texels. */
 export const SPLAT_ATTRIBUTES: VertexAttribute[] = [
   { name: "iCenter", format: "float32x3" },
   { name: "iColor", format: "unorm8x4" },

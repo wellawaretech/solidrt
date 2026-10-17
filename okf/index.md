@@ -769,12 +769,6 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
-- **[The engine holds a full 32-byte record copy of a splat cloud when the sort needs 12](backlog/splat-key-copy.md)** [2026-09-27]
-  An indexed instance order keys on the record's position, but the hand-off
-  mirror the core sorts is the whole record block (32 bytes per splat, 32 MB
-  at 1M) next to the same bytes in the record texture; a position-only key
-  copy would cut the CPU-side residency to 12 bytes per splat, and the memory
-  pressure that reaped the phone client at 1M was real.
 - **[A million splats at phone full resolution spend the frame in fill](backlog/splat-overdraw-fill.md)** [2026-09-27]
   With the instancing frontend gone the Pixel 7 draws 1M splats in ~36 ms at
   1079x2399, of which ~24 ms is fragment work - the gaussian falloff, the
@@ -2575,6 +2569,13 @@ Finished, kept for the reasoning.
   @solidrt/core/speech-recognition) ships nowhere and exists for testing; once
   speech runs as an external runtime module over the microphone ring, the lane
   and everything built only for it come out.
+- **[The engine holds a full 32-byte record copy of a splat cloud when the sort needs 12](done/splat-key-copy.md)** [2026-10-17]
+  An indexed instance order keys on the record's position, but the hand-off
+  mirror the core sorts is the whole record block (32 bytes per splat, 32 MB
+  at 1M) next to the same bytes in the record texture; the mirror should hold
+  the key column only, and the data textures should fill from the file block
+  in place instead of a padded copy, so the phone's residency and load peak
+  both drop.
 - **[Standalone APK for a packed app](done/standalone-android-apk.md)** [2026-09-01]
   Shipped 2026-09-01: sol pack --apk patches a per-ABI production runner APK
   (no Android SDK at pack time) with the app's payload, id, label, versionCode

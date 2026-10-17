@@ -46,6 +46,87 @@ pub enum OrderKey {
   Projected { offset: usize, direction: [f32; 3] },
 }
 
+impl OrderKey {
+  /// The key's byte offset in its record.
+  pub fn offset(&self) -> usize {
+    match *self {
+      OrderKey::Field { offset } | OrderKey::Projected { offset, .. } => offset,
+    }
+  }
+
+  /// The bytes the key reads: one f32 for a field, a vec3 for a position.
+  pub fn bytes(&self) -> usize {
+    match self {
+      OrderKey::Field { .. } => 4,
+      OrderKey::Projected { .. } => 12,
+    }
+  }
+
+  /// The same key at another byte offset.
+  fn at(&self, offset: usize) -> OrderKey {
+    match *self {
+      OrderKey::Field { .. } => OrderKey::Field { offset },
+      OrderKey::Projected { direction, .. } => OrderKey::Projected { offset, direction },
+    }
+  }
+}
+
+/// The key column of a handed-off record: what the index materialization's
+/// mirror keeps of each record. An indexed order never republishes its
+/// records (a re-sort writes ids), so the mirror holds the bytes the sort
+/// reads and nothing else - 12 per record for a position key, 4 for a
+/// field key - and a 1M-record population costs the engine 12 MB, not the
+/// record block. Declared with the hand-off (`transferRecords`' key
+/// argument: a byte stride and a float offset at the API) and matched
+/// against the entry's order when it attaches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyColumn {
+  /// The handed-off record's byte stride.
+  pub stride: usize,
+  /// The key's byte offset inside one record.
+  pub offset: usize,
+  /// The key's byte length: 4 for a field, 12 for a position.
+  pub len: usize,
+}
+
+impl KeyColumn {
+  /// Parse the API-boundary shape: `stride` in bytes, and exactly one of
+  /// `field` or `position` as a float offset into the record.
+  pub fn parse(stride: f64, field: Option<f64>, position: Option<f64>) -> Result<KeyColumn, String> {
+    let stride = record_stride(stride, "record key stride")?;
+    let key = match (field, position) {
+      (Some(_), Some(_)) => return Err("a record key is either field or position, not both".to_string()),
+      (None, None) => return Err("a record key needs field or position (a float offset into the record)".to_string()),
+      (Some(f), None) => OrderKey::Field { offset: float_offset(f, "record key field")? },
+      (None, Some(p)) => OrderKey::Projected { offset: float_offset(p, "record key position")?, direction: [0.0; 3] },
+    };
+    let column = KeyColumn { stride, offset: key.offset(), len: key.bytes() };
+    if column.offset + column.len > column.stride {
+      return Err(format!("record key at float {} does not fit the {}-byte record", column.offset / 4, column.stride));
+    }
+    Ok(column)
+  }
+
+  /// Whether `len` bytes are a whole number of this column's records.
+  pub fn check_records(&self, len: usize) -> Result<(), String> {
+    if len % self.stride != 0 {
+      return Err(format!("{len} bytes is not a whole number of {}-byte records", self.stride));
+    }
+    Ok(())
+  }
+
+  /// Copy the key column out of `records` (a whole number of records, see
+  /// `check_records`) into `out`, `len` bytes per record.
+  pub fn extract(&self, records: &[u8], out: &mut Vec<u8>) {
+    debug_assert!(records.len() % self.stride == 0, "hand-off not a whole number of records");
+    out.clear();
+    out.reserve(records.len() / self.stride * self.len);
+    for record in records.chunks_exact(self.stride) {
+      out.extend_from_slice(&record[self.offset..self.offset + self.len]);
+    }
+  }
+}
+
 /// One entry's declared instance order: the key source, which buffer's
 /// records hold it, and the direction of the sort. Ascending draws
 /// smallest key first; descending is the back-to-front alpha case when
@@ -68,11 +149,12 @@ pub struct InstanceOrder {
   pub retain: bool,
   /// The index materialization: Some(record stride in bytes) when the
   /// key buffer holds sorted record INDICES rather than records. The
-  /// records themselves are handed off (`instance_order_records`) at this
-  /// stride - the key offsets address them - and the buffer's instance
-  /// record is `arrayStride / 4` u32 ids (K records per drawn instance),
-  /// written whole on every re-sort with `INDEX_NONE` past the population.
-  /// Retains by nature (the mirror is the only record copy).
+  /// records are handed off (`instance_order_records`) with a `KeyColumn`
+  /// declaring this stride and the key's offset, and the mirror keeps the
+  /// key column only (`mirror_stride`, `mirror_order`); the buffer's
+  /// instance record is `arrayStride / 4` u32 ids (K records per drawn
+  /// instance), written whole on every re-sort with `INDEX_NONE` past the
+  /// population. Retains by nature (the mirror is the only key copy).
   pub indices: Option<usize>,
 }
 
@@ -117,26 +199,19 @@ impl InstanceOrder {
         if retain {
           return Err("retain applies to a position key; a field key re-orders when its records republish".to_string());
         }
-        OrderKey::Field { offset: float_offset(f, "field")? }
+        OrderKey::Field { offset: float_offset(f, "instanceOrder field")? }
       }
       (None, Some(p)) => {
         let Some(direction) = direction else {
           return Err("a position key needs a direction (the view direction positions project onto)".to_string());
         };
         check_direction(direction)?;
-        OrderKey::Projected { offset: float_offset(p, "position")?, direction }
+        OrderKey::Projected { offset: float_offset(p, "instanceOrder position")?, direction }
       }
     };
     let indices = match indices {
       None => None,
-      Some(s) => {
-        if !(s.is_finite() && s > 0.0 && s.fract() == 0.0 && (s as usize) % 4 == 0) {
-          return Err(format!(
-            "instanceOrder indices.stride must be a positive multiple of 4 bytes (whole float records), got {s}"
-          ));
-        }
-        Some(s as usize)
-      }
+      Some(s) => Some(record_stride(s, "instanceOrder indices.stride")?),
     };
     let order = InstanceOrder { key, descending, key_buffer, retain, indices };
     if let Some(stride) = indices {
@@ -145,21 +220,45 @@ impl InstanceOrder {
     Ok(order)
   }
 
-  /// The byte stride of the records the key reads: the handed-off record
-  /// stride under the index materialization, else the instance buffer's.
-  pub fn record_stride(&self, instance_stride: usize) -> usize {
-    self.indices.unwrap_or(instance_stride)
+  /// The byte stride of the records the sort reads off the mirror: the key
+  /// column's under the index materialization (the mirror holds nothing
+  /// else), the instance buffer's otherwise.
+  pub fn mirror_stride(&self, instance_stride: usize) -> usize {
+    if self.indices.is_some() {
+      self.key.bytes()
+    } else {
+      instance_stride
+    }
+  }
+
+  /// The order as the sort reads it off the mirror: under the index
+  /// materialization the key rebased to offset 0 of the key column, else
+  /// itself.
+  pub fn mirror_order(&self) -> InstanceOrder {
+    if self.indices.is_none() {
+      return *self;
+    }
+    InstanceOrder { key: self.key.at(0), ..*self }
+  }
+
+  /// The key column an index-materialized order expects its records handed
+  /// off as; None for the gathered forms.
+  pub fn key_column(&self) -> Option<KeyColumn> {
+    self.indices.map(|stride| KeyColumn { stride, offset: self.key.offset(), len: self.key.bytes() })
   }
 
   /// The key bytes must sit inside one record of `stride` bytes: a field key
   /// reads one f32, a projected key reads a vec3.
   pub fn check_stride(&self, stride: usize) -> Result<(), String> {
-    let (offset, len, name) = match self.key {
-      OrderKey::Field { offset } => (offset, 4, "field"),
-      OrderKey::Projected { offset, .. } => (offset, 12, "position"),
+    let name = match self.key {
+      OrderKey::Field { .. } => "field",
+      OrderKey::Projected { .. } => "position",
     };
-    if offset + len > stride {
-      return Err(format!("instanceOrder {name} offset {} does not fit the {stride}-byte instance record", offset / 4));
+    if self.key.offset() + self.key.bytes() > stride {
+      return Err(format!(
+        "instanceOrder {name} offset {} does not fit the {stride}-byte instance record",
+        self.key.offset() / 4
+      ));
     }
     Ok(())
   }
@@ -180,9 +279,18 @@ impl InstanceOrder {
 
 fn float_offset(value: f64, name: &str) -> Result<usize, String> {
   if !(value.is_finite() && value >= 0.0 && value.fract() == 0.0) {
-    return Err(format!("instanceOrder {name} must be a non-negative integer float offset, got {value}"));
+    return Err(format!("{name} must be a non-negative integer float offset, got {value}"));
   }
   Ok(value as usize * 4)
+}
+
+// A record's byte stride at the API boundary: a positive multiple of 4
+// (whole float records).
+fn record_stride(value: f64, name: &str) -> Result<usize, String> {
+  if !(value.is_finite() && value > 0.0 && value.fract() == 0.0 && (value as usize) % 4 == 0) {
+    return Err(format!("{name} must be a positive multiple of 4 bytes (whole float records), got {value}"));
+  }
+  Ok(value as usize)
 }
 
 fn check_direction(direction: [f32; 3]) -> Result<(), String> {

@@ -1,6 +1,6 @@
 use crate::gpu::{
-  gather_ordered, gather_permuted, materialize_indices, order_permutation, InstanceOrder, OrderKey, OrderScratch,
-  INDEX_NONE,
+  gather_ordered, gather_permuted, materialize_indices, order_permutation, InstanceOrder, KeyColumn, OrderKey,
+  OrderScratch, INDEX_NONE,
 };
 
 // Pack f32 records into the byte shape the lease block holds.
@@ -264,8 +264,8 @@ fn parse_and_materialize_indices() {
   let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(32.0))
     .expect("an indexed position order parses");
   assert_eq!(indexed.indices, Some(32));
-  assert_eq!(indexed.record_stride(64), 32, "the record stride is the handed-off one, not the id stream's");
-  assert_eq!(field(0).record_stride(52), 52, "without indices the instance record is the record");
+  assert_eq!(indexed.mirror_stride(64), 12, "the mirror holds the key column, not the id stream or the record");
+  assert_eq!(field(0).mirror_stride(52), 52, "without indices the instance record is the record");
   let odd = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false, Some(30.0));
   assert!(odd.expect_err("a stride off the float grid").contains("multiple of 4"));
   let zero = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false, Some(0.0));
@@ -284,4 +284,59 @@ fn parse_and_materialize_indices() {
   materialize_indices(&[], &mut odd);
   assert_eq!(&odd[..8], &[0xFF; 8]);
   assert_eq!(odd[8], 0x11);
+}
+
+// The hand-off's key column: parsed from the API's byte stride and float
+// offset, it names what the indexed mirror keeps of each record, and the
+// entry's order must describe the same column when it attaches.
+#[test]
+fn key_column_parses_and_matches_the_order() {
+  let column = KeyColumn::parse(32.0, None, Some(0.0)).expect("a position key at float 0 of 32-byte records");
+  assert_eq!(column, KeyColumn { stride: 32, offset: 0, len: 12 });
+  let field_column = KeyColumn::parse(16.0, Some(3.0), None).expect("a field key at float 3 of 16-byte records");
+  assert_eq!(field_column, KeyColumn { stride: 16, offset: 12, len: 4 });
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(32.0))
+    .expect("an indexed position order parses");
+  assert_eq!(indexed.key_column(), Some(column), "the order expects the column the hand-off declared");
+  assert_eq!(field(0).key_column(), None, "a gathered order keeps whole records");
+  let shifted =
+    InstanceOrder::parse(None, Some(1.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(32.0)).expect("parses");
+  assert_ne!(shifted.key_column(), Some(column), "a different offset is a different column");
+
+  let both = KeyColumn::parse(32.0, Some(0.0), Some(0.0));
+  assert!(both.expect_err("both keys").contains("not both"));
+  let neither = KeyColumn::parse(32.0, None, None);
+  assert!(neither.expect_err("no key").contains("needs field or position"));
+  let odd = KeyColumn::parse(30.0, None, Some(0.0));
+  assert!(odd.expect_err("a stride off the float grid").contains("multiple of 4"));
+  let tight = KeyColumn::parse(16.0, None, Some(2.0));
+  assert!(tight.expect_err("a vec3 at float 2 of a 16-byte record").contains("does not fit"));
+  let fraction = KeyColumn::parse(16.0, None, Some(0.5));
+  assert!(fraction.expect_err("a fractional offset").contains("float offset"));
+}
+
+// Extraction keeps the key bytes of every record, in slot order, and the
+// sort reads the column with the key rebased to offset 0 - the same
+// permutation the whole records would give.
+#[test]
+fn key_column_extracts_what_the_sort_reads() {
+  // Three 16-byte records: [x y z w], the position at float 1.
+  let records = bytes(&[9.0, 1.0, 2.0, 3.0, 9.0, 4.0, 5.0, 6.0, 9.0, 7.0, 8.0, 9.0]);
+  let column = KeyColumn::parse(16.0, None, Some(1.0)).expect("parses");
+  assert!(column.check_records(records.len()).is_ok());
+  assert!(column.check_records(records.len() - 1).expect_err("a torn record").contains("whole number"));
+  let mut keys = vec![0xAAu8; 3];
+  column.extract(&records, &mut keys);
+  assert_eq!(keys, bytes(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]), "the column replaces the vector");
+
+  // Depth along +z, descending: slot 2 (z = 9) first.
+  let order =
+    InstanceOrder::parse(None, Some(1.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0)).expect("parses");
+  let mut scratch = OrderScratch::default();
+  order_permutation(&order.mirror_order(), order.mirror_stride(64), &keys, &mut scratch);
+  assert_eq!(scratch.perm(), &[2, 1, 0]);
+  let mut whole = OrderScratch::default();
+  order_permutation(&order, 16, &records, &mut whole);
+  assert_eq!(scratch.perm(), whole.perm(), "the column sorts as the records do");
+  assert_eq!(field(2).mirror_order(), field(2), "a gathered order reads its records as declared");
 }

@@ -1906,15 +1906,16 @@ LAYOUT, descending: true }` (createRecordMesh only), is for a population
 whose records live in a DATA TEXTURE the vertex stage fetches by record
 index - a splat cloud, any large write-once set whose per-instance
 frontend cost matters. `records` is the layout of the record bytes you
-pass (the key attribute lives there), and the material's ONE instance
-buffer is the id stream: uint32/uint32x4 attributes the engine fills
+pass: the engine keeps their key column (the position, 12 bytes per
+record) as its sort mirror and nothing else, and the material's ONE
+instance buffer is the id stream: uint32/uint32x4 attributes the engine fills
 with the sorted record indices, K ids per instance record, so one drawn
 instance covers K records - repeat the geometry K times and pick the
 record with `gl_VertexID` (quad `gl_VertexID / 4`), fetch it by id
 (`texelFetch` on an `rgba32ui` texture the app built from the same
 bytes and bound per mesh), and cull the id 0xFFFFFFFF that pads the
-last group. Transfer is implied (the records are the engine's sort
-key source), a re-sort uploads 4 bytes per record instead of the
+last group. Transfer is implied (the engine reads its key column off
+the records at creation), a re-sort uploads 4 bytes per record instead of the
 record, and `count` stays in records while the entry draws
 ceil(count / K) instances (`drawCount`). `MeshInstances.textures` holds
 data textures the population owns, freed by disposeInstances.
@@ -3074,9 +3075,10 @@ successors) as ordinary content, the model-loading split repeated:
 - On the runtime, `loadSplat(path)` reads a `.sol3s` (fetch + decode,
   the loadModel shape) and `createSplatMesh(data, { count?, material?,
   label? })` / `<SplatMesh>` shows it: a RecordMesh in the INDEXED form
-  (see "Instance order") - the records handed to the engine as the
-  depth sort's key source AND uploaded once as the `rgba32ui` record
-  texture the vertex stage fetches by id (`uSplatRecords`, plus
+  (see "Instance order") - the records' centers kept by the engine as
+  the depth sort's key (12 bytes per splat, read off the block at
+  creation) AND the block uploaded once, in place and in row bands, as
+  the `rgba32ui` record texture the vertex stage fetches by id (`uSplatRecords`, plus
   `uSplatSh` when baked; bound per mesh, so a forked material keeps
   them), SPLAT_GROUP (16) splats per drawn instance of a merged-quad
   geometry, the header bounds as the cull and picking box, and the
@@ -3085,7 +3087,7 @@ successors) as ordinary content, the model-loading split repeated:
   entry sort, transformed by its node), a camera turn re-sorts and
   republishes 4 bytes per splat with zero per-frame JS, and a parked
   camera uploads nothing. Write-once: treat the SplatData as consumed
-  and drop it; at 1M splats the cloud is resident as the engine's 32 MB
+  and drop it; at 1M splats the cloud is resident as the engine's 12 MB
   key copy plus 32 MB of texture plus a 4 MB id buffer, and
   disposeInstances frees all three. `splatMaterialClass(shDegree)` is
   the stock class per degree (a shared instance each), and

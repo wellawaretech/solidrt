@@ -35,7 +35,9 @@ impl RasterState {
     } else {
       let gpu = GpuTexture::new(&self.gl, size, sampler, format);
       // An empty create allocates only: a camera's stream texture, which
-      // its tap fills at the next Frame before anything draws it.
+      // its tap fills at the next Frame before anything draws it, or a
+      // mutable texture created without a seed, which its owner fills in
+      // bands through the upload path.
       if !pixels.is_empty() {
         gpu.upload(&self.gl, pixels, size);
       }

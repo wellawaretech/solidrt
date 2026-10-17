@@ -450,9 +450,13 @@ declare module "flux:gpu" {
    * seed buffer must hold at least one frame at the declared format's size
    * and may hold more (uploadTexture selects a frame by offset); like
    * {@link createTexture}, the view type must match the format (Uint8Array
-   * for byte formats, Float32Array for float formats).
+   * for byte formats, Float32Array for float formats). A `null` seed
+   * allocates the storage alone, its contents unspecified until written:
+   * for a texture its owner fills through uploadTexture before anything
+   * samples it - a large data block uploaded in row bands straight from
+   * its source view, a stream whose producer writes the first frame.
    */
-  export function createMutableTexture(data: Uint8Array | Float32Array | Uint32Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
+  export function createMutableTexture(data: Uint8Array | Float32Array | Uint32Array | null, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /** A rect of a 2D texture, in texels from its top-left: the third argument of {@link uploadTexture}. */
   export type TextureRect = { x: number, y: number, width: number, height: number }
   /**
@@ -943,16 +947,21 @@ declare module "flux:gpu" {
     /**
      * The INDEX materialization, for a population whose records live in a
      * data texture the shader fetches by record index: the records are
-     * handed off with {@link transferRecords} at `stride` bytes each (the
-     * key offsets address them), and the ordered instance buffer holds
-     * the sorted record indices as u32 - `arrayStride / 4` ids per
+     * handed off with {@link transferRecords} at `stride` bytes each
+     * under a {@link RecordKey} naming this stride and the key's offset,
+     * and the engine keeps their key column only (12 bytes per record
+     * for a position, 4 for a field: the sort reads nothing else, and a
+     * re-sort writes ids, never records). The ordered instance buffer
+     * holds the sorted record indices as u32 - `arrayStride / 4` ids per
      * instance record, so one drawn instance covers K records - written
      * whole on every re-sort (the sorted ids, then 0xFFFFFFFF to the end
      * of the buffer, which the shader culls before fetching). A re-sort
      * then uploads 4 bytes per record instead of the record. Retains by
-     * nature; takes exactly one instance-step buffer, over handed-off
-     * records only (publishing that buffer through the lease throws), and
-     * `instanceCount` picks the first count x K records of the mirror.
+     * nature; takes exactly one instance-step buffer, over a handed-off
+     * key column only (publishing that buffer through the lease throws,
+     * and attaching over whole handed-off records or a different column
+     * throws naming both), and `instanceCount` picks the first count x K
+     * records of the mirror.
      */
     indices?: { stride: number }
   }
@@ -1068,6 +1077,14 @@ declare module "flux:gpu" {
    */
   export function writeBuffer(id: BufferId, data: Uint8Array, byteOffset?: number): void
   /**
+   * The key column of handed-off records, {@link transferRecords}' key
+   * argument for the index materialization ({@link InstanceOrder}'s
+   * `indices`): the record's byte stride and the key's float offset into
+   * it, exactly what the entry's `instanceOrder` will declare (`position`
+   * with `indices: { stride }`, or `field`).
+   */
+  export type RecordKey = { stride: number } & ({ position: number } | { field: number })
+  /**
    * Hand a buffer's full record set to the engine - the write-once form of
    * an ordered instance buffer ({@link InstanceOrder}): the engine's order
    * mirror takes ownership of a copy, so the app keeps none, and the
@@ -1075,14 +1092,18 @@ declare module "flux:gpu" {
    * first publish when the entry attaches (nothing draws before that),
    * re-sorts on `orderDirection` changes, and prefix republishes when the
    * entry's `instanceCount` changes (the first n records are the sorted
-   * population). Hand off before the entry attaches; a second call
-   * replaces the records wholesale. By the time an entry attaches over
-   * the buffer the records must be whole records of the order's stride
-   * and, for gathered records, fit the buffer (an indexed order's buffer
-   * holds their ids instead, see {@link InstanceOrder}). The mirror is
-   * freed with the buffer.
+   * population). With a {@link RecordKey} the mirror keeps the records'
+   * key column only - the index materialization, where the engine sorts
+   * the column and writes ids, so a 1M-record cloud is resident as 12 MB
+   * of positions, not its record block; without one it keeps the whole
+   * records a gathered order republishes. Hand off before the entry
+   * attaches; a second call replaces the records wholesale. By the time
+   * an entry attaches over the buffer the hand-off must match the order's
+   * form: whole records of the order's stride that fit the buffer for a
+   * gathered order, the order's own key column for an indexed one (whose
+   * buffer holds their ids instead). The mirror is freed with the buffer.
    */
-  export function transferRecords(id: BufferId, records: Uint8Array): void
+  export function transferRecords(id: BufferId, records: Uint8Array, key?: RecordKey): void
   /**
    * Destroy a vertex buffer. Pipeline textures drawing from it hold their own
    * reference, so destruction order does not matter; further writes to the id

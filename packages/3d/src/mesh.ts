@@ -4,7 +4,7 @@
 // scene side is reached through the node's SceneHooks (node.ts).
 
 import { createBuffer, createRecordStream, destroyBuffer, destroyTexture, encodeRecord, layoutComponents, layoutFields, transferRecords, writeRecord as writeLayoutRecord, VERTEX_FORMATS } from "@solidrt/core/gpu"
-import type { AttributeAccess, BufferId, DrawId, RecordStream, ShaderParams, TextureBindings, TextureId, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
+import type { AttributeAccess, BufferId, DrawId, RecordKey, RecordStream, ShaderParams, TextureBindings, TextureId, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
 import { checkCubeKnobs } from "./environment.ts"
 import type { EnvironmentOptions } from "./environment.ts"
 import { geometryBounds, isFloatLayout, layoutKey, layoutStride, plane, vertexBytes, vertexView } from "./geometry.ts"
@@ -394,9 +394,11 @@ function makeStream(layout: VertexAttribute[], capacity: number, blank: Uint8Arr
 // The indexed order's stream: the id buffer the core writes whole with the
 // sorted record indices (ceil(capacity / group) instance records of
 // `group` u32 ids each; it starts zeroed and the entry's attach seeds the
-// first sort), the records handed to the core's order mirror as the key
-// source. No JS mirror exists, as under transfer.
-function makeIndexStream(layout: VertexAttribute[], capacity: number, group: number, records: Uint8Array, label: string | undefined): InstanceStream {
+// first sort), the records handed to the core's order mirror under their
+// key column (`key`: the record stride and the position's float offset),
+// which is all the mirror keeps of them. No JS mirror exists, as under
+// transfer.
+function makeIndexStream(layout: VertexAttribute[], capacity: number, group: number, records: Uint8Array, key: RecordKey, label: string | undefined): InstanceStream {
   let stride = layoutStride(layout)
   let stream: InstanceStream = {
     layout,
@@ -410,7 +412,7 @@ function makeIndexStream(layout: VertexAttribute[], capacity: number, group: num
     _components: layoutComponents(layout),
     _fields: [],
   }
-  transferRecords(stream.buffer, records)
+  transferRecords(stream.buffer, records, key)
   return stream
 }
 
@@ -506,8 +508,11 @@ export type InstanceOrderOptions =
   | {
       /** The position attribute of the record layout below. */
       position: string
-      /** The layout of the handed-off records the shader fetches by
-       * index; the material's instance buffer is the id stream. */
+      /** The layout of the records you pass. The engine keeps their key
+       * column (the position: 12 bytes per record) as its sort mirror and
+       * nothing else, so the data texture the shader fetches by index is
+       * your own upload of the bytes; the material's instance buffer is
+       * the id stream. */
       records: VertexAttribute[]
       /** Largest key first - back-to-front. Default false. */
       descending?: boolean
@@ -1103,7 +1108,16 @@ export function createRecordMesh(
     matrix: null,
     streams:
       indices !== null
-        ? [makeIndexStream(buffers[0]!.attributes, capacity, group, vertexBytes(records), streamLabel(opts?.label, 0))]
+        ? [
+            makeIndexStream(
+              buffers[0]!.attributes,
+              capacity,
+              group,
+              vertexBytes(records),
+              { stride: indices.stride, position: order!.floats },
+              streamLabel(opts?.label, 0),
+            ),
+          ]
         : transfer
           ? [makeTransferredStream(buffers[0]!.attributes, vertexBytes(records), order !== null, streamLabel(opts?.label, 0))]
           : buffers.map((b, i) => makeStream(b.attributes, capacity, null, streamLabel(opts?.label, i))),

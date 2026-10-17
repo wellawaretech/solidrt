@@ -159,7 +159,7 @@ export {
 // GPU-side (exact, same size): seed a loadOp "load" accumulator, snapshot a
 // ping-pong buffer, reset state to a known image.
 export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
-export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceOrder, OrderUpdate, ShaderParams, Topology, VertexAttribute, VertexBufferLayout, VertexFormat } from "flux:gpu"
+export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceOrder, OrderUpdate, RecordKey, ShaderParams, Topology, VertexAttribute, VertexBufferLayout, VertexFormat } from "flux:gpu"
 
 // The vertex vocabulary as data (vertex.ts): the format codecs, the
 // arithmetic over an attribute list and the record accessors that the 3d
@@ -423,13 +423,17 @@ export function createArrayTexture(
  * `data` must hold at least `width * height` pixels at the declared format's
  * size, in the view type matching the format (Uint8Array for "rgba8"/
  * "rgba8-srgb"/"r8", Float32Array for "r32f"/"rgba32f"/"rgba16f"); it may
- * hold several frames. Like `createTexture`, the texture is freed automatically
- * when the reactive owner is disposed (opt out with `{ autoFree: false }`);
- * created outside a reactive scope you must call `destroyTexture` (from
- * flux:gpu) yourself.
+ * hold several frames. A `null` seed allocates the storage alone, its
+ * contents unspecified until written: fill it with `uploadTexture` before
+ * anything samples it (a large data block uploaded in row bands straight
+ * from its source view, a stream whose producer writes the first frame).
+ * Like `createTexture`, the texture is freed automatically when the
+ * reactive owner is disposed (opt out with `{ autoFree: false }`); created
+ * outside a reactive scope you must call `destroyTexture` (from flux:gpu)
+ * yourself.
  */
 export function createMutableTexture(
-  data: Uint8Array | Float32Array | Uint32Array,
+  data: Uint8Array | Float32Array | Uint32Array | null,
   width: number,
   height: number,
   opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
@@ -1014,10 +1018,12 @@ export function createRecordStream(stride: number, capacity: number, opts?: Crea
  * Hands an ordered instance buffer's full record set to the engine - the
  * write-once form: the engine keeps the one CPU copy and sorts,
  * republishes and count-dials from it on its own; the caller keeps
- * nothing and partial rewrites are off the table. Hand off before the
- * entry attaches over the buffer. See `transferRecords` in flux:gpu for
- * the full contract.
+ * nothing and partial rewrites are off the table. With a `key` (the
+ * record's byte stride and the key's float offset) the engine keeps the
+ * records' key column only - the index form, whose sort reads nothing
+ * else. Hand off before the entry attaches over the buffer. See
+ * `transferRecords` in flux:gpu for the full contract.
  */
-export function transferRecords(id: gpu.BufferId, records: ArrayBuffer | ArrayBufferView): void {
-  gpu.transferRecords(id, toUint8(records))
+export function transferRecords(id: gpu.BufferId, records: ArrayBuffer | ArrayBufferView, key?: gpu.RecordKey): void {
+  gpu.transferRecords(id, toUint8(records), key)
 }

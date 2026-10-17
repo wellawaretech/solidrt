@@ -25,8 +25,8 @@ pub use glyphs::{
 pub use lease::WriteLeases;
 pub use limits::GpuLimits;
 pub use order::{
-  gather_ordered, gather_permuted, materialize_indices, order_permutation, InstanceOrder, OrderKey, OrderScratch,
-  INDEX_NONE,
+  gather_ordered, gather_permuted, materialize_indices, order_permutation, InstanceOrder, KeyColumn, OrderKey,
+  OrderScratch, INDEX_NONE,
 };
 pub use resources::{
   GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo,

@@ -59,3 +59,22 @@ test("a rect outside the texture or of the wrong size throws and changes nothing
   await app.frame()
   expect(pixel(texture, 3, 3)).toEqual([0, 0, 255, 255])
 })
+
+test("a null seed allocates the storage, filled by rect uploads before it is sampled", async app => {
+  let texture!: TextureId
+  await app.mount(() => {
+    texture = createMutableTexture(null, SIDE, SIDE, { label: "upload-bands" })
+    // Fill in row bands straight from one block, the last row partial:
+    // what a data texture loads a large block with, no padded copy.
+    let block = solid(SIDE * 2 + 2, 1, [255, 0, 0, 255])
+    uploadTexture(texture, block.subarray(0, SIDE * 2 * 4), { x: 0, y: 0, width: SIDE, height: 2 })
+    uploadTexture(texture, block.subarray(SIDE * 2 * 4), { x: 0, y: 2, width: 2, height: 1 })
+    return <texture src={texture} width={SIDE} height={SIDE} />
+  })
+  await app.frame()
+  expect(pixel(texture, 0, 0)).toEqual([255, 0, 0, 255])
+  expect(pixel(texture, SIDE - 1, 1)).toEqual([255, 0, 0, 255])
+  expect(pixel(texture, 1, 2)).toEqual([255, 0, 0, 255])
+  // A seed shorter than a frame still throws; null is the only way to skip it.
+  expect(() => createMutableTexture(new Uint8Array(4), SIDE, SIDE)).toThrow()
+})
