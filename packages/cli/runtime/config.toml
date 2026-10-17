@@ -69,3 +69,14 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 strip = true
+
+# The CI test builds (test-app's client, test-js's flux): release
+# optimization with the debug assertions and overflow checks kept. The
+# assertions are what a test build is for; the optimization is what makes
+# the run read like a shipped binary. A debug build ran the Rust above the
+# engine and the raster thread several times slower, and settle-based app
+# tests then measured the runner, not the app (okf/done/test-harness.md).
+[profile.ci]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true

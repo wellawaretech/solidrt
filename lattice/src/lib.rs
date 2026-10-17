@@ -327,9 +327,20 @@ pub const VERSION: &str = match option_env!("SOLIDRT_VERSION") {
 };
 
 /// Build profile reported to the dev server (list_clients), so "is this a
-/// debug binary" is checkable without inspecting the file.
+/// debug binary" is checkable without inspecting the file. The make passes
+/// the profile it built (runtime.mk: debug, release, release-opt, ci); a
+/// bare cargo build reports by its assertions.
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
-pub(crate) const PROFILE: &str = if cfg!(debug_assertions) { "debug" } else { "release" };
+pub(crate) const PROFILE: &str = match option_env!("SOLIDRT_PROFILE") {
+  Some(profile) => profile,
+  None => {
+    if cfg!(debug_assertions) {
+      "debug"
+    } else {
+      "release"
+    }
+  }
+};
 
 /// QuickJS call-stack soft limit. Sits below the UI thread's native stack (see
 /// alloy gl::run_context) so deep recursion throws a clean "Maximum call stack

@@ -195,7 +195,7 @@ GL_LIBS  = $(wildcard $(GL_SRC)/libEGL.* $(GL_SRC)/libGLESv2.*)
 # $(1) = label, $(2) = binary name, $(3) = features, $(4) = target dir
 define host-build
 	@echo "Building $(1) ($(PROFILE)) $(VERSION)"
-	$(HOST_ENV) SOLIDRT_VERSION="$(VERSION)" cargo build $(CONFIG) $(CARGO_PROFILE_FLAG) $(3) --bin $(2) --target-dir $(4)
+	$(HOST_ENV) SOLIDRT_VERSION="$(VERSION)" SOLIDRT_PROFILE="$(PROFILE)" cargo build $(CONFIG) $(CARGO_PROFILE_FLAG) $(3) --bin $(2) --target-dir $(4)
 	$(call stage-host,$(4),$(2))
 	$(if $(GL_LIBS),@cp $(GL_LIBS) $(HOST_DIST)/)
 	@$(HOST_DIST)/$(2)$(HOST_EXT) --fonts > $(DIST_DIR)/fonts.txt
@@ -264,7 +264,7 @@ endef
 define ndk-build
 	@echo "Building ANDROID $(1) ($(PROFILE), $(ANDROID_ABI)) $(VERSION)"
 	@rustup target add $(ANDROID_TARGET) --toolchain $(TOOLCHAIN)
-	$(ANDROID_ENV) SOLIDRT_VERSION="$(VERSION)" cargo ndk -t $(ANDROID_ABI) build $(CONFIG) $(CARGO_PROFILE_FLAG) $(2) --lib --target-dir $(3)
+	$(ANDROID_ENV) SOLIDRT_VERSION="$(VERSION)" SOLIDRT_PROFILE="$(PROFILE)" cargo ndk -t $(ANDROID_ABI) build $(CONFIG) $(CARGO_PROFILE_FLAG) $(2) --lib --target-dir $(3)
 	@mkdir -p $(DIST_DIR)/$(4)/$(ANDROID_ABI)
 	$(STRIP) -o $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libmain.so $(3)/$(ANDROID_TARGET)/$(PROFILE)/lib$(LIB).so
 	$(STRIP) -o $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libSDL3.so $(3)/$(ANDROID_TARGET)/$(PROFILE)/libSDL3.so

@@ -58,24 +58,25 @@ lockstep problem as 5.2 itself, one level up).
 
 ## Harden the publish job against the dependency graph
 
-Separate from "are the artifacts good": `NPM_CONFIG_TOKEN` is live in the
-publish job, and that job also runs `bun install`. A malicious or compromised
-package anywhere in the dependency graph runs with the token in the
-environment and can exfiltrate it. A publish token is worth more than
-anything else in this repo - it is the one credential that lets someone ship
-code to every consumer.
+Done 2026-10-17, with the release flow's rework (one dispatched run per
+release with the version as its input, CI required on the commit rather
+than rerun, the `release` environment's approval before publishing, the tag
+pushed after a successful publish): the job that holds the registry token
+installs nothing. `pack` runs `bun install` and the CLI's own build, packs
+every package and checks the tarballs, with no token in its environment;
+`publish` downloads the tarballs, publishes them in dependency order with
+`bun publish <tarball>` and pushes the tag, and is the only job that sees
+`NPM_TOKEN`.
 
-Options, in rough order of value per effort:
+The concern, for the record: the token was live in the job that also ran
+`bun install`, so a malicious or compromised package anywhere in the
+dependency graph ran with the one credential that lets someone ship code to
+every consumer. Still open, both reducing the damage rather than the
+exposure:
 
-- isolate publish from build: build and pack in a job with no token, hand the
-  tarballs to a second job that installs nothing and only publishes
 - scope and time-limit the token (granular, per-package, short-lived) so a
   leak has a small blast radius
 - audit the graph harder before publish - lockfile diff review, or a
   provenance/trusted-publisher setup if npm's supports what we need
-
-The first one is the real fix; the others reduce the damage rather than the
-exposure. Worth deciding before the first real publish, since the flow is
-being defined now anyway.
 
 Source: root TODO.md, migrated 2026-08-14.

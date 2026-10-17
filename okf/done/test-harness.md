@@ -796,7 +796,11 @@ findings, both fixed the same day:
   (`DEFAULT_TIMEOUT` in `flux/src/test_plugins/host.rs`); nothing was
   added to set it, and no test was shrunk to fit a number. Rejected: a
   release binary in CI (debug assertions are part of what the run
-  checks); a cap per test or per run (surface for a safety cap).
+  checks); a cap per test or per run (surface for a safety cap). Since
+  2026-10-17 CI builds that flux and the client at the `ci` profile
+  (`.cargo/config.toml`: release optimization, debug assertions kept),
+  which keeps what the rejection protected and takes the debug slowness
+  out of every timing cap.
 - `cited(failed[0])` in `packages/cli/src/test/main.ts` failed the
   `types` job under `noUncheckedIndexedAccess`. `sol check` on the cli
   entry misses the file: it roots the program at the entry, and the test
