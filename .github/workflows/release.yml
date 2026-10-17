@@ -424,7 +424,6 @@ jobs:
     needs: [prepare, build-linux, build-linux-arm, build-darwin, build-windows, build-android]
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
-      TARBALLS: ${{ runner.temp }}/tarballs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -553,6 +552,7 @@ jobs:
       - name: Pack and verify the tarballs
         run: |
           set -eu
+          TARBALLS="$RUNNER_TEMP/tarballs"
           rm -rf "$TARBALLS" && mkdir -p "$TARBALLS"
           for dir in ${PUBLISH_DIRS}; do
             out="$TARBALLS/$(basename "$dir")"
@@ -605,7 +605,6 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       TAG_FLAG: ${{ needs.prepare.outputs.tag_flag }}
-      TARBALLS: ${{ runner.temp }}/tarballs
       NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -621,6 +620,7 @@ jobs:
       - name: Publish packages
         run: |
           set -eu
+          TARBALLS="$RUNNER_TEMP/tarballs"
           for dir in ${PUBLISH_DIRS}; do
             ./.github/scripts/publish-if-new.sh "$TARBALLS/$(basename "$dir")"/*.tgz
           done
