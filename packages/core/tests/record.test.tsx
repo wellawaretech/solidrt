@@ -21,7 +21,7 @@ import { Endpoint } from "flux:p2p"
 import type { P2pStream } from "flux:p2p"
 import { connect, listen } from "flux:net"
 import type { Conn } from "flux:net"
-import { createSignal, Show } from "solid-js"
+import { createEffect, createRoot, createSignal, Show } from "solid-js"
 
 const WIDTH = 64
 const HEIGHT = 48
@@ -203,6 +203,27 @@ test("a node records its box cut out of the window", async app => {
 // past the live resume buffer, so the player shows frames.
 const LIVE_FRAMES = 120
 const LIVE_LATENCY_S = 0.3
+// The player's open across the stream, as a promise: resolved by its
+// outcome, open or failed. A live player is never at rest, so settle is no
+// way to wait for it; and stepping frames is no way either, since the open
+// is work in flight on the native side that progresses while the test
+// awaits (the hold it takes keeps the engine polling), not per frame. A
+// test whose open never lands fails on its own cap, naming the open.
+function opened(clip: VideoStream): Promise<void> {
+  return new Promise(resolve =>
+    createRoot(dispose =>
+      createEffect(
+        () => clip.ready() || clip.error() !== undefined,
+        done => {
+          if (done) {
+            resolve()
+            queueMicrotask(dispose)
+          }
+        },
+      ),
+    ),
+  )
+}
 
 test("a live recording of the window plays back through a stream", async app => {
   let [showPlayer, setShowPlayer] = createSignal(false)
@@ -234,9 +255,7 @@ test("a live recording of the window plays back through a stream", async app => 
     setLeft(left() + BOX_STEP)
     await app.frame()
   }
-  // The open is work in flight (the header and the first keyframe cross
-  // the stream on the JS thread): settle waits for it.
-  await app.settle()
+  await opened(clip!)
   expect(clip?.error()).toBe(undefined)
   expect(clip?.height()).toBe(SCREEN_HEIGHT)
   expect(clip?.duration()).toBe(undefined)
@@ -249,9 +268,6 @@ test("a live recording of the window plays back through a stream", async app => 
 // the shower accepts, the caster connects by ticket and pipes the
 // recording into the stream, the shower plays the stream.
 const P2P_PROTOCOL = "record-test"
-// Wall time the open across the stream is given (the open itself times
-// out at 15 s).
-const P2P_SETTLE_MS = 20000
 
 test("a live recording crosses a p2p stream into a player", async app => {
   let [showPlayer, setShowPlayer] = createSignal(false)
@@ -290,7 +306,7 @@ test("a live recording crosses a p2p stream into a player", async app => {
     setLeft(left() + BOX_STEP)
     await app.frame()
   }
-  await app.settle({ maxMs: P2P_SETTLE_MS })
+  await opened(clip!)
   expect(clip?.error()).toBe(undefined)
   expect(clip?.height()).toBe(SCREEN_HEIGHT)
   await rec.stop()
@@ -341,7 +357,7 @@ test("a live recording crosses a TCP connection, and teardown ends it", async ap
     setLeft(left() + BOX_STEP)
     await app.frame()
   }
-  await app.settle({ maxMs: P2P_SETTLE_MS })
+  await opened(clip!)
   expect(clip?.error()).toBe(undefined)
   expect(clip?.height()).toBe(SCREEN_HEIGHT)
   // Everything is left open on purpose: the recording, the pipe, both
