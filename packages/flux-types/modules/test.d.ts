@@ -68,7 +68,7 @@ declare module "flux:test" {
   /**
    * Fulfills once nothing the test started is still in flight: work that
    * completes by itself (a fetch, a body or file read, a query, a connect,
-   * a call into an isolate) has landed, and what it woke has run and
+   * a call into an isolate or a step of its stream) has landed, and what it woke has run and
    * started nothing more. For work a test set off without holding its
    * promise; awaiting the promise itself is the direct way when there is
    * one.

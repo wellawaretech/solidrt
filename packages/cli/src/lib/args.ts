@@ -116,6 +116,9 @@ export function clientStorageArgs(): string[] {
 
 export let command = positionals[0]
 export let source = positionals[1]
+// Every path after the command, for a command that takes any number of
+// them (`sol test a.test.ts b.test.ts`); the rest read `source` alone.
+export let sources = positionals.slice(1)
 export let isTsx = source?.endsWith(".tsx") || source?.endsWith(".jsx")
 export let isPrebuilt = source?.endsWith(".sol.js") || source?.endsWith(".fluxbc")
 // A .sol.js also ends with .js: prebuilt wins, or the server would re-bundle
@@ -161,9 +164,11 @@ export function validateArgs() {
       }
       break
     case "test":
-      // A test file, or a folder whose tests/ folders are searched (test/main.ts).
-      if (source && !/\.test\.tsx?$/.test(source) && !(existsSync(source) && statSync(source).isDirectory())) {
-        usage("sol test [file.test.[ts|tsx] | folder]")
+      // Test files, or folders whose tests/ folders are searched (test/main.ts), any number of them.
+      for (let path of sources) {
+        if (!/\.test\.tsx?$/.test(path) && !(existsSync(path) && statSync(path).isDirectory())) {
+          usage("sol test [file.test.[ts|tsx] | folder]...")
+        }
       }
       break
     case "demo":

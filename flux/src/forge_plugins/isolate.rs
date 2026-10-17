@@ -89,7 +89,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::engine::{EngineConfig, FluxEngineBuilder, ModuleCode};
 use crate::logger::{CtxLogger, Logger};
-use crate::plugins::marshal::{mark_observed, with_standing, OptArg};
+use crate::plugins::marshal::{mark_observed, with_in_flight, OptArg};
 use crate::plugins::value::{self, Neutral};
 use crate::standards_plugins::abort::AbortSignal;
 use forge::isolate::{CallError, Kill, Link, Msg, Thrown};
@@ -405,7 +405,9 @@ impl IsolateInner {
     });
     let (pump_ctx, pump_state, pump_promise) = (ctx.clone(), state.clone(), promise.clone());
     // The call is work in flight until the child has answered it; from then
-    // on a stream is read step by step, and a read waits on its producer.
+    // on a stream is read step by step, each step work in flight of its own
+    // (stream_step), so a settle waits for the item an iterating caller
+    // waits for, while a stream nobody reads holds nothing.
     let hold = crate::pending::PendingOps::of(&ctx).in_flight("isolate call");
     ctx.spawn(async move {
       let _hold = hold;
@@ -669,7 +671,8 @@ fn attach_iterator<'js>(ctx: &Ctx<'js>, promise: &Promise<'js>, state: Rc<CallSt
 /// One `next()`/`return()`: ask the child (unless the call is known not to be
 /// a stream, or the stream is over), then wait for the answer, pumping the
 /// call's events once it is known to be a stream (before that the initial
-/// pump does, and it settles the promise). Steps are answered in order.
+/// pump does, and it settles the promise). Steps are answered in order, and
+/// each is work in flight until it is: what `settle` waits for.
 fn stream_step<'js>(ctx: Ctx<'js>, state: &Rc<CallState>, msg: Msg) -> rquickjs::Result<JsValue<'js>> {
   match state.mode.get() {
     Mode::Plain => return Err(Exception::throw_message(&ctx, &not_a_stream(&state.name))),
@@ -682,7 +685,7 @@ fn stream_step<'js>(ctx: Ctx<'js>, state: &Rc<CallState>, msg: Msg) -> rquickjs:
     state.answer(Err(e.into()));
   }
   let state = state.clone();
-  with_standing(&ctx, "isolate stream read", async move {
+  with_in_flight(&ctx, "isolate stream read", async move {
     let done = |r: Result<Result<Option<Value>, Thrown>, oneshot::error::RecvError>| match r {
       Ok(r) => StepResult(r),
       Err(_) => StepResult(Err(format!("stream '{}' dropped", state.name).into())),

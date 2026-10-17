@@ -350,6 +350,18 @@ pub fn main(program: Program) {
         println!("{alias}");
       }
       std::process::exit(0);
+    } else if arg == "--engine" {
+      // The engine's bytecode fingerprint (flux::engine_fingerprint): what
+      // the runtime build lists beside the binaries (engine.txt) for sol
+      // pack to check its compiler's bytecode against before packing it.
+      match flux::engine_fingerprint() {
+        Ok(fingerprint) => println!("{fingerprint}"),
+        Err(e) => {
+          eprintln!("{e}");
+          std::process::exit(1);
+        }
+      }
+      std::process::exit(0);
     } else if arg == "--render" {
       render = true;
     } else if arg == "--data-root" {

@@ -7,7 +7,11 @@ version = "0.0.0"
 edition = "2021"
 publish = false
 
-# Its own cargo workspace, not a member of one above it.
+# Its own cargo workspace, not a member of one above it. Cargo.lock beside
+# this file is seeded from the SolidRT release's by sol init and settled by
+# the first build: commit it, so a build elsewhere (CI builds --locked)
+# resolves the same crates, the JavaScript engine among them, which sol's
+# bytecode compiler must match (sol pack checks).
 [workspace]
 
 # The Android .so, and the library the two binaries link.

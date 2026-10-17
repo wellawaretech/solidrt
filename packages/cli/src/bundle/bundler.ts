@@ -8,7 +8,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path"
 import { values } from "../lib/args"
 import type { Mode } from "../lib/mode"
-import { requireBinary } from "../lib/util"
+import { requireBinary, runQuiet } from "../lib/util"
+import { fail } from "../lib/fail"
 import type { BundleOutput } from "../types/bundle"
 import { buildManifest, manifestAssetFor, type ManifestAsset } from "../lib/project"
 
@@ -525,4 +526,13 @@ export async function compileToBytecode(jsCode: string, moduleName = "main"): Pr
   let [bytecode, code] = await Promise.all([new Response(proc.stdout).arrayBuffer(), proc.exited])
   if (code !== 0) process.exit(code)
   return Buffer.from(bytecode)
+}
+
+// The compiler's engine fingerprint (`fluxc --engine`, flux::engine_fingerprint):
+// what a runtime must list as its own (engine.txt) to load the bytecode
+// compiled here.
+export async function engineFingerprint(): Promise<string> {
+  let { code, output } = await runQuiet([requireBinary("fluxc"), "--engine"], process.cwd())
+  if (code !== 0) fail(`fluxc --engine failed: ${output.trim()}`)
+  return output.trim()
 }

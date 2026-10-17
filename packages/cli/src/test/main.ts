@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { bundleWith, composeMap, inlinePlugin, PROJECT_MODULE_SCHEME, RUNTIME_MODULES, runtimeModulesPlugin, writeIsolates } from "../bundle/bundler"
-import { appArgs, source, values } from "../lib/args"
+import { appArgs, sources, values } from "../lib/args"
 import { collectAssets } from "../lib/project"
 import { fail } from "../lib/fail"
 import { projectEntry } from "../lib/mode"
@@ -465,9 +465,19 @@ function seedOption(): number | undefined {
 }
 
 export async function main() {
-  let target = resolve(source ?? ".")
-  if (!existsSync(target)) fail(`No such file or folder: ${source} (resolved from ${process.cwd()})`)
-  let { files, skipped } = statSync(target).isDirectory() ? discover(target, tree) : { files: [target], skipped: [] }
+  // Every path given (a file, or a folder whose tests/ folders are
+  // searched), the current folder without one; a file named twice runs once.
+  let given = sources.length ? sources : ["."]
+  let files: string[] = []
+  let skipped: string[] = []
+  for (let path of given) {
+    let target = resolve(path)
+    if (!existsSync(target)) fail(`No such file or folder: ${path} (resolved from ${process.cwd()})`)
+    let found = statSync(target).isDirectory() ? discover(target, tree) : { files: [target], skipped: [] }
+    for (let file of found.files) if (!files.includes(file)) files.push(file)
+    skipped.push(...found.skipped)
+  }
+  let target = given.map((path) => resolve(path)).join(", ")
   if (files.length === 0) {
     // Other projects are left to their own `sol test`; a run that found
     // nothing names them, since that is the likely answer.

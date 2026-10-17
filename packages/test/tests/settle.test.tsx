@@ -5,6 +5,7 @@
 import { serve } from "flux:http"
 import { test, expect } from "../src/index.ts"
 import { createSignal, onFrame } from "@solidrt/core"
+import { isolate } from "flux:isolate"
 
 // The error `run` rejects with; fails when it fulfills.
 async function failure(run: () => Promise<void>): Promise<string> {
@@ -35,6 +36,19 @@ test("settle waits for a fetch and draws what its answer wrote", async app => {
   // The wait itself passed no app time: only the frame that drew the answer.
   expect(app.time - before).toBeLessThan(50)
   server.close()
+})
+
+test("settle waits for each step of an isolate stream the app iterates", async app => {
+  let [last, setLast] = createSignal(0)
+  let root = await app.mount(() => <text>{`count ${last()}`}</text>)
+  let side = isolate<{ count(n: number): AsyncGenerator<number> }>("fixtures/counting")
+  let run = async () => {
+    for await (let n of side.count(3)) setLast(n)
+    side.terminate()
+  }
+  run()
+  await app.settle()
+  expect(root.find({ text: "count 3" }).visible).toBe(true)
 })
 
 test("settle on an app at rest runs no frame", async app => {

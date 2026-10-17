@@ -179,6 +179,16 @@ export function runtimeFontAliases(runtimeDir: string): string[] | null {
     .filter((line) => line.length > 0)
 }
 
+/**
+ * The engine fingerprint a runtime's host build listed (`engine.txt`,
+ * `solidrt --engine`); null when the runtime has not been built here, or
+ * was built by a runtime.mk from before the listing.
+ */
+export function runtimeEngine(runtimeDir: string): string | null {
+  let path = resolve(runtimeDir, "engine.txt")
+  return existsSync(path) ? readFileSync(path, "utf8").trim() : null
+}
+
 // `dir` is the project's, for the listing of its runtime's fonts.
 function parseProjectConfig(raw: unknown, dir: string): ProjectConfig {
   if (raw === undefined) return {}

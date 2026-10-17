@@ -118,6 +118,7 @@ What it writes is the project's own and nothing else:
 runtime/
   Makefile              one line: include ../node_modules/@solidrt/cli/runtime/runtime.mk
   Cargo.toml            the crate, its two binaries, lattice at the release tag
+  Cargo.lock            the release's, settled by the first build; commit it
   src/lib.rs            modules(), fonts() and program(): the modules, the fonts, the embedded screens
   src/hello.rs          runtime:hello, the starter module (hello(): string)
   src/bin/solidrt.rs    the production runtime: lattice::main(program())
@@ -393,6 +394,17 @@ Nothing in the project repeats them. The editor is the one place that does
 not go through make: an IDE's rust-analyzer uses the default toolchain
 unless the project carries a `rust-toolchain.toml` of its own, a copy of
 the package's.
+
+The lock is part of the project. `sol init` seeds `runtime/Cargo.lock`
+from the release's, the first build settles it to the runtime's own
+manifest, and committed it fixes the crates a build elsewhere resolves,
+the JavaScript engine among them. Where `CI` is set the Makefile builds
+`--locked` (`LOCKED=1` anywhere, `LOCKED=0` to turn it off), so a lock
+that no longer matches `Cargo.toml` fails the build instead of resolving
+afresh. The engine matters because `sol pack` compiles the app with its
+own `fluxc` and the runtime must load that bytecode: the host build lists
+the engine's fingerprint in `dist/engine.txt` (`solidrt --engine`), and
+`sol pack` refuses a runtime whose fingerprint differs from the compiler's.
 
 `runtime/` in the checkout is the stock program: this crate with no
 modules, the same one-line Makefile. `lattice/examples/custom_runtime.rs`

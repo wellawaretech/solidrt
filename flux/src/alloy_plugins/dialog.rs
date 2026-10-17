@@ -54,9 +54,16 @@ pub fn dialogs(ctx: &Ctx<'_>) -> Option<Arc<Dialogs>> {
 
 /// Never show a dialog in this engine: every call waits on the session's
 /// queue (a test host's engine, whose test answers through the harness).
+/// Every call then resolves, so the engine lists the "dialog" capability
+/// whether or not the platform could show one: an app that gates on it
+/// takes its dialog path under test, where the test answers.
 pub fn set_answers_only(ctx: &Ctx<'_>) {
-  if let Some(dialogs) = dialogs(ctx) {
-    dialogs.set_answers_only();
+  let Some(dialogs) = dialogs(ctx) else {
+    return;
+  };
+  dialogs.set_answers_only();
+  if !alloy::dialogs_available() {
+    crate::add_capability(ctx, super::DIALOG_CAPABILITY);
   }
 }
 

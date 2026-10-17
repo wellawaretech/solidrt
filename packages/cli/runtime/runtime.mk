@@ -35,6 +35,11 @@
 #                                                 by the host goals; sol checks
 #                                                 an app's solidrt.fonts
 #                                                 against it
+#   engine.txt                                    the engine's bytecode
+#                                                 fingerprint (`solidrt
+#                                                 --engine`), written by the
+#                                                 host goals; sol pack checks
+#                                                 its compiler against it
 #
 # Variables, all overridable on the command line:
 #   PROFILE      release (default: fast, keeps symbols), debug, or release-opt:
@@ -45,6 +50,8 @@
 #   TEST=0       leave the test host out of the player (default: in)
 #   VERSION      what the runtime reports (default: the lattice tag in
 #                Cargo.toml, else git describe)
+#   LOCKED       1 builds --locked: Cargo.lock must already match Cargo.toml
+#                (default: 1 where CI is set, else 0)
 #   DIST_DIR     where to stage (default: dist/ here)
 
 # This folder, before any include moves MAKEFILE_LIST on.
@@ -91,6 +98,17 @@ TOOLCHAIN := $(shell sed -n 's/^channel = "\([^"]*\)".*/\1/p' $(BASE)/rust-toolc
 export RUSTUP_TOOLCHAIN := $(TOOLCHAIN)
 
 CONFIG = --config $(call native,$(BASE)/config.toml)
+
+# -- Cargo.lock ------------------------------------------------------------
+
+# sol init seeds the lock from the release's and the first build settles it
+# to this manifest; committed, it is what a build elsewhere should resolve,
+# which --locked enforces: cargo refuses a lock that needs updating instead
+# of floating a requirement (the engine among them, which sol's bytecode
+# compiler must match). On where CI is set, off in the local loop, where
+# editing Cargo.toml is the norm.
+LOCKED   ?= $(if $(CI),1,0)
+LOCK_FLAG = $(if $(filter 1,$(LOCKED)),--locked,)
 
 # -- Profile and features -------------------------------------------------
 
@@ -195,11 +213,12 @@ GL_LIBS  = $(wildcard $(GL_SRC)/libEGL.* $(GL_SRC)/libGLESv2.*)
 # $(1) = label, $(2) = binary name, $(3) = features, $(4) = target dir
 define host-build
 	@echo "Building $(1) ($(PROFILE)) $(VERSION)"
-	$(HOST_ENV) SOLIDRT_VERSION="$(VERSION)" SOLIDRT_PROFILE="$(PROFILE)" cargo build $(CONFIG) $(CARGO_PROFILE_FLAG) $(3) --bin $(2) --target-dir $(4)
+	$(HOST_ENV) SOLIDRT_VERSION="$(VERSION)" SOLIDRT_PROFILE="$(PROFILE)" cargo build $(CONFIG) $(LOCK_FLAG) $(CARGO_PROFILE_FLAG) $(3) --bin $(2) --target-dir $(4)
 	$(call stage-host,$(4),$(2))
 	$(if $(GL_LIBS),@cp $(GL_LIBS) $(HOST_DIST)/)
 	@$(HOST_DIST)/$(2)$(HOST_EXT) --fonts > $(DIST_DIR)/fonts.txt
-	@echo "Listed the program's fonts in $(DIST_DIR)/fonts.txt"
+	@$(HOST_DIST)/$(2)$(HOST_EXT) --engine > $(DIST_DIR)/engine.txt
+	@echo "Listed the program's fonts in $(DIST_DIR)/fonts.txt and its engine in $(DIST_DIR)/engine.txt"
 endef
 
 # -- Android ---------------------------------------------------------------
@@ -264,7 +283,7 @@ endef
 define ndk-build
 	@echo "Building ANDROID $(1) ($(PROFILE), $(ANDROID_ABI)) $(VERSION)"
 	@rustup target add $(ANDROID_TARGET) --toolchain $(TOOLCHAIN)
-	$(ANDROID_ENV) SOLIDRT_VERSION="$(VERSION)" SOLIDRT_PROFILE="$(PROFILE)" cargo ndk -t $(ANDROID_ABI) build $(CONFIG) $(CARGO_PROFILE_FLAG) $(2) --lib --target-dir $(3)
+	$(ANDROID_ENV) SOLIDRT_VERSION="$(VERSION)" SOLIDRT_PROFILE="$(PROFILE)" cargo ndk -t $(ANDROID_ABI) build $(CONFIG) $(LOCK_FLAG) $(CARGO_PROFILE_FLAG) $(2) --lib --target-dir $(3)
 	@mkdir -p $(DIST_DIR)/$(4)/$(ANDROID_ABI)
 	$(STRIP) -o $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libmain.so $(3)/$(ANDROID_TARGET)/$(PROFILE)/lib$(LIB).so
 	$(STRIP) -o $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libSDL3.so $(3)/$(ANDROID_TARGET)/$(PROFILE)/libSDL3.so
@@ -316,6 +335,7 @@ help:
 	@echo "Pass TEST=0 to build the player without the test host (default: on)."
 	@echo "The capabilities (video, ktx2, wasm) are the runtime's Cargo.toml's: lattice's default set, or what its lattice line lists."
 	@echo "Pass VERSION=<v> for what the runtime reports (default: $(VERSION))."
+	@echo "Pass LOCKED=1 to build --locked, Cargo.lock as committed (default where CI is set; LOCKED=0 turns it off there)."
 	@echo ""
 	@echo "  clean            Remove target/ and dist/ here"
 

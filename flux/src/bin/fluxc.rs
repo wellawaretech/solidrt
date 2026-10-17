@@ -1,8 +1,11 @@
 // fluxc - compile JS from stdin to bytecode on stdout
 //
 // Usage: fluxc [module-name]
+//        fluxc --engine
 // The module name is what stack frames cite at runtime; the entry compiles
-// as "main" (the default), an isolate bundle as its isolate id.
+// as "main" (the default), an isolate bundle as its isolate id. `--engine`
+// prints the engine fingerprint instead (flux::engine_fingerprint): what a
+// runtime must report as its own to load the bytecode compiled here.
 
 struct StderrLogger;
 impl log::Log for StderrLogger {
@@ -19,6 +22,17 @@ static STDERR_LOGGER: StderrLogger = StderrLogger;
 fn main() {
   log::set_logger(&STDERR_LOGGER).ok();
   log::set_max_level(log::LevelFilter::Error);
+
+  if std::env::args().nth(1).as_deref() == Some("--engine") {
+    match flux::engine_fingerprint() {
+      Ok(fingerprint) => println!("{fingerprint}"),
+      Err(e) => {
+        log::error!("[fluxc] error: {e}");
+        std::process::exit(1);
+      }
+    }
+    return;
+  }
 
   let mut source = String::new();
   std::io::Read::read_to_string(&mut std::io::stdin(), &mut source).unwrap_or_else(|e| {

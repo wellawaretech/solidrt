@@ -1,7 +1,8 @@
 import { values, source } from "../lib/args"
-import { bundleFlux, bundleSolid, compileToBytecode, findFluxIsolates } from "../bundle/bundler"
+import { bundleFlux, bundleSolid, compileToBytecode, engineFingerprint, findFluxIsolates } from "../bundle/bundler"
 import { STOCK_FONT_ROLES } from "../lib/fonts"
-import { projectRuntime } from "../lib/runtime"
+import { projectRuntime, type ProjectRuntime } from "../lib/runtime"
+import { fail } from "../lib/fail"
 import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, loadAppIdentity, loadProject, resolveCapabilities, type Capability, type ManifestFont, type Project } from "../lib/project"
 import { resolveMode, type Mode } from "../lib/mode"
 import { packApp, packFlux, packSolid } from "./trailer"
@@ -127,8 +128,28 @@ async function buildApp(mode: Mode) {
   let needed = bundled.projectModules[0] ?? null
   let folder = buildPackFolder(mode, bytecode, isolates)
   let runtime = projectRuntime()
+  if (runtime) await checkEngine(runtime)
   console.log(`>> fonts: ${describeFonts(folder.fonts, runtime ? runtime.fonts() : STOCK_FONT_ROLES)}`)
   return { bytecode, folder, needed }
+}
+
+// The bytecode is compiled by sol's own fluxc, and the runtime packed must
+// load it: a project runtime's engine (engine.txt, listed by its host build
+// beside fonts.txt) is compared with the compiler's before anything is
+// written, since a runtime refuses bytecode from another engine and nothing
+// else fails before the packed app starts. A runtime whose build listed no
+// engine (an older runtime.mk) is said, not checked.
+async function checkEngine(runtime: ProjectRuntime) {
+  let listed = runtime.engine()
+  if (listed === null) {
+    console.log(`>> note: ${runtime.dir} lists no engine (no engine.txt); rebuild the runtime with this release to have its bytecode format checked`)
+    return
+  }
+  if (listed !== (await engineFingerprint())) {
+    fail(
+      `The runtime in ${runtime.dir} runs another JavaScript engine than sol's bytecode compiler, so the app packed here would not load in it. Rebuild the runtime at this release (make -C runtime) or bring @solidrt/cli to the release its lattice tag names.`,
+    )
+  }
 }
 
 // --apk patches the app into one installable Android APK per installed

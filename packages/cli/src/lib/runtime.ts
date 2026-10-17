@@ -30,7 +30,7 @@ import { elfLoadAlignment, MIN_LOAD_ALIGN } from "../pack/android/elf"
 import { missingRuntimeBinary, noRuntimeDeclared, stockRuntimeNotice } from "../server/runtime-messages"
 import { fail } from "./fail"
 import { projectEntry } from "./mode"
-import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, loadAppIdentity, loadProject, runtimeFontAliases, type AppIdentity } from "./project"
+import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, loadAppIdentity, loadProject, runtimeEngine, runtimeFontAliases, type AppIdentity } from "./project"
 
 /** The application id and launcher label of the Player of the app `identity`, a custom runtime's. */
 export function playerIdentity(identity: AppIdentity): { appId: string; label: string } {
@@ -55,6 +55,8 @@ export type ProjectRuntime = {
   hasLibs(abi: string): boolean
   /** The font aliases the runtime binds, from the listing its host build wrote; null when it has not been built here. */
   fonts(): string[] | null
+  /** The engine fingerprint its host build listed (engine.txt), which sol's bytecode compiler must match; null when it has not been built here. */
+  engine(): string | null
 }
 
 const PLAYER_APK = "solidrt-go.apk"
@@ -113,6 +115,9 @@ function load(): ProjectRuntime | null {
     },
     fonts() {
       return runtimeFontAliases(dir)
+    },
+    engine() {
+      return runtimeEngine(dir)
     },
   }
 }

@@ -92,7 +92,31 @@ impl RenderTree {
   /// A node a transition is running on, named the way `describe` names it.
   /// None when no transition runs.
   pub fn running_transition(&self) -> Option<String> {
-    self.transitions.running_node().map(|id| self.describe(id))
+    self.transitions.running_node().map(|id| self.describe_under(id))
+  }
+
+  /// `describe`, placed: the node and then the kinds (labelled where they
+  /// are) of its ancestors from the root down, for a message about a node
+  /// an outline cannot be searched for by id ("rect #1555 under window >
+  /// column > row labelled \"toolbar\""); the node alone at the root.
+  pub fn describe_under(&self, id: u64) -> String {
+    let mut ancestors = Vec::new();
+    let mut at = self.try_node(id).and_then(|node| node.parent);
+    while let Some(parent_id) = at {
+      let Some(parent) = self.try_node(parent_id) else {
+        break;
+      };
+      ancestors.push(match &parent.label {
+        Some(label) => format!("{} labelled {label:?}", parent.kind.name()),
+        None => parent.kind.name().to_string(),
+      });
+      at = parent.parent;
+    }
+    if ancestors.is_empty() {
+      return self.describe(id);
+    }
+    ancestors.reverse();
+    format!("{} under {}", self.describe(id), ancestors.join(" > "))
   }
 
   /// A node in a few words, for a message: its kind and the text it shows

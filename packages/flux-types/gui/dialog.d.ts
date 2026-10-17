@@ -7,7 +7,8 @@
 // Android without a document picker cannot), and a call there rejects with
 // an error named "NotSupportedError". Under `sol test` no dialog is shown:
 // the test answers it (`app.dialog`), and so can an agent over the control
-// API, before the app asks.
+// API, before the app asks; a test engine therefore lists "dialog" whatever
+// its platform can show, so an app that gates on the capability asks there.
 
 declare module "flux:dialog" {
   import type { FluxDir, FluxFile } from "flux:fs"

@@ -72,8 +72,30 @@ pub fn capabilities() -> Vec<&'static str> {
   caps
 }
 
-#[cfg(feature = "compile")]
 use rquickjs::{CatchResultExt, Context, Module, Runtime, WriteOptions, WriteOptionsEndianness};
+
+/// The module name of the fingerprint's probe: an atom in its bytes, so fixed.
+const ENGINE_PROBE_MODULE: &str = "engine";
+
+/// What decides whether bytecode loads in this engine: the bytes it writes
+/// for a fixed empty module, as hex. Two builds with the same fingerprint
+/// share a bytecode format (the version it stamps, the layout it writes).
+/// `solidrt --engine` and `fluxc --engine` print it, and `sol pack` compares
+/// its compiler's with that of the runtime it packs for, since a runtime
+/// refuses bytecode from another engine.
+pub fn engine_fingerprint() -> Result<String, String> {
+  let rt = Runtime::new().map_err(|e| format!("failed to create QuickJS runtime: {e}"))?;
+  let ctx = Context::full(&rt).map_err(|e| format!("failed to create QuickJS context: {e}"))?;
+  let bytes = ctx.with(|ctx| {
+    Module::declare(ctx.clone(), ENGINE_PROBE_MODULE, "")
+      .and_then(|module| {
+        module.write(WriteOptions { endianness: WriteOptionsEndianness::Little, ..Default::default() })
+      })
+      .catch(&ctx)
+      .map_err(|e| format!("failed to write the probe module: {e}"))
+  })?;
+  Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
 
 // Bundles arrive here with every real source inlined; the only remaining
 // imports are the modules the runtime provides, which the bundler left

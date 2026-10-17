@@ -10,6 +10,10 @@ import { RUNTIME_DIR, RUNTIME_TYPES, renderRuntime, withRuntime, withRuntimeIgno
 
 const DEFAULT_NAME = "solidrt-app"
 
+// The @solidrt/cli package this runs from (runtime/ beside src/), and the
+// checkout it sits in when it is the checkout's own.
+const PACKAGE_DIR = join(import.meta.dir, "..", "..")
+const CHECKOUT_DIR = join(PACKAGE_DIR, "..", "..")
 const SCAFFOLD_DIR = join(import.meta.dir, "scaffold")
 const TEMPLATES_DIR = join(SCAFFOLD_DIR, "templates")
 
@@ -146,6 +150,15 @@ async function writeRuntime(dir: string): Promise<void> {
     await mkdir(dirname(dest), { recursive: true })
     await writeFile(dest, body)
   }
+  // Cargo.lock is seeded from the release's, shipped beside runtime.mk in
+  // the package (release.yml); the checkout seeds from its own. The first
+  // build settles it to this manifest (lattice as a git dependency, the
+  // graph the runtime's features keep) and committed it is what CI builds
+  // against (runtime.mk, LOCKED): the same crates as the release, the
+  // JavaScript engine among them, which sol's bytecode compiler must match.
+  let lock = [join(PACKAGE_DIR, "runtime", "Cargo.lock"), ...(existsSync(join(CHECKOUT_DIR, "lattice", "Cargo.toml")) ? [join(CHECKOUT_DIR, "Cargo.lock")] : [])].find((path) => existsSync(path))
+  if (lock) await cp(lock, join(dir, RUNTIME_DIR, "Cargo.lock"))
+  else console.log(`No Cargo.lock to seed ${RUNTIME_DIR}/ from; the first build writes one`)
   await writeFile(pkgPath, withRuntime(await readFile(pkgPath, "utf8"), appId))
   let tsconfigPath = join(dir, "tsconfig.json")
   let tsconfig = existsSync(tsconfigPath) ? withRuntimeTypes(await readFile(tsconfigPath, "utf8")) : null
@@ -156,7 +169,7 @@ async function writeRuntime(dir: string): Promise<void> {
   if (!pkg.devDependencies?.["@solidrt/test"] && !pkg.dependencies?.["@solidrt/test"]) {
     console.log("tests/runtime.test.tsx imports @solidrt/test: add it with `bun add -d @solidrt/test`")
   }
-  step(`Wrote ${RUNTIME_DIR}/ (runtime:hello, built with make -C ${RUNTIME_DIR})`)
+  step(`Wrote ${RUNTIME_DIR}/ (runtime:hello, built with make -C ${RUNTIME_DIR}; commit its Cargo.lock after the first build)`)
 }
 
 // `sol init --runtime` with no folder: add a runtime to the project here.

@@ -397,11 +397,13 @@ when exactly one client is connected.
   app is at rest and says whether it got there: `{ settled, waitedMs,
   demand, inFlight, timerDue, idleDue }`. At rest means nothing the app
   started is in flight (a fetch, a file or body read, a query, an isolate
-  call), no timer is due, no idle callback waits for its idle period and no
+  call or a step of its stream), no timer is due, no idle callback waits for its idle period and no
   frame is demanded. Call it after `/input`, `/debug`,
   `/link` or `/reload` and before `/tree` or `/snapshot`, in place of a
   sleep. When `settled` is false the rest says why: `demand` lists what
-  still wants frames ("onFrame", "a transition on view labelled \"drawer\"",
+  still wants frames ("onFrame", "a transition on view labelled \"drawer\"
+  under window > column", the node placed under its ancestors so it can be
+  found in an outline,
   "a playing video", "requestAnimationFrame", "a write to the tree or to a
   texture"), `inFlight` counts the work per kind (`{ "fetch": 1 }`). An
   app that animates by itself never settles; freeze it with `/clock`

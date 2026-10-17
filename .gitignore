@@ -21,6 +21,10 @@ examples/**/frame-*.png
 # (make client runs it; runtime/build.rs says so when they are missing) and
 # shipped in the CLI package for a custom runtime (docs/runtime).
 packages/cli/player/
+# The release's Cargo.lock, shipped in the CLI package for `sol init
+# --runtime` to seed a custom runtime's from (release.yml); the checkout
+# seeds from its own.
+packages/cli/runtime/Cargo.lock
 probes/
 scratchpad/
 tmp/

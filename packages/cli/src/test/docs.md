@@ -12,6 +12,7 @@ runtime. Every test runs in an engine of its own.
 sol test                       # every tests/*.test.ts under the current folder
 sol test packages/router       # the same, under that folder
 sol test tests/route.test.ts   # one file
+sol test tests/a.test.ts tests/b.test.ts   # several files or folders, each once
 sol test tests/counter.test.tsx  # an app test, on the dev client
 sol test --filter matchPath    # only the tests whose name contains the text
 sol test --seed 12345          # the same tests on another Math.random sequence

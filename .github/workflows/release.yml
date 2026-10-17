@@ -553,6 +553,12 @@ jobs:
             }
           '
 
+      # The CLI package ships this release's Cargo.lock beside runtime.mk:
+      # `sol init --runtime` seeds a custom runtime's lock from it, so the
+      # runtime resolves the graph this release was built and tested with.
+      - name: Ship the Cargo.lock with the runtime scaffold
+        run: cp Cargo.lock packages/cli/runtime/Cargo.lock
+
       # Pack every package, one directory per package (tarballs/<dir name>/)
       # so `publish` finds them in PUBLISH_DIRS order, and fail the release
       # if any tarball's own version or intra-monorepo @solidrt/* specifier

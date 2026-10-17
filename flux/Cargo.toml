@@ -67,6 +67,13 @@ log = { workspace = true }
 # the node records of the gui layer (alloy_plugins/inspect.rs).
 serde_json = { version = "=1.0.151", optional = true }
 rquickjs = { version = "=0.14.0", features = ["rust-alloc", "futures", "macro", "loader"] }
+# rquickjs requires its core, sys and macro crates with a caret (`0.14.0`,
+# any 0.14.x), so they are pinned here as well: the sys crate is the engine,
+# which decides whether bytecode loads, and a custom runtime (a build outside
+# this Cargo.lock) must resolve the same one as the fluxc beside it.
+rquickjs-core = { version = "=0.14.0", default-features = false }
+rquickjs-macro = "=0.14.0"
+rquickjs-sys = { version = "=0.14.0", default-features = false }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }
 # The capability cores and every transport crate (reqwest, hyper, iroh,
 # fastwebsockets, rusqlite, ...) live in forge; flux names only the crates the
