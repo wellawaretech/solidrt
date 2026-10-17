@@ -6,8 +6,15 @@ created: 2026-08-27
 
 # 3D fill and pass count put low-end Android GPUs far off 60 fps
 
-Status 2026-09-23: levers 2 and 3 below are spent (see Findings); open
-are lever 1, the render-scale policy, and lever 4.
+Status 2026-10-17: levers 2 and 3 below are spent (see Findings); open
+are lever 1, the render-scale policy, and lever 4. Lever 1 has its
+app-level knob since the quality tier
+([3d-quality-tier](../done/3d-quality-tier.md)): `setQuality("low")`
+caps a fill-mode scene or view that sets no `maxPixels` at 1 Mpx and
+drops the kernel and the MSAA; picking the tier for the device stays the
+app's until a probe fact exists. Also open: the low row reads 198 ms on
+the TV at 1.0x where the same configuration read 123 ms on 2026-09-02
+(Findings, the 2026-10-17 rows).
 
 [packages/3d/demos/src/the-third-dimension.tsx](../../packages/3d/demos/src/the-third-dimension.tsx)
 runs at 13.1 fps (76.3 ms/frame) on a Samsung SM-T500: Adreno 610, Android
@@ -229,3 +236,30 @@ into `notes/` when this closes.
   light on this class of hardware is otherwise a ~budget-quarter item.
   GPU timer attribution stays unusable on this device (exec micros read
   0), so the number is an A/B of castShadow, not a timer read.
+- **Quality tier rows, 2026-10-17** (Philips TPM171E, Mali-T860, 1080p,
+  50 Hz, the-third-dimension demo on the dev server over the LAN, ms per
+  frame as frame-counter delta over `timeMs` delta in 15 s windows, the
+  tier set live through the demo's `quality` command;
+  [3d-quality-tier](../done/3d-quality-tier.md)). The demo pins its own
+  2048 maps and a 1.5x supersampling floor, which the row cannot touch,
+  so the row moves the kernel and the MSAA only:
+
+  | render scale | medium (16-tap kernel, 4x MSAA) | low (hard, 1x) |
+  |---|---|---|
+  | 1.5x (the demo's floor) | 1310 ms | 557 ms |
+  | 1.0x (`renderScale` 1) | 429 ms | 198 ms |
+
+  Low halves the frame either way, and the medium row is unusable on
+  this class, as expected (it is the low row's device). The MSAA took
+  on the scene target (`/gpu` reports `samples: 4` at medium) and not on
+  the side panels, which are tiles of an atlas (the atlas's count, by
+  design). The laptop (Intel RPL-P iGPU) reads 28 ms at medium against
+  17.6 at low on the same demo: 4x MSAA on top of the demo's 1.5x
+  supersample is the "one AA mechanism at a time" waste noted above, so
+  a supersampling app pins `samples: 1` (the demo now does; its side
+  panels are tiles of its own single-sample atlas and never took the
+  row's count). The laptop ran in the balanced power profile for those
+  two reads. Open: the low row at 1.0x reads 198 ms where 2026-09-02
+  measured 123 ms for the hard, single-sample configuration (557 against
+  290 at 1.5x); the demo's rig, the PCSS kernel and the TV's governor
+  all changed or drift since, so the gap is unattributed.

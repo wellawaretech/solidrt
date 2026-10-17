@@ -2,6 +2,7 @@
 title: One quality tier for the whole 3d package
 description: The package's quality knobs each stand alone - shadows.quality, lodBias, samples, the fill density (renderScale / maxPixels), the lights' map sizes and cascade counts - so an app that wants "low-end" or "high-end" sets five things in five places and a knob it forgets keeps the medium default; one tier every knob defaults from, each knob an override, as Unity's quality settings and Godot's project settings do, and the question whether the tier lives on the Scene or on the app as a device profile.
 created: 2026-10-16
+completed: 2026-10-17
 ---
 
 # One quality tier for the whole 3d package
@@ -177,32 +178,11 @@ Appended during the work, per the rule in [../README.md](../README.md).
   effect (created under no owner, like core's device facts) re-samples
   them; a texture leaves the registry with the model's dispose.
 
-- **TV rows, 2026-10-17** (Philips TPM171E, Mali-T860, 1080p, 50 Hz,
-  the-third-dimension demo on the dev server over the LAN, ms per frame
-  as frame-counter delta over `timeMs` delta in 15 s windows, the tier
-  set live through the demo's `quality` command). The demo pins its own
-  2048 maps and a 1.5x supersampling floor, which the row cannot touch,
-  so the row moves the kernel and the MSAA only:
-
-  | render scale | medium (16-tap kernel, 4x MSAA) | low (hard, 1x) |
-  |---|---|---|
-  | 1.5x (the demo's floor) | 1310 ms | 557 ms |
-  | 1.0x (`renderScale` 1) | 429 ms | 198 ms |
-
-  Low halves the frame either way, and the medium row is unusable on
-  this class, as expected (it is the low row's device). The MSAA took
-  on the scene target (`/gpu` reports `samples: 4` at medium) and not on
-  the side panels, which are tiles of an atlas (the atlas's count, by
-  design). The laptop (Intel RPL-P iGPU) reads 28 ms at medium against
-  17.6 at low on the same demo: 4x MSAA on top of the demo's 1.5x
-  supersample is the "one AA mechanism at a time" waste the low-end
-  note warned about, so a supersampling app pins `samples: 1` (the demo
-  now does; its side panels are tiles of its own single-sample atlas and
-  never took the row's count). The laptop ran in the balanced power
-  profile for those two reads. Open: today's low row at 1.0x reads 198 ms where
-  2026-09-02 measured 123 ms for the hard, single-sample configuration
-  (557 against 290 at 1.5x); the demo's rig, the PCSS kernel and the
-  TV's governor all changed or drift since, so the gap is unattributed.
+- The TV and laptop rows of 2026-10-17 (the tier set live on the
+  the-third-dimension demo), with the open gap between today's low row
+  and the September reading of the same configuration, are in the
+  Findings of
+  [3d-low-end-gpu-performance](../backlog/3d-low-end-gpu-performance.md).
 
 ## What it involves
 

@@ -48,14 +48,6 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
-- **[One quality tier for the whole 3d package](plans/3d-quality-tier.md)** [2026-10-16]
-  The package's quality knobs each stand alone - shadows.quality, lodBias,
-  samples, the fill density (renderScale / maxPixels), the lights' map sizes
-  and cascade counts - so an app that wants "low-end" or "high-end" sets five
-  things in five places and a knob it forgets keeps the medium default; one
-  tier every knob defaults from, each knob an override, as Unity's quality
-  settings and Godot's project settings do, and the question whether the tier
-  lives on the Scene or on the app as a device profile.
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -1258,6 +1250,14 @@ Finished, kept for the reasoning.
   @solidrt/3d as five pure generators next to sphere(), giving the flat-shaded
   solids at detail 0 and the icosphere above it; Godot and Unity ship neither,
   and the reason why shaped what the item does not claim.
+- **[One quality tier for the whole 3d package](done/3d-quality-tier.md)** [2026-10-17]
+  The package's quality knobs each stand alone - shadows.quality, lodBias,
+  samples, the fill density (renderScale / maxPixels), the lights' map sizes
+  and cascade counts - so an app that wants "low-end" or "high-end" sets five
+  things in five places and a knob it forgets keeps the medium default; one
+  tier every knob defaults from, each knob an override, as Unity's quality
+  settings and Godot's project settings do, and the question whether the tier
+  lives on the Scene or on the app as a device profile.
 - **[Root motion - in-place playback, and the travel moved onto the character](done/3d-root-motion.md)** [2026-09-03]
   Authored clips carry root motion; the mixer now strips it for viewers
   (inPlace, by net drift) and, for games, moves it onto the model through a

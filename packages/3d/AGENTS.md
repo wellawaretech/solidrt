@@ -257,8 +257,8 @@ moves:
 
 Low is the Adreno 610 tablet and Mali-T860 TV class (the soft kernel
 is half a 2 Mpx frame there, MSAA 4x ~9 ms, the fill cap the last
-lever), high the laptop and Pixel 7 class; the rows and their
-measurements are in okf/plans/3d-quality-tier.md. A scene may say its
+lever), high the laptop and Pixel 7 class; okf/done/3d-quality-tier.md
+has the rows and cites the measurements behind them. A scene may say its
 own: `<Scene quality="low">` is that row whatever the app tier (a
 thumbnail scene), `quality={{ samples: 8 }}` a row object over the app
 tier; spread a row for a custom level, `{ ...QUALITY_TIERS.high,

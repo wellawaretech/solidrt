@@ -4,7 +4,7 @@
 // shadow tap params in the /gpu inventory, the shadow atlas's size (map
 // edge times cascade count), the fill cap in the target size - and every
 // explicit option stays put when the row moves. Rows resolve as the
-// table says (okf/plans/3d-quality-tier.md); the app tier is restored to
+// table says (okf/done/3d-quality-tier.md); the app tier is restored to
 // medium at the end of every test that moves it, since the signal is the
 // engine's.
 

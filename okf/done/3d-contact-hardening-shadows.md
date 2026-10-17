@@ -204,4 +204,4 @@ specular half of the light size is its own item:
 contact leak of the uniform width on a coarse map is
 [3d-shadow-contact-leak](../backlog/3d-shadow-contact-leak.md), and the
 package-wide quality tier the close raised is
-[3d-quality-tier](../backlog/3d-quality-tier.md).
+[3d-quality-tier](3d-quality-tier.md).

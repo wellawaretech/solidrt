@@ -14,7 +14,7 @@ export { createDirectionalLight, createHemisphereLight, createPointLight, create
 export { MAX_CASCADES, MAX_LIGHTS, MAX_SHADOW_MAPS, MAX_SHADOW_TAPS } from "./glsl.ts"
 export type { ShadowQuality } from "./scene-shadows.ts"
 export { DEFAULT_SHADOW_CAMERA } from "./light.ts"
-// The quality table every knob defaults from (okf/plans/3d-quality-tier.md).
+// The quality table every knob defaults from (okf/done/3d-quality-tier.md).
 export { QUALITY_TIERS, resolveQuality } from "./quality.ts"
 export type { QualityInput, QualityRow } from "./quality.ts"
 export type {

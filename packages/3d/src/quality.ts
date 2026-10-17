@@ -11,7 +11,7 @@
 //
 // The rows are measured, not guessed. Low is the SM-T500 (Adreno 610) and
 // Mali-T860 TV class, high the laptop and Pixel 7 class; the evidence per
-// row is in okf/plans/3d-quality-tier.md and the notes it cites.
+// row is in okf/done/3d-quality-tier.md and the notes it cites.
 import type { Quality } from "@solidrt/core"
 import { MAX_CASCADES } from "./glsl.ts"
 import { SHADOW_QUALITY_TIERS } from "./scene-shadows.ts"
