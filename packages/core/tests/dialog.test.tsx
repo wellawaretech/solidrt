@@ -93,8 +93,8 @@ test("a handle's name is read lazily and stays what it was", async () => {
   expect(Object.keys(f)).toContain("name")
 })
 
-test("a headless client lists no dialog capability, yet a test's dialogs still answer", async app => {
-  expect(Flux.capabilities.includes("dialog")).toBe(false)
+test("a headless test client lists the dialog capability, and a test's dialogs answer", async app => {
+  expect(Flux.capabilities.includes("dialog")).toBe(true)
   app.dialog({ cancel: true })
   expect(await openFiles()).toEqual([])
 })
