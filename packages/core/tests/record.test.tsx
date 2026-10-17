@@ -17,7 +17,7 @@ import type { VideoStream } from "@solidrt/core/video"
 import type { TextureId } from "@solidrt/core/gpu"
 import { record } from "flux:video"
 import { file } from "flux:fs"
-import { Endpoint } from "flux:p2p"
+import { Endpoint, serveRelay } from "flux:p2p"
 import type { P2pStream } from "flux:p2p"
 import { connect, listen } from "flux:net"
 import type { Conn } from "flux:net"
@@ -315,6 +315,82 @@ test("a live recording crosses a p2p stream into a player", async app => {
   outgoing.close()
   await caster.close()
   await shower.close()
+})
+
+// A call: two live recordings of the test camera and microphone cross one
+// p2p stream in both directions, through a relay served here, and each
+// end plays the other's (with its audio track). The two recordings share
+// the one camera and microphone of this app; the host side is the acceptor,
+// the guest the dialer, as in examples/call. Both players open before any
+// frame is stepped: under the stepped clock a playing live player's frame
+// take waits for its next frame, which arrives through the JS thread, so a
+// blocking raster call from that thread during a frame (the second
+// player's texture create) would deadlock the host
+// (okf/backlog/headless-live-take-deadlock.md).
+test("a call carries two live recordings both ways through a relay", async app => {
+  await app.camera(still(0))
+  await app.microphone({ sampleRate: RATE, samples: new Float32Array(0) })
+  let cam!: CameraStream
+  let mic!: MicrophoneStream
+  let hostSees: VideoStream | undefined
+  let guestSees: VideoStream | undefined
+  let hostStream: P2pStream | undefined
+  let guestStream: P2pStream | undefined
+  await app.mount(() => {
+    cam = createCamera()
+    mic = createMicrophone({ sampleRate: RATE })
+    return <view />
+  })
+  await app.settle()
+  let relay = await serveRelay()
+  let host = await Endpoint.create({ protocols: [P2P_PROTOCOL], relayUrl: relay.url })
+  let guest = await Endpoint.create({ relayUrl: relay.url })
+  let accepted = (async () => {
+    for await (let stream of host.accept(P2P_PROTOCOL)) return stream
+    return undefined
+  })()
+  guestStream = await guest.connect(await host.ticket(), P2P_PROTOCOL)
+  let sources = { video: { texture: cam.texture()! }, audio: { id: mic.id()! } }
+  let guestRec = await record(sources, {})
+  let guestPipe = guestRec.readable!.pipeTo(guestStream.writable)
+  hostStream = await accepted
+  expect(hostStream).toBeDefined()
+  let hostRec = await record(sources, {})
+  let hostPipe = hostRec.readable!.pipeTo(hostStream!.writable)
+  // The players under a root of their own (no mount flush to wait for).
+  // The opens complete without a frame: each recording's header and first
+  // keyframe (the camera's current still) cross the stream as soon as it
+  // starts.
+  let disposePlayers = createRoot(dispose => {
+    hostSees = createVideo(hostStream!.readable, { latency: LIVE_LATENCY_S, autoplay: true })
+    guestSees = createVideo(guestStream!.readable, { latency: LIVE_LATENCY_S, autoplay: true })
+    return dispose
+  })
+  await opened(hostSees!)
+  await opened(guestSees!)
+  expect(hostSees?.error()).toBe(undefined)
+  expect(guestSees?.error()).toBe(undefined)
+  await app.microphone({ sampleRate: RATE, samples: tone() })
+  for (let i = 0; i < LIVE_FRAMES; i++) {
+    await app.camera(still((i * 7) % 256))
+    await app.frame()
+  }
+  expect(hostSees?.error()).toBe(undefined)
+  expect(guestSees?.error()).toBe(undefined)
+  expect([hostSees?.width(), hostSees?.height()]).toEqual([WIDTH, HEIGHT])
+  expect([guestSees?.width(), guestSees?.height()]).toEqual([WIDTH, HEIGHT])
+  expect(hostRec.error()).toBe(undefined)
+  expect(guestRec.error()).toBe(undefined)
+  await hostRec.stop()
+  await guestRec.stop()
+  await hostPipe.catch(() => {})
+  await guestPipe.catch(() => {})
+  disposePlayers()
+  hostStream?.close()
+  guestStream.close()
+  await guest.close()
+  await host.close()
+  await relay.close()
 })
 
 // The same over a TCP connection on the loopback (flux:net), left running

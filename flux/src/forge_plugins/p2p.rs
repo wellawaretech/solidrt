@@ -17,6 +17,8 @@
 //!   reads, `stream.writable` writes, `writable.close()` ends the send half
 //!   (QUIC FIN, the recv half stays open), `writable.abort(reason)` resets it
 //!   and errors the stream, `stream.close()` tears it down cleanly.
+//! - `serveRelay(opts)` (the `p2p-relay` feature) serves the self-hosted
+//!   relay from this process; its `url` is what peers pass as `relayUrl`.
 //!
 //! "protocol" is the JS-facing name for the QUIC/iroh ALPN. Out of scope for
 //! stage 1: unidirectional streams, multiple streams per peer, gossip/blobs, and
@@ -45,6 +47,79 @@ use crate::standards_plugins::body::byte_stream_readable;
 use crate::standards_plugins::streams::writable_to;
 use forge::p2p::{decode_hex32, Endpoint, Stream};
 
+#[cfg(feature = "p2p-relay")]
+mod relay {
+  //! `serveRelay`: the self-hosted relay, marshalled over `forge::p2p::Relay`.
+  //! Only in a build with the `p2p-relay` feature, which `Flux.capabilities`
+  //! reports as "p2p-relay"; without it the export is absent, like `record`
+  //! without `video-encode`.
+
+  use std::cell::Cell;
+  use std::future::Future;
+
+  use rquickjs::class::Trace;
+  use rquickjs::promise::Promised;
+  use rquickjs::{Ctx, JsLifetime, Object};
+
+  use crate::pending::{Hold, PendingOps};
+  use crate::plugins::js_error::JsResult;
+  use crate::plugins::marshal::{with_in_flight, OptArg};
+  use forge::p2p::Relay;
+
+  /// The `flux:p2p` `Relay`: a thin wrapper over the forge relay, holding
+  /// the engine (standing) while it serves.
+  #[derive(Trace, JsLifetime)]
+  #[rquickjs::class(rename = "Relay")]
+  pub struct P2pRelay {
+    #[qjs(skip_trace)]
+    inner: Relay,
+    #[qjs(skip_trace)]
+    hold: Cell<Option<Hold>>,
+  }
+
+  #[rquickjs::methods]
+  impl P2pRelay {
+    /// The port the relay listens on.
+    #[qjs(get)]
+    pub fn port(&self) -> u16 {
+      self.inner.port()
+    }
+
+    /// The relay URL peers pass as `relayUrl`; see `forge::p2p::Relay::serve`.
+    #[qjs(get)]
+    pub fn url(&self) -> String {
+      self.inner.url().to_string()
+    }
+
+    /// Stop the relay; the connections it carries end.
+    pub fn close<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
+      let inner = self.inner.clone();
+      let hold = self.hold.take();
+      Ok(with_in_flight(&ctx, "p2p", async move {
+        inner.close().await;
+        drop(hold);
+        Ok::<(), String>(())
+      }))
+    }
+  }
+
+  /// `serveRelay({ port? })` -> `Promise<Relay>`; `port` 0 (the default) is
+  /// a free one. The relay is standing work until its `close`.
+  pub fn serve_relay<'js>(
+    ctx: Ctx<'js>,
+    opts: OptArg<Object<'js>>,
+  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<P2pRelay>>>> {
+    let port = match opts.0 {
+      Some(opts) => opts.get::<_, Option<u16>>("port")?.unwrap_or(0),
+      None => 0,
+    };
+    let hold = PendingOps::of(&ctx).standing("p2p relay");
+    Ok(with_in_flight(&ctx, "p2p", async move {
+      Relay::serve(port).await.map(|inner| P2pRelay { inner, hold: Cell::new(Some(hold)) })
+    }))
+  }
+}
+
 /// `next()` of the `accept` async-iterable: a promise resolving to an iterator
 /// result object (boxed so the closure has a nameable return type).
 type AcceptStep<'js> = Promised<Pin<Box<dyn Future<Output = rquickjs::Result<Object<'js>>> + 'js>>>;
@@ -72,20 +147,22 @@ impl P2pEndpoint {
     Err(Exception::throw_message(&ctx, "use Endpoint.create() to bind a p2p endpoint"))
   }
 
-  /// Bind an endpoint. `opts`: `{ secretKey?, relayUrl?, protocols?, port? }`.
+  /// Bind an endpoint. `opts`: `{ secretKey?, relayUrl?, protocols?, port?, paths? }`.
   /// `secretKey` is 64 hex chars (omit for an ephemeral key); `relayUrl`
   /// selects a self-hosted relay (omit for none: direct paths only);
   /// `protocols` lists the protocols this endpoint will `accept`. `port` pins
   /// the UDP bind port (IPv4-only) so the ticket stays stable across restarts;
-  /// omit for an ephemeral port. See `forge::p2p::Endpoint::bind`.
+  /// omit for an ephemeral port. `paths` is `"any"` (the default) or
+  /// `"relay"` (no UDP socket; every packet through the relay). See
+  /// `forge::p2p::Endpoint::bind`.
   #[qjs(static)]
   pub fn create<'js>(
     ctx: Ctx<'js>,
     opts: OptArg<Object<'js>>,
   ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<P2pEndpoint>>>> {
-    let (secret, relay_url, alpns, port) = parse_create_opts(&ctx, opts.0)?;
+    let (secret, relay_url, alpns, port, relay_only) = parse_create_opts(&ctx, opts.0)?;
     Ok(with_in_flight(&ctx, "p2p", async move {
-      Endpoint::bind(secret, relay_url, alpns, port).await.map(|inner| P2pEndpoint { inner })
+      Endpoint::bind(secret, relay_url, alpns, port, relay_only).await.map(|inner| P2pEndpoint { inner })
     }))
   }
 
@@ -257,24 +334,28 @@ pub struct P2pModule;
 impl ModuleDef for P2pModule {
   fn declare(decl: &Declarations<'_>) -> rquickjs::Result<()> {
     decl.declare("Endpoint")?;
+    #[cfg(feature = "p2p-relay")]
+    decl.declare("serveRelay")?;
     Ok(())
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
     let ctor = Class::<P2pEndpoint>::create_constructor(ctx)?.expect("Endpoint class has a constructor");
     exports.export("Endpoint", ctor)?;
+    #[cfg(feature = "p2p-relay")]
+    exports.export("serveRelay", Function::new(ctx.clone(), relay::serve_relay)?)?;
     Ok(())
   }
 }
 
 /// Parsed `create` options: `(secretKey bytes, relayUrl, protocols/alpns,
-/// bind port)`, the native config `Endpoint::bind` takes.
-type CreateOpts = (Option<[u8; 32]>, Option<String>, Vec<Vec<u8>>, Option<u16>);
+/// bind port, relay-only)`, the native config `Endpoint::bind` takes.
+type CreateOpts = (Option<[u8; 32]>, Option<String>, Vec<Vec<u8>>, Option<u16>, bool);
 
 /// Parse the `create` options object into native config. `opts` may be absent.
 fn parse_create_opts<'js>(ctx: &Ctx<'js>, opts: Option<Object<'js>>) -> rquickjs::Result<CreateOpts> {
   let Some(opts) = opts else {
-    return Ok((None, None, Vec::new(), None));
+    return Ok((None, None, Vec::new(), None, false));
   };
   let secret = match opts.get::<_, Option<String>>("secretKey")? {
     Some(s) => Some(decode_hex32(&s).map_err(|m| Exception::throw_message(ctx, &m))?),
@@ -284,5 +365,12 @@ fn parse_create_opts<'js>(ctx: &Ctx<'js>, opts: Option<Object<'js>>) -> rquickjs
   let alpns =
     opts.get::<_, Option<Vec<String>>>("protocols")?.unwrap_or_default().into_iter().map(String::into_bytes).collect();
   let port = opts.get::<_, Option<u16>>("port")?;
-  Ok((secret, relay_url, alpns, port))
+  let relay_only = match opts.get::<_, Option<String>>("paths")?.as_deref() {
+    None | Some("any") => false,
+    Some("relay") => true,
+    Some(other) => {
+      return Err(Exception::throw_message(ctx, &format!("paths must be \"any\" or \"relay\", not \"{other}\"")))
+    }
+  };
+  Ok((secret, relay_url, alpns, port, relay_only))
 }

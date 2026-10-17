@@ -1,8 +1,9 @@
 // flux:p2p: two local endpoints on this machine (no relay, no discovery),
 // one stream between them, and the readable/writable pair over it: the echo,
-// a write after the peer went away, and an abort the peer's read reports.
+// a write after the peer went away, and an abort the peer's read reports;
+// then the same pair through a relay served here.
 import { expect, test } from "flux:test"
-import { Endpoint, type P2pStream } from "flux:p2p"
+import { Endpoint, serveRelay, type P2pStream } from "flux:p2p"
 
 const PROTOCOL = "flux-test/1"
 // A write on a connection the peer closed fails once the close has been
@@ -78,4 +79,36 @@ test("aborting the writable resets the stream for the peer and errors this side"
   b.close()
   await client.close()
   await server.close()
+})
+
+// Both endpoints name the relay served here (its URL carries the token it
+// admits), and the dialer gets a ticket cut down to id and relay (no direct
+// addresses), so its first packets have no path but the relay; iroh finds
+// the direct path on its own after that (both ends are this machine), which
+// is why the relay address is checked for presence, not for being the
+// active path. That the relay refuses an endpoint without its token is a
+// forge test (forge/src/tests/p2p_relay.rs): it shows in iroh's relay
+// connection state, which this surface does not expose.
+test("two endpoints meet through a relay served here", async () => {
+  let relay = await serveRelay()
+  expect(relay.port).toBeGreaterThan(0)
+  expect(relay.url.startsWith("http://")).toBe(true)
+  let server = await Endpoint.create({ protocols: [PROTOCOL], relayUrl: relay.url })
+  let client = await Endpoint.create({ relayUrl: relay.url })
+  let [id, home] = (await server.ticket()).split("|")
+  expect(home).toBe(relay.url)
+  let accepted = server.accept(PROTOCOL)[Symbol.asyncIterator]().next()
+  let a = await client.connect(`${id}|${home}|`, PROTOCOL)
+  let writer = a.writable.getWriter()
+  await writer.write(GREETING)
+  await writer.close()
+  let b = (await accepted).value as P2pStream
+  expect(await new Response(b.readable).text()).toBe(GREETING)
+  let info = await server.connInfo(client.id)
+  expect(info.addrs.some(entry => entry.kind === "relay")).toBe(true)
+  a.close()
+  b.close()
+  await client.close()
+  await server.close()
+  await relay.close()
 })

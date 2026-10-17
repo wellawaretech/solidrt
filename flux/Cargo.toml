@@ -35,6 +35,9 @@ video = ["forge/video"]
 # `record` of flux:video (behind forge/video-encode): the encoders, the WebM
 # writer and the recorder; implies video. See okf/plans/video-encode.md.
 video-encode = ["video", "forge/video-encode"]
+# `serveRelay` of flux:p2p and the `p2p-relay` capability (behind
+# forge/p2p-relay): not a cargo default; see forge/Cargo.toml.
+p2p-relay = ["forge/p2p-relay"]
 # flux:image transcodeTexture / encodeTexture and the `ktx2` capability
 # (behind forge/ktx2): not a cargo default; see forge/Cargo.toml.
 ktx2 = ["forge/ktx2"]

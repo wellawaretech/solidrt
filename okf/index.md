@@ -513,6 +513,13 @@ Shaped, not started.
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components
   theme presets hardcode precomputed mix results as a workaround.
+- **[A live player's stepped frame take can deadlock the headless host](backlog/headless-live-take-deadlock.md)** [2026-10-17]
+  Under the stepped clock (sol test, sol render) a playing texture player fed
+  from the JS thread makes the raster thread wait in its frame take for a
+  frame the UI thread has yet to pump, so any blocking raster call from the UI
+  thread during that frame (a texture create, a compile, a readback) deadlocks
+  the process silently; seen one run in four with two live p2p players in one
+  test.
 - **[HiDPI image cursors from one SVG source](backlog/hidpi-cursors-from-svg.md)** [2026-09-22]
   createCursor takes encoded bitmaps per scale; a vector source rasterized at
   1x, 2x and 3x in JS (parseSvg, draw to a texture, readTexture) would give
@@ -533,6 +540,12 @@ Shaped, not started.
   transfer() was parked on the rquickjs quickjs-ng bump, and the workspace is
   on rquickjs 0.14.0 since, so check whether the steal is now the safe
   from_source over a slot-holding source and build stages 1+2 together.
+- **[Give live sources their own buffering floor](backlog/live-latency-floor.md)** [2026-10-17]
+  A live player cannot play closer than 0.75 s behind the sender, whatever
+  `latency` asks, because the live form inherits the file stream's low water
+  (0.5 s) plus a 250 ms hysteresis as its resume floor; a call therefore runs
+  about a second behind. A sender-paced source needs a floor of a few frames,
+  so the three buffering constants should follow the source kind.
 - **[Content damage for live-sampled textures](backlog/live-texture-content-damage.md)** [2026-09-12]
   A texture whose pixels change behind an unchanged id produces no damage,
   because nodes displaying it hold a live reference and need none to show the
@@ -3226,6 +3239,12 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   resolves the C runtime from the DLLs and imports VCRUNTIME140.dll,
   VCRUNTIME140_1.dll and api-ms-win-crt-*, needing the Visual C++
   redistributable to start.
+- **[noq-udp keeps failing every send after an EIO on Android](upstream/noq-udp-android-eio-ecn-cmsg-send-stall.md)** [2026-10-17]
+  On a phone whose kernel answers a GSO sendmsg with EIO, noq-udp halts
+  segmentation offload but keeps attaching the ECN cmsg, which that kernel
+  also refuses with EIO, so every later send fails and the phone's uploads
+  over flux:p2p stall while downloads work; fixed in quinn and synced into
+  noq's main, not in a noq release yet.
 - **[quickjs-ng ArrayBuffer.prototype.transfer mishandles external buffers](upstream/quickjs-ng-transfer-external-buffers.md)** [2026-08-03]
   transfer() on a JS_NewArrayBuffer-backed (external) buffer calls js_realloc
   on a pointer the JS allocator does not own when the length changes (heap

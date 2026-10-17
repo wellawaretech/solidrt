@@ -246,6 +246,8 @@ const BASE_CAPABILITIES: &[&str] = &[
   "fs",
   "http",
   "p2p",
+  #[cfg(feature = "p2p-relay")]
+  "p2p-relay",
   "process",
   "path",
   "subprocess",

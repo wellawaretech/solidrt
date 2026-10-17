@@ -8,10 +8,10 @@ edition = "2021"
 # (runtime/Cargo.toml, the scaffold's). A custom runtime that trims writes
 # `default-features = false, features = [...]` on its lattice line and lists
 # everything it keeps (okf/backlog/module-feature-flags.md).
-default = ["video", "video-encode", "ktx2", "wasm-native"]
+default = ["video", "video-encode", "ktx2", "wasm-native", "p2p-relay"]
 # The player: the dev client, which carries every optional module whatever
 # the runtime crate lists, so one player runs any app.
-go = ["video", "video-encode", "ktx2", "wasm-native", "dep:tokio-websockets", "dep:futures-util", "dep:http", "dep:reqwest", "dep:base64", "dep:sha2", "dep:resvg"]
+go = ["video", "video-encode", "ktx2", "wasm-native", "p2p-relay", "dep:tokio-websockets", "dep:futures-util", "dep:http", "dep:reqwest", "dep:base64", "dep:sha2", "dep:resvg"]
 # Test mode (test_host.rs): the `--test` runner, `sol:test`, and flux's
 # test host and `flux:test` underneath. The Makefile turns it on for the dev
 # client only, so the production runtime carries none of it.
@@ -22,6 +22,8 @@ video = ["flux/video"]
 video-encode = ["video", "flux/video-encode"]
 # Passthrough: compressed textures (see flux).
 ktx2 = ["flux/ktx2"]
+# Passthrough: the self-hosted relay, `serveRelay` of flux:p2p (see flux).
+p2p-relay = ["flux/p2p-relay"]
 # Passthrough: flux:wasm on wasmi (see forge).
 wasm = ["flux/wasm"]
 # Passthrough: the native wasm lane, wasmtime with Cranelift where the

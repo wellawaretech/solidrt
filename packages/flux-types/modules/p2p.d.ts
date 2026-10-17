@@ -15,7 +15,15 @@ declare module "flux:p2p" {
      * ephemeral key.
      */
     secretKey?: string
-    /** A self-hosted relay URL. Omit for no relay: direct paths only. */
+    /**
+     * A self-hosted relay URL ({@link Relay.url} of a {@link serveRelay} in
+     * some process on the network, or a relay the app operates), with the
+     * relay's token as its user part when it has one
+     * (`http://<token>@host:port/`, what `serveRelay` hands out and a ticket
+     * carries). The endpoint connects to it, its ticket carries it, and a
+     * peer with no direct UDP path (or one that fails) is reached through
+     * it. Omit for no relay: direct paths only. Never a public relay.
+     */
     relayUrl?: string
     /** Protocols this endpoint will {@link Endpoint.accept}. */
     protocols?: string[]
@@ -25,6 +33,15 @@ declare module "flux:p2p" {
      * the old ticket. Omit for an ephemeral port.
      */
     port?: number
+    /**
+     * Which paths the endpoint uses: "any" (the default: a direct IPv4 path,
+     * the relay when one is named) or "relay" (no UDP socket at all, every
+     * packet through the `relayUrl`, which is then required). "relay" is for
+     * a device whose UDP sends fail, which today is a phone on a noq-udp
+     * version with the EIO fallback bug: its direct path dies in both
+     * directions while it still looks alive to it.
+     */
+    paths?: "any" | "relay"
   }
 
   /** One transport address from {@link Endpoint.connInfo}. */
@@ -122,4 +139,42 @@ declare module "flux:p2p" {
     /** Close the endpoint, ending any {@link accept} iteration. */
     close(): Promise<void>
   }
+
+  /** Options for {@link serveRelay}. */
+  type RelayOptions = {
+    /** The TCP port to listen on, on every IPv4 interface. Omit (or 0) for a free one. */
+    port?: number
+  }
+
+  /** A relay this process serves; see {@link serveRelay}. */
+  export class Relay {
+    /** The port the relay listens on. */
+    readonly port: number
+    /**
+     * The relay URL peers pass as `relayUrl`: plain `http://`, the relay's
+     * token as the user part, the IPv4 of this machine's default route (the
+     * address other hosts on the network reach it by; the loopback address
+     * on a machine without one) and the port, in the form a ticket carries.
+     * The token is the whole secret: whoever has the URL can use the relay.
+     */
+    readonly url: string
+    /** Stop the relay: its listener closes and the connections it carries end. */
+    close(): Promise<void>
+  }
+
+  /**
+   * Serve an iroh relay from this process, for the endpoints that name its
+   * {@link Relay.url} as `relayUrl`: two peers with no direct UDP path to each
+   * other (or whose direct path fails) exchange their packets through it,
+   * each over a TCP connection to the relay, while iroh keeps probing for a
+   * direct path. Plain HTTP on the network the devices share, no
+   * certificate; everything carried is end-to-end encrypted QUIC, so the
+   * relay reads nothing. It admits only endpoints that present its token,
+   * a fresh random one per relay, carried in {@link Relay.url}; a reachable
+   * port is not an open relay. The relay runs until
+   * {@link Relay.close} or the end of the program. Only in a build with the
+   * "p2p-relay" capability (the stock runtimes have it); the export is
+   * absent without it.
+   */
+  export function serveRelay(opts?: RelayOptions): Promise<Relay>
 }

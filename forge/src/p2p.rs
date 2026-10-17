@@ -22,12 +22,21 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use tokio::sync::Mutex;
+use url::Url;
 
 use iroh::endpoint::{presets, Connection, RecvStream, RelayMode, SendStream, TransportAddrUsage, VarInt};
-use iroh::{Endpoint as IrohEndpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr, Watcher};
+use iroh::{
+  Endpoint as IrohEndpoint, EndpointAddr, EndpointId, RelayConfig, RelayMap, RelayUrl, SecretKey, TransportAddr,
+  Watcher,
+};
 
 use crate::stream::{holding, read_half, ByteStream, Closing, ReadSlot};
 use crate::Value;
+
+#[cfg(feature = "p2p-relay")]
+pub mod relay;
+#[cfg(feature = "p2p-relay")]
+pub use relay::Relay;
 
 /// Read granularity: each read off a `Stream` pulls at most this many bytes.
 const READ_CHUNK: usize = 64 * 1024;
@@ -51,14 +60,24 @@ pub struct Endpoint {
   inner: IrohEndpoint,
   /// The 32-byte secret key, kept so it can be read back for persistence.
   secret: [u8; 32],
-  /// Whether a (self-hosted) relay is configured, so `ticket` knows whether a
-  /// home relay can ever come online.
-  relayed: bool,
+  /// The configured relay, if any: `ticket` waits for the home relay only
+  /// then, and writes the relay's token into the ticket.
+  relay: Option<RelayAccess>,
+}
+
+/// A configured relay as an app or a ticket names it: the URL proper, and
+/// the token the relay admits (`relay::Relay` issues one), carried as the
+/// URL's user part on the way in and out (`http://<token>@host:port/`).
+#[derive(Clone)]
+struct RelayAccess {
+  url: RelayUrl,
+  token: Option<String>,
 }
 
 impl Endpoint {
   /// Bind an endpoint. `secret` is the 32-byte key (generated when `None`);
-  /// `relay_url` selects a self-hosted relay (`None`: no relay at all);
+  /// `relay_url` selects a self-hosted relay (`None`: no relay at all), its
+  /// token as the URL's user part when the relay admits one;
   /// `alpns` lists the protocols this endpoint will `accept`. No public
   /// infrastructure is ever used: no public relay and no address publishing or
   /// lookup, so nothing about the endpoint leaves the machine except the
@@ -67,7 +86,10 @@ impl Endpoint {
   /// port (IPv4-only) so the ticket's direct address stays fixed across
   /// restarts; paired with a persisted `secret` this makes the whole ticket
   /// stable, so a client can re-dial the old ticket after a restart. `None`
-  /// lets iroh pick an ephemeral port.
+  /// lets iroh pick an ephemeral port. `relay_only` binds no UDP socket at
+  /// all: every packet goes through the relay (which must then be given),
+  /// for a device whose UDP sends fail
+  /// (okf/upstream/noq-udp-android-eio-ecn-cmsg-send-stall.md).
   ///
   /// Bind runs on a worker thread (`tokio::spawn`), not the caller's thread:
   /// iroh's bind does blocking work that otherwise stalls a single-threaded host
@@ -78,10 +100,14 @@ impl Endpoint {
     relay_url: Option<String>,
     alpns: Vec<Vec<u8>>,
     bind_port: Option<u16>,
+    relay_only: bool,
   ) -> Result<Endpoint, String> {
-    let relayed = relay_url.is_some();
-    match tokio::spawn(build_endpoint(secret, relay_url, alpns, bind_port)).await {
-      Ok(Ok((inner, secret))) => Ok(Endpoint { inner, secret, relayed }),
+    let relay = relay_url.as_deref().map(parse_relay_url).transpose()?;
+    if relay_only && relay.is_none() {
+      return Err("paths \"relay\" needs a relayUrl".to_string());
+    }
+    match tokio::spawn(build_endpoint(secret, relay.clone(), alpns, bind_port, relay_only)).await {
+      Ok(Ok((inner, secret))) => Ok(Endpoint { inner, secret, relay }),
       Ok(Err(e)) => Err(e),
       Err(e) => Err(format!("bind task failed: {e}")),
     }
@@ -99,17 +125,17 @@ impl Endpoint {
   }
 
   /// A self-contained dial token (`id|relay|ips`) carrying this endpoint's id,
-  /// home relay, and direct addresses, so a peer can `connect` without any
-  /// lookup. Waits (bounded) for what makes it dialable: the relay coming
+  /// home relay (with its token, so the peer can use it too), and direct
+  /// addresses, so a peer can `connect` without any lookup. Waits (bounded) for what makes it dialable: the relay coming
   /// online when one is configured, else the first direct address (without a
   /// relay `online` never resolves).
   pub async fn ticket(&self) -> String {
-    if self.relayed {
+    if self.relay.is_some() {
       let _ = tokio::time::timeout(TICKET_WAIT, self.inner.online()).await;
     } else {
       let _ = tokio::time::timeout(TICKET_WAIT, self.direct_addr_known()).await;
     }
-    encode_ticket(&self.inner.addr())
+    encode_ticket(&self.inner.addr(), self.relay.as_ref().and_then(|relay| relay.token.as_deref()))
   }
 
   /// Resolves once the endpoint knows at least one direct address.
@@ -405,13 +431,14 @@ impl tokio::io::AsyncWrite for ConnIo {
 }
 
 /// Encode an `EndpointAddr` as a compact ticket string `id|relay|ip1,ip2,...`
-/// (relay and ips optional). Hand-rolled rather than serde to keep the QR small.
-fn encode_ticket(addr: &EndpointAddr) -> String {
+/// (relay and ips optional; the relay with `token` as its user part).
+/// Hand-rolled rather than serde to keep the QR small.
+fn encode_ticket(addr: &EndpointAddr, token: Option<&str>) -> String {
   let mut relay = String::new();
   let mut ips: Vec<String> = Vec::new();
   for ta in &addr.addrs {
     match ta {
-      TransportAddr::Relay(url) if relay.is_empty() => relay = url.to_string(),
+      TransportAddr::Relay(url) if relay.is_empty() => relay = relay_with_token(url, token),
       TransportAddr::Ip(sa) => ips.push(sa.to_string()),
       _ => {}
     }
@@ -428,7 +455,9 @@ fn parse_dial(s: &str) -> Result<EndpointAddr, String> {
   let id: EndpointId = parts.next().unwrap_or("").trim().parse().map_err(|e| format!("invalid endpoint id: {e}"))?;
   let mut addrs: Vec<TransportAddr> = Vec::new();
   if let Some(relay) = parts.next().filter(|s| !s.is_empty()) {
-    addrs.push(TransportAddr::Relay(relay.parse::<RelayUrl>().map_err(|e| e.to_string())?));
+    // The token in the ticket is for the dialer's own relay config; the
+    // peer's relay address is the URL proper.
+    addrs.push(TransportAddr::Relay(parse_relay_url(relay)?.url));
   }
   if let Some(ips) = parts.next() {
     for ip in ips.split(',').filter(|s| !s.is_empty()) {
@@ -447,9 +476,10 @@ fn parse_dial(s: &str) -> Result<EndpointAddr, String> {
 /// off-machine. The only relay is the self-hosted one `relay_url` names.
 async fn build_endpoint(
   secret: Option<[u8; 32]>,
-  relay_url: Option<String>,
+  relay: Option<RelayAccess>,
   alpns: Vec<Vec<u8>>,
   bind_port: Option<u16>,
+  relay_only: bool,
 ) -> Result<(IrohEndpoint, [u8; 32]), String> {
   let secret_key = match secret {
     Some(bytes) => SecretKey::from_bytes(&bytes),
@@ -466,12 +496,26 @@ async fn build_endpoint(
   // privacy addresses rotate under a connection (observed 2026-10-16: a
   // stream stalled after its first packets on such a path), while the LAN
   // path every device here shares is IPv4.
-  builder = builder
-    .clear_ip_transports()
-    .bind_addr((std::net::Ipv4Addr::UNSPECIFIED, bind_port.unwrap_or(0)))
-    .map_err(|e| format!("invalid bind port: {e}"))?;
-  let relay_mode = match relay_url {
-    Some(url) => RelayMode::custom([url.parse::<RelayUrl>().map_err(|e| format!("invalid relayUrl: {e}"))?]),
+  // Relay-only: no IP transport at all, so nothing is sent over UDP.
+  builder = builder.clear_ip_transports();
+  if !relay_only {
+    builder = builder
+      .bind_addr((std::net::Ipv4Addr::UNSPECIFIED, bind_port.unwrap_or(0)))
+      .map_err(|e| format!("invalid bind port: {e}"))?;
+  }
+  let relay_mode = match relay {
+    Some(RelayAccess { url, token }) => {
+      // No QUIC address discovery port: the self-hosted relay (`relay`)
+      // serves plain HTTP only, and an entry with the default QUIC port
+      // (what `RelayMode::custom` writes) makes iroh probe it and wait out
+      // the timeouts before the HTTP probe counts, 3 s before the endpoint
+      // is online (measured 2026-10-17).
+      let mut config = RelayConfig::new(url, None);
+      if let Some(token) = token {
+        config = config.with_auth_token(token);
+      }
+      RelayMode::Custom(RelayMap::from(config))
+    }
     None => RelayMode::Disabled,
   };
   builder = builder.relay_mode(relay_mode);
@@ -502,7 +546,26 @@ async fn accept_one(ep: &IrohEndpoint, alpn: &[u8]) -> Result<Option<(Connection
   }
 }
 
-fn encode_hex(bytes: &[u8]) -> String {
+/// A relay URL as an app or a ticket gives it, `http://<token>@host:port/`
+/// when the relay admits a token: the URL proper and the token.
+fn parse_relay_url(s: &str) -> Result<RelayAccess, String> {
+  let mut url = Url::parse(s).map_err(|e| format!("invalid relay URL: {e}"))?;
+  let token = (!url.username().is_empty()).then(|| url.username().to_string());
+  url.set_username("").map_err(|_| format!("invalid relay URL: {s}"))?;
+  Ok(RelayAccess { url: RelayUrl::from(url), token })
+}
+
+/// A relay URL as a ticket carries it: `token` as its user part, so the peer
+/// dialing the ticket can configure the same relay.
+fn relay_with_token(url: &RelayUrl, token: Option<&str>) -> String {
+  let mut url: Url = (**url).clone();
+  if let Some(token) = token {
+    let _ = url.set_username(token);
+  }
+  url.to_string()
+}
+
+pub(crate) fn encode_hex(bytes: &[u8]) -> String {
   bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 

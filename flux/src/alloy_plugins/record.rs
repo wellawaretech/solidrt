@@ -54,6 +54,10 @@ use crate::standards_plugins::body::byte_stream_readable;
 
 // How long a feeder waits on its tap before looking at the stop flag.
 const FEEDER_WAIT: Duration = Duration::from_millis(100);
+// How long a feeder waits at the stop for the frame still in flight: a
+// window tap's last readback lands at the next frame (or after the raster
+// loop's idle timeout) and is delivered before the tap closes.
+const STOP_DRAIN: Duration = Duration::from_millis(100);
 // The audio feeder forwards once this much is buffered: one Opus frame,
 // so the recorder never waits on a half frame.
 const AUDIO_BLOCK_MS: u32 = 20;
@@ -479,26 +483,44 @@ impl AsRef<[u8]> for TapFrame {
 }
 
 /// Every frame the tap (a camera's, or the window's) publishes, newest
-/// first, until the tap closes or the recording stops. A frame the
-/// recorder has no room for is lost, not queued (the clip keeps real time).
+/// first, until the tap closes or the recording stops, plus the one frame
+/// in flight at the stop (a window tap delivers its last readback before
+/// it closes; a camera may publish once more), so the clip ends on the
+/// last frame drawn. A frame the recorder has no room for is lost, not
+/// queued (the clip keeps real time).
 fn video_feeder(tap: FrameTap, feeder: Feeder, stop: Arc<AtomicBool>) {
-  let mut after = 0;
-  let (mut taken, mut dropped) = (0u64, 0u64);
-  while !stop.load(Ordering::Relaxed) {
-    match tap.wait_newer(after, FEEDER_WAIT) {
-      TapWait::Frame(frame) => {
-        after = frame.seq;
-        let (width, height, timestamp_ns) = (frame.width, frame.height, frame.timestamp_ns);
-        match feeder.push_video(TapFrame(frame), width, height, timestamp_ns) {
-          Push::Queued => taken += 1,
-          Push::Dropped => dropped += 1,
-          Push::Closed => break,
-        }
-      }
+  // Taken and dropped counts, and the newest seq seen.
+  struct Counts {
+    after: u64,
+    taken: u64,
+    dropped: u64,
+  }
+  // Hand a frame to the recorder; false once the recorder is closed.
+  fn take(frame: Arc<CameraFrame>, feeder: &Feeder, counts: &mut Counts) -> bool {
+    counts.after = frame.seq;
+    let (width, height, timestamp_ns) = (frame.width, frame.height, frame.timestamp_ns);
+    match feeder.push_video(TapFrame(frame), width, height, timestamp_ns) {
+      Push::Queued => counts.taken += 1,
+      Push::Dropped => counts.dropped += 1,
+      Push::Closed => return false,
+    }
+    true
+  }
+  let mut counts = Counts { after: 0, taken: 0, dropped: 0 };
+  let mut open = true;
+  while open && !stop.load(Ordering::Relaxed) {
+    match tap.wait_newer(counts.after, FEEDER_WAIT) {
+      TapWait::Frame(frame) => open = take(frame, &feeder, &mut counts),
       TapWait::Timeout => {}
-      TapWait::Closed => break,
+      TapWait::Closed => open = false,
     }
   }
+  if open {
+    if let TapWait::Frame(frame) = tap.wait_newer(counts.after, STOP_DRAIN) {
+      take(frame, &feeder, &mut counts);
+    }
+  }
+  let (taken, dropped) = (counts.taken, counts.dropped);
   if dropped > 0 {
     log::warn!("[video] recording dropped {dropped} of {} frames (the encoder fell behind)", taken + dropped);
   }

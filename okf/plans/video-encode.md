@@ -206,6 +206,21 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
    connection on the local network (`flux:net`; see Findings for why not
    `flux:p2p`), laptop to tablet, Pixel to laptop and Pixel to tablet
    verified.
+7. The self-hosted relay: `serveRelay` in `flux:p2p` over iroh-relay's
+   server half, behind the `p2p-relay` feature in every stock runtime,
+   plain HTTP on the local network, its `url` what peers pass as
+   `relayUrl`; the path for a pair with no working direct UDP path. The
+   Pixel's own stall is a bug in the pinned noq-udp (see Findings), not
+   what the relay is for. Built 2026-10-17: `serveRelay` with its token,
+   flux and forge tests, the size row.
+8. The call: `examples/call`, host and guest over `flux:p2p` with the host
+   serving the relay, camera and microphone both ways, each side playing
+   the other's at the live latency, hold, far side off, hang up, a redial
+   after a drop; a two-way loopback test through a relay in the record
+   suite. Built 2026-10-17; laptop host to tablet guest verified one way
+   (the tablet has no VP9 encoder and joins receiving only, by the
+   decision above); the two-way run, the latency read and the live
+   bitrate measurement wait for the Pixel (see Open).
 
 ## Open
 
@@ -230,9 +245,42 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
 - **Transport and framing** (step 6 took WebM over one reliable, ordered
   byte stream: the mode-2 reader as is, a TCP connection or a p2p stream
   alike; a lost packet stalls everything behind it, which the live
-  catch-up then cuts). Still open: `flux:p2p` for a phone whose direct
-  UDP drops batched sends (a self-hosted relay, never a public one), and
-  QUIC datagrams with keyframe requests if the stall-and-cut shows.
+  catch-up then cuts). Step 7 added the self-hosted relay; the phone's
+  direct UDP stall is upstream's (Findings). Still open: QUIC datagrams
+  with keyframe requests if the stall-and-cut shows, and keyframe on
+  demand plus a bitrate that follows the link, which the call does not
+  need yet (a dropped connection is a fresh recording, which begins on a
+  keyframe).
+- **The call's delay.** Read by eye on the laptop and Pixel call
+  (2026-10-17): about a second. That is the live resume floor
+  (`LIVE_MIN_RESUME_US`, the stream low water plus 250 ms, 0.75 s) plus
+  the pipe, the same figure the screencast gave, and a `latency` of 0.3 s
+  cannot go below it; a call wants the floor itself lowered (a live
+  source paced by its sender needs less buffer than a network file), the
+  one knob left for the delay: [[live-latency-floor]]. A clock read off
+  the two screens (the phone held in front of the laptop camera shows its
+  own clock twice) is still owed as the exact number.
+- **Owed on the Pixel 7**: the phone as the sender over a direct path after the noq
+  bump (okf/upstream/noq-udp-android-eio-ecn-cmsg-send-stall.md), when
+  `paths: "relay"` stops being needed for it; the live bitrate (its
+  hardware encoder gave 240 kbit/s at 324x720 under a 700 kbit/s budget
+  in CBR mode, a soft picture: see whether the mode takes, or raise the
+  live default). The two-way call itself ran 2026-10-17 (Findings).
+- **The relay across NATs.** Without a QUIC address-discovery listener
+  (TLS, so a self-signed certificate the clients would have to accept)
+  the endpoints learn no public address from the relay, so two peers on
+  different networks are carried by the relay and never find a direct
+  path; and whether `sol run` should serve a relay for its dev clients
+  is undecided.
+- **A drop's redial on a device.** The guest's redial after a network
+  drop is covered by the code path (the far picture failing after it
+  played, the pipe failing) and the host's side was seen (a lost
+  connection reported within 45 s of the tablet's Wi-Fi going off), but
+  the tablet's dev client reloads the app when it reconnects to the dev
+  server, which reset the guest before its redial could be read; a
+  packed app or a drop that spares the dev connection would show it.
+- **The stepped host deadlocks a live player against a blocking raster
+  call** (found by the call test): [[headless-live-take-deadlock]].
 
 ## Not in scope
 
@@ -401,6 +449,88 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   (a TCP loopback cast left open at the test's end) tears down cleanly,
   so the device-side cause (the MediaCodec encoder's flush, the window
   tap, the camera) is not pinned down.
+- **The Pixel's upload stall is a noq-udp bug, not the direct path** (found
+  2026-10-17, from the phone's `sendmsg error ... EIO ... ecn: Ect0,
+  segment_size` line): the pinned noq-udp halts GSO on an EIO but drops the
+  ECN cmsg only on EINVAL, and this kernel answers the cmsg with EIO too,
+  so every later send fails while receives work. Fixed upstream in quinn
+  (PR 2719, 2026-07-10), synced into noq's main 2026-10-16, no release
+  yet: okf/upstream/noq-udp-android-eio-ecn-cmsg-send-stall.md. The
+  phone's first p2p call (2026-10-17, a direct IPv4 path plus the relay)
+  showed the bug's full shape: both opens timed out, the phone's own
+  included, since its ACKs leave no more than its data, and `connInfo`
+  went from `mixed` to `relay` only after about a minute, while the phone
+  kept reporting the direct path active (packets still reach it) and its
+  pipe writes kept succeeding into the send buffer, so neither a hang-up
+  nor a drop reached its app. Hence `paths: "relay"` on `Endpoint.create`
+  (added the same day, default `"any"`): no UDP socket at all, every
+  packet through the relay, the one way to use this phone until the noq
+  bump; the call demo takes it through `call_debug relayOnly true`.
+- **The self-hosted relay (step 7), 2026-10-17.** iroh-relay's server half
+  over plain HTTP works as is: iroh exchanges relay URLs with the http
+  scheme and dials ws, and its net report's HTTP probe takes the URL as
+  given. What cost a round: `RelayMode::custom(urls)` writes the default
+  QUIC address-discovery port into each relay entry, so the report probes
+  that port on our HTTP-only relay and waits the probes out before the
+  HTTP latency counts, and the endpoint was online (its ticket carrying
+  the relay) only after 3 s; built as `RelayConfig::new(url, None)` it is
+  online in 0.2 s. Without address discovery the endpoint learns no public
+  address from the relay, which a pair across two NATs would need to find
+  a direct path: on one network it is moot, and a TLS QUIC listener on the
+  relay (self-signed, so the clients would have to skip verification) is
+  the later item if it ever matters. The relay admits its own token only
+  (a fresh 32-byte one per relay, checked on the websocket upgrade's
+  bearer header through iroh-relay's access hook), carried as the user
+  part of the relay URL (`http://<token>@host:port/`): an endpoint strips
+  it into its relay config and its ticket writes it back, so the guest
+  gets it from the QR, and a port reachable from further away is not an
+  open relay. The flux binary (release, unstripped,
+  Linux x64) grows from 57.06 MB to 59.52 MB with the feature: iroh-relay's
+  server pulls clap, tokio-rustls-acme, rcgen and the cert reloading crates
+  on top of what iroh's client half already linked.
+- **The call on devices, 2026-10-17** (laptop host, SM-T500 guest, the
+  laptop serving the relay, the tablet dialing the ticket through
+  `call_debug call <ticket>`): the tablet has no VP9 encoder, so its
+  `record` rejects and it joins receiving only, which the demo now allows
+  (a side whose recording cannot start finishes its send half, since a
+  QUIC stream reaches the acceptor only with the dialer's first bytes,
+  and stays in the call; a far open that fails is a peer sending nothing
+  and keeps the call; a far picture failing after it played is the drop
+  that ends it). The tablet played the laptop's camera live with no
+  missed present over a 5 s window, `connInfo` reporting `mixed` (the
+  relay and the direct path both active) for the call's length; a hang
+  up on the host returned the guest to its scanner and a second dial
+  connected again; Wi-Fi off on the tablet had the host report the lost
+  connection within 45 s. The player's `finished` and `buffering` are
+  plain reads, so a status text over them must poll them into signals,
+  which the screencast's player does not (it reads them in JSX and goes
+  stale).
+- **The record suite deadlocked the headless host one run in four** with
+  the two-way call test, by a hazard older than the test: under the
+  stepped clock a playing live player's frame take waits for a frame due
+  after the deadline, that frame arrives through the JS pump on the UI
+  thread, and the UI thread was blocked in a texture-create RPC for the
+  second player, queued behind the frame on the raster thread (gdb as the
+  client's parent, since ptrace is otherwise refused here: `sol-raster`
+  in `YuvLatchShared::take`, `sol-ui` in `create_texture_at`'s `recv`).
+  The test now opens both players before it steps a frame; the hazard is
+  [[headless-live-take-deadlock]]. The feeder's missed frame at the stop
+  is gone with the drain (the window clips take 30 of 30 frames; the
+  live ones lose one to the full channel instead).
+- **The two-way call, laptop and Pixel 7, 2026-10-17**, the phone
+  relay-only (`call_debug relayOnly true`, then `call <ticket>`), the
+  laptop serving the relay and dialled by the phone: both sides live and
+  sending within 25 s, `connInfo` `relay` on both, the laptop's far
+  picture the phone's 480x640 camera and the phone's the laptop's, read
+  as pixels (over a thousand distinct colours in a 48x32 crop). Over a
+  10 s window the laptop latched 2460 frames in all, 0 skipped, 0 late,
+  0 missed presents; the phone 1527, 0 skipped, 0 late, 4 missed
+  presents. The phone's first, direct-path attempt had its recording drop
+  2365 of 2739 frames at the full live sink (the stall above); the
+  relay-only one encodes at the step 5 rate. The laptop's camera list
+  went stale when a second camera appeared mid-session (the open named a
+  `/dev/video2` that had moved), cured by a fresh client, so a camera
+  that fails to open after a hotplug is the SDL list, not the app.
 - **A stepped test records nothing from a window at rest**: `frame()` of
   the test host steps app time without demanding a draw, so the screen
   tests move a box every frame. The recording's start demands one frame

@@ -32,9 +32,10 @@ build-opt:
 # the texture encoder (flux:image encodeTexture) and every module a shipped
 # runtime can (the native wasm lane, like the stock runtime). It is also
 # what `sol test` runs test files on, so it alone carries flux:test. The
-# interpreted wasm lane on a desktop is a cargo line with `wasm` alone
+# relay (flux:p2p serveRelay) is in the stock runtime, so it is here too.
+# The interpreted wasm lane on a desktop is a cargo line with `wasm` alone
 # (okf/notes/wasm-vs-js-throughput.md).
-FLUX_FEATURES = --features ktx2,wasm-native,test
+FLUX_FEATURES = --features ktx2,wasm-native,p2p-relay,test
 
 flux:
 	cargo build $(CARGO_PROFILE_FLAG) $(FLUX_FEATURES) --bin flux

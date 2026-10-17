@@ -31,6 +31,12 @@ video = ["audio", "dep:ndk", "dep:ndk-sys"]
 # module, and the tests decode what they encode. See
 # okf/plans/video-encode.md.
 video-encode = ["video"]
+# forge::p2p::relay (flux:p2p's `serveRelay`): an iroh relay served from this
+# process over plain HTTP, the path between peers a direct UDP path does
+# not carry; the `server` half of iroh-relay (the client half is in iroh
+# already). Not a cargo default (it pulls the relay's HTTP server stack);
+# lattice's default set turns it on. See okf/plans/video-encode.md.
+p2p-relay = ["dep:iroh-relay"]
 # forge::ktx2: compressed textures - KTX2 files of Basis Universal texel data
 # transcoded to the device's block format (ETC2, BC7), and the encoder that
 # bakes them. The vendored Basis Universal (forge/vendor/basis_universal, a
@@ -99,6 +105,10 @@ notify = { version = "=8.2.0", default-features = false, features = ["macos_fsev
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
 fastwebsockets = { version = "=0.10.0", features = ["upgrade", "unstable-split"] }
 iroh = "=1.3.0"
+# The relay server behind `p2p-relay`. `default-features = false` as iroh
+# declares the crate; `server` is the HTTP relay, and the metrics and ring
+# TLS it implies are what iroh picks for the client half too.
+iroh-relay = { version = "=1.3.0", default-features = false, features = ["server"], optional = true }
 # Cross-platform PATH lookup for the subprocess `which` (handles Windows PATHEXT).
 which = "=7.0.3"
 # UDP socket options the flux:net multicast beacon needs (SO_REUSEADDR/REUSEPORT)
@@ -112,6 +122,9 @@ hickory-proto = "=0.26.3"
 # flux:net interfaces() - the no-subprocess replacement for parsing `ip addr`.
 # Already in the tree (iroh depends on it).
 netdev = "=0.46.3"
+# URL parsing for the relay token a relay URL carries as its user part
+# (forge::p2p). Already in the tree (iroh depends on it).
+url = "=2.5.8"
 # Pure-Rust, no-JIT wasm interpreter behind forge::wasm (flux:wasm), the
 # `wasm` feature: the lane on the targets that cannot run generated code. No
 # per-platform native build or signing story: one .wasm runs on every target.

@@ -75,7 +75,7 @@ pub async fn start(ticket: String) -> Result<(SocketAddr, Tunnel), String> {
   // ephemeral bind port is fine here - the dialer is never itself dialed.
   // The secret is the client's stable identity (see load_secret).
   let secret = load_secret();
-  let endpoint = forge::p2p::Endpoint::bind(secret, None, Vec::new(), None).await?;
+  let endpoint = forge::p2p::Endpoint::bind(secret, None, Vec::new(), None, false).await?;
   if secret.is_none() {
     persist_secret(&endpoint.secret_key_hex());
   }

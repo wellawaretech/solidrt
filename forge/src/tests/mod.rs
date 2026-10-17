@@ -15,6 +15,8 @@ mod ktx2;
 mod live;
 mod mdns;
 mod net;
+#[cfg(feature = "p2p-relay")]
+mod p2p_relay;
 mod path;
 mod process;
 #[cfg(feature = "video")]

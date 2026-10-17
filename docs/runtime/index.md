@@ -358,7 +358,8 @@ The capabilities are not flags but lattice's cargo features, chosen in
 the runtime's `Cargo.toml`. The plain line the scaffold writes takes
 lattice's default set, the stock runtime's: `video` (playback),
 `video-encode` (recording, `record` of `flux:video`; it implies `video`),
-`ktx2` (compressed textures) and `wasm-native` (`flux:wasm` compiled to
+`ktx2` (compressed textures), `p2p-relay` (`serveRelay` of `flux:p2p`, the
+self-hosted relay) and `wasm-native` (`flux:wasm` compiled to
 machine code where the target allows it, interpreted elsewhere; `wasm`
 alone is the interpreter everywhere). A runtime that needs less trims the
 line and names everything it keeps:
