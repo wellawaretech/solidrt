@@ -60,7 +60,7 @@ run/server/bundle/pack/render: what the command works on
   sol run <file>         Outside a project: the file on its own (no assets, no isolates)
   sol run <file> --project   In a project root: the project, with this entry
   sol run <file> --file      In a project root: the file on its own, ignoring the project
-  Build outputs land under dist/ in the current directory.
+  Packs and bundles land under dist/ in the current directory, render frames under renders/.
   One server per project or file; each keeps the port it had last time,
   else the first free one from 34884 up (see the startup line). Loopback only unless --lan.
 
@@ -152,8 +152,8 @@ render options:
       --settle           Run the app to rest (loads landed, transitions played out) before the first frame
       --strict           Fail the render when the app logs an error (a contained error included)
       --seed <n>         Render on another Math.random sequence (default: 0)
-  -o, --output <path>    Where frames land: a directory (frame-NNNNNN.png inside it)
-                         or a path prefix (default: the current directory)
+  -o, --output <dir>     Where frames land (frame-NNNNNN.png): a missing or empty directory
+                         (default: a new renders/<app>-<YYYY-MM-DD-HHMMSS>/ per render)
       --data-root <dir>  Client data root (default: ~/.solidrt/clients)
   -c, --client <N>       Client number: the app's sandbox under that client's tree (default: 0)
       -- <args...>       Everything after -- is passed to the app (flux:process argv)`

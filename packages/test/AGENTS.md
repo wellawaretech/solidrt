@@ -95,6 +95,6 @@ agents/testing.md.
 - The data folder and the fetch cache are empty at the start of every
   test, and no gamepad is seated.
 - A failure prints the app time and frame, what still demanded frames,
-  the whole outline and a snapshot's path under `dist/test/` beside the
-  error: read them before changing the test. The method (what to test at
+  the whole outline and a snapshot's path under `.solidrt-data/test/`
+  beside the error: read them before changing the test. The method (what to test at
   which layer, when to `settle`) is @solidrt/cli agents/testing.md.

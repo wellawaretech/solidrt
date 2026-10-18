@@ -45,13 +45,13 @@ are the wall clock's. Logic with a timeout is tested by waiting for it, or
 takes its delay as a parameter, so a test can pass a short one.
 
 Each file runs in a fresh process, one file after another. Its working
-directory is a sandbox of its own under the `dist/test/` of the package or
-project that holds its `tests/` folder, emptied before every test, so a
-test writes relative paths and starts from no stored state. The project's
-own files are reached as an app reaches them: a path under `assets/` reads
-the project's `assets/` folder (read-only), and a file imported `with
-{ type: "binary" }` or `with { type: "text" }` is inlined in the bundle as
-a `Uint8Array` or a string. Inside the process the
+directory is a sandbox of its own under the `.solidrt-data/test/` of the
+package or project that holds its `tests/` folder, emptied before every
+test, so a test writes relative paths and starts from no stored state. The
+project's own files are reached as an app reaches them: a path under
+`assets/` reads the project's `assets/` folder (read-only), and a file
+imported `with { type: "binary" }` or `with { type: "text" }` is inlined in
+the bundle as a `Uint8Array` or a string. Inside the process the
 file is evaluated once to list its tests and once more for every test, in
 a fresh engine: a test starts from the file's freshly evaluated state, so
 what one test changed, registered or left running is not there for the
@@ -208,7 +208,7 @@ only the picture shows.
 When an app test fails, the report says what the test saw: the app time
 and frame it failed at, what still wanted frames (a transition on a named
 node, a frame callback), the whole app as `outline()` prints it, and the path
-of a snapshot of the frame, written under the project's `dist/test/`:
+of a snapshot of the frame, written under the project's `.solidrt-data/test/`:
 
 ```
   FAILED: a tap increments
@@ -222,14 +222,14 @@ of a snapshot of the frame, written under the project's `dist/test/`:
       window 0,0 1280x720
         view [count] 20,20 200x40
           text "0" 20,20 200x40
-    Snapshot: dist/test/counter/failures/a-tap-increments.png
+    Snapshot: .solidrt-data/test/counter/failures/a-tap-increments.png
 ```
 
 Anything that imports the app runtime (`sol:` modules, or a module of the
 rendering layer such as `flux:rendertree`) makes a file an app test; a
 `.test.tsx` file always is one. The bundle and a data folder of the file's
-own are staged under the project's `dist/test/`. `--only flux` and `--only
-app` run one layer, for a machine that has one of the two binaries.
+own are staged under the project's `.solidrt-data/test/`. `--only flux` and
+`--only app` run one layer, for a machine that has one of the two binaries.
 
 The method - what to test and at which layer, naming, the time model, how
 to read a failure - is in the testing guide of `@solidrt/cli`

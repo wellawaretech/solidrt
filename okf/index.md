@@ -35,6 +35,14 @@ The architecture of an area and the decisions behind it, kept current. Read befo
   (no 3D-rendered controls, hover lift over tilt, press sink over press scale,
   an app-owned light at event rate) and the open items. Read before moving the
   model into the package.
+- **[Gaussian splats](design/splats.md)** [2026-10-18]
+  The splat viewer in one place - the .sol3s bake and its chunked 16-bit
+  record, the data textures and the one-texel vertex decode, the packed depth
+  key the core sorts on its own thread, the importance order block the count
+  dial reads, the blend space a capture is trained against, the decisions
+  behind each with the alternatives that were rejected and measured, and the
+  known limits with their open items. Read before touching splat-data.ts,
+  splat.ts, the order module or the splat probe.
 - **[WebAssembly](design/wasm.md)** [2026-10-03]
   The route for app code that needs more than the JavaScript interpreter,
   front to back - what a module is written in and how it reaches a project,
@@ -700,11 +708,9 @@ Shaped, not started.
   whether alloy opened it as a joystick, and Android's auto-mapping can drop
   buttons it sends; a core remoteControl() device for createInputMap should
   hide both so an app binds select, navigate and back once.
-- **[Keep sol render off the dev client's data and the user's files](backlog/render-data-and-output-safety.md)** [2026-10-08]
+- **[Keep sol render off the dev client's data](backlog/render-data-and-output-safety.md)** [2026-10-08]
   sol render runs in the dev client's own data tree (client 0) even while that
-  client is up, so a render reads and writes the live app's saved state; and
-  it wipes dist/render/ for its staging, taking any frames a user wrote there
-  with -o.
+  client is up, so a render reads and writes the live app's saved state.
 - **[Node lifetime is a deferred sweep, not reference lifetime](backlog/renderer-node-lifetime.md)** [2026-08-14]
   removeNode detaches and a microtask sweep frees, so control-flow reuse
   inside one tick survives but a node re-inserted in a later async tick is
@@ -775,6 +781,14 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
+- **[The splat order block and chunk table carry less than they could - the count dial drops the subject, sparse leaves lose precision, and nothing culls a chunk](backlog/splat-order-and-chunks.md)** [2026-10-18]
+  The order block ranks by volume times opacity, so a capture whose subject is
+  micro-splats loses the subject before the background at 100k; a k-d leaf
+  holds 256 splats whatever their spread, so 0.9% of the lizard's splats in
+  near-empty space move more than a tenth of their size; and the chunk table
+  the core now holds is never used to skip off-screen chunks in the sort, the
+  one lever left on the phone's ~44 ms fill at 1M. Three jobs on the same two
+  structures, decided together.
 - **[A million splats at phone full resolution spend the frame in fill](backlog/splat-overdraw-fill.md)** [2026-09-27]
   With the instancing frontend gone the Pixel 7 draws 1M splats in ~36 ms at
   1079x2399, of which ~24 ms is fragment work - the gaussian falloff, the
@@ -790,6 +804,14 @@ Shaped, not started.
   bytes per splat; a product-quantized encoding behind the SH block's
   `encoding` field would cut the dominant texture 12x, at the price of a
   bake-time k-means to engineer and a quality judgement of its own.
+- **[The splat record's loose ends - an order check that does not know the key is packed, two boundaries without tests, 16 dead bits, a constant scale floor, an unjudged antialiased path](backlog/splat-record-loose-ends.md)** [2026-10-18]
+  Five small debts left by okf/done/splat-record-compression.md, fixed
+  together - the entry's instanceOrder still demands 12 bytes from a packed
+  key's offset; the flux `packed` object shape and the 3d `packed`/`order`
+  validation have no tests; word 1's high 16 bits carry nothing; the log-scale
+  clamp is a constant a kilometre-scale capture would clip; and the
+  Mip-Splatting compensation has never been looked at on a capture trained
+  with it.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
@@ -1429,7 +1451,9 @@ Finished, kept for the reasoning.
 - **[One build-output root with per-flow subdirs](done/build-output-dirs.md)** [2026-08-21]
   Landed 2026-08-21: dist/ is the build root with one subdir per flow
   (render/, pack/, bundle/), render stages isolates and assets so isolate()
-  works headless, and single-file deliverables land in the dist/ root. Asset
+  works headless, and single-file deliverables land in the dist/ root. Revised
+  2026-10-18 - dist/ holds deliverables only, render and test staging moved to
+  .solidrt-data/, render frames to a new renders/<app>-<time>/ per run. Asset
   pre-processing on top of the staged dirs is an ideas.md line.
 - **[An unsized Button fills its row instead of sizing to its content](done/button-unsized-fills-row.md)** [2026-09-21]
   Button falls back to width 100% when size is omitted while its docs promise

@@ -37,8 +37,13 @@ from connected clients to a script (pointer input is not captured yet). `--size`
 at exactly that size, so frames are identical on every machine. Every frame
 follows a frame callback: frame k is the app's state after its (k+1)th
 `onFrame` call, at time (k+1)/fps; the mount state before any callback is
-drawn but never written. Frames land in the directory the command runs from;
-`-o <path>` picks another (or a path prefix for the `-NNNNNN.png` names).
+drawn but never written. Frames are output to keep: each render writes them
+to a new folder, `renders/<app>-<YYYY-MM-DD-HHMMSS>/` under the directory the
+command runs from (the last segment of the appId, the local time it started),
+and prints its path; no render deletes or writes into another's.
+`-o <dir>` picks the folder instead, refused unless it is missing or empty.
+The bundle, isolates and assets the runtime runs from are staged in
+`.solidrt-data/render/`, tool state that every render wipes.
 A project's fonts (`solidrt.fonts` in package.json) register over the
 runtime's built-in defaults, so text renders with the same fonts as under
 the dev server. The app runs in the same sandbox as under a dev client

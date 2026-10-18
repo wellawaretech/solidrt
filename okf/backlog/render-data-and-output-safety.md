@@ -1,12 +1,10 @@
 ---
-title: Keep sol render off the dev client's data and the user's files
-description: sol render runs in the dev client's own data tree (client 0) even while that client is up, so a render reads and writes the live app's saved state; and it wipes dist/render/ for its staging, taking any frames a user wrote there with -o.
+title: Keep sol render off the dev client's data
+description: sol render runs in the dev client's own data tree (client 0) even while that client is up, so a render reads and writes the live app's saved state.
 created: 2026-10-08
 ---
 
-# Keep sol render off the dev client's data and the user's files
-
-## 1. Render shares the live client's data tree
+# Keep sol render off the dev client's data
 
 By design a render runs in the same sandbox as a dev client
 (`clientStorageArgs`: `--data-root` and `--client`, default 0), so the
@@ -29,15 +27,11 @@ points the runtime there. To settle: how much gets copied (a fetch disk
 cache can be large and could stay behind), and whether `--client N` keeps
 meaning "start from client N's state". Refusing to render while the tree is
 held does not solve it: a render run with no client up still writes into
-the dev tree.
+the dev tree. Two renders at once also share the one staging dir
+(`.solidrt-data/render/`), which each wipes at its start, so the staging
+dir becomes one per render too.
 
-## 2. The staging wipe takes the user's output
-
-Render stages its bundle, isolates and assets in `dist/render/` and wipes
-that directory first ([render/main.ts](../../packages/cli/src/render/main.ts);
-each flow wipes only its own subdir, okf/done/build-output-dirs.md). With
-`-o dist/render/phone` the frames land inside that subdir, so the next render
-deletes them. `sol bundle -o` already refuses a directory it does not own.
-
-**Done when:** render refuses an `-o` inside its staging dir with a message
-naming the dir, before anything is wiped.
+The other half this item had, the staging wipe taking frames written into
+it with `-o`, closed with the output split of 2026-10-18
+(okf/done/build-output-dirs.md): staging moved to `.solidrt-data/render/`,
+frames to `renders/`, and an `-o` inside the staging dir is refused.

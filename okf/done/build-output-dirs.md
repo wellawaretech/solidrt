@@ -1,6 +1,6 @@
 ---
 title: One build-output root with per-flow subdirs
-description: Landed 2026-08-21: dist/ is the build root with one subdir per flow (render/, pack/, bundle/), render stages isolates and assets so isolate() works headless, and single-file deliverables land in the dist/ root. Asset pre-processing on top of the staged dirs is an ideas.md line.
+description: Landed 2026-08-21: dist/ is the build root with one subdir per flow (render/, pack/, bundle/), render stages isolates and assets so isolate() works headless, and single-file deliverables land in the dist/ root. Revised 2026-10-18 - dist/ holds deliverables only, render and test staging moved to .solidrt-data/, render frames to a new renders/<app>-<time>/ per run. Asset pre-processing on top of the staged dirs is an ideas.md line.
 created: 2026-08-21
 completed: 2026-08-21
 ---
@@ -22,6 +22,8 @@ isolate bundles live in `.solidrt-data/`. There is no place a flow can stage a
 complete app-shaped directory.
 
 ## Decision
+
+(Revised 2026-10-18, below: `dist/` keeps only what ships.)
 
 `dist/` is the build root, in the spirit of Cargo's `target/`: one gitignored
 directory (already in the scaffold gitignore and the bundler's SKIP_DIRS),
@@ -52,6 +54,32 @@ dist/
 - **dev stays in `.solidrt-data/`** for now. Its isolate bundles are dev-server
   serving state tied to a running server, closer to runtime data than build
   output. Revisit when asset pre-processing exists (below).
+
+## Revised 2026-10-18: what ships, what the tool keeps, what the user keeps
+
+In a JavaScript project `dist/` reads as "what you distribute", and the
+`target/` reading had put two other kinds of output in it: render's staged
+run dir and the test stage, and the frames and failure snapshots people
+open. Generated files now split by who wants them:
+
+| Kind | Where | Lifetime |
+|---|---|---|
+| Shipped: the packed exe, `.solapp`, `.apk`, `pack/`, `bundle/` | `dist/` | rebuilt by each pack or bundle |
+| Automated, volatile: render's staged run dir; an app test's stage, data sandbox and failure snapshots | `.solidrt-data/render/`, `.solidrt-data/test/`, beside the dev server's own state | wiped by the flow that owns it |
+| User-initiated, kept: render frames, and the images of a `sol snapshot` when one exists | `renders/`, `snapshots/` in the build root | never wiped or written over by a tool |
+
+- Render writes each run to a new `renders/<app>-<YYYY-MM-DD-HHMMSS>/` (the
+  appId's last segment, local time; a rerun in the same second gets `-N`)
+  and prints its path. It used to write into the cwd, where a shorter rerun
+  left the longer run's tail frames behind. `-o <dir>` must be missing or
+  empty and outside the staging dir; the path-prefix form is gone from the
+  CLI (the runtime's `--out` keeps it). This closes the staging-wipe half of
+  [render-data-and-output-safety](../backlog/render-data-and-output-safety.md).
+- A snapshot command follows the same rule: one new
+  `snapshots/<app>-<time>.png` per call.
+- The scaffold's gitignore covers `dist/` and `.solidrt-data/` and leaves
+  `renders/` and `snapshots/` out: whether kept output is committed is the
+  app author's call. The bundler's walk skips them like `dist/`.
 
 ## Why this shape also carries asset pre-processing
 

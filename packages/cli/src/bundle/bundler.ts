@@ -160,7 +160,9 @@ export function hasIsolateDirective(code: string): boolean {
   return ISOLATE_DIRECTIVE.test(code)
 }
 
-let SKIP_DIRS = new Set(["node_modules", "dist"])
+// Never sources: dependencies, build output, and the folders kept output
+// lands in (tool state is a dotfile, skipped anyway).
+let SKIP_DIRS = new Set(["node_modules", "dist", "renders", "snapshots"])
 
 /**
  * Depth-first files under `root`, visited as (absolute path, forward-slash

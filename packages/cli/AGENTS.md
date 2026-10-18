@@ -73,7 +73,7 @@ the work before starting it:
   Exits nonzero on any failure; a failure prints expected, received and
   the source line, what was in flight, and for an app test the app time
   and frame, what still demanded frames, the outline and the path of a
-  snapshot under `dist/test/` (agents/testing.md, "Reading a failure").
+  snapshot under `.solidrt-data/test/` (agents/testing.md, "Reading a failure").
   A file that imports `@solidrt/test` (or any app
   runtime module; always a `.test.tsx`) is an app test and runs on the dev
   client, headless: `test(name, async app => ...)`, time passes only by
@@ -112,7 +112,8 @@ Two reliable checks that need no GUI:
 
 1. `bun run sol bundle` - exit 0 means the app compiles. Fast.
 2. `bun run sol render --settle --strict --size 480x640 --duration 1 --fps 2`
-   - renders offscreen via EGL and writes `frame-NNNNNN.png`. `--strict`
+   - renders offscreen via EGL and writes `frame-NNNNNN.png` into a new
+   `renders/<app>-<time>/` folder, whose path it prints. `--strict`
    makes exit 0 mean the frames were written AND the app logged no error
    (a scene whose build throws is contained per the error model and would
    otherwise write an empty frame and exit 0); `--settle` makes frame 0
@@ -131,8 +132,10 @@ access. The right tool for micro-benchmarks and for probing flux module
 behavior in isolation.
 
 `render` gotchas:
-- Frames land in the directory you ran the command from; `-o <path>` picks a
-  different directory (or a path prefix for the `-NNNNNN.png` names).
+- Each render writes its frames to a new folder,
+  `renders/<app>-<YYYY-MM-DD-HHMMSS>/` under the directory you ran the
+  command from, and prints its path; `-o <dir>` picks the folder instead,
+  refused unless it is missing or empty. Renders never delete frames.
 - `--size` is physical output pixels: layout runs at exactly that size
   (display scale is pinned to 1), so frames are identical on every machine.
 - Every frame follows a frame callback: frame k is the app's state after its

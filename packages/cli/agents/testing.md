@@ -191,8 +191,9 @@ the test logged.
 - `Outline:` - the whole app as `outline()` prints it, so the layout is
   read without re-running (cut after 200 lines; `locator.outline()` reads
   a subtree in full).
-- `Snapshot: dist/test/<file>/failures/<test>.png` - the frame as a user
-  would have seen it, written under the project's build output. Open it.
+- `Snapshot: .solidrt-data/test/<file>/failures/<test>.png` - the frame as
+  a user would have seen it, written under the project's tool state (the
+  next run of the file replaces it). Open it.
 - `No node matches { text: "Goodbye" }; texts there: ...` - a `find` that
   matched nothing lists the texts and labels that were there instead.
 - `Timed out after 30000 ms` - the test never finished: a promise nothing

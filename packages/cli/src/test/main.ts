@@ -30,10 +30,11 @@ const HARNESS_FRAME = "(flux:test:"
 // the project's runtime has). A test file whose bundle imports one runs on
 // the dev client, the project's own when it has one (lib/runtime.ts).
 const APP_MODULE = /^sol:|^runtime:|^flux:(rendertree|camera|microphone|audio|gpu|spatial|video|test\/gui)$/
-// Where an app test's staged bundle and its data root live, under the
-// project's build output, and the folder in it a failed test's snapshot
-// lands in.
-const STAGE_DIR = join("dist", "test")
+// Where an app test's staged bundle and its data root live, test's subdir of
+// the project's tool state (the .solidrt-data the dev server keeps its own
+// in: volatile, rewritten by every run), and the folder in it a failed
+// test's snapshot lands in.
+const STAGE_DIR = join(".solidrt-data", "test")
 const FAILURES_DIR = "failures"
 // The layers `--only` selects: a flux test runs on the flux binary, an app
 // test on the dev client.
@@ -276,7 +277,7 @@ async function runFile(file: string, filter: string | undefined, seed: number | 
       stderr: "pipe",
     })
   } else {
-    // The sandbox: a folder under the package's build output that the host
+    // The sandbox: a folder under the package's test stage that the host
     // enters and empties before every engine, so a test writes relative
     // paths and starts from no stored state. One per package: files run
     // one after another, and the wipe is per engine. The package's own
