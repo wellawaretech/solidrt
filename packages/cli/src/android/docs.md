@@ -12,7 +12,11 @@ server through its host alias. Without a running server the client starts
 on its own, into the player (`--port` must name a live server). With several
 devices connected a terminal asks which ones (all preselected, so enter
 launches on every device); `--device` picks one by serial or unique prefix
-(a script must).
+(a script must). `--env NAME=value` (repeatable) sets a variable in the
+client's environment before it starts, the way a shell export does for a
+desktop client: the runtime's knobs, such as `SOLIDRT_CADENCE_HOLD=off`
+for a measurement, reach the device client without a hand-typed `am
+start`.
 
 A device without the client gets it installed first, from the project's
 Android target for the device's ABI: the `@solidrt/android-<abi>` dev

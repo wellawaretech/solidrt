@@ -28,7 +28,9 @@ import type { LiveRecord } from "../types/registry"
 // client built and installed by hand stays unless you say so. --install
 // reinstalls regardless. --apk runs `sol pack --apk` and installs the
 // packed app instead. --force uninstalls an installed app that blocks an
-// install (adbInstall) without asking.
+// install (adbInstall) without asking. --env NAME=value (repeatable) sets
+// a variable in the client's environment before it starts, for the
+// runtime's knobs (SOLIDRT_CADENCE_HOLD) a measurement pins.
 
 // The published Player's application id. Every build from a checkout
 // without PUBLISH=1 is the dev Player, com.solidrt.player.dev, installed
@@ -407,7 +409,10 @@ async function prepare(adb: string, { target, abi }: Device, needed: string | nu
 // (--dev-server); the client auto-connects to it. Replaces adb reverse, which
 // never worked over wireless adb. -S stops a running instance first: a
 // delivered intent does not reach one, so without it the client would keep
-// whatever server it had. With no server there is no extra to pass.
+// whatever server it had. With no server there is no extra to pass. The
+// --env pairs travel as the `sol_env` extra, ';'-separated, which
+// MainActivity sets into the process environment before SDL_main; adb runs
+// here from an argument array, so no shell on the way splits the value.
 async function launch(adb: string, { target }: Device, player: string, server: LiveRecord | null) {
   let devServer = server ? devServerAddress(adb, target, server) : null
   let launchArgs = [adb, "-s", target, "shell", "am", "start", "-S", "-n", `${player}/${MAIN_ACTIVITY}`]
@@ -417,12 +422,25 @@ async function launch(adb: string, { target }: Device, player: string, server: L
   } else if (server) {
     console.log(`[cli] Could not resolve a host address for ${target}; client will need a manual/QR connect`)
   }
+  let env = clientEnv()
+  if (env) launchArgs.push("--es", "sol_env", env)
   let start = Bun.spawn(launchArgs, { stdout: "pipe", stderr: "pipe" })
   if ((await start.exited) !== 0) {
     console.error("adb start failed:\n" + (await new Response(start.stderr).text()))
     process.exit(1)
   }
   console.log(`[cli] Launched ${player} on ${target}`)
+}
+
+// The --env pairs as the `sol_env` extra carries them, or null without any.
+// A pair is NAME=value with a non-empty name and no ';', the separator.
+function clientEnv(): string | null {
+  let pairs = values.env ?? []
+  for (let pair of pairs) {
+    let eq = pair.indexOf("=")
+    if (eq <= 0 || pair.includes(";")) fail(`--env ${pair}: expected NAME=value (no ';' in either)`)
+  }
+  return pairs.length ? pairs.join(";") : null
 }
 
 // The application id an APK names in its own manifest (for a packed app,

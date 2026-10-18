@@ -57,7 +57,7 @@ points, all of which need compute:
 - Compression, which is not compute-bound but the compute viewers all
   have: spz, PlayCanvas's sogs and ksplat hold a splat in 8-16 bytes
   (chunked quantized positions, 8-bit SH). Ours is 32 bytes plus
-  uncompressed half-float SH: ~130 MB resident for a 1M SH3 cloud where
+  uncompressed half-float SH: ~140 MB resident for a 1M SH3 cloud where
   theirs is ~30 MB.
   [../backlog/splat-record-compression.md](../backlog/splat-record-compression.md).
 
@@ -68,10 +68,13 @@ points, all of which need compute:
   texture; the data textures fill in row bands straight from the block,
   so loading holds one band in flight, not a padded copy of each block.
   [../done/splat-key-copy.md](../done/splat-key-copy.md).
-- The sort blocks the UI thread. Its per-re-sort spike at 1M was never
-  isolated (the JS p50 hides a periodic spike) - the one cost of this
-  design that is not measured.
-  [../backlog/splat-sort-spike.md](../backlog/splat-sort-spike.md).
+- A cloud above SYNC_SORT_MAX_KEYS re-sorts on its own thread
+  (`sol-order`) and never costs a frame; the new order lands when the
+  sort finishes, so on top of the gate below it lags the camera by the
+  sort's duration (about 40-50 ms at 1M on the Pixel 7, memory-bound
+  under every core placement).
+  [../done/splat-sort-spike.md](../done/splat-sort-spike.md),
+  [../done/sort-thread-core-placement.md](../done/sort-thread-core-placement.md).
 - The order refreshes past a ~2 degree gate (ORDER_DIRECTION_EPS_COS), so
   inside the gate it is stale. The viewers are lagged instead; neither is
   exact. Lowering the gate is cheap now that a re-sort moves 4 MB (see

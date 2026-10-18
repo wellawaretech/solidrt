@@ -70,7 +70,7 @@ filled from the source block in place.
   a bump the next item bumps again is churn. With step 1 in place,
   compression's "decode at load into the key copy" needs nothing new
   from core: it hands a float32x3 stream and declares stride 12.
-- okf/backlog/splat-sort-spike.md measures after this lands, once: the
+- okf/done/splat-sort-spike.md measures after this lands, once: the
   key pass streams a third of the bytes it did.
 
 ## Verification

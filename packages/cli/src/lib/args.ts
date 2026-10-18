@@ -62,6 +62,7 @@ const OPTIONS = {
     server: { type: "string" },
     port: { type: "string" },
     device: { type: "string" },
+    env: { type: "string", multiple: true },
     install: { type: "boolean" },
     force: { type: "boolean", default: false },
     census: { type: "boolean", default: false },
@@ -214,6 +215,10 @@ export function validateArgs() {
   // --device picks the adb device `android` installs on.
   if (values.device && command !== "android") {
     usage("sol android --device <serial>  (--device is only valid with the android command)")
+  }
+  // --env sets a variable in the environment of the client `android` launches.
+  if (values.env?.length && command !== "android") {
+    usage("sol android --env NAME=value  (--env is only valid with the android command)")
   }
   // --server points a standalone client at a dev server; `run` and `server`
   // own their server side, so it is valid nowhere else.

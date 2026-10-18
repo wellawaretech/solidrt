@@ -786,7 +786,7 @@ Shaped, not started.
   leaking 1%.
 - **[A splat cloud is resident at 32 bytes per splat plus half-float SH where the field ships 8-16](backlog/splat-record-compression.md)** [2026-09-27]
   The .sol3s record is 32 bytes and SH bands are uncompressed halves (32/48/96
-  bytes per splat), so a 1M SH3 cloud is ~130 MB of textures and key copy on
+  bytes per splat), so a 1M SH3 cloud is ~140 MB of textures and key column on
   the phone; spz, sogs and ksplat store the same splat in 8-16 bytes with
   chunk-quantized positions and 8-bit SH, and a compressed record would also
   shrink the download and the texture fetch.

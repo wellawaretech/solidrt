@@ -97,6 +97,8 @@ android options:
                          uninstall it without asking; this clears its data
       --port <N>         Point it at the local dev server on this port
       --device <serial>  Target a specific adb device by serial or unique prefix
+      --env NAME=value   Set this in the launched client's environment (repeatable): the runtime's
+                         knobs, such as SOLIDRT_CADENCE_HOLD=off for a measurement
       --census           Read the compositor's present census for the client on screen instead of launching:
                          present intervals in refreshes and the per-frame GPU span (frameReady minus queue)
       --clear            With --census: clear the compositor's history first
