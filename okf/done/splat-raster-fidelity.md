@@ -2,6 +2,7 @@
 title: The splat fragment skips two of the reference rasterizer's rules
 description: The 3DGS rasterizer caps each splat's alpha at 0.99 and, in the antialiased training mode (Mip-Splatting, gsplat's antialiased rasterization), scales opacity by sqrt(det(cov) / det(cov + dilation)); the shipped fragment applies neither, so captures trained antialiased read slightly too opaque at small sizes and a fully opaque splat blocks everything behind it instead of leaking 1%.
 created: 2026-09-27
+completed: 2026-10-18
 ---
 
 # The splat fragment skips two of the reference rasterizer's rules
@@ -27,3 +28,14 @@ should carry (a header flag from the trainer's mode, `--antialiased` on
 the tool) and the vertex stage multiplies into the alpha. Judge both
 against a reference render, side by side (the sRGB blend verdict's
 protocol).
+
+## Outcome
+
+Folded into [splat-record-compression.md](splat-record-compression.md)
+on 2026-10-18, where the vertex stage was rewritten anyway: the fragment
+caps alpha at SPLAT_ALPHA_MAX (0.99), and the bake's `--antialiased`
+flag (the .sol3s header's `antialiased`) selects a material class whose
+vertex stage multiplies sqrt(det(S) / det(S + dilation)) into the
+opacity. Judged inside that item's side-by-side pair (neither test
+capture is antialiased, so the compensation path is covered by the
+shader variant and the flag's round trip, not by a verdict of its own).

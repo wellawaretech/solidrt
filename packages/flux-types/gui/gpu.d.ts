@@ -1081,13 +1081,30 @@ declare module "flux:gpu" {
    */
   export function writeBuffer(id: BufferId, data: Uint8Array, byteOffset?: number): void
   /**
+   * A position handed off packed ({@link RecordKey}'s `packed`): unorms
+   * over the box of the record's chunk - `format` names the packing
+   * (`"unorm16x3"`: 16 bits per axis in two u32, x in the low half of the
+   * first, y in its high half, z in the low half of the second, the rest
+   * the record's own), `chunk` the records per chunk (record id / chunk is
+   * the chunk), `bounds` the chunk table, six floats per chunk (min xyz,
+   * max xyz), ceil(count / chunk) of them. What a splat bake stores; the
+   * engine decodes the depth key from the words and the box, and its
+   * mirror holds the id and the words per record.
+   */
+  export type PackedPosition = { format: "unorm16x3"; chunk: number; bounds: Float32Array }
+  /**
    * The key column of handed-off records, {@link transferRecords}' key
    * argument for the index materialization ({@link InstanceOrder}'s
    * `indices`): the record's byte stride and the key's float offset into
    * it, exactly what the entry's `instanceOrder` will declare (`position`
-   * with `indices: { stride }`, or `field`).
+   * with `indices: { stride }`, or `field`). A packed position adds its
+   * {@link PackedPosition} and the draw `order`: the record ids in the
+   * order a count prefix dials (importance, say), every record once - the
+   * records themselves may sit in any order (a spatial one, for the
+   * chunks), and the entry's `instanceCount` takes the first n of
+   * `order`.
    */
-  export type RecordKey = { stride: number } & ({ position: number } | { field: number })
+  export type RecordKey = { stride: number } & ({ position: number; packed: PackedPosition; order: Uint32Array } | { position: number } | { field: number })
   /**
    * Hand a buffer's full record set to the engine - the write-once form of
    * an ordered instance buffer ({@link InstanceOrder}): the engine's order
@@ -1099,7 +1116,7 @@ declare module "flux:gpu" {
    * population). With a {@link RecordKey} the mirror keeps the records'
    * key column only - the index materialization, where the engine sorts
    * the column and writes ids, so a 1M-record cloud is resident as 12 MB
-   * of positions, not its record block; without one it keeps the whole
+   * of positions (12 packed, the ids included), not its record block; without one it keeps the whole
    * records a gathered order republishes. Hand off before the entry
    * attaches; a second call replaces the records wholesale. By the time
    * an entry attaches over the buffer the hand-off must match the order's

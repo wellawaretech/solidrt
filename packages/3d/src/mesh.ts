@@ -4,7 +4,7 @@
 // scene side is reached through the node's SceneHooks (node.ts).
 
 import { createBuffer, createRecordStream, destroyBuffer, destroyTexture, encodeRecord, layoutComponents, layoutFields, transferRecords, writeRecord as writeLayoutRecord, VERTEX_FORMATS } from "@solidrt/core/gpu"
-import type { AttributeAccess, BufferId, DrawId, RecordKey, RecordStream, ShaderParams, TextureBindings, TextureId, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
+import type { AttributeAccess, BufferId, DrawId, PackedPosition, RecordKey, RecordStream, ShaderParams, TextureBindings, TextureId, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
 import { checkCubeKnobs } from "./environment.ts"
 import type { EnvironmentOptions } from "./environment.ts"
 import { geometryBounds, isFloatLayout, layoutKey, layoutStride, plane, vertexBytes, vertexView } from "./geometry.ts"
@@ -416,6 +416,16 @@ function makeIndexStream(layout: VertexAttribute[], capacity: number, group: num
   return stream
 }
 
+// The hand-off's key for an indexed order: the record stride and the
+// position's float offset, plus a packed position's chunk table and draw
+// order (the resolved order keeps neither: the engine copies both).
+function indexedKey(order: InstanceOrderOptions, stride: number, floats: number): RecordKey {
+  let packed = "packed" in order ? order.packed : undefined
+  let draw = "order" in order ? order.order : undefined
+  if (packed !== undefined && draw !== undefined) return { stride, position: floats, packed, order: draw }
+  return { stride, position: floats }
+}
+
 // The transfer form's stream: records go to the engine at creation and no
 // JS mirror exists (data stays a zero-length view; the operations that
 // would read or write it throw on the transfer flag first). An ordered
@@ -498,7 +508,12 @@ function markRecords(mesh: Mesh, stream: InstanceStream, lo: number, hi: number)
  * sort's key source; the app uploads the same bytes as its texture. A
  * re-sort then uploads 4 bytes per record instead of the record, and
  * the last instance's group past `count` carries 0xFFFFFFFF, which the
- * shader culls before fetching.
+ * shader culls before fetching. A record whose position is PACKED (two
+ * uint32 of unorms over its chunk's box, a splat bake's) names that
+ * attribute with `packed` (the packing and the chunk table) and `order`
+ * (the record ids in the order `count` dials, every record once): the
+ * engine keeps the id and the word per record and decodes the depth key
+ * against the chunk table, and the records may sit in any order.
  */
 export type InstanceOrderOptions =
   | (({ position: string; retain?: boolean } | { field: string }) & {
@@ -506,16 +521,24 @@ export type InstanceOrderOptions =
       descending?: boolean
     })
   | {
-      /** The position attribute of the record layout below. */
+      /** The position attribute of the record layout below: float32x3/x4,
+       * or uint32x2 with `packed`. */
       position: string
       /** The layout of the records you pass. The engine keeps their key
-       * column (the position: 12 bytes per record) as its sort mirror and
-       * nothing else, so the data texture the shader fetches by index is
-       * your own upload of the bytes; the material's instance buffer is
-       * the id stream. */
+       * column (the position: 12 bytes per record, packed or not) as its sort
+       * mirror and nothing else, so the data texture the shader fetches
+       * by index is your own upload of the bytes; the material's instance
+       * buffer is the id stream. */
       records: VertexAttribute[]
       /** Largest key first - back-to-front. Default false. */
       descending?: boolean
+      /** The position attribute is a packed uint32: its packing and the
+       * chunk table (see PackedPosition in @solidrt/core/gpu). Takes
+       * `order` with it. */
+      packed?: PackedPosition
+      /** The draw order of a packed population: record ids, every record
+       * once, in the order `count` takes a prefix of. */
+      order?: Uint32Array
     }
 
 /** The instanceOrder resolved against the material's instance layouts at
@@ -550,10 +573,15 @@ function resolveInstanceOrder(order: InstanceOrderOptions | undefined, buffers: 
     }
     let stride = layoutStride(order.records)
     if (stride === 0 || stride % 4 !== 0) throw new Error(site + ": the indexed record layout is " + stride + " bytes; records must be whole floats")
+    if ((order.packed === undefined) !== (order.order === undefined)) {
+      throw new Error(site + ": a packed instanceOrder takes `packed` and `order` together")
+    }
     let at = 0
     for (let a of order.records) {
       if (a.name === order.position) {
-        if (a.format !== "float32x3" && a.format !== "float32x4") {
+        if (order.packed !== undefined) {
+          if (a.format !== "uint32x2") throw new Error(site + ": a packed instanceOrder position attribute '" + a.name + "' must be uint32x2 (two words of unorm16x3), got " + a.format)
+        } else if (a.format !== "float32x3" && a.format !== "float32x4") {
           throw new Error(site + ": instanceOrder position attribute '" + a.name + "' must be float32x3 or float32x4, got " + a.format)
         }
         if (at % 4 !== 0) throw new Error(site + ": instanceOrder key attribute '" + a.name + "' starts at byte " + at + " of its record; the key must start on a 4-byte boundary")
@@ -1114,7 +1142,7 @@ export function createRecordMesh(
               capacity,
               group,
               vertexBytes(records),
-              { stride: indices.stride, position: order!.floats },
+              indexedKey(opts!.instanceOrder!, indices.stride, order!.floats),
               streamLabel(opts?.label, 0),
             ),
           ]

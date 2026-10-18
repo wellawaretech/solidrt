@@ -3047,63 +3047,91 @@ Captured 3D Gaussian splat scenes (phone scans, photogrammetry
 successors) as ordinary content, the model-loading split repeated:
 
 - `@solidrt/3d/splat` (src/splat-data.ts) is the runtime-free data side,
-  the model-data rule: `parseSplat(bytes, { format?, keepOrientation? })`
-  reads a trainer's `.ply`, the de-facto `.splat` interchange or a
-  GUNZIPPED `.spz` (Niantic, version 2 or 3; the entry stays
-  decompression-free, so inflate first) and bakes it - the 3D covariance
-  precomputed per splat (R S St Rt, the vertex-stage wall every
-  bake-less viewer pays at each corner), records importance-sorted (size
-  times opacity, so the first n are the scene at n), y-down captures
-  (.ply, .splat) stood up to y-up (positions and covariances rotated
-  together; `keepOrientation` opts out, `.spz` is y-up already), bounds
-  measured. `encodeSplat`/`decodeSplat` round-trip the `.sol3s` container
-  (the record and SH blocks, next bullet); decode is a header parse
-  plus byte VIEWS, nothing per-splat. `sol tool 3d/splat <in> [-o
-  out.sol3s] [--sh 0..3] [--keep-orientation]` is the parse and bake
-  under bun (tools/splat.ts); an app bake script uses the same entry.
-- The `.sol3s` record (version 2) is 32 bytes = two rgba32ui texels:
-  center float32x3 + sRGB color and opacity unorm8x4, then the
-  covariance upper triangle as six float16 + a spare word
-  (SPLAT_ATTRIBUTES as a byte layout, SPLAT_RECORD_TEXELS). `--sh 1..3`
-  bakes that many spherical-harmonic bands beyond the base color from a
+  the model-data rule: `parseSplat(bytes, { format?, keepOrientation?,
+  shDegree?, antialiased? })` reads a trainer's `.ply`, the de-facto
+  `.splat` interchange or a GUNZIPPED `.spz` (Niantic, version 2 or 3;
+  the entry stays decompression-free, so inflate first) and bakes it -
+  the records partitioned spatially (a k-d split down to chunks of
+  SPLAT_CHUNK_SIZE = 256 consecutive records, each a compact box) and
+  quantized against their chunk, the draw order (record ids by
+  importance, size times opacity, so the first n are the scene at n) as
+  a block beside them, y-down captures (.ply, .splat) stood up to y-up
+  (positions, rotations and SH rotated together; `keepOrientation` opts
+  out, `.spz` is y-up already), bounds measured, and the loss reported
+  (`report`: the chunk position step over each splat's largest axis as
+  median, 99th percentile and the share above SPLAT_STEP_VISIBLE, plus
+  the SH coefficients clamped). `encodeSplat`/`decodeSplat` round-trip
+  the `.sol3s` container (the record, chunk, order and SH blocks, next
+  bullet); decode is a header parse plus byte VIEWS, nothing per-splat;
+  `decodeRecord`/`decodeSh` are the reference decoders (per record: for
+  tests and tools, not whole clouds). `sol tool 3d/splat <in> [-o
+  out.sol3s] [--sh 0..3] [--keep-orientation] [--antialiased]` is the
+  parse and bake under bun (tools/splat.ts), printing the report; an
+  app bake script uses the same entry.
+- The `.sol3s` record (version 3) is 16 bytes = one rgba32ui texel, a
+  chunked record in the field's shape (Unity's importer, PlayCanvas's
+  compressed ply) with the position at 16 bits per axis where the field
+  has 11 (11 moved a capture's sub-millimetre detail by multiples of its
+  size): the position as 16-bit unorms over the chunk's position box in
+  two words (x | y << 16, then z; 16 bits reserved), the rotation as a
+  smallest-three quaternion (the largest's index on top, three 10-bit
+  components), the scale as 11/10/11-bit unorms over the chunk's
+  log-scale box (SPLAT_ATTRIBUTES as a byte layout). The sRGB color +
+  opacity are a color block beside the records (rgba8, SPLAT_COLOR_BYTES
+  per splat), the chunk table 12 floats per chunk (position min/max,
+  log-scale min/max; SPLAT_CHUNK_TEXELS = 3 rgba32f texels), the order
+  block a u32 per splat. `--sh 1..3` bakes
+  that many spherical-harmonic bands beyond the base color from a
   trainer's `.ply` or an `.spz` (`.splat` has none), capped at the
-  capture's: a second texel block of 2/3/6 texels per splat
-  (SPLAT_SH_TEXELS; the halves packed pairwise, coefficient-major with
-  rgb interleaved), 32/48/96 bytes per splat of texture, so the
-  default is 0 and a bake opts in. The y-up flip negates the
-  coefficients whose basis is odd in (y, z).
+  capture's: a byte per coefficient, spz's (byte - 128) / 128, in 1/2/3
+  texels per splat (SPLAT_SH_TEXELS; coefficient-major with rgb
+  interleaved), 16/32/48 bytes per splat of texture, so the default is
+  0 and a bake opts in. The header's `antialiased` flag marks a capture
+  trained with the Mip-Splatting compensation. At 1M splats a cloud is
+  24 MB on disk at SH0 (72 at SH3) and the bake runs in about a second.
 - On the runtime, `loadSplat(path)` reads a `.sol3s` (fetch + decode,
   the loadModel shape) and `createSplatMesh(data, { count?, material?,
   label? })` / `<SplatMesh>` shows it: a RecordMesh in the INDEXED form
-  (see "Instance order") - the records' centers kept by the engine as
-  the depth sort's key (12 bytes per splat, read off the block at
-  creation) AND the block uploaded once, in place and in row bands, as
-  the `rgba32ui` record texture the vertex stage fetches by id (`uSplatRecords`, plus
-  `uSplatSh` when baked; bound per mesh, so a forked material keeps
-  them), SPLAT_GROUP (16) splats per drawn instance of a merged-quad
-  geometry, the header bounds as the cull and picking box, and the
-  id stream sorted back to front core-side - the cloud composes as a
-  mesh (depth-tested against opaque geometry, placed by the transparent
+  (see "Instance order") with a PACKED position key - the engine keeps
+  each splat's packed position words beside its id in the draw order
+  (12 bytes per splat) and the chunk table, and decodes the depth key
+  from them - AND the record block uploaded once, in place and in row
+  bands, as the `rgba32ui` record texture the vertex stage fetches by id
+  (`uSplatRecords`, the chunk table as `uSplatChunks`, the colors as
+  `uSplatColors`, plus `uSplatSh` when baked; bound per mesh, so a forked
+  material keeps them),
+  SPLAT_GROUP (16) splats per drawn instance of a merged-quad geometry,
+  the header bounds as the cull and picking box, and the id stream
+  sorted back to front core-side - the cloud composes as a mesh
+  (depth-tested against opaque geometry, placed by the transparent
   entry sort, transformed by its node), a camera turn re-sorts and
   republishes 4 bytes per splat with zero per-frame JS - on the engine's
   sort thread above ~16k splats, so the frame never waits and the order
   lags the camera by one sort (tens of ms at 1M on a phone; a test
-  `settle`s before reading it) - and a parked
-  camera uploads nothing. Write-once: treat the SplatData as consumed
-  and drop it; at 1M splats the cloud is resident as the engine's 12 MB
-  key copy plus 32 MB of texture plus a 4 MB id buffer, and
-  disposeInstances frees all three. `splatMaterialClass(shDegree)` is
-  the stock class per degree (a shared instance each), and
-  `splatVertexSource(shDegree)` / SPLAT_FRAGMENT / SPLAT_ID_ATTRIBUTES
-  are exported for forks; `count` rounds up to whole groups.
-- The vertex stage projects the baked covariance through the Jacobian
-  of `uViewProj * uModel` (no focal/view uniforms; any node transform
-  shapes the footprint with the same matrix that moves the center),
-  reads the target size from the standard `uViewport`, and evaluates
-  the SH bands per corner from the view direction (`uCamPos` through
-  the transposed model rotation - exact under rotation and uniform
-  scale). The data textures' row width is the device's (up to 4096),
-  compiled into the source.
+  `settle`s before reading it) - and a parked camera uploads nothing.
+  `count` dials a prefix of the bake's draw order (by importance).
+  Write-once: treat the SplatData as consumed and drop it; at 1M splats
+  the cloud is resident as the engine's 12 MB key copy plus 20 MB of
+  record and color texture (48 more at SH3) plus a 4 MB id buffer, and
+  disposeInstances frees all of it. `splatMaterialClass(shDegree,
+  antialiased)` is the stock class per pair (a shared instance each),
+  and `splatVertexSource(shDegree, antialiased)` / SPLAT_FRAGMENT /
+  SPLAT_ID_ATTRIBUTES are exported for forks; `count` rounds up to whole
+  groups.
+- The vertex stage decodes the record against its chunk (the mix over
+  the boxes, exp of the log scale, the quaternion's fourth component
+  from the unit norm), rebuilds the covariance R S St Rt (measured free:
+  vertex ALU is invisible next to the fetch and the fill), projects it
+  through the Jacobian of `uViewProj * uModel` (no focal/view uniforms;
+  any node transform shapes the footprint with the same matrix that
+  moves the center), reads the target size from the standard
+  `uViewport`, and evaluates the SH bands per corner from the view
+  direction (`uCamPos` through the transposed model rotation - exact
+  under rotation and uniform scale). Two of the reference rasterizer's
+  rules ride along: the fragment caps alpha at SPLAT_ALPHA_MAX (0.99),
+  and an antialiased bake scales opacity by the footprint's determinant
+  ratio before and after the LOW_PASS dilation. The data textures' row
+  width is the device's (up to 4096), compiled into the source.
 - Why this shape: on the Pixel 7 at 1M splats the one-quad-per-instance
   form spent two thirds of its vertex side on the instancing frontend;
   the indexed form takes the full-res frame from 45 to 31 ms and the

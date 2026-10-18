@@ -73,13 +73,85 @@ impl OrderKey {
   }
 }
 
+/// How a handed-off position is packed (`PackedKey`): unorms over the
+/// record's chunk box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PackedFormat {
+  /// 16 bits per axis in two words: x in the low half of the first, y in
+  /// its high half, z in the low half of the second (its high half is the
+  /// record's to use) - the splat record.
+  Unorm16x3,
+}
+
+impl PackedFormat {
+  /// The API's name for a format.
+  pub fn parse(name: &str) -> Result<PackedFormat, String> {
+    match name {
+      "unorm16x3" => Ok(PackedFormat::Unorm16x3),
+      other => Err(format!("packed format '{other}' is not supported (unorm16x3)")),
+    }
+  }
+
+  /// The bytes the packed position takes in the record.
+  pub fn bytes(self) -> usize {
+    match self {
+      PackedFormat::Unorm16x3 => 8,
+    }
+  }
+
+  // The three unorms as integers, x first, from the record's words at
+  // `at` (native-endian).
+  fn unpack(self, bytes: &[u8], at: usize) -> [u32; 3] {
+    match self {
+      PackedFormat::Unorm16x3 => {
+        let xy = read_u32(bytes, at);
+        let z = read_u32(bytes, at + 4);
+        [xy & 0xffff, xy >> 16, z & 0xffff]
+      }
+    }
+  }
+
+  // The largest unorm per axis, as a float divisor.
+  fn steps(self) -> [f32; 3] {
+    match self {
+      PackedFormat::Unorm16x3 => [65535.0; 3],
+    }
+  }
+}
+
+/// A position key handed off packed: the format's words at the column's
+/// offset, decoded against the box of the record's chunk (record id /
+/// `chunk`), whose table the hand-off brings (`PackedRecords`). The
+/// mirror then holds (record id, packed words) records in the hand-off's
+/// draw order, and the sort decodes a key from them and the chunk's box,
+/// read in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PackedKey {
+  pub format: PackedFormat,
+  /// Records per chunk.
+  pub chunk: usize,
+}
+
+/// The data beside a packed hand-off: the chunk table (each chunk's
+/// position box as min xyz, max xyz) and the draw order (the record ids
+/// in the order a count prefix dials: the population the sort orders).
+pub struct PackedRecords {
+  pub bounds: Vec<[f32; 6]>,
+  pub order: Vec<u32>,
+}
+
+/// Bytes of one mirror record under a packed key: the record id and the
+/// packed position words (`PackedFormat::bytes`, 8 for unorm16x3).
+pub const PACKED_PAIR_BYTES: usize = 12;
+
 /// The key column of a handed-off record: what the index materialization's
 /// mirror keeps of each record. An indexed order never republishes its
 /// records (a re-sort writes ids), so the mirror holds the bytes the sort
 /// reads and nothing else - 12 per record for a position key, 4 for a
-/// field key - and a 1M-record population costs the engine 12 MB, not the
-/// record block. Declared with the hand-off (`transferRecords`' key
-/// argument: a byte stride and a float offset at the API) and matched
+/// field key, 12 for a packed position (the id and its two words) - and a
+/// 1M-record population costs the engine 12 MB, not the record block.
+/// Declared with the hand-off (`transferRecords`' key argument: a byte
+/// stride and a float offset at the API, plus the packing) and matched
 /// against the entry's order when it attaches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyColumn {
@@ -87,14 +159,23 @@ pub struct KeyColumn {
   pub stride: usize,
   /// The key's byte offset inside one record.
   pub offset: usize,
-  /// The key's byte length: 4 for a field, 12 for a position.
+  /// The key's byte length in the record: 4 for a field, 12 for a float
+  /// position, the format's for a packed one (8 for unorm16x3).
   pub len: usize,
+  /// Some when the position is packed (`PackedKey`).
+  pub packed: Option<PackedKey>,
 }
 
 impl KeyColumn {
-  /// Parse the API-boundary shape: `stride` in bytes, and exactly one of
-  /// `field` or `position` as a float offset into the record.
-  pub fn parse(stride: f64, field: Option<f64>, position: Option<f64>) -> Result<KeyColumn, String> {
+  /// Parse the API-boundary shape: `stride` in bytes, exactly one of
+  /// `field` or `position` as a float offset into the record, and for a
+  /// position optionally its packing.
+  pub fn parse(
+    stride: f64,
+    field: Option<f64>,
+    position: Option<f64>,
+    packed: Option<PackedKey>,
+  ) -> Result<KeyColumn, String> {
     let stride = record_stride(stride, "record key stride")?;
     let key = match (field, position) {
       (Some(_), Some(_)) => return Err("a record key is either field or position, not both".to_string()),
@@ -102,11 +183,48 @@ impl KeyColumn {
       (Some(f), None) => OrderKey::Field { offset: float_offset(f, "record key field")? },
       (None, Some(p)) => OrderKey::Projected { offset: float_offset(p, "record key position")?, direction: [0.0; 3] },
     };
-    let column = KeyColumn { stride, offset: key.offset(), len: key.bytes() };
+    if let Some(packed) = packed {
+      if matches!(key, OrderKey::Field { .. }) {
+        return Err("a packed record key is a position; a field key is one f32".to_string());
+      }
+      if packed.chunk == 0 {
+        return Err("a packed record key needs a positive chunk size".to_string());
+      }
+    }
+    let len = match packed {
+      Some(packed) => packed.format.bytes(),
+      None => key.bytes(),
+    };
+    let column = KeyColumn { stride, offset: key.offset(), len, packed };
     if column.offset + column.len > column.stride {
       return Err(format!("record key at float {} does not fit the {}-byte record", column.offset / 4, column.stride));
     }
     Ok(column)
+  }
+
+  /// Bytes of one mirror record: the key's, or the id plus words of a
+  /// packed position.
+  pub fn mirror_len(&self) -> usize {
+    if self.packed.is_some() {
+      PACKED_PAIR_BYTES
+    } else {
+      self.len
+    }
+  }
+
+  /// Whether an entry's declared column (`InstanceOrder::key_column`, a
+  /// float key) reads what this hand-off holds: the same column exactly,
+  /// or a position key over a packed hand-off's stride and offset.
+  pub fn accepts(&self, declared: KeyColumn) -> bool {
+    match self.packed {
+      None => *self == declared,
+      Some(_) => {
+        declared.packed.is_none()
+          && declared.len == 12
+          && declared.stride == self.stride
+          && declared.offset == self.offset
+      }
+    }
   }
 
   /// Whether `len` bytes are a whole number of this column's records.
@@ -125,6 +243,52 @@ impl KeyColumn {
     out.reserve(records.len() / self.stride * self.len);
     for record in records.chunks_exact(self.stride) {
       out.extend_from_slice(&record[self.offset..self.offset + self.len]);
+    }
+  }
+
+  /// What a packed hand-off must bring for `records`: a draw order that
+  /// lists every record once, and a box per chunk.
+  pub fn check_packed(&self, records_len: usize, packed: &PackedRecords) -> Result<(), String> {
+    let Some(key) = self.packed else {
+      return Err("the record key is not packed; a chunk table and draw order go with a packed key".to_string());
+    };
+    let count = records_len / self.stride;
+    let chunks = count.div_ceil(key.chunk);
+    if packed.bounds.len() != chunks {
+      return Err(format!(
+        "the chunk table holds {} boxes; {count} records in chunks of {} need {chunks}",
+        packed.bounds.len(),
+        key.chunk
+      ));
+    }
+    if packed.order.len() != count {
+      return Err(format!("the draw order lists {} ids for {count} records", packed.order.len()));
+    }
+    let mut seen = vec![false; count];
+    for &id in &packed.order {
+      let Some(slot) = seen.get_mut(id as usize) else {
+        return Err(format!("the draw order names record {id}, past the {count} handed off"));
+      };
+      if *slot {
+        return Err(format!("the draw order names record {id} twice"));
+      }
+      *slot = true;
+    }
+    Ok(())
+  }
+
+  /// Build the packed mirror: (record id, packed words) in the draw
+  /// order, native-endian, `PACKED_PAIR_BYTES` each (see `check_packed`
+  /// for the contract on `order`).
+  pub fn extract_packed(&self, records: &[u8], order: &[u32], out: &mut Vec<u8>) {
+    debug_assert!(records.len() % self.stride == 0, "hand-off not a whole number of records");
+    debug_assert!(self.len + 4 == PACKED_PAIR_BYTES, "a packed column's words fill the mirror record");
+    out.clear();
+    out.reserve(order.len() * PACKED_PAIR_BYTES);
+    for &id in order {
+      let at = id as usize * self.stride + self.offset;
+      out.extend_from_slice(&id.to_ne_bytes());
+      out.extend_from_slice(&records[at..at + self.len]);
     }
   }
 }
@@ -246,7 +410,7 @@ impl InstanceOrder {
   /// The key column an index-materialized order expects its records handed
   /// off as; None for the gathered forms.
   pub fn key_column(&self) -> Option<KeyColumn> {
-    self.indices.map(|stride| KeyColumn { stride, offset: self.key.offset(), len: self.key.bytes() })
+    self.indices.map(|stride| KeyColumn { stride, offset: self.key.offset(), len: self.key.bytes(), packed: None })
   }
 
   /// The key bytes must sit inside one record of `stride` bytes: a field key
@@ -312,6 +476,9 @@ fn check_direction(direction: [f32; 3]) -> Result<(), String> {
 pub struct OrderScratch {
   // Quantized key per slot (indexed by slot; never reordered).
   keys: Vec<u32>,
+  // Per chunk of a packed key: dot(box min, direction) and the per-axis
+  // unorm step along the direction.
+  chunks: Vec<[f32; 4]>,
   // The permutation under construction: perm[i] = the slot drawn i-th.
   perm: Vec<u32>,
   // The ping-pong partner of `perm` for the radix passes.
@@ -336,6 +503,13 @@ fn read_f32(bytes: &[u8], at: usize) -> f32 {
   let mut b = [0u8; 4];
   b.copy_from_slice(&bytes[at..at + 4]);
   f32::from_ne_bytes(b)
+}
+
+// The u32 at byte offset `at`, native-endian (the mirror's own writes).
+fn read_u32(bytes: &[u8], at: usize) -> u32 {
+  let mut b = [0u8; 4];
+  b.copy_from_slice(&bytes[at..at + 4]);
+  u32::from_ne_bytes(b)
 }
 
 // Order-preserving f32 -> u32: flip all bits of negatives, only the sign bit
@@ -369,8 +543,7 @@ pub fn gather_ordered(order: &InstanceOrder, stride: usize, src: &[u8], dst: &mu
 pub fn order_permutation(order: &InstanceOrder, stride: usize, src: &[u8], scratch: &mut OrderScratch) {
   debug_assert!(stride > 0 && src.len() % stride == 0, "publish length not a whole number of records");
   let count = src.len() / stride;
-  let OrderScratch { keys, perm, tmp, counts } = scratch;
-
+  let keys = &mut scratch.keys;
   keys.clear();
   keys.reserve(count);
   for slot in 0..count {
@@ -386,7 +559,65 @@ pub fn order_permutation(order: &InstanceOrder, stride: usize, src: &[u8], scrat
     let k = quantize(f);
     keys.push(if order.descending { !k } else { k });
   }
+  radix_sort(scratch);
+}
 
+/// `order_permutation` over a packed mirror (`KeyColumn::extract_packed`):
+/// `pairs` holds (record id, packed words) per draw slot, `bounds` the
+/// chunk table, and the key is the decoded position's depth along the
+/// order's direction - decoded as dot(box min, d) plus each unorm times
+/// its axis step along d, three multiply-adds per record on the integers,
+/// so the sort streams 12 bytes per record and the table stays in cache.
+/// The permutation is over draw slots; `materialize_indices_mapped` turns
+/// it into record ids.
+pub fn order_permutation_packed(
+  order: &InstanceOrder,
+  key: PackedKey,
+  pairs: &[u8],
+  bounds: &[[f32; 6]],
+  scratch: &mut OrderScratch,
+) {
+  debug_assert!(pairs.len() % PACKED_PAIR_BYTES == 0, "packed mirror not whole pairs");
+  let OrderKey::Projected { direction, .. } = order.key else {
+    debug_assert!(false, "a packed key is a position key");
+    return;
+  };
+  let count = pairs.len() / PACKED_PAIR_BYTES;
+  let steps = key.format.steps();
+  let OrderScratch { keys, chunks, .. } = scratch;
+  chunks.clear();
+  chunks.reserve(bounds.len());
+  for b in bounds {
+    let base = b[0] * direction[0] + b[1] * direction[1] + b[2] * direction[2];
+    chunks.push([
+      base,
+      (b[3] - b[0]) / steps[0] * direction[0],
+      (b[4] - b[1]) / steps[1] * direction[1],
+      (b[5] - b[2]) / steps[2] * direction[2],
+    ]);
+  }
+  keys.clear();
+  keys.reserve(count);
+  for slot in 0..count {
+    let at = slot * PACKED_PAIR_BYTES;
+    let id = read_u32(pairs, at) as usize;
+    let q = key.format.unpack(pairs, at + 4);
+    // A record past the table (a hand-off the registry validated cannot
+    // have one) keys as the box-less origin rather than reading out of
+    // bounds.
+    let c = chunks.get(id / key.chunk).copied().unwrap_or([0.0; 4]);
+    let f = c[0] + q[0] as f32 * c[1] + q[1] as f32 * c[2] + q[2] as f32 * c[3];
+    let k = quantize(f);
+    keys.push(if order.descending { !k } else { k });
+  }
+  radix_sort(scratch);
+}
+
+// The LSD radix passes over `scratch.keys`, leaving the permutation in
+// `scratch.perm` (perm[i] = the slot drawn i-th), stable.
+fn radix_sort(scratch: &mut OrderScratch) {
+  let OrderScratch { keys, perm, tmp, counts, .. } = scratch;
+  let count = keys.len();
   perm.clear();
   perm.extend(0..count as u32);
   tmp.clear();
@@ -431,6 +662,17 @@ pub fn materialize_indices(perm: &[u32], dst: &mut [u8]) {
   let slots = dst.len() / 4;
   for (i, chunk) in dst.chunks_exact_mut(4).enumerate() {
     let id = if i < perm.len() { perm[i] } else { INDEX_NONE };
+    chunk.copy_from_slice(&id.to_ne_bytes());
+  }
+  debug_assert!(perm.len() <= slots, "permutation longer than the index buffer");
+}
+
+/// `materialize_indices` for a permutation over a packed mirror's draw
+/// slots: the id written is the slot's record id, read from `pairs`.
+pub fn materialize_indices_mapped(perm: &[u32], pairs: &[u8], dst: &mut [u8]) {
+  let slots = dst.len() / 4;
+  for (i, chunk) in dst.chunks_exact_mut(4).enumerate() {
+    let id = if i < perm.len() { read_u32(pairs, perm[i] as usize * PACKED_PAIR_BYTES) } else { INDEX_NONE };
     chunk.copy_from_slice(&id.to_ne_bytes());
   }
   debug_assert!(perm.len() <= slots, "permutation longer than the index buffer");

@@ -159,7 +159,7 @@ export {
 // GPU-side (exact, same size): seed a loadOp "load" accumulator, snapshot a
 // ping-pong buffer, reset state to a known image.
 export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
-export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceOrder, OrderUpdate, RecordKey, ShaderParams, Topology, VertexAttribute, VertexBufferLayout, VertexFormat } from "flux:gpu"
+export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceOrder, OrderUpdate, PackedPosition, RecordKey, ShaderParams, Topology, VertexAttribute, VertexBufferLayout, VertexFormat } from "flux:gpu"
 
 // The vertex vocabulary as data (vertex.ts): the format codecs, the
 // arithmetic over an attribute list and the record accessors that the 3d
@@ -1021,7 +1021,8 @@ export function createRecordStream(stride: number, capacity: number, opts?: Crea
  * nothing and partial rewrites are off the table. With a `key` (the
  * record's byte stride and the key's float offset) the engine keeps the
  * records' key column only - the index form, whose sort reads nothing
- * else. Hand off before the entry attaches over the buffer. See
+ * else; a packed position key brings its chunk table and the draw order.
+ * Hand off before the entry attaches over the buffer. See
  * `transferRecords` in flux:gpu for the full contract.
  */
 export function transferRecords(id: gpu.BufferId, records: ArrayBuffer | ArrayBufferView, key?: gpu.RecordKey): void {

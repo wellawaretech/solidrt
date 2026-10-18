@@ -554,6 +554,12 @@ Shaped, not started.
   2026-09-28 (one PROFILE for every dist binary, release by default,
   release-opt for publishing, Android alike) and verified on linux-x64 and
   Windows; open is verifying the darwin and Android publish builds.
+- **[The linear-blend scene path costs twice the display path on the Pixel 7 where it used to cost the same](backlog/mali-linear-scene-path-doubled.md)** [2026-10-18]
+  On 2026-09-27 the 1M splat train at full resolution read 42 ms in a linear
+  scene and 41 in a display scene on the Pixel 7; on 2026-10-18 HEAD reads 88
+  and 44 at the same clock and pose, so something since then doubled the
+  half-float scene buffer path (the buffer, its resolve, or what the view does
+  with it) on Mali, and every linear 3d scene on a phone pays it.
 - **[Jank an agent cannot see or measure](backlog/mcp-interaction-perf-visibility.md)** [2026-07-27]
   Most of this landed 2026-08-18 (the 600-frame history, get_stats' window
   with p50/p95/max, the worst frame and rates, the throttled slow-frame
@@ -777,19 +783,13 @@ Shaped, not started.
   levers are overdraw cuts (a tighter extent than e^-4, a higher minimum-alpha
   cut, a per-splat screen-size cull, a count dial by distance), each a
   picture-quality trade that wants the human side-by-side.
-- **[The splat fragment skips two of the reference rasterizer's rules](backlog/splat-raster-fidelity.md)** [2026-09-27]
-  The 3DGS rasterizer caps each splat's alpha at 0.99 and, in the antialiased
-  training mode (Mip-Splatting, gsplat's antialiased rasterization), scales
-  opacity by sqrt(det(cov) / det(cov + dilation)); the shipped fragment
-  applies neither, so captures trained antialiased read slightly too opaque at
-  small sizes and a fully opaque splat blocks everything behind it instead of
-  leaking 1%.
-- **[A splat cloud is resident at 32 bytes per splat plus half-float SH where the field ships 8-16](backlog/splat-record-compression.md)** [2026-09-27]
-  The .sol3s record is 32 bytes and SH bands are uncompressed halves (32/48/96
-  bytes per splat), so a 1M SH3 cloud is ~140 MB of textures and key column on
-  the phone; spz, sogs and ksplat store the same splat in 8-16 bytes with
-  chunk-quantized positions and 8-bit SH, and a compressed record would also
-  shrink the download and the texture fetch.
+- **[A splat cloud's SH3 texture is 48 bytes per splat where a palette holds it in 3](backlog/splat-palette-sh.md)** [2026-10-18]
+  The .sol3s SH block stores a byte per coefficient (16/32/48 bytes per splat
+  at degree 1/2/3, 48 MB at 1M splats with SH3) while sogs and Unity's
+  importer quantize the 45-coefficient vectors to a k-means palette at 2-3
+  bytes per splat; a product-quantized encoding behind the SH block's
+  `encoding` field would cut the dominant texture 12x, at the price of a
+  bake-time k-means to engineer and a quality judgement of its own.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
@@ -2576,6 +2576,20 @@ Finished, kept for the reasoning.
   the key column only, and the data textures should fill from the file block
   in place instead of a padded copy, so the phone's residency and load peak
   both drop.
+- **[The splat fragment skips two of the reference rasterizer's rules](done/splat-raster-fidelity.md)** [2026-10-18]
+  The 3DGS rasterizer caps each splat's alpha at 0.99 and, in the antialiased
+  training mode (Mip-Splatting, gsplat's antialiased rasterization), scales
+  opacity by sqrt(det(cov) / det(cov + dilation)); the shipped fragment
+  applies neither, so captures trained antialiased read slightly too opaque at
+  small sizes and a fully opaque splat blocks everything behind it instead of
+  leaking 1%.
+- **[A splat cloud is resident at 32 bytes per splat plus half-float SH where the field ships 8-16](done/splat-record-compression.md)** [2026-10-18]
+  The .sol3s record is 32 bytes and SH bands are uncompressed halves (32/48/96
+  bytes per splat), so a 1M SH3 cloud is ~140 MB of textures and key column on
+  the phone; the field's chunk-quantized 16-byte record (Unity's importer,
+  PlayCanvas's compressed ply) with 8-bit SH halves the textures and the
+  download, and the engine's sort keys on the packed position word, a third of
+  the key bytes.
 - **[The splat re-sort blocks the UI thread and its spike at 1M is unmeasured](done/splat-sort-spike.md)** [2026-10-17]
   A camera turn past the order gate radix-sorts the cloud's key mirror and
   republishes the id stream inside the flush, on the UI thread; at 1M splats
@@ -3151,6 +3165,13 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Survey of crates that could replace or extend alloy/src/spatial, with
   measured dependency costs; conclusion is no action, demand-gated pointers
   only.
+- **[Splat record compression measurements and the 11-bit lesson](notes/splat-record-compression.md)** [2026-10-18]
+  What building the chunked splat record established - importance banding
+  costs 12x in position precision, the field's 11-bit position fails a
+  capture's micro-splats where 16 bits pass a human flip, the decode and chunk
+  fetches cost about 1.5 ms per million splats on Mali, the packed sort is a
+  wash on the phone and 25% slower on a laptop, and the snapshot and phone
+  protocols that measured it.
 - **[Standalone APK implementation notes](notes/standalone-apk-implementation.md)** [2026-09-01]
   Working notes for the sol pack --apk pipeline
   (done/standalone-android-apk.md): what shipped in the first three stages,

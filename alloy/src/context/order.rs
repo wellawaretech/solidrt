@@ -3,8 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::gpu::{
-  gather_ordered, gather_permuted, materialize_indices, order_permutation, BufferIds, BufferStride, InstanceOrder,
-  KeyColumn, OrderCounters, OrderScratch, OrderWorker, SortJob, StepMode, MAX_BUFFERS,
+  gather_ordered, gather_permuted, materialize_indices, materialize_indices_mapped, order_permutation,
+  order_permutation_packed, BufferIds, BufferStride, InstanceOrder, KeyColumn, OrderCounters, OrderScratch,
+  OrderWorker, PackedRecords, SortJob, StepMode, MAX_BUFFERS,
 };
 use crate::raster::RasterCmd;
 
@@ -100,6 +101,9 @@ struct Mirror {
   // index-materialized entry whose attach must declare the same column.
   // None holds whole records, what a gathered entry republishes.
   column: Option<KeyColumn>,
+  // The chunk table of a packed column (shared with a sort job in
+  // flight); None otherwise.
+  bounds: Option<Arc<Vec<[f32; 6]>>>,
   // Whether an id write ever reached the buffer (index form): a fresh
   // buffer is zeroed, which fetches record 0 everywhere, so the first
   // asynchronous seed writes the sentinel first.
@@ -123,17 +127,28 @@ impl OrderedEntry {
     self.order.retain || self.slots() > 1 || self.order.indices.is_some()
   }
 
-  // The byte stride of the records the sort reads off the mirror: the key
-  // column's under the index materialization, the key buffer's instance
-  // record otherwise.
-  fn mirror_stride(&self) -> usize {
-    self.order.mirror_stride(self.strides[self.key])
+  // The published prefix in bytes for an instance count over an owned
+  // mirror (see `published_prefix`).
+  fn published_for(&self, instances: usize, mirror: &Mirror) -> usize {
+    published_prefix(&self.order, self.strides[self.key], instances, mirror)
+  }
+}
+
+impl Mirror {
+  // The byte stride of the records the sort reads off this mirror: the
+  // key column's record (a key, or a packed pair) under the index
+  // materialization, the key buffer's instance record otherwise.
+  fn record_len(&self, entry: &OrderedEntry) -> usize {
+    match self.column {
+      Some(column) => column.mirror_len(),
+      None => entry.strides[entry.key],
+    }
   }
 
-  // The published prefix in bytes for an instance count over an owned
-  // mirror holding `held` bytes (see `published_prefix`).
-  fn published_for(&self, instances: usize, held: usize) -> usize {
-    published_prefix(&self.order, self.strides[self.key], instances, held)
+  // Whether the mirror holds (id, packed word) pairs in draw order, whose
+  // permutation maps through the ids.
+  fn packed(&self) -> bool {
+    self.column.is_some_and(|c| c.packed.is_some())
   }
 }
 
@@ -141,9 +156,23 @@ impl OrderedEntry {
 // first count records - count x K under the index materialization, whose
 // instance record is K u32 ids and whose mirror record is the key column -
 // capped at what was handed off.
-fn published_prefix(order: &InstanceOrder, instance_stride: usize, instances: usize, held: usize) -> usize {
+fn published_prefix(order: &InstanceOrder, instance_stride: usize, instances: usize, mirror: &Mirror) -> usize {
   let per_instance = if order.indices.is_some() { instance_stride / 4 } else { 1 };
-  (instances * per_instance * order.mirror_stride(instance_stride)).min(held)
+  let record = match mirror.column {
+    Some(column) => column.mirror_len(),
+    None => order.mirror_stride(instance_stride),
+  };
+  (instances * per_instance * record).min(mirror.held)
+}
+
+// The id materialization of an entry's permutation into `dst`: the slots
+// themselves, or the record ids a packed mirror's slots name.
+fn materialize(entry: &OrderedEntry, mirror: &Mirror, dst: &mut [u8]) {
+  if mirror.packed() {
+    materialize_indices_mapped(&entry.perm, &mirror.data[..mirror.published], dst);
+  } else {
+    materialize_indices(&entry.perm, dst);
+  }
 }
 
 // The instance-step strides of a pipeline's buffers by index (0 at a
@@ -248,12 +277,13 @@ impl Context {
               ids.buffers[key]
             ))
           }
-          Some(held) if held != column => {
+          Some(held) if !held.accepts(column) => {
             return Err(format!(
-              "buffer {} handed off {}-byte records with a {}-byte key at float {}; the entry's instanceOrder reads a {}-byte key at float {} of {}-byte records",
+              "buffer {} handed off {}-byte records with a {}-byte{} key at float {}; the entry's instanceOrder reads a {}-byte key at float {} of {}-byte records",
               ids.buffers[key],
               held.stride,
               held.len,
+              if held.packed.is_some() { " packed" } else { "" },
               held.offset / 4,
               column.len,
               column.offset / 4,
@@ -264,7 +294,7 @@ impl Context {
         }
         // The id stream must hold every handed-off record's id, groups
         // rounded up.
-        let records = mirror.held / column.len;
+        let records = mirror.held / mirror.column.map_or(column.len, |c| c.mirror_len());
         let per_instance = instance_stride / 4;
         let needed = records.div_ceil(per_instance) * instance_stride;
         let size = self.gpu_buffer_len(ids.buffers[key])?;
@@ -354,7 +384,7 @@ impl Context {
     let mut seed = false;
     if let Some(mirror) = orders.mirrors.get_mut(&buffers[key]) {
       if mirror.owned {
-        mirror.published = published_prefix(&order, strides[key], instances, mirror.held);
+        mirror.published = published_prefix(&order, strides[key], instances, mirror);
         seed = mirror.published > 0;
       }
     }
@@ -409,7 +439,13 @@ impl Context {
   /// index stream must hold their ids and its order must declare the
   /// handed-off key column). A second hand-off replaces the records
   /// wholesale.
-  pub fn instance_order_records(&self, id: u64, data: &[u8], key: Option<KeyColumn>) -> Result<(), String> {
+  pub fn instance_order_records(
+    &self,
+    id: u64,
+    data: &[u8],
+    key: Option<KeyColumn>,
+    packed: Option<PackedRecords>,
+  ) -> Result<(), String> {
     self.gpu_buffer_len(id)?;
     if data.is_empty() {
       return Err(format!("record hand-off to buffer {id} is empty"));
@@ -417,18 +453,35 @@ impl Context {
     if let Some(column) = key {
       column.check_records(data.len()).map_err(|e| format!("record hand-off to buffer {id}: {e}"))?;
     }
+    let mut held = Vec::new();
+    let mut bounds = None;
+    match (key, packed) {
+      (Some(column), Some(packed)) => {
+        column.check_packed(data.len(), &packed).map_err(|e| format!("record hand-off to buffer {id}: {e}"))?;
+        column.extract_packed(data, &packed.order, &mut held);
+        bounds = Some(Arc::new(packed.bounds));
+      }
+      (Some(column), None) => {
+        if column.packed.is_some() {
+          return Err(format!("record hand-off to buffer {id}: a packed key needs its chunk table and draw order"));
+        }
+        column.extract(data, &mut held);
+      }
+      (None, Some(_)) => {
+        return Err(format!(
+          "record hand-off to buffer {id}: a chunk table and draw order go with a packed record key"
+        ));
+      }
+      (None, None) => held.extend_from_slice(data),
+    }
     let mut orders = self.orders.borrow_mut();
     let mirror = orders.mirrors.entry(id).or_default();
-    let mut held = Vec::new();
-    match key {
-      Some(column) => column.extract(data, &mut held),
-      None => held.extend_from_slice(data),
-    }
     mirror.held = held.len();
     mirror.data = Arc::new(held);
     mirror.published = mirror.published.min(mirror.held);
     mirror.owned = true;
     mirror.column = key;
+    mirror.bounds = bounds;
     Ok(())
   }
 
@@ -543,7 +596,7 @@ impl Context {
     if !mirror.ids_written {
       mirror.ids_written = true;
       let mut dst = self.write_leases.borrow_mut().take_free(buffer, size);
-      materialize_indices(&entry.perm, &mut dst[..size]);
+      materialize(entry, mirror, &mut dst[..size]);
       self.send(RasterCmd::WriteBufferLease {
         id: buffer,
         block: dst,
@@ -567,7 +620,11 @@ impl Context {
       buffer,
       generation,
       order: entry.order.mirror_order(),
-      stride: entry.mirror_stride(),
+      stride: mirror.record_len(entry),
+      packed: match (mirror.column.and_then(|c| c.packed), &mirror.bounds) {
+        (Some(key), Some(bounds)) => Some((key, bounds.clone())),
+        _ => None,
+      },
       keys: mirror.data.clone(),
       len: mirror.published,
       perm: std::mem::take(&mut entry.spare),
@@ -609,7 +666,7 @@ impl Context {
     if !mirror.owned {
       return false;
     }
-    let published = entry.published_for(instances, mirror.held);
+    let published = entry.published_for(instances, mirror);
     if published == mirror.published {
       return false;
     }
@@ -728,13 +785,23 @@ impl Context {
     if len == 0 {
       return;
     }
-    let keys = len / entry.mirror_stride();
+    let keys = len / mirror.record_len(entry);
     if entry.order.indices.is_some() && keys > SYNC_SORT_MAX_KEYS && self.submit_order_sort(orders, target, draw) {
       return;
     }
     let entry = orders.entries.get_mut(&(target, draw)).expect("resolved above");
     let mirror = orders.mirrors.get(&key_buffer).expect("resolved above");
-    order_permutation(&entry.order.mirror_order(), entry.mirror_stride(), &mirror.data[..len], &mut orders.scratch);
+    match (mirror.column.and_then(|c| c.packed), &mirror.bounds) {
+      (Some(key), Some(bounds)) => {
+        order_permutation_packed(&entry.order.mirror_order(), key, &mirror.data[..len], bounds, &mut orders.scratch)
+      }
+      _ => order_permutation(
+        &entry.order.mirror_order(),
+        mirror.record_len(entry),
+        &mirror.data[..len],
+        &mut orders.scratch,
+      ),
+    }
     if orders.scratch.perm() == entry.perm.as_slice() {
       return;
     }
@@ -947,7 +1014,7 @@ impl Context {
       };
       let mut dst = self.write_leases.borrow_mut().take_free(id, size);
       let len = if indexed {
-        materialize_indices(&entry.perm, &mut dst[..size]);
+        materialize(entry, mirror, &mut dst[..size]);
         size
       } else {
         gather_permuted(&entry.perm, stride, &mirror.data[..len], &mut dst[..len]);

@@ -1,6 +1,7 @@
 use crate::gpu::{
-  gather_ordered, gather_permuted, materialize_indices, order_permutation, InstanceOrder, KeyColumn, OrderKey,
-  OrderScratch, OrderWorker, SortJob, INDEX_NONE,
+  gather_ordered, gather_permuted, materialize_indices, materialize_indices_mapped, order_permutation,
+  order_permutation_packed, InstanceOrder, KeyColumn, OrderKey, OrderScratch, OrderWorker, PackedFormat, PackedKey,
+  PackedRecords, SortJob, INDEX_NONE,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -293,10 +294,10 @@ fn parse_and_materialize_indices() {
 // entry's order must describe the same column when it attaches.
 #[test]
 fn key_column_parses_and_matches_the_order() {
-  let column = KeyColumn::parse(32.0, None, Some(0.0)).expect("a position key at float 0 of 32-byte records");
-  assert_eq!(column, KeyColumn { stride: 32, offset: 0, len: 12 });
-  let field_column = KeyColumn::parse(16.0, Some(3.0), None).expect("a field key at float 3 of 16-byte records");
-  assert_eq!(field_column, KeyColumn { stride: 16, offset: 12, len: 4 });
+  let column = KeyColumn::parse(32.0, None, Some(0.0), None).expect("a position key at float 0 of 32-byte records");
+  assert_eq!(column, KeyColumn { stride: 32, offset: 0, len: 12, packed: None });
+  let field_column = KeyColumn::parse(16.0, Some(3.0), None, None).expect("a field key at float 3 of 16-byte records");
+  assert_eq!(field_column, KeyColumn { stride: 16, offset: 12, len: 4, packed: None });
   let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(32.0))
     .expect("an indexed position order parses");
   assert_eq!(indexed.key_column(), Some(column), "the order expects the column the hand-off declared");
@@ -305,15 +306,15 @@ fn key_column_parses_and_matches_the_order() {
     InstanceOrder::parse(None, Some(1.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(32.0)).expect("parses");
   assert_ne!(shifted.key_column(), Some(column), "a different offset is a different column");
 
-  let both = KeyColumn::parse(32.0, Some(0.0), Some(0.0));
+  let both = KeyColumn::parse(32.0, Some(0.0), Some(0.0), None);
   assert!(both.expect_err("both keys").contains("not both"));
-  let neither = KeyColumn::parse(32.0, None, None);
+  let neither = KeyColumn::parse(32.0, None, None, None);
   assert!(neither.expect_err("no key").contains("needs field or position"));
-  let odd = KeyColumn::parse(30.0, None, Some(0.0));
+  let odd = KeyColumn::parse(30.0, None, Some(0.0), None);
   assert!(odd.expect_err("a stride off the float grid").contains("multiple of 4"));
-  let tight = KeyColumn::parse(16.0, None, Some(2.0));
+  let tight = KeyColumn::parse(16.0, None, Some(2.0), None);
   assert!(tight.expect_err("a vec3 at float 2 of a 16-byte record").contains("does not fit"));
-  let fraction = KeyColumn::parse(16.0, None, Some(0.5));
+  let fraction = KeyColumn::parse(16.0, None, Some(0.5), None);
   assert!(fraction.expect_err("a fractional offset").contains("float offset"));
 }
 
@@ -324,7 +325,7 @@ fn key_column_parses_and_matches_the_order() {
 fn key_column_extracts_what_the_sort_reads() {
   // Three 16-byte records: [x y z w], the position at float 1.
   let records = bytes(&[9.0, 1.0, 2.0, 3.0, 9.0, 4.0, 5.0, 6.0, 9.0, 7.0, 8.0, 9.0]);
-  let column = KeyColumn::parse(16.0, None, Some(1.0)).expect("parses");
+  let column = KeyColumn::parse(16.0, None, Some(1.0), None).expect("parses");
   assert!(column.check_records(records.len()).is_ok());
   assert!(column.check_records(records.len() - 1).expect_err("a torn record").contains("whole number"));
   let mut keys = vec![0xAAu8; 3];
@@ -362,6 +363,7 @@ fn sort_worker_round_trips_a_job() {
     generation: 1,
     order,
     stride: 12,
+    packed: None,
     keys: keys.clone(),
     len: keys.len(),
     perm: Vec::new(),
@@ -382,5 +384,191 @@ fn sort_worker_round_trips_a_job() {
   assert_eq!(ids, vec![2, 1, 0, INDEX_NONE, INDEX_NONE]);
   assert!(done.load(Ordering::Relaxed), "the done hook ran");
   assert!(result.work_ms >= 0.0);
+  drop(worker);
+}
+
+// A packed position key: the hand-off's column names the packing and the
+// chunk size, an entry's float position key over the same stride and
+// offset reads it, a field key cannot be packed.
+#[test]
+fn packed_key_column_parses_and_matches_the_order() {
+  let packed = PackedKey { format: PackedFormat::parse("unorm16x3").expect("the format"), chunk: 256 };
+  let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("a packed position at float 0");
+  assert_eq!(column, KeyColumn { stride: 16, offset: 0, len: 8, packed: Some(packed) });
+  assert_eq!(column.mirror_len(), 12, "the mirror holds the id and the two words");
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0))
+    .expect("an indexed position order over 16-byte records");
+  assert!(column.accepts(indexed.key_column().expect("indexed")), "a position key reads the packed column");
+  let shifted =
+    InstanceOrder::parse(None, Some(1.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0)).expect("parses");
+  assert!(!column.accepts(shifted.key_column().expect("indexed")), "a different offset is a different column");
+  let float = KeyColumn::parse(16.0, None, Some(0.0), None).expect("a float position");
+  assert!(!float.accepts(column), "a float hand-off is not read as packed");
+
+  let field = KeyColumn::parse(16.0, Some(0.0), None, Some(packed));
+  assert!(field.expect_err("a packed field").contains("position"));
+  let empty = KeyColumn::parse(16.0, None, Some(0.0), Some(PackedKey { chunk: 0, ..packed }));
+  assert!(empty.expect_err("a zero chunk").contains("chunk"));
+  assert!(PackedFormat::parse("unorm11-10-11").expect_err("an unknown format").contains("not supported"));
+  // Two packed words fit where a vec3 would not.
+  assert!(KeyColumn::parse(16.0, None, Some(2.0), Some(packed)).is_ok());
+  assert!(KeyColumn::parse(16.0, None, Some(2.0), None).is_err());
+  assert!(KeyColumn::parse(16.0, None, Some(3.0), Some(packed)).expect_err("past the end").contains("does not fit"));
+}
+
+// Records of 16 bytes: the packed position words at float 0 (x | y << 16,
+// then z with junk in its high half), the rest junk; positions on the
+// quantization grid of their chunk's box, so the float key and the
+// packed key agree exactly.
+fn packed_cloud(count: usize, chunk: usize) -> (Vec<u8>, Vec<[f32; 6]>, Vec<f32>) {
+  let mut records = Vec::new();
+  let mut bounds = Vec::new();
+  let mut zs = Vec::new();
+  let chunks = count.div_ceil(chunk);
+  for c in 0..chunks {
+    // Box c: each axis over 65535 steps of 2 (exact in f32 at these
+    // magnitudes), boxes 1 << 17 apart.
+    let min = [c as f32 * 131072.0, c as f32 * 131072.0, c as f32 * 131072.0];
+    let max = [min[0] + 65535.0 * 2.0, min[1] + 65535.0 * 2.0, min[2] + 65535.0 * 2.0];
+    bounds.push([min[0], min[1], min[2], max[0], max[1], max[2]]);
+  }
+  let mut state = 12345u32;
+  let mut next = || {
+    state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+    state >> 8
+  };
+  for i in 0..count {
+    let c = i / chunk;
+    let (qx, qy, qz) = (next() % 65536, next() % 65536, next() % 65536);
+    records.extend_from_slice(&(qx | (qy << 16)).to_ne_bytes());
+    records.extend_from_slice(&(qz | 0xEEEE_0000).to_ne_bytes());
+    records.extend_from_slice(&[0xEEu8; 8]);
+    zs.push(bounds[c][2] + qz as f32 * 2.0);
+  }
+  (records, bounds, zs)
+}
+
+// The packed sort over (id, word) pairs in a shuffled draw order gives the
+// float sort's record order along the direction, and the mapped
+// materialization writes record ids, not draw slots.
+#[test]
+fn packed_key_sorts_as_the_float_key_does() {
+  let count = 700;
+  let chunk = 256;
+  let (records, bounds, zs) = packed_cloud(count, chunk);
+  let packed = PackedKey { format: PackedFormat::Unorm16x3, chunk };
+  let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("parses");
+  // The draw order: every record, reversed in blocks of 7.
+  let mut order: Vec<u32> = (0..count as u32).collect();
+  for block in order.chunks_mut(7) {
+    block.reverse();
+  }
+  let table = PackedRecords { bounds: bounds.clone(), order: order.clone() };
+  column.check_packed(records.len(), &table).expect("a valid hand-off");
+  let mut pairs = Vec::new();
+  column.extract_packed(&records, &order, &mut pairs);
+  assert_eq!(pairs.len(), count * 12);
+
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0))
+    .expect("parses")
+    .mirror_order();
+  let mut scratch = OrderScratch::default();
+  order_permutation_packed(&indexed, packed, &pairs, &bounds, &mut scratch);
+  let mut dst = vec![0u8; (count + 3) * 4];
+  materialize_indices_mapped(scratch.perm(), &pairs, &mut dst);
+  let ids: Vec<u32> = dst.chunks_exact(4).map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]])).collect();
+  assert_eq!(&ids[count..], &[INDEX_NONE; 3]);
+  // Descending z: each drawn record's z is no larger than the previous.
+  let mut last = f32::INFINITY;
+  let mut seen = vec![false; count];
+  for &id in &ids[..count] {
+    let z = zs[id as usize];
+    assert!(z <= last, "record {id} at z {z} drawn after z {last}");
+    last = z;
+    assert!(!seen[id as usize], "record {id} drawn twice");
+    seen[id as usize] = true;
+  }
+  // The same order the float key column gives (equal z keep draw-slot
+  // order under the packed sort, slot order under the float one; the
+  // generator makes z unique enough that both agree).
+  let floats: Vec<u8> =
+    (0..count).flat_map(|i| [0.0f32, 0.0, zs[i]].iter().flat_map(|f| f.to_ne_bytes()).collect::<Vec<u8>>()).collect();
+  let mut whole = OrderScratch::default();
+  order_permutation(&indexed, 12, &floats, &mut whole);
+  let float_ids: Vec<u32> = whole.perm().to_vec();
+  let float_z: Vec<f32> = float_ids.iter().map(|&i| zs[i as usize]).collect();
+  let packed_z: Vec<f32> = ids[..count].iter().map(|&i| zs[i as usize]).collect();
+  assert_eq!(packed_z, float_z, "the packed key sorts the depths the float key sorts");
+}
+
+// The packed hand-off's contract: a box per chunk, a draw order that is a
+// permutation of the records.
+#[test]
+fn packed_hand_off_is_validated() {
+  let (records, bounds, _) = packed_cloud(300, 256);
+  let packed = PackedKey { format: PackedFormat::Unorm16x3, chunk: 256 };
+  let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("parses");
+  let order: Vec<u32> = (0..300).collect();
+  let short = PackedRecords { bounds: bounds[..1].to_vec(), order: order.clone() };
+  assert!(column.check_packed(records.len(), &short).expect_err("one box for two chunks").contains("chunk table"));
+  let missing = PackedRecords { bounds: bounds.clone(), order: order[..299].to_vec() };
+  assert!(column.check_packed(records.len(), &missing).expect_err("299 ids").contains("lists 299"));
+  let mut twice = order.clone();
+  twice[5] = 7;
+  let dup = PackedRecords { bounds: bounds.clone(), order: twice };
+  assert!(column.check_packed(records.len(), &dup).expect_err("7 twice").contains("twice"));
+  let mut past = order.clone();
+  past[0] = 300;
+  let out = PackedRecords { bounds: bounds.clone(), order: past };
+  assert!(column.check_packed(records.len(), &out).expect_err("id 300").contains("past"));
+  let float = KeyColumn::parse(16.0, None, Some(0.0), None).expect("parses");
+  let table = PackedRecords { bounds, order };
+  assert!(float.check_packed(records.len(), &table).expect_err("not packed").contains("not packed"));
+}
+
+// The sort thread takes a packed job: the ids come back mapped through
+// the pairs, in depth order.
+#[test]
+fn sort_worker_sorts_a_packed_job() {
+  let (records, bounds, zs) = packed_cloud(40, 256);
+  let packed = PackedKey { format: PackedFormat::Unorm16x3, chunk: 256 };
+  let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("parses");
+  let order: Vec<u32> = (0..40).rev().collect();
+  let mut pairs = Vec::new();
+  column.extract_packed(&records, &order, &mut pairs);
+  let keys = Arc::new(pairs);
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false, Some(16.0))
+    .expect("parses")
+    .mirror_order();
+  let worker = OrderWorker::spawn().expect("a sort thread");
+  let job = SortJob {
+    entry: (1, 1),
+    buffer: 9,
+    generation: 1,
+    order: indexed,
+    stride: 12,
+    packed: Some((packed, Arc::new(bounds))),
+    keys: keys.clone(),
+    len: keys.len(),
+    perm: Vec::new(),
+    block: vec![0u8; 44 * 4],
+    done: None,
+  };
+  assert!(worker.submit(job));
+  let mut results = Vec::new();
+  let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+  while results.is_empty() && std::time::Instant::now() < deadline {
+    results = worker.drain();
+    std::thread::sleep(std::time::Duration::from_millis(1));
+  }
+  let result = results.pop().expect("the job came back");
+  let ids: Vec<u32> = result.block.chunks_exact(4).map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]])).collect();
+  assert_eq!(&ids[40..], &[INDEX_NONE; 4]);
+  let mut last = f32::NEG_INFINITY;
+  for &id in &ids[..40] {
+    assert!(id < 40, "a record id, not a draw slot");
+    assert!(zs[id as usize] >= last, "ascending z");
+    last = zs[id as usize];
+  }
   drop(worker);
 }

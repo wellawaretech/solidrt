@@ -8,7 +8,7 @@ use rquickjs::{Array, ArrayBuffer, Ctx, Exception, Function, JsLifetime, Object,
 
 use super::properties::{decode_params, decode_texture_bindings};
 use super::tree::to_prop_value;
-use crate::plugins::marshal::{array_buffer_over, bytes_of, OptArg};
+use crate::plugins::marshal::{array_buffer_over, bytes_of, elements_of, OptArg};
 use alloy::{CaptureInfo, TextureBox, TextureRect, TextureShape};
 
 // Per-engine texture bookkeeping, held in context userdata so engine teardown
@@ -1600,15 +1600,19 @@ fn write_buffer(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: OptArg<
 // republishes on instance-count changes). The optional key ({ stride,
 // position | field }: the record's byte stride and the key's float
 // offset) is the index form's: the mirror then keeps the records' key
-// column only. Only the object shape is checked here; the values are
-// alloy's. No frame request: nothing draws until an entry attaches over
-// the buffer, and that attach requests one.
+// column only. A packed position ({ packed: { format, chunk, bounds },
+// order }) brings its chunk table (a Float32Array of six floats per
+// chunk) and the draw order (a Uint32Array of record ids), both copied.
+// Only the object shape is checked here; the values are alloy's. No
+// frame request: nothing draws until an entry attaches over the buffer,
+// and that attach requests one.
 fn transfer_records(
   ctx: Ctx<'_>,
   id: u64,
   records: TypedArray<'_, u8>,
   key: OptArg<Object<'_>>,
 ) -> rquickjs::Result<()> {
+  let mut packed = None;
   let key = match &key.0 {
     None => None,
     Some(o) => {
@@ -1617,15 +1621,49 @@ fn transfer_records(
       };
       let field = o.get::<_, Option<f64>>("field")?;
       let position = o.get::<_, Option<f64>>("position")?;
+      let packing = match o.get::<_, Option<Object>>("packed")? {
+        None => None,
+        Some(p) => {
+          let Some(format) = p.get::<_, Option<String>>("format")? else {
+            return Err(throw_str(&ctx, "transferRecords: a packed key needs a format"));
+          };
+          let format =
+            alloy::PackedFormat::parse(&format).map_err(|e| throw_str(&ctx, &format!("transferRecords: {e}")))?;
+          let chunk = p.get::<_, Option<f64>>("chunk")?.unwrap_or(0.0);
+          if !(chunk.is_finite() && chunk > 0.0 && chunk.fract() == 0.0) {
+            return Err(throw_str(&ctx, "transferRecords: a packed key needs a positive whole chunk size"));
+          }
+          let Some(bounds) = p.get::<_, Option<TypedArray<f32>>>("bounds")? else {
+            return Err(throw_str(
+              &ctx,
+              "transferRecords: a packed key needs its chunk table (bounds, a Float32Array)",
+            ));
+          };
+          let Some(order) = o.get::<_, Option<TypedArray<u32>>>("order")? else {
+            return Err(throw_str(&ctx, "transferRecords: a packed key needs the draw order (order, a Uint32Array)"));
+          };
+          let floats = elements_of(&ctx, &bounds, "transferRecords")?;
+          if floats.len() % 6 != 0 {
+            return Err(throw_str(&ctx, "transferRecords: the chunk table is six floats per chunk (min xyz, max xyz)"));
+          }
+          let bounds: Vec<[f32; 6]> = floats.chunks_exact(6).map(|b| [b[0], b[1], b[2], b[3], b[4], b[5]]).collect();
+          let order = elements_of(&ctx, &order, "transferRecords")?.to_vec();
+          packed = Some(alloy::PackedRecords { bounds, order });
+          Some(alloy::PackedKey { format, chunk: chunk as usize })
+        }
+      };
       Some(
-        alloy::KeyColumn::parse(stride, field, position)
+        alloy::KeyColumn::parse(stride, field, position, packing)
           .map_err(|e| throw_str(&ctx, &format!("transferRecords: {e}")))?,
       )
     }
   };
   let bytes = bytes_of(&ctx, &records, "transferRecords")?;
   let st = state(&ctx);
-  st.gui.alloy.instance_order_records(id, bytes, key).map_err(|e| throw_str(&ctx, &format!("transferRecords: {e}")))?;
+  st.gui
+    .alloy
+    .instance_order_records(id, bytes, key, packed)
+    .map_err(|e| throw_str(&ctx, &format!("transferRecords: {e}")))?;
   Ok(())
 }
 

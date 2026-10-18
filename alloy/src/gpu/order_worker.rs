@@ -17,7 +17,10 @@
 //! over another, and dropping the worker closes the job channel: the thread
 //! finishes the job in hand and exits, joined by the drop so an engine
 //! teardown leaves no thread behind.
-use super::{materialize_indices, order_permutation, InstanceOrder, OrderScratch};
+use super::{
+  materialize_indices, materialize_indices_mapped, order_permutation, order_permutation_packed, InstanceOrder,
+  OrderScratch, PackedKey,
+};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -36,8 +39,11 @@ pub struct SortJob {
   /// The order as the sort reads it off the key column
   /// (`InstanceOrder::mirror_order`).
   pub order: InstanceOrder,
-  /// Bytes per key record (`InstanceOrder::mirror_stride`).
+  /// Bytes per key record (`KeyColumn::mirror_len`).
   pub stride: usize,
+  /// A packed key's packing and chunk table: the column then holds (id,
+  /// word) pairs in draw order and the ids map through them.
+  pub packed: Option<(PackedKey, Arc<Vec<[f32; 6]>>)>,
   /// The key column, shared with the mirror.
   pub keys: Arc<Vec<u8>>,
   /// The published prefix of the column in bytes: what sorts.
@@ -101,10 +107,16 @@ impl OrderWorker {
       while let Ok(mut job) = job_rx.recv() {
         placement.reassert();
         let start = Instant::now();
-        order_permutation(&job.order, job.stride, &job.keys[..job.len], &mut scratch);
+        match &job.packed {
+          Some((key, bounds)) => order_permutation_packed(&job.order, *key, &job.keys[..job.len], bounds, &mut scratch),
+          None => order_permutation(&job.order, job.stride, &job.keys[..job.len], &mut scratch),
+        }
         job.perm.clear();
         job.perm.extend_from_slice(scratch.perm());
-        materialize_indices(&job.perm, &mut job.block);
+        match &job.packed {
+          Some(_) => materialize_indices_mapped(&job.perm, &job.keys[..job.len], &mut job.block),
+          None => materialize_indices(&job.perm, &mut job.block),
+        }
         let work_ms = start.elapsed().as_secs_f32() * 1000.0;
         let done = job.done.take();
         let result = SortDone {

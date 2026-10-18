@@ -89,8 +89,31 @@ export type { ModelChannel, ModelClip, ModelData, ModelExtras, ModelImage, Model
 export { decodeModel, encodeModel } from "./model-file.ts"
 export { createModel, loadGltf, loadModel, transcodeModelImages } from "./model.ts"
 export type { Model, ModelMaps, ModelOptions } from "./model.ts"
-export { decodeSplat, encodeSplat, parseSplat, SPLAT_ATTRIBUTES, SPLAT_RECORD_BYTES, SPLAT_RECORD_TEXELS, SPLAT_SH_TEXELS, SPLAT_TEXEL_BYTES } from "./splat-data.ts"
-export type { ParseSplatOptions, SplatData, SplatFormat } from "./splat-data.ts"
+export {
+  decodeRecord,
+  decodeSh,
+  decodeSplat,
+  encodeSplat,
+  parseSplat,
+  splatChunkBounds,
+  SPLAT_ATTRIBUTES,
+  SPLAT_CHUNK_BYTES,
+  SPLAT_CHUNK_FLOATS,
+  SPLAT_CHUNK_SIZE,
+  SPLAT_CHUNK_TEXELS,
+  SPLAT_COLOR_BYTES,
+  SPLAT_POSITION_BITS,
+  SPLAT_RECORD_BYTES,
+  SPLAT_RECORD_TEXELS,
+  SPLAT_ROTATION_BITS,
+  SPLAT_SCALE_BITS,
+  SPLAT_SH_BYTE_SCALE,
+  SPLAT_SH_BYTE_ZERO,
+  SPLAT_SH_TEXELS,
+  SPLAT_STEP_VISIBLE,
+  SPLAT_TEXEL_BYTES,
+} from "./splat-data.ts"
+export type { BakeReport, ParseSplatOptions, SplatData, SplatFormat, SplatRecord } from "./splat-data.ts"
 export { createSplatMesh, loadSplat, splatMaterialClass, splatVertexSource, SPLAT_FRAGMENT, SPLAT_GROUP, SPLAT_ID_ATTRIBUTES } from "./splat.ts"
 export type { SplatMesh as SplatMeshNode, SplatMeshOptions } from "./splat.ts"
 export { bindSkeleton } from "./skeleton.ts"

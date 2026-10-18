@@ -1,74 +1,152 @@
 // @solidrt/3d/splat - the splat DATA side of the package without the
-// runtime: the capture parsers (.ply, .splat, gunzipped .spz), the
-// covariance bake and the .sol3s container, for `sol tool 3d/splat` and any
-// app bake script under bun. The package root imports `flux:*` and so
-// loads only on the runtime; this entry imports nothing that does (the
-// model-data rule; tests/splat-data.test.ts imports it on the bare flux
-// binary and fails the moment a gui or sol: import creeps into the chain).
+// runtime: the capture parsers (.ply, .splat, gunzipped .spz), the bake
+// and the .sol3s container, for `sol tool 3d/splat` and any app bake
+// script under bun. The package root imports `flux:*` and so loads only on
+// the runtime; this entry imports nothing that does (the model-data rule;
+// tests/splat-data.test.ts imports it on the bare flux binary and fails
+// the moment a gui or sol: import creeps into the chain).
 //
 //   import { encodeSplat, parseSplat } from "@solidrt/3d/splat"
 //   writeFileSync("assets/scan.sol3s", encodeSplat(parseSplat(bytes)))
 //
 // loadSplat / createSplatMesh on the runtime read what it writes: a .sol3s
-// record IS the texel data the splat shader fetches (two rgba32ui texels
-// per splat, SPLAT_ATTRIBUTES as a byte layout) and the record the core
-// sorts by depth, so runtime loading is a header parse plus byte views -
-// the 3D covariance is precomputed here, deleting the quaternion decode,
-// the rotation build and the M*Mt from the vertex stage (the measured
-// per-splat wall no bake-less viewer can avoid), the spherical-harmonic
-// bands beyond DC pack into a second texel block, and the y-up bake
-// deletes the orientation footgun every viewer pushes onto the app.
+// record IS the texel the splat shader fetches (one rgba32ui texel per
+// splat, SPLAT_ATTRIBUTES as a byte layout - the field's 16-byte chunked
+// record, what Unity's importer and PlayCanvas's compressed ply converged
+// on) and its position word is the key the core sorts by depth against
+// the chunk table, so runtime loading is a header parse plus byte views.
+// The bake quantizes against 256-splat chunks (positions and log scales
+// as 11/10/11 bits over the chunk's box, the rotation as a smallest-three
+// quaternion, color rgba8), stores the records in spatial order with the
+// draw order (by importance) as an id block beside them, packs the
+// spherical-harmonic bands beyond DC as a byte per coefficient, and
+// stands a y-down capture up to y-up, deleting the orientation footgun
+// every viewer pushes onto the app.
 
 import type { VertexAttribute } from "@solidrt/core/gpu"
 
-/** One baked splat record, 32 bytes = two rgba32ui texels: center
- * float32x3 (12) + sRGB color and opacity unorm8x4 (4) | 3D covariance
- * upper triangle as six float16 (12) + a spare u32 (4). Centers stay
- * float32 deliberately - half positions are a known precision mistake on
- * large scenes; covariance quantizes to fp16 robustly. */
-export const SPLAT_RECORD_BYTES = 32
+/** One baked splat record, 16 bytes = one rgba32ui texel, four words:
+ * the position as 16-bit unorms over its chunk's position box (x in the
+ * low half of word 0, y in its high half, z in the low half of word 1;
+ * the high half of word 1 is reserved, 0), the rotation as a
+ * smallest-three quaternion (the largest component's index in the top
+ * two bits, the other three as 10-bit unorms over [-1/sqrt2, 1/sqrt2] in
+ * 1022 steps, zero exact, in index order at bits 20, 10 and 0; the
+ * largest is made positive, so it derives as sqrt(1 - the rest)), and
+ * the scale packed 11/10/11 bits over the chunk's log-scale box. The
+ * sRGB color + opacity sit beside the record as an rgba8 texel of the
+ * color block (SPLAT_COLOR_BYTES). decodeRecord is the reference decoder
+ * the vertex stage agrees with. 16 bits of position is what the fine
+ * detail of a trained capture needs: the field's 11 bits over a 256-splat
+ * box moved a lizard's sub-millimetre scales by multiples of their size
+ * (the plan's Findings). */
+export const SPLAT_RECORD_BYTES = 16
+/** Bytes per splat of the color block: sRGB r, g, b and opacity. */
+export const SPLAT_COLOR_BYTES = 4
 /** Texels of the record texture per splat (SPLAT_RECORD_BYTES / 16). */
-export const SPLAT_RECORD_TEXELS = 2
+export const SPLAT_RECORD_TEXELS = 1
 /** Bytes per rgba32ui texel. */
 export const SPLAT_TEXEL_BYTES = 16
+/** Splats per chunk: record id >> 8 is the chunk, whose box the record's
+ * position and scale words are unorms over. The field's size (Unity,
+ * PlayCanvas): small enough that a chunk's box is a few splats across
+ * where the cloud is dense, large enough that the table is 0.2 bytes per
+ * splat. */
+export const SPLAT_CHUNK_SIZE = 256
+/** Floats per chunk record: position min xyz, position max xyz, log-scale
+ * min xyz, log-scale max xyz - as three rgba32f texels (minX, minY, minZ,
+ * maxX | maxY, maxZ, minSx, minSy | minSz, maxSx, maxSy, maxSz). */
+export const SPLAT_CHUNK_FLOATS = 12
+/** Bytes per chunk record (SPLAT_CHUNK_FLOATS x 4). */
+export const SPLAT_CHUNK_BYTES = 48
+/** Texels of the chunk texture per chunk. */
+export const SPLAT_CHUNK_TEXELS = 3
+/** Unorm bits of a position component (65536 steps over the chunk's
+ * box per axis). */
+export const SPLAT_POSITION_BITS = 16
+/** Unorm bits of the packed scale word per axis (x at the top, then y, z
+ * at the bottom): 11/10/11 fills the word. */
+export const SPLAT_SCALE_BITS = [11, 10, 11]
+/** Unorm bits per stored quaternion component. */
+export const SPLAT_ROTATION_BITS = 10
 /** Texels of the SH texture per splat for each degree 0..3: the
- * 3 x ((d + 1)^2 - 1) halves beyond DC packed pairwise into u32s, eight
- * halves per texel (degree 1 = 9 halves in 2 texels, 2 = 24 in 3,
- * 3 = 45 in 6). */
-export const SPLAT_SH_TEXELS = [0, 2, 3, 6]
+ * 3 x ((d + 1)^2 - 1) coefficients beyond DC as a byte each, sixteen
+ * per texel (degree 1 = 9 bytes in 1 texel, 2 = 24 in 2, 3 = 45 in 3). */
+export const SPLAT_SH_TEXELS = [0, 1, 2, 3]
+/** An SH coefficient byte decodes as (byte - SPLAT_SH_BYTE_ZERO) /
+ * SPLAT_SH_BYTE_SCALE, spz's encoding: [-1, 1) in 1/128 steps. */
+export const SPLAT_SH_BYTE_ZERO = 128
+export const SPLAT_SH_BYTE_SCALE = 128
 
-/** The record as a byte layout, in texel order: the center and packed
- * color (texel A), then the covariance halves - iCovA (xx, xy, xz, yy),
- * iCovB (yz, zz) - and the spare word (texel B). The core's depth sort
- * keys on iCenter at this stride (the hand-off declares that column and
- * the engine keeps those 12 bytes per splat, nothing else of the record);
- * the shader reads the same bytes as two uvec4 texels. */
+/** The record as a byte layout, in word order. The core's depth sort keys
+ * on iPosition as packed unorm16x3 words against the chunk table (the
+ * hand-off declares that column and the engine keeps those 8 bytes per
+ * splat beside its id, nothing else of the record); the shader reads the
+ * same bytes as one uvec4 texel. */
 export const SPLAT_ATTRIBUTES: VertexAttribute[] = [
-  { name: "iCenter", format: "float32x3" },
-  { name: "iColor", format: "unorm8x4" },
-  { name: "iCovA", format: "float16x4" },
-  { name: "iCovB", format: "float16x2" },
-  { name: "iSpare", format: "uint32" },
+  { name: "iPosition", format: "uint32x2" },
+  { name: "iRotation", format: "uint32" },
+  { name: "iScale", format: "uint32" },
 ]
 
-/** A parsed or loaded splat cloud: `records` is the interleaved record
- * block (SPLAT_ATTRIBUTES, SPLAT_RECORD_BYTES per splat, `count` of
- * them), importance-sorted at bake so the first n records are a usable
- * scene at any n; `sh` the matching SH texel block (SPLAT_SH_TEXELS per
- * splat, in the same order) or null at degree 0. From decodeSplat both
- * VIEW the container's bytes. */
+/** What the bake lost, for the tool to print. `positionStep` is the
+ * chunk's position step over the splat's largest axis (0.01: the step is
+ * 1% of the splat), as the median and 99th percentile over the cloud and
+ * the share of splats above SPLAT_STEP_VISIBLE; `shClamped` how many SH
+ * coefficients fell outside the byte's [-1, 1) and were clamped. */
+export type BakeReport = {
+  chunks: number
+  positionStep: { median: number; p99: number; visibleShare: number }
+  shClamped: number
+}
+/** A position step above this fraction of the splat's largest axis is
+ * where quantization starts to show; the report counts those splats. */
+export const SPLAT_STEP_VISIBLE = 0.1
+
+/** A parsed or loaded splat cloud: `records` is the record block
+ * (SPLAT_ATTRIBUTES, SPLAT_RECORD_BYTES per splat, `count` of them) in
+ * SPATIAL order (a k-d partition, so every chunk is a compact box),
+ * `colors` the color block (SPLAT_COLOR_BYTES per splat, in record
+ * order), `chunks` the chunk table (SPLAT_CHUNK_BYTES per chunk of
+ * SPLAT_CHUNK_SIZE records, the last chunk partial), `order` the draw
+ * population (record ids by importance, size times opacity descending,
+ * so its first n are a usable scene at any n), `sh` the matching SH
+ * texel block (SPLAT_SH_TEXELS per splat, in record order) or null at
+ * degree 0. From decodeSplat the blocks VIEW the container's bytes. */
 export type SplatData = {
   count: number
   records: Uint8Array
+  colors: Uint8Array
+  chunks: Uint8Array
+  /** Record ids in draw order: by importance, descending; `count` of
+   * them, a permutation of the records. */
+  order: Uint32Array
   /** [minX, minY, minZ, maxX, maxY, maxZ] of the splat centers. */
   bounds: Float32Array
   /** Spherical-harmonic bands baked beyond the base color (0..3). */
   shDegree: number
   /** The SH texel block: count x SPLAT_SH_TEXELS[shDegree] texels of
-   * SPLAT_TEXEL_BYTES, each splat's halves beyond DC coefficient-major
-   * with rgb interleaved (coefficient k of channel c at half 3k + c),
-   * zero-padded to its texels. null at degree 0. */
+   * SPLAT_TEXEL_BYTES, each splat's coefficients beyond DC as bytes,
+   * coefficient-major with rgb interleaved (coefficient k of channel c at
+   * byte 3k + c), zero-padded to its texels. null at degree 0. */
   sh: Uint8Array | null
+  /** The capture was trained with the antialiasing compensation
+   * (Mip-Splatting, nerfstudio's antialiased mode): the renderer scales
+   * opacity by the dilation's determinant ratio. */
+  antialiased: boolean
+  /** What parseSplat's bake lost; not stored in the container. */
+  report?: BakeReport
+}
+
+/** One record decoded: the reference the shader's decode must match. */
+export type SplatRecord = {
+  position: [number, number, number]
+  /** Linear scales per axis. */
+  scale: [number, number, number]
+  /** Unit quaternion (w, x, y, z). */
+  rotation: [number, number, number, number]
+  /** sRGB color and opacity bytes. */
+  color: [number, number, number, number]
 }
 
 export type SplatFormat = "ply" | "splat" | "spz"
@@ -79,15 +157,19 @@ export type ParseSplatOptions = {
   format?: SplatFormat
   /** Keep the capture's own orientation. By default a y-down capture
    * (.ply and .splat are COLMAP-framed) is stood up to y-up at bake -
-   * exact and free, positions, covariances and SH coefficients rotated
+   * exact and free, positions, rotations and SH coefficients rotated
    * together - so a baked splat drops into a scene like any model; .spz
    * is y-up already and never flips. */
   keepOrientation?: boolean
   /** Spherical-harmonic bands to bake beyond the base color, 0..3,
    * capped at what the capture holds (.splat has none). Default 0: the
-   * view-dependent bands cost 32/48/96 bytes per splat of texture at
+   * view-dependent bands cost 16/32/48 bytes per splat of texture at
    * degree 1/2/3, so a bake opts in. */
   shDegree?: number
+  /** The capture was trained antialiased (Mip-Splatting, nerfstudio's
+   * `antialiased` rasterization); a per-capture fact the trainer knows
+   * and the file carries. Default false (vanilla 3DGS). */
+  antialiased?: boolean
 }
 
 // The zeroth spherical harmonic: color = 0.5 + SH_C0 * f_dc, the 3DGS
@@ -104,9 +186,6 @@ const SH_COEFFICIENTS = [0, 3, 8, 15]
 const SH_FLIP_SIGN = [-1, -1, 1, -1, 1, 1, -1, 1, -1, 1, -1, -1, 1, -1, 1]
 // spz stores an SH coefficient as a byte around 128: (byte - 128) / 128.
 const SPZ_SH_SCALE = 128
-// Largest finite float16; covariance entries are clamped into this range
-// (a monster background splat past it would otherwise bake to infinity).
-const F16_MAX = 65504
 // spz packs the DC band as u8 around 0.5 with this scale (Niantic's
 // load-spz.cc colorScale): dc = (byte / 255 - 0.5) / SPZ_COLOR_SCALE.
 const SPZ_COLOR_SCALE = 0.15
@@ -116,11 +195,14 @@ const SPZ_SCALE_STEP = 16
 
 /** "SOLS" read as a little-endian u32. */
 const MAGIC = 0x534c4f53
-// Version 2: the 32-byte two-texel record, importance-sorted, y-up unless
-// the bake kept orientation, plus the optional SH texel block; the header
-// carries count, shDegree, bounds and both block ranges. (Version 1 was
-// the 28-byte instance-attribute record of the first viewer.)
-const VERSION = 2
+// Version 3: the 16-byte chunk-quantized record and the chunk table in
+// spatial order, the draw order as an id block, y-up unless the bake kept
+// orientation, the SH block as bytes; the header carries count,
+// chunkSize, shDegree, antialiased, bounds and the block ranges.
+// (Version 2 was the 32-byte two-texel record with the covariance baked
+// as halves and half-float SH; version 1 the 28-byte instance-attribute
+// record of the first viewer.)
+const VERSION = 3
 
 /** The de-facto .splat interchange record (antimatter15): position
  * float32x3, scale float32x3, sRGB color + opacity unorm8x4, rotation
@@ -141,6 +223,12 @@ const SPZ_VERSIONS = [2, 3]
 const SPZ_ROT_MAG_BITS = 9
 // Coefficients per color channel for SH degree 1..3 (bands beyond DC).
 const SPZ_SH_DIM = [0, 3, 8, 15]
+
+// Log scales are clamped into this range before quantization: a trainer
+// can drive a scale to zero (log of minus infinity), and nothing on screen
+// is smaller than e^-12 or larger than e^10 scene units.
+const SPLAT_LOG_SCALE_MIN = -12
+const SPLAT_LOG_SCALE_MAX = 10
 
 // The parsers' common product, before the bake: linear scales, (w,x,y,z)
 // rotations (normalized at bake), sRGB color + opacity bytes, and the SH
@@ -166,9 +254,10 @@ let colorByte = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 255)
  * interchange, or a gunzipped .spz (Niantic; the container is
  * gzip-compressed, and this entry stays decompression-free, so hand it
  * the inflated bytes - `sol tool 3d/splat` does) - into baked SplatData:
- * covariance precomputed, y-up by default, importance-sorted (size times
- * opacity), bounds measured. Runs anywhere (bun, the runtime); for a
- * capture of real size run it at pack time and ship encodeSplat's .sol3s.
+ * chunk-quantized records in spatial order, the draw order by importance
+ * (size times opacity), y-up by default, bounds measured, the loss
+ * reported. Runs anywhere (bun, the runtime); for a capture of real
+ * size run it at pack time and ship encodeSplat's .sol3s.
  */
 export function parseSplat(bytes: Uint8Array, opts?: ParseSplatOptions): SplatData {
   let format = opts?.format ?? sniffFormat(bytes)
@@ -176,7 +265,7 @@ export function parseSplat(bytes: Uint8Array, opts?: ParseSplatOptions): SplatDa
   if (!(Number.isInteger(degree) && degree >= 0 && degree <= 3)) throw new Error("parseSplat: shDegree must be an integer 0..3, got " + degree)
   let raw = format === "ply" ? parsePly(bytes, degree) : format === "spz" ? parseSpz(bytes, degree) : parseDotSplat(bytes)
   if (opts?.keepOrientation === true) raw.flip = false
-  return bake(raw)
+  return bake(raw, opts?.antialiased === true)
 }
 
 function sniffFormat(bytes: Uint8Array): SplatFormat {
@@ -424,35 +513,101 @@ function emptyGaussians(count: number, flip: boolean, shDegree: number): Gaussia
     flip,
   }
 }
+// A position component's unorm range.
+const POSITION_MAX = (1 << SPLAT_POSITION_BITS) - 1
+// The scale word's unorm range and shift per axis (x at the top).
+const SCALE_MAX = SPLAT_SCALE_BITS.map(b => (1 << b) - 1)
+const SCALE_SHIFT = [SPLAT_SCALE_BITS[1]! + SPLAT_SCALE_BITS[2]!, SPLAT_SCALE_BITS[2]!, 0]
+// The stored quaternion components span an even number of steps, so the
+// midpoint (a zero component: every axis-aligned splat) is a code of its
+// own and decodes exactly; the one unused code costs a tenth of a percent
+// of range.
+const ROTATION_MAX = (1 << SPLAT_ROTATION_BITS) - 2
+const ROTATION_MASK = (1 << SPLAT_ROTATION_BITS) - 1
 
-// The bake: importance-sort (size times opacity, descending - the .splat
-// convention, so a count prefix is a usable scene at any n), compute each
-// splat's 3D covariance R S St Rt once, stand a y-down capture up
-// (positions (x, -y, -z); the covariance conjugated by the same half-turn
-// negates its xy and xz entries; the SH coefficients odd in (y, z) negate),
-// measure bounds, write the records and the SH texels.
-function bake(g: Gaussians): SplatData {
+// A log scale inside the quantizable range; NaN (a negative scale) and
+// minus infinity (a zero scale) land on the floor.
+let clampLog = (v: number): number => (v > SPLAT_LOG_SCALE_MAX ? SPLAT_LOG_SCALE_MAX : v >= SPLAT_LOG_SCALE_MIN ? v : SPLAT_LOG_SCALE_MIN)
+
+// `v` as a unorm of `max` steps over [lo, hi]; a degenerate range (every
+// record of the chunk at the same value) packs as 0 and decodes to lo.
+function packUnorm(v: number, lo: number, hi: number, max: number): number {
+  if (!(hi > lo)) return 0
+  let q = Math.round(((v - lo) / (hi - lo)) * max)
+  return q < 0 ? 0 : q > max ? max : q
+}
+
+// Three scale unorms into one word, x at the top.
+let packScale = (q: number[]): number => ((q[0]! << SCALE_SHIFT[0]!) | (q[1]! << SCALE_SHIFT[1]!) | q[2]!) >>> 0
+
+// Axis `k` of a packed scale word back to [lo, hi].
+function unpackScale(word: number, k: number, lo: number, hi: number): number {
+  let q = (word >>> SCALE_SHIFT[k]!) & SCALE_MAX[k]!
+  return lo + (q / SCALE_MAX[k]!) * (hi - lo)
+}
+
+// A 16-bit position unorm back to [lo, hi].
+let unpackPosition = (q: number, lo: number, hi: number): number => lo + (q / POSITION_MAX) * (hi - lo)
+
+// A unit quaternion (w, x, y, z) as smallest-three: the largest
+// component's index in the top two bits (made positive by negating the
+// quaternion, which is the same rotation), the other three in index order
+// at bits 20, 10, 0 as 10-bit unorms over [-1/sqrt2, 1/sqrt2] (ROTATION_MAX
+// steps).
+function packRotation(q: number[]): number {
+  let largest = 0
+  for (let k = 1; k < 4; k++) if (Math.abs(q[k]!) > Math.abs(q[largest]!)) largest = k
+  let sign = q[largest]! < 0 ? -1 : 1
+  let word = largest * 2 ** 30
+  let shift = 2 * SPLAT_ROTATION_BITS
+  for (let k = 0; k < 4; k++) {
+    if (k === largest) continue
+    let u = Math.round(((q[k]! * sign * Math.SQRT2 + 1) / 2) * ROTATION_MAX)
+    word += (u < 0 ? 0 : u > ROTATION_MAX ? ROTATION_MAX : u) * 2 ** shift
+    shift -= SPLAT_ROTATION_BITS
+  }
+  return word >>> 0
+}
+
+function unpackRotation(word: number): [number, number, number, number] {
+  let q: [number, number, number, number] = [0, 0, 0, 0]
+  let largest = word >>> 30
+  let shift = 2 * SPLAT_ROTATION_BITS
+  let sum = 0
+  for (let k = 0; k < 4; k++) {
+    if (k === largest) continue
+    let u = (word >>> shift) & ROTATION_MASK
+    let v = ((u / ROTATION_MAX) * 2 - 1) / Math.SQRT2
+    q[k] = v
+    sum += v * v
+    shift -= SPLAT_ROTATION_BITS
+  }
+  q[largest] = Math.sqrt(Math.max(0, 1 - sum))
+  return q
+}
+
+// The bake: stand a y-down capture up (positions (x, -y, -z); the
+// quaternion composed with the half turn about x, q' = (-x, w, -z, y);
+// the SH coefficients odd in (y, z) negated), partition the records
+// spatially (kdOrder) into chunks of SPLAT_CHUNK_SIZE consecutive
+// records and quantize each against its chunk, rank the records by
+// importance (size times opacity, descending - the .splat convention)
+// into the draw order, measure bounds, pack the SH bytes.
+function bake(g: Gaussians, antialiased: boolean): SplatData {
   let n = g.count
+  let D = SH_COEFFICIENTS[g.shDegree]!
+  let sy = g.flip ? -1 : 1
+  let pos = new Float32Array(n * 3)
+  let logs = new Float32Array(n * 3)
+  let quat = new Float32Array(n * 4)
   let importance = new Float32Array(n)
   for (let i = 0; i < n; i++) {
+    // The + 0 folds a flip's -0 to 0, so the header JSON round-trips.
+    pos[i * 3] = g.positions[i * 3]! + 0
+    pos[i * 3 + 1] = g.positions[i * 3 + 1]! * sy + 0
+    pos[i * 3 + 2] = g.positions[i * 3 + 2]! * sy + 0
+    for (let k = 0; k < 3; k++) logs[i * 3 + k] = clampLog(Math.log(g.scales[i * 3 + k]!))
     importance[i] = g.scales[i * 3]! * g.scales[i * 3 + 1]! * g.scales[i * 3 + 2]! * g.colors[i * 4 + 3]!
-  }
-  let order = new Uint32Array(n)
-  for (let i = 0; i < n; i++) order[i] = i
-  order.sort((a, b) => importance[b]! - importance[a]!)
-
-  let sy = g.flip ? -1 : 1
-  let records = new Uint8Array(n * SPLAT_RECORD_BYTES)
-  let dv = new DataView(records.buffer)
-  let D = SH_COEFFICIENTS[g.shDegree]!
-  let shBytes = SPLAT_SH_TEXELS[g.shDegree]! * SPLAT_TEXEL_BYTES
-  let sh = D > 0 ? new Uint8Array(n * shBytes) : null
-  let shdv = sh === null ? null : new DataView(sh.buffer)
-  let bounds = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity])
-  let clampHalf = (v: number) => Math.min(F16_MAX, Math.max(-F16_MAX, v))
-  let half = (at: number, v: number) => dv.setFloat16(at, clampHalf(v), true)
-  for (let slot = 0; slot < n; slot++) {
-    let i = order[slot]!
     let w = g.rotations[i * 4]!
     let x = g.rotations[i * 4 + 1]!
     let y = g.rotations[i * 4 + 2]!
@@ -466,70 +621,259 @@ function bake(g: Gaussians): SplatData {
     } else {
       w = 1
     }
-    let sx = g.scales[i * 3]!
-    let syc = g.scales[i * 3 + 1]!
-    let sz = g.scales[i * 3 + 2]!
-    // M = R * diag(s); sigma = M * Mt, upper triangle.
-    let m00 = (1 - 2 * (y * y + z * z)) * sx
-    let m01 = 2 * (x * y - w * z) * syc
-    let m02 = 2 * (x * z + w * y) * sz
-    let m10 = 2 * (x * y + w * z) * sx
-    let m11 = (1 - 2 * (x * x + z * z)) * syc
-    let m12 = 2 * (y * z - w * x) * sz
-    let m20 = 2 * (x * z - w * y) * sx
-    let m21 = 2 * (y * z + w * x) * syc
-    let m22 = (1 - 2 * (x * x + y * y)) * sz
-    let xx = m00 * m00 + m01 * m01 + m02 * m02
-    let xy = (m00 * m10 + m01 * m11 + m02 * m12) * sy
-    let xz = (m00 * m20 + m01 * m21 + m02 * m22) * sy
-    let yy = m10 * m10 + m11 * m11 + m12 * m12
-    let yz = m10 * m20 + m11 * m21 + m12 * m22
-    let zz = m20 * m20 + m21 * m21 + m22 * m22
+    if (g.flip) {
+      quat[i * 4] = -x
+      quat[i * 4 + 1] = w
+      quat[i * 4 + 2] = -z
+      quat[i * 4 + 3] = y
+    } else {
+      quat[i * 4] = w
+      quat[i * 4 + 1] = x
+      quat[i * 4 + 2] = y
+      quat[i * 4 + 3] = z
+    }
+  }
 
-    // The + 0 folds a flip's -0 to 0, so the header JSON round-trips.
-    let px = g.positions[i * 3]! + 0
-    let py = g.positions[i * 3 + 1]! * sy + 0
-    let pz = g.positions[i * 3 + 2]! * sy + 0
-    if (px < bounds[0]!) bounds[0] = px
-    if (py < bounds[1]!) bounds[1] = py
-    if (pz < bounds[2]!) bounds[2] = pz
-    if (px > bounds[3]!) bounds[3] = px
-    if (py > bounds[4]!) bounds[4] = py
-    if (pz > bounds[5]!) bounds[5] = pz
+  // The storage order: order[slot] = the source splat at that record.
+  let order = new Uint32Array(n)
+  for (let i = 0; i < n; i++) order[i] = i
+  kdOrder(order, 0, n, pos)
+  // The draw order: record ids ranked by importance.
+  let ranks = new Uint32Array(n)
+  for (let i = 0; i < n; i++) ranks[i] = i
+  ranks.sort((a, b) => importance[b]! - importance[a]!)
+  let slotOf = new Uint32Array(n)
+  for (let slot = 0; slot < n; slot++) slotOf[order[slot]!] = slot
+  let drawOrder = new Uint32Array(n)
+  for (let r = 0; r < n; r++) drawOrder[r] = slotOf[ranks[r]!]!
 
-    // Texel A: the center and the packed color; texel B: the six
-    // covariance halves and the spare word (left 0).
-    let at = slot * SPLAT_RECORD_BYTES
-    dv.setFloat32(at, px, true)
-    dv.setFloat32(at + 4, py, true)
-    dv.setFloat32(at + 8, pz, true)
-    records[at + 12] = g.colors[i * 4]!
-    records[at + 13] = g.colors[i * 4 + 1]!
-    records[at + 14] = g.colors[i * 4 + 2]!
-    records[at + 15] = g.colors[i * 4 + 3]!
-    half(at + 16, xx)
-    half(at + 18, xy)
-    half(at + 20, xz)
-    half(at + 22, yy)
-    half(at + 24, yz)
-    half(at + 26, zz)
-    // The SH halves, consecutive = packed pairwise into the texels' u32s
-    // (the low half first, as unpackHalf2x16 reads them).
-    if (shdv !== null) {
-      let base = slot * shBytes
-      for (let k = 0; k < D; k++) {
-        let sign = g.flip ? SH_FLIP_SIGN[k]! : 1
-        for (let c = 0; c < 3; c++) shdv.setFloat16(base + (k * 3 + c) * 2, clampHalf(g.sh![(i * D + k) * 3 + c]! * sign), true)
+  let chunkCount = Math.ceil(n / SPLAT_CHUNK_SIZE)
+  let records = new Uint8Array(n * SPLAT_RECORD_BYTES)
+  let rdv = new DataView(records.buffer)
+  let colors = new Uint8Array(n * SPLAT_COLOR_BYTES)
+  let chunks = new Uint8Array(chunkCount * SPLAT_CHUNK_BYTES)
+  let cdv = new DataView(chunks.buffer)
+  let shBytes = SPLAT_SH_TEXELS[g.shDegree]! * SPLAT_TEXEL_BYTES
+  let sh = D > 0 ? new Uint8Array(n * shBytes) : null
+  let bounds = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity])
+  let stepRatio = new Float32Array(n)
+  let shClamped = 0
+  let pmin = [0, 0, 0]
+  let pmax = [0, 0, 0]
+  let smin = [0, 0, 0]
+  let smax = [0, 0, 0]
+  let q = [0, 0, 0]
+  let rotation = [0, 0, 0, 0]
+  for (let c = 0; c < chunkCount; c++) {
+    let lo = c * SPLAT_CHUNK_SIZE
+    let hi = Math.min(n, lo + SPLAT_CHUNK_SIZE)
+    for (let k = 0; k < 3; k++) {
+      pmin[k] = Infinity
+      pmax[k] = -Infinity
+      smin[k] = Infinity
+      smax[k] = -Infinity
+    }
+    for (let s = lo; s < hi; s++) {
+      let i = order[s]!
+      for (let k = 0; k < 3; k++) {
+        let p = pos[i * 3 + k]!
+        let l = logs[i * 3 + k]!
+        if (p < pmin[k]!) pmin[k] = p
+        if (p > pmax[k]!) pmax[k] = p
+        if (l < smin[k]!) smin[k] = l
+        if (l > smax[k]!) smax[k] = l
+      }
+    }
+    let at = c * SPLAT_CHUNK_BYTES
+    for (let k = 0; k < 3; k++) {
+      cdv.setFloat32(at + k * 4, pmin[k]!, true)
+      cdv.setFloat32(at + 12 + k * 4, pmax[k]!, true)
+      cdv.setFloat32(at + 24 + k * 4, smin[k]!, true)
+      cdv.setFloat32(at + 36 + k * 4, smax[k]!, true)
+    }
+    let step = 0
+    for (let k = 0; k < 3; k++) step = Math.max(step, (pmax[k]! - pmin[k]!) / POSITION_MAX)
+    for (let slot = lo; slot < hi; slot++) {
+      let i = order[slot]!
+      stepRatio[slot] = step / Math.exp(Math.max(logs[i * 3]!, logs[i * 3 + 1]!, logs[i * 3 + 2]!))
+      for (let k = 0; k < 3; k++) {
+        let p = pos[i * 3 + k]!
+        if (p < bounds[k]!) bounds[k] = p
+        if (p > bounds[k + 3]!) bounds[k + 3] = p
+        q[k] = packUnorm(p, pmin[k]!, pmax[k]!, POSITION_MAX)
+      }
+      let rat = slot * SPLAT_RECORD_BYTES
+      rdv.setUint32(rat, (q[0]! | (q[1]! << SPLAT_POSITION_BITS)) >>> 0, true)
+      rdv.setUint32(rat + 4, q[2]!, true)
+      for (let k = 0; k < 4; k++) rotation[k] = quat[i * 4 + k]!
+      rdv.setUint32(rat + 8, packRotation(rotation), true)
+      for (let k = 0; k < 3; k++) q[k] = packUnorm(logs[i * 3 + k]!, smin[k]!, smax[k]!, SCALE_MAX[k]!)
+      rdv.setUint32(rat + 12, packScale(q), true)
+      for (let k = 0; k < 4; k++) colors[slot * SPLAT_COLOR_BYTES + k] = g.colors[i * 4 + k]!
+      if (sh !== null) {
+        let base = slot * shBytes
+        for (let k = 0; k < D; k++) {
+          let sign = g.flip ? SH_FLIP_SIGN[k]! : 1
+          for (let ch = 0; ch < 3; ch++) {
+            let b = Math.round(g.sh![(i * D + k) * 3 + ch]! * sign * SPLAT_SH_BYTE_SCALE + SPLAT_SH_BYTE_ZERO)
+            if (b < 0 || b > 255) {
+              shClamped++
+              b = b < 0 ? 0 : 255
+            }
+            sh[base + k * 3 + ch] = b
+          }
+        }
       }
     }
   }
   if (n === 0) bounds.fill(0)
-  return { count: n, records, bounds, shDegree: g.shDegree, sh }
+  let visible = 0
+  for (let slot = 0; slot < n; slot++) if (stepRatio[slot]! > SPLAT_STEP_VISIBLE) visible++
+  stepRatio.sort()
+  let at = (p: number) => (n === 0 ? 0 : stepRatio[Math.min(n - 1, Math.floor(p * n))]!)
+  return {
+    count: n,
+    records,
+    colors,
+    chunks,
+    order: drawOrder,
+    bounds,
+    shDegree: g.shDegree,
+    sh,
+    antialiased,
+    report: { chunks: chunkCount, positionStep: { median: at(0.5), p99: at(0.99), visibleShare: n === 0 ? 0 : visible / n }, shClamped },
+  }
+}
+
+// Partition the records at order[lo..hi) spatially for chunking, in
+// place: a k-d split at the median of the longest axis, the left size
+// snapped to a whole number of chunks, down to leaves of one chunk, so
+// each chunk is a compact box (no Morton seams). The remainder below a
+// chunk is always the rightmost leaf, the cloud's last partial chunk.
+function kdOrder(order: Uint32Array, lo: number, hi: number, pos: Float32Array): void {
+  let n = hi - lo
+  if (n <= SPLAT_CHUNK_SIZE) return
+  let left = Math.max(SPLAT_CHUNK_SIZE, Math.floor((n + SPLAT_CHUNK_SIZE) / (2 * SPLAT_CHUNK_SIZE)) * SPLAT_CHUNK_SIZE)
+  selectAxis(order, lo, hi, lo + left - 1, longestAxis(order, lo, hi, pos), pos)
+  kdOrder(order, lo, lo + left, pos)
+  kdOrder(order, lo + left, hi, pos)
+}
+
+// The axis with the largest extent over the records at order[lo..hi).
+function longestAxis(order: Uint32Array, lo: number, hi: number, pos: Float32Array): number {
+  let min = [Infinity, Infinity, Infinity]
+  let max = [-Infinity, -Infinity, -Infinity]
+  for (let s = lo; s < hi; s++) {
+    let i = order[s]! * 3
+    for (let k = 0; k < 3; k++) {
+      let p = pos[i + k]!
+      if (p < min[k]!) min[k] = p
+      if (p > max[k]!) max[k] = p
+    }
+  }
+  let axis = 0
+  for (let k = 1; k < 3; k++) if (max[k]! - min[k]! > max[axis]! - min[axis]!) axis = k
+  return axis
+}
+
+// Quickselect over order[lo..hi) on `axis`: afterwards the record at
+// `nth` is where a full sort would put it, everything before it no
+// larger, everything after no smaller (Hoare partitions, in place).
+function selectAxis(order: Uint32Array, lo: number, hi: number, nth: number, axis: number, pos: Float32Array): void {
+  let key = (s: number) => pos[order[s]! * 3 + axis]!
+  let left = lo
+  let right = hi - 1
+  while (right > left) {
+    let mid = (left + right) >> 1
+    let a = key(left)
+    let b = key(mid)
+    let c = key(right)
+    let pivot = a < b ? (b < c ? b : a < c ? c : a) : a < c ? a : b < c ? c : b
+    let i = left
+    let j = right
+    while (i <= j) {
+      while (key(i) < pivot) i++
+      while (key(j) > pivot) j--
+      if (i <= j) {
+        let t = order[i]!
+        order[i] = order[j]!
+        order[j] = t
+        i++
+        j--
+      }
+    }
+    if (nth <= j) right = j
+    else if (nth >= i) left = i
+    else return
+  }
+}
+
+/**
+ * Decode record `slot` of a cloud against its chunk: the reference the
+ * shader's decode agrees with, for tests, tools and any app reading a
+ * bake back (per-record work, so not for whole clouds at runtime).
+ */
+export function decodeRecord(data: SplatData, slot: number): SplatRecord {
+  if (!(Number.isInteger(slot) && slot >= 0 && slot < data.count)) throw new Error("decodeRecord: slot " + slot + " is outside the cloud's " + data.count + " records")
+  let rdv = new DataView(data.records.buffer, data.records.byteOffset + slot * SPLAT_RECORD_BYTES, SPLAT_RECORD_BYTES)
+  let cdv = new DataView(data.chunks.buffer, data.chunks.byteOffset + Math.floor(slot / SPLAT_CHUNK_SIZE) * SPLAT_CHUNK_BYTES, SPLAT_CHUNK_BYTES)
+  let chunk = (f: number) => cdv.getFloat32(f * 4, true)
+  let xy = rdv.getUint32(0, true)
+  let z = rdv.getUint32(4, true) & POSITION_MAX
+  let scale = rdv.getUint32(12, true)
+  let at = slot * SPLAT_COLOR_BYTES
+  return {
+    position: [unpackPosition(xy & POSITION_MAX, chunk(0), chunk(3)), unpackPosition(xy >>> SPLAT_POSITION_BITS, chunk(1), chunk(4)), unpackPosition(z, chunk(2), chunk(5))],
+    scale: [Math.exp(unpackScale(scale, 0, chunk(6), chunk(9))), Math.exp(unpackScale(scale, 1, chunk(7), chunk(10))), Math.exp(unpackScale(scale, 2, chunk(8), chunk(11)))],
+    rotation: unpackRotation(rdv.getUint32(8, true)),
+    color: [data.colors[at]!, data.colors[at + 1]!, data.colors[at + 2]!, data.colors[at + 3]!],
+  }
+}
+
+/**
+ * Decode record `slot`'s SH coefficients beyond DC (coefficient-major,
+ * rgb interleaved: coefficient k of channel c at 3k + c), 3 x ((d + 1)^2
+ * - 1) of them; empty at degree 0.
+ */
+export function decodeSh(data: SplatData, slot: number): Float32Array {
+  if (!(Number.isInteger(slot) && slot >= 0 && slot < data.count)) throw new Error("decodeSh: slot " + slot + " is outside the cloud's " + data.count + " records")
+  let D = SH_COEFFICIENTS[data.shDegree]!
+  let out = new Float32Array(D * 3)
+  if (data.sh === null) return out
+  let base = slot * SPLAT_SH_TEXELS[data.shDegree]! * SPLAT_TEXEL_BYTES
+  for (let j = 0; j < D * 3; j++) out[j] = (data.sh[base + j]! - SPLAT_SH_BYTE_ZERO) / SPLAT_SH_BYTE_SCALE
+  return out
+}
+
+/**
+ * The chunk table's position boxes as the engine's packed key takes them
+ * (`transferRecords`' `packed.bounds`): six floats per chunk, min xyz
+ * then max xyz, in chunk order - the first half of each chunk record.
+ */
+export function splatChunkBounds(data: SplatData): Float32Array {
+  let chunks = data.chunks.byteLength / SPLAT_CHUNK_BYTES
+  let out = new Float32Array(chunks * 6)
+  let dv = new DataView(data.chunks.buffer, data.chunks.byteOffset, data.chunks.byteLength)
+  for (let c = 0; c < chunks; c++) {
+    for (let f = 0; f < 6; f++) out[c * 6 + f] = dv.getFloat32(c * SPLAT_CHUNK_BYTES + f * 4, true)
+  }
+  return out
 }
 
 type Block = { offset: number; bytes: number }
 
-type Header = { count: number; shDegree: number; bounds: number[]; records: Block; sh?: Block }
+type Header = {
+  count: number
+  chunkSize: number
+  shDegree: number
+  antialiased: boolean
+  bounds: number[]
+  records: Block
+  colors: Block
+  chunks: Block
+  order: Block
+  sh?: Block & { encoding: string }
+}
 
 // The SH block's byte length for a cloud: its texels per splat times the
 // count; 0 at degree 0.
@@ -537,48 +881,74 @@ function shBytesOf(count: number, shDegree: number): number {
   return count * SPLAT_SH_TEXELS[shDegree]! * SPLAT_TEXEL_BYTES
 }
 
+// The chunk table's byte length for a cloud.
+function chunkBytesOf(count: number): number {
+  return Math.ceil(count / SPLAT_CHUNK_SIZE) * SPLAT_CHUNK_BYTES
+}
+
+// The shape checks encode and decode share, naming `site`.
+function checkShape(site: string, count: number, shDegree: number, bounds: ArrayLike<number>, records: number, colors: number, chunks: number, order: number, sh: number): void {
+  if (!(Number.isInteger(count) && count >= 0)) throw new Error(site + ": count must be a non-negative integer, got " + count)
+  if (records !== count * SPLAT_RECORD_BYTES) throw new Error(site + ": the record block holds " + records + " bytes, not " + count + " whole splat records")
+  if (colors !== count * SPLAT_COLOR_BYTES) throw new Error(site + ": the color block holds " + colors + " bytes, not " + count + " rgba8 colors")
+  if (chunks !== chunkBytesOf(count)) throw new Error(site + ": the chunk table holds " + chunks + " bytes; " + count + " splats need " + chunkBytesOf(count))
+  if (order !== count * 4) throw new Error(site + ": the order block holds " + order + " bytes, not " + count + " record ids")
+  if (bounds.length !== 6) throw new Error(site + ": bounds must be [minX, minY, minZ, maxX, maxY, maxZ]")
+  if (!(Number.isInteger(shDegree) && shDegree >= 0 && shDegree <= 3)) throw new Error(site + ": shDegree must be 0..3, got " + shDegree)
+  if (sh !== shBytesOf(count, shDegree)) throw new Error(site + ": the SH block holds " + sh + " bytes; degree " + shDegree + " over " + count + " splats needs " + shBytesOf(count, shDegree))
+}
+
 /**
  * Serialize a splat cloud into the .sol3s container, all little-endian:
  * "SOLS" u32 | version u32 | jsonLength u32 | json (padded to 4) |
- * payload. The JSON header carries count, shDegree, bounds and the byte
- * range of the record block and (above degree 0) the SH block; the
- * payload is both blocks verbatim.
+ * payload. The JSON header carries count, chunkSize, shDegree,
+ * antialiased, bounds and the byte range of the record block, the color
+ * block, the chunk table, the order block and (above degree 0) the SH
+ * block with its encoding; the payload is the blocks verbatim.
  */
 export function encodeSplat(data: SplatData): Uint8Array {
-  if (data.records.byteLength !== data.count * SPLAT_RECORD_BYTES) {
-    throw new Error("encodeSplat: records hold " + data.records.byteLength + " bytes, not " + data.count + " whole splat records")
-  }
-  if (data.bounds.length !== 6) throw new Error("encodeSplat: bounds must be [minX, minY, minZ, maxX, maxY, maxZ]")
-  if (!(Number.isInteger(data.shDegree) && data.shDegree >= 0 && data.shDegree <= 3)) throw new Error("encodeSplat: shDegree must be 0..3, got " + data.shDegree)
+  checkShape("encodeSplat", data.count, data.shDegree, data.bounds, data.records.byteLength, data.colors.byteLength, data.chunks.byteLength, data.order.byteLength, data.sh?.byteLength ?? 0)
   let shBytes = shBytesOf(data.count, data.shDegree)
-  if ((data.sh?.byteLength ?? 0) !== shBytes) {
-    throw new Error("encodeSplat: the SH block holds " + (data.sh?.byteLength ?? 0) + " bytes; degree " + data.shDegree + " over " + data.count + " splats needs " + shBytes)
+  let at = 0
+  let next = (bytes: number): Block => {
+    let block = { offset: at, bytes }
+    at += bytes
+    return block
   }
   let header: Header = {
     count: data.count,
+    chunkSize: SPLAT_CHUNK_SIZE,
     shDegree: data.shDegree,
+    antialiased: data.antialiased === true,
     bounds: Array.from(data.bounds),
-    records: { offset: 0, bytes: data.records.byteLength },
+    records: next(data.records.byteLength),
+    colors: next(data.colors.byteLength),
+    chunks: next(data.chunks.byteLength),
+    order: next(data.order.byteLength),
   }
-  if (shBytes > 0) header.sh = { offset: data.records.byteLength, bytes: shBytes }
+  if (shBytes > 0) header.sh = { ...next(shBytes), encoding: "u8" }
   let json = new TextEncoder().encode(JSON.stringify(header))
   let jsonPadded = json.byteLength + ((4 - (json.byteLength % 4)) % 4)
-  let out = new Uint8Array(12 + jsonPadded + data.records.byteLength + shBytes)
+  let out = new Uint8Array(12 + jsonPadded + at)
   let dv = new DataView(out.buffer)
   dv.setUint32(0, MAGIC, true)
   dv.setUint32(4, VERSION, true)
   dv.setUint32(8, json.byteLength, true)
   out.set(json, 12)
-  out.set(data.records, 12 + jsonPadded)
-  if (data.sh !== null && shBytes > 0) out.set(data.sh, 12 + jsonPadded + data.records.byteLength)
+  let payload = 12 + jsonPadded
+  out.set(data.records, payload + header.records.offset)
+  out.set(data.colors, payload + header.colors.offset)
+  out.set(data.chunks, payload + header.chunks.offset)
+  out.set(new Uint8Array(data.order.buffer, data.order.byteOffset, data.order.byteLength), payload + header.order.offset)
+  if (data.sh !== null && shBytes > 0) out.set(data.sh, payload + header.sh!.offset)
   return out
 }
 
 /**
- * Read a .sol3s container back into SplatData. The records and the SH
- * block are VIEWS onto `bytes` (copied once only when the input is not
- * 4-aligned), so the bytes must outlive the data - which is the point:
- * loading a bake is a header parse, and the views upload as-is.
+ * Read a .sol3s container back into SplatData. The blocks are VIEWS onto
+ * `bytes` (copied once only when the input is not 4-aligned), so the
+ * bytes must outlive the data - which is the point: loading a bake is a
+ * header parse, and the views upload as-is.
  */
 export function decodeSplat(bytes: Uint8Array): SplatData {
   if (bytes.byteOffset % 4 !== 0) bytes = new Uint8Array(bytes)
@@ -588,31 +958,30 @@ export function decodeSplat(bytes: Uint8Array): SplatData {
   let version = dv.getUint32(4, true)
   if (version !== VERSION) throw new Error("decodeSplat: version " + version + ", expected " + VERSION + " - re-bake with `sol tool 3d/splat`")
   let jsonLength = dv.getUint32(8, true)
+  if (bytes.byteLength < 12 + jsonLength) throw new Error("decodeSplat: shorter than its header")
   let header: Header = JSON.parse(new TextDecoder().decode(bytes.subarray(12, 12 + jsonLength)))
   let payload = 12 + jsonLength + ((4 - (jsonLength % 4)) % 4)
-  if (header.records.bytes !== header.count * SPLAT_RECORD_BYTES) {
-    throw new Error("decodeSplat: record block holds " + header.records.bytes + " bytes, not " + header.count + " whole splat records")
+  if (header.chunkSize !== SPLAT_CHUNK_SIZE) throw new Error("decodeSplat: chunk size " + header.chunkSize + ", expected " + SPLAT_CHUNK_SIZE)
+  checkShape("decodeSplat", header.count, header.shDegree, header.bounds, header.records?.bytes ?? -1, header.colors?.bytes ?? -1, header.chunks?.bytes ?? -1, header.order?.bytes ?? -1, header.sh?.bytes ?? 0)
+  let block = (b: Block, name: string): Uint8Array => {
+    if (!(Number.isInteger(b.offset) && b.offset >= 0 && b.offset % 4 === 0) || bytes.byteLength < payload + b.offset + b.bytes) throw new Error("decodeSplat: shorter than its " + name + " block (or the block is not 4-aligned)")
+    return bytes.subarray(payload + b.offset, payload + b.offset + b.bytes)
   }
-  if (bytes.byteLength < payload + header.records.offset + header.records.bytes) {
-    throw new Error("decodeSplat: shorter than its " + header.count + " records")
-  }
-  if (!(Number.isInteger(header.shDegree) && header.shDegree >= 0 && header.shDegree <= 3)) {
-    throw new Error("decodeSplat: shDegree " + header.shDegree + " out of range")
-  }
-  let shBytes = shBytesOf(header.count, header.shDegree)
+  let order = block(header.order, "order")
   let sh: Uint8Array | null = null
-  if (shBytes > 0) {
-    if (header.sh === undefined || header.sh.bytes !== shBytes) {
-      throw new Error("decodeSplat: SH block holds " + (header.sh?.bytes ?? 0) + " bytes; degree " + header.shDegree + " over " + header.count + " splats needs " + shBytes)
-    }
-    if (bytes.byteLength < payload + header.sh.offset + shBytes) throw new Error("decodeSplat: shorter than its SH block")
-    sh = bytes.subarray(payload + header.sh.offset, payload + header.sh.offset + shBytes)
+  if (header.sh !== undefined && header.sh.bytes > 0) {
+    if (header.sh.encoding !== "u8") throw new Error("decodeSplat: SH encoding '" + header.sh.encoding + "' is not supported (u8)")
+    sh = block(header.sh, "SH")
   }
   return {
     count: header.count,
-    records: bytes.subarray(payload + header.records.offset, payload + header.records.offset + header.records.bytes),
+    records: block(header.records, "record"),
+    colors: block(header.colors, "color"),
+    chunks: block(header.chunks, "chunk"),
+    order: new Uint32Array(order.buffer, order.byteOffset, header.count),
     bounds: Float32Array.from(header.bounds),
     shDegree: header.shDegree,
     sh,
+    antialiased: header.antialiased === true,
   }
 }
