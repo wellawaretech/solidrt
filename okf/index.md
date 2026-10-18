@@ -790,12 +790,6 @@ Shaped, not started.
   the phone; spz, sogs and ksplat store the same splat in 8-16 bytes with
   chunk-quantized positions and 8-bit SH, and a compressed record would also
   shrink the download and the texture fetch.
-- **[The splat re-sort blocks the UI thread and its spike at 1M is unmeasured](backlog/splat-sort-spike.md)** [2026-09-27]
-  A camera turn past the order gate radix-sorts the cloud's key mirror and
-  republishes the id stream inside the flush, on the UI thread; at 1M splats
-  that is a periodic stall the JS p50 hides and no probe has isolated (p95/max
-  per re-sort on the Pixel 7), so the frame-time cost of the in-engine sort -
-  the design's one unmeasured term - is unknown.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
@@ -2514,6 +2508,12 @@ Finished, kept for the reasoning.
   package of its own, @solidrt/test, a devDependency of every app and a peer
   of core like the router; core's surface and its auto-imported AGENTS.md go
   back to being the app's alone. No runtime or Rust change.
+- **[The sort thread lands on a slow core, so a splat re-sort lags more than it needs to](done/sort-thread-core-placement.md)** [2026-10-18]
+  On the Pixel 7 the order worker sorts 100k keys in about 30 ms where the UI
+  thread did it in 15, and 300k takes the same 30 ms; the thread runs at
+  normal priority beside two display-priority frame threads and is scheduled
+  onto a little core at a low clock, so the order lags the camera by two to
+  four times what a big core would give.
 - **[Collision queries on the spatial index - overlap, shape sweep, move-and-slide](done/spatial-collision-queries.md)** [2026-09-06]
   The only collision tool a game has is the raycast against an undrawn
   collider mesh, so a character walking into a wall, picking up an item or
@@ -2576,6 +2576,12 @@ Finished, kept for the reasoning.
   the key column only, and the data textures should fill from the file block
   in place instead of a padded copy, so the phone's residency and load peak
   both drop.
+- **[The splat re-sort blocks the UI thread and its spike at 1M is unmeasured](done/splat-sort-spike.md)** [2026-10-17]
+  A camera turn past the order gate radix-sorts the cloud's key mirror and
+  republishes the id stream inside the flush, on the UI thread; at 1M splats
+  that is a periodic stall the JS p50 hides and no probe has isolated (p95/max
+  per re-sort on the Pixel 7), so the frame-time cost of the in-engine sort -
+  the design's one unmeasured term - is unknown.
 - **[Standalone APK for a packed app](done/standalone-android-apk.md)** [2026-09-01]
   Shipped 2026-09-01: sol pack --apk patches a per-ABI production runner APK
   (no Android SDK at pack time) with the app's payload, id, label, versionCode

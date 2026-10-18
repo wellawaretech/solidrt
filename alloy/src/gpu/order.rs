@@ -26,11 +26,13 @@
 /// buffer): the shader culls it before any fetch.
 pub const INDEX_NONE: u32 = u32::MAX;
 
-// Digit width of the LSD radix sort: 8 bits = 4 counting passes over u32
-// keys with 256-bucket histograms, the standard cache-friendly split.
-const RADIX_BITS: usize = 8;
+// Digit width of the LSD radix sort over the exact 32-bit key: 11 bits =
+// 3 counting passes (11, 11, 10) with 2048-bucket histograms, one pass
+// fewer than the 8-bit split at the price of a wider scatter; the sort
+// order is the same at any width.
+const RADIX_BITS: usize = 11;
 const RADIX_BUCKETS: usize = 1 << RADIX_BITS;
-const RADIX_PASSES: usize = 32 / RADIX_BITS;
+const RADIX_PASSES: usize = (32 + RADIX_BITS - 1) / RADIX_BITS;
 
 /// Where an entry's per-record sort key comes from. Offsets are BYTE offsets
 /// into one instance record (the public API speaks float offsets; the flux

@@ -62,6 +62,9 @@ pub(crate) struct Unsettled {
   /// Raster commands sent and not yet run (a frame being drawn, an
   /// upload); 0 where no GUI is installed.
   pub raster_queue: usize,
+  /// Instance-order re-sorts on the sort thread, not yet landed; 0 where
+  /// no GUI is installed.
+  pub sort_queue: usize,
 }
 
 impl Unsettled {
@@ -72,17 +75,22 @@ impl Unsettled {
       timer_due: flux::timer_due(ctx),
       idle_due: flux::idle_due(ctx),
       raster_queue: flux::gui::alloy_context(ctx).map_or(0, |atx| atx.raster_counters().queue),
+      sort_queue: flux::gui::alloy_context(ctx).map_or(0, |atx| atx.order_counters().pending),
     }
   }
 
+  fn quiet(&self) -> bool {
+    self.in_flight.is_empty() && self.demand.is_empty() && !self.timer_due && !self.idle_due && self.sort_queue == 0
+  }
+
   fn at_rest(&self) -> bool {
-    self.in_flight.is_empty() && self.demand.is_empty() && !self.timer_due && !self.idle_due && self.raster_queue == 0
+    self.quiet() && self.raster_queue == 0
   }
 
   /// Only the raster thread is still busy: nothing to run a frame for,
   /// just a drain to wait out.
   fn raster_only(&self) -> bool {
-    self.in_flight.is_empty() && self.demand.is_empty() && !self.timer_due && !self.idle_due && self.raster_queue > 0
+    self.quiet() && self.raster_queue > 0
   }
 
   /// What is left, as a sentence part: "frames are still demanded by
@@ -103,6 +111,9 @@ impl Unsettled {
     }
     if self.raster_queue > 0 {
       parts.push(format!("the raster thread still has {} command(s) to run", self.raster_queue));
+    }
+    if self.sort_queue > 0 {
+      parts.push(format!("{} instance order re-sort(s) still run on the sort thread", self.sort_queue));
     }
     parts.join("; ")
   }

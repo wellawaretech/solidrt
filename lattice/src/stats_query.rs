@@ -38,6 +38,8 @@ pub(crate) struct StatsQuery<'a> {
   pub(crate) window: Option<&'a crate::frame_history::WindowSummary>,
   pub(crate) counts: Option<(usize, usize)>,
   pub(crate) raster: Option<alloy::RasterCounters>,
+  /// The instance-order sort thread's counters (alloy `Context::order_counters`).
+  pub(crate) order: Option<alloy::OrderCounters>,
   /// Frames submitted to the raster thread so far (alloy `Context::submitted_frames`).
   pub(crate) submitted_frames: Option<u64>,
   pub(crate) residency: Option<alloy::spatial::ResidencyStats>,
@@ -121,6 +123,14 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
       put("gpuFrameExecMs", (exec / 1000).into());
     }
     put("rasterCmdMs", (rc.cmd_micros / 1000).into());
+  }
+  // The instance-order sort thread: jobs not yet landed, jobs landed, and
+  // the last and slowest job's sort-and-materialize time.
+  if let Some(oc) = r.order {
+    put("orderSortsPending", oc.pending.into());
+    put("orderSorts", oc.sorts.into());
+    put("orderSortMs", round2(oc.last_ms).into());
+    put("orderSortMaxMs", round2(oc.max_ms).into());
   }
   // The residency gate, read live like the raster counters: the resident
   // set now, and cumulative enters and leaves (the window carries its own

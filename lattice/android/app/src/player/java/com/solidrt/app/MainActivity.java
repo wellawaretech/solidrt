@@ -24,7 +24,10 @@ public class MainActivity extends SolidRTActivity {
     // A second dev extra, `sol_env`: "NAME=value" pairs separated by ';',
     // set into the process environment here, before SDL_main, so the
     // runtime's env knobs (SOLIDRT_CADENCE_HOLD for a measurement) reach a
-    // launched client the way a shell export does on desktop.
+    // launched client the way a shell export does on desktop. From `adb
+    // shell am start ...` the value must be quoted for the phone's shell
+    // (--es sol_env 'A=x;B=y'), or that shell splits at the ';' and only
+    // the first pair arrives.
     @Override
     protected String[] getArguments() {
         String[] base = super.getArguments();

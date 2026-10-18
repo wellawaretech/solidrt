@@ -186,6 +186,9 @@ pub fn draw<R>(
   };
   // Before the gate: the ticks' damage is this frame's reason to rebuild.
   let anim_active = tree::tick(ctx);
+  // A re-sort the sort thread finished since the last frame lands now, so
+  // its ids draw in this one.
+  s.gui.alloy.drain_order_results();
   let spatial = spatial::tick(ctx);
   // A video frame the raster thread will latch for this present changes a
   // texture's pixels: noted now, by the same rule the raster applies, so a

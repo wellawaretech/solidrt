@@ -961,7 +961,11 @@ declare module "flux:gpu" {
      * key column only (publishing that buffer through the lease throws,
      * and attaching over whole handed-off records or a different column
      * throws naming both), and `instanceCount` picks the first count x K
-     * records of the mirror.
+     * records of the mirror. Above about 16k records the re-sort runs on
+     * the engine's sort thread: the ids land a sort later (the order lags
+     * the camera by one sort, tens of milliseconds at a million records
+     * on a phone), a frame never waits for it, and a `settle` does; a
+     * smaller population sorts in the flush, exact for the frame.
      */
     indices?: { stride: number }
   }

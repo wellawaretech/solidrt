@@ -869,6 +869,7 @@ async fn try_serve(
                       // latch goes stale exactly when these matter.
                       let atx = flux::gui::alloy_context(&ctx);
                       let raster = atx.as_ref().map(|atx| atx.raster_counters());
+                      let order = atx.as_ref().map(|atx| atx.order_counters());
                       let submitted_frames = atx.as_ref().map(|atx| atx.submitted_frames());
                       let residency = atx.as_ref().map(|atx| atx.spatial().residency_stats());
                       let audio = atx.as_ref().and_then(|atx| atx.audio_stats());
@@ -881,6 +882,7 @@ async fn try_serve(
                         window: window.as_ref(),
                         counts,
                         raster,
+                        order,
                         submitted_frames,
                         residency,
                         audio,
@@ -898,6 +900,7 @@ async fn try_serve(
                       window: window.as_ref(),
                       counts: None,
                       raster: None,
+                      order: None,
                       submitted_frames: None,
                       residency: None,
                       audio: None,

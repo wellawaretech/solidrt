@@ -3085,7 +3085,10 @@ successors) as ordinary content, the model-loading split repeated:
   id stream sorted back to front core-side - the cloud composes as a
   mesh (depth-tested against opaque geometry, placed by the transparent
   entry sort, transformed by its node), a camera turn re-sorts and
-  republishes 4 bytes per splat with zero per-frame JS, and a parked
+  republishes 4 bytes per splat with zero per-frame JS - on the engine's
+  sort thread above ~16k splats, so the frame never waits and the order
+  lags the camera by one sort (tens of ms at 1M on a phone; a test
+  `settle`s before reading it) - and a parked
   camera uploads nothing. Write-once: treat the SplatData as consumed
   and drop it; at 1M splats the cloud is resident as the engine's 12 MB
   key copy plus 32 MB of texture plus a 4 MB id buffer, and

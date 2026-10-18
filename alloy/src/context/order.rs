@@ -1,12 +1,20 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::gpu::{
   gather_ordered, gather_permuted, materialize_indices, order_permutation, BufferIds, BufferStride, InstanceOrder,
-  KeyColumn, OrderScratch, StepMode, MAX_BUFFERS,
+  KeyColumn, OrderCounters, OrderScratch, OrderWorker, SortJob, StepMode, MAX_BUFFERS,
 };
 use crate::raster::RasterCmd;
 
 use super::Context;
+
+// Above this many keys an index-materialized re-sort goes to the sort
+// thread (gpu/order_worker.rs): the ids land a sort later and the frame
+// never waits. Below it the sort runs in the flush, exact for the frame:
+// a few milliseconds on a phone core, less than a frame of lag is worth.
+const SYNC_SORT_MAX_KEYS: usize = 16384;
 
 // The instance-order registry (see gpu/order.rs for the primitive): which
 // draw entries declared an instance order, and - derived - which buffers are
@@ -30,6 +38,15 @@ pub(super) struct InstanceOrders {
   // The sort's reusable working memory, shared by every ordered entry (the
   // UI thread publishes one buffer at a time).
   scratch: OrderScratch,
+  // The sort thread, started at the first re-sort that leaves the UI
+  // thread; None until then, and None after a spawn failure (the registry
+  // then sorts in place).
+  worker: Option<OrderWorker>,
+  worker_failed: bool,
+  // The frame-request latch a finished job sets before waking the loop,
+  // installed by the embedder (`Context::set_frame_request_latch`).
+  latch: Option<Arc<AtomicBool>>,
+  counters: OrderCounters,
 }
 
 struct OrderedEntry {
@@ -51,11 +68,22 @@ struct OrderedEntry {
   // on a direction change; a single-buffer gather entry recomputes at
   // each publish and retains nothing (stage 1's contract, unchanged).
   perm: Vec<u32>,
+  // The asynchronous re-sort (index entries above SYNC_SORT_MAX_KEYS):
+  // the submit counter, the generation in flight (one job at a time per
+  // entry), whether a newer re-sort was asked for while it ran (the
+  // result's landing resubmits: the newest direction wins, nothing
+  // queues up), and the permutation vector the next job fills.
+  generation: u64,
+  in_flight: Option<u64>,
+  wanted: bool,
+  spare: Vec<u32>,
 }
 
 #[derive(Default)]
 struct Mirror {
-  data: Vec<u8>,
+  // Shared with a sort job in flight (an index mirror never changes after
+  // its hand-off; a publish onto a gathered mirror makes its own copy).
+  data: Arc<Vec<u8>>,
   // Record bytes held. A hand-off may hold more records than draw; a
   // publish holds exactly what it published.
   held: usize,
@@ -72,6 +100,10 @@ struct Mirror {
   // index-materialized entry whose attach must declare the same column.
   // None holds whole records, what a gathered entry republishes.
   column: Option<KeyColumn>,
+  // Whether an id write ever reached the buffer (index form): a fresh
+  // buffer is zeroed, which fetches record 0 everywhere, so the first
+  // asynchronous seed writes the sentinel first.
+  ids_written: bool,
 }
 
 impl OrderedEntry {
@@ -134,6 +166,25 @@ impl InstanceOrders {
       by_buffer: HashMap::new(),
       mirrors: HashMap::new(),
       scratch: OrderScratch::default(),
+      worker: None,
+      worker_failed: false,
+      latch: None,
+      counters: OrderCounters::default(),
+    }
+  }
+
+  // Start the sort thread on first use; a spawn failure is logged once and
+  // leaves `worker` None (the registry then sorts in place).
+  fn ensure_worker(&mut self) {
+    if self.worker.is_some() || self.worker_failed {
+      return;
+    }
+    match OrderWorker::spawn() {
+      Ok(worker) => self.worker = Some(worker),
+      Err(e) => {
+        log::warn!("[order] sort thread unavailable, sorting in the flush: {e}");
+        self.worker_failed = true;
+      }
     }
   }
 }
@@ -307,7 +358,20 @@ impl Context {
         seed = mirror.published > 0;
       }
     }
-    orders.entries.insert((target, draw), OrderedEntry { order, key, strides, buffers, perm: Vec::new() });
+    orders.entries.insert(
+      (target, draw),
+      OrderedEntry {
+        order,
+        key,
+        strides,
+        buffers,
+        perm: Vec::new(),
+        generation: 0,
+        in_flight: None,
+        wanted: false,
+        spare: Vec::new(),
+      },
+    );
     seed
   }
 
@@ -355,18 +419,167 @@ impl Context {
     }
     let mut orders = self.orders.borrow_mut();
     let mirror = orders.mirrors.entry(id).or_default();
+    let mut held = Vec::new();
     match key {
-      Some(column) => column.extract(data, &mut mirror.data),
-      None => {
-        mirror.data.clear();
-        mirror.data.extend_from_slice(data);
-      }
+      Some(column) => column.extract(data, &mut held),
+      None => held.extend_from_slice(data),
     }
-    mirror.held = mirror.data.len();
+    mirror.held = held.len();
+    mirror.data = Arc::new(held);
     mirror.published = mirror.published.min(mirror.held);
     mirror.owned = true;
     mirror.column = key;
     Ok(())
+  }
+
+  /// Install the frame-request latch a finished sort job sets before it
+  /// wakes the loop (`PlatformContext::frame_request_handle`), so the ids
+  /// a job made land in a frame even when the app is otherwise idle.
+  pub fn set_frame_request_latch(&self, latch: Arc<AtomicBool>) {
+    self.orders.borrow_mut().latch = Some(latch);
+  }
+
+  /// The sort worker's counters: jobs pending (what the settle gate waits
+  /// for) and the drained jobs' timing.
+  pub fn order_counters(&self) -> OrderCounters {
+    self.orders.borrow().counters
+  }
+
+  /// Land the sort thread's finished jobs: a changed permutation becomes
+  /// the entry's and its ids block goes to the raster thread as the key
+  /// buffer's write; an unchanged one gives the block back to the pool.
+  /// An entry that asked for another re-sort while the job ran resubmits
+  /// here, on the newest direction. Runs once per frame before the spatial
+  /// tick (so a job that finished between frames draws in this one) and at
+  /// every re-sort entry point.
+  pub fn drain_order_results(&self) {
+    let results = {
+      let orders = self.orders.borrow();
+      match &orders.worker {
+        Some(worker) => worker.drain(),
+        None => return,
+      }
+    };
+    if results.is_empty() {
+      return;
+    }
+    let mut resubmit = Vec::new();
+    {
+      let mut orders = self.orders.borrow_mut();
+      let orders = &mut *orders;
+      for done in results {
+        orders.counters.pending = orders.counters.pending.saturating_sub(1);
+        orders.counters.sorts += 1;
+        orders.counters.last_ms = done.work_ms;
+        orders.counters.max_ms = orders.counters.max_ms.max(done.work_ms);
+        let Some(entry) = orders.entries.get_mut(&done.entry) else {
+          self.recycle_block(done.buffer, done.block);
+          continue;
+        };
+        if entry.in_flight != Some(done.generation) {
+          self.recycle_block(done.buffer, done.block);
+          continue;
+        }
+        entry.in_flight = None;
+        let buffer = entry.buffers[entry.key];
+        if buffer != done.buffer || buffer == 0 {
+          // The entry moved to another buffer while the job ran: the ids
+          // belong to the old one, so sort again for the new.
+          self.recycle_block(done.buffer, done.block);
+          entry.wanted = buffer != 0;
+        } else if done.perm != entry.perm {
+          entry.spare = std::mem::replace(&mut entry.perm, done.perm);
+          let len = done.block.len();
+          self.send(RasterCmd::WriteBufferLease {
+            id: buffer,
+            block: done.block,
+            len,
+            recycle: self.block_recycle_tx.clone(),
+          });
+          self.note_buffer_content(buffer);
+        } else {
+          entry.spare = done.perm;
+          self.recycle_block(done.buffer, done.block);
+        }
+        if entry.wanted {
+          entry.wanted = false;
+          resubmit.push(done.entry);
+        }
+      }
+    }
+    for (target, draw) in resubmit {
+      self.rematerialize_retained_order(target, draw);
+    }
+  }
+
+  // A block back to its buffer's pool (dropped when the buffer is gone).
+  fn recycle_block(&self, buffer: u64, block: Vec<u8>) {
+    let sizes = self.buffer_sizes.borrow();
+    self.write_leases.borrow_mut().recycle(buffer, block, |i| sizes.contains_key(&i));
+  }
+
+  // Hand an index entry's re-sort to the sort thread: one job in flight
+  // per entry, a second ask marks the entry wanted. A fresh id buffer gets
+  // the sentinel written in place first, so nothing draws record 0 while
+  // the seed sorts. False when no thread is available (the caller sorts in
+  // the flush).
+  fn submit_order_sort(&self, orders: &mut InstanceOrders, target: u64, draw: u64) -> bool {
+    let latch = orders.latch.clone();
+    let wake = self.frame_wake.clone();
+    orders.ensure_worker();
+    let Some(worker) = orders.worker.as_ref() else {
+      return false;
+    };
+    let entry = orders.entries.get_mut(&(target, draw)).expect("the caller resolved the entry");
+    if entry.in_flight.is_some() {
+      entry.wanted = true;
+      return true;
+    }
+    let buffer = entry.buffers[entry.key];
+    let Ok(size) = self.gpu_buffer_len(buffer) else {
+      return false;
+    };
+    let mirror = orders.mirrors.get_mut(&buffer).expect("the caller resolved the mirror");
+    if !mirror.ids_written {
+      mirror.ids_written = true;
+      let mut dst = self.write_leases.borrow_mut().take_free(buffer, size);
+      materialize_indices(&entry.perm, &mut dst[..size]);
+      self.send(RasterCmd::WriteBufferLease {
+        id: buffer,
+        block: dst,
+        len: size,
+        recycle: self.block_recycle_tx.clone(),
+      });
+      self.note_buffer_content(buffer);
+    }
+    entry.generation += 1;
+    let generation = entry.generation;
+    let done: Box<dyn FnOnce() + Send> = Box::new(move || {
+      if let Some(latch) = &latch {
+        latch.store(true, Ordering::Relaxed);
+      }
+      if let Some(wake) = &wake {
+        wake();
+      }
+    });
+    let job = SortJob {
+      entry: (target, draw),
+      buffer,
+      generation,
+      order: entry.order.mirror_order(),
+      stride: entry.mirror_stride(),
+      keys: mirror.data.clone(),
+      len: mirror.published,
+      perm: std::mem::take(&mut entry.spare),
+      block: self.write_leases.borrow_mut().take_free(buffer, size),
+      done: Some(done),
+    };
+    if !worker.submit(job) {
+      return false;
+    }
+    entry.in_flight = Some(generation);
+    orders.counters.pending += 1;
+    true
   }
 
   /// Follow an ordered entry's instance count into the published prefix of
@@ -491,8 +704,11 @@ impl Context {
     // The republish takes pooled blocks; give it the raster thread's
     // returns first, or a camera-driven re-sort stream (no lease call
     // anywhere) mints a fresh block per re-sort while the returns pile up
-    // unread - the leak that killed a phone at splat scale.
+    // unread - the leak that killed a phone at splat scale. A finished
+    // sort lands first too, so a resubmit compares against the newest
+    // permutation.
     self.drain_recycled_blocks();
+    self.drain_order_results();
     let mut orders = self.orders.borrow_mut();
     let orders = &mut *orders;
     let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
@@ -512,13 +728,25 @@ impl Context {
     if len == 0 {
       return;
     }
+    let keys = len / entry.mirror_stride();
+    if entry.order.indices.is_some() && keys > SYNC_SORT_MAX_KEYS && self.submit_order_sort(orders, target, draw) {
+      return;
+    }
+    let entry = orders.entries.get_mut(&(target, draw)).expect("resolved above");
+    let mirror = orders.mirrors.get(&key_buffer).expect("resolved above");
     order_permutation(&entry.order.mirror_order(), entry.mirror_stride(), &mirror.data[..len], &mut orders.scratch);
     if orders.scratch.perm() == entry.perm.as_slice() {
       return;
     }
     entry.perm.clear();
     entry.perm.extend_from_slice(orders.scratch.perm());
+    let indexed = entry.order.indices.is_some();
     self.republish_slots(entry, &orders.mirrors, None);
+    if indexed {
+      if let Some(mirror) = orders.mirrors.get_mut(&key_buffer) {
+        mirror.ids_written = true;
+      }
+    }
   }
 
   /// A destroyed buffer stops resolving as ordered (its id is retired), and
@@ -590,8 +818,9 @@ impl Context {
       return Ok(dst);
     }
     let mirror = orders.mirrors.entry(id).or_default();
-    mirror.data.resize(len.max(mirror.data.len()), 0);
-    mirror.data[..len].copy_from_slice(&block[..len]);
+    let data = Arc::make_mut(&mut mirror.data);
+    data.resize(len.max(data.len()), 0);
+    data[..len].copy_from_slice(&block[..len]);
     mirror.held = len;
     mirror.published = len;
     mirror.owned = false;
@@ -650,8 +879,9 @@ impl Context {
     }
     // The mirror doubles as the byte staging for the f32 values.
     let mirror = orders.mirrors.entry(id).or_default();
-    mirror.data.resize(len.max(mirror.data.len()), 0);
-    for (v, out) in values.iter().zip(mirror.data.chunks_exact_mut(4)) {
+    let data = Arc::make_mut(&mut mirror.data);
+    data.resize(len.max(data.len()), 0);
+    for (v, out) in values.iter().zip(data.chunks_exact_mut(4)) {
       out.copy_from_slice(&v.to_ne_bytes());
     }
     mirror.held = len;

@@ -214,6 +214,9 @@ pub struct GuiHost {
 /// tree itself.
 pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let GuiHost { platform, alloy, render_tree, alloy_cmd_tx, teardown } = host;
+  // A sort job finishing on the sort thread latches a frame request before
+  // it wakes the loop, like a camera frame or a glyph cell.
+  alloy.set_frame_request_latch(platform.frame_request_handle());
   // navigator.clipboard is a web-standard surface (standards_plugins) that
   // marshals alloy commands, so it installs here at the gui seam.
   let clipboard_cmd_tx = alloy_cmd_tx.clone();

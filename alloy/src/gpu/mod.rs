@@ -14,6 +14,7 @@ mod glyphs;
 mod lease;
 mod limits;
 mod order;
+mod order_worker;
 pub(crate) mod resources;
 pub(crate) mod spec;
 pub(crate) mod texture;
@@ -28,6 +29,7 @@ pub use order::{
   gather_ordered, gather_permuted, materialize_indices, order_permutation, InstanceOrder, KeyColumn, OrderKey,
   OrderScratch, INDEX_NONE,
 };
+pub use order_worker::{OrderCounters, OrderWorker, SortJob};
 pub use resources::{
   GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo,
   GpuResources, GpuTextureInfo, GpuWindowShaderInfo, LostContent,

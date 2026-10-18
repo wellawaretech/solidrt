@@ -1,7 +1,9 @@
 use crate::gpu::{
   gather_ordered, gather_permuted, materialize_indices, order_permutation, InstanceOrder, KeyColumn, OrderKey,
-  OrderScratch, INDEX_NONE,
+  OrderScratch, OrderWorker, SortJob, INDEX_NONE,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 // Pack f32 records into the byte shape the lease block holds.
 fn bytes(floats: &[f32]) -> Vec<u8> {
@@ -339,4 +341,46 @@ fn key_column_extracts_what_the_sort_reads() {
   order_permutation(&order, 16, &records, &mut whole);
   assert_eq!(scratch.perm(), whole.perm(), "the column sorts as the records do");
   assert_eq!(field(2).mirror_order(), field(2), "a gathered order reads its records as declared");
+}
+
+// The sort thread: a job's key column sorts to the same permutation the
+// in-place sort gives, the ids land in the job's block with the sentinel
+// past them, the `done` hook ran, and dropping the worker joins the
+// thread.
+#[test]
+fn sort_worker_round_trips_a_job() {
+  let keys = Arc::new(bytes(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]));
+  let order = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(12.0))
+    .expect("parses")
+    .mirror_order();
+  let worker = OrderWorker::spawn().expect("a sort thread");
+  let done = Arc::new(AtomicBool::new(false));
+  let flag = done.clone();
+  let job = SortJob {
+    entry: (7, 1),
+    buffer: 3,
+    generation: 1,
+    order,
+    stride: 12,
+    keys: keys.clone(),
+    len: keys.len(),
+    perm: Vec::new(),
+    block: vec![0u8; 5 * 4],
+    done: Some(Box::new(move || flag.store(true, Ordering::Relaxed))),
+  };
+  assert!(worker.submit(job));
+  let mut results = Vec::new();
+  let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+  while results.is_empty() && std::time::Instant::now() < deadline {
+    results = worker.drain();
+    std::thread::sleep(std::time::Duration::from_millis(1));
+  }
+  let result = results.pop().expect("the job came back");
+  assert_eq!((result.entry, result.buffer, result.generation), ((7, 1), 3, 1));
+  assert_eq!(result.perm, vec![2, 1, 0], "descending depth along +z");
+  let ids: Vec<u32> = result.block.chunks_exact(4).map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]])).collect();
+  assert_eq!(ids, vec![2, 1, 0, INDEX_NONE, INDEX_NONE]);
+  assert!(done.load(Ordering::Relaxed), "the done hook ran");
+  assert!(result.work_ms >= 0.0);
+  drop(worker);
 }

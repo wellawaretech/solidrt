@@ -6,7 +6,9 @@
 // over the view's center: the nearer one is drawn last, so its color is
 // the pixel; the camera crossing to the other side re-sorts the engine's
 // key column and the other splat wins; a count of 0 draws nothing until
-// setRecordCount publishes the prefix.
+// setRecordCount publishes the prefix. A cloud above the engine's
+// in-place sort size takes the same path through the sort thread: the
+// ids land a sort later, which `settle` waits out.
 
 import { test, expect } from "@solidrt/test"
 import type { Pixels, RefLocator, TestApp } from "@solidrt/test"
@@ -25,6 +27,11 @@ const SOLID = 240
 const FAINT = 16
 const RED = [255, 0, 0, 255]
 const BLUE = [0, 0, 255, 255]
+// Above the engine's in-place sort size (16384 keys): the cloud's re-sort
+// runs on the sort thread. The filler splats sit far off to the side,
+// invisible, so the two at the center decide the pixel.
+const LARGE_CLOUD = 20000
+const FILLER_X = 1000
 
 // A .splat record: position, linear scale, color bytes, quaternion
 // (w, x, y, z) quantized v * 128 + 128; the identity rotation at the
@@ -90,6 +97,24 @@ test("a splat cloud paints back to front from the engine's key column, re-sorted
   expectColor(center(await app.painted(leaf)), BLUE)
   // From -z the far (red) one is nearer: the engine re-sorts its column.
   s.setCamera({ position: [0, 0, -DISTANCE], target: [0, 0, 0] })
+  expectColor(center(await app.painted(leaf)), RED)
+  disposeInstances(mesh)
+})
+
+test("a large cloud sorts on the sort thread: the camera crossing lands after a settle", async app => {
+  let { scene: s, mesh, leaf } = await mounted(app, () => {
+    let s = scene()
+    let splats = [{ p: [0, 0, 0], c: RED }, { p: [0, 0, NEAR_Z], c: BLUE }]
+    for (let i = 2; i < LARGE_CLOUD; i++) splats.push({ p: [FILLER_X + i, 0, 0], c: RED })
+    let data = parseSplat(dotSplat(splats), { keepOrientation: true })
+    let mesh: SplatMeshNode = createSplatMesh(data, { label: "splat-mesh-large" })
+    add(s.root, mesh)
+    return { scene: s, mesh }
+  })
+  await app.settle()
+  expectColor(center(await app.painted(leaf)), BLUE)
+  s.setCamera({ position: [0, 0, -DISTANCE], target: [0, 0, 0] })
+  await app.settle()
   expectColor(center(await app.painted(leaf)), RED)
   disposeInstances(mesh)
 })

@@ -718,13 +718,7 @@ pub const WINDOW_SWAP_INTERVAL: i32 = 1;
 /// and harmless), macOS and Windows always accept their calls.
 pub fn frame_thread_priority(critical: bool) {
   #[cfg(any(target_os = "android", target_os = "linux"))]
-  unsafe {
-    let nice = if critical { -8 } else { -4 };
-    let tid = libc::gettid();
-    if libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, nice) != 0 {
-      log::debug!("[alloy] setpriority({nice}) not permitted for thread {tid}");
-    }
-  }
+  thread_nice(if critical { -8 } else { -4 });
   #[cfg(target_os = "macos")]
   unsafe {
     let class = if critical {
@@ -745,6 +739,197 @@ pub fn frame_thread_priority(critical: bool) {
     if SetThreadPriority(GetCurrentThread(), priority) == 0 {
       log::debug!("[alloy] SetThreadPriority({priority}) failed");
     }
+  }
+}
+
+/// The nice value of a latency worker on Android and Linux: between the UI
+/// thread's -4 and the default 0, so the frame tier keeps its precedence
+/// over the worker and the worker has its own over the process's
+/// background threads. A thread inherits its spawner's nice, so for a
+/// worker the UI thread starts this is a step down, not a boost. SDL's
+/// own `SDL_THREAD_PRIORITY_HIGH` is -10 there, above the raster thread,
+/// which is why the worker does not use it.
+const LATENCY_WORKER_NICE: i32 = -2;
+
+/// The utilization floor a latency worker asks the scheduler for, on the
+/// kernel's 0..1024 capacity scale; 1024 is the largest core at its top
+/// clock. A worker that runs tens of milliseconds a few times a second has
+/// a low average utilization, and an energy-aware scheduler answers that
+/// average with a little core at a low clock; the floor replaces the
+/// average with what the burst needs.
+const LATENCY_WORKER_UTIL_MIN: u32 = 1024;
+
+/// The placement `latency_worker_thread_priority` gave a thread, kept so
+/// the thread can re-assert it: the nice value and the utilization floor
+/// stick, but a hard affinity does not survive a cpuset move (Android
+/// rewrites a thread's allowed cores when the app changes between its
+/// top-app, foreground and background groups, and the Pixel 7 returns from
+/// the background with the pin gone), so a pinned worker calls
+/// `reassert` before each job. While the app sits in a group without the
+/// pinned cores the re-pin fails and the thread runs where the group
+/// allows; the next job in the top-app group restores it.
+pub struct LatencyPlacement {
+  /// The cores the thread was pinned to; empty when it was not.
+  cores: Vec<usize>,
+}
+
+impl LatencyPlacement {
+  /// Re-apply the pin, when there is one.
+  pub fn reassert(&self) {
+    if !self.cores.is_empty() {
+      pin_thread_to(&self.cores);
+    }
+  }
+}
+
+/// Give the calling thread the placement of a latency worker: a thread whose
+/// duration is lag the user sees but never a frame's deadline (the sort
+/// thread: the splat order lags the camera by one sort). Below the frame
+/// tier (`frame_thread_priority`) and above the default, on a performance
+/// core: on Linux a nice value plus a utilization floor through
+/// `sched_setattr`, and where the floor is refused a hard affinity to the
+/// cores above the smallest capacity. Android refuses the floor by policy
+/// (its kernel makes any clamp change depend on CAP_SYS_NICE, which no app
+/// has), so there the pin is the placement; measured on the Pixel 7 it is
+/// what moves the sort, nice alone moves nothing. macOS places by QoS and a
+/// thread at the default QoS already runs on the performance cores; Windows
+/// has no placement hint; both are no-ops. Best-effort everywhere, like
+/// `frame_thread_priority`: desktop Linux denies the nice, and the floor
+/// only costs clock on a uniform CPU.
+pub fn latency_worker_thread_priority() -> LatencyPlacement {
+  thread_nice(LATENCY_WORKER_NICE);
+  if thread_util_min(LATENCY_WORKER_UTIL_MIN) {
+    return LatencyPlacement { cores: Vec::new() };
+  }
+  let cores = performance_cores();
+  if !cores.is_empty() && pin_thread_to(&cores) {
+    log::debug!("[alloy] latency worker pinned to cpus {cores:?}");
+    LatencyPlacement { cores }
+  } else {
+    LatencyPlacement { cores: Vec::new() }
+  }
+}
+
+/// Set the calling thread's nice value (Android and Linux; a no-op
+/// elsewhere). Whether the kernel accepted it: desktop Linux typically
+/// denies a negative value to an unprivileged process (EPERM, logged at
+/// debug and harmless).
+pub fn thread_nice(nice: i32) -> bool {
+  #[cfg(any(target_os = "android", target_os = "linux"))]
+  unsafe {
+    let tid = libc::gettid();
+    if libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, nice) != 0 {
+      log::debug!("[alloy] setpriority({nice}) not permitted for thread {tid}");
+      return false;
+    }
+    true
+  }
+  #[cfg(not(any(target_os = "android", target_os = "linux")))]
+  {
+    let _ = nice;
+    false
+  }
+}
+
+/// Ask the scheduler for a utilization floor for the calling thread
+/// (Linux 5.3 and later with utilization clamping): `util` on the 0..1024
+/// capacity scale, the policy and the nice value left as they are. Whether
+/// the kernel took it: a kernel without the clamp refuses (ENOSYS,
+/// EOPNOTSUPP or EINVAL) and Android refuses an unprivileged caller
+/// (EPERM), both logged at debug.
+pub fn thread_util_min(util: u32) -> bool {
+  #[cfg(any(target_os = "android", target_os = "linux"))]
+  unsafe {
+    // `struct sched_attr` with the clamp fields (SCHED_ATTR_SIZE_VER1); the
+    // libc crate declares the older, shorter version and no wrapper.
+    #[repr(C)]
+    struct SchedAttr {
+      size: u32,
+      sched_policy: u32,
+      sched_flags: u64,
+      sched_nice: i32,
+      sched_priority: u32,
+      sched_runtime: u64,
+      sched_deadline: u64,
+      sched_period: u64,
+      sched_util_min: u32,
+      sched_util_max: u32,
+    }
+    const SCHED_ATTR_SIZE_VER1: u32 = 56;
+    const SCHED_FLAG_KEEP_POLICY: u64 = 0x08;
+    const SCHED_FLAG_KEEP_PARAMS: u64 = 0x10;
+    const SCHED_FLAG_UTIL_CLAMP_MIN: u64 = 0x20;
+    let attr = SchedAttr {
+      size: SCHED_ATTR_SIZE_VER1,
+      sched_policy: 0,
+      sched_flags: SCHED_FLAG_KEEP_POLICY | SCHED_FLAG_KEEP_PARAMS | SCHED_FLAG_UTIL_CLAMP_MIN,
+      sched_nice: 0,
+      sched_priority: 0,
+      sched_runtime: 0,
+      sched_deadline: 0,
+      sched_period: 0,
+      sched_util_min: util,
+      sched_util_max: 0,
+    };
+    let calling_thread: libc::pid_t = 0;
+    let flags: libc::c_uint = 0;
+    if libc::syscall(libc::SYS_sched_setattr, calling_thread, &attr as *const SchedAttr, flags) != 0 {
+      log::debug!("[alloy] sched_setattr(util_min={util}) refused: {}", std::io::Error::last_os_error());
+      return false;
+    }
+    true
+  }
+  #[cfg(not(any(target_os = "android", target_os = "linux")))]
+  {
+    let _ = util;
+    false
+  }
+}
+
+/// The cores above the smallest capacity, from the kernel's per-cpu
+/// `cpu_capacity` (Android and Linux): on the Pixel 7 the two mid and two
+/// big cores beside four little ones. Empty on a uniform CPU, where the
+/// files say one capacity, or without the files.
+pub fn performance_cores() -> Vec<usize> {
+  #[cfg(any(target_os = "android", target_os = "linux"))]
+  {
+    let max_cpus = std::mem::size_of::<libc::cpu_set_t>() * 8;
+    let mut capacities: Vec<(usize, u32)> = Vec::new();
+    for cpu in 0..max_cpus {
+      let Ok(text) = std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{cpu}/cpu_capacity")) else { break };
+      let Ok(capacity) = text.trim().parse::<u32>() else { break };
+      capacities.push((cpu, capacity));
+    }
+    let Some(least) = capacities.iter().map(|&(_, capacity)| capacity).min() else { return Vec::new() };
+    capacities.iter().filter(|&&(_, capacity)| capacity > least).map(|&(cpu, _)| cpu).collect()
+  }
+  #[cfg(not(any(target_os = "android", target_os = "linux")))]
+  {
+    Vec::new()
+  }
+}
+
+/// Pin the calling thread to `cores` (Android and Linux; false elsewhere).
+/// Whether the kernel took it: it refuses a set with no core the thread's
+/// cpuset allows (EINVAL, logged at debug).
+pub fn pin_thread_to(cores: &[usize]) -> bool {
+  #[cfg(any(target_os = "android", target_os = "linux"))]
+  unsafe {
+    let mut set: libc::cpu_set_t = std::mem::zeroed();
+    libc::CPU_ZERO(&mut set);
+    for &cpu in cores {
+      libc::CPU_SET(cpu, &mut set);
+    }
+    if libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set) != 0 {
+      log::debug!("[alloy] sched_setaffinity({cores:?}) refused: {}", std::io::Error::last_os_error());
+      return false;
+    }
+    true
+  }
+  #[cfg(not(any(target_os = "android", target_os = "linux")))]
+  {
+    let _ = cores;
+    false
   }
 }
 
