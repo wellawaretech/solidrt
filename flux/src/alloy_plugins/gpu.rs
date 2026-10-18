@@ -181,8 +181,9 @@ fn collect_label(opts: &Option<Object<'_>>) -> rquickjs::Result<Option<String>> 
 
 // Decode the { format? } pixel format the pixel-upload creates accept
 // ("rgba8" default | "rgba8-srgb" | "r8" | "r32f" | "rgba32f" | "rgba16f" |
-// "rgba32ui" | the compressed "etc2-rgba8"/"bc7-rgba8" and their "-srgb"
-// twins); an unknown value throws at the create call site.
+// the integer "rgba32ui" | "r8ui" | "rg8ui" | "rgba8ui" | the compressed
+// "etc2-rgba8"/"bc7-rgba8" and their "-srgb" twins); an unknown value
+// throws at the create call site.
 fn collect_format(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<alloy::TextureFormat> {
   let format = match opts {
     Some(o) => o.get::<_, Option<String>>("format")?,
@@ -192,8 +193,9 @@ fn collect_format(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquick
 }
 
 // The pixel payload of a texture create/upload. The view type must match the
-// id's format - byte formats take a Uint8Array, float formats a Float32Array,
-// the integer format a Uint32Array - so float data handed as raw bytes (or
+// id's format - byte formats (the 8-bit integer formats included) take a
+// Uint8Array, float formats a Float32Array, the 32-bit integer format a
+// Uint32Array - so float data handed as raw bytes (or
 // the reverse) throws at the call site instead of uploading a
 // reinterpretation. Held (not just borrowed) so the JS buffer stays pinned
 // while the bytes are read. The half-float format takes the same
@@ -208,7 +210,7 @@ enum PixelData<'js> {
 
 impl<'js> PixelData<'js> {
   fn collect(ctx: &Ctx<'_>, data: Value<'js>, format: alloy::TextureFormat, api: &str) -> rquickjs::Result<Self> {
-    if format.is_uint() {
+    if format.is_uint32() {
       return TypedArray::<u32>::from_value(data)
         .map(PixelData::Uints)
         .map_err(|_| throw_str(ctx, &format!("{api}: {} data must be a Uint32Array", format.name())));

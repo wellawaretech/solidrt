@@ -71,7 +71,9 @@ thread), `alloy/src/context/order.rs` (the registry and the mirrors),
    components over [-1/sqrt2, 1/sqrt2] in 1022 steps so zero is exact),
    scale as 11/10/11-bit unorms over the chunk's log-scale box (log
    clamped to [-12, 10]), color as rgba8 in the color block, SH as a
-   byte per coefficient, spz's (byte - 128) / 128, in 1/2/3 texels.
+   palette code per subspace (`pq`, the default: 2/4/8 label bytes per
+   splat at degree 1/2/3 plus a 32 KB palette, D11) or as a byte per
+   coefficient, spz's (byte - 128) / 128, in 1/2/3 texels (`u8`).
 5. **Rank**: importance per splat, the order block as record ids.
 6. **Report**: the chunk position step over each splat's largest axis
    (median, 99th percentile, the share above `SPLAT_STEP_VISIBLE`), the
@@ -79,24 +81,29 @@ thread), `alloy/src/context/order.rs` (the registry and the mirrors),
    says what it lost.
 7. **Container** (`encodeSplat` / `decodeSplat`): "SOLS" | version 3 |
    JSON header (count, chunkSize, shDegree, antialiased, bounds, block
-   ranges, the SH block's `encoding`) | records | colors | chunks |
-   order | SH. Decode views the bytes; version 2 is refused with the
-   re-bake message.
+   ranges, the SH block's `encoding` and under pq its `palette` block) |
+   records | colors | chunks | order | SH (labels or coefficient texels)
+   | palette, every block 4-aligned. Decode views the bytes; version 2
+   is refused with the re-bake message.
 8. **Runtime** (`createSplatMesh`): a RecordMesh in the INDEXED form
    over the stock material for (shDegree, antialiased). The record block
    is handed to the core with the packed key (`transferRecords(id,
    records, { stride: 16, position: 0, packed: { format: "unorm16x3",
    chunk: 256, bounds }, order })`) and uploaded in row bands, in place,
    as `uSplatRecords`; the chunk table as `uSplatChunks` (rgba32f, 3
-   texels per chunk), the colors as `uSplatColors` (rgba8), the SH block
-   as `uSplatSh`. The header bounds are the cull and picking box.
+   texels per chunk), the colors as `uSplatColors` (rgba8), the SH labels
+   as `uSplatShLabels` (an 8-bit integer texture, `rg8ui` or `rgba8ui`)
+   beside the palette `uSplatShPalette` (rgba32ui, 256 x subspaces
+   texels), or the u8 block as `uSplatSh`. The header bounds are the cull
+   and picking box.
 9. **Vertex stage**: the id from the instance's 16 ids by quad, the
    record texel, the chunk's three texels, the decode (`decodeRecord`
    in splat-data.ts is the reference it must agree with), the covariance
    R S St Rt rebuilt, the projection through the Jacobian of
    `uViewProj * uModel` (no focal or view uniforms), the 0.3 px^2
    dilation, optionally the Mip-Splatting compensation, the SH bands per
-   corner from `uCamPos`.
+   corner from `uCamPos` (under pq: the label texels, one palette texel
+   per subspace, green plus the chroma differences per coefficient).
 10. **Fragment**: the gaussian falloff times opacity, cut at e^-4 and
     below 1/255, capped at 0.99 (the reference rasterizer's cap),
     premultiplied out.
@@ -183,10 +190,38 @@ mapped id materialization (a random gather) costs about 25%. Rejected
 for now: carrying (key, id) as one u64 through the radix passes (would
 also delete the per-pass random key read); the phone showed no need.
 
-**D11. SH as bytes, a palette later.** spz's byte encoding halves the SH
-texture against halves and round-trips an spz exactly; the header's
-`encoding` field makes a palette encoding additive
-([backlog/splat-palette-sh.md](../backlog/splat-palette-sh.md)).
+**D11. SH as a product-quantized palette over luma and chroma planes
+per band, 256 codes each; bytes kept as the exact encoding.** The SH3
+block was 48 MB at 1M as bytes and is 8 MB of labels plus a 32 KB
+palette as `pq`: each coefficient's rgb becomes green and the red and
+blue differences from green (exact on the byte lattice), the planes are
+cut by band into eight subspaces (luma and chroma of band 1, of band 2,
+of band 3 in two halves; 3 to 10 bytes each, one palette texel), each
+clustered at bake by k-means (k-means++ on a 64k sample, Lloyd on the
+sample then the whole cloud, the centroids rounded into the byte domain
+before the final assignment, deterministic). The label texture is 8-bit
+integer (`rg8ui`/`rgba8ui`, added to the engine's formats for this) and
+the palette is cache-resident; the vertex stage trades its 1/2/3 random
+SH fetches for the label texel(s) plus 2/4/8 palette fetches, which the
+Pixel 7 priced at 0.6 ms (3%) more per frame at full fill (21.1 to 21.8
+ms, 848 MHz) and a wash on the vertex-only rung - the return is memory,
+not frame time. Decided on the lizard against the u8 bake (snapshot diff
+and crops):
+mean 0.67/255 at the default pose and 0.90 close, max 35/41, the head
+tile 0.7, the foliage's view-dependent purple intact. Rejected, all
+measured on the same cloud: one codebook per BAND over rgb (4 x 256,
+4 bytes per splat), which kept 0.3 of the SH chroma norm at the median
+and turned the purple foliage gray because the cloud's SH mass is
+achromatic and mass-driven codes lie along the gray axis; a 65536-code
+tree VQ over the whole vector (2 bytes per splat), which trimmed the
+extreme tail but kept the same chroma loss and a worse bulk error; luma
+and chroma each as one 15-coefficient subspace (3 bytes), which keeps
+chroma but doubles the luma error because band 3 carries most of it;
+and the two-byte-shorter 6-subspace split with band 3's luma whole,
+measured at twice the luma error. The byte encoding (`u8`) stays for
+the exact spz round trip and as the reference a palette bake is judged
+against ([done/splat-palette-sh.md](../done/splat-palette-sh.md),
+[notes/splat-palette-sh.md](../notes/splat-palette-sh.md)).
 
 **D12. The reference rasterizer's two rules ride along.** The 0.99 alpha
 cap, and the Mip-Splatting compensation behind a per-capture header flag

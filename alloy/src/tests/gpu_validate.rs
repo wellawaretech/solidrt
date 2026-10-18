@@ -478,9 +478,9 @@ fn bound(shape: TextureShape, format: TextureFormat) -> BoundTexture {
   BoundTexture { shape, format }
 }
 
-/// A registry of seven ids: 1 a 2D rgba8, 2 a cube map, 3 a depth texture,
+/// A registry of eight ids: 1 a 2D rgba8, 2 a cube map, 3 a depth texture,
 /// 4 an integer (rgba32ui) texture, 5 a 3D texture, 6 an array texture, 7
-/// an integer 3D texture.
+/// an integer 3D texture, 8 an 8-bit integer (rgba8ui) texture.
 fn lookup(id: u64) -> Option<BoundTexture> {
   match id {
     1 => Some(bound(TextureShape::D2, TextureFormat::Rgba8)),
@@ -490,6 +490,7 @@ fn lookup(id: u64) -> Option<BoundTexture> {
     5 => Some(bound(TextureShape::D3, TextureFormat::Rgba8)),
     6 => Some(bound(TextureShape::D2Array, TextureFormat::Rgba8)),
     7 => Some(bound(TextureShape::D3, TextureFormat::Rgba32ui)),
+    8 => Some(bound(TextureShape::D2, TextureFormat::Rgba8ui)),
     _ => None,
   }
 }
@@ -558,7 +559,7 @@ fn binding_shapes_pair_integer_volumes_with_integer_samplers() {
   assert_eq!(validate_binding_shapes(&t, &[TextureBinding::new("uBricks", 7)], lookup), Ok(()));
   let err = validate_binding_shapes(&t, &[TextureBinding::new("uBricks", 5)], lookup)
     .expect_err("rgba8 volume on usampler3D must error");
-  assert!(err.contains("usampler3D") && err.contains("rgba32ui"), "{err}");
+  assert!(err.contains("usampler3D") && err.contains("integer-format texture"), "{err}");
   let err = validate_binding_shapes(&t, &[TextureBinding::new("uVolume", 7)], lookup)
     .expect_err("rgba32ui volume on sampler3D must error");
   assert!(err.contains("integer texels") && err.contains("declare it usampler3D"), "{err}");
@@ -591,18 +592,23 @@ fn binding_shapes_require_depth_behind_compare_sampler() {
   assert!(err.contains("cube map"), "{err}");
 }
 
-// An integer texture binds only behind a usampler2D, and a usampler2D takes
-// nothing else: both mismatches sample undefined values in GL.
+// An integer texture (32-bit or 8-bit) binds only behind a usampler2D, and
+// a usampler2D takes nothing else: both mismatches sample undefined values
+// in GL.
 #[test]
 fn binding_shapes_pair_integer_textures_with_integer_samplers() {
   let t = table(&[("uRecords", UniformKind::USampler2D), ("uTex", UniformKind::Sampler2D)]);
   assert_eq!(validate_binding_shapes(&t, &[TextureBinding::new("uRecords", 4)], lookup), Ok(()));
+  assert_eq!(validate_binding_shapes(&t, &[TextureBinding::new("uRecords", 8)], lookup), Ok(()));
   let err = validate_binding_shapes(&t, &[TextureBinding::new("uRecords", 1)], lookup)
     .expect_err("rgba8 on usampler2D must error");
-  assert!(err.contains("usampler2D") && err.contains("rgba32ui"), "{err}");
+  assert!(err.contains("usampler2D") && err.contains("integer-format texture") && err.contains("rgba8ui"), "{err}");
   let err = validate_binding_shapes(&t, &[TextureBinding::new("uTex", 4)], lookup)
     .expect_err("rgba32ui on sampler2D must error");
-  assert!(err.contains("integer texels") && err.contains("usampler2D"), "{err}");
+  assert!(err.contains("rgba32ui (integer texels)") && err.contains("usampler2D"), "{err}");
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uTex", 8)], lookup)
+    .expect_err("rgba8ui on sampler2D must error");
+  assert!(err.contains("rgba8ui (integer texels)") && err.contains("usampler2D"), "{err}");
   assert!(UniformKind::USampler2D.is_sampler());
   assert_eq!(UniformKind::USampler2D.sampler_shape(), Some(TextureShape::D2));
   assert_eq!(UniformKind::USampler2D.components(), None);

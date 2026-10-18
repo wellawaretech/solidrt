@@ -78,6 +78,60 @@ export const SPLAT_SH_TEXELS = [0, 1, 2, 3]
 export const SPLAT_SH_BYTE_ZERO = 128
 export const SPLAT_SH_BYTE_SCALE = 128
 
+/** How a bake stores the SH bands beyond DC. "u8": a byte per coefficient
+ * in SPLAT_SH_TEXELS texels per splat (exact for an spz, 16/32/48 bytes
+ * per splat). "pq": product-quantized - each coefficient's rgb is first
+ * split into a luma plane and a chroma plane (SPLAT_SH_SUBSPACES), the
+ * planes are cut into SPLAT_SH_SUBSPACES by band, each subspace is
+ * clustered at bake into a codebook of SPLAT_SH_PALETTE_SIZE entries by
+ * k-means, and a splat stores one byte label per subspace
+ * (SPLAT_SH_LABEL_BYTES per splat: 2/4/8 at degree 1/2/3) beside one
+ * shared palette block; 6x less texture at degree 3, at the price of the
+ * clustering error the bake reports. */
+export type SplatShEncoding = "u8" | "pq"
+/** One pq subspace: a run of `count` coefficients from `first` (3DGS
+ * order) of one plane of the per-coefficient color transform the palette
+ * stores - "luma" is the green channel, "chroma" the red and blue
+ * channels as differences from green (r - g, b - g; exact on the byte
+ * lattice, clamped to the byte range when a difference exceeds it, which
+ * the report counts). */
+export type SplatShSubspace = { plane: "luma" | "chroma"; first: number; count: number }
+/** The pq subspaces, in the order degree d uses the first
+ * SPLAT_SH_LABEL_BYTES[d] of: band 1 luma and chroma, band 2 luma and
+ * chroma, band 3 luma in two halves, band 3 chroma in two halves. The real
+ * SH basis is orthonormal, so squared coefficient error is the mean
+ * squared color error over all view directions, and a band is the natural
+ * unit of that error; luma and chroma are separate subspaces because a
+ * capture's SH is mostly achromatic (rgb nearly equal) and one codebook
+ * over rgb spends its codes along the gray axis and averages the rare hue
+ * shifts away - measured on the lizard: a band split kept 0.3 of the
+ * chroma norm at the median, this split keeps it all at the same luma
+ * error; band 3 splits in two because it carries most of the luma error
+ * and 256 codes over its 7 coefficients were measured at twice the error
+ * of two subspaces. Every subspace's bytes (3, 6, 5, 10, 3, 4, 6, 8) fit
+ * one 16-byte palette texel. */
+export const SPLAT_SH_SUBSPACES: SplatShSubspace[] = [
+  { plane: "luma", first: 0, count: 3 },
+  { plane: "chroma", first: 0, count: 3 },
+  { plane: "luma", first: 3, count: 5 },
+  { plane: "chroma", first: 3, count: 5 },
+  { plane: "luma", first: 8, count: 3 },
+  { plane: "luma", first: 11, count: 4 },
+  { plane: "chroma", first: 8, count: 3 },
+  { plane: "chroma", first: 11, count: 4 },
+]
+/** Subspaces in use (= label bytes per splat and palette texels per entry)
+ * at SH degree 0..3. */
+export const SPLAT_SH_LABEL_BYTES = [0, 2, 4, 8]
+/** Label texels per splat at SH degree 0..3: the labels ride an integer
+ * texture of up to four bytes per texel (rg8ui at degree 1, rgba8ui
+ * above), two texels at degree 3. */
+export const SPLAT_SH_LABEL_TEXELS = [0, 1, 1, 2]
+/** Bytes per label texel at SH degree 0..3. */
+export const SPLAT_SH_LABEL_TEXEL_BYTES = [0, 2, 4, 4]
+/** Codebook entries per subspace: what one label byte addresses. */
+export const SPLAT_SH_PALETTE_SIZE = 256
+
 /** The record as a byte layout, in word order. The core's depth sort keys
  * on iPosition as packed unorm16x3 words against the chunk table (the
  * hand-off declares that column and the engine keeps those 8 bytes per
@@ -93,11 +147,18 @@ export const SPLAT_ATTRIBUTES: VertexAttribute[] = [
  * chunk's position step over the splat's largest axis (0.01: the step is
  * 1% of the splat), as the median and 99th percentile over the cloud and
  * the share of splats above SPLAT_STEP_VISIBLE; `shClamped` how many SH
- * coefficients fell outside the byte's [-1, 1) and were clamped. */
+ * coefficients fell outside the byte's [-1, 1) and were clamped;
+ * `shPalette` (the "pq" encoding) what the codebooks lost, per subspace in
+ * use: `rms` the root mean square error per coefficient and `p99` the 99th
+ * percentile over splats of the largest coefficient error, both in byte
+ * steps (1/SPLAT_SH_BYTE_SCALE; the u8 encoding's own rounding is 0.29 rms,
+ * 0.5 max), and `clamped` how many chroma differences fell outside the
+ * byte range. */
 export type BakeReport = {
   chunks: number
   positionStep: { median: number; p99: number; visibleShare: number }
   shClamped: number
+  shPalette?: { rms: number[]; p99: number[]; clamped: number }
 }
 /** A position step above this fraction of the splat's largest axis is
  * where quantization starts to show; the report counts those splats. */
@@ -125,11 +186,22 @@ export type SplatData = {
   bounds: Float32Array
   /** Spherical-harmonic bands baked beyond the base color (0..3). */
   shDegree: number
-  /** The SH texel block: count x SPLAT_SH_TEXELS[shDegree] texels of
-   * SPLAT_TEXEL_BYTES, each splat's coefficients beyond DC as bytes,
-   * coefficient-major with rgb interleaved (coefficient k of channel c at
-   * byte 3k + c), zero-padded to its texels. null at degree 0. */
+  /** How `sh` (and `shPalette`) hold the bands; "u8" at degree 0. */
+  shEncoding: SplatShEncoding
+  /** The per-splat SH block, in record order; null at degree 0. Under
+   * "u8": count x SPLAT_SH_TEXELS[shDegree] texels of SPLAT_TEXEL_BYTES,
+   * each splat's coefficients beyond DC as bytes, coefficient-major with
+   * rgb interleaved (coefficient k of channel c at byte 3k + c),
+   * zero-padded to its texels. Under "pq": SPLAT_SH_LABEL_BYTES[shDegree]
+   * bytes per splat, the label of subspace j at byte j. */
   sh: Uint8Array | null
+  /** Under "pq", the palette: SPLAT_SH_PALETTE_SIZE entries of
+   * SPLAT_SH_LABEL_BYTES[shDegree] rgba32ui texels (entry e's subspace j
+   * at texel e x subspaces + j), a texel holding the subspace's plane
+   * values as bytes - a luma subspace its green coefficients in order, a
+   * chroma subspace its red-minus-green coefficients then its
+   * blue-minus-green ones - zero-padded. null otherwise. */
+  shPalette: Uint8Array | null
   /** The capture was trained with the antialiasing compensation
    * (Mip-Splatting, nerfstudio's antialiased mode): the renderer scales
    * opacity by the dilation's determinant ratio. */
@@ -163,9 +235,14 @@ export type ParseSplatOptions = {
   keepOrientation?: boolean
   /** Spherical-harmonic bands to bake beyond the base color, 0..3,
    * capped at what the capture holds (.splat has none). Default 0: the
-   * view-dependent bands cost 16/32/48 bytes per splat of texture at
-   * degree 1/2/3, so a bake opts in. */
+   * view-dependent bands cost texture (1/2/4 bytes per splat palette-coded,
+   * 16/32/48 as bytes), so a bake opts in. */
   shDegree?: number
+  /** How the bands are stored (SplatShEncoding). Default "pq": the
+   * k-means palette, 12x less texture at degree 3 for a clustering error
+   * the report states. "u8" keeps every coefficient as a byte - exact for
+   * an spz, and the reference when judging a palette bake. */
+  shEncoding?: SplatShEncoding
   /** The capture was trained antialiased (Mip-Splatting, nerfstudio's
    * `antialiased` rasterization); a per-capture fact the trainer knows
    * and the file carries. Default false (vanilla 3DGS). */
@@ -263,9 +340,11 @@ export function parseSplat(bytes: Uint8Array, opts?: ParseSplatOptions): SplatDa
   let format = opts?.format ?? sniffFormat(bytes)
   let degree = opts?.shDegree ?? 0
   if (!(Number.isInteger(degree) && degree >= 0 && degree <= 3)) throw new Error("parseSplat: shDegree must be an integer 0..3, got " + degree)
+  let encoding = opts?.shEncoding ?? "pq"
+  if (encoding !== "u8" && encoding !== "pq") throw new Error("parseSplat: shEncoding must be \"u8\" or \"pq\", got " + String(encoding))
   let raw = format === "ply" ? parsePly(bytes, degree) : format === "spz" ? parseSpz(bytes, degree) : parseDotSplat(bytes)
   if (opts?.keepOrientation === true) raw.flip = false
-  return bake(raw, opts?.antialiased === true)
+  return bake(raw, opts?.antialiased === true, encoding)
 }
 
 function sniffFormat(bytes: Uint8Array): SplatFormat {
@@ -592,8 +671,8 @@ function unpackRotation(word: number): [number, number, number, number] {
 // spatially (kdOrder) into chunks of SPLAT_CHUNK_SIZE consecutive
 // records and quantize each against its chunk, rank the records by
 // importance (size times opacity, descending - the .splat convention)
-// into the draw order, measure bounds, pack the SH bytes.
-function bake(g: Gaussians, antialiased: boolean): SplatData {
+// into the draw order, measure bounds, pack the SH bands (packSh).
+function bake(g: Gaussians, antialiased: boolean, encoding: SplatShEncoding): SplatData {
   let n = g.count
   let D = SH_COEFFICIENTS[g.shDegree]!
   let sy = g.flip ? -1 : 1
@@ -653,8 +732,9 @@ function bake(g: Gaussians, antialiased: boolean): SplatData {
   let colors = new Uint8Array(n * SPLAT_COLOR_BYTES)
   let chunks = new Uint8Array(chunkCount * SPLAT_CHUNK_BYTES)
   let cdv = new DataView(chunks.buffer)
-  let shBytes = SPLAT_SH_TEXELS[g.shDegree]! * SPLAT_TEXEL_BYTES
-  let sh = D > 0 ? new Uint8Array(n * shBytes) : null
+  // The coefficients beyond DC as clamped bytes, compact (3D per slot, in
+  // record order), for packSh to lay out or cluster.
+  let coeffs = D > 0 ? new Uint8Array(n * D * 3) : null
   let bounds = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity])
   let stepRatio = new Float32Array(n)
   let shClamped = 0
@@ -710,8 +790,8 @@ function bake(g: Gaussians, antialiased: boolean): SplatData {
       for (let k = 0; k < 3; k++) q[k] = packUnorm(logs[i * 3 + k]!, smin[k]!, smax[k]!, SCALE_MAX[k]!)
       rdv.setUint32(rat + 12, packScale(q), true)
       for (let k = 0; k < 4; k++) colors[slot * SPLAT_COLOR_BYTES + k] = g.colors[i * 4 + k]!
-      if (sh !== null) {
-        let base = slot * shBytes
+      if (coeffs !== null) {
+        let base = slot * D * 3
         for (let k = 0; k < D; k++) {
           let sign = g.flip ? SH_FLIP_SIGN[k]! : 1
           for (let ch = 0; ch < 3; ch++) {
@@ -720,7 +800,7 @@ function bake(g: Gaussians, antialiased: boolean): SplatData {
               shClamped++
               b = b < 0 ? 0 : 255
             }
-            sh[base + k * 3 + ch] = b
+            coeffs[base + k * 3 + ch] = b
           }
         }
       }
@@ -731,6 +811,9 @@ function bake(g: Gaussians, antialiased: boolean): SplatData {
   for (let slot = 0; slot < n; slot++) if (stepRatio[slot]! > SPLAT_STEP_VISIBLE) visible++
   stepRatio.sort()
   let at = (p: number) => (n === 0 ? 0 : stepRatio[Math.min(n - 1, Math.floor(p * n))]!)
+  let report: BakeReport = { chunks: chunkCount, positionStep: { median: at(0.5), p99: at(0.99), visibleShare: n === 0 ? 0 : visible / n }, shClamped }
+  let packed = packSh(coeffs, n, g.shDegree, encoding)
+  if (packed.report !== undefined) report.shPalette = packed.report
   return {
     count: n,
     records,
@@ -739,10 +822,265 @@ function bake(g: Gaussians, antialiased: boolean): SplatData {
     order: drawOrder,
     bounds,
     shDegree: g.shDegree,
-    sh,
+    shEncoding: D > 0 ? encoding : "u8",
+    sh: packed.sh,
+    shPalette: packed.palette,
     antialiased,
-    report: { chunks: chunkCount, positionStep: { median: at(0.5), p99: at(0.99), visibleShare: n === 0 ? 0 : visible / n }, shClamped },
+    report,
   }
+}
+
+// The pq bake's tuning. A codebook is seeded (k-means++) and iterated
+// (Lloyd) on a random sample of this many vectors - 256 per centroid at
+// SPLAT_SH_PALETTE_SIZE, enough for the centroids to settle - then
+// iterated over the whole cloud until it converges; a pass stops when
+// fewer than this share of vectors change label.
+const SPLAT_PQ_SAMPLE = 65536
+const SPLAT_PQ_SAMPLE_ITERATIONS = 32
+const SPLAT_PQ_FULL_ITERATIONS = 8
+const SPLAT_PQ_CONVERGED = 0.001
+// The seed of the bake's generator: a bake is a function of its input.
+const SPLAT_PQ_SEED = 0x53482d53
+
+// A deterministic generator (a 32-bit LCG) in [0, 1).
+function lcg(seed: number): () => number {
+  let s = seed >>> 0
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0
+    return s / 4294967296
+  }
+}
+
+// A clamped coefficient byte to its value, and back.
+let shByteValue = (b: number): number => (b - SPLAT_SH_BYTE_ZERO) / SPLAT_SH_BYTE_SCALE
+let shValueByte = (v: number): number => Math.min(255, Math.max(0, Math.round(v * SPLAT_SH_BYTE_SCALE + SPLAT_SH_BYTE_ZERO)))
+
+// Lay the compact coefficient bytes (3D per slot) out as the SH block of
+// `encoding`: under u8 the per-splat texels; under pq a codebook per
+// subspace trained on the cloud (trainCodebook), the labels per splat and
+// the palette texels, with the clustering error for the report.
+function packSh(
+  coeffs: Uint8Array | null,
+  n: number,
+  degree: number,
+  encoding: SplatShEncoding,
+): { sh: Uint8Array | null; palette: Uint8Array | null; report?: BakeReport["shPalette"] } {
+  if (coeffs === null) return { sh: null, palette: null }
+  let D = SH_COEFFICIENTS[degree]!
+  if (encoding === "u8") {
+    let shBytes = SPLAT_SH_TEXELS[degree]! * SPLAT_TEXEL_BYTES
+    let sh = new Uint8Array(n * shBytes)
+    for (let slot = 0; slot < n; slot++) sh.set(coeffs.subarray(slot * D * 3, (slot + 1) * D * 3), slot * shBytes)
+    return { sh, palette: null }
+  }
+  let subspaces = SPLAT_SH_LABEL_BYTES[degree]!
+  let sh = new Uint8Array(n * subspaces)
+  let palette = new Uint8Array(SPLAT_SH_PALETTE_SIZE * subspaces * SPLAT_TEXEL_BYTES)
+  let rms: number[] = []
+  let p99: number[] = []
+  let clamped = 0
+  let rand = lcg(SPLAT_PQ_SEED)
+  for (let j = 0; j < subspaces; j++) {
+    let { plane, first, count } = SPLAT_SH_SUBSPACES[j]!
+    let dims = subspaceDims(SPLAT_SH_SUBSPACES[j]!)
+    // The subspace's vectors, one row per slot: the green bytes, or the
+    // red and blue differences from green clamped into the byte range.
+    let vectors = new Float32Array(n * dims)
+    for (let slot = 0; slot < n; slot++) {
+      let base = slot * D * 3 + first * 3
+      for (let k = 0; k < count; k++) {
+        let g = coeffs[base + k * 3 + 1]!
+        if (plane === "luma") {
+          vectors[slot * dims + k] = shByteValue(g)
+          continue
+        }
+        for (let c = 0; c < 2; c++) {
+          let diff = coeffs[base + k * 3 + (c === 0 ? 0 : 2)]! - g + SPLAT_SH_BYTE_ZERO
+          if (diff < 0 || diff > 255) {
+            clamped++
+            diff = diff < 0 ? 0 : 255
+          }
+          vectors[slot * dims + c * count + k] = shByteValue(diff)
+        }
+      }
+    }
+    let { codebook, labels, maxError, sse } = trainCodebook(vectors, n, dims, rand)
+    for (let slot = 0; slot < n; slot++) sh[slot * subspaces + j] = labels[slot]!
+    for (let e = 0; e < SPLAT_SH_PALETTE_SIZE; e++) {
+      let at = (e * subspaces + j) * SPLAT_TEXEL_BYTES
+      for (let d = 0; d < dims; d++) palette[at + d] = shValueByte(codebook[e * dims + d]!)
+    }
+    rms.push(n === 0 ? 0 : Math.sqrt(sse / (n * dims)) * SPLAT_SH_BYTE_SCALE)
+    maxError.sort()
+    p99.push(n === 0 ? 0 : maxError[Math.min(n - 1, Math.floor(0.99 * n))]! * SPLAT_SH_BYTE_SCALE)
+  }
+  return { sh, palette, report: { rms, p99, clamped } }
+}
+
+// A subspace's vector length: its coefficients for a luma plane, twice
+// them for the chroma plane's two differences.
+let subspaceDims = (sub: SplatShSubspace): number => (sub.plane === "luma" ? sub.count : 2 * sub.count)
+
+// Cluster `n` vectors of `dims` into SPLAT_SH_PALETTE_SIZE centroids:
+// k-means++ seeding and Lloyd iterations on a sample (the whole cloud when
+// it is no bigger), then Lloyd over the whole cloud to convergence, the
+// centroids rounded to the byte domain they are stored in, and a last
+// assignment against the stored centroids - so `labels`, `maxError` (per
+// vector, the largest coefficient error) and `sse` describe exactly what
+// the palette will decode to.
+function trainCodebook(
+  vectors: Float32Array,
+  n: number,
+  dims: number,
+  rand: () => number,
+): { codebook: Float32Array; labels: Uint8Array; maxError: Float32Array; sse: number } {
+  let K = SPLAT_SH_PALETTE_SIZE
+  let codebook = new Float32Array(K * dims)
+  let labels = new Uint8Array(n)
+  let maxError = new Float32Array(n)
+  if (n === 0) return { codebook, labels, maxError, sse: 0 }
+  let sampleCount = Math.min(n, SPLAT_PQ_SAMPLE)
+  let sample = vectors
+  if (sampleCount < n) {
+    sample = new Float32Array(sampleCount * dims)
+    for (let s = 0; s < sampleCount; s++) {
+      let i = Math.floor(rand() * n)
+      sample.set(vectors.subarray(i * dims, (i + 1) * dims), s * dims)
+    }
+  }
+  seedCodebook(sample, sampleCount, dims, codebook, rand)
+  let sampleLabels = new Uint8Array(sampleCount)
+  lloyd(sample, sampleCount, dims, codebook, sampleLabels, SPLAT_PQ_SAMPLE_ITERATIONS)
+  if (sampleCount < n) lloyd(vectors, n, dims, codebook, labels, SPLAT_PQ_FULL_ITERATIONS)
+  for (let c = 0; c < K * dims; c++) codebook[c] = shByteValue(shValueByte(codebook[c]!))
+  let sse = 0
+  for (let i = 0; i < n; i++) {
+    let k = nearest(vectors, i, dims, codebook)
+    labels[i] = k
+    let worst = 0
+    for (let d = 0; d < dims; d++) {
+      let e = vectors[i * dims + d]! - codebook[k * dims + d]!
+      sse += e * e
+      if (Math.abs(e) > worst) worst = Math.abs(e)
+    }
+    maxError[i] = worst
+  }
+  return { codebook, labels, maxError, sse }
+}
+
+// k-means++: the first centroid a random vector, each next one drawn with
+// probability proportional to its squared distance from the nearest
+// centroid so far. A cloud with fewer distinct vectors than centroids runs
+// out of distance: the remaining centroids stay zero and attract nothing.
+function seedCodebook(vectors: Float32Array, n: number, dims: number, codebook: Float32Array, rand: () => number): void {
+  let K = SPLAT_SH_PALETTE_SIZE
+  let minDist = new Float32Array(n).fill(Infinity)
+  let pick = Math.floor(rand() * n)
+  codebook.set(vectors.subarray(pick * dims, (pick + 1) * dims), 0)
+  for (let k = 1; k < K; k++) {
+    let total = 0
+    let prev = (k - 1) * dims
+    for (let i = 0; i < n; i++) {
+      let d = 0
+      for (let c = 0; c < dims; c++) {
+        let e = vectors[i * dims + c]! - codebook[prev + c]!
+        d += e * e
+      }
+      if (d < minDist[i]!) minDist[i] = d
+      total += minDist[i]!
+    }
+    if (total === 0) return
+    let r = rand() * total
+    let chosen = n - 1
+    for (let i = 0; i < n; i++) {
+      r -= minDist[i]!
+      if (r <= 0) {
+        chosen = i
+        break
+      }
+    }
+    codebook.set(vectors.subarray(chosen * dims, (chosen + 1) * dims), k * dims)
+  }
+}
+
+// Lloyd iterations over `vectors`: assign each to its nearest centroid,
+// move each centroid to its members' mean, until fewer than
+// SPLAT_PQ_CONVERGED of the vectors change label or `maxIterations` pass.
+// A centroid left without members takes over the vector farthest from its
+// own centroid among the clusters not yet raided this iteration (the
+// cluster that spreads most splits; an empty code is a wasted byte value).
+function lloyd(vectors: Float32Array, n: number, dims: number, codebook: Float32Array, labels: Uint8Array, maxIterations: number): void {
+  let K = SPLAT_SH_PALETTE_SIZE
+  let sums = new Float64Array(K * dims)
+  let counts = new Uint32Array(K)
+  let farthestDist = new Float32Array(K)
+  let farthestIndex = new Uint32Array(K)
+  labels.fill(255)
+  for (let iteration = 0; iteration < maxIterations; iteration++) {
+    sums.fill(0)
+    counts.fill(0)
+    farthestDist.fill(0)
+    let changed = 0
+    for (let i = 0; i < n; i++) {
+      let k = nearest(vectors, i, dims, codebook)
+      if (labels[i] !== k) {
+        labels[i] = k
+        changed++
+      }
+      counts[k]!++
+      let d = 0
+      for (let c = 0; c < dims; c++) {
+        let v = vectors[i * dims + c]!
+        sums[k * dims + c]! += v
+        let e = v - codebook[k * dims + c]!
+        d += e * e
+      }
+      if (d > farthestDist[k]!) {
+        farthestDist[k] = d
+        farthestIndex[k] = i
+      }
+    }
+    for (let k = 0; k < K; k++) {
+      if (counts[k]! > 0) {
+        for (let c = 0; c < dims; c++) codebook[k * dims + c] = sums[k * dims + c]! / counts[k]!
+        continue
+      }
+      let source = 0
+      for (let s = 1; s < K; s++) if (farthestDist[s]! > farthestDist[source]!) source = s
+      if (farthestDist[source]! === 0) {
+        // Every vector sits on its centroid: fewer distinct vectors than
+        // codes. Nothing to split; leave the code unused.
+        continue
+      }
+      let i = farthestIndex[source]!
+      codebook.set(vectors.subarray(i * dims, (i + 1) * dims), k * dims)
+      farthestDist[source] = 0
+      changed++
+    }
+    if (changed < SPLAT_PQ_CONVERGED * n) return
+  }
+}
+
+// The nearest centroid of vector `i`, by squared distance with an early
+// exit once a partial sum passes the best so far.
+function nearest(vectors: Float32Array, i: number, dims: number, codebook: Float32Array): number {
+  let K = SPLAT_SH_PALETTE_SIZE
+  let base = i * dims
+  let best = 0
+  let bestDist = Infinity
+  for (let k = 0; k < K; k++) {
+    let at = k * dims
+    let d = 0
+    for (let c = 0; c < dims && d < bestDist; c++) {
+      let e = vectors[base + c]! - codebook[at + c]!
+      d += e * e
+    }
+    if (d < bestDist) {
+      bestDist = d
+      best = k
+    }
+  }
+  return best
 }
 
 // Partition the records at order[lo..hi) spatially for chunking, in
@@ -840,8 +1178,30 @@ export function decodeSh(data: SplatData, slot: number): Float32Array {
   let D = SH_COEFFICIENTS[data.shDegree]!
   let out = new Float32Array(D * 3)
   if (data.sh === null) return out
-  let base = slot * SPLAT_SH_TEXELS[data.shDegree]! * SPLAT_TEXEL_BYTES
-  for (let j = 0; j < D * 3; j++) out[j] = (data.sh[base + j]! - SPLAT_SH_BYTE_ZERO) / SPLAT_SH_BYTE_SCALE
+  if (data.shEncoding === "u8") {
+    let base = slot * SPLAT_SH_TEXELS[data.shDegree]! * SPLAT_TEXEL_BYTES
+    for (let j = 0; j < D * 3; j++) out[j] = shByteValue(data.sh[base + j]!)
+    return out
+  }
+  if (data.shPalette === null) throw new Error("decodeSh: a pq-encoded cloud without its palette")
+  let subspaces = SPLAT_SH_LABEL_BYTES[data.shDegree]!
+  // Luma first (green), then the chroma differences added to it.
+  for (let pass of ["luma", "chroma"] as const) {
+    for (let j = 0; j < subspaces; j++) {
+      let { plane, first, count } = SPLAT_SH_SUBSPACES[j]!
+      if (plane !== pass) continue
+      let at = (data.sh[slot * subspaces + j]! * subspaces + j) * SPLAT_TEXEL_BYTES
+      for (let k = 0; k < count; k++) {
+        let g = (first + k) * 3 + 1
+        if (plane === "luma") {
+          out[g] = shByteValue(data.shPalette[at + k]!)
+        } else {
+          out[g - 1] = out[g]! + shByteValue(data.shPalette[at + k]!)
+          out[g + 1] = out[g]! + shByteValue(data.shPalette[at + count + k]!)
+        }
+      }
+    }
+  }
   return out
 }
 
@@ -872,13 +1232,22 @@ type Header = {
   colors: Block
   chunks: Block
   order: Block
-  sh?: Block & { encoding: string }
+  sh?: Block & { encoding: SplatShEncoding; palette?: Block }
 }
 
-// The SH block's byte length for a cloud: its texels per splat times the
-// count; 0 at degree 0.
-function shBytesOf(count: number, shDegree: number): number {
+// The per-splat SH block's byte length for a cloud under `encoding`: the
+// coefficient texels or the label bytes per splat times the count; 0 at
+// degree 0.
+function shBytesOf(count: number, shDegree: number, encoding: SplatShEncoding): number {
+  if (encoding === "pq") return count * SPLAT_SH_LABEL_BYTES[shDegree]!
   return count * SPLAT_SH_TEXELS[shDegree]! * SPLAT_TEXEL_BYTES
+}
+
+// The palette block's byte length: the codebook texels under pq, 0 under u8
+// or at degree 0.
+function paletteBytesOf(shDegree: number, encoding: SplatShEncoding): number {
+  if (encoding !== "pq" || shDegree === 0) return 0
+  return SPLAT_SH_PALETTE_SIZE * SPLAT_SH_LABEL_BYTES[shDegree]! * SPLAT_TEXEL_BYTES
 }
 
 // The chunk table's byte length for a cloud.
@@ -887,7 +1256,7 @@ function chunkBytesOf(count: number): number {
 }
 
 // The shape checks encode and decode share, naming `site`.
-function checkShape(site: string, count: number, shDegree: number, bounds: ArrayLike<number>, records: number, colors: number, chunks: number, order: number, sh: number): void {
+function checkShape(site: string, count: number, shDegree: number, encoding: SplatShEncoding, bounds: ArrayLike<number>, records: number, colors: number, chunks: number, order: number, sh: number, palette: number): void {
   if (!(Number.isInteger(count) && count >= 0)) throw new Error(site + ": count must be a non-negative integer, got " + count)
   if (records !== count * SPLAT_RECORD_BYTES) throw new Error(site + ": the record block holds " + records + " bytes, not " + count + " whole splat records")
   if (colors !== count * SPLAT_COLOR_BYTES) throw new Error(site + ": the color block holds " + colors + " bytes, not " + count + " rgba8 colors")
@@ -895,7 +1264,9 @@ function checkShape(site: string, count: number, shDegree: number, bounds: Array
   if (order !== count * 4) throw new Error(site + ": the order block holds " + order + " bytes, not " + count + " record ids")
   if (bounds.length !== 6) throw new Error(site + ": bounds must be [minX, minY, minZ, maxX, maxY, maxZ]")
   if (!(Number.isInteger(shDegree) && shDegree >= 0 && shDegree <= 3)) throw new Error(site + ": shDegree must be 0..3, got " + shDegree)
-  if (sh !== shBytesOf(count, shDegree)) throw new Error(site + ": the SH block holds " + sh + " bytes; degree " + shDegree + " over " + count + " splats needs " + shBytesOf(count, shDegree))
+  if (encoding !== "u8" && encoding !== "pq") throw new Error(site + ": SH encoding '" + String(encoding) + "' is not supported (u8, pq)")
+  if (sh !== shBytesOf(count, shDegree, encoding)) throw new Error(site + ": the SH block holds " + sh + " bytes; degree " + shDegree + " as " + encoding + " over " + count + " splats needs " + shBytesOf(count, shDegree, encoding))
+  if (palette !== paletteBytesOf(shDegree, encoding)) throw new Error(site + ": the SH palette holds " + palette + " bytes; degree " + shDegree + " as " + encoding + " needs " + paletteBytesOf(shDegree, encoding))
 }
 
 /**
@@ -904,13 +1275,18 @@ function checkShape(site: string, count: number, shDegree: number, bounds: Array
  * payload. The JSON header carries count, chunkSize, shDegree,
  * antialiased, bounds and the byte range of the record block, the color
  * block, the chunk table, the order block and (above degree 0) the SH
- * block with its encoding; the payload is the blocks verbatim.
+ * block with its encoding and, under pq, its palette block; the payload is
+ * the blocks verbatim, each starting 4-aligned.
  */
 export function encodeSplat(data: SplatData): Uint8Array {
-  checkShape("encodeSplat", data.count, data.shDegree, data.bounds, data.records.byteLength, data.colors.byteLength, data.chunks.byteLength, data.order.byteLength, data.sh?.byteLength ?? 0)
-  let shBytes = shBytesOf(data.count, data.shDegree)
+  checkShape("encodeSplat", data.count, data.shDegree, data.shEncoding, data.bounds, data.records.byteLength, data.colors.byteLength, data.chunks.byteLength, data.order.byteLength, data.sh?.byteLength ?? 0, data.shPalette?.byteLength ?? 0)
+  let shBytes = shBytesOf(data.count, data.shDegree, data.shEncoding)
+  let paletteBytes = paletteBytesOf(data.shDegree, data.shEncoding)
+  // Blocks start 4-aligned (decodeSplat views them as typed arrays); a
+  // byte-sized block (the pq labels) is followed by zero padding.
   let at = 0
   let next = (bytes: number): Block => {
+    at += (4 - (at % 4)) % 4
     let block = { offset: at, bytes }
     at += bytes
     return block
@@ -926,7 +1302,10 @@ export function encodeSplat(data: SplatData): Uint8Array {
     chunks: next(data.chunks.byteLength),
     order: next(data.order.byteLength),
   }
-  if (shBytes > 0) header.sh = { ...next(shBytes), encoding: "u8" }
+  if (shBytes > 0) {
+    header.sh = { ...next(shBytes), encoding: data.shEncoding }
+    if (paletteBytes > 0) header.sh.palette = next(paletteBytes)
+  }
   let json = new TextEncoder().encode(JSON.stringify(header))
   let jsonPadded = json.byteLength + ((4 - (json.byteLength % 4)) % 4)
   let out = new Uint8Array(12 + jsonPadded + at)
@@ -941,6 +1320,7 @@ export function encodeSplat(data: SplatData): Uint8Array {
   out.set(data.chunks, payload + header.chunks.offset)
   out.set(new Uint8Array(data.order.buffer, data.order.byteOffset, data.order.byteLength), payload + header.order.offset)
   if (data.sh !== null && shBytes > 0) out.set(data.sh, payload + header.sh!.offset)
+  if (data.shPalette !== null && paletteBytes > 0) out.set(data.shPalette, payload + header.sh!.palette!.offset)
   return out
 }
 
@@ -962,16 +1342,18 @@ export function decodeSplat(bytes: Uint8Array): SplatData {
   let header: Header = JSON.parse(new TextDecoder().decode(bytes.subarray(12, 12 + jsonLength)))
   let payload = 12 + jsonLength + ((4 - (jsonLength % 4)) % 4)
   if (header.chunkSize !== SPLAT_CHUNK_SIZE) throw new Error("decodeSplat: chunk size " + header.chunkSize + ", expected " + SPLAT_CHUNK_SIZE)
-  checkShape("decodeSplat", header.count, header.shDegree, header.bounds, header.records?.bytes ?? -1, header.colors?.bytes ?? -1, header.chunks?.bytes ?? -1, header.order?.bytes ?? -1, header.sh?.bytes ?? 0)
+  let encoding: SplatShEncoding = header.sh?.encoding ?? "u8"
+  checkShape("decodeSplat", header.count, header.shDegree, encoding, header.bounds, header.records?.bytes ?? -1, header.colors?.bytes ?? -1, header.chunks?.bytes ?? -1, header.order?.bytes ?? -1, header.sh?.bytes ?? 0, header.sh?.palette?.bytes ?? 0)
   let block = (b: Block, name: string): Uint8Array => {
     if (!(Number.isInteger(b.offset) && b.offset >= 0 && b.offset % 4 === 0) || bytes.byteLength < payload + b.offset + b.bytes) throw new Error("decodeSplat: shorter than its " + name + " block (or the block is not 4-aligned)")
     return bytes.subarray(payload + b.offset, payload + b.offset + b.bytes)
   }
   let order = block(header.order, "order")
   let sh: Uint8Array | null = null
+  let shPalette: Uint8Array | null = null
   if (header.sh !== undefined && header.sh.bytes > 0) {
-    if (header.sh.encoding !== "u8") throw new Error("decodeSplat: SH encoding '" + header.sh.encoding + "' is not supported (u8)")
     sh = block(header.sh, "SH")
+    if (header.sh.palette !== undefined) shPalette = block(header.sh.palette, "SH palette")
   }
   return {
     count: header.count,
@@ -981,7 +1363,9 @@ export function decodeSplat(bytes: Uint8Array): SplatData {
     order: new Uint32Array(order.buffer, order.byteOffset, header.count),
     bounds: Float32Array.from(header.bounds),
     shDegree: header.shDegree,
+    shEncoding: header.shDegree > 0 ? encoding : "u8",
     sh,
+    shPalette,
     antialiased: header.antialiased === true,
   }
 }

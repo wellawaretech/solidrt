@@ -626,9 +626,9 @@ pub enum UniformKind {
   /// and the pass binds the id on the cube map target.
   SamplerCube,
   /// An unsigned integer sampler (`usampler2D`): bound via texture bindings
-  /// like Sampler2D, but only an integer-format texture (Rgba32ui) may back
-  /// it, and no float sampler may take one (either mismatch samples
-  /// undefined values in GL).
+  /// like Sampler2D, but only an integer-format texture (`is_integer`:
+  /// Rgba32ui, Rgba8ui, Rg8ui, R8ui) may back it, and no float sampler may
+  /// take one (either mismatch samples undefined values in GL).
   USampler2D,
   /// A volume sampler (`sampler3D`): bound via texture bindings like
   /// Sampler2D, but only a 3D texture id (`TextureShape::D3`) may back it,
@@ -920,7 +920,7 @@ pub struct BoundTexture {
 /// refuses the rest (a name of another target cannot bind - the draw would
 /// sample garbage or error), a `sampler2DShadow` takes a depth texture (a
 /// color texture behind a comparison sampler is undefined GL), and an
-/// integer texture (Rgba32ui) goes only behind a `usampler*` of its shape,
+/// integer texture (`is_integer`) goes only behind a `usampler*` of its shape,
 /// which takes nothing else (a float sampler over integer texels, or the
 /// reverse, samples undefined values). The reverse of the depth rule stays legal - a
 /// depth id on a plain sampler2D is the raw depth read. One copy of the
@@ -945,7 +945,7 @@ pub fn validate_binding_shapes(
         bound.shape.describe(),
         wanted.describe(),
         wanted.create_name(),
-        if bound.format.is_uint() { bound.shape.integer_sampler_name() } else { bound.shape.sampler_name() }
+        if bound.format.is_integer() { bound.shape.integer_sampler_name() } else { bound.shape.sampler_name() }
       ));
     }
     if slot.kind == UniformKind::Sampler2DShadow && bound.format != TextureFormat::Depth24 {
@@ -953,16 +953,17 @@ pub fn validate_binding_shapes(
         "uniform '{name}' is a sampler2DShadow; bind a draw target's depth texture (depthTexture(target))"
       ));
     }
-    if slot.kind.is_integer_sampler() && !bound.format.is_uint() {
+    if slot.kind.is_integer_sampler() && !bound.format.is_integer() {
       return Err(format!(
-        "uniform '{name}' is a {}; texture {id} is {} (bind an rgba32ui texture)",
+        "uniform '{name}' is a {}; texture {id} is {} (bind an integer-format texture: rgba32ui, rgba8ui, rg8ui or r8ui)",
         slot.glsl_name(),
         bound.format.name()
       ));
     }
-    if !slot.kind.is_integer_sampler() && bound.format.is_uint() {
+    if !slot.kind.is_integer_sampler() && bound.format.is_integer() {
       return Err(format!(
-        "texture {id} is rgba32ui (integer texels); uniform '{name}' is a {} (declare it {})",
+        "texture {id} is {} (integer texels); uniform '{name}' is a {} (declare it {})",
+        bound.format.name(),
         slot.glsl_name(),
         wanted.integer_sampler_name()
       ));

@@ -89,8 +89,10 @@ export type { FilterMode, SamplerUpdate, WrapMode, TextureBinding, TextureBindin
 // light on sample), "r8", the float data-texture formats "r32f"/"rgba32f"
 // (Float32Array payload, nearest/texelFetch sampling only, no readback), the
 // HDR image format "rgba16f" (Float32Array payload packed to half float,
-// filterable) and the integer data-texture format "rgba32ui" (Uint32Array
-// payload, a uvec4 per texel through a usampler2D, nearest/texelFetch only)
+// filterable), the integer data-texture formats "rgba32ui" (Uint32Array
+// payload, a uvec4 per texel through a usampler2D) and "r8ui"/"rg8ui"/
+// "rgba8ui" (Uint8Array payload, the bytes as plain integers through a
+// usampler2D; all nearest/texelFetch only)
 // and the block-compressed formats "etc2-rgba8"/"etc2-rgba8-srgb" (GLES 3.0
 // core, every device) and "bc7-rgba8"/"bc7-rgba8-srgb" (desktops, behind
 // limits.bc7Textures): raw 4x4 blocks, the full mip chain when mipmap is

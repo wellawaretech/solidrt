@@ -121,12 +121,16 @@ pub enum SamplerWrap {
 /// Rgba16f is the HDR image format (environment maps, panoramas): the same
 /// float payload at the boundary, stored as half float, and filterable like
 /// a byte format because GLES 3.0 lists RGBA16F as texture-filterable.
-/// Rgba32ui is the integer data-texture format (four u32 per texel: packed
-/// records a shader unpacks with `uintBitsToFloat`, `unpackHalf2x16` and
-/// `unpackUnorm4x8` - a splat cloud's records and SH bands, any bit-exact
-/// table): a Uint32Array payload, fetched through a `usampler2D`, and like
-/// the 32-bit floats upload-and-sample only and nearest/texelFetch only
-/// (integer textures never filter).
+/// The integer formats (`is_integer`) are shader data fetched through a
+/// `usampler*` as unsigned integers, nothing converted: Rgba32ui is four u32
+/// per texel (packed records a shader unpacks with `uintBitsToFloat`,
+/// `unpackHalf2x16` and `unpackUnorm4x8` - a splat cloud's records, any
+/// bit-exact table; a Uint32Array payload), and R8ui/Rg8ui/Rgba8ui are one,
+/// two or four bytes per texel read as plain integers (indices into a
+/// palette or codebook, labels, small ids; a Uint8Array payload, the byte
+/// formats' row alignment). All are upload-and-sample only and
+/// nearest/texelFetch only like the 32-bit floats (integer textures never
+/// filter).
 /// Rgba8Srgb is an rgba8 whose stored bytes are sRGB-encoded: sampling
 /// decodes them to linear light in hardware, before filtering, so the
 /// filter and the mip chain are right - the color-map format of
@@ -168,6 +172,13 @@ pub enum TextureFormat {
   /// bit-exact data-texture format (packed records a shader unpacks).
   /// Nearest-only and sample-only like the 32-bit floats.
   Rgba32ui,
+  /// One byte per pixel read as an integer - a uint through a `usampler2D`
+  /// (`.r`): an index or label per texel. Integer rules as Rgba32ui.
+  R8ui,
+  /// Two bytes per pixel read as integers - a uvec2 (`.rg`).
+  Rg8ui,
+  /// Four bytes per pixel read as integers - a uvec4.
+  Rgba8ui,
   /// Rgba8 stored sRGB-encoded (SRGB8_ALPHA8): sampling decodes RGB to
   /// linear light in hardware, alpha stays linear. Upload-and-sample only
   /// like the float formats: the readback path samples (decodes) instead of
@@ -206,13 +217,16 @@ impl TextureFormat {
       Some("rgba32f") => Ok(TextureFormat::Rgba32f),
       Some("rgba16f") => Ok(TextureFormat::Rgba16f),
       Some("rgba32ui") => Ok(TextureFormat::Rgba32ui),
+      Some("r8ui") => Ok(TextureFormat::R8ui),
+      Some("rg8ui") => Ok(TextureFormat::Rg8ui),
+      Some("rgba8ui") => Ok(TextureFormat::Rgba8ui),
       Some("rgba8-srgb") => Ok(TextureFormat::Rgba8Srgb),
       Some("etc2-rgba8") => Ok(TextureFormat::Etc2Rgba8),
       Some("etc2-rgba8-srgb") => Ok(TextureFormat::Etc2Rgba8Srgb),
       Some("bc7-rgba8") => Ok(TextureFormat::Bc7Rgba8),
       Some("bc7-rgba8-srgb") => Ok(TextureFormat::Bc7Rgba8Srgb),
       Some(other) => Err(format!(
-        "unknown format '{other}' (expected \"rgba8\", \"rgba8-srgb\", \"r8\", \"r32f\", \"rgba32f\", \"rgba16f\", \"rgba32ui\", \"etc2-rgba8\", \"etc2-rgba8-srgb\", \"bc7-rgba8\" or \"bc7-rgba8-srgb\")"
+        "unknown format '{other}' (expected \"rgba8\", \"rgba8-srgb\", \"r8\", \"r32f\", \"rgba32f\", \"rgba16f\", \"rgba32ui\", \"r8ui\", \"rg8ui\", \"rgba8ui\", \"etc2-rgba8\", \"etc2-rgba8-srgb\", \"bc7-rgba8\" or \"bc7-rgba8-srgb\")"
       )),
     }
   }
@@ -235,6 +249,9 @@ impl TextureFormat {
       TextureFormat::Rgba32f => 16,
       TextureFormat::Rgba16f => 8,
       TextureFormat::Rgba32ui => 16,
+      TextureFormat::R8ui => 1,
+      TextureFormat::Rg8ui => 2,
+      TextureFormat::Rgba8ui => 4,
       TextureFormat::Rgba8Srgb => 4,
       TextureFormat::Etc2Rgba8
       | TextureFormat::Etc2Rgba8Srgb
@@ -265,9 +282,16 @@ impl TextureFormat {
     )
   }
 
+  /// Whether the format is fetched through an integer sampler (`usampler*`)
+  /// as unsigned integers: the 32-bit and the 8-bit integer formats alike.
+  /// The sampler rule and the filtering rule both key on this.
+  pub fn is_integer(self) -> bool {
+    matches!(self, TextureFormat::Rgba32ui | TextureFormat::R8ui | TextureFormat::Rg8ui | TextureFormat::Rgba8ui)
+  }
+
   /// Whether the payload is unsigned 32-bit integers (a Uint32Array in JS),
-  /// stored as-is and fetched through an integer sampler.
-  pub fn is_uint(self) -> bool {
+  /// stored as-is. The 8-bit integer formats take bytes like Rgba8.
+  pub fn is_uint32(self) -> bool {
     self == TextureFormat::Rgba32ui
   }
 
@@ -286,7 +310,7 @@ impl TextureFormat {
   /// in core GLES 3.0 like every byte format; depth samples nearest without
   /// a comparison mode.
   pub fn filterable(self) -> bool {
-    !matches!(self, TextureFormat::R32f | TextureFormat::Rgba32f | TextureFormat::Rgba32ui | TextureFormat::Depth24)
+    !self.is_integer() && !matches!(self, TextureFormat::R32f | TextureFormat::Rgba32f | TextureFormat::Depth24)
   }
 
   /// Whether the format is sample-only, with no readback, copy or display
@@ -298,7 +322,7 @@ impl TextureFormat {
   /// renders (through a pass) but is read the same way: through a pass into
   /// an Rgba8 target.
   pub fn sample_only(self) -> bool {
-    self.is_float() || self.is_uint() || self == TextureFormat::Rgba8Srgb || self.is_compressed()
+    self.is_float() || self.is_integer() || self == TextureFormat::Rgba8Srgb || self.is_compressed()
   }
 
   /// Pack an f32 payload (its native-endian bytes, as a Float32Array views
@@ -325,6 +349,9 @@ impl TextureFormat {
       TextureFormat::Rgba32f => "rgba32f",
       TextureFormat::Rgba16f => "rgba16f",
       TextureFormat::Rgba32ui => "rgba32ui",
+      TextureFormat::R8ui => "r8ui",
+      TextureFormat::Rg8ui => "rg8ui",
+      TextureFormat::Rgba8ui => "rgba8ui",
       TextureFormat::Rgba8Srgb => "rgba8-srgb",
       TextureFormat::Etc2Rgba8 => "etc2-rgba8",
       TextureFormat::Etc2Rgba8Srgb => "etc2-rgba8-srgb",

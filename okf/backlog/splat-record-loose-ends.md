@@ -27,9 +27,6 @@ created: 2026-10-18
   det(S + dilation))` are covered by the flag's round trip and the
   shader variant compiling; neither test capture was trained in that
   mode, so no human has seen the path do its job.
-- `splatMaterialClass(shDegree, antialiased)` and
-  `splatVertexSource(shDegree, antialiased)` take two positional
-  arguments where an options object reads better and extends.
 
 ## Shape
 
@@ -51,5 +48,3 @@ created: 2026-10-18
 - Find or train a capture in nerfstudio's `antialiased` mode (or
   Mip-Splatting's), bake it with and without `--antialiased`, judge the
   pair against the trainer's own render.
-- `splatMaterialClass({ shDegree, antialiased })` and the same for the
-  source; the component and `createSplatMesh` pass the object.

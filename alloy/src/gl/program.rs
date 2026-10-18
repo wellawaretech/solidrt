@@ -478,16 +478,20 @@ fn reflect_uniforms(
 
 /// Reflect active vertex attributes. The compiler drops unused `in`s, so
 /// this is exactly the set a pipeline layout must feed. Built-in inputs
-/// (gl_VertexID, gl_InstanceID) are not reported by GL. A type no layout
-/// can express (a matrix attribute) is an error here, at link, rather
-/// than a silent mis-bind at draw.
+/// (gl_VertexID, gl_InstanceID) are not reported by GL by the spec, but a
+/// driver that emulates them through hidden attributes lists those too:
+/// Adreno 610 (OpenGL ES 3.2 V@0502) reports two nameless FLOAT attributes
+/// for a program reading gl_VertexID under instancing. Nothing a layout
+/// feeds by name can be nameless or `gl_`-prefixed, so both are skipped. A
+/// type no layout can express (a matrix attribute) is an error here, at
+/// link, rather than a silent mis-bind at draw.
 fn reflect_attributes(gl: &glow::Context, program: glow::Program) -> Result<crate::gpu::vocab::AttributeTable, String> {
   let mut attributes = Vec::new();
   unsafe {
     let count = gl.get_active_attributes(program);
     for i in 0..count {
       if let Some(a) = gl.get_active_attribute(program, i) {
-        if a.name.starts_with("gl_") {
+        if a.name.is_empty() || a.name.starts_with("gl_") {
           continue;
         }
         let format = crate::gpu::vocab::AttrFormat::from_gl(a.atype).ok_or_else(|| {

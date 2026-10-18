@@ -7,7 +7,7 @@
 // regression fails here rather than as a wrong-looking cloud.
 import { expect, test } from "flux:test"
 import * as entry from "../src/splat-data.ts"
-import { decodeRecord, decodeSh, decodeSplat, encodeSplat, parseSplat, SPLAT_CHUNK_BYTES, SPLAT_CHUNK_SIZE, SPLAT_POSITION_BITS, SPLAT_SCALE_BITS, SPLAT_SH_TEXELS, SPLAT_TEXEL_BYTES } from "../src/splat-data.ts"
+import { decodeRecord, decodeSh, decodeSplat, encodeSplat, parseSplat, SPLAT_CHUNK_BYTES, SPLAT_CHUNK_SIZE, SPLAT_POSITION_BITS, SPLAT_SCALE_BITS, SPLAT_SH_LABEL_BYTES, SPLAT_SH_PALETTE_SIZE, SPLAT_SH_SUBSPACES, SPLAT_SH_TEXELS, SPLAT_TEXEL_BYTES } from "../src/splat-data.ts"
 import type { SplatData, SplatRecord } from "../src/splat-data.ts"
 
 // color = 0.5 + SH_C0 * dc, the DC-band mapping (splat-data's constant).
@@ -284,8 +284,9 @@ test("a .ply's SH bands bake channel-major in, coefficient-major out, flipped wi
   let row = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, ...rest]
 
   // Degree 1 out of a degree-2 file: three coefficients, one texel.
-  let d1 = parseSplat(ply(fields, [row]), { shDegree: 1 })
+  let d1 = parseSplat(ply(fields, [row]), { shDegree: 1, shEncoding: "u8" })
   expect(d1.shDegree).toBe(1)
+  expect(d1.shEncoding).toBe("u8")
   expect(d1.sh!.byteLength).toBe(1 * SPLAT_TEXEL_BYTES)
   let sh = decodeSh(d1, 0)
   expect(sh.length).toBe(9)
@@ -295,7 +296,7 @@ test("a .ply's SH bands bake channel-major in, coefficient-major out, flipped wi
   for (let b = 9; b < 16; b++) expect(d1.sh![b]).toBe(0)
 
   // Kept orientation: no signs change. Degree 2: eight coefficients, two texels.
-  let d2 = parseSplat(ply(fields, [row]), { shDegree: 2, keepOrientation: true })
+  let d2 = parseSplat(ply(fields, [row]), { shDegree: 2, shEncoding: "u8", keepOrientation: true })
   expect(d2.sh!.byteLength).toBe(2 * SPLAT_TEXEL_BYTES)
   let kept = decodeSh(d2, 0)
   for (let k = 0; k < 8; k++) for (let c = 0; c < 3; c++) expect(kept[k * 3 + c]).toBeCloseTo((k + 1) * 0.01 * (c + 1), 2)
@@ -314,7 +315,7 @@ test("a .ply's SH bands bake channel-major in, coefficient-major out, flipped wi
   let loud = [...row]
   loud[17] = 3
   loud[18] = -3
-  let clamped = parseSplat(ply(fields, [loud]), { shDegree: 1, keepOrientation: true })
+  let clamped = parseSplat(ply(fields, [loud]), { shDegree: 1, shEncoding: "u8", keepOrientation: true })
   expect(clamped.report!.shClamped).toBe(2)
   expect(decodeSh(clamped, 0)[0]).toBeCloseTo(127 / 128, 3)
   expect(decodeSh(clamped, 0)[3]).toBe(-1)
@@ -398,9 +399,9 @@ test("a .spz version 2 parses fixed-point positions unflipped", () => {
 test("a .spz SH block reads coefficient-major and never flips", () => {
   // Degree 1: nine bytes per splat, [c0r, c0g, c0b, c1r, ...].
   let sh = [0.25, -0.5, 0.75, 0.125, 0, -0.125, 1 / 128, 2 / 128, 3 / 128]
-  let data = parseSplat(spz(2, [{ p: [0, 0, 0], s: [1, 1, 1], a: 255, rot: [1, 0, 0, 0], sh }], 1), { shDegree: 1 })
+  let data = parseSplat(spz(2, [{ p: [0, 0, 0], s: [1, 1, 1], a: 255, rot: [1, 0, 0, 0], sh }], 1), { shDegree: 1, shEncoding: "u8" })
   expect(data.shDegree).toBe(1)
-  // Bytes in, bytes out: an spz's SH round-trips exactly.
+  // Bytes in, bytes out: an spz's SH round-trips exactly under u8.
   let decoded = decodeSh(data, 0)
   sh.forEach((v, h) => expect(decoded[h]).toBe(v))
   // A file at degree 1 caps a degree-3 request; the default reads none.
@@ -458,11 +459,13 @@ test("the .sol3s container carries the SH block and checks its size", () => {
       { p: [0, 0, 0], s: [1, 1, 1], a: 255, rot: [1, 0, 0, 0], sh },
       { p: [1, 0, 0], s: [2, 2, 2], a: 255, rot: [1, 0, 0, 0], sh: sh.map(v => -v) },
     ], 1),
-    { shDegree: 1 },
+    { shDegree: 1, shEncoding: "u8" },
   )
   let file = encodeSplat(data)
   let back = decodeSplat(file)
   expect(back.shDegree).toBe(1)
+  expect(back.shEncoding).toBe("u8")
+  expect(back.shPalette).toBeNull()
   expect(back.sh).toEqual(data.sh)
   expect(back.sh!.buffer).toBe(file.buffer)
   // The bigger splat heads the draw order, and its SH texel sits at its
@@ -478,6 +481,140 @@ test("the .sol3s container carries the SH block and checks its size", () => {
   expect(() => encodeSplat({ ...data, chunks: data.chunks.subarray(0, 8) })).toThrow("chunk table")
   expect(() => encodeSplat({ ...data, colors: data.colors.subarray(0, 4) })).toThrow("color block")
   expect(() => encodeSplat({ ...data, order: data.order.subarray(0, 1) })).toThrow("order block")
+})
+
+// A degree-3 .ply (45 f_rest, channel-major) of `rows` splats at the
+// origin whose SH coefficients come from `vector(i)` (45 values,
+// coefficient-major rgb interleaved as decodeSh returns them).
+function shPly(rows: number, vector: (i: number) => number[]): Uint8Array {
+  let fields = [...PLY_FIELDS, ...Array.from({ length: 45 }, (_, j) => "f_rest_" + j)]
+  return ply(
+    fields,
+    Array.from({ length: rows }, (_, i) => {
+      let v = vector(i)
+      let rest = Array.from({ length: 45 }, (_, j) => v[(j % 15) * 3 + Math.floor(j / 15)]!)
+      return [i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, ...rest]
+    }),
+  )
+}
+
+test("a pq bake palettes the SH bands per subspace, exactly when the codes suffice, and round-trips", () => {
+  // Six distinct SH vectors over 300 splats: every subspace has six
+  // distinct values for 256 codes, so the codebook holds them exactly
+  // and the only error is the byte domain's, already applied to the u8
+  // reference the vectors are measured against (the luma/chroma planes
+  // are differences of bytes, exact on the lattice).
+  const PATTERNS = 6
+  let pattern = (p: number) => Array.from({ length: 45 }, (_, j) => Math.sin(p * 1.7 + j * 0.31) * 0.6)
+  let bytes = shPly(300, i => pattern(i % PATTERNS))
+  let pq = parseSplat(bytes, { shDegree: 3, keepOrientation: true })
+  let u8 = parseSplat(bytes, { shDegree: 3, keepOrientation: true, shEncoding: "u8" })
+  expect(pq.shEncoding).toBe("pq")
+  expect(pq.sh!.byteLength).toBe(300 * SPLAT_SH_LABEL_BYTES[3]!)
+  expect(pq.shPalette!.byteLength).toBe(SPLAT_SH_PALETTE_SIZE * SPLAT_SH_LABEL_BYTES[3]! * SPLAT_TEXEL_BYTES)
+  for (let slot = 0; slot < 300; slot++) expect(Array.from(decodeSh(pq, slot))).toEqual(Array.from(decodeSh(u8, slot)))
+  // At most PATTERNS labels in use per subspace.
+  let subspaces = SPLAT_SH_LABEL_BYTES[3]!
+  for (let j = 0; j < subspaces; j++) {
+    let used = new Set<number>()
+    for (let slot = 0; slot < 300; slot++) used.add(pq.sh![slot * subspaces + j]!)
+    expect(used.size).toBe(PATTERNS)
+  }
+  expect(pq.report!.shPalette!.rms).toEqual(new Array(subspaces).fill(0))
+  expect(pq.report!.shPalette!.p99).toEqual(new Array(subspaces).fill(0))
+  expect(pq.report!.shPalette!.clamped).toBe(0)
+  // Each plane's subspaces tile the 15 coefficients, and degree d's
+  // prefix tiles its bands.
+  for (let plane of ["luma", "chroma"] as const) {
+    let runs = SPLAT_SH_SUBSPACES.filter(s => s.plane === plane).sort((a, b) => a.first - b.first)
+    expect(runs[0]!.first).toBe(0)
+    for (let i = 1; i < runs.length; i++) expect(runs[i]!.first).toBe(runs[i - 1]!.first + runs[i - 1]!.count)
+    expect(runs[runs.length - 1]!.first + runs[runs.length - 1]!.count).toBe(15)
+    for (let degree = 1; degree <= 3; degree++) {
+      let within = SPLAT_SH_SUBSPACES.slice(0, SPLAT_SH_LABEL_BYTES[degree]!).filter(s => s.plane === plane)
+      expect(within.reduce((n, s) => n + s.count, 0)).toBe([0, 3, 8, 15][degree])
+    }
+  }
+
+  // The container carries labels and palette, 4-aligned, and views them.
+  let file = encodeSplat(pq)
+  let back = decodeSplat(file)
+  expect(back.shEncoding).toBe("pq")
+  expect(back.sh).toEqual(pq.sh)
+  expect(back.shPalette).toEqual(pq.shPalette)
+  expect(back.shPalette!.buffer).toBe(file.buffer)
+  expect(back.shPalette!.byteOffset % 4).toBe(0)
+  for (let slot = 0; slot < 300; slot += 37) expect(Array.from(decodeSh(back, slot))).toEqual(Array.from(decodeSh(pq, slot)))
+  // A degree-1 cloud of three splats has six label bytes: the palette
+  // block behind it still lands 4-aligned.
+  let three = decodeSplat(encodeSplat(parseSplat(shPly(3, i => pattern(i)), { shDegree: 1, keepOrientation: true })))
+  expect(three.sh!.byteLength).toBe(3 * SPLAT_SH_LABEL_BYTES[1]!)
+  expect(three.shPalette!.byteOffset % 4).toBe(0)
+  expect(three.shPalette!.byteLength).toBe(SPLAT_SH_PALETTE_SIZE * SPLAT_SH_LABEL_BYTES[1]! * SPLAT_TEXEL_BYTES)
+  expect(Array.from(decodeSh(three, 2)).slice(0, 9).map(v => Math.round(v * 128))).toEqual(pattern(2).slice(0, 9).map(v => Math.round(v * 128)))
+  // The shapes are checked both ways, and the encoding is validated.
+  expect(() => encodeSplat({ ...pq, shPalette: null })).toThrow("SH palette")
+  expect(() => encodeSplat({ ...pq, sh: pq.sh!.subarray(0, 8) })).toThrow("SH block")
+  expect(() => encodeSplat({ ...pq, shEncoding: "u8" })).toThrow("SH block")
+  expect(() => parseSplat(bytes, { shDegree: 1, shEncoding: "u4" as "u8" })).toThrow("shEncoding")
+  // Degree 0 carries no SH whatever the encoding asked.
+  let none = parseSplat(bytes, { shEncoding: "pq" })
+  expect(none.sh).toBeNull()
+  expect(none.shPalette).toBeNull()
+  expect(none.shEncoding).toBe("u8")
+})
+
+test("a pq bake of more vectors than codes clusters them, deterministically, better than no palette", () => {
+  // 3000 degree-1 vectors in a ball: no exact codebook exists. (Chroma
+  // differences of two uniform [-0.5, 0.5] values stay inside the byte
+  // range, so nothing clamps.)
+  let rand = lcg(11)
+  let vectors = Array.from({ length: 3000 }, () => Array.from({ length: 45 }, () => (rand() * 2 - 1) * 0.5))
+  let bytes = shPly(3000, i => vectors[i]!)
+  let a = parseSplat(bytes, { shDegree: 1, keepOrientation: true })
+  let b = parseSplat(bytes, { shDegree: 1, keepOrientation: true })
+  expect(a.sh).toEqual(b.sh)
+  expect(a.shPalette).toEqual(b.shPalette)
+  // The clustering error is well under the data's own spread (the error
+  // of a one-entry palette at the mean): a uniform [-0.5, 0.5] luma
+  // coordinate has rms 0.289 = 37 byte steps, a chroma difference of two
+  // of them rms 0.408 = 52; 256 codes over 3 or 6 dims land far below.
+  let report = a.report!.shPalette!
+  expect(report.rms.length).toBe(SPLAT_SH_LABEL_BYTES[1])
+  expect(report.clamped).toBe(0)
+  for (let j = 0; j < report.rms.length; j++) {
+    let spread = SPLAT_SH_SUBSPACES[j]!.plane === "luma" ? 37 : 52
+    expect(report.rms[j]!).toBeLessThan(spread / 2)
+    expect(report.rms[j]!).toBeGreaterThan(0)
+    expect(report.p99[j]!).toBeGreaterThanOrEqual(report.rms[j]!)
+  }
+  // Every splat decodes to its own nearest code: no decoded vector is
+  // farther from its source than the farthest code the report saw.
+  let worst = 0
+  for (let slot = 0; slot < 3000; slot++) {
+    let decoded = decodeSh(a, slot)
+    let source = Math.round(decodeRecord(a, slot).position[0])
+    let v = vectors[source]!
+    for (let h = 0; h < 9; h++) worst = Math.max(worst, Math.abs(decoded[h]! - v[h]!) * 128)
+  }
+  expect(worst).toBeLessThan(128)
+  expect(worst).toBeGreaterThanOrEqual(Math.max(...report.p99))
+})
+
+test("a pq bake clamps a chroma difference past the byte range and counts it", () => {
+  // Red at the top of the range, green and blue at the bottom: r - g = 2,
+  // outside [-1, 1), so the stored difference saturates; b - g = 0 does
+  // not.
+  let v = new Array(45).fill(0)
+  v[0] = 0.99
+  v[1] = -1
+  v[2] = -1
+  let data = parseSplat(shPly(2, () => v), { shDegree: 1, keepOrientation: true })
+  expect(data.report!.shPalette!.clamped).toBe(2)
+  let sh = decodeSh(data, 0)
+  expect(sh[1]).toBe(-1)
+  expect(sh[2]).toBe(-1)
+  expect(sh[0]).toBeCloseTo(-1 + 127 / 128, 6)
 })
 
 test("the container rejects foreign and stale bytes by name", () => {

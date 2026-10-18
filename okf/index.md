@@ -109,6 +109,13 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   as a root error boundary around the app's window (error window with reset)
   plus per-node containment in the renderer's effect/insert exports, with the
   verified mechanics and the measured cost.
+- **[A splat cloud's SH3 texture is 48 bytes per splat where a palette holds it in 3](plans/splat-palette-sh.md)** [2026-10-18]
+  The .sol3s SH block stores a byte per coefficient (16/32/48 bytes per splat
+  at degree 1/2/3, 48 MB at 1M splats with SH3) while sogs and Unity's
+  importer quantize the 45-coefficient vectors to a k-means palette at 2-3
+  bytes per splat; a product-quantized encoding behind the SH block's
+  `encoding` field would cut the dominant texture 12x, at the price of a
+  bake-time k-means to engineer and a quality judgement of its own.
 - **[Encode video and audio](plans/video-encode.md)** [2026-10-16]
   The runtime decodes VP9 and Opus but cannot encode either, so an app cannot
   record its camera and microphone to a file or send them anywhere; a VP9
@@ -791,13 +798,6 @@ Shaped, not started.
   levers are overdraw cuts (a tighter extent than e^-4, a higher minimum-alpha
   cut, a per-splat screen-size cull, a count dial by distance), each a
   picture-quality trade that wants the human side-by-side.
-- **[A splat cloud's SH3 texture is 48 bytes per splat where a palette holds it in 3](backlog/splat-palette-sh.md)** [2026-10-18]
-  The .sol3s SH block stores a byte per coefficient (16/32/48 bytes per splat
-  at degree 1/2/3, 48 MB at 1M splats with SH3) while sogs and Unity's
-  importer quantize the 45-coefficient vectors to a k-means palette at 2-3
-  bytes per splat; a product-quantized encoding behind the SH block's
-  `encoding` field would cut the dominant texture 12x, at the price of a
-  bake-time k-means to engineer and a quality judgement of its own.
 - **[The splat record's loose ends - an order check that does not know the key is packed, two boundaries without tests, 16 dead bits, a constant scale floor, an unjudged antialiased path](backlog/splat-record-loose-ends.md)** [2026-10-18]
   Five small debts left by okf/done/splat-record-compression.md, fixed
   together - the entry's instanceOrder still demands 12 bytes from a packed
@@ -806,6 +806,17 @@ Shaped, not started.
   clamp is a constant a kilometre-scale capture would clip; and the
   Mip-Splatting compensation has never been looked at on a capture trained
   with it.
+- **[The splat SH vertex shader draws nothing on Adreno 610 and breaks the program's reflection, at every degree and under both encodings](backlog/splat-sh-adreno.md)** [2026-10-18]
+  On the Samsung SM-T500 (Adreno 610, OpenGL ES 3.2 V@0502, 2021 driver) a
+  splat cloud at SH degree 0 draws, but a cloud at degree 1, 2 or 3, as u8 or
+  pq, does not - the first SH program of a process links and renders nothing
+  (60 presents per second, the window crop all zero), every later SH program
+  reflects zero active uniforms (addDraw refuses "no active uniform named
+  uSplatRecords"), and the attribute reflection lists two nameless FLOAT
+  inputs; the Pixel 7 (Mali) renders the same programs. Something in the SH
+  block (uCamPos, transpose(mat3(uModel)), the second integer sampler, the
+  basis arithmetic) breaks this compiler silently and wants a shader bisect on
+  the device.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the

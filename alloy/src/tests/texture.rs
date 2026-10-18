@@ -248,6 +248,9 @@ fn texture_format_parses_and_sizes() {
   assert_eq!(TextureFormat::parse(Some("rgba32f")).expect("rgba32f parses"), TextureFormat::Rgba32f);
   assert_eq!(TextureFormat::parse(Some("rgba16f")).expect("rgba16f parses"), TextureFormat::Rgba16f);
   assert_eq!(TextureFormat::parse(Some("rgba32ui")).expect("rgba32ui parses"), TextureFormat::Rgba32ui);
+  assert_eq!(TextureFormat::parse(Some("r8ui")).expect("r8ui parses"), TextureFormat::R8ui);
+  assert_eq!(TextureFormat::parse(Some("rg8ui")).expect("rg8ui parses"), TextureFormat::Rg8ui);
+  assert_eq!(TextureFormat::parse(Some("rgba8ui")).expect("rgba8ui parses"), TextureFormat::Rgba8ui);
   assert_eq!(TextureFormat::parse(Some("rgba8-srgb")).expect("rgba8-srgb parses"), TextureFormat::Rgba8Srgb);
   assert!(TextureFormat::parse(Some("rg8")).is_err());
   assert!(TextureFormat::parse(Some("depth24")).is_err());
@@ -258,6 +261,9 @@ fn texture_format_parses_and_sizes() {
   assert_eq!(TextureFormat::Rgba32f.byte_len(3, 5), 240);
   assert_eq!(TextureFormat::Rgba16f.byte_len(3, 5), 120);
   assert_eq!(TextureFormat::Rgba32ui.byte_len(3, 5), 240);
+  assert_eq!(TextureFormat::R8ui.byte_len(3, 5), 15);
+  assert_eq!(TextureFormat::Rg8ui.byte_len(3, 5), 30);
+  assert_eq!(TextureFormat::Rgba8ui.byte_len(3, 5), 60);
   assert_eq!(TextureFormat::Rgba8Srgb.byte_len(3, 5), 60);
 }
 
@@ -282,7 +288,7 @@ fn compressed_formats_size_by_block_and_chain() {
     assert!(format.is_compressed());
     assert!(format.filterable());
     assert!(format.sample_only());
-    assert!(!format.is_float() && !format.is_uint());
+    assert!(!format.is_float() && !format.is_integer());
     // One block per 4x4, partial blocks whole.
     assert_eq!(format.byte_len(4, 4), 16);
     assert_eq!(format.byte_len(8, 4), 32);
@@ -330,8 +336,8 @@ fn integer_format_samples_like_the_32bit_floats() {
   use crate::gpu::texture::{SamplerFilter, SamplerOptions, SamplerState, TextureFormat};
 
   let format = TextureFormat::Rgba32ui;
-  assert!(format.is_uint() && !format.is_float());
-  assert!(!TextureFormat::Rgba32f.is_uint());
+  assert!(format.is_integer() && format.is_uint32() && !format.is_float());
+  assert!(!TextureFormat::Rgba32f.is_integer() && !TextureFormat::Rgba8.is_integer());
   assert!(!format.filterable());
   assert!(format.sample_only());
   let state = SamplerState::parse_for(
@@ -350,6 +356,32 @@ fn integer_format_samples_like_the_32bit_floats() {
     &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: None, base_level: None },
   );
   assert!(mip.expect_err("mipmap refused").contains("mip"));
+}
+
+// The 8-bit integer formats are integer textures with a byte payload: the
+// sampler rules of rgba32ui (nearest-only, sample-only, usampler), the row
+// sizes of r8/rg8/rgba8, and not the u32 payload.
+#[test]
+fn byte_integer_formats_are_integer_textures_with_byte_payloads() {
+  use crate::gpu::texture::{SamplerFilter, SamplerOptions, SamplerState, TextureFormat};
+
+  for (format, per_pixel) in [(TextureFormat::R8ui, 1), (TextureFormat::Rg8ui, 2), (TextureFormat::Rgba8ui, 4)] {
+    assert!(format.is_integer() && !format.is_uint32() && !format.is_float() && !format.is_compressed());
+    assert!(!format.filterable());
+    assert!(format.sample_only());
+    assert_eq!(format.byte_len(7, 3), 21 * per_pixel);
+    let state = SamplerState::parse_for(
+      format,
+      &SamplerOptions { filter: None, wrap: None, mipmap: None, anisotropy: None, base_level: None },
+    )
+    .expect("defaults parse");
+    assert_eq!(state.filter, SamplerFilter::Nearest);
+    let linear = SamplerState::parse_for(
+      format,
+      &SamplerOptions { filter: Some("linear"), wrap: None, mipmap: None, anisotropy: None, base_level: None },
+    );
+    assert!(linear.expect_err("linear refused").contains("nearest-only"));
+  }
 }
 
 // The half-float and sRGB formats sample like byte formats (RGBA16F is

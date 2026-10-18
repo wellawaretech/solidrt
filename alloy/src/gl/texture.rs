@@ -279,6 +279,9 @@ pub(super) fn gl_storage(format: TextureFormat) -> (u32, u32, u32) {
     TextureFormat::Rgba32f => (glow::RGBA32F, glow::RGBA, glow::FLOAT),
     TextureFormat::Rgba16f => (glow::RGBA16F, glow::RGBA, glow::HALF_FLOAT),
     TextureFormat::Rgba32ui => (glow::RGBA32UI, glow::RGBA_INTEGER, glow::UNSIGNED_INT),
+    TextureFormat::R8ui => (glow::R8UI, glow::RED_INTEGER, glow::UNSIGNED_BYTE),
+    TextureFormat::Rg8ui => (glow::RG8UI, glow::RG_INTEGER, glow::UNSIGNED_BYTE),
+    TextureFormat::Rgba8ui => (glow::RGBA8UI, glow::RGBA_INTEGER, glow::UNSIGNED_BYTE),
     TextureFormat::Rgba8Srgb => (glow::SRGB8_ALPHA8, glow::RGBA, glow::UNSIGNED_BYTE),
     // Compressed storage is allocated by glCompressedTexImage2D from the
     // blocks themselves (`new_compressed`); the layout and type are moot.
@@ -804,6 +807,9 @@ fn upload_layout(format: TextureFormat) -> Option<(u32, u32, i32)> {
     TextureFormat::Rgba32f => Some((glow::RGBA, glow::FLOAT, 4)),
     TextureFormat::Rgba16f => Some((glow::RGBA, glow::HALF_FLOAT, 4)),
     TextureFormat::Rgba32ui => Some((glow::RGBA_INTEGER, glow::UNSIGNED_INT, 4)),
+    TextureFormat::R8ui => Some((glow::RED_INTEGER, glow::UNSIGNED_BYTE, 1)),
+    TextureFormat::Rg8ui => Some((glow::RG_INTEGER, glow::UNSIGNED_BYTE, 1)),
+    TextureFormat::Rgba8ui => Some((glow::RGBA_INTEGER, glow::UNSIGNED_BYTE, 4)),
     TextureFormat::Rgba8Srgb => Some((glow::RGBA, glow::UNSIGNED_BYTE, 4)),
     TextureFormat::Depth24
     | TextureFormat::Etc2Rgba8

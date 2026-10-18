@@ -109,13 +109,18 @@ export {
   SPLAT_SCALE_BITS,
   SPLAT_SH_BYTE_SCALE,
   SPLAT_SH_BYTE_ZERO,
+  SPLAT_SH_LABEL_BYTES,
+  SPLAT_SH_LABEL_TEXEL_BYTES,
+  SPLAT_SH_LABEL_TEXELS,
+  SPLAT_SH_PALETTE_SIZE,
+  SPLAT_SH_SUBSPACES,
   SPLAT_SH_TEXELS,
   SPLAT_STEP_VISIBLE,
   SPLAT_TEXEL_BYTES,
 } from "./splat-data.ts"
-export type { BakeReport, ParseSplatOptions, SplatData, SplatFormat, SplatRecord } from "./splat-data.ts"
+export type { BakeReport, ParseSplatOptions, SplatData, SplatFormat, SplatRecord, SplatShEncoding, SplatShSubspace } from "./splat-data.ts"
 export { createSplatMesh, loadSplat, splatMaterialClass, splatVertexSource, SPLAT_FRAGMENT, SPLAT_GROUP, SPLAT_ID_ATTRIBUTES } from "./splat.ts"
-export type { SplatMesh as SplatMeshNode, SplatMeshOptions } from "./splat.ts"
+export type { SplatMaterialOptions, SplatMesh as SplatMeshNode, SplatMeshOptions } from "./splat.ts"
 export { bindSkeleton } from "./skeleton.ts"
 export type { BindSkeletonOptions } from "./skeleton.ts"
 export { createMixer } from "./mixer.ts"

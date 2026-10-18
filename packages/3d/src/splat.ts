@@ -37,10 +37,14 @@ import {
   SPLAT_SCALE_BITS,
   SPLAT_SH_BYTE_SCALE,
   SPLAT_SH_BYTE_ZERO,
+  SPLAT_SH_LABEL_BYTES,
+  SPLAT_SH_LABEL_TEXELS,
+  SPLAT_SH_PALETTE_SIZE,
+  SPLAT_SH_SUBSPACES,
   SPLAT_SH_TEXELS,
   SPLAT_TEXEL_BYTES,
 } from "./splat-data.ts"
-import type { SplatData } from "./splat-data.ts"
+import type { SplatData, SplatShEncoding } from "./splat-data.ts"
 import { SRGB } from "./glsl.ts"
 
 // core/gpu's glsl tag, aliased locally like ./glsl.ts does.
@@ -102,21 +106,49 @@ const SH_GLSL = glsl`
   const float SH_C3_6 = -0.5900435899266435;
 `
 
-// The SH evaluation for `degree`: the view direction in the model frame
-// (uCamPos through the transposed model rotation - exact under rotation
-// and uniform scale), the coefficients unpacked from the fetched texels
-// at constant indices (coefficient-major, rgb interleaved, a byte each:
-// byte j of the splat's block is word j / 4 of texel j / 16), the basis
+// Under u8, byte 3k + c of the splat's block is word j / 4 of texel
+// j / 16: the coefficient's rgb as three bytes.
+let u8ByteAt = (k: number, c: number): string => {
+  let j = 3 * k + c
+  return `shByte(t${j >> 4}[${(j >> 2) & 3}] >> ${8 * (j & 3)}u)`
+}
+// Under pq, coefficient k's green is byte k - first of its luma
+// subspace's palette texel, and its red and blue are green plus the
+// differences at bytes k - first and count + k - first of its chroma
+// subspace's texel.
+let pqByteAt = (plane: "luma" | "chroma", k: number, second: boolean): string => {
+  let j = SPLAT_SH_SUBSPACES.findIndex(sub => sub.plane === plane && k >= sub.first && k < sub.first + sub.count)
+  let sub = SPLAT_SH_SUBSPACES[j]!
+  let byte = k - sub.first + (second ? sub.count : 0)
+  return `shByte(t${j}[${byte >> 2}] >> ${8 * (byte & 3)}u)`
+}
+
+// The SH evaluation for `degree` under `encoding`: the view direction in
+// the model frame (uCamPos through the transposed model rotation - exact
+// under rotation and uniform scale), the texels fetched (u8: the splat's
+// SPLAT_SH_TEXELS coefficient texels; pq: the splat's label texels, then
+// one palette texel per subspace at label x subspaces + subspace), the
+// coefficients unpacked from them at constant positions (u8ByteAt,
+// pqByteAt with the chroma differences added back to green), the basis
 // polynomials per band added to the base color.
-let shBlock = (degree: number): string => {
-  let texels = SPLAT_SH_TEXELS[degree]!
-  let fetch = (j: number) => `    uvec4 t${j} = texelFetch(uSplatSh, splatTexel(s + ${j}u), 0);`
-  let byte = (j: number) => `shByte(t${j >> 4}[${(j >> 2) & 3}] >> ${8 * (j & 3)}u)`
-  let c = (k: number) => `vec3(${byte(3 * k)}, ${byte(3 * k + 1)}, ${byte(3 * k + 2)})`
+let shBlock = (degree: number, encoding: SplatShEncoding): string => {
+  let subspaces = SPLAT_SH_LABEL_BYTES[degree]!
+  let texels = encoding === "pq" ? subspaces : SPLAT_SH_TEXELS[degree]!
+  let fetch =
+    encoding === "pq"
+      ? (j: number) => `    uvec4 t${j} = texelFetch(uSplatShPalette, splatTexel(l${j >> 2}[${j & 3}] * ${subspaces}u + ${j}u), 0);`
+      : (j: number) => `    uvec4 t${j} = texelFetch(uSplatSh, splatTexel(s + ${j}u), 0);`
+  let c =
+    encoding === "pq"
+      ? (k: number) => `shRgb(${pqByteAt("luma", k, false)}, ${pqByteAt("chroma", k, false)}, ${pqByteAt("chroma", k, true)})`
+      : (k: number) => `vec3(${u8ByteAt(k, 0)}, ${u8ByteAt(k, 1)}, ${u8ByteAt(k, 2)})`
+  let labelTexels = SPLAT_SH_LABEL_TEXELS[degree]!
   let lines = [
     `    vec3 worldCenter = (uModel * vec4(center, 1.0)).xyz;`,
     `    vec3 d = normalize(transpose(mat3(uModel)) * (worldCenter - uCamPos));`,
-    `    uint s = id * ${texels}u;`,
+    ...(encoding === "pq"
+      ? Array.from({ length: labelTexels }, (_, t) => `    uvec4 l${t} = texelFetch(uSplatShLabels, splatTexel(id * ${labelTexels}u + ${t}u), 0);`)
+      : [`    uint s = id * ${texels}u;`]),
     ...Array.from({ length: texels }, (_, j) => fetch(j)),
     `    float x = d.x, y = d.y, z = d.z;`,
     `    vec3 sh = -SH_C1 * y * ${c(0)} + SH_C1 * z * ${c(1)} - SH_C1 * x * ${c(2)};`,
@@ -146,30 +178,52 @@ let idSelect = (): string => {
   return lines.join("\n") + "\n"
 }
 
-let checkDegree = (degree: number, site: string): void => {
-  if (!(Number.isInteger(degree) && degree >= 0 && degree <= 3)) throw new Error(site + ": shDegree must be an integer 0..3, got " + degree)
+/** What a splat material is compiled for: the cloud's SH degree (default
+ * 0) and encoding (default "pq"; moot at degree 0), and whether the
+ * Mip-Splatting compensation applies (default false) - the bake's
+ * `shDegree`, `shEncoding` and `antialiased`. */
+export type SplatMaterialOptions = {
+  shDegree?: number
+  shEncoding?: SplatShEncoding
+  antialiased?: boolean
+}
+
+// The options resolved, validated and keyed, naming `site` in a throw.
+type SplatMaterialKind = { shDegree: number; shEncoding: SplatShEncoding; antialiased: boolean; key: string }
+
+let materialKind = (opts: SplatMaterialOptions | undefined, site: string): SplatMaterialKind => {
+  let shDegree = opts?.shDegree ?? 0
+  let shEncoding = opts?.shEncoding ?? "pq"
+  let antialiased = opts?.antialiased === true
+  if (!(Number.isInteger(shDegree) && shDegree >= 0 && shDegree <= 3)) throw new Error(site + ": shDegree must be an integer 0..3, got " + shDegree)
+  if (shEncoding !== "u8" && shEncoding !== "pq") throw new Error(site + ": shEncoding must be \"u8\" or \"pq\", got " + String(shEncoding))
+  if (shDegree === 0) shEncoding = "u8"
+  return { shDegree, shEncoding, antialiased, key: `${shDegree}:${shEncoding}:${antialiased ? "aa" : "plain"}` }
 }
 
 /**
- * The stock splat vertex stage for a cloud baked at `shDegree`: the id
+ * The stock splat vertex stage for a cloud baked as `opts` says: the id
  * from the instance's id record (quad `gl_VertexID / 4` of the merged
  * geometry), the record's one rgba32ui texel from `uSplatRecords` decoded
  * against its chunk's three rgba32f texels from `uSplatChunks` (the
  * 16-bit position and the packed log scale over the chunk's boxes, the
  * smallest-three rotation - decodeRecord in splat-data.ts is the
  * reference), its rgba8 color from `uSplatColors`, the 3D covariance R S St Rt rebuilt
- * from them, the SH bands from `uSplatSh` (evaluated per corner from
- * uCamPos), the covariance projected to a screen ellipse through the
- * Jacobian of `uViewProj * uModel`, the quad's corners placed along its
- * axes. `antialiased` applies the Mip-Splatting compensation (the
- * footprint's determinant before and after the dilation) a capture
- * trained in that mode expects. The texture width is this device's,
- * compiled in. For a forked class that keeps the projection and swaps
- * the shading: fork this source over SPLAT_ID_ATTRIBUTES, and pass the
- * class's instance as the mesh material (the mesh binds the textures).
+ * from them, the SH bands (evaluated per corner from uCamPos) from
+ * `uSplatSh` under the u8 encoding or from the splat's labels in
+ * `uSplatShLabels` through the codebook texels of `uSplatShPalette` under
+ * pq, green plus the chroma differences per coefficient (decodeSh is the
+ * reference), the covariance projected to a screen
+ * ellipse through the Jacobian of `uViewProj * uModel`, the quad's corners
+ * placed along its axes. `antialiased` applies the Mip-Splatting
+ * compensation (the footprint's determinant before and after the dilation)
+ * a capture trained in that mode expects. The texture width is this
+ * device's, compiled in. For a forked class that keeps the projection and
+ * swaps the shading: fork this source over SPLAT_ID_ATTRIBUTES, and pass
+ * the class's instance as the mesh material (the mesh binds the textures).
  */
-export function splatVertexSource(shDegree = 0, antialiased = false): string {
-  checkDegree(shDegree, "splatVertexSource")
+export function splatVertexSource(opts?: SplatMaterialOptions): string {
+  let { shDegree, shEncoding, antialiased } = materialKind(opts, "splatVertexSource")
   let { width, log2 } = textureWidth()
   let attributes = SPLAT_ID_ATTRIBUTES.map(a => `  in uvec4 ${a.name};\n`).join("")
   let [bitsX, bitsY, bitsZ] = SPLAT_SCALE_BITS as [number, number, number]
@@ -182,7 +236,7 @@ ${attributes}  uniform mat4 uModel;
   uniform highp usampler2D uSplatRecords;
   uniform highp sampler2D uSplatChunks;
   uniform highp sampler2D uSplatColors;
-${shDegree > 0 ? `  uniform highp usampler2D uSplatSh;\n  uniform vec3 uCamPos;\n${SH_GLSL}` : ""}  out vec4 vColor;
+${shDegree > 0 ? `${shEncoding === "pq" ? "  uniform highp usampler2D uSplatShLabels;\n  uniform highp usampler2D uSplatShPalette;\n" : "  uniform highp usampler2D uSplatSh;\n"}  uniform vec3 uCamPos;\n${SH_GLSL}` : ""}  out vec4 vColor;
   out vec2 vOffset;
   ${SPLAT_CONSTANTS}
   ${SRGB}
@@ -237,6 +291,12 @@ ${shDegree > 0 ? `  uniform highp usampler2D uSplatSh;\n  uniform vec3 uCamPos;\
     return (float(shifted & 255u) - SH_BYTE_ZERO) / SH_BYTE_SCALE;
   }
 
+  // A pq coefficient's rgb from its planes: green, and the red and blue
+  // differences from green.
+  vec3 shRgb(float g, float rd, float bd) {
+    return vec3(g + rd, g, g + bd);
+  }
+
   void main() {
     uint quad = uint(gl_VertexID) / 4u;
 ${idSelect()}    if (id == SPLAT_NONE) {
@@ -266,7 +326,7 @@ ${idSelect()}    if (id == SPLAT_NONE) {
       2.0 * (qx * qz + qw * qy), 2.0 * (qy * qz - qw * qx), 1.0 - 2.0 * (qx * qx + qy * qy));
     mat3 m = mat3(rot[0] * scale.x, rot[1] * scale.y, rot[2] * scale.z);
     mat3 sigma = m * transpose(m);
-${shDegree > 0 ? shBlock(shDegree) : ""}    mat4 mvp = uViewProj * uModel;
+${shDegree > 0 ? shBlock(shDegree, shEncoding) : ""}    mat4 mvp = uViewProj * uModel;
     vec4 clip = mvp * vec4(center, 1.0);
     if (clip.w <= 0.0 || clip.z < -clip.w || any(greaterThan(abs(clip.xy), vec2(clip.w * FRUSTUM_MARGIN)))) {
       gl_Position = CULLED;
@@ -342,40 +402,37 @@ export const SPLAT_FRAGMENT = glsl`
   }
 `
 
-// One class and one shared instance per (SH degree, antialiased), created
-// on first use (the source compiles the device's texture width in, so the
-// class waits for the runtime). The textures bind per MESH, so every
-// cloud of a kind shares the instance.
+// One class and one shared instance per (SH degree, SH encoding,
+// antialiased), created on first use (the source compiles the device's
+// texture width in, so the class waits for the runtime). The textures bind
+// per MESH, so every cloud of a kind shares the instance.
 let classes = new Map<string, ShaderMaterialClass>()
 let stockMaterials = new Map<string, Material>()
 let stockQuads: Geometry | null = null
 
-let classKey = (shDegree: number, antialiased: boolean): string => `${shDegree}:${antialiased ? "aa" : "plain"}`
-
 /**
- * The stock splat material class for clouds baked at `shDegree` (default
- * 0), with or without the antialiased compensation (default without):
- * splatVertexSource(shDegree, antialiased) and SPLAT_FRAGMENT over the
- * id-stream layout (SPLAT_ID_ATTRIBUTES), transparent, both faces.
- * Cached per pair. A custom look forks the sources into its own
- * shaderMaterialClass over the same layout; a mesh over it still wants
- * createSplatMesh's geometry, order, textures and bounds, so pass its
- * instance as the option there rather than building the mesh by hand.
+ * The stock splat material class for clouds baked as `opts` says (the
+ * bake's shDegree, shEncoding and antialiased; defaults 0, "pq", false):
+ * splatVertexSource(opts) and SPLAT_FRAGMENT over the id-stream layout
+ * (SPLAT_ID_ATTRIBUTES), transparent, both faces. Cached per kind. A
+ * custom look forks the sources into its own shaderMaterialClass over the
+ * same layout; a mesh over it still wants createSplatMesh's geometry,
+ * order, textures and bounds, so pass its instance as the option there
+ * rather than building the mesh by hand.
  */
-export function splatMaterialClass(shDegree = 0, antialiased = false): ShaderMaterialClass {
-  checkDegree(shDegree, "splatMaterialClass")
-  let key = classKey(shDegree, antialiased)
-  let cls = classes.get(key)
+export function splatMaterialClass(opts?: SplatMaterialOptions): ShaderMaterialClass {
+  let kind = materialKind(opts, "splatMaterialClass")
+  let cls = classes.get(kind.key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
-      vertex: splatVertexSource(shDegree, antialiased),
+      vertex: splatVertexSource(kind),
       fragment: SPLAT_FRAGMENT,
       instanceBuffers: [{ attributes: SPLAT_ID_ATTRIBUTES }],
       transparent: true,
       cull: "none",
-      label: `splat-sh${shDegree}${antialiased ? "-aa" : ""}`,
+      label: `splat-sh${kind.shDegree}${kind.shDegree > 0 ? "-" + kind.shEncoding : ""}${kind.antialiased ? "-aa" : ""}`,
     })
-    classes.set(key, cls)
+    classes.set(kind.key, cls)
   }
   return cls
 }
@@ -392,12 +449,12 @@ export type SplatMeshOptions = {
    * with setRecordCount (the engine re-sorts and republishes the prefix
    * of its own copy). */
   count?: number
-  /** A custom splat material: a fork of splatVertexSource(data.shDegree,
-   * data.antialiased) and SPLAT_FRAGMENT over SPLAT_ID_ATTRIBUTES;
-   * default the stock class's shared instance for the cloud's degree and
-   * antialiasing. The data textures bind per mesh under the stock names
-   * (uSplatRecords, uSplatChunks, uSplatColors, uSplatSh), so a fork
-   * keeps them. */
+  /** A custom splat material: a fork of splatVertexSource(data) and
+   * SPLAT_FRAGMENT over SPLAT_ID_ATTRIBUTES; default the stock class's
+   * shared instance for the cloud's degree, encoding and antialiasing.
+   * The data textures bind per mesh under the stock names (uSplatRecords,
+   * uSplatChunks, uSplatColors, and uSplatSh or uSplatShLabels +
+   * uSplatShPalette by the encoding), so a fork keeps them. */
   material?: Material
   /** Debug label for the id buffer and the data textures (default
    * "splat"). */
@@ -410,13 +467,18 @@ export type SplatMeshOptions = {
 // copy would hold the block twice.
 const SPLAT_UPLOAD_BAND_BYTES = 4 << 20
 
-type SplatTextureFormat = "rgba32ui" | "rgba32f" | "rgba8"
+type SplatTextureFormat = "rgba32ui" | "rgba32f" | "rgba8" | "r8ui" | "rg8ui" | "rgba8ui"
 
 // Bytes per texel of each data texture format.
-const SPLAT_FORMAT_BYTES: Record<SplatTextureFormat, number> = { rgba32ui: SPLAT_TEXEL_BYTES, rgba32f: SPLAT_TEXEL_BYTES, rgba8: SPLAT_COLOR_BYTES }
+const SPLAT_FORMAT_BYTES: Record<SplatTextureFormat, number> = { rgba32ui: SPLAT_TEXEL_BYTES, rgba32f: SPLAT_TEXEL_BYTES, rgba8: SPLAT_COLOR_BYTES, r8ui: 1, rg8ui: 2, rgba8ui: 4 }
+
+// The label texture's integer format per SH degree: SPLAT_SH_LABEL_TEXELS
+// texels of SPLAT_SH_LABEL_TEXEL_BYTES per splat, read as a uint per
+// component.
+const SPLAT_LABEL_FORMATS: SplatTextureFormat[] = ["rgba8ui", "rg8ui", "rgba8ui", "rgba8ui"]
 
 // A data texture from a texel block (`count` x `texels` texels of the
-// format's size), rgba32ui, rgba32f or rgba8: allocated at its size, then
+// format's size), rgba32ui, rgba32f or a byte format: allocated at its size, then
 // filled in place from the block - whole rows of the device width in
 // bands, the tail of the last row as a partial rect. No padded copy: a
 // bake's bytes or the .sol3s payload upload as they are, and the texels
@@ -446,11 +508,11 @@ function splatTexture(block: Uint8Array, texels: number, count: number, format: 
 }
 
 // `bytes` of `block` from `at` as the typed array an upload of `format`
-// takes (u32 words for rgba32ui, floats for rgba32f, bytes for rgba8): a
-// view when the range sits on a word boundary (a bake's buffer and the
-// .sol3s payload do), a copy of just that range otherwise.
+// takes (u32 words for rgba32ui, floats for rgba32f, bytes for the byte
+// formats): a view when the range sits on a word boundary (a bake's buffer
+// and the .sol3s payload do), a copy of just that range otherwise.
 function texelWords(block: Uint8Array, at: number, bytes: number, format: SplatTextureFormat): Uint32Array | Float32Array | Uint8Array {
-  if (format === "rgba8") return block.subarray(at, at + bytes)
+  if (format !== "rgba32ui" && format !== "rgba32f") return block.subarray(at, at + bytes)
   let offset = block.byteOffset + at
   let buffer = offset % 4 === 0 ? block.buffer : block.slice(at, at + bytes).buffer
   let start = offset % 4 === 0 ? offset : 0
@@ -466,7 +528,9 @@ function texelWords(block: Uint8Array, at: number, bytes: number, format: SplatT
  * chunk table the engine also keeps) AND the record block uploaded once,
  * in place and in row bands, as the rgba32ui record texture the vertex
  * stage fetches by id, the chunk table as an rgba32f texture, the colors
- * as an rgba8 texture, the SH block (when baked) as a fourth, SPLAT_GROUP
+ * as an rgba8 texture, the SH bands (when baked) as a fourth - the u8
+ * coefficient texels, or the pq labels as an 8-bit integer texture beside
+ * the 32 KB palette texture - SPLAT_GROUP
  * splats per drawn instance of
  * the merged-quad geometry, the cloud's header bounds as the picking and
  * cull box, and the core-side back-to-front order materialized as the id
@@ -483,9 +547,16 @@ function texelWords(block: Uint8Array, at: number, bytes: number, format: SplatT
  * (okf/done/gaussian-splats.md).
  */
 export function createSplatMesh(data: SplatData, opts?: SplatMeshOptions): SplatMesh {
-  checkDegree(data.shDegree, "createSplatMesh")
-  if (data.shDegree > 0 && (data.sh === null || data.sh.byteLength < data.count * SPLAT_SH_TEXELS[data.shDegree]! * SPLAT_TEXEL_BYTES)) {
-    throw new Error("createSplatMesh: the cloud claims SH degree " + data.shDegree + " but carries no SH block of that size")
+  let kind = materialKind(data, "createSplatMesh")
+  if (kind.shDegree > 0) {
+    let shBytes = kind.shEncoding === "pq" ? SPLAT_SH_LABEL_BYTES[kind.shDegree]! : SPLAT_SH_TEXELS[kind.shDegree]! * SPLAT_TEXEL_BYTES
+    if (data.sh === null || data.sh.byteLength < data.count * shBytes) {
+      throw new Error("createSplatMesh: the cloud claims SH degree " + kind.shDegree + " as " + kind.shEncoding + " but carries no SH block of that size")
+    }
+    let paletteBytes = SPLAT_SH_PALETTE_SIZE * SPLAT_SH_LABEL_BYTES[kind.shDegree]! * SPLAT_TEXEL_BYTES
+    if (kind.shEncoding === "pq" && (data.shPalette === null || data.shPalette.byteLength !== paletteBytes)) {
+      throw new Error("createSplatMesh: a pq-encoded cloud at SH degree " + kind.shDegree + " needs a " + paletteBytes + "-byte palette block")
+    }
   }
   let chunkCount = Math.ceil(data.count / SPLAT_CHUNK_SIZE)
   if (data.chunks.byteLength !== chunkCount * SPLAT_CHUNK_BYTES) {
@@ -499,11 +570,10 @@ export function createSplatMesh(data: SplatData, opts?: SplatMeshOptions): Splat
   }
   let material = opts?.material
   if (material === undefined) {
-    let key = classKey(data.shDegree, data.antialiased)
-    material = stockMaterials.get(key)
+    material = stockMaterials.get(kind.key)
     if (material === undefined) {
-      material = splatMaterialClass(data.shDegree, data.antialiased).instance()
-      stockMaterials.set(key, material)
+      material = splatMaterialClass(kind).instance()
+      stockMaterials.set(kind.key, material)
     }
   }
   let label = opts?.label ?? "splat"
@@ -524,8 +594,13 @@ export function createSplatMesh(data: SplatData, opts?: SplatMeshOptions): Splat
     uSplatColors: splatTexture(data.colors, 1, data.count, "rgba8", label + "-colors"),
   }
   mesh._instances.textures.push(textures.uSplatRecords as TextureId, textures.uSplatChunks as TextureId, textures.uSplatColors as TextureId)
-  if (data.shDegree > 0) {
-    textures.uSplatSh = splatTexture(data.sh!, SPLAT_SH_TEXELS[data.shDegree]!, data.count, "rgba32ui", label + "-sh")
+  if (kind.shDegree > 0 && kind.shEncoding === "pq") {
+    let subspaces = SPLAT_SH_LABEL_BYTES[kind.shDegree]!
+    textures.uSplatShLabels = splatTexture(data.sh!, SPLAT_SH_LABEL_TEXELS[kind.shDegree]!, data.count, SPLAT_LABEL_FORMATS[kind.shDegree]!, label + "-sh-labels")
+    textures.uSplatShPalette = splatTexture(data.shPalette!, subspaces, SPLAT_SH_PALETTE_SIZE, "rgba32ui", label + "-sh-palette")
+    mesh._instances.textures.push(textures.uSplatShLabels as TextureId, textures.uSplatShPalette as TextureId)
+  } else if (kind.shDegree > 0) {
+    textures.uSplatSh = splatTexture(data.sh!, SPLAT_SH_TEXELS[kind.shDegree]!, data.count, "rgba32ui", label + "-sh")
     mesh._instances.textures.push(textures.uSplatSh as TextureId)
   }
   mesh._textures = textures

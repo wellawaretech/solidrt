@@ -3086,12 +3086,34 @@ successors) as ordinary content, the model-loading split repeated:
   block a u32 per splat. `--sh 1..3` bakes
   that many spherical-harmonic bands beyond the base color from a
   trainer's `.ply` or an `.spz` (`.splat` has none), capped at the
-  capture's: a byte per coefficient, spz's (byte - 128) / 128, in 1/2/3
-  texels per splat (SPLAT_SH_TEXELS; coefficient-major with rgb
-  interleaved), 16/32/48 bytes per splat of texture, so the default is
+  capture's, stored as `--sh-encoding` says (`shEncoding` on
+  parseSplat, SplatShEncoding, in the header's SH block): `"pq"`, the
+  default, is product quantization - each coefficient's rgb becomes a
+  luma plane (green) and a chroma plane (red and blue as differences
+  from green, exact on the byte lattice), the planes are cut by band
+  into SPLAT_SH_SUBSPACES (luma and chroma of band 1, of band 2, and of
+  band 3 in two halves each: 3, 6, 5, 10, 3, 4, 6, 8 bytes, one palette
+  texel each), each clustered at bake by k-means into
+  SPLAT_SH_PALETTE_SIZE (256) entries, and a splat stores one label
+  byte per subspace (SPLAT_SH_LABEL_BYTES: 2/4/8 at degree 1/2/3)
+  beside one palette block (256 entries x subspaces rgba32ui texels,
+  32 KB at degree 3, `shPalette`); `"u8"` is a byte per coefficient,
+  spz's (byte - 128) / 128, in 1/2/3 texels per splat (SPLAT_SH_TEXELS;
+  coefficient-major with rgb interleaved), 16/32/48 bytes per splat,
+  exact for an spz. Luma and chroma are separate codebooks because a
+  capture's SH is mostly achromatic and one codebook over rgb spends
+  its codes on the gray axis and averages the rare hue shifts away
+  (okf/design/splats.md, D11). The pq bake seeds (k-means++) and
+  iterates (Lloyd) on a 64k sample, then over the whole cloud to
+  convergence, deterministically; it reports the clustering error per
+  subspace (`report.shPalette`: rms per coefficient and the 99th
+  percentile of the per-splat worst coefficient, in byte steps, and
+  the chroma differences clamped) and costs about 35 s at 786k splats
+  and degree 3. SH costs texture either way, so the default degree is
   0 and a bake opts in. The header's `antialiased` flag marks a capture
   trained with the Mip-Splatting compensation. At 1M splats a cloud is
-  24 MB on disk at SH0 (72 at SH3) and the bake runs in about a second.
+  24 MB on disk at SH0 (32 at SH3 as pq, 72 as u8) and the bake runs in
+  about a second without SH.
 - On the runtime, `loadSplat(path)` reads a `.sol3s` (fetch + decode,
   the loadModel shape) and `createSplatMesh(data, { count?, material?,
   label? })` / `<SplatMesh>` shows it: a RecordMesh in the INDEXED form
@@ -3115,10 +3137,14 @@ successors) as ordinary content, the model-loading split repeated:
   `count` dials a prefix of the bake's draw order (by importance).
   Write-once: treat the SplatData as consumed and drop it; at 1M splats
   the cloud is resident as the engine's 12 MB key copy plus 20 MB of
-  record and color texture (48 more at SH3) plus a 4 MB id buffer, and
-  disposeInstances frees all of it. `splatMaterialClass(shDegree,
-  antialiased)` is the stock class per pair (a shared instance each),
-  and `splatVertexSource(shDegree, antialiased)` / SPLAT_FRAGMENT /
+  record and color texture (8 MB of labels plus the 32 KB palette more
+  at SH3 as pq - `uSplatShLabels`, an `rg8ui` texture at degree 1 and
+  one or two `rgba8ui` texels per splat above, and `uSplatShPalette`;
+  48 MB more as u8, `uSplatSh`) plus
+  a 4 MB id buffer, and disposeInstances frees all of it.
+  `splatMaterialClass({ shDegree, shEncoding, antialiased })` is the
+  stock class per kind (a shared instance each; a SplatData is a valid
+  argument), and `splatVertexSource(opts)` / SPLAT_FRAGMENT /
   SPLAT_ID_ATTRIBUTES are exported for forks; `count` rounds up to whole
   groups.
 - The vertex stage decodes the record against its chunk (the mix over
@@ -3130,7 +3156,10 @@ successors) as ordinary content, the model-loading split repeated:
   moves the center), reads the target size from the standard
   `uViewport`, and evaluates the SH bands per corner from the view
   direction (`uCamPos` through the transposed model rotation - exact
-  under rotation and uniform scale). Two of the reference rasterizer's
+  under rotation and uniform scale) - under pq the splat's label texels
+  then one cache-resident palette texel per subspace, green plus the
+  chroma differences per coefficient, under u8 the splat's own
+  coefficient texels (`decodeSh` is the reference for both). Two of the reference rasterizer's
   rules ride along: the fragment caps alpha at SPLAT_ALPHA_MAX (0.99),
   and an antialiased bake scales opacity by the footprint's determinant
   ratio before and after the LOW_PASS dilation. The data textures' row

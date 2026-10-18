@@ -820,14 +820,18 @@ export type Scene = {
    * (default) clamps the linear result, "aces" compresses highlights on
    * the filmic curve. One shared-params write (`uToneMapping`, the
    * RESOLVE set in `@solidrt/3d/glsl` declares), like Three's
-   * renderer.toneMapping and Godot's Environment tonemap.
+   * renderer.toneMapping and Godot's Environment tonemap. A blendSpace
+   * "display" scene has no resolve stage: any curve throws there, "none"
+   * is a no-op.
    */
   setToneMapping(mode: ToneMapping): void
   /**
    * The resolve's exposure (default 1): the buffer is scaled by it before
    * tone mapping, so a scene lit in physical-ish units is brought into
    * range here rather than by dimming every light. One shared-params
-   * write (`uExposure`), like Three's toneMappingExposure.
+   * write (`uExposure`), like Three's toneMappingExposure. A blendSpace
+   * "display" scene has no resolve stage: any other exposure throws
+   * there, 1 is a no-op.
    */
   setExposure(exposure: number): void
   /**
@@ -857,7 +861,9 @@ export type Scene = {
    * is; the default resolve composes it, and a custom one does by
    * declaring `uBloom` / `uBloomIntensity` (start from BLOOM_RESOLVE in
    * `@solidrt/3d/glsl`). Fans out to every view that has not set a
-   * bloom of its own, like setFog.
+   * bloom of its own, like setFog. A blendSpace "display" scene has no
+   * resolve stage: bloom on throws there, null (off) is a no-op, so a
+   * component that mirrors an absent `bloom` prop asks nothing of it.
    */
   setBloom(bloom: BloomOptions | null): void
   /** The LOD quality knob (SceneOptions.lodBias): a multiplier on every
@@ -2751,13 +2757,21 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       scene.setParams(params)
     },
     setToneMapping(mode) {
-      if (resolve === null) throw new Error('scene.setToneMapping: a blendSpace "display" scene has no resolve stage to tone map in')
+      if (resolve === null) {
+        // No resolve stage, no tone mapping: "none" is already the state.
+        if (mode === "none") return
+        throw new Error('scene.setToneMapping: a blendSpace "display" scene has no resolve stage to tone map in')
+      }
       let code = TONE_MAPPING_CODE[mode]
       if (code === undefined) throw new Error('scene.setToneMapping: expected "none", "aces", "agx" or "neutral", got ' + mode)
       scene.setParams({ uToneMapping: code })
     },
     setExposure(exposure) {
-      if (resolve === null) throw new Error('scene.setExposure: a blendSpace "display" scene has no resolve stage to expose in')
+      if (resolve === null) {
+        // No resolve stage, no exposure: unity is already the state.
+        if (exposure === 1) return
+        throw new Error('scene.setExposure: a blendSpace "display" scene has no resolve stage to expose in')
+      }
       if (!Number.isFinite(exposure) || exposure < 0) throw new Error("scene.setExposure: expected a finite number >= 0, got " + exposure)
       scene.setParams({ uExposure: exposure })
     },
@@ -2769,7 +2783,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     setBloom(bloom) {
       if (disposed) return
-      if (resolve === null) throw new Error('scene.setBloom: a blendSpace "display" scene has no resolve stage to bloom on')
+      if (resolve === null) {
+        // No resolve stage, no bloom: off is already the state.
+        if (bloom === null) return
+        throw new Error('scene.setBloom: a blendSpace "display" scene has no resolve stage to bloom on')
+      }
       sceneBloom = bloom
       setResolveBloom(resolve, texture, width, height, bloom)
       for (let v of views) if (v.resolve !== null && !v.ownBloom) setResolveBloom(v.resolve, v.texture, v.width, v.height, bloom)
@@ -2893,8 +2911,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           hooks._schedule()
         },
         setBloom(bloom) {
-          if (v.resolve === null) throw new Error("view.setBloom: a tiled view has no resolve to bloom on - resolve the atlas")
           if (v.disposed) return
+          if (v.resolve === null) {
+            if (bloom === null) return
+            throw new Error("view.setBloom: a tiled view has no resolve to bloom on - resolve the atlas")
+          }
           v.ownBloom = true
           setResolveBloom(v.resolve, v.texture, v.width, v.height, bloom)
           hooks._schedule()

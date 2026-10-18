@@ -178,7 +178,8 @@ declare module "flux:gpu" {
    * a 3D texture ({@link createTexture3D}), a `sampler2DArray` an array
    * texture ({@link createArrayTexture}), a `sampler2DShadow` a draw
    * target's depth texture, and the `usampler*` of each shape an
-   * "rgba32ui" texture of that shape; a mismatch throws. An
+   * integer-format texture ("rgba32ui", "rgba8ui", "rg8ui", "r8ui") of
+   * that shape; a mismatch throws. An
    * `undefined` (or `null`) binding is skipped, like a param; an id must be
    * a non-negative integer (a negative or fractional value throws).
    */
@@ -245,7 +246,15 @@ declare module "flux:gpu" {
    * canonicalize the bits (a splat cloud's records and SH bands, any
    * packed table). Nearest-only and sample-only exactly like "rgba32f"
    * (integer textures never filter), and a float sampler over it (or a
-   * `usampler2D` over any other format) throws at bind.
+   * `usampler2D` over a non-integer format) throws at bind.
+   *
+   * "r8ui", "rg8ui" and "rgba8ui" are the 8-bit integer formats: one, two
+   * or four bytes per texel (a Uint8Array of width*height*1/2/4, the row
+   * alignment of "r8"/"rgba8"), fetched through a `usampler2D` as a
+   * uint/uvec2/uvec4 holding the bytes as plain integers - an index per
+   * texel into a palette or codebook, a label, a small id - where an
+   * "rgba8" would hand the shader a unorm to scale back. The same integer
+   * rules as "rgba32ui": nearest-only, sample-only, `usampler*` only.
    *
    * "etc2-rgba8", "etc2-rgba8-srgb", "bc7-rgba8" and "bc7-rgba8-srgb" are
    * the block-compressed formats: 4x4 texel blocks of 16 bytes (1 byte per
@@ -278,6 +287,9 @@ declare module "flux:gpu" {
     | "rgba32f"
     | "rgba16f"
     | "rgba32ui"
+    | "r8ui"
+    | "rg8ui"
+    | "rgba8ui"
     | "etc2-rgba8"
     | "etc2-rgba8-srgb"
     | "bc7-rgba8"
@@ -410,7 +422,7 @@ declare module "flux:gpu" {
    * rows top-down like a 2D upload, slice 0 first - in the view type the
    * format takes (see {@link createTexture}; uncompressed formats only).
    * Returns an ordinary texture id that only a `uniform sampler3D` (or
-   * `usampler3D` for "rgba32ui") consumes, sampled by position:
+   * `usampler3D` for an integer format) consumes, sampled by position:
    * `texture(uVolume, p)` with `p` in 0..1 on all three axes, filtered
    * across all three (hardware trilinear with `filter: "linear"`) - the
    * storage of a brick pool, a 3D LUT or a density field. Texel i's centre
@@ -432,7 +444,7 @@ declare module "flux:gpu" {
    * layer back to back (layer 0 first; each layer laid out like a 2D
    * upload) in the view type the format takes (uncompressed formats only).
    * Returns an ordinary texture id that only a `uniform sampler2DArray`
-   * (or `usampler2DArray` for "rgba32ui") consumes, sampled by layer:
+   * (or `usampler2DArray` for an integer format) consumes, sampled by layer:
    * `texture(uLayers, vec3(uv, layer))`, where `layer` is an UNNORMALIZED
    * index (0, 1, 2, ... - rounded to the nearest layer and clamped, never
    * divided by the count), and filtering, `wrap` and the mip chain apply
