@@ -562,12 +562,6 @@ Shaped, not started.
   2026-09-28 (one PROFILE for every dist binary, release by default,
   release-opt for publishing, Android alike) and verified on linux-x64 and
   Windows; open is verifying the darwin and Android publish builds.
-- **[The linear-blend scene path costs twice the display path on the Pixel 7 where it used to cost the same](backlog/mali-linear-scene-path-doubled.md)** [2026-10-18]
-  On 2026-09-27 the 1M splat train at full resolution read 42 ms in a linear
-  scene and 41 in a display scene on the Pixel 7; on 2026-10-18 HEAD reads 88
-  and 44 at the same clock and pose, so something since then doubled the
-  half-float scene buffer path (the buffer, its resolve, or what the view does
-  with it) on Mali, and every linear 3d scene on a phone pays it.
 - **[Jank an agent cannot see or measure](backlog/mcp-interaction-perf-visibility.md)** [2026-07-27]
   Most of this landed 2026-08-18 (the 600-frame history, get_stats' window
   with p50/p95/max, the worst frame and rates, the throttled slow-frame
@@ -2132,6 +2126,12 @@ Finished, kept for the reasoning.
   Reintroduce per-node localX/localY on pointer events (already carried
   through hit testing, dropped in flux marshalling), and cap move hit-tests to
   one per pointer per frame.
+- **[The linear-blend scene path costs twice the display path on the Pixel 7 where it used to cost the same](done/mali-linear-scene-path-doubled.md)** [2026-10-18]
+  On 2026-09-27 the 1M splat train at full resolution read 42 ms in a linear
+  scene and 41 in a display scene on the Pixel 7; on 2026-10-18 HEAD reads 88
+  and 44 at the same clock and pose, so something since then doubled the
+  half-float scene buffer path (the buffer, its resolve, or what the view does
+  with it) on Mali, and every linear 3d scene on a phone pays it.
 - **[One material model for the 2d and 3d extensions](done/materials-one-model.md)** [2026-10-10]
   A 2d layer had one hardwired shader pair with blend as its only knob, and
   the 3d custom-look tiers had settled after that note was written; both

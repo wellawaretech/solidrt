@@ -249,7 +249,7 @@ moves:
 | directional `cascades` | 1 | 2 | 2 | `shadow.cascades`; a light that authored a `camera` box stays one map |
 | `lodBias` | 0.7 | 1 | 1.5 | the Scene option |
 | LOD cross-fade | off | on | on | none - the row's call |
-| `samples` (scene and views) | 1 | 4 | 4 | the Scene / View option, live |
+| `samples` (scene and views) | 1 | 1 | 4 | the Scene / View option, live |
 | fill `maxPixels` | 1 Mpx | none | none | the Scene / View3d prop |
 | model texture anisotropy | 1 | 4 | 16, device-clamped | none - id state every scene shares |
 | model texture mip limit (`baseLevel`) | 1 | 0 | 0 | none |
@@ -257,7 +257,10 @@ moves:
 
 Low is the Adreno 610 tablet and Mali-T860 TV class (the soft kernel
 is half a 2 Mpx frame there, MSAA 4x ~9 ms, the fill cap the last
-lever), high the laptop and Pixel 7 class; okf/done/3d-quality-tier.md
+lever), high the laptop class. Multisampling is high's alone: on a
+Mali phone (Pixel 7) any count above 1 on the half-float buffer costs a
+flat ~54 ms per 2.6 Mpx frame, 2x the same as 4x, while rgba8 4x costs
+~40% (okf/done/mali-linear-scene-path-doubled.md); okf/done/3d-quality-tier.md
 has the rows and cites the measurements behind them. A scene may say its
 own: `<Scene quality="low">` is that row whatever the app tier (a
 thumbnail scene), `quality={{ samples: 8 }}` a row object over the app

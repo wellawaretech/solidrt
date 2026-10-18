@@ -81,16 +81,18 @@ export const QUALITY_TIERS: Record<Quality, QualityRow> = {
     mipLimit: 1,
     probeSize: 64,
   },
-  // Unity's Medium: a 5x5 tent, 2 cascades; 4x MSAA is what every example
-  // had asked for by hand before the row; the chain's full resolution and
-  // native density.
+  // Unity's Medium: a 5x5 tent, 2 cascades, the chain's full resolution
+  // and native density. Single-sample: on a Mali phone (Pixel 7) any
+  // count above 1 on the half-float buffer costs a flat ~54 ms per 2.6
+  // Mpx frame, 2x the same as 4x (okf/done/mali-linear-scene-path-doubled.md),
+  // so multisampling is high's, where the device is assumed to afford it.
   medium: {
     shadows: "medium",
     mapSize: 1024,
     cascades: 2,
     lodBias: 1,
     lodFade: true,
-    samples: 4,
+    samples: 1,
     maxPixels: null,
     anisotropy: 4,
     mipLimit: 0,
@@ -99,7 +101,8 @@ export const QUALITY_TIERS: Record<Quality, QualityRow> = {
   // Unity's High and Very High: a 7x7 tent, 2048 maps (what spot cones
   // need to stay clean; 15 ms on the tablet, 50 on the TV - not this
   // class's problem), the LOD bias of Very High, the device's full
-  // anisotropy, a 256 probe (Godot's desktop reflection size).
+  // anisotropy, a 256 probe (Godot's desktop reflection size), and the
+  // 4x MSAA every example had asked for by hand before the row.
   high: {
     shadows: "high",
     mapSize: 2048,

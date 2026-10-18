@@ -505,7 +505,7 @@ export type SceneOptions = {
   wrap?: WrapMode
   /** Multisample count of the target (1, 2, 4 or 8). Storage-only
    * anti-aliasing of mesh edges; see createDrawTarget. Default: the
-   * quality row's (1 / 4 / 4), or 1 with `depth: "texture"` (no
+   * quality row's (1 / 1 / 4), or 1 with `depth: "texture"` (no
    * multisampled sampleable depth; an explicit count above 1 with it
    * throws). Live via scene.setSamples. */
   samples?: 1 | 2 | 4 | 8

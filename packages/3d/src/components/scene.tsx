@@ -121,7 +121,7 @@ export type SceneProps = ScenePointerProps &
   depth?: true | "texture"
   label?: string
   /** Multisample count (1, 2, 4 or 8): anti-aliased mesh edges. Default
-   * the quality row's (1 / 4 / 4; 1 with `depth: "texture"`). Reactive
+   * the quality row's (1 / 1 / 4; 1 with `depth: "texture"`). Reactive
    * (scene.setSamples: the target's storage is reallocated in place). */
   samples?: 1 | 2 | 4 | 8
   ref?: (scene: SceneHandle) => void

@@ -117,6 +117,11 @@ notes/3d-soft-shadows-findings.md and backlog/3d-low-end-gpu-performance.md):
 | model texture mip limit | 1 | 0 | 0 |
 | probe size | 64 | 128 | 256 |
 
+The medium `samples` went to 1 on 2026-10-18: the 4x this table
+priced on the Adreno tablet costs a flat ~54 ms per 2.6 Mpx frame on a
+Mali phone's half-float buffer, 2x the same
+(done/mali-linear-scene-path-doubled.md).
+
 ## Built (2026-10-17)
 
 - core: `quality.ts` (`quality`, `setQuality`, `QUALITIES`, `Quality`).

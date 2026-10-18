@@ -56,12 +56,13 @@ async function mounted(
   return scene
 }
 
-test("the medium row by default: 4 samples, a 5x5 kernel, two 1024 cascades", async app => {
+test("the medium row by default: one sample, a 5x5 kernel, two 1024 cascades", async app => {
   let scene = await mounted(app, "q-medium")
   expect(quality()).toBe("medium")
   expect(scene.quality()).toEqual(QUALITY_TIERS.medium)
   let t = target(app, "q-medium")
-  expect(t.samples).toBe(4)
+  // Single-sample is reported by absence, like every default.
+  expect(t.samples).toBeUndefined()
   expect(t.params.uShadowFilterTaps).toBe(16)
   // Two cascades of 1024 tile a 2 x 1 atlas.
   expect(atlas(app, "q-medium")).toMatchObject({ width: 2048, height: 1024 })
@@ -74,13 +75,12 @@ test("the app tier moves every unset knob live, and back", async app => {
     await app.settle()
     expect(scene.quality()).toEqual(QUALITY_TIERS.low)
     let t = target(app, "q-app")
-    // Single-sample is reported by absence, like every default.
     expect(t.samples).toBeUndefined()
     expect(t.params.uShadowFilterTaps).toBe(0)
     expect(atlas(app, "q-app")).toMatchObject({ width: 512, height: 512 })
     setQuality("medium")
     await app.settle()
-    expect(target(app, "q-app").samples).toBe(4)
+    expect(target(app, "q-app").samples).toBeUndefined()
     expect(target(app, "q-app").params.uShadowFilterTaps).toBe(16)
     expect(atlas(app, "q-app")).toMatchObject({ width: 2048, height: 1024 })
   } finally {
@@ -123,7 +123,7 @@ test("a row object overrides the app tier field by field; a name replaces it who
   // Back to following the app tier.
   scene.setQuality(null)
   await app.settle()
-  expect(target(app, "q-row").samples).toBe(4)
+  expect(target(app, "q-row").samples).toBeUndefined()
 })
 
 test("setSamples fixes the count; the row no longer moves it", async app => {

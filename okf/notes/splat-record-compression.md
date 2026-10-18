@@ -105,7 +105,7 @@ at its close. Each bullet is dated by the work it came out of.
   The fill is identical, the decode and the three chunk fetches cost
   about 1.5 ms per million splats on the vertex side (2% of the frame),
   the sort is a wash. The linear-blend doubling is HEAD's:
-  okf/backlog/mali-linear-scene-path-doubled.md.
+  okf/done/mali-linear-scene-path-doubled.md.
 - The human verdict on the 11/10/11 pairs: the train indistinguishable,
   the lizard visibly worse on the right side of its head. The diff
   localizes it to a mottled patch of cheek behind the eye, and the bake

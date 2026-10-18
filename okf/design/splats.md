@@ -206,7 +206,7 @@ carry, not a renderer guess.
   ([backlog/splat-order-and-chunks.md](../backlog/splat-order-and-chunks.md)).
 - **The linear blend path costs twice the display path on Mali**, in
   HEAD, since some change after 2026-09-27; not the splats'
-  ([backlog/mali-linear-scene-path-doubled.md](../backlog/mali-linear-scene-path-doubled.md)).
+  ([done/mali-linear-scene-path-doubled.md](../done/mali-linear-scene-path-doubled.md)).
 - **The count dial drops a detailed subject first.** Importance is
   volume times opacity; a capture whose subject is all micro-splats
   loses the subject before the garden at 100k. The order block takes any

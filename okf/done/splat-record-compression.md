@@ -178,7 +178,7 @@ u64 radix idea (the phone showed no need); a variable chunk size for
 sparse regions (the 16-bit step made it moot at the lizard's tail,
 0.9% of splats above a tenth of their size, all in near-empty space).
 The linear-blend regression found on the way is HEAD's and has its own
-item ([../backlog/mali-linear-scene-path-doubled.md](../backlog/mali-linear-scene-path-doubled.md)).
+item ([../done/mali-linear-scene-path-doubled.md](../done/mali-linear-scene-path-doubled.md)).
 
 ## Findings
 
