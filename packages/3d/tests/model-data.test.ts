@@ -12,6 +12,12 @@ import * as entry from "../src/model-data.ts"
 import type { ModelData } from "../src/model-data.ts"
 
 test("the model entry loads without the runtime", async () => {
+  // sol test runs a file whose bundle imports a gui or sol: module on the
+  // dev client instead of failing it, where those modules exist: a leak
+  // would move this file there and keep it green. The bare flux binary
+  // lists no gui capability, so this is the check that the leak-proof
+  // import above actually proved anything.
+  expect(Flux.capabilities.includes("gpu")).toBe(false)
   // The published subpath resolves to the same module as the file.
   let published = await import("@solidrt/3d/model")
   expect(published.encodeModel).toBe(entry.encodeModel)

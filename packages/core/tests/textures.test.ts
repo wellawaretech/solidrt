@@ -1,5 +1,6 @@
 // @solidrt/core/textures under sol test: the entry imports no gui or sol:
-// module (this import is the proof: the bare flux binary has neither),
+// module (the first test is the proof: the bare flux binary has neither,
+// and a leak would move this file onto the dev client, which has both),
 // isKtx2 sniffs the file, and the texture settings an app
 // declares in package.json (solidrt.textures) read as defaults where
 // nothing is said and a named error where something is wrong. Which
@@ -10,6 +11,14 @@ import { matchesGlob } from "flux:path"
 import { DEFAULT_TEXTURE_SETTINGS, isKtx2, textureSettingFor, textureSettings, unmatchedTextureFiles, unmatchedTextureNames } from "../src/textures.ts"
 
 let read = (textures: unknown, run?: { compress?: boolean }) => textureSettings({ solidrt: { textures } }, run)
+
+test("the textures entry loads without the runtime", () => {
+  // sol test runs a file whose bundle imports a gui or sol: module on the
+  // dev client, where those modules exist, so a leak into this entry
+  // would not fail the import: it would move the file. The bare flux
+  // binary lists no gui capability.
+  expect(Flux.capabilities.includes("gpu")).toBe(false)
+})
 
 test("isKtx2 goes by the first twelve bytes", () => {
   let ktx2 = new Uint8Array([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2])

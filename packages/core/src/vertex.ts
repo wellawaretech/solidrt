@@ -12,6 +12,12 @@
 // is what keeps every offset and stride 4-aligned with no padding
 // arithmetic anywhere, and a Float32Array view over any record buffer
 // always valid.
+//
+// Published as @solidrt/core/vertex, a runtime-free entry like ./textures:
+// it imports nothing the runtime provides (the flux:gpu import below is
+// type-only), so the pure modules of an extension (3d's geometry kit, on
+// the @solidrt/3d/model bake path) take the vocabulary from here, never
+// from ./gpu, which imports flux:gpu and sol:dev at module scope.
 
 import type { VertexAttribute, VertexFormat } from "flux:gpu"
 

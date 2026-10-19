@@ -40,8 +40,12 @@
 // array math (tests/geometry.test.ts runs it headless on
 // flux). The GPU buffer step lives in geometry-gpu.ts.
 
-import { attributeAccess as coreAccess, checkLayout as coreCheck, isFloatFormat, isFloatLayout as coreIsFloat, layoutBytes, layoutKey as coreKey, layoutSlot as coreSlot, layoutStride as coreStride, layoutView, VERTEX_FORMATS } from "@solidrt/core/gpu"
-import type { AttributeAccess, Topology, VertexAttribute, VertexFormat } from "@solidrt/core/gpu"
+// The vertex vocabulary comes from core's runtime-free entry, not from
+// @solidrt/core/gpu (which imports flux:gpu and sol:dev at module scope):
+// this module is on the @solidrt/3d/model path, which bakes under bun.
+import { attributeAccess as coreAccess, checkLayout as coreCheck, isFloatFormat, isFloatLayout as coreIsFloat, layoutBytes, layoutKey as coreKey, layoutSlot as coreSlot, layoutStride as coreStride, layoutView, VERTEX_FORMATS } from "@solidrt/core/vertex"
+import type { AttributeAccess } from "@solidrt/core/vertex"
+import type { Topology, VertexAttribute, VertexFormat } from "@solidrt/core/gpu"
 import { premultipliedColor } from "./color.ts"
 import { add, compose, cross, mat4, normalize, normalMatrix, sub, updateRotation, updateScale } from "./math.ts"
 import type { Quat, TransformUpdate, Vec2, Vec3 } from "./math.ts"
@@ -80,14 +84,15 @@ export const VERTEX_LAYOUTS: Record<"base" | "colored" | "skinned", VertexAttrib
 export const BASE_FLOATS = 8
 
 // The vertex vocabulary - the format codecs, the stride and key of an
-// attribute list, the record accessors - is core's (`@solidrt/core/gpu`,
-// vertex.ts), shared with the 2d package's material style streams;
+// attribute list, the record accessors - is core's (`@solidrt/core/vertex`,
+// also re-exported by `@solidrt/core/gpu`), shared with the 2d package's
+// material style streams;
 // re-exported here so the package's own modules and callers keep one
 // import for layouts. What stays here is the PRESET side: the named
 // layouts and the functions taking a VertexLayout (a preset name or a
 // list).
-export { formatFeeds, isFloatFormat, VERTEX_FORMATS } from "@solidrt/core/gpu"
-export type { AttributeAccess, FormatCodec, FormatKind } from "@solidrt/core/gpu"
+export { formatFeeds, isFloatFormat, VERTEX_FORMATS } from "@solidrt/core/vertex"
+export type { AttributeAccess, FormatCodec, FormatKind } from "@solidrt/core/vertex"
 
 /** The attribute list of a layout (a preset name resolves to its list). */
 export function layoutAttributes(layout?: VertexLayout): VertexAttribute[] {
