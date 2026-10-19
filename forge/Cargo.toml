@@ -110,7 +110,7 @@ iroh = "=1.3.0"
 # TLS it implies are what iroh picks for the client half too.
 iroh-relay = { version = "=1.3.0", default-features = false, features = ["server"], optional = true }
 # Cross-platform PATH lookup for the subprocess `which` (handles Windows PATHEXT).
-which = "=7.0.3"
+which = "=8.0.6"
 # UDP socket options the flux:net multicast beacon needs (SO_REUSEADDR/REUSEPORT)
 # that tokio's UdpSocket::bind doesn't expose: bind via socket2, then adopt with
 # UdpSocket::from_std. Already in the tree (tokio depends on it).
