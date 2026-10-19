@@ -16,11 +16,14 @@
 // and its rest tail direction `d` at bone length `L` taken from the
 // parent's matrix as it stands this frame,
 //
-//   tail' = tail + (tail - prev) * keep + d * stiffness * S + g * power * S
+//   tail' = tail + (tail - prev) * keep
+//         + (d * stiffness + g * power + force) * S
 //   tail' = p + normalize(tail' - p) * L, then out of each collider, then
 //   back to L again; the bone turns from its rest tail to tail'
 //
-// where keep = 1 - drag and S is the reference step, 1/60 s. three-vrm,
+// where keep = 1 - drag, `force` is the chain's runtime force (the wind,
+// beside the joint's authored gravity, as UniVRM's ExternalForce and
+// Godot's external_force) and S is the reference step, 1/60 s. three-vrm,
 // UniVRM and Godot apply that map once per FRAME with S = the frame's
 // delta, so the drag damps twice as much per second at 120 Hz as at 60 Hz
 // and the same hair swings differently on every display. A fixed 60 Hz
@@ -30,7 +33,7 @@
 // agrees with three-vrm's map on every whole S and is defined for any dt:
 //
 //   per step S, with velocity u = (tail - prev) / S and kick f = d *
-//   stiffness + g * power (both in length per second):
+//   stiffness + g * power + force (all in length per second):
 //     u' = keep * u + f
 //     x' = x + S * u'
 //   is affine in (x, u) with eigenvalues 1 and keep, so it has a unique
@@ -121,6 +124,18 @@ pub struct SpringJoint {
   pub gravity_power: f32,
   pub gravity_dir: [f32; 3],
   pub hit_radius: f32,
+}
+
+/// A change to a joint's authored settings (`set_spring_joint`): the
+/// fields given replace the joint's, the others stay. The tail and the
+/// rest rotation are the chain's structure and stay as created.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SpringJointUpdate {
+  pub stiffness: Option<f32>,
+  pub drag: Option<f32>,
+  pub gravity_power: Option<f32>,
+  pub gravity_dir: Option<[f32; 3]>,
+  pub hit_radius: Option<f32>,
 }
 
 /// A collider's shape, in its node's space. `inside` keeps the tails
@@ -229,6 +244,11 @@ struct Chain {
   colliders: Vec<SpringCollider>,
   /// By arena index of a joint's node: its position in `joints`.
   by_node: HashMap<u32, usize>,
+  /// The runtime force on every tail (`set_spring_force`), world space,
+  /// beside the joints' authored gravity: the wind. Zero until set.
+  force: [f32; 3],
+  /// `force` in simulation space, per frame.
+  force_sim: [f32; 3],
   /// Per frame: the parent matrix of every joint without a parent joint
   /// (unused slots stay identity), the solved matrix of every joint, the
   /// collider shapes in simulation space.
@@ -300,14 +320,9 @@ impl Spatial {
       if !(rest_length > 0.0) {
         return Err(format!("joint {i}: the tail must not be zero"));
       }
-      if !(0.0..=1.0).contains(&spec.drag) {
-        return Err(format!("joint {i}: drag must be within 0..1, got {}", spec.drag));
-      }
-      if !(spec.stiffness >= 0.0) || !(spec.hit_radius >= 0.0) || !spec.gravity_power.is_finite() {
-        return Err(format!("joint {i}: stiffness and hit radius must be >= 0, gravity power finite"));
-      }
-      if !spec.gravity_dir.iter().all(|v| v.is_finite()) || !spec.rest_rotation.iter().all(|v| v.is_finite()) {
-        return Err(format!("joint {i}: gravity direction and rest rotation must be finite"));
+      check_settings(&spec).map_err(|e| format!("joint {i}: {e}"))?;
+      if !spec.rest_rotation.iter().all(|v| v.is_finite()) {
+        return Err(format!("joint {i}: the rest rotation must be finite"));
       }
       let scale = self.nodes[idx as usize].scale;
       let scaled = [spec.tail[0] * scale[0], spec.tail[1] * scale[1], spec.tail[2] * scale[2]];
@@ -347,6 +362,8 @@ impl Spatial {
       sim_shapes: Vec::with_capacity(colliders.len()),
       colliders,
       by_node,
+      force: [0.0; 3],
+      force_sim: [0.0; 3],
       parent_sims: vec![IDENTITY; n],
       solved: vec![IDENTITY; n],
     };
@@ -381,6 +398,53 @@ impl Spatial {
     };
     self.springs = set;
     result
+  }
+
+  /// Change a joint's authored settings (the fields given); a drag change
+  /// re-derives the joint's flow. Nothing re-primes: the chain goes on
+  /// from where it is under the new settings. Errors: a dropped id, a
+  /// joint out of range, a setting out of range.
+  pub fn set_spring_joint(&mut self, id: SpringId, joint: usize, update: SpringJointUpdate) -> Result<(), String> {
+    let chain = self.springs.chains.iter_mut().find(|c| c.id == id).ok_or_else(|| format!("spring {id} not found"))?;
+    let count = chain.joints.len();
+    let j =
+      chain.joints.get_mut(joint).ok_or_else(|| format!("joint {joint} out of range (the spring has {count})"))?;
+    let mut spec = j.spec;
+    if let Some(v) = update.stiffness {
+      spec.stiffness = v;
+    }
+    if let Some(v) = update.drag {
+      spec.drag = v;
+    }
+    if let Some(v) = update.gravity_power {
+      spec.gravity_power = v;
+    }
+    if let Some(v) = update.gravity_dir {
+      spec.gravity_dir = v;
+    }
+    if let Some(v) = update.hit_radius {
+      spec.hit_radius = v;
+    }
+    check_settings(&spec).map_err(|e| format!("joint {joint}: {e}"))?;
+    if spec.drag != j.spec.drag {
+      j.flow = Flow::new(spec.drag);
+    }
+    j.spec = spec;
+    Ok(())
+  }
+
+  /// Set the runtime force on every tail of the chain (world space, the
+  /// units of gravity power along a direction): the wind, added to each
+  /// joint's authored gravity in the kick - Godot's external_force,
+  /// UniVRM's ExternalForce. A constant force settles like gravity does.
+  /// Errors: a dropped id, a non-finite force.
+  pub fn set_spring_force(&mut self, id: SpringId, force: [f32; 3]) -> Result<(), String> {
+    if !force.iter().all(|v| v.is_finite()) {
+      return Err("the force must be finite".to_string());
+    }
+    let chain = self.springs.chains.iter_mut().find(|c| c.id == id).ok_or_else(|| format!("spring {id} not found"))?;
+    chain.force = force;
+    Ok(())
   }
 
   /// Step every chain by the app time since the last advance, each at its
@@ -418,6 +482,7 @@ impl Spatial {
       Some(c) => invert_affine(&self.world(c).map_err(|_| ())?),
       None => IDENTITY,
     };
+    chain.force_sim = transform_vector(&to_sim, chain.force);
     chain.sim_shapes.clear();
     for c in &chain.colliders {
       let m = multiply(to_sim, self.world(c.node).map_err(|_| ())?);
@@ -498,7 +563,7 @@ impl Spatial {
         }
         let rest_dir = scale3(rest_vec, 1.0 / len);
         let gravity = normalize_or(transform_vector(&to_sim, j.spec.gravity_dir), [0.0; 3]);
-        let f = add(scale3(rest_dir, j.spec.stiffness), scale3(gravity, j.spec.gravity_power));
+        let f = add(add(scale3(rest_dir, j.spec.stiffness), scale3(gravity, j.spec.gravity_power)), chain.force_sim);
         let (free, u, kappa) = j.flow.step(j.x, j.u, f, t);
         // Length, colliders (each followed by length again).
         let mut x = pos_at_length(pos, free, len, rest_dir);
@@ -572,6 +637,21 @@ impl Spatial {
     self.enqueue(idx);
     true
   }
+}
+
+/// The authored settings checked: drag within 0..1, stiffness and hit
+/// radius non-negative, gravity finite.
+fn check_settings(spec: &SpringJoint) -> Result<(), String> {
+  if !(0.0..=1.0).contains(&spec.drag) {
+    return Err(format!("drag must be within 0..1, got {}", spec.drag));
+  }
+  if !(spec.stiffness >= 0.0) || !(spec.hit_radius >= 0.0) || !spec.gravity_power.is_finite() {
+    return Err("stiffness and hit radius must be >= 0, gravity power finite".to_string());
+  }
+  if !spec.gravity_dir.iter().all(|v| v.is_finite()) {
+    return Err("the gravity direction must be finite".to_string());
+  }
+  Ok(())
 }
 
 /// The rest rotation checked finite (its normalization is per use).

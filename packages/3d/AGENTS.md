@@ -2994,7 +2994,15 @@ in the collider node's space; `inside` keeps the tails WITHIN a sphere
 or capsule, a skirt around the legs), and `center` the node whose space
 the chain is solved in (its own motion then does not swing the chain -
 VRM's center; default world space). The handle has `reset()` (every
-tail back at rest under the current pose, what a teleport wants) and
+tail back at rest under the current pose, what a teleport wants),
+`setJoint(chain, joint, { stiffness?, drag?, gravityPower?,
+gravityDir?, hitRadius? })` (the AUTHORED settings, for tuning and
+states - wet hair raises drag; the chain goes on from where it is, and
+a re-enter keeps the values), `setForce(force, chain?)` (the RUNTIME
+force on every tail, world space, the units of gravityPower along a
+direction, added to each joint's authored gravity: the wind - Godot's
+external_force, UniVRM's ExternalForce - on the whole model or one
+chain; write it per frame for gusts, a constant one settles) and
 `dispose()`. Zero per-frame JS: the core steps every chain once per
 frame AFTER your onFrame and its flush - the POSE POST-PASS, where
 Unity's LateUpdate and Godot's skeleton modifiers run - so the chains

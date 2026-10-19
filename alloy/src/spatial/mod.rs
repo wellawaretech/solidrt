@@ -47,7 +47,9 @@ pub use players::{
 pub use residency::{
   GridId, GridSpec, RegionEvent, RegionMargins, RegionRef, ResidencyStats, DEFAULT_RESIDENCY_BUDGET, VIEW_KEY_BASE,
 };
-pub use springs::{SpringCollider, SpringId, SpringJoint, SpringShape, SpringsTick, SPRING_REFERENCE_STEP};
+pub use springs::{
+  SpringCollider, SpringId, SpringJoint, SpringJointUpdate, SpringShape, SpringsTick, SPRING_REFERENCE_STEP,
+};
 // The flow's pure step, for the frame-rate tests.
 #[cfg(test)]
 pub(crate) use springs::flow_step;

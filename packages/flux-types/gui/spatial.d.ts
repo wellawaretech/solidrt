@@ -903,4 +903,23 @@ declare module "flux:spatial" {
    * over (three-vrm's reset; what a teleport wants). Throws on a dropped
    * id. */
   export function resetSpring(spring: SpringId): void
+  /**
+   * Change a joint's AUTHORED settings - the fields given replace the
+   * joint's, the others stay; the tail and the rest rotation are the
+   * chain's structure and stay as created. A drag change re-derives the
+   * joint's flow; nothing re-primes, the chain goes on from where it is
+   * (three-vrm's settings object, Godot's per-joint setters). Throws on
+   * a dropped id, a joint out of range or a setting out of range.
+   */
+  export function setSpringJoint(spring: SpringId, joint: number, update: { stiffness?: number; drag?: number; gravityPower?: number; gravityDir?: [number, number, number]; hitRadius?: number }): void
+  /**
+   * Set the chain's RUNTIME force: one vector (a Float32Array of 3, world
+   * space, the units of gravity power along a direction) added to every
+   * joint's authored gravity in the step - the wind, Godot's
+   * external_force and UniVRM's ExternalForce, kept apart from the
+   * asset's per-joint gravity so nothing authored is overwritten. Zero
+   * until set; a constant force settles like gravity does. Throws on a
+   * dropped id or a non-finite force.
+   */
+  export function setSpringForce(spring: SpringId, force: Float32Array): void
 }

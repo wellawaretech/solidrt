@@ -1,5 +1,6 @@
 use crate::spatial::{
-  flow_step, transform_point, Spatial, SpringCollider, SpringJoint, SpringShape, SpringsTick, SPRING_REFERENCE_STEP,
+  flow_step, transform_point, Spatial, SpringCollider, SpringJoint, SpringJointUpdate, SpringShape, SpringsTick,
+  SPRING_REFERENCE_STEP,
 };
 
 const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -358,4 +359,68 @@ fn creation_rejects_bad_input() {
   assert!(s.create_spring(b1, vec![joint(b1, 0.4, 0.0, 0.0), joint(b1, 0.4, 0.0, 0.0)], vec![], None).is_err());
   s.destroy(anchor).expect("destroy");
   assert!(s.create_spring(anchor, vec![joint(b1, 0.4, 0.0, 0.0)], vec![], None).is_err(), "dead clock");
+}
+
+#[test]
+fn a_force_deflects_the_chain_and_a_constant_one_settles() {
+  let mut s = Spatial::new();
+  let (_, b1, b2) = rig(&mut s);
+  let id = chain(&mut s, b1, b2, 0.0, vec![]);
+  advance_at(&mut s, 0.0);
+  // A wind along +x: the chain leans that way and comes to rest there.
+  s.set_spring_force(id, [1.0, 0.0, 0.0]).expect("force");
+  let tick = advance_at(&mut s, S * 1000.0);
+  assert!(tick.active && tick.wrote, "{tick:?}");
+  let mut settled = false;
+  for i in 2..=600 {
+    if !advance_at(&mut s, i as f64 * S * 1000.0).active {
+      settled = true;
+      break;
+    }
+  }
+  assert!(settled, "a constant force settles");
+  let end = chain_end(&s, b2);
+  assert!(end[0] > 0.05 && end[1] > 1.0 - 2.0 * BONE, "leaning along the wind, its end lifted: {end:?}");
+  // The force off: it hangs again.
+  s.set_spring_force(id, [0.0; 3]).expect("force");
+  for i in 601..=1200 {
+    advance_at(&mut s, i as f64 * S * 1000.0);
+  }
+  assert!(close(chain_end(&s, b2), [0.0, 1.0 - 2.0 * BONE, 0.0], 1e-3));
+  assert!(s.set_spring_force(id, [f32::NAN, 0.0, 0.0]).is_err());
+  assert!(s.set_spring_force(id + 1, [0.0; 3]).is_err());
+}
+
+#[test]
+fn a_joint_update_changes_the_motion_from_here_on() {
+  let mut s = Spatial::new();
+  let (anchor, b1, b2) = rig(&mut s);
+  let id = chain(&mut s, b1, b2, 0.0, vec![]);
+  advance_at(&mut s, 0.0);
+  s.set_transform(anchor, [0.0, 1.0, 0.0], axis_quat([0.0, 0.0, 1.0], 1.0), ONE).expect("turn");
+  advance_at(&mut s, S * 1000.0);
+  // Total drag on both joints: the swing stops dead, and stiffness 0 holds
+  // it where it is (no pull back) - the chain rests off its rest line.
+  for j in 0..2 {
+    s.set_spring_joint(id, j, SpringJointUpdate { drag: Some(1.0), stiffness: Some(0.0), ..Default::default() })
+      .expect("update");
+  }
+  let before = rotation_of(&s, b1);
+  for i in 2..=30 {
+    advance_at(&mut s, i as f64 * S * 1000.0);
+  }
+  let after = rotation_of(&s, b1);
+  assert!(!is_identity(before) && (0..4).all(|k| (before[k] - after[k]).abs() < 1e-4), "{before:?} vs {after:?}");
+  // Stiffness back: it returns to rest.
+  for j in 0..2 {
+    s.set_spring_joint(id, j, SpringJointUpdate { stiffness: Some(1.0), drag: Some(0.4), ..Default::default() })
+      .expect("update");
+  }
+  for i in 31..=600 {
+    advance_at(&mut s, i as f64 * S * 1000.0);
+  }
+  assert!(is_identity(rotation_of(&s, b1)), "{:?}", rotation_of(&s, b1));
+  assert!(s.set_spring_joint(id, 2, SpringJointUpdate::default()).is_err(), "out of range");
+  assert!(s.set_spring_joint(id, 0, SpringJointUpdate { drag: Some(1.5), ..Default::default() }).is_err());
+  assert!(s.set_spring_joint(id + 1, 0, SpringJointUpdate::default()).is_err());
 }

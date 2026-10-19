@@ -127,3 +127,26 @@ test("a chain without its model is refused, and a joint outside it too", async a
   remove(model)
   expect(() => createSpringBones(model, { springs: [{ joints: [{ node: b1 }] }] })).toThrow("must be in a scene")
 })
+
+test("a force leans the chain and a joint update takes from where it is", async app => {
+  let scene = await mounted(app)
+  let { model, b1, b2 } = rig(scene)
+  let springs = createSpringBones(model, { springs: [{ joints: [{ node: b1 }, { node: b2 }] }] })
+  await app.settle({ maxMs: 500 })
+  // A wind along +x leans the hanging chain; a constant one settles.
+  springs.setForce([1, 0, 0])
+  await app.advance(50)
+  expect(Math.abs(w(b1))).toBeLessThan(0.9999)
+  await app.settle({ maxMs: SETTLE_MS })
+  let leaning = Math.abs(w(b1))
+  expect(leaning).toBeLessThan(0.99)
+  // Total drag and no stiffness freeze the chain where it is, wind off.
+  springs.setForce([0, 0, 0])
+  springs.setJoint(0, 0, { drag: 1, stiffness: 0 })
+  springs.setJoint(0, 1, { drag: 1, stiffness: 0 })
+  await app.advance(500)
+  expect(Math.abs(w(b1))).toBeCloseTo(leaning, 3)
+  expect(() => springs.setJoint(1, 0, {})).toThrow("no chain 1")
+  expect(() => springs.setJoint(0, 2, {})).toThrow("no joint 2")
+  expect(() => springs.setJoint(0, 0, { drag: 2 })).toThrow("drag")
+})

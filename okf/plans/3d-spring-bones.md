@@ -23,9 +23,10 @@ it compose by hand.
 - `createSpringBones(model, { colliders, springs })` in `@solidrt/3d`:
   per-joint settings in the VRM 1.0 / three-vrm / Godot vocabulary
   (stiffness, drag, gravity power and direction, hit radius, tail), an
-  optional center node, colliders shared by index. `reset()` and
-  `dispose()`. The declaration lives on the model node and re-applies on
-  every scene enter, like `setTransition`.
+  optional center node, colliders shared by index. `reset()`,
+  `setJoint()`, `setForce()` and `dispose()`. The declaration lives on
+  the model node and re-applies on every scene enter, like
+  `setTransition`.
 - The core steps every chain once per frame AFTER the frame's JS and its
   flush, in the draw tick ahead of the spatial flush: secondary motion is
   a function of the final primary pose, and the frame's JS is a primary
@@ -70,7 +71,18 @@ scale; three-vrm 2.x does the same.
 
 **VRM reader stays out.** The app parses `secondaryAnimation` or
 `VRMC_springBone` and hands the joints over; a `@solidrt/3d/vrm` reader is
-a separate, additive item. Live settings updates are additive too.
+a separate, additive item.
+
+**Authored settings and the runtime force are two things.** `setJoint`
+edits a joint's authored settings (the asset's: stiffness, drag, gravity
+power and direction, hit radius; VRM's gravity is a per-joint shaping
+tool, not physics, and often not down). Wind is one runtime vector per
+chain, `setForce`, added to every joint's gravity in the kick, as UniVRM
+1.0's ExternalForce (per model) and Godot's external_force (per
+simulator) are, and Dynamic Bone's Force beside its Gravity; three-vrm has
+only the authored gravity and its wind demos mutate it per joint, the
+path this avoids. The tail and the rest rotation are structure and stay
+as created.
 
 ## Work
 

@@ -85,11 +85,26 @@ export type SpringBonesOptions = {
   colliders?: SpringColliderSpec[]
 }
 
+/** The authored settings `setJoint` can change (the tail is structure
+ * and stays). */
+export type SpringJointUpdate = Pick<SpringJointSpec, "stiffness" | "drag" | "gravityPower" | "gravityDir" | "hitRadius">
+
 export type SpringBones = {
   /** Put every chain back at rest now: the tails along their rest
    * directions under the current pose, no motion carried over
    * (three-vrm's reset) - what a teleport wants. */
   reset(): void
+  /** Change one joint's authored settings (`springs[chain].joints[joint]`):
+   * the fields given replace the joint's. The chain goes on from where it
+   * is under the new settings; a scene re-enter keeps them. For tuning
+   * and states (wet hair raises drag), not for wind: that is setForce. */
+  setJoint(chain: number, joint: number, update: SpringJointUpdate): void
+  /** Set the runtime force on every tail - the wind: one world-space
+   * vector in the units of gravityPower along a direction, added to each
+   * joint's authored gravity (Godot's external_force, UniVRM's
+   * ExternalForce). On every chain, or on `chain` alone. Write it per
+   * frame for gusts; a constant force settles like gravity does. */
+  setForce(force: Vec3, chain?: number): void
   /** Drop the chains; the joints hold their last rotation. */
   dispose(): void
 }
@@ -97,12 +112,19 @@ export type SpringBones = {
 /** One chain's packed payload and its core binding while in a scene. */
 type Chain = {
   nodes: SceneNode[]
+  /** The packed joints, kept current with setJoint so a re-enter binds
+   * the tuned values. */
   joints: Float32Array
   colliderNodes: SceneNode[]
   colliders: Float32Array
   center: SceneNode | null
+  /** The runtime force, re-applied at every bind. */
+  force: Float32Array
   id: SpringId | null
 }
+
+/** Where a setting sits in a joint's packed floats. */
+const JOINT_OFFSET = { stiffness: 7, drag: 8, gravityPower: 9, gravityDir: 10, hitRadius: 13 } as const
 
 /**
  * Declare the model's spring bones. The model must be in a scene (the
@@ -162,8 +184,13 @@ export function createSpringBones(model: Model, opts: SpringBonesOptions): Sprin
         packed.set([0, o[0], o[1], o[2], n[0], n[1], n[2], 0], at + 1)
       }
     })
-    return { nodes, joints, colliderNodes: chosen.map((c) => c.node), colliders: packed, center: spec.center ?? null, id: null }
+    return { nodes, joints, colliderNodes: chosen.map((c) => c.node), colliders: packed, center: spec.center ?? null, force: new Float32Array(3), id: null }
   })
+  let chainAt = (index: number, what: string): Chain => {
+    let chain = chains[index]
+    if (chain === undefined) throw new Error("createSpringBones." + what + ": no chain " + index + " (the model has " + chains.length + ")")
+    return chain
+  }
 
   let binding = {
     enter() {
@@ -183,6 +210,24 @@ export function createSpringBones(model: Model, opts: SpringBonesOptions): Sprin
   return {
     reset() {
       for (let chain of chains) if (chain.id !== null) spatial.resetSpring(chain.id)
+    },
+    setJoint(chainIndex, joint, update) {
+      let chain = chainAt(chainIndex, "setJoint")
+      if (!Number.isInteger(joint) || joint < 0 || joint >= chain.nodes.length) throw new Error("createSpringBones.setJoint: no joint " + joint + " (the chain has " + chain.nodes.length + ")")
+      if (chain.id !== null) spatial.setSpringJoint(chain.id, joint, update)
+      let at = joint * JOINT_FLOATS
+      if (update.stiffness !== undefined) chain.joints[at + JOINT_OFFSET.stiffness] = update.stiffness
+      if (update.drag !== undefined) chain.joints[at + JOINT_OFFSET.drag] = update.drag
+      if (update.gravityPower !== undefined) chain.joints[at + JOINT_OFFSET.gravityPower] = update.gravityPower
+      if (update.gravityDir !== undefined) chain.joints.set(update.gravityDir, at + JOINT_OFFSET.gravityDir)
+      if (update.hitRadius !== undefined) chain.joints[at + JOINT_OFFSET.hitRadius] = update.hitRadius
+    },
+    setForce(force, chainIndex) {
+      let targets = chainIndex === undefined ? chains : [chainAt(chainIndex, "setForce")]
+      for (let chain of targets) {
+        chain.force.set(force)
+        if (chain.id !== null) spatial.setSpringForce(chain.id, chain.force)
+      }
     },
     dispose() {
       binding.leave()
@@ -215,6 +260,7 @@ function bind(chain: Chain): void {
   let center = chain.center === null ? undefined : chain.center._node
   if (center === null) throw new Error("createSpringBones: the center node is not in the scene")
   chain.id = spatial.createSpring(clock, ids, chain.joints, colliderIds, chain.colliders, center)
+  if (chain.force[0] !== 0 || chain.force[1] !== 0 || chain.force[2] !== 0) spatial.setSpringForce(chain.id, chain.force)
 }
 
 /** Whether `node` is `model` itself or sits somewhere under it. */

@@ -18,8 +18,8 @@ use alloy::spatial::{
   vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawOrder,
   DrawQueue, DrawSink, GridSpec, InstanceProjection, InstanceRecordSink, LodLevel, MoveOptions, NodeEndpoint,
   NodeMotion, NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter, RegionEvent,
-  RegionMargins, RegionRef, RootMotion, Shape, SharedSlotSink, SpringCollider, SpringJoint, SpringShape,
-  TextureSlotSink, Volume,
+  RegionMargins, RegionRef, RootMotion, Shape, SharedSlotSink, SpringCollider, SpringJoint, SpringJointUpdate,
+  SpringShape, TextureSlotSink, Volume,
 };
 
 /// Floats per joint in createSpring's joint payload (see `create_spring`).
@@ -146,6 +146,8 @@ impl ModuleDef for SpatialModule {
     decl.declare("createSpring")?;
     decl.declare("destroySpring")?;
     decl.declare("resetSpring")?;
+    decl.declare("setSpringJoint")?;
+    decl.declare("setSpringForce")?;
     decl.declare("bindPoseRecord")?;
     decl.declare("bindMatrixRecord")?;
     decl.declare("unbindRecord")?;
@@ -221,6 +223,8 @@ impl ModuleDef for SpatialModule {
     exports.export("createSpring", Function::new(ctx.clone(), create_spring)?)?;
     exports.export("destroySpring", Function::new(ctx.clone(), destroy_spring)?)?;
     exports.export("resetSpring", Function::new(ctx.clone(), reset_spring)?)?;
+    exports.export("setSpringJoint", Function::new(ctx.clone(), set_spring_joint)?)?;
+    exports.export("setSpringForce", Function::new(ctx.clone(), set_spring_force)?)?;
     exports.export("bindPoseRecord", Function::new(ctx.clone(), bind_pose_record)?)?;
     exports.export("bindMatrixRecord", Function::new(ctx.clone(), bind_matrix_record)?)?;
     exports.export("unbindRecord", Function::new(ctx.clone(), unbind_record)?)?;
@@ -1504,6 +1508,49 @@ fn reset_spring(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
   let st = super::gui(&ctx);
   st.alloy.spatial().reset_spring(id).map_err(|e| throw_str(&ctx, &format!("resetSpring: {e}")))?;
   // The rest pose is written on the spot: a frame must publish it.
+  st.platform.request_frame();
+  Ok(())
+}
+
+/// Change a joint's authored settings: the fields of `update` given
+/// (`stiffness`, `drag`, `gravityPower`, `gravityDir` [x, y, z],
+/// `hitRadius`) replace the joint's.
+fn set_spring_joint<'js>(ctx: Ctx<'js>, id: u64, joint: u32, update: Object<'js>) -> rquickjs::Result<()> {
+  let number =
+    |key: &str| -> rquickjs::Result<Option<f32>> { Ok(update.get::<_, Option<f64>>(key)?.map(|v| v as f32)) };
+  let gravity_dir = match update.get::<_, Option<Vec<f64>>>("gravityDir")? {
+    None => None,
+    Some(v) if v.len() == 3 => Some([v[0] as f32, v[1] as f32, v[2] as f32]),
+    Some(_) => return Err(throw_str(&ctx, "setSpringJoint: gravityDir must be [x, y, z]")),
+  };
+  let update = SpringJointUpdate {
+    stiffness: number("stiffness")?,
+    drag: number("drag")?,
+    gravity_power: number("gravityPower")?,
+    gravity_dir,
+    hit_radius: number("hitRadius")?,
+  };
+  let st = super::gui(&ctx);
+  st.alloy
+    .spatial()
+    .set_spring_joint(id, joint as usize, update)
+    .map_err(|e| throw_str(&ctx, &format!("setSpringJoint: {e}")))?;
+  // New settings move the chain: a frame must step it.
+  st.platform.request_frame();
+  Ok(())
+}
+
+/// Set the chain's runtime force (a Float32Array of 3, world space).
+fn set_spring_force(ctx: Ctx<'_>, id: u64, force: TypedArray<'_, f32>) -> rquickjs::Result<()> {
+  let f = elements_of(&ctx, &force, "setSpringForce")?;
+  if f.len() != 3 {
+    return Err(throw_str(&ctx, "setSpringForce: force must be a Float32Array of 3"));
+  }
+  let st = super::gui(&ctx);
+  st.alloy
+    .spatial()
+    .set_spring_force(id, [f[0], f[1], f[2]])
+    .map_err(|e| throw_str(&ctx, &format!("setSpringForce: {e}")))?;
   st.platform.request_frame();
   Ok(())
 }
