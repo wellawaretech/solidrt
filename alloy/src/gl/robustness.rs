@@ -5,6 +5,16 @@
 //! whether the context was reset, and `glLoseContextCHROMIUM`
 //! (GL_CHROMIUM_lose_context, ANGLE's test hook) marks it lost on demand.
 //!
+//! The status entry is chosen by the extension string, never by which name
+//! resolves: Android's libEGL and libGLESv2 wrappers answer a proc-address
+//! lookup with a trampoline for every name they know, and where the vendor
+//! driver lacks that spelling the trampoline logs "called unimplemented
+//! OpenGL ES API" and returns 0, "no reset", forever. The SM-T500's Adreno
+//! 610 driver advertises GL_EXT_robustness and exports only the EXT
+//! spelling, while its ES 3.2 wrapper exports the core name as a stub; the
+//! first non-null pointer read no reset through a real GPU fault
+//! (okf/backlog/splat-adreno-gpu-fault.md).
+//!
 //! The status reads no-error forever on a context created without reset
 //! notification (the robustness spec requires it); the window's context is
 //! created with `EGL_LOSE_CONTEXT_ON_RESET_EXT` where EGL grants it (see
@@ -12,7 +22,10 @@
 //! context-level loss keeps swapping and only the status reports it, a
 //! device removal fails the swap with `EGL_CONTEXT_LOST`.
 
-use std::ffi::c_void;
+use std::collections::HashSet;
+use std::ffi::{c_void, CStr};
+
+use glow::HasContext;
 
 use crate::backend::GlBinding;
 
@@ -69,15 +82,45 @@ pub(crate) struct Robustness {
   lose_context: Option<LoseContextFn>,
 }
 
+/// The reset-status entry point this context's robustness support names, or
+/// None without any: the extension's own spelling first (KHR, EXT and ARB
+/// share one signature and one set of tokens), the unsuffixed core name
+/// only where the version makes it core (ES 3.2, GL 4.5), since a wrapper
+/// can export the core name for a driver that implements only an
+/// extension's (see the module doc).
+pub(crate) fn reset_status_entry(extensions: &HashSet<String>, version: &glow::Version) -> Option<&'static CStr> {
+  if extensions.contains("GL_KHR_robustness") {
+    return Some(c"glGetGraphicsResetStatusKHR");
+  }
+  if extensions.contains("GL_EXT_robustness") {
+    return Some(c"glGetGraphicsResetStatusEXT");
+  }
+  if extensions.contains("GL_ARB_robustness") {
+    return Some(c"glGetGraphicsResetStatusARB");
+  }
+  let (core_major, core_minor) = if version.is_embedded { (3, 2) } else { (4, 5) };
+  let core = version.major > core_major || (version.major == core_major && version.minor >= core_minor);
+  core.then_some(c"glGetGraphicsResetStatus")
+}
+
 impl Robustness {
-  pub(crate) fn load(binding: &dyn GlBinding) -> Self {
-    let reset_status = [c"glGetGraphicsResetStatusKHR", c"glGetGraphicsResetStatusEXT", c"glGetGraphicsResetStatus"]
-      .into_iter()
-      .map(|name| binding.proc_address(name))
-      .find(|p| !p.is_null())
+  pub(crate) fn load(gl: &glow::Context, binding: &dyn GlBinding) -> Self {
+    let entry = reset_status_entry(gl.supported_extensions(), gl.version());
+    let reset_status = entry
+      .map(|name| (name, binding.proc_address(name)))
+      .filter(|(_, p)| !p.is_null())
       // Safety: the loader resolved this name on the current context, and
-      // the KHR, EXT and core forms share one signature.
-      .map(|p| unsafe { std::mem::transmute::<*const c_void, ResetStatusFn>(p) });
+      // the KHR, EXT, ARB and core forms share one signature.
+      .map(|(_, p)| unsafe { std::mem::transmute::<*const c_void, ResetStatusFn>(p) });
+    match (entry, reset_status.is_some()) {
+      (Some(name), true) => log::info!("[alloy] GPU reset status from {}", name.to_string_lossy()),
+      (Some(name), false) => {
+        log::warn!("[alloy] GPU reset status unavailable: {} did not resolve", name.to_string_lossy())
+      }
+      (None, _) => log::info!(
+        "[alloy] GPU reset status unavailable: no robustness extension; a loss shows only as a failed present"
+      ),
+    }
     let lose = binding.proc_address(c"glLoseContextCHROMIUM");
     // Safety: same, for GL_CHROMIUM_lose_context's one signature.
     let lose_context = (!lose.is_null()).then(|| unsafe { std::mem::transmute::<*const c_void, LoseContextFn>(lose) });

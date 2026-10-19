@@ -122,6 +122,21 @@ ANGLE's hook and a real device removal (a GPU hang through the watchdog).
 The findings are in [gpu-context-loss-findings](../notes/gpu-context-loss-findings.md).
 The macOS and Android-emulator runs of the same cycle are listed in tiny.md.
 
+Android, real device (2026-10-19): a KGSL GPU fault on the SM-T500
+(Adreno 610) is detected and recovered, twice in one process, once two
+things were fixed: the reset-status entry is chosen by the extension
+string (Android's wrappers hand a stub for the spellings the vendor lacks),
+and Android recreates the window like the ANGLE platforms, because a new
+context on the same window is born dead after the fault. The stats
+overlay's rasterized text is dropped on the restore too. Two more pieces
+followed the same day: a cap on guilty resets (three within a minute end
+the process with the cause named, since an app that keeps drawing the
+faulting pass would otherwise recover and fault forever) with `guilty` and
+`losses` on the restore event, and the present fence as the
+driver-independent watchdog (a frame whose GPU work has not completed in
+10 s is a loss, status "no reset"). Findings in
+okf/backlog/splat-adreno-gpu-fault.md.
+
 ## Findings
 
 Cut to [gpu-context-loss-findings](../notes/gpu-context-loss-findings.md).

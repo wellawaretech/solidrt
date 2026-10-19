@@ -180,7 +180,19 @@ fn setup_video(
   if !mode.is_headless() {
     builder.resizable();
   }
-  let mut window = builder.build().map_err(|e| format!("window creation: {e}{}", gl_library_hint(&e.to_string())))?;
+  let mut window = match builder.build() {
+    Ok(window) => window,
+    // No window config with a multisampled backbuffer on this EGL (the
+    // Android emulator's GLES translator offers none): a single-sample
+    // window instead, every frame through the rig and its resolve (see
+    // gl::rig::window_samples). The attribute stays cleared, so a window
+    // recreated after a context loss matches.
+    Err(e) if gl::drop_window_multisampling(&video) => {
+      log::warn!("[alloy] GL window creation failed ({e}); retrying with a single-sample backbuffer");
+      builder.build().map_err(|e| format!("window creation: {e}{}", gl_library_hint(&e.to_string())))?
+    }
+    Err(e) => return Err(format!("window creation: {e}{}", gl_library_hint(&e.to_string()))),
+  };
   if mode.is_headless() {
     window.hide();
   }
@@ -354,9 +366,14 @@ impl std::ops::DerefMut for HeldWindow {
 // loss marks the whole EGL display lost and every later EGL call fails with
 // EGL_CONTEXT_LOST until eglTerminate, which SDL issues when the last GL
 // window goes (measured, okf/done/gpu-context-loss.md): recovery recreates
-// the window. On Mesa and Android a loss is per context, and a new context
-// on the same window recovers it.
-const RECOVERY_RECREATES_WINDOW: bool = cfg!(any(target_os = "windows", target_os = "macos"));
+// the window. Adreno's driver is the same on Android: after a KGSL fault a
+// new context on the same window is born dead (its creation already fails
+// a GPU submission, its extension list reads empty, every pass errors;
+// measured on the SM-T500, okf/backlog/splat-adreno-gpu-fault.md), so the
+// display is terminated there too; SDL's Android backend recreates its one
+// window on the same native surface. On Mesa a loss is per context, and a
+// new context on the same window recovers it.
+const RECOVERY_RECREATES_WINDOW: bool = cfg!(any(target_os = "windows", target_os = "macos", target_os = "android"));
 
 /// A fresh GL context for the raster thread after a loss, on this window or
 /// a recreated one (see RECOVERY_RECREATES_WINDOW): the old context is
@@ -807,8 +824,8 @@ impl App {
               event_tx.send(e).ok();
             }
           }
-          Ok(FrameOutput::ContextRestored { handles, lost }) => {
-            event_tx.send(AlloyEvent::ContextRestored { handles, lost }).ok();
+          Ok(FrameOutput::ContextRestored { handles, lost, guilty, losses }) => {
+            event_tx.send(AlloyEvent::ContextRestored { handles, lost, guilty, losses }).ok();
           }
           Err(mpsc::TryRecvError::Empty) => break,
           Err(mpsc::TryRecvError::Disconnected) => {

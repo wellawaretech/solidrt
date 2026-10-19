@@ -35,7 +35,7 @@ pub enum FrameOutput {
   /// thread's registry (its old ones belong to the dead context), and
   /// `lost` what the app has to re-supply. Forwarded to the UI thread as
   /// `AlloyEvent::ContextRestored`.
-  ContextRestored { handles: Vec<(u64, impellers::Texture)>, lost: crate::gpu::LostContent },
+  ContextRestored { handles: Vec<(u64, impellers::Texture)>, lost: crate::gpu::LostContent, guilty: bool, losses: u64 },
 }
 
 /// Physical framebuffer size packed for atomic hand-off from the main thread

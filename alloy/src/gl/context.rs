@@ -217,6 +217,25 @@ fn pin_gl_libraries() {
   }
 }
 
+// Whether `configure_opengl` asked for a multisampled window backbuffer and
+// nothing withdrew it since. Kept here rather than read back from SDL: after
+// a failed window creation no GL driver is loaded and SDL_GL_GetAttribute
+// fails, while SDL_GL_SetAttribute works at any time.
+static WINDOW_MULTISAMPLING_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Withdraw the request for a multisampled window backbuffer (see
+/// `configure_opengl`); true when one was in force, false when there was
+/// nothing to withdraw and a failed window creation has another cause.
+pub(crate) fn drop_window_multisampling(video: &sdl3::VideoSubsystem) -> bool {
+  if !WINDOW_MULTISAMPLING_REQUESTED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+    return false;
+  }
+  let gl_attr = video.gl_attr();
+  gl_attr.set_multisample_buffers(0);
+  gl_attr.set_multisample_samples(0);
+  true
+}
+
 /// Must be called before window creation so SDL selects ANGLE (EGL) on macOS.
 pub(crate) fn configure_opengl(video: &sdl3::VideoSubsystem) {
   #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -256,6 +275,7 @@ pub(crate) fn configure_opengl(video: &sdl3::VideoSubsystem) {
   {
     gl_attr.set_multisample_buffers(1);
     gl_attr.set_multisample_samples(super::rig::MSAA_SAMPLES as u8);
+    WINDOW_MULTISAMPLING_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
   }
 
   // On desktop the window is deliberately single-sample: every frame

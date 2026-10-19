@@ -116,7 +116,8 @@ export function onQuit(fn: LifecycleHandler) {
   return registerLifecycle(quitHandlers, fn)
 }
 
-/** What a restored GPU context could not bring back (see `onContextRestored`). */
+/** What a restored GPU context could not bring back, and why it was lost
+ * (see `onContextRestored`). */
 export type ContextRestoredEvent = {
   /** Textures created from pixels (every shape), now undefined: upload them again. */
   textures: TextureId[]
@@ -124,6 +125,14 @@ export type ContextRestoredEvent = {
   buffers: BufferId[]
   /** Manual render targets, now cleared: render them again. */
   targets: TextureId[]
+  /** Whether the driver attributed the reset to this app's own GPU work: a
+   * pass that ran past the driver's hang timeout (about 2 s on Android and
+   * Windows). The load is the app's to lower (fewer instances, a smaller
+   * render scale, a lower quality tier): after three such resets within a
+   * minute the runtime stops recovering and exits with the cause. */
+  guilty: boolean
+  /** How many times this process has lost its context so far, this one included. */
+  losses: number
 }
 
 /**
@@ -135,6 +144,9 @@ export type ContextRestoredEvent = {
  * pixels, the buffers and the manual targets, and until you re-supply them
  * they draw as transparent black, zeros, or cleared. The app keeps running
  * throughout; an app that listens to nothing only loses those pixels.
+ * `guilty` says the loss was the app's own doing (a pass past the driver's
+ * hang timeout); the same pass drawn again faults again, so lower the load
+ * before the runtime gives up recovering (three guilty resets in a minute).
  *
  * Returns a cleanup function; also auto-cleans within an owned scope.
  */

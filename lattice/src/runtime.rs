@@ -341,6 +341,11 @@ impl UiRuntime for FluxRuntime {
       if matches!(event, AlloyEvent::Resize { .. }) {
         eh.exec(|ctx| crate::stepped::window_ready(&ctx));
       }
+      // The engine's own restore ran in the forward; the runner's overlay
+      // state follows it, ahead of the frame the restore requested.
+      if matches!(event, AlloyEvent::ContextRestored { .. }) {
+        eh.exec(|ctx| crate::plugins::draw::gpu_reset(&ctx));
+      }
       return;
     }
     match event {

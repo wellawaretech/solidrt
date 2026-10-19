@@ -1,5 +1,11 @@
-use crate::gl::ResetStatus;
+use std::collections::HashSet;
+
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
+use crate::gl::{reset_status_entry, ResetStatus};
 use crate::raster::is_context_lost_error;
+use crate::raster::note_guilty_reset;
 
 #[test]
 fn sdl_error_text_names_a_lost_context() {
@@ -26,6 +32,48 @@ fn reset_status_maps_the_robustness_tokens() {
   // A token outside the spec's three is still a reset, never ignored.
   assert_eq!(ResetStatus::from_gl(0x1234), ResetStatus::Unknown);
   assert!(ResetStatus::Guilty.is_reset());
+}
+
+#[test]
+fn guilty_resets_count_within_the_window_only() {
+  let t0 = Instant::now();
+  let mut resets = VecDeque::new();
+  // Three guilty resets in quick succession reach the limit's count.
+  assert_eq!(note_guilty_reset(&mut resets, t0), 1);
+  assert_eq!(note_guilty_reset(&mut resets, t0 + Duration::from_secs(1)), 2);
+  assert_eq!(note_guilty_reset(&mut resets, t0 + Duration::from_secs(2)), 3);
+  // Two minutes on, the earlier ones have left the window: a new fault is
+  // one of one, and recovery runs again.
+  assert_eq!(note_guilty_reset(&mut resets, t0 + Duration::from_secs(120)), 1);
+  assert_eq!(resets.len(), 1);
+}
+
+#[test]
+fn reset_status_entry_follows_the_extension_not_the_version() {
+  let version =
+    |major, minor, is_embedded| glow::Version { major, minor, is_embedded, revision: None, vendor_info: String::new() };
+  let ext = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<HashSet<String>>();
+  // The SM-T500's Adreno 610: ES 3.2 reported, GL_EXT_robustness only, and
+  // the core name a wrapper stub; the EXT spelling is the driver's.
+  assert_eq!(
+    reset_status_entry(&ext(&["GL_EXT_robustness"]), &version(3, 2, true)),
+    Some(c"glGetGraphicsResetStatusEXT")
+  );
+  // ANGLE and Mesa: KHR wins over EXT when both are listed.
+  assert_eq!(
+    reset_status_entry(&ext(&["GL_EXT_robustness", "GL_KHR_robustness"]), &version(3, 0, true)),
+    Some(c"glGetGraphicsResetStatusKHR")
+  );
+  // A desktop core profile listing only the ARB spelling.
+  assert_eq!(
+    reset_status_entry(&ext(&["GL_ARB_robustness"]), &version(3, 3, false)),
+    Some(c"glGetGraphicsResetStatusARB")
+  );
+  // No extension: the core name where the version makes it core, else none.
+  assert_eq!(reset_status_entry(&ext(&[]), &version(3, 2, true)), Some(c"glGetGraphicsResetStatus"));
+  assert_eq!(reset_status_entry(&ext(&[]), &version(4, 6, false)), Some(c"glGetGraphicsResetStatus"));
+  assert_eq!(reset_status_entry(&ext(&[]), &version(3, 1, true)), None);
+  assert_eq!(reset_status_entry(&ext(&[]), &version(4, 4, false)), None);
 }
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -118,7 +166,10 @@ fn recovery_rebuilds_every_object_behind_its_id() {
     let fresh: Box<dyn GlBinding> = Box::new(HeadlessEglBinding(platform_egl));
     reply.send(Some(fresh)).expect("recover awaits the reply");
     match rx.recv() {
-      Ok(FrameOutput::ContextRestored { handles, lost }) => {
+      Ok(FrameOutput::ContextRestored { handles, lost, guilty, losses }) => {
+        // The test forced a guilty reset, the first of this process.
+        assert!(guilty);
+        assert_eq!(losses, 1);
         let mut ids: Vec<u64> = handles.into_iter().map(|(id, _)| id).collect();
         ids.sort_unstable();
         (ids, lost)
@@ -126,7 +177,8 @@ fn recovery_rebuilds_every_object_behind_its_id() {
       _ => panic!("the raster side reports the restore"),
     }
   });
-  let state = state.recover("forced by the test".to_string()).expect("recovery on the pbuffer context");
+  let state =
+    state.recover("forced by the test".to_string(), ResetStatus::Guilty).expect("recovery on the pbuffer context");
   let (adopted, lost) = platform.join().expect("platform half");
 
   assert_eq!(stats.context_losses.load(Ordering::Relaxed), 1);

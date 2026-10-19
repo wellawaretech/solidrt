@@ -363,11 +363,17 @@ pub enum AlloyEvent {
   // fresh one (okf/done/gpu-context-loss.md): `handles` are the new
   // Impeller adoptions per texture id for the UI thread's registry (its old
   // ones belong to the dead context), `lost` the ids whose content the app
-  // alone can re-supply. The UI thread installs the handles, drops its paint
-  // caches, resyncs the raster thread, and tells the app.
+  // alone can re-supply, `guilty` whether the driver attributed the reset to
+  // this context's own work (a pass past its hang timeout; the app's load
+  // to lower, since the engine stops recovering after a few such resets in
+  // a row), `losses` how many losses this process has had. The UI thread
+  // installs the handles, drops its paint caches, resyncs the raster thread,
+  // and tells the app.
   ContextRestored {
     handles: Vec<(u64, crate::impellers::Texture)>,
     lost: crate::gpu::LostContent,
+    guilty: bool,
+    losses: u64,
   },
   // The platform is ending this app instance: desktop window close or
   // SIGTERM, Android onDestroy, iOS applicationWillTerminate. A command, not

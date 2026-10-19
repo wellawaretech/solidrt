@@ -24,6 +24,8 @@ mod compose;
 mod frame;
 mod offscreen;
 mod recover;
+#[cfg(test)]
+pub(crate) use recover::note_guilty_reset;
 mod repaint;
 mod resources;
 mod targets;
@@ -353,6 +355,24 @@ const PRESENT_FAILURE_EXIT_THRESHOLD: u32 = 2;
 // slow-frame path anyway, so give up and draw.
 const PRESENT_FENCE_TIMEOUT_NS: i32 = 100_000_000;
 
+// The fence watchdog's bound (see `RasterState::await_present_fence`): a
+// present fence unsignaled this long is a lost context whatever the driver
+// says. Above every kernel's own GPU hang timeout (KGSL and Windows TDR
+// 2 s, amdgpu 10 s), so where a driver reports the reset its verdict comes
+// first and this is the fallback for the drivers that stay silent.
+const PRESENT_FENCE_LOSS_SECS: u64 = 10;
+
+// Guilty context resets (the driver attributing the reset to this
+// context's own work: a pass that ran past its hang timeout) within
+// GUILTY_RESET_WINDOW_SECS before recovery stops and the process ends
+// with the cause named: an app that keeps drawing the pass that faults
+// would otherwise recover and fault forever (measured on the SM-T500,
+// okf/backlog/splat-adreno-gpu-fault.md: a fault every 2.6 s). Three, not
+// one: a transient (a thermal event, another process's work misattributed)
+// deserves the recovery; a pattern does not.
+const GUILTY_RESET_LIMIT: usize = 3;
+const GUILTY_RESET_WINDOW_SECS: u64 = 60;
+
 // Undisplayed frames allowed in flight before the draw blocks on the oldest
 // fence. Two, not one: the fence covers not just GPU execution but the
 // compositor returning the swapped buffer, and on slow-GPU/TV targets that
@@ -447,6 +467,9 @@ pub(crate) struct RasterState {
   frame_timestamps: crate::frame_timestamps::FrameTimestamps,
   // Instant of the last fence-timeout/-failure warning, same rate limit.
   fence_wait_log: Option<std::time::Instant>,
+  // Instant of the last "GL error latched before the frame" warning, same
+  // rate limit (see RasterState::frame).
+  gl_error_log: Option<std::time::Instant>,
   // Shared live counters (see RasterStats): this thread decrements the queue
   // depth per executed command and accumulates fence timeouts and pass
   // count/time; get_stats reads them through the Context.
@@ -466,7 +489,12 @@ pub(crate) struct RasterState {
   // flight below the driver's own depth. Empty in capture mode, which never
   // presents. Each fence carries the number of the UI frame it follows, what
   // `RasterStats::retired_frames` is published from when it signals.
-  present_fences: std::collections::VecDeque<(u64, glow::Fence)>,
+  // Each entry: the UI frame number, the fence, and when it was queued (the
+  // fence watchdog's clock, see `await_present_fence`).
+  present_fences: std::collections::VecDeque<(u64, glow::Fence, std::time::Instant)>,
+  // When the driver attributed a context reset to this context's own work,
+  // over the last GUILTY_RESET_WINDOW_SECS (see recover.rs, GUILTY_RESET_LIMIT).
+  guilty_resets: std::collections::VecDeque<std::time::Instant>,
   // Pixel-unpack buffers per-frame uploads stage through (see UploadStaging).
   staging: gl::UploadStaging,
   // GL-side view of every registered texture (id -> name + dims), for sampler
@@ -699,7 +727,7 @@ impl RasterState {
     let pass_timer = PassTimer::new(&gl);
     stats.timer_queries.store(pass_timer.supported(), Ordering::Relaxed);
     let glyph_rig = gl::GlyphRig::new(&gl);
-    let robustness = gl::Robustness::load(&*binding);
+    let robustness = gl::Robustness::load(&gl, &*binding);
     let device = gl::DeviceProbe::resolve();
     RasterState {
       gl,
@@ -723,10 +751,12 @@ impl RasterState {
       pending_pass_micros: 0,
       frame_timestamps: crate::frame_timestamps::FrameTimestamps::new(),
       fence_wait_log: None,
+      gl_error_log: None,
       stats,
       timing: FrameTiming::new(),
       demand_latch: None,
       present_fences: std::collections::VecDeque::new(),
+      guilty_resets: std::collections::VecDeque::new(),
       staging: gl::UploadStaging::new(),
       textures: HashMap::new(),
       yuv_latches: HashMap::new(),
@@ -823,8 +853,8 @@ impl RasterState {
                 // The context is gone: rebuild everything behind the same
                 // ids on a fresh one (recover.rs), or end the process the
                 // way a confirmed loss always did when that is impossible.
-                Err(FrameExit::ContextLost(detail)) => {
-                  self = match self.recover(detail) {
+                Err(FrameExit::ContextLost { detail, status }) => {
+                  self = match self.recover(detail, status) {
                     Ok(state) => state,
                     Err(e) => {
                       log::error!("[alloy] GPU context lost and not recoverable: {e}; exiting");

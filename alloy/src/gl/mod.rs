@@ -29,8 +29,8 @@ mod timing;
 
 pub(crate) use buffer::{release_buffer, GpuBuffer};
 pub(crate) use context::{
-  adopt_texture, configure_opengl, create_gl_context, create_impeller_context, create_window_gl_context, query_limits,
-  setup_opengl_platform, SdlGlBinding,
+  adopt_texture, configure_opengl, create_gl_context, create_impeller_context, create_window_gl_context,
+  drop_window_multisampling, query_limits, setup_opengl_platform, SdlGlBinding,
 };
 pub(crate) use device_loss::DeviceProbe;
 pub(crate) use draw::{
@@ -52,6 +52,8 @@ pub(crate) use readback::{flip_rows, read_fbo0_pixels, read_texture_pixels};
 pub(crate) use rig::{
   forget_window_samples, msrtt, supports_invalidate, window_fast_path, window_samples, MsrttFns, OffscreenRig,
 };
+#[cfg(test)]
+pub(crate) use robustness::reset_status_entry;
 pub(crate) use robustness::{ResetStatus, Robustness};
 pub(crate) use staging::UploadStaging;
 pub(crate) use storage::create_layer_target;

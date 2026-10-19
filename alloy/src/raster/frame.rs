@@ -11,7 +11,7 @@ use impellers::{DisplayList, ISize};
 use super::repaint::WindowRoute;
 use super::{
   DamageRect, FrameSink, PresentDamage, RasterState, PRESENT_FAILURE_EXIT_THRESHOLD, PRESENT_FENCE_DEPTH,
-  PRESENT_FENCE_TIMEOUT_NS,
+  PRESENT_FENCE_LOSS_SECS, PRESENT_FENCE_TIMEOUT_NS,
 };
 use crate::backend::FrameOutput;
 use crate::gl;
@@ -21,16 +21,21 @@ use crate::gl::{ResetStatus, Timed};
 /// down), or the GL context is lost (the thread recovers, see recover.rs).
 pub(super) enum FrameExit {
   MainGone,
-  ContextLost(String),
+  /// The detail for the log, and the reset status the driver gave (None
+  /// for a loss found another way: a failed present, the fence watchdog).
+  ContextLost {
+    detail: String,
+    status: ResetStatus,
+  },
 }
 
 /// What a present did: swapped, failed to swap (the surface is gone or the
 /// driver hiccupped; the rebind-and-retry and the failure threshold apply),
-/// or found the context lost, with the detail for the log.
+/// or found the context lost, with the detail for the log and the status.
 enum Presented {
   Yes,
   No,
-  Lost(String),
+  Lost { detail: String, status: ResetStatus },
 }
 
 /// Whether an SDL error names a lost context: SDL's text carries the EGL
@@ -95,7 +100,24 @@ impl RasterState {
     // otherwise be found: ask first (a flag read).
     let status = self.robustness.reset_status();
     if status.is_reset() {
-      return Err(FrameExit::ContextLost(self.loss_detail("before the frame", status)));
+      return Err(FrameExit::ContextLost { detail: self.loss_detail("before the frame", status), status });
+    }
+    // The error flag is the second word on it: GL_CONTEXT_LOST
+    // (KHR_robustness) is raised once by a lost context, and a driver that
+    // never flips the reset status may still raise it. Anything else latched
+    // here is some pass's silent no-op, logged for diagnosis (rate-limited
+    // like the fence line) and not a loss.
+    let error = unsafe { glow::HasContext::get_error(&self.gl) };
+    if error == glow::CONTEXT_LOST {
+      let status = ResetStatus::Unknown;
+      return Err(FrameExit::ContextLost {
+        detail: self.loss_detail("GL_CONTEXT_LOST before the frame", status),
+        status,
+      });
+    }
+    if error != glow::NO_ERROR && self.gl_error_log.is_none_or(|t| t.elapsed().as_secs() >= 1) {
+      self.gl_error_log = Some(std::time::Instant::now());
+      log::warn!("[alloy] GL error {error:#x} latched before the frame");
     }
     // The frame's GPU span starts here, ahead of the pass flush: on a tiler
     // the passes execute in the same submission as the window draw.
@@ -131,7 +153,7 @@ impl RasterState {
     let patch_barred = self.sink.headless() || self.window_shader.is_some();
     let mut route = self.damage.route(own_damage, size, fast_path, patch_barred);
     let wait_start = std::time::Instant::now();
-    self.await_present_fence();
+    self.await_present_fence()?;
     let wait_ms = wait_start.elapsed().as_secs_f32() * 1000.0;
     let draw_start = std::time::Instant::now();
     // The frame's GPU time comes from the frame timestamps where they are
@@ -172,7 +194,7 @@ impl RasterState {
       if drawn {
         match self.present(frame) {
           Presented::Yes => presented = true,
-          Presented::Lost(detail) => return Err(FrameExit::ContextLost(detail)),
+          Presented::Lost { detail, status } => return Err(FrameExit::ContextLost { detail, status }),
           Presented::No => {
             if !crate::window_backgrounded() && self.rebind_window_surface() {
               // The failed swap's frame is lost with the dead binding (Android
@@ -188,7 +210,7 @@ impl RasterState {
               if self.draw_to_window(&dl, size, route) {
                 match self.present(frame) {
                   Presented::Yes => presented = true,
-                  Presented::Lost(detail) => return Err(FrameExit::ContextLost(detail)),
+                  Presented::Lost { detail, status } => return Err(FrameExit::ContextLost { detail, status }),
                   Presented::No => {}
                 }
               }
@@ -262,44 +284,68 @@ impl RasterState {
   }
 
   /// Block until outstanding presents are back under PRESENT_FENCE_DEPTH (or
-  /// the timeout passes per fence), consuming the awaited fences. See the
-  /// `present_fences` field. A timeout is the "GPU is over budget for a full
-  /// refresh period and then some" signal - pacing is lost for this frame
-  /// (we draw anyway; hanging the raster thread would be worse). Counted for
-  /// get_stats (fenceTimeouts) and logged at debug 1/s: a healthy discrete
-  /// GPU never hits this while a saturated tiled one (Android TV) lives near
-  /// it in steady state, so the counter is the observability and the log
-  /// line is SOLIDRT_LOG=debug diagnosis material (see
+  /// the timeout passes on the oldest fence), consuming the signaled fences.
+  /// See the `present_fences` field. A timeout is the "GPU is over budget for
+  /// a full refresh period and then some" signal - pacing is lost for this
+  /// frame (we draw anyway; hanging the raster thread would be worse).
+  /// Counted for get_stats (fenceTimeouts) and logged at debug 1/s: a healthy
+  /// discrete GPU never hits this while a saturated tiled one (Android TV)
+  /// lives near it in steady state, so the counter is the observability and
+  /// the log line is SOLIDRT_LOG=debug diagnosis material (see
   /// okf/backlog/idle-tick-gpu-backlog-runaway.md, present-fence finding).
-  fn await_present_fence(&mut self) {
+  ///
+  /// The timed-out fence stays at the head of the queue, so its age is the
+  /// watchdog's clock: a frame whose GPU work has not completed within
+  /// PRESENT_FENCE_LOSS_SECS is a lost context, on any driver (the GPU hung,
+  /// or the kernel reset it and this driver reports no reset status; every
+  /// kernel's own hang timeout is shorter). Err is that loss. A wait that
+  /// fails outright is a GL error, not a hang; its fence is dropped as
+  /// before.
+  fn await_present_fence(&mut self) -> Result<(), FrameExit> {
     while self.present_fences.len() >= PRESENT_FENCE_DEPTH {
-      let (frame, fence) = self.present_fences.pop_front().expect("len checked above");
+      let (frame, fence, submitted) = self.present_fences.pop_front().expect("len checked above");
       let status = unsafe {
-        let status =
-          glow::HasContext::client_wait_sync(&self.gl, fence, glow::SYNC_FLUSH_COMMANDS_BIT, PRESENT_FENCE_TIMEOUT_NS);
-        glow::HasContext::delete_sync(&self.gl, fence);
-        status
+        glow::HasContext::client_wait_sync(&self.gl, fence, glow::SYNC_FLUSH_COMMANDS_BIT, PRESENT_FENCE_TIMEOUT_NS)
       };
       match status {
-        glow::ALREADY_SIGNALED | glow::CONDITION_SATISFIED => self.publish_retired(frame),
-        status => {
-          if status == glow::TIMEOUT_EXPIRED {
-            self.stats.fence_timeouts.fetch_add(1, Ordering::Relaxed);
+        glow::ALREADY_SIGNALED | glow::CONDITION_SATISFIED => {
+          unsafe { glow::HasContext::delete_sync(&self.gl, fence) };
+          self.publish_retired(frame);
+        }
+        glow::TIMEOUT_EXPIRED => {
+          self.stats.fence_timeouts.fetch_add(1, Ordering::Relaxed);
+          let age = submitted.elapsed();
+          if age.as_secs() >= PRESENT_FENCE_LOSS_SECS {
+            unsafe { glow::HasContext::delete_sync(&self.gl, fence) };
+            let observed = format!("frame {frame}'s GPU work has not completed in {} s", age.as_secs());
+            return Err(FrameExit::ContextLost {
+              detail: self.loss_detail(&observed, ResetStatus::None),
+              status: ResetStatus::None,
+            });
           }
           if self.fence_wait_log.is_none_or(|t| t.elapsed().as_secs() >= 1) {
             self.fence_wait_log = Some(std::time::Instant::now());
-            if status == glow::TIMEOUT_EXPIRED {
-              log::debug!(
-                "[alloy] present fence timed out after {}ms: GPU over budget, pacing lost this frame",
-                PRESENT_FENCE_TIMEOUT_NS / 1_000_000
-              );
-            } else {
-              log::warn!("[alloy] present fence wait failed (status {status:#x})");
-            }
+            log::debug!(
+              "[alloy] present fence timed out after {}ms: GPU over budget, pacing lost this frame",
+              PRESENT_FENCE_TIMEOUT_NS / 1_000_000
+            );
           }
+          // Back at the head: the frames behind it complete in order, so
+          // nothing is awaited before it, and its age keeps counting.
+          self.present_fences.push_front((frame, fence, submitted));
+          return Ok(());
+        }
+        status => {
+          unsafe { glow::HasContext::delete_sync(&self.gl, fence) };
+          if self.fence_wait_log.is_none_or(|t| t.elapsed().as_secs() >= 1) {
+            self.fence_wait_log = Some(std::time::Instant::now());
+            log::warn!("[alloy] present fence wait failed (status {status:#x})");
+          }
+          return Ok(());
         }
       }
     }
+    Ok(())
   }
 
   /// Publish that UI frame `frame` has completed on the GPU, and with it
@@ -377,7 +423,7 @@ impl RasterState {
       // PRESENT_FENCE_DEPTH. A failed fence_sync just means no pacing this
       // frame: same behavior as before this mechanism existed.
       if let Ok(fence) = unsafe { glow::HasContext::fence_sync(&self.gl, glow::SYNC_GPU_COMMANDS_COMPLETE, 0) } {
-        self.present_fences.push_back((frame, fence));
+        self.present_fences.push_back((frame, fence, std::time::Instant::now()));
         // Flush the fence into the command stream now. ANGLE/D3D11 defers a
         // post-swap fence's submission (~2 swaps) and its glClientWaitSync
         // never blocks (the flush bit does not rescue it), so without this
@@ -391,7 +437,7 @@ impl RasterState {
       // signal, asked once per presented frame (a flag read).
       let status = self.robustness.reset_status();
       if status.is_reset() {
-        return Presented::Lost(self.loss_detail("the swap succeeded", status));
+        return Presented::Lost { detail: self.loss_detail("the swap succeeded", status), status };
       }
       return Presented::Yes;
     }
@@ -404,7 +450,7 @@ impl RasterState {
     let error = self.binding.error();
     let status = self.robustness.reset_status();
     if status.is_reset() || is_context_lost_error(&error) {
-      return Presented::Lost(self.loss_detail(&format!("present failed: {error}"), status));
+      return Presented::Lost { detail: self.loss_detail(&format!("present failed: {error}"), status), status };
     }
     self.present_failures += 1;
     if self.present_failures == 1 {

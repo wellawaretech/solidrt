@@ -609,6 +609,14 @@ Shaped, not started.
   its own microtask checkpoint; the frame's publish pass coalesces only what
   the frame's JS writes, so a drag at a high event rate publishes many times
   per frame.
+- **[A renderer seam in alloy, the first step to replacing Impeller](backlog/own-display-list.md)** [2026-10-19]
+  The rendertree, the flux plugins and the lattice overlay call Impeller's
+  display-list builder directly, and the raster side calls Impeller and passes
+  its textures around (60 files name impellers); own vocabulary types plus
+  opaque builder, list, path and texture types owned by one cfg-selected
+  renderer module confine Impeller to that module with no visible change and
+  no added per-op cost, so a replacement can be built as a second
+  implementation and Impeller deleted.
 - **[Owner-scoped registerDebug](backlog/owner-scoped-register-debug.md)** [2026-08-02]
   Registrations reset on hot reload, so commands must register at module init
   - which forces any app state a command touches up to module scope; an
@@ -782,6 +790,15 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
+- **[A heavy splat pass faults the Adreno 610 GPU, and the app goes black without alloy noticing](backlog/splat-adreno-gpu-fault.md)** [2026-10-18]
+  On the Samsung SM-T500 (Adreno 610, OpenGL ES 3.2 V@0502) a splat scene pass
+  of about 1.9 s GPU time trips a KGSL GPU fault (logcat
+  "IOCTL_KGSL_GPU_COMMAND failed - errno 35"); the scene stays black, every
+  later program reflects no uniforms, sometimes the process dies, and
+  contextLosses stays 0. First filed as an SH vertex shader bug and disproven
+  on the device 2026-10-19 (the SH shader draws at every degree and encoding).
+  Wants the fault detected as a context loss, and the pass kept under the
+  driver's limit on weak GPUs.
 - **[The splat order block and chunk table carry less than they could - the count dial drops the subject, sparse leaves lose precision, and nothing culls a chunk](backlog/splat-order-and-chunks.md)** [2026-10-18]
   The order block ranks by volume times opacity, so a capture whose subject is
   micro-splats loses the subject before the background at 100k; a k-d leaf
@@ -806,17 +823,6 @@ Shaped, not started.
   clamp is a constant a kilometre-scale capture would clip; and the
   Mip-Splatting compensation has never been looked at on a capture trained
   with it.
-- **[The splat SH vertex shader draws nothing on Adreno 610 and breaks the program's reflection, at every degree and under both encodings](backlog/splat-sh-adreno.md)** [2026-10-18]
-  On the Samsung SM-T500 (Adreno 610, OpenGL ES 3.2 V@0502, 2021 driver) a
-  splat cloud at SH degree 0 draws, but a cloud at degree 1, 2 or 3, as u8 or
-  pq, does not - the first SH program of a process links and renders nothing
-  (60 presents per second, the window crop all zero), every later SH program
-  reflects zero active uniforms (addDraw refuses "no active uniform named
-  uSplatRecords"), and the attribute reflection lists two nameless FLOAT
-  inputs; the Pixel 7 (Mali) renders the same programs. Something in the SH
-  block (uCamPos, transpose(mat3(uModel)), the second integer sampler, the
-  basis arithmetic) breaks this compiler silently and wants a shader bisect on
-  the device.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the

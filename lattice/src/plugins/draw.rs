@@ -153,6 +153,19 @@ pub fn render_now(ctx: &QuickJsContext<'_>) {
   }
 }
 
+/// The GL context was lost and recovered (okf/done/gpu-context-loss.md):
+/// the overlay's rasterized text is a texture of the dead context, and the
+/// raster thread starts over without an overlay, so forget both and the
+/// next due refresh rasterizes and installs it afresh. Handing the dead
+/// image in as `previous` fails the raster (an incomplete framebuffer) and
+/// latches a GL error for the pass that follows.
+pub fn gpu_reset(ctx: &QuickJsContext<'_>) {
+  if let Some(state) = ctx.userdata::<RenderState>() {
+    state.0.overlay_image.borrow_mut().take();
+    state.0.overlay_installed.set(false);
+  }
+}
+
 /// The `sol:render` module: `renderFrame()`, the runner's per-frame draw. Not
 /// part of `flux:rendertree` because it bundles lattice-only policy (the
 /// stats overlay and figures, the frame history, hover refresh, the

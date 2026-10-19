@@ -183,7 +183,11 @@ the same ids and the app keeps running. `onContextRestored` then names what
 only the app can bring back - textures it created from pixels, buffers,
 manual render targets - which draw empty until re-supplied; images from
 `createImage` and everything the runtime renders itself come back on their
-own.
+own. The event's `guilty` says the driver blamed the app's own GPU work (a
+pass past its hang timeout, about 2 s on Android and Windows): the same
+pass drawn again faults again, so lower the load, since after three such
+resets within a minute the runtime stops recovering and exits with the
+cause named.
 
 A link from outside (a custom scheme link the OS routed to the app, or one
 a dev tool sent) arrives raw: `env.launchLink` is the one this run of the

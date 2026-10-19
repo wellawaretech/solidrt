@@ -19,19 +19,44 @@ use std::sync::mpsc;
 
 use impellers::ISize;
 
-use super::{CameraTapEntry, RasterState};
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
+use super::{CameraTapEntry, RasterState, GUILTY_RESET_LIMIT, GUILTY_RESET_WINDOW_SECS};
 use crate::backend::FrameOutput;
-use crate::gl::{self, GpuBuffer, GpuTexture, RebuildRegistries};
+use crate::gl::{self, GpuBuffer, GpuTexture, RebuildRegistries, ResetStatus};
 use crate::gpu::{LostContent, SamplerState, TextureFormat, TextureShape};
+
+/// Record a guilty reset at `now` and answer how many fell within the last
+/// GUILTY_RESET_WINDOW_SECS, this one included; older ones are forgotten.
+pub(crate) fn note_guilty_reset(resets: &mut VecDeque<Instant>, now: Instant) -> usize {
+  resets.push_back(now);
+  let window = Duration::from_secs(GUILTY_RESET_WINDOW_SECS);
+  while resets.front().is_some_and(|t| now.saturating_duration_since(*t) > window) {
+    resets.pop_front();
+  }
+  resets.len()
+}
 
 impl RasterState {
   /// Recover from a lost context: this state, rebuilt on a fresh one. Err
-  /// when the platform cannot provide one (the caller exits, as a confirmed
-  /// loss always did). On return the state awaits the UI thread's resync
-  /// (`RasterCmd::Resync`), and the main loop holds the restore report.
-  pub(crate) fn recover(self, detail: String) -> Result<RasterState, String> {
+  /// when the platform cannot provide one, or when this context's own work
+  /// has reset the GPU GUILTY_RESET_LIMIT times within the window (the
+  /// caller exits, as a confirmed loss always did; see the constants). On
+  /// return the state awaits the UI thread's resync (`RasterCmd::Resync`),
+  /// and the main loop holds the restore report.
+  pub(crate) fn recover(mut self, detail: String, status: ResetStatus) -> Result<RasterState, String> {
     log::error!("[alloy] GPU context lost: {detail}; recovering");
-    self.stats.context_losses.fetch_add(1, Ordering::Relaxed);
+    let losses = self.stats.context_losses.fetch_add(1, Ordering::Relaxed) + 1;
+    let guilty = status == ResetStatus::Guilty;
+    if guilty {
+      let recent = note_guilty_reset(&mut self.guilty_resets, Instant::now());
+      if recent >= GUILTY_RESET_LIMIT {
+        return Err(format!(
+          "this app's own GPU work reset the context {recent} times within {GUILTY_RESET_WINDOW_SECS} s (a pass runs past the driver's hang timeout)"
+        ));
+      }
+    }
     let RasterState {
       gl,
       impeller_ctx,
@@ -63,6 +88,7 @@ impl RasterState {
       window_shader,
       pass_only_frames,
       adopted_snapshots,
+      guilty_resets,
       ..
     } = self;
 
@@ -104,6 +130,7 @@ impl RasterState {
     }
     gl::forget_window_samples();
     let mut state = RasterState::new(gl, impeller_ctx, binding, surface_size, sink, stats, tx, wake);
+    state.guilty_resets = guilty_resets;
     state.demand_latch = demand_latch;
     state.last_size = last_size;
     state.pass_only_frames = pass_only_frames;
@@ -329,7 +356,7 @@ impl RasterState {
     );
     state
       .tx
-      .send(FrameOutput::ContextRestored { handles, lost })
+      .send(FrameOutput::ContextRestored { handles, lost, guilty, losses })
       .map_err(|_| "the platform loop is gone".to_string())?;
     if let Some(wake) = &state.wake {
       wake();

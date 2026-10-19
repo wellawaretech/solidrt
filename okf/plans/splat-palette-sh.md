@@ -128,14 +128,19 @@ minutes) and store a label per splat.
   lizard bake without an error, but a readback bisect showed it draws
   NO SH cloud at any degree under either encoding: the first SH program
   of a process renders nothing (the human saw a black window with the
-  HUD), every later one reflects zero active uniforms. A pre-existing
-  incompatibility of the SH vertex path with this Adreno driver, filed
-  as okf/backlog/splat-sh-adreno.md; the palette is not involved (u8
-  fails the same way) and the Pixel draws all of it. The tablet also
-  killed the client twice without a native crash while lmkd was
-  reclaiming (a server reload with two engines holding a cloud each,
-  and a few cloud loads in a row): a 2.7 GB device has no headroom for
-  swapping lizard-scale clouds, which the palette is the lever on. It
+  HUD), every later one reflects zero active uniforms. Not the SH vertex
+  path (read so at the time; disproven on the device 2026-10-19): the
+  heavy scene pass trips a KGSL GPU fault that dead-ends the context,
+  the SH degree-0 lizard and the train fault too at full resolution, and
+  a quarter render scale draws the SH3 lizard; filed as
+  okf/backlog/splat-adreno-gpu-fault.md. The palette is not involved and
+  the Pixel draws all of it. The tablet also killed the client twice
+  without a native crash, read as lmkd at the time (a server reload with
+  two engines holding a cloud each, and a few cloud loads in a row); at
+  least some such deaths follow the same GPU fault, though the 2.7 GB
+  device has little headroom for swapping lizard-scale clouds either
+  (about 600 MB available with one 786k cloud resident), which the
+  palette is the lever on. It
   exposes no live GPU clock to the shell, so no row from it would have
   been clock-pinned anyway.
 - Pixel 7, the protocol (hold off, cold skin, orbit, 10 s windows, the
