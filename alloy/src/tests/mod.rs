@@ -40,6 +40,7 @@ mod spatial_collide;
 mod spatial_normals;
 mod spatial_players;
 mod spatial_residency;
+mod spatial_springs;
 mod spatial_transitions;
 mod text_baseline;
 mod text_gradient;

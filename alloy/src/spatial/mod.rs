@@ -21,6 +21,7 @@ mod normals;
 mod pick;
 mod players;
 mod residency;
+mod springs;
 mod transitions;
 
 use std::collections::{HashMap, HashSet};
@@ -46,6 +47,10 @@ pub use players::{
 pub use residency::{
   GridId, GridSpec, RegionEvent, RegionMargins, RegionRef, ResidencyStats, DEFAULT_RESIDENCY_BUDGET, VIEW_KEY_BASE,
 };
+pub use springs::{SpringCollider, SpringId, SpringJoint, SpringShape, SpringsTick, SPRING_REFERENCE_STEP};
+// The flow's pure step, for the frame-rate tests.
+#[cfg(test)]
+pub(crate) use springs::flow_step;
 // The pure sampler, for the differential tests.
 #[cfg(test)]
 pub(crate) use players::sample as sample_channel;
@@ -836,6 +841,7 @@ pub struct Spatial {
   weights_scratch: Vec<f32>,
   transitions: NodeTransitions,
   players: players::PlayerSet,
+  springs: springs::SpringSet,
   /// Per target, the clip volume its draw sinks are gated by, derived
   /// from its view (`set_view`; a target without one never culls).
   frustums: HashMap<u64, Frustum>,
@@ -3137,6 +3143,7 @@ impl Spatial {
     // the spot after a reload).
     if self.transitions.set_now(now_ms) {
       self.players.last_ms = now_ms;
+      self.springs.last_ms = now_ms;
     }
   }
 

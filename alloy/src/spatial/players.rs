@@ -241,7 +241,7 @@ fn wrap_angle(a: f32) -> f32 {
 }
 
 /// Hamilton product a * b for [x, y, z, w] quaternions.
-fn quat_multiply(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+pub(super) fn quat_multiply(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
   let (ax, ay, az, aw) = (a[0], a[1], a[2], a[3]);
   let (bx, by, bz, bw) = (b[0], b[1], b[2], b[3]);
   [

@@ -263,7 +263,14 @@ export type SceneNode = {
   /** The LOD group this node heads (see LodConfig); null for the common
    * case. */
   _lod: LodConfig | null
+  /** Declarations over this node's SUBTREE that bind to the core while it
+   * is in a scene (a model's spring bones): entered after the children
+   * are live, left before the core node goes. null for the common case. */
+  _bindings: SubtreeBinding[] | null
 }
+
+/** A subtree declaration's core half (see SceneNode._bindings). */
+export type SubtreeBinding = { enter(): void; leave(): void }
 
 /** The settled component of a node transition: a transform component,
  * or "weights" for the morph target weights lane. */
@@ -419,6 +426,7 @@ export function makeNode(kind: SceneNode["kind"]): SceneNode {
     _morph: null,
     _cullBounds: null,
     _lod: null,
+    _bindings: null,
   }
 }
 
@@ -503,6 +511,10 @@ function letGo(node: SceneNode): void {
   let scene = node._scene
   let id = node._node
   node._scene = null
+  if (node._bindings !== null) {
+    for (let b of node._bindings) b.leave()
+    node._bindings = null
+  }
   if (scene === null || id === null) {
     finishLeave(node, null)
     return
@@ -580,8 +592,10 @@ export function enterScene(node: SceneNode, scene: SceneHooks): void {
   else if (node.kind === "light") scene._attachLight(node as Light)
   else if (node.kind === "instance") scene._attachInstance(node as InstanceNode)
   for (let c of node.children) enterScene(c, scene)
-  // After the children: node levels must be live to be named.
+  // After the children: node levels must be live to be named, and a
+  // subtree binding's joints too.
   if (node._lod !== null) scene._bindLod(node)
+  if (node._bindings !== null) for (let b of node._bindings) b.enter()
   scene._schedule()
 }
 
@@ -591,6 +605,7 @@ export function leaveScene(node: SceneNode): void {
   else if (scene && node.kind === "light") scene._detachLight(node as Light)
   else if (scene && node.kind === "instance") scene._detachInstance(node as InstanceNode)
   node._scene = null
+  if (node._bindings !== null) for (let b of node._bindings) b.leave()
   for (let c of node.children) leaveScene(c)
   if (node._node !== null) {
     declared.delete(node._node)

@@ -851,4 +851,56 @@ declare module "flux:spatial" {
    * player go stale, this does not.
    */
   export function readTransform(node: NodeId, out: Float32Array): void
+
+  /** A spring-bone chain's handle (createSpring). */
+  export type SpringId = number
+  /**
+   * Declare a spring-bone chain: secondary motion (hair, a skirt, a
+   * tail, a cable) solved in core - Unity's SpringBone, Godot's
+   * SpringBoneSimulator3D, three-vrm's VRMSpringBoneJoint. `jointNodes`
+   * lists the simulated bones PARENTS FIRST (a joint whose parent node is
+   * another listed joint's must come after it; throws otherwise), and
+   * `joints` carries 14 floats per joint in that order: the tail xyz in
+   * the bone's own space (where the chain continues: the next joint's
+   * rest position, or a leaf's virtual tail; must not be zero), the rest
+   * local rotation xyzw the solve turns from, then VRM's settings -
+   * stiffness (the pull back toward the rest direction), drag (0 none ..
+   * 1 total), gravity power, gravity direction xyz (world space, any
+   * length) and the tail's hit radius against colliders. `colliderNodes`
+   * and `colliders` (9 floats each) declare the colliders the chain's
+   * tails are kept out of: kind (0 sphere, 1 capsule, 2 plane), inside
+   * (1 keeps the tails WITHIN a sphere or capsule), two points xyz in
+   * the collider node's space (the sphere's offset and an unused triple;
+   * the capsule's ends; the plane's offset and normal) and the radius.
+   * Lengths follow the matrices: a scaled ancestor scales bone lengths,
+   * hit radii and collider radii alike.
+   *
+   * The chain steps once per frame AFTER the frame's JS and its flush,
+   * the pose post-pass (secondary motion reacts to the FINAL primary
+   * pose: the players, the transitions and the frame's own writes - a
+   * look-at, a controller's move), at `clock`'s rate (setTimeScale: 0
+   * freezes it), in `center`'s space when given (the tails live there,
+   * so the center's own motion does not swing them - VRM's center) and
+   * in world space otherwise. The solve is frame-rate exact: the free
+   * motion is the closed-form flow of three-vrm's 60 Hz step, so authored
+   * values mean what they mean there and a 50, 60 or 120 Hz display
+   * draws the same motion, and the length and collider projections run
+   * at 240 Hz substeps. The chain OWNS its joints' rotations (a write in
+   * the frame is overwritten at the step), and a read of one during the
+   * frame (readTransform, worldMatrix) sees the previous frame's solve.
+   * The tails start at rest under the pose as the tree stands at the
+   * call (pending writes included), the rest rotations written. A chain
+   * whose every tail is at rest asks for no frames; one whose clock,
+   * center, joint or collider node dies drops silently. Every node must
+   * be live (throws otherwise).
+   */
+  export function createSpring(clock: NodeId, jointNodes: NodeId[], joints: Float32Array, colliderNodes: NodeId[], colliders: Float32Array, center?: NodeId): SpringId
+  /** Drop a chain at once; its joints hold their last rotation. A
+   * dropped id is fine. */
+  export function destroySpring(spring: SpringId): void
+  /** Put the chain back at rest now: every tail along its rest direction
+   * under the current pose, the rest rotations written, no motion carried
+   * over (three-vrm's reset; what a teleport wants). Throws on a dropped
+   * id. */
+  export function resetSpring(spring: SpringId): void
 }

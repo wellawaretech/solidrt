@@ -67,6 +67,7 @@ Contents:
   - [Applied glTF material fields](#applied-gltf-material-fields)
   - [Animation](#animation)
   - [Root motion](#root-motion)
+  - [Spring bones](#spring-bones)
   - [Skins](#skins)
   - [Not in the subset](#not-in-the-subset)
 - [Traps](#traps)
@@ -98,8 +99,8 @@ each entry's uModel (plus uNormal for materials declaring it) and its
 visibility switch itself - a move costs its subtree, never the scene.
 ONE `setTargetParams` (the shared uViewProj + uCamPos) per camera
 change, however many meshes. World matrices live in the core only:
-`worldPosition`/`lookAt`/picking read them back (`worldMatrix`, pending
-writes included). See okf/backlog/spatial-core.md for what still runs
+`worldPosition`/`worldInto` (the full matrix)/`lookAt`/picking read them
+back (`worldMatrix`, pending writes included). See okf/backlog/spatial-core.md for what still runs
 in JS and why. The component face (`Scene`/`View3d`/`Group`/`Mesh`/
 `PerspectiveCamera`) syncs props into that core over context and renders
 nothing itself.
@@ -2974,6 +2975,46 @@ owns gravity). `inPlace` is ignored while rootMotion is set. Yaw is
 the swing-twist about up (exact under any lean); a cubic rotation
 track is linearized at 60 keys/s before its yaw is held. Verified on
 Mixamo's standing turns (external/mixamo-turn).
+
+### Spring bones
+
+Secondary motion - hair, a hood, a skirt, a tail, a cable: chains that
+lag behind the bones they hang from - is `createSpringBones(model, {
+colliders?, springs })`, solved in the spatial core (Unity's SpringBone,
+Godot's SpringBoneSimulator3D, three-vrm's VRMSpringBoneManager) with
+VRM's vocabulary, so a VRM's `secondaryAnimation`/`VRMC_springBone`
+values go straight in: each spring is `{ joints, colliders?, center? }`,
+its joints PARENTS FIRST, each `{ node, tail?, stiffness?, drag?,
+gravityPower?, gravityDir?, hitRadius? }` (defaults three-vrm's: 1,
+0.4, 0, -y, 0; `tail` is where the chain continues in the bone's own
+space, defaulting to the next joint's rest position or VRM's 7 cm
+virtual tail for a leaf), `colliders` indices into the options' list of
+`{ node, shape: "sphere" | "capsule" | "plane", ... , inside? }` (offsets
+in the collider node's space; `inside` keeps the tails WITHIN a sphere
+or capsule, a skirt around the legs), and `center` the node whose space
+the chain is solved in (its own motion then does not swing the chain -
+VRM's center; default world space). The handle has `reset()` (every
+tail back at rest under the current pose, what a teleport wants) and
+`dispose()`. Zero per-frame JS: the core steps every chain once per
+frame AFTER your onFrame and its flush - the POSE POST-PASS, where
+Unity's LateUpdate and Godot's skeleton modifiers run - so the chains
+react to the final primary pose: the players, the transitions and the
+frame's own writes (a look-at, an IK, a controller's move). Three
+consequences: (1) the chain owns its joints' rotations - a setTransform
+on one is overwritten at the step; (2) `getTransform`/`worldPosition`
+on a joint during the frame read the PREVIOUS frame's solve (anything
+attached under a joint follows through the hierarchy and needs no
+read); (3) the model's time scale freezes its chains with its clips.
+The solve is frame-rate exact: the free motion is the closed-form flow
+of three-vrm's 60 Hz step (authored values mean what they mean there)
+and the length and collider projections run at 240 Hz substeps, so a
+50, 60 or 120 Hz display draws the same motion with no added latency.
+Lengths follow the matrices (a scaled ancestor scales bone lengths, hit
+radii and collider radii alike). The declaration lives on the model
+node and re-applies on every scene enter, like setTransition; a settled
+chain asks for no frames. The VRM extension itself is the app's to
+parse (no reader here yet); `okf/plans/3d-spring-bones.md` holds the
+design.
 
 ### Skins
 

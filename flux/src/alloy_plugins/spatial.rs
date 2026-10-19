@@ -18,8 +18,14 @@ use alloy::spatial::{
   vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawOrder,
   DrawQueue, DrawSink, GridSpec, InstanceProjection, InstanceRecordSink, LodLevel, MoveOptions, NodeEndpoint,
   NodeMotion, NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter, RegionEvent,
-  RegionMargins, RegionRef, RootMotion, Shape, SharedSlotSink, TextureSlotSink, Volume,
+  RegionMargins, RegionRef, RootMotion, Shape, SharedSlotSink, SpringCollider, SpringJoint, SpringShape,
+  TextureSlotSink, Volume,
 };
+
+/// Floats per joint in createSpring's joint payload (see `create_spring`).
+const SPRING_JOINT_FLOATS: usize = 14;
+/// Floats per collider in createSpring's collider payload.
+const SPRING_COLLIDER_FLOATS: usize = 9;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
@@ -137,6 +143,9 @@ impl ModuleDef for SpatialModule {
     decl.declare("bindRootMotion")?;
     decl.declare("destroyPlayer")?;
     decl.declare("readTransform")?;
+    decl.declare("createSpring")?;
+    decl.declare("destroySpring")?;
+    decl.declare("resetSpring")?;
     decl.declare("bindPoseRecord")?;
     decl.declare("bindMatrixRecord")?;
     decl.declare("unbindRecord")?;
@@ -209,6 +218,9 @@ impl ModuleDef for SpatialModule {
     exports.export("bindRootMotion", Function::new(ctx.clone(), bind_root_motion)?)?;
     exports.export("destroyPlayer", Function::new(ctx.clone(), destroy_player)?)?;
     exports.export("readTransform", Function::new(ctx.clone(), read_transform)?)?;
+    exports.export("createSpring", Function::new(ctx.clone(), create_spring)?)?;
+    exports.export("destroySpring", Function::new(ctx.clone(), destroy_spring)?)?;
+    exports.export("resetSpring", Function::new(ctx.clone(), reset_spring)?)?;
     exports.export("bindPoseRecord", Function::new(ctx.clone(), bind_pose_record)?)?;
     exports.export("bindMatrixRecord", Function::new(ctx.clone(), bind_matrix_record)?)?;
     exports.export("unbindRecord", Function::new(ctx.clone(), unbind_record)?)?;
@@ -1408,6 +1420,94 @@ fn read_transform(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::
   Ok(())
 }
 
+/// Declare a spring-bone chain (see `alloy::spatial::springs`): joint i is
+/// `jointNodes[i]` with its 14 floats in `joints` - tail xyz, rest
+/// rotation xyzw, stiffness, drag, gravity power, gravity direction xyz,
+/// hit radius; collider i is `colliderNodes[i]` with its 9 floats in
+/// `colliders` - kind (0 sphere, 1 capsule, 2 plane), inside (0 or 1),
+/// two points xyz (the sphere's offset and nothing; the capsule's ends;
+/// the plane's offset and normal) and radius.
+fn create_spring<'js>(
+  ctx: Ctx<'js>,
+  clock: u64,
+  joint_nodes: Vec<u64>,
+  joints: TypedArray<'js, f32>,
+  collider_nodes: Vec<u64>,
+  colliders: TypedArray<'js, f32>,
+  center: OptArg<u64>,
+) -> rquickjs::Result<u64> {
+  let jf = elements_of(&ctx, &joints, "createSpring")?;
+  if jf.len() != joint_nodes.len() * SPRING_JOINT_FLOATS {
+    return Err(throw_str(
+      &ctx,
+      &format!(
+        "createSpring: joints must hold {SPRING_JOINT_FLOATS} floats per joint node ({} nodes, {} floats)",
+        joint_nodes.len(),
+        jf.len()
+      ),
+    ));
+  }
+  let joint_specs: Vec<SpringJoint> = joint_nodes
+    .iter()
+    .zip(jf.chunks_exact(SPRING_JOINT_FLOATS))
+    .map(|(&node, f)| SpringJoint {
+      node,
+      tail: [f[0], f[1], f[2]],
+      rest_rotation: [f[3], f[4], f[5], f[6]],
+      stiffness: f[7],
+      drag: f[8],
+      gravity_power: f[9],
+      gravity_dir: [f[10], f[11], f[12]],
+      hit_radius: f[13],
+    })
+    .collect();
+  let cf = elements_of(&ctx, &colliders, "createSpring")?;
+  if cf.len() != collider_nodes.len() * SPRING_COLLIDER_FLOATS {
+    return Err(throw_str(
+      &ctx,
+      &format!(
+        "createSpring: colliders must hold {SPRING_COLLIDER_FLOATS} floats per collider node ({} nodes, {} floats)",
+        collider_nodes.len(),
+        cf.len()
+      ),
+    ));
+  }
+  let mut collider_specs = Vec::with_capacity(collider_nodes.len());
+  for (i, (&node, f)) in collider_nodes.iter().zip(cf.chunks_exact(SPRING_COLLIDER_FLOATS)).enumerate() {
+    let inside = f[1] != 0.0;
+    let (p0, p1, radius) = ([f[2], f[3], f[4]], [f[5], f[6], f[7]], f[8]);
+    let shape = match f[0] as i32 {
+      0 => SpringShape::Sphere { offset: p0, radius, inside },
+      1 => SpringShape::Capsule { a: p0, b: p1, radius, inside },
+      2 => SpringShape::Plane { offset: p0, normal: p1 },
+      kind => return Err(throw_str(&ctx, &format!("createSpring: collider {i} has unknown kind {kind}"))),
+    };
+    collider_specs.push(SpringCollider { node, shape });
+  }
+  let st = super::gui(&ctx);
+  let id = st
+    .alloy
+    .spatial()
+    .create_spring(clock, joint_specs, collider_specs, center.0)
+    .map_err(|e| throw_str(&ctx, &format!("createSpring: {e}")))?;
+  // The rest pose is written at creation: a frame must publish it.
+  st.platform.request_frame();
+  Ok(id)
+}
+
+fn destroy_spring(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().destroy_spring(id);
+  Ok(())
+}
+
+fn reset_spring(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
+  let st = super::gui(&ctx);
+  st.alloy.spatial().reset_spring(id).map_err(|e| throw_str(&ctx, &format!("resetSpring: {e}")))?;
+  // The rest pose is written on the spot: a frame must publish it.
+  st.platform.request_frame();
+  Ok(())
+}
+
 /// Bind the node's instance-record sink with the 2D pose projection: the
 /// flush writes [x, y, angle, sx, sy] to record slot `index` of vertex
 /// buffer `buffer`, batched into one buffer write per flush.
@@ -1606,6 +1706,11 @@ pub(crate) fn tick(ctx: &Ctx<'_>) -> SpatialTick {
   };
   st.alloy.spatial().start_transitions();
   let active = st.alloy.spatial().check_exits();
+  // The pose post-pass: the spring chains step over the frame's final
+  // primary pose (players, transitions and the frame's own writes), and
+  // the flush below publishes their joints.
+  let springs = st.alloy.spatial().advance_springs();
+  let active = active || springs.active;
   let freed = st.alloy.spatial().take_freed();
   let wrote = st.alloy.spatial_flush();
   let regions = st.alloy.spatial().residency_demand();

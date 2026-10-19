@@ -5,7 +5,7 @@
 // without Solid components) and the component face (Scene/Mesh/Group/
 // PerspectiveCamera) on top. See AGENTS.md for the model and the traps.
 
-export { add, createGroup, destroy, getMorphNames, getMorphWeights, getRotation, getTransform, lookAt, remove, setMorphWeights, setTimeScale, setTransform, setTransition, setVisible, timeRate, worldPosition } from "./node.ts"
+export { add, createGroup, destroy, getMorphNames, getMorphWeights, getRotation, getTransform, lookAt, remove, setMorphWeights, setTimeScale, setTransform, setTransition, setVisible, timeRate, worldInto, worldPosition } from "./node.ts"
 export type { HoverHandlers, LodConfig, MorphWeights, NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneEventBase, SceneNode, ScenePointerEvent, ScenePointerListener, SceneTapEvent, SceneWheelEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
 export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, setCastShadow, setCulling, setDrawRange, setEnvironment, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, instanceAttribute, records, updateRecords, INSTANCE_FLOATS } from "./mesh.ts"
 export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceOrderOptions, InstanceSlots, InstanceStream, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions, UpdateRecordsOptions } from "./mesh.ts"
@@ -125,6 +125,8 @@ export { bindSkeleton } from "./skeleton.ts"
 export type { BindSkeletonOptions } from "./skeleton.ts"
 export { createMixer } from "./mixer.ts"
 export type { Mixer, MixerOptions, MixerPlayOptions } from "./mixer.ts"
+export { createSpringBones } from "./springs.ts"
+export type { SpringBones, SpringBonesOptions, SpringChainSpec, SpringColliderSpec, SpringJointSpec } from "./springs.ts"
 export { channelElements, sampleChannel } from "./clip.ts"
 export { createOrbitCamera } from "./orbit.ts"
 export type { OrbitAxes, OrbitCamera as OrbitCameraHandle, OrbitCameraOptions, OrbitPose, OrbitPoseState, OrbitTarget } from "./orbit.ts"

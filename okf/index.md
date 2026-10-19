@@ -56,6 +56,13 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
+- **[Spring bones - secondary motion solved in the spatial core](plans/3d-spring-bones.md)** [2026-10-19]
+  A native chain solver for hair, skirts, tails and cables (Unity's
+  SpringBone, Godot's SpringBoneSimulator3D, three-vrm's VRMSpringBoneJoint),
+  declared once per model and stepped after the frame's JS as a pose
+  post-pass; frame-rate exact by construction, with sphere, capsule and plane
+  colliders, so a rigged character costs zero per-frame JS for its secondary
+  motion.
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
