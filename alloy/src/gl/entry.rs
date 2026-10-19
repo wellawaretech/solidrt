@@ -9,6 +9,7 @@ use std::rc::Rc;
 use super::buffer::{release_buffer, GpuBuffer};
 use super::pass::{PassInput, ResolvedDraw};
 use super::program::{RenderPipeline, ShaderProgram};
+use super::slicing::SliceGauge;
 use super::storage::{DepthAttachment, Msaa};
 use super::{prev_buffer, prev_vertex_array};
 use crate::gpu::vocab::{AttrKind, BufferLayout, DrawRange, IndexFormat, ParamValue, PipelineDesc, TextureBinding};
@@ -71,6 +72,10 @@ pub(super) struct DrawEntry {
   pub(super) bindings: Vec<TextureBinding>,
   /// The entry's debug name (see `DrawSpec::label`), for the inventory only.
   pub(super) label: Option<String>,
+  /// The entry's memory of the submission budget (gl::slicing): the
+  /// measured rate its renders are sliced by, and the pending bound fence
+  /// of a one-slice render. Fresh with the entry, so a rebuilt entry probes.
+  pub(super) gauge: SliceGauge,
 }
 
 /// The mesh half of a target: the ordered draw list sharing this target's
@@ -146,10 +151,13 @@ impl MeshState {
           program: &e.pipeline.program,
           desc: &e.pipeline.desc,
           vao: e.vao,
+          buffers: &e.buffers,
           range: e.draw,
           index: e.buffers.index.as_ref().map(|(_, _, fmt)| *fmt),
           params: &e.params,
           inputs,
+          gauge: &e.gauge,
+          label: e.label.as_deref().or(e.pipeline.label()),
         }
       })
       .collect()

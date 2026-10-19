@@ -16,6 +16,7 @@ use super::entry::{
 use super::pass::{run_pass, DrawGroup, PassDraw, PassInput, ResolvedDraw};
 use super::prev_framebuffer;
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
+use super::slicing::SliceGauge;
 use super::storage::{
   attach_cube_face, attach_storage, create_cube_storage, create_depth_texture, create_mesh_storage,
   create_target_texture, make_msaa, DepthAttachment, MeshStorage, Msaa,
@@ -243,6 +244,7 @@ impl ShaderTexture {
         draw,
         params: Vec::new(),
         bindings: sampler_bindings,
+        gauge: SliceGauge::new(),
         label: None,
       };
       Ok(ShaderTexture {
@@ -649,7 +651,12 @@ impl ShaderTexture {
     };
     check_entry_buffers(&entry.pipeline.desc, &buffers)?;
     let vao = build_vao(gl, &entry.pipeline.program, &entry.pipeline.desc, &buffers)?;
-    unsafe { gl.delete_vertex_array(entry.vao) };
+    unsafe {
+      gl.delete_vertex_array(entry.vao);
+      if let Some(bound) = entry.gauge.take_bound() {
+        gl.delete_sync(bound.fence);
+      }
+    };
     entry.vao = vao;
     let previous = std::mem::replace(&mut entry.buffers, buffers);
     release_entry_buffers(gl, previous);
@@ -696,7 +703,8 @@ impl ShaderTexture {
       None => None,
     };
     let vao = build_vao(gl, &pipeline.program, &pipeline.desc, &buffers)?;
-    let entry = DrawEntry { id, pipeline, pipeline_id, vao, buffers, draw, params, bindings, label };
+    let entry =
+      DrawEntry { id, pipeline, pipeline_id, vao, buffers, draw, params, bindings, label, gauge: SliceGauge::new() };
     match position {
       Some(pos) => mesh.entries.insert(pos, entry),
       None => mesh.entries.push(entry),
@@ -731,7 +739,12 @@ impl ShaderTexture {
     }
     let pos = mesh.entries.iter().position(|e| e.id == id).ok_or_else(|| format!("draw {id} not found"))?;
     let entry = mesh.entries.remove(pos);
-    unsafe { gl.delete_vertex_array(entry.vao) };
+    unsafe {
+      gl.delete_vertex_array(entry.vao);
+      if let Some(bound) = entry.gauge.take_bound() {
+        gl.delete_sync(bound.fence);
+      }
+    };
     release_pipeline(gl, entry.pipeline);
     release_entry_buffers(gl, entry.buffers);
     Ok(())
@@ -976,7 +989,12 @@ impl ShaderTexture {
       TargetKind::Fragment { program, .. } => release_program(gl, program),
       TargetKind::Mesh(mesh) => {
         for entry in mesh.entries {
-          unsafe { gl.delete_vertex_array(entry.vao) };
+          unsafe {
+            gl.delete_vertex_array(entry.vao);
+            if let Some(bound) = entry.gauge.take_bound() {
+              gl.delete_sync(bound.fence);
+            }
+          };
           release_pipeline(gl, entry.pipeline);
           release_entry_buffers(gl, entry.buffers);
         }
@@ -1150,13 +1168,19 @@ impl ShaderTexture {
           params: entry.params.clone(),
           bindings: entry.bindings.clone(),
           label: entry.label.clone(),
+          gauge: SliceGauge::new(),
         })
       })();
       match built {
         Ok(entry) => entries.push(entry),
         Err(e) => {
           for entry in entries {
-            unsafe { gl.delete_vertex_array(entry.vao) };
+            unsafe {
+              gl.delete_vertex_array(entry.vao);
+              if let Some(bound) = entry.gauge.take_bound() {
+                gl.delete_sync(bound.fence);
+              }
+            };
             release_pipeline(gl, entry.pipeline);
             release_entry_buffers(gl, entry.buffers);
           }
@@ -1229,10 +1253,46 @@ impl ShaderTexture {
             params: e.params.clone(),
             textures: e.bindings.clone(),
             label: e.label.clone(),
+            slices: e.gauge.last_render().0,
+            submission_micros: e.gauge.last_render().1,
           })
           .collect()
       })
       .unwrap_or_default()
+  }
+
+  /// Forget one entry's submission-budget measurement (see
+  /// `SliceGauge::reset`): the engine's order registry says the entry's
+  /// instances just went from the sentinel seed (all culled) to a real
+  /// order, so the probe that measured the seed stands for nothing.
+  pub fn reset_draw_gauge(&self, gl: &glow::Context, draw: u64) {
+    let Some(mesh) = self.mesh() else { return };
+    if let Some(e) = mesh.entries.iter().find(|e| e.id == draw) {
+      if let Some(bound) = e.gauge.reset() {
+        unsafe { gl.delete_sync(bound.fence) };
+      }
+    }
+  }
+
+  /// Poll the bound fences the entries' one-slice renders left (see
+  /// gl::slicing): a signaled fence's age is the draw's upper bound, read
+  /// into the entry's gauge and the fence deleted. Answers whether any
+  /// bound is still pending, so the owner keeps polling this target.
+  pub fn poll_slice_bounds(&self, gl: &glow::Context) -> bool {
+    let Some(mesh) = self.mesh() else { return false };
+    let mut pending = false;
+    for e in &mesh.entries {
+      let Some(bound) = e.gauge.bound() else { continue };
+      let signaled = unsafe { gl.get_sync_status(bound.fence) } == glow::SIGNALED;
+      if signaled {
+        e.gauge.take_bound();
+        unsafe { gl.delete_sync(bound.fence) };
+        e.gauge.bound_read(bound.issued.elapsed().as_micros() as u64, bound.work);
+      } else {
+        pending = true;
+      }
+    }
+    pending
   }
 
   /// Rebind the first pass's sampler2D inputs by uniform name (fragment, or

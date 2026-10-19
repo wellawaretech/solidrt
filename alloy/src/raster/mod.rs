@@ -131,6 +131,16 @@ pub struct RasterStats {
   /// timer queries. Per frame this is the number to hold against the
   /// refresh period; it is what explains `fence_timeouts`.
   pub(crate) frame_exec_micros: AtomicU64,
+  /// Submissions issued beyond one per draw by the submission budget
+  /// (gl::slicing): a heavy draw cut into slices so no single submission
+  /// runs past the kernel's hang timeout. 0 on a healthy desktop; climbing
+  /// on a GPU that needs it (the SM-T500 under a splat cloud).
+  pub(crate) draw_slices: AtomicU64,
+  /// Raster-thread wall time spent waiting on slice fences, microseconds
+  /// (each slice is waited for, which measures it); part of
+  /// `pass_issue_micros`, split out so an issue figure that grew because
+  /// draws are sliced reads as such.
+  pub(crate) slice_wait_micros: AtomicU64,
   /// Whether the raster context supports timer queries; set once by the
   /// raster thread at startup. False means `pass_exec_micros` is meaningless
   /// and reports as absent.
@@ -223,6 +233,11 @@ pub struct RasterCounters {
   /// GPU-side execution time of the window draws, microseconds; None when
   /// the context has no timer queries.
   pub frame_exec_micros: Option<u64>,
+  /// Submissions issued beyond one per draw by the submission budget, and
+  /// the raster-thread time spent waiting on their fences (see
+  /// `RasterStats`).
+  pub draw_slices: u64,
+  pub slice_wait_micros: u64,
   /// Raster-thread wall time spent executing non-Frame commands,
   /// microseconds - the work no frame-phase timing sees.
   pub cmd_micros: u64,
@@ -260,6 +275,8 @@ impl RasterStats {
         .timer_queries
         .load(Ordering::Relaxed)
         .then(|| self.frame_exec_micros.load(Ordering::Relaxed)),
+      draw_slices: self.draw_slices.load(Ordering::Relaxed),
+      slice_wait_micros: self.slice_wait_micros.load(Ordering::Relaxed),
       cmd_micros: self.cmd_micros.load(Ordering::Relaxed),
       partial_presents: self.partial_presents.load(Ordering::Relaxed),
       video_latched: self.video_latched.load(Ordering::Relaxed),
@@ -285,6 +302,8 @@ impl RasterStats {
       pass_issue_micros: AtomicU64::new(0),
       pass_exec_micros: AtomicU64::new(0),
       frame_exec_micros: AtomicU64::new(0),
+      draw_slices: AtomicU64::new(0),
+      slice_wait_micros: AtomicU64::new(0),
       timer_queries: AtomicBool::new(false),
       cmd_micros: AtomicU64::new(0),
       partial_presents: AtomicU64::new(0),
@@ -495,6 +514,10 @@ pub(crate) struct RasterState {
   // When the driver attributed a context reset to this context's own work,
   // over the last GUILTY_RESET_WINDOW_SECS (see recover.rs, GUILTY_RESET_LIMIT).
   guilty_resets: std::collections::VecDeque<std::time::Instant>,
+  // Targets whose draw entries left a bound fence to poll (gl::slicing: a
+  // one-slice render's upper bound), polled at the top of each raster
+  // command like the timer queries and dropped once every bound is read.
+  slice_bounds: HashSet<u64>,
   // Pixel-unpack buffers per-frame uploads stage through (see UploadStaging).
   staging: gl::UploadStaging,
   // GL-side view of every registered texture (id -> name + dims), for sampler
@@ -757,6 +780,7 @@ impl RasterState {
       demand_latch: None,
       present_fences: std::collections::VecDeque::new(),
       guilty_resets: std::collections::VecDeque::new(),
+      slice_bounds: HashSet::new(),
       staging: gl::UploadStaging::new(),
       textures: HashMap::new(),
       yuv_latches: HashMap::new(),
@@ -836,6 +860,7 @@ impl RasterState {
         let timed = !matches!(cmd, RasterCmd::Frame { .. });
         let cmd_start = std::time::Instant::now();
         self.harvest_pass_timings();
+        self.poll_slice_bounds();
         match cmd {
           RasterCmd::Frame { dl, tree_clean, damage, present_at, frame } => {
             // A load-shed frame that was not clean still changed the tree:
@@ -1146,6 +1171,11 @@ impl RasterState {
               log::warn!("[alloy] buffer write failed: {e}");
             }
             let _ = recycle.send((id, block));
+          }
+          RasterCmd::ResetDrawGauge { target, draw } => {
+            if let Some(shader) = self.shaders.get(&target) {
+              shader.reset_draw_gauge(&self.gl, draw);
+            }
           }
           RasterCmd::ReadBuffer { id, byte_offset, len, reply: tx } => {
             let result = self

@@ -294,7 +294,10 @@ not infer it from the desktop number.
 
 Finding your own numbers: `get_stats` gives fps, frameMs, setPropsPerFrame,
 the window summary (worst frame, percentiles, GPU rates), rasterQueue and
-fenceTimeouts. When those disagree with what the screen is
+fenceTimeouts, and `gpuDrawSlices`, the extra GPU submissions the engine
+issued to keep a heavy draw under the driver's hang timeout (nonzero names
+a draw whose `submissionMs` in get_gpu_resources is the frame's cost on
+that device). When those disagree with what the screen is
 visibly doing, ground truth on Android is
 `adb shell dumpsys SurfaceFlinger --latency <layer>` for real present
 timestamps - engine-reported phase timings can each be honest and still not add

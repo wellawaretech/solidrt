@@ -12,7 +12,9 @@ use impellers::{ISize, Texture};
 
 use super::{cmd, ensure_copy_program, resolve_entry_buffers, RasterState, RasterStats};
 use crate::gl;
-use crate::gl::{GpuTexture, PassInput, PassTimer, SamplerCache, ShaderProgram, ShaderTexture, Timed};
+use crate::gl::{
+  take_slice_report, GpuTexture, PassInput, PassTimer, SamplerCache, ShaderProgram, ShaderTexture, Timed,
+};
 use crate::gpu::{
   validate_binding_shapes, validate_params, validate_texture_bindings, BoundTexture, DepthStorage, DrawSpec,
   ParamValue, PipelineSpec, SamplerState, TargetSpec, TextureBinding, TextureFormat, TextureShape, UniformKind,
@@ -36,7 +38,7 @@ impl RasterState {
     self.flush_sources_of(id);
     match self.shaders.get(&id) {
       Some(shader) => {
-        timed_pass(&self.gl, &mut self.pass_timer, &self.stats, id, shader, || {
+        timed_pass(&self.gl, &mut self.pass_timer, &self.stats, &mut self.slice_bounds, id, shader, || {
           let resolve = |bindings: &[TextureBinding], program: &ShaderProgram| {
             resolve_binding_list(&self.textures, &self.samplers, bindings, program)
           };
@@ -148,20 +150,22 @@ impl RasterState {
       let resolve = |bindings: &[TextureBinding], program: &ShaderProgram| {
         resolve_binding_list(&self.textures, &self.samplers, bindings, program)
       };
-      timed_pass(&self.gl, &mut self.pass_timer, &self.stats, *id, shader, || match self.regions.get(id) {
-        None => shader.render(&self.gl, &resolve),
-        Some(tiles) => {
-          // Full when the parent's own state or inputs changed (its clear
-          // wipes every tile, so every tile redraws), or when every tile
-          // changed anyway (a pass-level clear is cheaper on a tiler than
-          // the full-surface load a no-clear pass implies); otherwise only
-          // the changed tiles, each over its own rectangle.
-          let full = self.dirty.contains(id)
-            || own_sources.get(id).is_some_and(|s| s.iter().any(changed))
-            || tiles.iter().all(changed);
-          let tiles: Vec<&ShaderTexture> =
-            tiles.iter().filter(|t| full || changed(t)).filter_map(|t| self.shaders.get(t)).collect();
-          shader.render_groups(&self.gl, &resolve, full, &tiles, tile_clear.as_deref());
+      timed_pass(&self.gl, &mut self.pass_timer, &self.stats, &mut self.slice_bounds, *id, shader, || {
+        match self.regions.get(id) {
+          None => shader.render(&self.gl, &resolve),
+          Some(tiles) => {
+            // Full when the parent's own state or inputs changed (its clear
+            // wipes every tile, so every tile redraws), or when every tile
+            // changed anyway (a pass-level clear is cheaper on a tiler than
+            // the full-surface load a no-clear pass implies); otherwise only
+            // the changed tiles, each over its own rectangle.
+            let full = self.dirty.contains(id)
+              || own_sources.get(id).is_some_and(|s| s.iter().any(changed))
+              || tiles.iter().all(changed);
+            let tiles: Vec<&ShaderTexture> =
+              tiles.iter().filter(|t| full || changed(t)).filter_map(|t| self.shaders.get(t)).collect();
+            shader.render_groups(&self.gl, &resolve, full, &tiles, tile_clear.as_deref());
+          }
         }
       });
     }
@@ -678,7 +682,7 @@ impl RasterState {
     let gpu = self.textures.get(&src).ok_or_else(|| format!("texture {src} not found"))?;
     let shader = self.shaders.get(&dst).ok_or_else(|| format!("shader texture {dst} not found"))?;
     let input = PassInput::d2("uSrc", gpu.gl_texture, Some(self.samplers.get(gpu.sampler)));
-    timed_pass(&self.gl, &mut self.pass_timer, &self.stats, dst, shader, || {
+    timed_pass(&self.gl, &mut self.pass_timer, &self.stats, &mut self.slice_bounds, dst, shader, || {
       shader.overwrite_with(&self.gl, &program, &[input]);
     });
     self.dirty.insert(dst);
@@ -700,20 +704,24 @@ fn ensure_tile_clear_program(gl: &glow::Context, slot: &mut Option<Rc<ShaderProg
 }
 
 /// The pass-accounting policy around one GPU pass into `target`: the timer
-/// query pair, issue-time measurement, the per-target record, and the
-/// cumulative stats - one owner, so every pass producer counts identically.
-/// A free function over the disjoint fields (not a method) because callers
-/// hold shared borrows of the registries while the timer needs `&mut`.
+/// query pair, issue-time measurement, the per-target record, the
+/// cumulative stats, and the submission budget's report (the slices issued
+/// and the bound fences left to poll, see gl::slicing) - one owner, so
+/// every pass producer counts identically. A free function over the
+/// disjoint fields (not a method) because callers hold shared borrows of
+/// the registries while the timer and the bound list need `&mut`.
 fn timed_pass(
   gl: &glow::Context,
   timer: &mut PassTimer,
   stats: &RasterStats,
+  bounds: &mut HashSet<u64>,
   target: u64,
   shader: &ShaderTexture,
   pass: impl FnOnce(),
 ) {
   let start = std::time::Instant::now();
   crate::gl::take_vertices();
+  take_slice_report();
   timer.begin(gl);
   pass();
   timer.end(gl, Timed::Pass { target });
@@ -721,6 +729,12 @@ fn timed_pass(
   shader.record_pass(micros, crate::gl::take_vertices());
   stats.passes.fetch_add(1, Ordering::Relaxed);
   stats.pass_issue_micros.fetch_add(micros, Ordering::Relaxed);
+  let report = take_slice_report();
+  stats.draw_slices.fetch_add(report.extra_submissions, Ordering::Relaxed);
+  stats.slice_wait_micros.fetch_add(report.wait_micros, Ordering::Relaxed);
+  if report.bounds > 0 {
+    bounds.insert(target);
+  }
 }
 
 /// Which shader targets need re-rendering after the contents of the `dirty`

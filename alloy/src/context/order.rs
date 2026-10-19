@@ -108,6 +108,19 @@ struct Mirror {
   // buffer is zeroed, which fetches record 0 everywhere, so the first
   // asynchronous seed writes the sentinel first.
   ids_written: bool,
+  // Whether that seed is the only id write so far (see `seeded_only`).
+  seeded: bool,
+}
+
+impl Mirror {
+  // The sentinel seed went out and no real order has followed it yet:
+  // the entry draws nothing until the sort lands, and a render measured
+  // in between (the submission budget's probe, gl::slicing) stands for
+  // nothing. Cleared by the first real publish, which tells the raster
+  // thread to forget that measurement.
+  fn seeded_only(&mut self) -> bool {
+    std::mem::replace(&mut self.seeded, false)
+  }
 }
 
 impl OrderedEntry {
@@ -550,6 +563,9 @@ impl Context {
             recycle: self.block_recycle_tx.clone(),
           });
           self.note_buffer_content(buffer);
+          if orders.mirrors.get_mut(&buffer).is_some_and(Mirror::seeded_only) {
+            self.send(RasterCmd::ResetDrawGauge { target: done.entry.0, draw: done.entry.1 });
+          }
         } else {
           entry.spare = done.perm;
           self.recycle_block(done.buffer, done.block);
@@ -595,6 +611,7 @@ impl Context {
     let mirror = orders.mirrors.get_mut(&buffer).expect("the caller resolved the mirror");
     if !mirror.ids_written {
       mirror.ids_written = true;
+      mirror.seeded = true;
       let mut dst = self.write_leases.borrow_mut().take_free(buffer, size);
       materialize(entry, mirror, &mut dst[..size]);
       self.send(RasterCmd::WriteBufferLease {
@@ -812,6 +829,9 @@ impl Context {
     if indexed {
       if let Some(mirror) = orders.mirrors.get_mut(&key_buffer) {
         mirror.ids_written = true;
+        if mirror.seeded_only() {
+          self.send(RasterCmd::ResetDrawGauge { target, draw });
+        }
       }
     }
   }

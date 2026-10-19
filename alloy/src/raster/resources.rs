@@ -287,6 +287,28 @@ impl RasterState {
     Ok(())
   }
 
+  /// Poll the bound fences one-slice renders left on the targets listed in
+  /// `slice_bounds` (see gl::slicing and `ShaderTexture::poll_slice_bounds`);
+  /// a target gone before its bound signaled drops out of the list with it.
+  pub(super) fn poll_slice_bounds(&mut self) {
+    if self.slice_bounds.is_empty() {
+      return;
+    }
+    let gl = &self.gl;
+    let shaders = &self.shaders;
+    let regions = &self.regions;
+    // A pass is accounted to its target, whose groups draw the tiles' own
+    // entries too (a view atlas, a 3d scene's panels), so the tiles are
+    // polled with their parent.
+    self.slice_bounds.retain(|id| {
+      let tiles = regions.get(id).map(|t| t.as_slice()).unwrap_or(&[]);
+      std::iter::once(id)
+        .chain(tiles.iter())
+        .filter_map(|t| shaders.get(t))
+        .fold(false, |pending, shader| shader.poll_slice_bounds(gl) || pending)
+    });
+  }
+
   /// Drain retired timer queries into the cumulative GPU-side counters
   /// (see gpu::PassTimer). A target destroyed before its result retired is
   /// simply not credited; the total still is.

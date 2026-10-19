@@ -257,7 +257,11 @@ moves:
 
 Low is the Adreno 610 tablet and Mali-T860 TV class (the soft kernel
 is half a 2 Mpx frame there, MSAA 4x ~9 ms, the fill cap the last
-lever), high the laptop class. Multisampling is high's alone: on a
+lever), high the laptop class. A tier is a speed choice, never a safety
+one: the engine keeps every GPU submission under its own budget (a heavy
+draw, a million-splat cloud at the window size on the tablet, is issued
+as several submissions sized from what it measures), so a row too rich
+for a device is slow, not black (okf/done/splat-adreno-gpu-fault.md). Multisampling is high's alone: on a
 Mali phone (Pixel 7) any count above 1 on the half-float buffer costs a
 flat ~54 ms per 2.6 Mpx frame, 2x the same as 4x, while rgba8 4x costs
 ~40% (okf/done/mali-linear-scene-path-doubled.md); okf/done/3d-quality-tier.md

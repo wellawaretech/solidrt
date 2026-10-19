@@ -256,6 +256,17 @@ carry, not a renderer guess.
 - **16 reserved bits per splat**, the antialiased path without a capture
   to judge it, the constant log-scale floor, and the test gaps at the
   flux and 3d boundaries: same item.
+- **A heavy pass is kept under the driver's hang timeout by the engine,
+  not by the cloud.** On the SM-T500 (Adreno 610) the train at the
+  window size ran past KGSL's 2 s submission limit and faulted the
+  context; the engine's submission budget now issues such a draw as
+  several submissions sized from what it measures (alloy gl::slicing,
+  [done/splat-adreno-gpu-fault.md](../done/splat-adreno-gpu-fault.md)),
+  so the quality row and the count dial are speed levers, never safety
+  ones. On that GPU the pass is vertex-stage bound - the full vertex
+  stage runs per bin, fifteen texel fetches per corner at pq SH3 - and
+  nearly resolution-independent (276 ms at a quarter of the pixels, 493
+  at all of them); the u8 SH encoding costs about 4x there.
 - **No level of detail or streaming** beyond the count prefix; a
   city-scale capture is out of scope.
 - **Floaters.** A capture is clean near the camera path it was taken
@@ -265,7 +276,10 @@ carry, not a renderer guess.
 
 - The ladder is `probes/splat-mesh-probe.tsx`: `bench { count, scale,
   orbit, shader, blend }` remounts at azimuth 0; `shader: "noraster"`
-  is the vertex side alone; `/stats?window=10000` gives
+  is the vertex side alone on the Pixel's Mali - on Adreno it measures
+  the binning pass only (every primitive culled, the render pass runs
+  no vertex stage), so a vertex-stage price there is the stock shader at
+  a small scale; `/stats?window=10000` gives
   `gpuFrameExecMsPerFrame` (this Mali's pass timers read 0),
   `orderSortMs` the last sort on the thread.
 - Phone rows are valid only cold (skin under 35.5 C, status 0), cadence

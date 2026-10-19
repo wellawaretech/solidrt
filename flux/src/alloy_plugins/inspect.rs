@@ -484,6 +484,15 @@ pub fn gpu_record(
             if d.instance_count != 1 {
               map.insert("instanceCount".into(), d.instance_count.into());
             }
+            // The submission budget's figures (alloy gl::slicing): the
+            // slice count of the entry's last render when it was cut, and
+            // the longest submission measured, whole ms, when measured.
+            if d.slices > 1 {
+              map.insert("slices".into(), d.slices.into());
+            }
+            if d.submission_micros > 0 {
+              map.insert("submissionMs".into(), (d.submission_micros / 1000).into());
+            }
             if !d.depth_write {
               map.insert("depthWrite".into(), false.into());
             }

@@ -20,6 +20,7 @@ mod program;
 mod readback;
 mod rig;
 mod robustness;
+mod slicing;
 mod staging;
 mod storage;
 mod tap;
@@ -43,11 +44,11 @@ pub(crate) use pass::{
   composite_program_over_window, render_program_to_fbo, render_program_to_window, take_vertices, PassInput,
   TILE_CLEAR_FRAGMENT,
 };
-#[cfg(test)]
-pub(crate) use program::declared_uniform_names;
 pub(crate) use program::{
   compile_stage, delete_stage, release_pipeline, release_program, CompiledStage, RenderPipeline, ShaderProgram,
 };
+#[cfg(test)]
+pub(crate) use program::{declared_uniform_names, reads_instance_id};
 pub(crate) use readback::{flip_rows, read_fbo0_pixels, read_texture_pixels};
 pub(crate) use rig::{
   forget_window_samples, msrtt, supports_invalidate, window_fast_path, window_samples, MsrttFns, OffscreenRig,
@@ -55,6 +56,11 @@ pub(crate) use rig::{
 #[cfg(test)]
 pub(crate) use robustness::reset_status_entry;
 pub(crate) use robustness::{ResetStatus, Robustness};
+pub(crate) use slicing::take_slice_report;
+#[cfg(test)]
+pub(crate) use slicing::{
+  Bound, Issue, RateMeter, SliceAxis, SliceGauge, SlicePlan, SLICE_MIN_WORK, SUBMISSION_BUDGET_MICROS,
+};
 pub(crate) use staging::UploadStaging;
 pub(crate) use storage::create_layer_target;
 pub(crate) use tap::TapReadback;

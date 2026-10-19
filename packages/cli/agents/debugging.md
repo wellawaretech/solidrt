@@ -230,7 +230,14 @@ when exactly one client is connected.
   per target, so pair it with `label`) reported in full. An entry carries
   its own `label` when the add gave one (a 3d mesh reports its geometry's
   label, so a model part's entry is found by the part's name), beside its
-  `indexCount`/`instanceCount`. `groups` sums the textures and buffers by
+  `indexCount`/`instanceCount`. An entry the submission budget cut reports
+  `slices` (the submissions its last render was issued as) and
+  `submissionMs` (the longest of them, or a one-draw render's upper
+  bound): the engine keeps every GPU submission under about half a
+  second, a quarter of the hang timeout at which a driver faults the
+  context, so a heavy draw on a weak GPU shows here as several
+  submissions instead of one black screen (`gpuDrawSlices` in `/stats`
+  counts them; okf/plans/splat-adreno-gpu-fault.md). `groups` sums the textures and buffers by
   exact label (`textures`, `textureBytes`, `buffers`, `bufferBytes`,
   `bytes`): a consumer that labels every resource it creates (a tile
   layer's chunks under the layer's label) reads its footprint as one
@@ -302,7 +309,12 @@ when exactly one client is connected.
   line says "snapshot capture(s) in the paint" - not a hitch to chase; the
   first rebuild after a load says "first frame after load" for the same
   reason (that rebuild shapes, decodes and records everything at once),
-  and is still worth a look when it is hundreds of ms. The line measures
+  and is still worth a look when it is hundreds of ms.
+  `gpuDrawSlices` counts the extra GPU submissions the submission budget
+  issued by slicing heavy draws and `gpuDrawSliceWaitMs` the raster-thread
+  time spent waiting on them (part of `gpuPassIssueMs`): 0 on a desktop,
+  climbing on a GPU that needs the slicing, where a draw's own cost is
+  the `submissionMs` beside its inventory entry. The line measures
   the JS thread's phases only, so a load whose cost is uploads and
   compiles on the raster thread gets no line at all: a first frame under
   budget there is normal, not a missing warning. The `gpu*ExecMs` figures are absent (not 0) when the client's

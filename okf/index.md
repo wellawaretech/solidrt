@@ -373,6 +373,14 @@ Shaped, not started.
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
   either not found or checked against the wrong file.
+- **[A 3d scene mounted after a context recovery draws black on the SM-T500](backlog/context-recovery-3d-scene-black.md)** [2026-10-19]
+  On the Samsung SM-T500 (Adreno 610) a splat scene created fifteen seconds
+  after a guilty-reset recovery renders black at 2 ms per pass although its
+  data textures carry their content, its id stream is sorted, its program
+  links and no GL error is logged; the recovery was verified on the HUD and
+  the loss probe's content, never on a 3d scene mounted afterwards. Wants the
+  stage that fails found (the rgba16f scene target, its resolve, or the draw
+  itself) and the recovery verified on a scene.
 - **[Read a depth texture through the control API](backlog/control-api-depth-texture-read.md)** [2026-10-07]
   A target's depth texture is sampler-only, so /texture refuses it and a
   shadow-map bug cannot be split into "the tile was not written" and "the
@@ -790,15 +798,6 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
-- **[A heavy splat pass faults the Adreno 610 GPU, and the app goes black without alloy noticing](backlog/splat-adreno-gpu-fault.md)** [2026-10-18]
-  On the Samsung SM-T500 (Adreno 610, OpenGL ES 3.2 V@0502) a splat scene pass
-  of about 1.9 s GPU time trips a KGSL GPU fault (logcat
-  "IOCTL_KGSL_GPU_COMMAND failed - errno 35"); the scene stays black, every
-  later program reflects no uniforms, sometimes the process dies, and
-  contextLosses stays 0. First filed as an SH vertex shader bug and disproven
-  on the device 2026-10-19 (the SH shader draws at every degree and encoding).
-  Wants the fault detected as a context loss, and the pass kept under the
-  driver's limit on weak GPUs.
 - **[The splat order block and chunk table carry less than they could - the count dial drops the subject, sparse leaves lose precision, and nothing culls a chunk](backlog/splat-order-and-chunks.md)** [2026-10-18]
   The order block ranks by volume times opacity, so a capture whose subject is
   micro-splats loses the subject before the background at 100k; a k-d leaf
@@ -2610,6 +2609,16 @@ Finished, kept for the reasoning.
   @solidrt/core/speech-recognition) ships nowhere and exists for testing; once
   speech runs as an external runtime module over the microphone ring, the lane
   and everything built only for it come out.
+- **[A heavy splat pass faults the Adreno 610 GPU, and the app goes black without alloy noticing](done/splat-adreno-gpu-fault.md)** [2026-10-19]
+  On the Samsung SM-T500 (Adreno 610) a splat pass of about 2 s GPU time
+  tripped a KGSL GPU fault and the app went black with alloy none the wiser.
+  Part A made the fault a counted, recovered context loss (the EXT reset
+  entry, the Android window recreate, the guilty-reset cap, the present-fence
+  watchdog). Part B put a submission budget in the engine: a heavy draw is
+  issued as several submissions sized from what it measures, so no submission
+  is predicted past 500 ms on any device, converging to one draw call where it
+  fits; the train and the lizard at the window size draw on the tablet without
+  a fault.
 - **[The engine holds a full 32-byte record copy of a splat cloud when the sort needs 12](done/splat-key-copy.md)** [2026-10-17]
   An indexed instance order keys on the record's position, but the hand-off
   mirror the core sorts is the whole record block (32 bytes per splat, 32 MB
@@ -3206,6 +3215,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Survey of crates that could replace or extend alloy/src/spatial, with
   measured dependency costs; conclusion is no action, demand-gated pointers
   only.
+- **[What the Adreno 610 taught about a heavy splat pass and the submission budget](notes/splat-adreno-gpu-fault.md)** [2026-10-19]
+  The measurements behind okf/done/splat-adreno-gpu-fault.md - the SM-T500's
+  splat ladder (the pass is vertex-stage bound per bin, not fill, and nearly
+  resolution-independent), the u8 against pq cost, the planner faults the
+  tests caught, the sentinel-seed probe gap and the device runs that verified
+  the budget.
 - **[Splat record compression measurements and the 11-bit lesson](notes/splat-record-compression.md)** [2026-10-18]
   What building the chunked splat record established - importance banding
   costs 12x in position precision, the field's 11-bit position fails a

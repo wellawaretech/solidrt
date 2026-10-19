@@ -5,11 +5,19 @@
 //! reviewed.
 
 use glow::HasContext;
+use std::time::Instant;
 
+use super::entry::EntryBuffers;
 use super::program::ShaderProgram;
-use super::{prev_framebuffer, prev_program, prev_sampler, prev_texture, prev_vertex_array};
+use super::slicing::{
+  note_bound, note_slices, Bound, Issue, RateMeter, SliceAxis, SliceGauge, SlicePlan, SLICE_WAIT_LIMIT_SECS,
+  SLICE_WAIT_STEP_NS, SUBMISSION_BUDGET_MICROS,
+};
+use super::{prev_buffer, prev_framebuffer, prev_program, prev_sampler, prev_texture, prev_vertex_array};
 use crate::gpu::texture::TextureShape;
-use crate::gpu::vocab::{BlendMode, DrawRange, IndexFormat, ParamValue, PipelineDesc, UniformKind, UniformSlot};
+use crate::gpu::vocab::{
+  AttrKind, BlendMode, DrawRange, IndexFormat, ParamValue, PipelineDesc, StepMode, UniformKind, UniformSlot,
+};
 
 /// A resolved sampler input for a pass: uniform name, source GL texture, the
 /// sampler object carrying the source's declared filter/wrap (None for
@@ -75,12 +83,19 @@ pub(super) struct ResolvedDraw<'a> {
   pub(super) program: &'a ShaderProgram,
   pub(super) desc: &'a PipelineDesc,
   pub(super) vao: glow::VertexArray,
+  /// The entry's buffers, for re-pointing the instance-step layouts when
+  /// the draw is issued in instance slices (see `issue_draw`).
+  pub(super) buffers: &'a EntryBuffers,
   pub(super) range: DrawRange,
   /// Present = draw indexed (`range` counts indices): the index buffer is
   /// already captured in `vao`, so the format is all the draw call needs.
   pub(super) index: Option<IndexFormat>,
   pub(super) params: &'a [(String, ParamValue)],
   pub(super) inputs: Vec<PassInput>,
+  /// The entry's submission-budget memory (gl::slicing).
+  pub(super) gauge: &'a SliceGauge,
+  /// The entry's label, or its pipeline's, for the slicing log line.
+  pub(super) label: Option<&'a str>,
 }
 
 /// One group of a mesh pass: an ordered run of draws sharing a viewport, a
@@ -606,41 +621,8 @@ pub(super) fn run_pass(
               None => gl.disable(glow::CULL_FACE),
             }
             gl.bind_vertex_array(Some(d.vao));
-            // instance_count 1 keeps the plain draw - bit-identical to the
-            // non-instanced path (gl_InstanceID reads 0 either way); 0 draws
-            // nothing. gl_VertexID includes first_vertex, as in WebGPU (on an
-            // indexed draw it reads the index value). An indexed entry's
-            // element buffer is VAO state, bound since build_vao; the byte
-            // offset positions the range within it.
             vertices += d.range.vertex_count.max(0) as u64 * d.range.instance_count.max(0) as u64;
-            match d.index {
-              Some(fmt) => {
-                let offset = d.range.first_vertex * fmt.size();
-                if d.range.instance_count == 1 {
-                  gl.draw_elements(d.desc.topology.gl(), d.range.vertex_count, fmt.gl(), offset);
-                } else {
-                  gl.draw_elements_instanced(
-                    d.desc.topology.gl(),
-                    d.range.vertex_count,
-                    fmt.gl(),
-                    offset,
-                    d.range.instance_count,
-                  );
-                }
-              }
-              None => {
-                if d.range.instance_count == 1 {
-                  gl.draw_arrays(d.desc.topology.gl(), d.range.first_vertex, d.range.vertex_count);
-                } else {
-                  gl.draw_arrays_instanced(
-                    d.desc.topology.gl(),
-                    d.range.first_vertex,
-                    d.range.vertex_count,
-                    d.range.instance_count,
-                  );
-                }
-              }
-            }
+            issue_draw(gl, d);
           }
         }
 
@@ -718,4 +700,190 @@ pub(super) fn run_pass(
     }
     VERTICES.with(|c| c.set(c.get() + vertices));
   }
+}
+
+/// One draw call over `range` with the entry's topology and index binding.
+/// instance_count 1 keeps the plain draw - bit-identical to the
+/// non-instanced path (gl_InstanceID reads 0 either way); 0 draws nothing.
+/// gl_VertexID includes first_vertex, as in WebGPU (on an indexed draw it
+/// reads the index value). An indexed entry's element buffer is VAO state,
+/// bound since build_vao; the byte offset positions the range within it.
+unsafe fn draw_range(gl: &glow::Context, d: &ResolvedDraw, range: DrawRange) {
+  let topology = d.desc.topology.gl();
+  match d.index {
+    Some(fmt) => {
+      let offset = range.first_vertex * fmt.size();
+      if range.instance_count == 1 {
+        gl.draw_elements(topology, range.vertex_count, fmt.gl(), offset);
+      } else {
+        gl.draw_elements_instanced(topology, range.vertex_count, fmt.gl(), offset, range.instance_count);
+      }
+    }
+    None => {
+      if range.instance_count == 1 {
+        gl.draw_arrays(topology, range.first_vertex, range.vertex_count);
+      } else {
+        gl.draw_arrays_instanced(topology, range.first_vertex, range.vertex_count, range.instance_count);
+      }
+    }
+  }
+}
+
+/// Issue one resolved draw under the submission budget (gl::slicing): a
+/// draw under the work floor, or whose measured rate fits the budget, is
+/// one draw call - the latter followed by a fence (no flush) the owner
+/// polls as the run's upper bound; a heavy or unmeasured draw goes out as
+/// slices, each flushed and waited for, so no submission is predicted to
+/// run past the budget and every slice is measured on the kernel's own
+/// clock. The entry's VAO is bound; the instance-step pointers an instance
+/// slice re-points are restored to the VAO's own before returning.
+unsafe fn issue_draw(gl: &glow::Context, d: &ResolvedDraw) {
+  let Some(plan) = SlicePlan::plan(d.range, d.desc.topology, d.program.reads_instance_id()) else {
+    draw_range(gl, d, d.range);
+    return;
+  };
+  match plan.issue(d.gauge.rate()) {
+    Issue::Whole => {
+      draw_range(gl, d, d.range);
+      let bound = gl.fence_sync(glow::SYNC_GPU_COMMANDS_COMPLETE, 0).ok().map(|fence| Bound {
+        fence,
+        issued: Instant::now(),
+        work: plan.work(),
+      });
+      let polled = bound.is_some();
+      if let Some(stale) = d.gauge.whole(bound) {
+        gl.delete_sync(stale.fence);
+      }
+      if polled {
+        note_bound();
+      }
+    }
+    Issue::Sliced => issue_slices(gl, d, plan),
+  }
+}
+
+/// The sliced issue of `issue_draw`: the queue drained first so the first
+/// slice's measure is its own, then slices sized by the plan from the rate
+/// of the slice before, the instance pointers re-pointed per slice on the
+/// instance axis. A wait that runs out (`SLICE_WAIT_LIMIT_SECS`) stops the
+/// measuring for this render - the GPU is hung and the present fence
+/// watchdog will say so - while the remaining slices still go out.
+unsafe fn issue_slices(gl: &glow::Context, d: &ResolvedDraw, plan: SlicePlan) {
+  let label = d.label.unwrap_or("unlabelled");
+  let mut hung = false;
+  let mut wait_micros = submit_and_wait(gl, &mut hung, label);
+  let mut at = 0u64;
+  let mut prev = None;
+  let mut rate = d.gauge.rate();
+  let mut meter = RateMeter::default();
+  let mut longest = 0u64;
+  let mut slices = 0u32;
+  while at < plan.units {
+    let take = plan.take(at, rate, prev);
+    match plan.axis {
+      SliceAxis::Instances => {
+        point_instances(gl, d, at);
+        draw_range(gl, d, DrawRange { instance_count: take as i32, ..d.range });
+      }
+      SliceAxis::Vertices => {
+        let first_vertex = d.range.first_vertex + at as i32;
+        draw_range(gl, d, DrawRange { first_vertex, vertex_count: take as i32, ..d.range });
+      }
+    }
+    let micros = if hung { 0 } else { submit_and_wait(gl, &mut hung, label) };
+    wait_micros += micros;
+    if !hung {
+      let work = take * plan.unit_work;
+      meter.add(micros, work);
+      // The next slice is sized from this one's own rate: the region's
+      // density, with the fixed cost of a short slice erring small.
+      rate = Some(micros as f64 / work as f64);
+      longest = longest.max(micros);
+    }
+    prev = Some(take);
+    at = plan.advance(at, take);
+    slices += 1;
+  }
+  if plan.axis == SliceAxis::Instances {
+    point_instances(gl, d, 0);
+  }
+  if let (false, Some(rate)) = (hung, meter.rate()) {
+    d.gauge.measured(rate, slices, longest);
+    let budget_ms = SUBMISSION_BUDGET_MICROS / 1000;
+    if d.gauge.log_once() {
+      log::info!(
+        "[alloy] draw {label} ({} vertices) issued as {slices} submissions, the slowest {} ms against the {budget_ms} ms budget",
+        plan.work(),
+        longest / 1000
+      );
+    } else {
+      log::debug!("[alloy] draw {label} issued as {slices} submissions, the slowest {} ms", longest / 1000);
+    }
+  }
+  note_slices(slices.saturating_sub(1) as u64, wait_micros);
+}
+
+/// Submit everything issued so far as one submission and wait for it to
+/// retire: a fence, a flush, and the wait in steps up to the limit. Answers
+/// the wall time of the wait, which for a slice issued right before is the
+/// slice's run on the kernel's clock. Past the limit (or on a failed wait,
+/// a lost context) `hung` is set and nothing is waited for again.
+unsafe fn submit_and_wait(gl: &glow::Context, hung: &mut bool, label: &str) -> u64 {
+  let started = Instant::now();
+  let Ok(fence) = gl.fence_sync(glow::SYNC_GPU_COMMANDS_COMPLETE, 0) else {
+    gl.flush();
+    return 0;
+  };
+  gl.flush();
+  loop {
+    match gl.client_wait_sync(fence, glow::SYNC_FLUSH_COMMANDS_BIT, SLICE_WAIT_STEP_NS) {
+      glow::ALREADY_SIGNALED | glow::CONDITION_SATISFIED => break,
+      glow::TIMEOUT_EXPIRED if started.elapsed().as_secs() < SLICE_WAIT_LIMIT_SECS => continue,
+      glow::TIMEOUT_EXPIRED => {
+        log::warn!("[alloy] draw {label}: a slice did not complete within {SLICE_WAIT_LIMIT_SECS} s; the GPU is hung");
+        *hung = true;
+        break;
+      }
+      status => {
+        log::warn!("[alloy] draw {label}: the slice fence wait failed (status {status:#x})");
+        *hung = true;
+        break;
+      }
+    }
+  }
+  gl.delete_sync(fence);
+  started.elapsed().as_micros() as u64
+}
+
+/// Point the entry's instance-step attribute pointers at instance record
+/// `first`: ES 3.0 has no base instance, so an instance slice starts where
+/// the pointers say. Pointer state lives in the bound VAO (the entry's);
+/// `first` 0 is the VAO as build_vao made it. The array-buffer binding is
+/// restored (Impeller-cached state).
+unsafe fn point_instances(gl: &glow::Context, d: &ResolvedDraw, first: u64) {
+  let prev_ab = gl.get_parameter_i32(glow::ARRAY_BUFFER_BINDING);
+  for (layout, (buffer, _)) in d.desc.buffers.iter().zip(d.buffers.buffers.iter()) {
+    if layout.step != StepMode::Instance {
+      continue;
+    }
+    gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer.vbo));
+    let base = first as i32 * layout.stride;
+    for attr in &layout.attributes {
+      let Some(loc) = gl.get_attrib_location(d.program.program, &attr.name) else { continue };
+      let fmt = attr.format;
+      if fmt.kind() == AttrKind::Float {
+        gl.vertex_attrib_pointer_f32(
+          loc,
+          fmt.components(),
+          fmt.gl_type(),
+          fmt.normalized(),
+          layout.stride,
+          base + attr.offset,
+        );
+      } else {
+        gl.vertex_attrib_pointer_i32(loc, fmt.components(), fmt.gl_type(), layout.stride, base + attr.offset);
+      }
+    }
+  }
+  gl.bind_buffer(glow::ARRAY_BUFFER, prev_buffer(prev_ab));
 }

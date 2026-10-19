@@ -122,6 +122,10 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
     if let Some(exec) = rc.frame_exec_micros {
       put("gpuFrameExecMs", (exec / 1000).into());
     }
+    // The submission budget (alloy gl::slicing): extra submissions issued
+    // by slicing heavy draws, and the raster-thread time waiting on them.
+    put("gpuDrawSlices", rc.draw_slices.into());
+    put("gpuDrawSliceWaitMs", (rc.slice_wait_micros / 1000).into());
     put("rasterCmdMs", (rc.cmd_micros / 1000).into());
   }
   // The instance-order sort thread: jobs not yet landed, jobs landed, and

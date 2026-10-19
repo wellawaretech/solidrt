@@ -1,7 +1,8 @@
 ---
 title: A heavy splat pass faults the Adreno 610 GPU, and the app goes black without alloy noticing
-description: On the Samsung SM-T500 (Adreno 610, OpenGL ES 3.2 V@0502) a splat scene pass of about 1.9 s GPU time trips a KGSL GPU fault (logcat "IOCTL_KGSL_GPU_COMMAND failed - errno 35"); the scene stays black, every later program reflects no uniforms, sometimes the process dies, and contextLosses stays 0. First filed as an SH vertex shader bug and disproven on the device 2026-10-19 (the SH shader draws at every degree and encoding). Wants the fault detected as a context loss, and the pass kept under the driver's limit on weak GPUs.
+description: On the Samsung SM-T500 (Adreno 610) a splat pass of about 2 s GPU time tripped a KGSL GPU fault and the app went black with alloy none the wiser. Part A made the fault a counted, recovered context loss (the EXT reset entry, the Android window recreate, the guilty-reset cap, the present-fence watchdog). Part B put a submission budget in the engine: a heavy draw is issued as several submissions sized from what it measures, so no submission is predicted past 500 ms on any device, converging to one draw call where it fits; the train and the lizard at the window size draw on the tablet without a fault.
 created: 2026-10-18
+completed: 2026-10-19
 ---
 
 # A heavy splat pass faults the Adreno 610 GPU
@@ -223,14 +224,133 @@ Two parts, one symptom.
   programs that reflect nothing. The frame fence that never retires was
   not needed as a signal: the reset status answers once the right entry
   is asked.
-- Keep a splat pass under the limit on weak GPUs. Measure where the time
-  goes first (vertex against fill, per the question above). The levers
-  are the quality row for low-end devices (renderScale, maxPixels,
-  samples; okf/done/3d-quality-tier.md), and splitting a large instanced
-  draw into several draws with a flush between them, so no single
-  submission runs long; the splat count dial (setRecordCount) is the
-  app's own. Done: the lizard at the tablet's default quality draws
+- Keep a splat pass under the limit on weak GPUs (part B, below): the
+  engine keeps every GPU submission under a time budget by slicing a
+  heavy draw into several submissions, sized from what it measures. The
+  quality row for low-end devices (renderScale, maxPixels, samples;
+  okf/done/3d-quality-tier.md) and the splat count dial (setRecordCount)
+  stay the app's levers for speed; the budget is what makes any choice
+  of them safe. Done: the lizard at the tablet's default quality draws
   there, slowly if need be, without a fault.
+
+## Part B: a submission budget in the engine (decided and built 2026-10-19)
+
+### The limit is per submission
+
+The msm KGSL dispatcher (4.19, this tablet) faults a context when
+`adreno_drawobj_timeout` (2000 ms) passes without any of its submissions
+retiring: the clock restarts at every retire, so what the kernel bounds
+is one submission's run, never a frame's. Windows TDR bounds a DMA
+packet the same way (2 s). A submission is the GL command stream between
+two flushes - and on a tiled GPU the whole frame (passes and the window
+draw) is one, since nothing forces the driver to submit earlier. The
+engine's invariant is therefore: **no submission it issues is predicted
+to run longer than `SUBMISSION_BUDGET_MICROS` (500 ms)**. A quarter of
+the tightest kernel limit: room for a clock drop or a camera move
+between two measurements.
+
+### Mechanism: a draw issued as slices
+
+A draw entry whose work (vertices times instances) is at least
+`SLICE_MIN_WORK` and whose predicted time exceeds the budget is issued
+as slices, each its own submission: after every slice a fence is
+created and waited for with the flush bit (`glClientWaitSync`, which
+submits the slice and returns when it retired), so the slice's time is
+measured exactly, on the clock the kernel keeps; the queue is drained
+the same way before the first slice, so its measure is its own and not
+the work queued ahead of it. The raster thread blocks for the slice's
+GPU time, which costs nothing where it matters (a sliced draw is by
+definition the GPU's bottleneck, and the thread would block at the
+present fence anyway) and a handful of flushes once where it does not.
+
+- An instanced draw slices over its instances: ES 3.0 has no base
+  instance, so each slice re-points the instance-step attribute pointers
+  of the entry's VAO at the slice's first record and the last slice
+  points them back. `gl_InstanceID` restarts at 0 in every slice, so a
+  vertex stage that reads it (the 3d morph-weights row lookup) is sliced
+  over its vertex range instead - a bounded division, logged once when
+  it is not enough; every instance attribute stays exact.
+- A plain draw slices over its vertex or index range: lists at primitive
+  multiples, a line strip with one vertex of overlap, a triangle strip
+  with two and every slice an even length so the winding parity holds,
+  an indexed draw by element offset. `gl_VertexID` stays the true index.
+- Slices run in order inside the entry's list position, with the
+  entry's blend, depth and cull state: the pixels are the unsliced
+  draw's. A tiled driver stores and reloads its tiles at each flush (a
+  few ms per boundary at 2.6 Mpx), which is the whole cost.
+
+### Policy: measured, adaptive, converging
+
+Per entry, the engine keeps a rate - microseconds per vertex, from the
+slowest slice of the last exact measurement - and plans each render
+from it:
+
+- predicted = work times rate. At or under `SLICE_MERGE_MICROS` (250 ms,
+  half the budget, the hysteresis) the draw is one slice: no flush, no
+  wait. Above it, slices sized to `SLICE_TARGET_MICROS` (250 ms) at the
+  rate, re-planned after every slice from that slice's own measure, a
+  slice at most `SLICE_GROWTH_MAX` (2x) the previous: a sorted cloud's
+  near splats are many times denser than its far ones, and 2x growth
+  aimed at half the budget keeps a 4x density jump under the kernel's
+  2 s.
+- An entry with no rate (new, rebuilt after a context loss, or its
+  program swapped) probes: its first slice is `SLICE_PROBE_WORK`
+  vertices, then it grows by the rule above. On the tablet the first
+  render is already safe; on a fast GPU it is six flushes once, and the
+  second render is one slice. No device-wide rate is trusted for a new
+  entry: a small cloud measured light says nothing about the 10M cloud
+  loaded after it.
+- A one-slice draw still carries a fence (no flush), polled without
+  blocking: its signal time bounds the draw from above - on a tiler it
+  is the frame's time - and a bound over the budget makes the next
+  render measure exactly (the rate set from the bound, corrected by the
+  measure). A healthy frame's bound is its frame time, far under the
+  budget, so the converged state costs one fence per big draw per render
+  and nothing else; a frame near the budget pays a probe, which is cheap
+  against such a frame.
+- The rate follows the work: a count dial, a resize, a camera move or a
+  thermal clamp re-plans at the next render; a 4x surprise within one
+  render still fits the kernel's limit.
+
+### Said plainly, what this does not cover
+
+- A draw under `SLICE_MIN_WORK` (65536 vertices), or a single primitive,
+  with absurd fill - a fragment stage that never ends: the fault is the
+  app's, part A recovers it and the guilty-reset cap ends the loop.
+- A frame whose many small passes add up to the limit: not seen on any
+  device (an app at 0.5 fps is not running), not addressed; a flush
+  between passes by the same accounting would be the step.
+- A one-slice draw that jumps past the budget in a single render (a
+  teleport into a dense cloud): its bound is read after the fact, the
+  next render is sliced. The 4x margin covers the jump the kernel sees.
+
+### Surface
+
+- `/stats`: `gpuDrawSlices` (cumulative extra submissions issued by
+  slicing; 0 on a healthy desktop) and `gpuDrawSliceWaitMs` (raster-thread
+  time spent waiting on slice fences, which `gpuPassIssueMs` includes).
+  The inventory's `draws[]` carry `slices` and `submissionMs`, the slice
+  count and the longest submission of the entry's last render (a
+  one-slice entry's is its bound).
+- One info log line per entry when it first slices (label, slices, the
+  slowest slice); the re-plans at debug.
+- Docs: debugging.md (the inventory and stats fields), core gpu.ts
+  (`addDraw`: the gl_InstanceID rule), design/splats.md (the limit).
+
+### Tests
+
+- alloy unit tests on the planner (pure): the probe sizing, the budget
+  sizing and the growth cap, the topology alignment and the strip
+  overlap and parity, the merge rule, the bound rule.
+- An app test (packages/core/tests): an instanced draw above
+  `SLICE_MIN_WORK` renders sliced on its first frame (`slices` >= 2 in
+  the inventory) with pixels identical to the same population drawn
+  below the floor, then converges to one slice; a vertex stage reading
+  gl_InstanceID slices over vertices and stays exact.
+- The tablet: the lizard at the default (medium) quality, full
+  resolution, draws without a fault, `contextLosses` 0, every
+  `submissionMs` under the budget, three renders; the splat ladder's
+  Pixel rows unchanged (one slice from the second render on).
 
 ## Reproducing
 
@@ -259,3 +379,7 @@ Two parts, one symptom.
   SH sampler but never reads it is refused at addDraw (the mesh binds
   the SH textures by name), so the probe drops the declarations and
   draws such variants on a degree 0 cloud.
+
+## Findings
+
+Cut into [notes/splat-adreno-gpu-fault.md](../notes/splat-adreno-gpu-fault.md).

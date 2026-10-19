@@ -426,6 +426,11 @@ pub(crate) enum RasterCmd {
   /// the UI-side pool via `recycle` once the GL write is issued. `len` is
   /// the published prefix; the block itself is always full buffer size.
   WriteBufferLease { id: u64, block: Vec<u8>, len: usize, recycle: mpsc::Sender<(u64, Vec<u8>)> },
+  /// Forget a draw entry's submission-budget measurement (gl::slicing):
+  /// sent by the order registry when an index-stream entry's first real
+  /// order lands over the sentinel seed, so a probe that measured a draw of
+  /// culled instances does not plan the first real one.
+  ResetDrawGauge { target: u64, draw: u64 },
   /// Read back part of a vertex buffer.
   ReadBuffer { id: u64, byte_offset: usize, len: usize, reply: mpsc::Sender<Result<Vec<u8>, String>> },
   /// Free a vertex buffer.

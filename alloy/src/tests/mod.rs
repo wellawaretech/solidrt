@@ -9,6 +9,7 @@ mod context_loss;
 mod cull;
 mod damage;
 mod dialog;
+mod draw_slices;
 mod effects;
 mod fonts;
 mod frame;

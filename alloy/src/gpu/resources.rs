@@ -153,6 +153,13 @@ pub struct GpuDrawInfo {
   pub textures: Vec<TextureBinding>,
   /// The entry's debug label, when the add gave one (`DrawSpec::label`).
   pub label: Option<String>,
+  /// How many submissions the entry's last render was issued as under the
+  /// submission budget (gl::slicing): 1 = one draw call; 0 = not rendered
+  /// yet, or under the work floor and never measured.
+  pub slices: u32,
+  /// The longest submission of that render, microseconds: the slowest
+  /// slice, or the bound a one-slice render read (0 = unmeasured).
+  pub submission_micros: u64,
 }
 
 pub struct GpuPipelineInfo {

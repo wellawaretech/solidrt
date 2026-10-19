@@ -188,6 +188,22 @@ pub fn declared_uniform_names(src: &str) -> Vec<String> {
   names
 }
 
+/// Whether `src` (a vertex stage) reads `gl_InstanceID`: the token as a
+/// whole identifier, outside comments. Decides the slicing axis of the
+/// draws over the program (gl::slicing); a mention in a comment does not
+/// count, a read inside dead code does (conservative: vertex slicing).
+pub fn reads_instance_id(src: &str) -> bool {
+  let text = strip_comments(src);
+  let token = "gl_InstanceID";
+  let bytes = text.as_bytes();
+  let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+  text.match_indices(token).any(|(i, _)| {
+    let before = i.checked_sub(1).map(|j| bytes[j]);
+    let after = bytes.get(i + token.len()).copied();
+    !before.is_some_and(ident) && !after.is_some_and(ident)
+  })
+}
+
 fn strip_comments(src: &str) -> String {
   let mut out = String::with_capacity(src.len());
   let mut rest = src;
@@ -281,6 +297,10 @@ pub struct ShaderProgram {
   /// (`relink`). Text only: the cost is the source, never a second copy of
   /// anything GL holds.
   sources: ProgramSources,
+  /// Whether the vertex stage reads `gl_InstanceID` (a token scan of the
+  /// source with its comments stripped): such a stage cannot be issued in
+  /// instance slices, since the id restarts at 0 in each (gl::slicing).
+  reads_instance_id: bool,
 }
 
 /// A program's sources as compiled: what `ShaderProgram::relink` compiles
@@ -301,7 +321,16 @@ impl ShaderProgram {
     let uniforms = reflect_uniforms(gl, program);
     let inactive = inactive_names(&uniforms, declared_uniform_names(&fragment_full));
     let sources = ProgramSources { vertex: VERTEX_SRC.to_string(), fragment: fragment_full };
-    Ok(ShaderProgram { program, uniforms, inactive, attributes: Vec::new(), pipeline: false, label: None, sources })
+    Ok(ShaderProgram {
+      program,
+      uniforms,
+      inactive,
+      attributes: Vec::new(),
+      pipeline: false,
+      label: None,
+      sources,
+      reads_instance_id: false,
+    })
   }
 
   /// Compile a vertex+fragment pipeline program. Attribute locations are
@@ -316,8 +345,18 @@ impl ShaderProgram {
     declared.extend(declared_uniform_names(&fragment_full));
     let inactive = inactive_names(&uniforms, declared);
     let attributes = reflect_attributes(gl, program)?;
+    let reads_instance_id = reads_instance_id(&vertex_full);
     let sources = ProgramSources { vertex: vertex_full, fragment: fragment_full };
-    Ok(ShaderProgram { program, uniforms, inactive, attributes, pipeline: true, label: None, sources })
+    Ok(ShaderProgram {
+      program,
+      uniforms,
+      inactive,
+      attributes,
+      pipeline: true,
+      label: None,
+      sources,
+      reads_instance_id,
+    })
   }
 
   /// Link two already-compiled stages into a program: the raw path, no
@@ -351,7 +390,17 @@ impl ShaderProgram {
           return Err(e);
         }
       };
-      Ok(ShaderProgram { program, uniforms, inactive, attributes, pipeline: true, label: None, sources })
+      let reads_instance_id = reads_instance_id(&sources.vertex);
+      Ok(ShaderProgram {
+        program,
+        uniforms,
+        inactive,
+        attributes,
+        pipeline: true,
+        label: None,
+        sources,
+        reads_instance_id,
+      })
     }
   }
 
@@ -386,6 +435,7 @@ impl ShaderProgram {
       pipeline: self.pipeline,
       label: self.label.clone(),
       sources: self.sources.clone(),
+      reads_instance_id: self.reads_instance_id,
     })
   }
 
@@ -397,6 +447,11 @@ impl ShaderProgram {
 
   pub fn label(&self) -> Option<&str> {
     self.label.as_deref()
+  }
+
+  /// Whether the vertex stage reads `gl_InstanceID` (see the field).
+  pub fn reads_instance_id(&self) -> bool {
+    self.reads_instance_id
   }
 
   pub fn is_pipeline(&self) -> bool {

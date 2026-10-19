@@ -186,6 +186,19 @@ export type { AttributeAccess, FormatCodec, FormatKind } from "./vertex.ts"
 // one entry is the instanceOrder creation option (see InstanceOrder), whose
 // projected-key direction updates ride setDraw/setDrawRange as
 // orderDirection.
+//
+// Heavy draws and the submission budget: the engine keeps every GPU
+// submission under about half a second (a quarter of the hang timeout at
+// which Android's and Windows' drivers fault the context, 2 s) by issuing
+// an entry whose measured cost exceeds it as several submissions - an
+// instanced draw by instance ranges, a plain one by vertex ranges - with
+// the same pixels. Nothing to call; on a fast GPU the cost is a handful of
+// flushes on an entry's first render, then one draw call. The one
+// contract: a vertex stage that reads gl_InstanceID cannot be cut by
+// instances (the id restarts per slice), so such a draw is cut over its
+// vertex range, a bounded division - a large population reads its records
+// through instance attributes. The inventory reports `slices` and
+// `submissionMs` per entry (get_gpu_resources).
 export { addDraw, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu"
 
 // The resource pool (pool.ts): GPU ids a residency handler frees on a leave
