@@ -9,6 +9,17 @@ created: 2026-08-17
 Status 2026-09-23: stages 1 and 2 shipped; what is open is the
 non-interactive-session run described under stage 2.
 
+Status 2026-10-19: the pbuffer path verified on macOS (M1, ANGLE over
+Metal) from an ssh session while the console belongs to another user:
+`sol render` and the whole app test suite (260 tests) ran on it. On
+Windows the same ran over ssh through WSL interop, which launches the
+process into the logged-in desktop session, so Session 0 is still
+unanswered. Since the headless frame is drawn into a framebuffer of the
+raster thread's own (okf/done/test-window-size-and-scale.md), the pbuffer
+only keeps the context current, and the surfaceless context named below
+is now a drop-in; the OpenXR item (okf/backlog/vr-openxr.md) owns that
+swap.
+
 Symptom: every `sol render` on Windows prints
 
 ```

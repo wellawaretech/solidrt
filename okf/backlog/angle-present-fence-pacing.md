@@ -30,6 +30,28 @@ The flush sits at a frame boundary (the swap already flushed everything
 else), so the tiled-GPU cost concern does not apply; Mesa behavior is
 identical with and without.
 
+## Headless retirement (found and fixed 2026-10-19)
+
+The same never-blocking wait broke correctness, not just pacing, on the
+headless path: `RasterState::finish_gpu_work` (alloy/src/raster/frame.rs)
+waits on a fence right after the frame's draw and publishes the frame
+retired when it signals. On the winbox (ANGLE 2.1.28027 over D3D11) that
+wait returned TIMEOUT_EXPIRED on every frame, an explicit `glFlush` after
+the fence included, so `retiredFrames` stayed 0 for the whole run. Every
+consumer of retirement then misbehaved: the resource pool handed out no
+freed target (every take a miss, every chunk a fresh texture), and a re-bake
+of a drawn chunk swapped instead of writing in place. Three 2d tile tests
+failed on it (materials: per-cell style re-bake; tiles-residency: the pool
+handover and the maxTexels budget), on Linux and macOS (ANGLE over Metal)
+none. Fixed with the fallback proposed below, on the headless path only:
+an expired wait polls `GetSynciv(SYNC_STATUS)` every millisecond until the
+same 100 ms deadline. Verified by the whole app suite on the winbox. The
+present path still pops fences two frames later and is as described under
+Open: on an over-budget GPU its waits also expire instantly, and
+`retiredFrames` would then lag there too, with the pool allocating instead
+of reusing under exactly that load; the same poll is the fix if that is
+ever measured.
+
 ## Open
 
 - Blocking pacing is still absent on ANGLE. With waits that never block,

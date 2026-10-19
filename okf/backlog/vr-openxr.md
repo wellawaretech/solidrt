@@ -19,6 +19,14 @@ nothing renders per eye, follows the head, or reads the controllers.
 
 - `alloy/src/egl_headless.rs` creates an EGL display, config and context
   without a window. That is what an OpenXR GLES session is created from.
+  Since 2026-10-19 the headless frame is drawn into a framebuffer the
+  raster thread owns, not into the pbuffer
+  (okf/done/test-window-size-and-scale.md), so the pbuffer only keeps the
+  context current and a surfaceless context
+  (`EGL_KHR_surfaceless_context`, which ANGLE advertises) can replace it:
+  the XR session shares the display and context creation and never needs
+  a surface, as its frames go to swapchain images. That swap is this
+  item's to make, not the test item's.
 - The raster thread presents through the `GlBinding` trait (bind, swap,
   swap interval) over a `DisplayContext` (`alloy/src/backend.rs`). An XR
   display is a third variant beside the SDL window and the pbuffer: it

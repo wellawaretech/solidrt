@@ -85,4 +85,11 @@ resize and the call land in. The render host is untouched.
 
 Verified: renders of `examples/hello-world` (1280x720 and 480x640) and
 `examples/spin` byte-identical before and after; `bun run sol test
---only app` at the repo root; alloy and lattice unit tests.
+--only app` at the repo root (Linux), on the winbox (ANGLE over D3D11) and
+on the Mac (ANGLE over Metal), 260 tests each; alloy and lattice unit
+tests. The Windows run first failed three 2d tile tests, which turned out
+to be a pre-existing headless bug that CI (Linux only) never saw: frames
+never retired on D3D11, because the headless completion wait's
+glClientWaitSync never blocks there. Fixed in the same pass with a bounded
+status poll; the finding is recorded in
+okf/backlog/angle-present-fence-pacing.md.

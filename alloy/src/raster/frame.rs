@@ -13,6 +13,13 @@ use super::{
   DamageRect, FrameSink, PresentDamage, RasterState, PRESENT_FAILURE_EXIT_THRESHOLD, PRESENT_FENCE_DEPTH,
   PRESENT_FENCE_LOSS_SECS, PRESENT_FENCE_TIMEOUT_NS,
 };
+
+/// How often a headless completion wait re-reads its fence's status once
+/// glClientWaitSync has returned without blocking (ANGLE/D3D11, see
+/// `finish_gpu_work`): a headless frame's GPU work takes a few
+/// milliseconds, so a millisecond's sleep neither spins the core nor
+/// overshoots the completion by much.
+const FENCE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1);
 use crate::backend::FrameOutput;
 use crate::gl;
 use crate::gl::{ResetStatus, Timed};
@@ -493,14 +500,44 @@ impl RasterState {
   /// budget loses the protection for this frame rather than stalling the
   /// raster thread, and counts as a fence timeout like any other. On
   /// completion UI frame `frame`, whose work this is, is published retired.
+  ///
+  /// On ANGLE/D3D11 glClientWaitSync never blocks: an unsignaled fence
+  /// returns TIMEOUT_EXPIRED at once whatever the budget, flush bit or not
+  /// (okf/backlog/angle-present-fence-pacing.md). The present path lives
+  /// with that, since it pops its fences two frames later; this wait is
+  /// immediate, so left alone no headless frame ever retired on Windows,
+  /// and whatever waits on retirement - the resource pool's handover of
+  /// freed targets, a re-bake in place - never ran (the 2d tile tests on the
+  /// winbox, 2026-10-19). So an expired wait falls back to polling the
+  /// fence's status until the same deadline: the bounded spin that note
+  /// proposed, on this path only.
   fn finish_gpu_work(&mut self, frame: u64) {
     let fence = match unsafe { glow::HasContext::fence_sync(&self.gl, glow::SYNC_GPU_COMMANDS_COMPLETE, 0) } {
       Ok(fence) => fence,
-      Err(_) => return,
+      Err(e) => {
+        log::warn!(
+          "[alloy] headless frame {frame}: fence creation failed ({e}); the frame cannot be published retired"
+        );
+        return;
+      }
     };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_nanos(PRESENT_FENCE_TIMEOUT_NS as u64);
     let status = unsafe {
-      let status =
+      // The fence into the command stream first, as `present` does: ANGLE/
+      // D3D11 defers its submission otherwise, and nothing below could see
+      // it signal.
+      glow::HasContext::flush(&self.gl);
+      let mut status =
         glow::HasContext::client_wait_sync(&self.gl, fence, glow::SYNC_FLUSH_COMMANDS_BIT, PRESENT_FENCE_TIMEOUT_NS);
+      while status == glow::TIMEOUT_EXPIRED {
+        if glow::HasContext::get_sync_parameter_i32(&self.gl, fence, glow::SYNC_STATUS) as u32 == glow::SIGNALED {
+          status = glow::CONDITION_SATISFIED;
+        } else if std::time::Instant::now() >= deadline {
+          break;
+        } else {
+          std::thread::sleep(FENCE_POLL_INTERVAL);
+        }
+      }
       glow::HasContext::delete_sync(&self.gl, fence);
       status
     };
@@ -509,7 +546,9 @@ impl RasterState {
       glow::TIMEOUT_EXPIRED => {
         self.stats.fence_timeouts.fetch_add(1, Ordering::Relaxed);
       }
-      _ => {}
+      status => {
+        log::warn!("[alloy] headless frame {frame}: fence wait failed (status {status:#x}); the frame cannot be published retired");
+      }
     }
   }
 
