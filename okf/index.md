@@ -424,6 +424,11 @@ Shaped, not started.
   jaggies on thick diagonal strokes at 1x; desktop could run the offscreen rig
   at 8x (one constant, already clamped to GL_MAX_SAMPLES) while Android must
   stay at 4x. Parked 2026-08-27.
+- **[Widget-style desktop windows](backlog/desktop-widget-window.md)** [2026-10-19]
+  An app cannot make its window transparent, undecorated or always on top, or
+  mark a drag-to-move region, so a desktop widget (a character, a clock, a
+  floating panel) runs in an ordinary framed window; `<window>` has only
+  title, fullscreen and shader. Desktop-only.
 - **[Statically detect layout elements inside detached views](backlog/detached-nesting-static-check.md)** [2026-08-02]
   A <view> nested inside a <d-view> typechecks and fails only at runtime, and
   TypeScript cannot catch it (every JSX expression is the one Element type, so
@@ -850,12 +855,6 @@ Shaped, not started.
   partly-built subtree without freeing it, so every retry leaks the elements
   built before the suspend point - and the leak sentinel that catches it names
   the wrong cause.
-- **[An app test cannot choose its window size or display scale](backlog/test-window-size-and-scale.md)** [2026-09-30]
-  Every app test runs at the one surface the dev client was started with
-  (1280x720, scale 1), so a responsive layout, a breakpoint or a display-scale
-  dependent paint cannot be tested; let a test name its size and scale
-  (test(name, fn, { size, scale })), which needs the headless surface rebuilt
-  or sub-sized between engines on all three headless backends.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,
@@ -2713,6 +2712,13 @@ Finished, kept for the reasoning.
   of its own, behind one command, sol test. Supersedes the JS test
   infrastructure backlog item; the ten bun test files and the checks/ rigs are
   its first consumers.
+- **[An app test chooses its window size and display scale](done/test-window-size-and-scale.md)** [2026-10-19]
+  Every app test ran at the one surface the dev client was started with
+  (1280x720, scale 1), so a responsive layout, a breakpoint or a display-scale
+  dependent paint could not be tested; test(name, fn, { size, scale }) now
+  mounts at that window, built on a headless window that is a framebuffer the
+  raster thread owns rather than the EGL surface, so the size is an allocation
+  and not a platform question.
 - **[A frame never draws text without its glyphs](done/text-complete-frames.md)** [2026-10-09]
   A text layer whose cells are not in the atlas draws without them when the
   frame's 3 ms cell budget is spent, and the frame presents that way - a size

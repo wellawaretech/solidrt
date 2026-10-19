@@ -182,14 +182,20 @@ impl RasterState {
     }
   }
 
-  /// Issue this frame's readback on every tap: blit the rect out of FBO 0
-  /// into the tap's target and start the read. Called after the frame's
-  /// draw, before the present.
-  pub(super) fn issue_window_taps(&mut self, surface: (u32, u32), timestamp_ns: u64) {
+  /// Issue this frame's readback on every tap: blit the rect out of the
+  /// window framebuffer (`window`, see `window_framebuffer`) into the tap's
+  /// target and start the read. Called after the frame's draw, before the
+  /// present.
+  pub(super) fn issue_window_taps(
+    &mut self,
+    window: Option<glow::NativeFramebuffer>,
+    surface: (u32, u32),
+    timestamp_ns: u64,
+  ) {
     if self.window_taps.is_empty() {
       return;
     }
-    let multisampled = window_samples(&self.gl) >= 2;
+    let multisampled = window.is_none() && window_samples(&self.gl) >= 2;
     for entry in self.window_taps.values_mut() {
       let start = std::time::Instant::now();
       // The rect as it stands against this frame's surface; a cut-out that
@@ -214,6 +220,7 @@ impl RasterState {
       let Some(mut readback) = entry.readback.take() else { continue };
       let issued = readback.issue(
         &self.gl,
+        window,
         (surface.0 as i32, surface.1 as i32),
         src,
         multisampled,

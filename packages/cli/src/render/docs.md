@@ -3,9 +3,10 @@
 {{ usage render }}
 
 Replays an optional recorded script and writes frames, which is how an app
-produces video or deterministic screenshots with no display attached:
-rendering uses SDL's offscreen driver, or alloy's own EGL pbuffer where that
-driver cannot go headless.
+produces video or deterministic screenshots with no display attached: the
+GL context comes from SDL's offscreen driver, or alloy's own EGL pbuffer
+where that driver cannot go headless, and the frames are drawn into a
+framebuffer of the renderer's own at the render's size.
 
 ```sh
 sol run --capture session.json

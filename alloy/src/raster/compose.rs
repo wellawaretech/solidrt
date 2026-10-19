@@ -1,8 +1,9 @@
-//! Window composition: routing the frame draw through the window shader's
+//! Window composition: the window framebuffer (FBO 0 for a window, an owned
+//! target headless), routing the frame draw through the window shader's
 //! retained layer (with its clean-tree pass-only fast path and uPrevious
-//! history rotation) or straight to FBO 0, and the stats overlay composited
-//! over the finished frame. The layer/overlay state structs live with
-//! RasterState in the parent module.
+//! history rotation) or straight to the window framebuffer, and the stats
+//! overlay composited over the finished frame. The layer/overlay state
+//! structs live with RasterState in the parent module.
 
 use impellers::{DisplayList, ISize};
 
@@ -15,11 +16,47 @@ use crate::gl::PassInput;
 use crate::gpu::WindowShader;
 
 impl RasterState {
-  /// Draw the display list to the window backbuffer along `route`; true when
-  /// a frame reached it. False skips the frame (a zero-sized minimized
-  /// window, or a failed draw); the caller notifies the main loop all the
-  /// same.
-  pub(super) fn draw_to_window(&mut self, dl: &DisplayList, size: ISize, route: WindowRoute) -> bool {
+  /// The window framebuffer at `size`: None for a window (FBO 0, sized by
+  /// the surface), Some for the headless window target, allocated here at
+  /// `size` and reallocated when a frame or a readback comes at another
+  /// size, which is how a headless host changes its window between engines
+  /// (the main thread publishes the size, this thread picks it up; see
+  /// stepped.rs). The EGL surface beneath is never drawn to headless: its
+  /// size does not matter and its content is never read. Color only, like
+  /// the window shader's layer: every frame reaches it as a rig resolve or
+  /// a pass, never as a direct Impeller draw, so the rig carries the depth
+  /// and stencil. A fresh target starts cleared, so a readback before any
+  /// frame is defined.
+  pub(super) fn window_framebuffer(&mut self, size: ISize) -> Result<Option<glow::NativeFramebuffer>, String> {
+    if !self.sink.headless() {
+      return Ok(None);
+    }
+    let (width, height) = (size.width.max(0) as u32, size.height.max(0) as u32);
+    if self.window_target.as_ref().is_none_or(|t| t.width != width || t.height != height) {
+      if let Some(old) = self.window_target.take() {
+        unsafe {
+          glow::HasContext::delete_framebuffer(&self.gl, old.fbo);
+          glow::HasContext::delete_texture(&self.gl, old.tex);
+        }
+      }
+      let (tex, fbo) = crate::gl::create_layer_target(&self.gl, width, height, [0.0, 0.0, 0.0, 0.0])
+        .map_err(|e| format!("headless window target {width}x{height}: {e}"))?;
+      self.window_target = Some(LayerTarget { tex, fbo, width, height });
+    }
+    Ok(self.window_target.as_ref().map(|t| t.fbo))
+  }
+
+  /// Draw the display list to the window framebuffer (`window`, see
+  /// `window_framebuffer`) along `route`; true when a frame reached it.
+  /// False skips the frame (a zero-sized minimized window, or a failed
+  /// draw); the caller notifies the main loop all the same.
+  pub(super) fn draw_to_window(
+    &mut self,
+    dl: &DisplayList,
+    size: ISize,
+    route: WindowRoute,
+    window: Option<glow::NativeFramebuffer>,
+  ) -> bool {
     // Resize-race diagnostics: geometry transitions as this thread sees them,
     // once per size.
     if self.last_size.width != size.width || self.last_size.height != size.height {
@@ -36,15 +73,22 @@ impl RasterState {
       return false;
     }
     if self.window_shader.is_some() {
-      match self.draw_to_window_shaded(dl, size) {
+      match self.draw_to_window_shaded(dl, size, window) {
         Ok(()) => return true,
         // Fall back to the plain path so the app stays visible; the layer or
         // pass failure is a diagnostic, not a black window.
         Err(e) => log::warn!("[alloy] window shader pass failed: {e}; drawing without it"),
       }
     }
-    match gl::render_display_list_to_window(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, dl, size, route)
-    {
+    match gl::render_display_list_to_window(
+      &self.gl,
+      &mut self.impeller_ctx,
+      &mut self.offscreen_rig,
+      dl,
+      size,
+      route,
+      window,
+    ) {
       Ok(()) => true,
       Err(e) => {
         log::warn!("[alloy] frame draw failed at {}x{}: {e}; skipping frame", size.width, size.height);
@@ -56,10 +100,16 @@ impl RasterState {
   /// Shader-active frame: rasterize the display list - flipped, so the layer
   /// reads top-left origin like every sampled texture - through the rig into
   /// the retained layer, then draw the window shader program over it straight
-  /// into FBO 0 (no intermediate target, no closing blit). The program's
-  /// vertex stage is what flips back to window orientation. `spec.previous`
-  /// retains last frame's resolve as a second layer bound as `uPrevious`.
-  fn draw_to_window_shaded(&mut self, dl: &DisplayList, size: ISize) -> Result<(), String> {
+  /// into the window framebuffer (no intermediate target, no closing blit).
+  /// The program's vertex stage is what flips back to window orientation.
+  /// `spec.previous` retains last frame's resolve as a second layer bound as
+  /// `uPrevious`.
+  fn draw_to_window_shaded(
+    &mut self,
+    dl: &DisplayList,
+    size: ISize,
+    window: Option<glow::NativeFramebuffer>,
+  ) -> Result<(), String> {
     let (width, height) = (size.width as u32, size.height as u32);
     let state = self.window_shader.as_mut().expect("shaded draw requires a declared window shader");
 
@@ -147,6 +197,7 @@ impl RasterState {
     crate::gl::render_program_to_window(
       &self.gl,
       &state.program,
+      window,
       width,
       height,
       &state.spec.params,
@@ -180,16 +231,17 @@ impl RasterState {
     }
   }
 
-  /// Composite the installed overlay over the finished frame in FBO 0.
+  /// Composite the installed overlay over the finished frame in the window
+  /// framebuffer (`window`, see `window_framebuffer`; `size` the window's).
   /// A stale declaration is rasterized into the retained layer first - drawn
   /// UNFLIPPED on purpose: the wrapped layer FBO is a bottom-up window
-  /// target, so its rows come out in FBO 0's own convention and the plain
-  /// copy draw (vUV = p, see the fullscreen vertex stage) lands the overlay
-  /// upright with no flip anywhere. The composite is a premultiplied-alpha
-  /// blended draw at the declared window rectangle (converted here to GL's
-  /// bottom-up viewport origin). Failures warn and skip: a lost overlay
-  /// frame must never cost the app frame.
-  pub(super) fn draw_overlay(&mut self, window: ISize) {
+  /// target, so its rows come out in the window framebuffer's own convention
+  /// and the plain copy draw (vUV = p, see the fullscreen vertex stage) lands
+  /// the overlay upright with no flip anywhere. The composite is a
+  /// premultiplied-alpha blended draw at the declared window rectangle
+  /// (converted here to GL's bottom-up viewport origin). Failures warn and
+  /// skip: a lost overlay frame must never cost the app frame.
+  pub(super) fn draw_overlay(&mut self, size: ISize, window: Option<glow::NativeFramebuffer>) {
     let Some(ov) = &mut self.overlay else { return };
     let (width, height) = (ov.decl.width, ov.decl.height);
     if width == 0 || height == 0 {
@@ -228,9 +280,9 @@ impl RasterState {
       }
     };
     let layer = ov.layer.as_ref().expect("rasterized above");
-    let origin = (ov.decl.x, window.height as i32 - (ov.decl.y + height as i32));
+    let origin = (ov.decl.x, size.height as i32 - (ov.decl.y + height as i32));
     let input = PassInput::d2("uSrc", layer.tex, None);
-    crate::gl::composite_program_over_window(&self.gl, &program, origin, width, height, &[input]);
+    crate::gl::composite_program_over_window(&self.gl, &program, window, origin, width, height, &[input]);
   }
 
   /// Apply a SetWindowShader command. A redeclaration with the same program

@@ -1,12 +1,14 @@
 //! Headless GL context without SDL's video subsystem: an EGL pbuffer on the
 //! default display, for the headless mode on a stack whose SDL offscreen
 //! driver cannot go headless (ANGLE lacks EGL_EXT_device_enumeration, which
-//! that driver requires; see okf/backlog/playback-headless-angle.md). A
-//! headless host draws to FBO 0 and reads it back, so a pbuffer keeps every
-//! downstream path (window draw, MSAA resolve, window readback) unchanged.
-//! libEGL is loaded at
-//! runtime by name; the crate compiles on every target and only ever runs
-//! after the offscreen driver failed.
+//! that driver requires; see okf/backlog/playback-headless-angle.md). The
+//! pbuffer only keeps the context current: a headless frame is drawn into
+//! the raster thread's own window framebuffer and read back from there
+//! (raster::RasterState::window_framebuffer), so its size and content never
+//! matter; a surfaceless context (EGL_KHR_surfaceless_context) would do as
+//! well, and is what an OpenXR session would share this context creation
+//! with. libEGL is loaded at runtime by name; the crate compiles on every
+//! target and only ever runs after the offscreen driver failed.
 
 use crate::backend::GlBinding;
 use khronos_egl as egl;

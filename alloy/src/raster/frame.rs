@@ -87,9 +87,9 @@ impl RasterState {
     *self.stats.targets.lock().expect("target counters lock poisoned") = std::sync::Arc::new(targets);
   }
 
-  /// Draw the frame's display list to the window backbuffer and hand it on:
-  /// present in interactive mode, leave it in the offscreen surface in the
-  /// headless mode. Then notify the main loop, which only does frame
+  /// Draw the frame's display list to the window framebuffer and hand it on:
+  /// present in interactive mode, leave it in the headless window target in
+  /// the headless mode. Then notify the main loop, which only does frame
   /// bookkeeping (fps, FrameRendered). `frame` is the UI frame number the
   /// list was built under, what its GPU completion is published as (see
   /// `RasterStats::retired_frames`). Err means the main loop is gone and
@@ -146,10 +146,23 @@ impl RasterState {
         height: ov.decl.height as i32,
       }));
     }
+    // The window framebuffer: FBO 0, or the headless window target at this
+    // frame's size. A target that cannot be allocated (a size past the
+    // device's limits) skips the frame like a failed draw, with the reason.
+    let window = match self.window_framebuffer(size) {
+      Ok(window) => window,
+      Err(e) => {
+        log::warn!("[alloy] {e}; skipping frame");
+        None
+      }
+    };
+    let target_ok = window.is_some() || !self.sink.headless();
+    // The in-tile fast path is FBO 0's own: an owned target is single-sample
+    // and goes through the rig.
+    let fast_path = window.is_none() && gl::window_fast_path(&self.gl);
     // A headless frame is read in full (the window, any node of it) and the
     // window shader redraws its whole layer; neither frame kind may be
     // pruned to a patch.
-    let fast_path = gl::window_fast_path(&self.gl);
     let patch_barred = self.sink.headless() || self.window_shader.is_some();
     let mut route = self.damage.route(own_damage, size, fast_path, patch_barred);
     let wait_start = std::time::Instant::now();
@@ -169,17 +182,17 @@ impl RasterState {
     // in lib.rs): the frame is dropped like an undrawn one, its damage kept
     // for the frame that follows the return-to-visible rebind.
     let backgrounded = crate::window_backgrounded();
-    let drawn = !backgrounded && self.draw_to_window(&dl, size, route);
+    let drawn = !backgrounded && target_ok && self.draw_to_window(&dl, size, route, window);
     self.pass_timer.end(&self.gl, Timed::Frame);
     let draw_ms = draw_start.elapsed().as_secs_f32() * 1000.0;
     // The overlay composites over the finished frame (shaded or not), so a
     // headless window readback carries it too. Excluded from draw_ms: it is
     // diagnostics, not the app's frame cost.
     if drawn {
-      self.draw_overlay(size);
+      self.draw_overlay(size, window);
       // The frame as it goes to the window, for the window taps: the read
       // is asynchronous, completed at the next frame.
-      self.issue_window_taps((width, height), crate::sdl_utils::ticks_ns());
+      self.issue_window_taps(window, (width, height), crate::sdl_utils::ticks_ns());
     }
     // A frame that is not presented has no present fence to retire it: a
     // headless or capture frame is read back, and the readback would sync
@@ -207,7 +220,7 @@ impl RasterState {
               self.damage.invalidated();
               own_damage = PresentDamage::Full;
               route = WindowRoute::whole(fast_path);
-              if self.draw_to_window(&dl, size, route) {
+              if self.draw_to_window(&dl, size, route, window) {
                 match self.present(frame) {
                   Presented::Yes => presented = true,
                   Presented::Lost { detail, status } => return Err(FrameExit::ContextLost { detail, status }),

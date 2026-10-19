@@ -45,7 +45,7 @@ pub(crate) fn read_texture_pixels(gl: &glow::Context, texture: &Texture, size: I
   }
 }
 
-/// Reorder a bottom-up RGBA8 readback (`read_fbo0_pixels`) into top-down
+/// Reorder a bottom-up RGBA8 readback (`read_window_pixels`) into top-down
 /// rows, the layout every other pixel read of the crate hands out.
 pub(crate) fn flip_rows(pixels: Vec<u8>, size: ISize) -> Vec<u8> {
   let row_bytes = size.width.max(0) as usize * 4;
@@ -60,15 +60,16 @@ pub(crate) fn flip_rows(pixels: Vec<u8>, size: ISize) -> Vec<u8> {
   flipped
 }
 
-/// Read back the window backbuffer's RGBA8 pixels (FBO 0, bottom-up rows as
-/// GL stores them; `flip_rows` turns them top-down). Called on the raster
-/// thread after a frame's draw, which glReadPixels implicitly waits on.
-pub(crate) fn read_fbo0_pixels(gl: &glow::Context, size: ISize) -> Vec<u8> {
+/// Read back the window framebuffer's RGBA8 pixels (`window`: None is FBO
+/// 0, Some the headless window target; bottom-up rows as GL stores them,
+/// `flip_rows` turns them top-down). Called on the raster thread after a
+/// frame's draw, which glReadPixels implicitly waits on.
+pub(crate) fn read_window_pixels(gl: &glow::Context, window: Option<glow::NativeFramebuffer>, size: ISize) -> Vec<u8> {
   let (width, height) = (size.width as i32, size.height as i32);
   let mut pixels = vec![0u8; (width.max(0) as usize) * (height.max(0) as usize) * 4];
   unsafe {
     let prev_fbo = gl.get_parameter_i32(glow::READ_FRAMEBUFFER_BINDING);
-    if window_samples(gl) >= 2 {
+    if window.is_none() && window_samples(gl) >= 2 {
       // glReadPixels cannot read a multisampled framebuffer: resolve the
       // window rect into a temporary single-sample FBO first.
       let prev_draw = gl.get_parameter_i32(glow::DRAW_FRAMEBUFFER_BINDING);
@@ -96,7 +97,7 @@ pub(crate) fn read_fbo0_pixels(gl: &glow::Context, size: ISize) -> Vec<u8> {
       gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, prev_framebuffer(prev_draw));
       gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rbo));
     } else {
-      gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+      gl.bind_framebuffer(glow::READ_FRAMEBUFFER, window);
       gl.read_pixels(
         0,
         0,

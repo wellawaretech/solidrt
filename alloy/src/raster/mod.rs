@@ -468,6 +468,12 @@ pub(crate) struct RasterState {
   last_size: ISize,
   // What becomes of a drawn frame (see FrameSink).
   sink: FrameSink,
+  // The headless window: the framebuffer a headless frame is resolved into,
+  // read back from and composited over, at the published surface size,
+  // reallocated when that size changes (see `window_framebuffer`). None for
+  // a window, whose framebuffer is FBO 0; None headless until the first
+  // frame or readback.
+  window_target: Option<LayerTarget>,
   // Consecutive failed presents; a short streak confirms context loss.
   present_failures: u32,
   // Instant of the last slow-frame warning, for the 1/s rate limit.
@@ -714,8 +720,10 @@ impl FrameTiming {
 pub(crate) enum FrameSink {
   /// Interactive: presented to the window.
   Window,
-  /// Stepped: left in the offscreen surface. Whoever wants pixels asks for
-  /// them (`RasterCmd::ReadWindow`, a node capture).
+  /// Stepped: left in the headless window target (a framebuffer this thread
+  /// owns at the published surface size; the EGL surface only keeps the
+  /// context current). Whoever wants pixels asks for them
+  /// (`RasterCmd::ReadWindow`, a node capture).
   Discard,
 }
 
@@ -768,6 +776,7 @@ impl RasterState {
       glyph_rig,
       last_size: ISize::new(0, 0),
       sink,
+      window_target: None,
       present_failures: 0,
       slow_frame_log: None,
       last_frame_gpu_micros: None,
@@ -1239,7 +1248,9 @@ impl RasterState {
             let result = if width == 0 || height == 0 {
               Err("the window has no surface to read".to_string())
             } else {
-              Ok((width, height, gl::flip_rows(gl::read_fbo0_pixels(&self.gl, size), size)))
+              self
+                .window_framebuffer(size)
+                .map(|window| (width, height, gl::flip_rows(gl::read_window_pixels(&self.gl, window, size), size)))
             };
             reply(tx, result);
           }

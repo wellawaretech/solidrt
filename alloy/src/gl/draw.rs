@@ -305,6 +305,11 @@ fn draw_offscreen(
 /// so it is deliberately never issued. MSAA matches the snapshot path and
 /// falls back to single-sample via the same process-wide latch when the
 /// driver rejects the multisampled config.
+///
+/// `window` is the window framebuffer: None is FBO 0, Some the headless
+/// window target (see `RasterState::window_framebuffer`), which only the
+/// rig route reaches - the fast path is FBO 0's own and the route is never
+/// decided for it over an owned target.
 pub(crate) fn render_display_list_to_window(
   gl: &glow::Context,
   impeller_ctx: &mut ImpellerContext,
@@ -312,10 +317,11 @@ pub(crate) fn render_display_list_to_window(
   dl: &DisplayList,
   size: ISize,
   route: WindowRoute,
+  window: Option<glow::NativeFramebuffer>,
 ) -> Result<(), String> {
   // The route is decided once, raster-side (DamageTracker::route, from
-  // window_fast_path); this function only executes it, so a patch can never
-  // meet the fast path.
+  // window_fast_path and the target); this function only executes it, so a
+  // patch can never meet the fast path.
   match route {
     // Multisampled-backbuffer fast path (Android, see configure_opengl): the
     // driver multisamples FBO 0 inside tile memory and resolves at swap, so
@@ -337,7 +343,7 @@ pub(crate) fn render_display_list_to_window(
       gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
       result
     },
-    WindowRoute::Rig(patch) => render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, None, patch),
+    WindowRoute::Rig(patch) => render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, window, patch),
   }
 }
 
@@ -386,7 +392,8 @@ fn render_display_list_via_rig(
 }
 
 /// Render `dl` into the rig's storage and blit the window-sized rect into
-/// `dst` (None = the default framebuffer; Some = the retained window layer).
+/// `dst` (None = the default framebuffer; Some = the retained window layer,
+/// or the headless window target).
 /// `samples >= 2` draws multisampled - in-tile when the driver has
 /// EXT_multisampled_render_to_texture (the blit is then a plain copy),
 /// otherwise into the explicit multisampled renderbuffers (the blit is the

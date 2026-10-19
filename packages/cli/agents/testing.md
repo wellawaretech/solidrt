@@ -111,6 +111,13 @@ is the time resolution: a timer due at 500 ms fires at the frame at 500
 ms, one due at 505 ms at 516.7 ms. A test that asserts a threshold to the
 millisecond sets `{ fps: 1000 }`. `app.time` is the app time so far.
 
+The window is 1280 x 720 at display scale 1 unless `test(name, fn, { size:
+[390, 844], scale: 3 })` says otherwise: `size` in logical points (what
+`windowSize()` and boxes read), `scale` the display scale (the pixels of
+`pixels()` and a snapshot are `size * scale`, whole). A responsive layout
+is tested by mounting it at the size either side of its breakpoint; the
+test after a sized one is back at the default.
+
 `performance.now()` reads 0, so logic that measures with it fails the same
 way every run instead of passing within a tolerance: take time from the
 event's `timeStamp` or the frame tick instead. `Date.now()` and `new

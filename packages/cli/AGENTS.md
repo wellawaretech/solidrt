@@ -120,10 +120,12 @@ Two reliable checks that need no GUI:
    the app at rest (loads landed, mount transitions played out) instead of
    its loading state. An app that calls `exit()` ends the run early, with
    0. Combine with `--fps`/`--duration` (defaults 1280x720, 60fps, 1s). No
-   display needed: rendering uses SDL's offscreen driver, or alloy's own
-   EGL pbuffer where that driver cannot go headless (see the ANGLE gotcha
-   below). A test (`bun run sol test`, agents/testing.md) asserts on the tree
-   instead of a picture and is the better gate for behavior.
+   display needed: the GL context comes from SDL's offscreen driver, or
+   alloy's own EGL pbuffer where that driver cannot go headless (see the
+   ANGLE gotcha below), and the frame is drawn into a framebuffer of the
+   renderer's own at the render's size. A test (`bun run sol test`,
+   agents/testing.md) asserts on the tree instead of a picture and is the
+   better gate for behavior.
 
 Also headless: the bundled flux runtime runs a plain `.js` file directly -
 `node_modules/@solidrt/<platform>/flux script.js` (e.g.

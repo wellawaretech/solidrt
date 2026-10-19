@@ -38,6 +38,16 @@ declare module "sol:test" {
   export function frameRate(): number
   /** Another frame rate, a positive integer. Throws once a frame has run. */
   export function setFrameRate(fps: number): void
+  /**
+   * Another window, before the first frame: `width` x `height` logical
+   * points (null: the size the run was started with) at display `scale`
+   * (null: 1), so the window has `width * scale` by `height * scale`
+   * pixels. Throws on a side or scale that is not positive, a product that
+   * is not whole pixels, a side past the GPU's largest render target, and
+   * once a frame has run. The resize lands ahead of the next frame;
+   * `windowReady` waits for it.
+   */
+  export function setWindow(width: number | null, height: number | null, scale: number | null): void
   /** App time as of the last frame, in milliseconds; 0 before the first. */
   export function time(): number
   /**

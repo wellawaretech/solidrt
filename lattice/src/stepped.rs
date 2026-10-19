@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use alloy::resample::SharedResampler;
-use alloy::AlloyEvent;
+use alloy::{AlloyCommand, AlloyEvent};
 use flux::rquickjs::{Ctx, JsLifetime};
 use tokio::sync::oneshot;
 
@@ -47,6 +47,13 @@ pub(crate) struct Stepper {
   // alloy's resample.rs): the frame verb samples them.
   #[qjs(skip_trace)]
   resampler: SharedResampler,
+  // The platform loop, for the window's size and scale (alloy's stepped
+  // loop owns the headless window).
+  #[qjs(skip_trace)]
+  commands: std::sync::mpsc::Sender<AlloyCommand>,
+  // The window size the run was started with: every engine's window until
+  // its test sets another, and what a size left out means.
+  window: (u32, u32),
 }
 
 impl Stepper {
@@ -55,8 +62,31 @@ impl Stepper {
     frame: Arc<AtomicU64>,
     fps: Arc<AtomicU32>,
     resampler: SharedResampler,
+    commands: std::sync::mpsc::Sender<AlloyCommand>,
+    window: (u32, u32),
   ) -> Self {
-    Self { events, frame, fps, resampler }
+    Self { events, frame, fps, resampler, commands, window }
+  }
+
+  /// The window size the run was started with, in logical points at scale
+  /// 1.
+  #[cfg(feature = "test")]
+  pub(crate) fn window(&self) -> (u32, u32) {
+    self.window
+  }
+
+  /// Another window for this engine: `width` x `height` logical points at
+  /// `scale`, which is `width * scale` by `height * scale` pixels, whole
+  /// (the caller validates). Only before its first step: the window is a
+  /// fact of the engine's start, like the frame rate. The app learns of it
+  /// as a resize (`window_ready` sees it land).
+  #[cfg(feature = "test")]
+  pub(crate) fn set_window(&self, width: u32, height: u32, scale: f32) -> Result<(), String> {
+    if self.frame() != 0 {
+      return Err("the window is set before the first frame of a test".to_string());
+    }
+    let _ = self.commands.send(AlloyCommand::SetHeadlessWindow { width, height, scale });
+    Ok(())
   }
 
   /// A new engine starts at frame 0, time 0, on `fps`.
@@ -135,16 +165,25 @@ impl Stepper {
 }
 
 /// Whether the window's size has reached this engine (the first resize,
-/// which is what an app's first frame is built on), and who waits for it:
-/// a test's mount (`sol:test` `windowReady`, a JS promise) or the render
-/// host (a native waiter). Installed with the engine, ahead of any import:
-/// the resize can land before the file has evaluated.
+/// which is what an app's first frame is built on; after `set_window`, the
+/// resize that carries the size set), and who waits for it: a test's mount
+/// (`sol:test` `windowReady`, a JS promise) or the render host (a native
+/// waiter). Installed with the engine, ahead of any import: the resize can
+/// land before the file has evaluated.
 #[derive(Clone, Default, JsLifetime)]
 pub(crate) struct WindowReady(#[qjs(skip_trace)] Rc<RefCell<ReadyState>>);
+
+/// A window as a resize reports it: width, height, display scale.
+type Window = (u32, u32, f32);
 
 #[derive(Default)]
 struct ReadyState {
   ready: bool,
+  // The window a test set (`Stepper::set_window`): only its resize makes
+  // the engine ready, whether the run's own resize lands before or after
+  // the call (the two are ordered on the platform loop, so the one that
+  // matches is the last).
+  expected: Option<Window>,
   promises: Vec<(flux::rquickjs::Persistent<flux::rquickjs::Function<'static>>, flux::Hold)>,
   waiters: Vec<oneshot::Sender<()>>,
 }
@@ -154,6 +193,15 @@ impl WindowReady {
   #[cfg(feature = "test")]
   pub(crate) fn is_ready(&self) -> bool {
     self.0.borrow().ready
+  }
+
+  /// The window the engine now waits for: not ready until a resize with
+  /// exactly this size and scale has landed.
+  #[cfg(feature = "test")]
+  pub(crate) fn expect(&self, window: Window) {
+    let mut state = self.0.borrow_mut();
+    state.ready = false;
+    state.expected = Some(window);
   }
 
   /// Hold a promise's resolver (and the engine) until the size is there.
@@ -179,13 +227,17 @@ impl WindowReady {
   }
 }
 
-/// The window's size reached this engine: whoever waited on it goes on.
-pub(crate) fn window_ready(ctx: &Ctx<'_>) {
+/// A window size reached this engine: whoever waited on it goes on, unless
+/// a test set another window and this is not its resize yet.
+pub(crate) fn window_ready(ctx: &Ctx<'_>, window: Window) {
   let Some(state) = ctx.userdata::<WindowReady>() else {
     return;
   };
   let (promises, waiters) = {
     let mut state = state.0.borrow_mut();
+    if state.expected.is_some_and(|expected| expected != window) {
+      return;
+    }
     state.ready = true;
     (std::mem::take(&mut state.promises), std::mem::take(&mut state.waiters))
   };

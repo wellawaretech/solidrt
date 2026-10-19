@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { camera as installCamera, capture, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, microphone as installMicrophone, painted as paintFrame, setFrameRate, settle, stats as queryStats, time, windowReady } from "sol:test"
+import { camera as installCamera, capture, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, microphone as installMicrophone, painted as paintFrame, setFrameRate, setWindow, settle, stats as queryStats, time, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
@@ -392,6 +392,19 @@ export interface TestOptions {
    * test that asserts a threshold to the millisecond sets 1000.
    */
   fps?: number
+  /**
+   * The window's size in logical points, `[width, height]` (default: the
+   * size `sol test` starts the client with, 1280 x 720). What `windowSize()`
+   * reads and what boxes are measured in; a breakpoint is tested by
+   * mounting at the size either side of it.
+   */
+  size?: [width: number, height: number]
+  /**
+   * The display scale (default 1): the window has `size * scale` pixels,
+   * which is what `pixels()` and a snapshot are, and what `displayScale()`
+   * reads. Every side times the scale must be whole pixels.
+   */
+  scale?: number
 }
 
 // -- Locators --
@@ -691,6 +704,11 @@ let app: TestApp = {
 export function test(name: string, fn: (app: TestApp) => void | Promise<void>, options: TestOptions = {}): void {
   register(name, () => {
     if (options.fps !== undefined) setFrameRate(options.fps)
+    if (options.size !== undefined || options.scale !== undefined) {
+      let size = options.size
+      if (size !== undefined && (!Array.isArray(size) || size.length !== 2)) throw new TypeError("test: size is [width, height], like { size: [390, 844] }")
+      setWindow(size?.[0] ?? null, size?.[1] ?? null, options.scale ?? null)
+    }
     return fn(app)
   })
 }

@@ -391,6 +391,9 @@ struct RunOptions {
   // The frame rate of a headless (stepped) run, whose time is frame / fps;
   // None on a display.
   stepped_fps: Option<u32>,
+  // The window size the run was started with (`--size`, or the default):
+  // what a headless window is between the sizes a test sets.
+  window_size: (u32, u32),
   stats: bool,
   // Dev-server address to auto-connect on launch (go client only; see plugins::dev).
   dev_server: Option<String>,
@@ -623,6 +626,7 @@ fn ui_thread(
     launch,
     display_name,
     stepped_fps,
+    window_size,
     stats,
     dev_server,
     fonts,
@@ -1142,9 +1146,16 @@ fn ui_thread(
     });
     // The stepper a stepped host's engines step frames through (stepped.rs).
     #[cfg(any(feature = "go", feature = "test"))]
-    let stepper = stepped::Stepper::new(step_tx, stepped_frame.clone(), frame_rate.clone(), resampler.clone());
+    let stepper = stepped::Stepper::new(
+      step_tx,
+      stepped_frame.clone(),
+      frame_rate.clone(),
+      resampler.clone(),
+      alloy_cmd_tx.clone(),
+      window_size,
+    );
     #[cfg(not(any(feature = "go", feature = "test")))]
-    let _ = &frame_rate;
+    let _ = (&frame_rate, window_size);
     #[cfg(feature = "go")]
     if let Some(host) = &render {
       stepper.reset(host.fps);
@@ -1736,6 +1747,7 @@ fn start_with(
     launch,
     display_name,
     stepped_fps,
+    window_size: size,
     stats,
     dev_server,
     fonts,

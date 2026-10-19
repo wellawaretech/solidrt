@@ -4,8 +4,9 @@
 // verbs beneath it, on plain host elements.
 
 import { test, expect } from "../src/index.ts"
-import { createSignal, setFocus } from "@solidrt/core"
+import { createSignal, displayScale, setFocus, windowSize } from "@solidrt/core"
 import { openFiles } from "flux:dialog"
+import { setWindow } from "sol:test"
 
 function Counter() {
   let [count, setCount] = createSignal(0)
@@ -155,6 +156,55 @@ test("a tap is never 0 ms: its up is a frame after its down, or holdMs", async a
   expect(stamps[1]! - stamps[0]!).toBe(1)
   expect(stamps[3]! - stamps[2]!).toBe(100)
 }, { fps: 1000 })
+
+// A layout that switches at a breakpoint: what a sized test is for.
+const NARROW_BELOW = 600
+function Shell() {
+  return <text>{windowSize().width < NARROW_BELOW ? "narrow" : "wide"}</text>
+}
+
+test("a sized test mounts at that size and scale, and the pixels follow the scale", async app => {
+  let root = await app.mount(() => <Shell />)
+  expect(root.box).toMatchObject({ x: 0, y: 0, width: 390, height: 844 })
+  expect(windowSize()).toEqual({ width: 390, height: 844 })
+  expect(displayScale()).toBe(3)
+  expect(root.find({ text: "narrow" }).visible).toBe(true)
+  let image = root.pixels()
+  expect(image.width).toBe(1170)
+  expect(image.height).toBe(2532)
+}, { size: [390, 844], scale: 3 })
+
+test("the test after a sized one is back at the run's window", async app => {
+  let root = await app.mount(() => <Shell />)
+  expect(root.box).toMatchObject({ width: 1280, height: 720 })
+  expect(displayScale()).toBe(1)
+  expect(root.find({ text: "wide" }).visible).toBe(true)
+  expect(root.pixels().width).toBe(1280)
+})
+
+test("a scale alone keeps the run's size", async app => {
+  let root = await app.mount(() => <Shell />)
+  expect(root.box).toMatchObject({ width: 1280, height: 720 })
+  expect(displayScale()).toBe(2)
+  expect(root.pixels().width).toBe(2560)
+}, { scale: 2 })
+
+test("a size alone keeps scale 1", async app => {
+  let root = await app.mount(() => <Shell />)
+  expect(root.box).toMatchObject({ width: 500, height: 400 })
+  expect(displayScale()).toBe(1)
+  expect(root.find({ text: "narrow" }).visible).toBe(true)
+  expect(root.pixels()).toMatchObject({ width: 500, height: 400 })
+}, { size: [500, 400] })
+
+test("the window is set before the first frame, in whole pixels", async app => {
+  expect(() => setWindow(101, 100, 1.5)).toThrow("not a whole number of pixels")
+  expect(() => setWindow(0, 100, null)).toThrow("positive integer")
+  expect(() => setWindow(null, null, -1)).toThrow("positive number")
+  await app.mount(() => <Shell />)
+  await app.frame()
+  expect(() => setWindow(400, 300, null)).toThrow("before the first frame")
+})
 
 test("a key and typed text reach the focused node", async app => {
   let seen: string[] = []

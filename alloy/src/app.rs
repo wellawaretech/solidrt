@@ -92,9 +92,12 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // to inherit. Where the driver fails only because the GL stack lacks EGL
   // device enumeration (ANGLE never implements it), the same pbuffer is
   // built without SDL's video subsystem (egl_headless.rs) behind SDL's dummy
-  // driver, which still provides the Window the surface is sized from.
+  // driver, which still provides the Window the run's size is read from.
   // Anything else falls back to the interactive path's hidden window on the
-  // real display. Each
+  // real display. Whichever surface results only keeps the context current:
+  // a headless frame is drawn into a framebuffer the raster thread owns at
+  // the headless window's size (raster::RasterState::window_framebuffer),
+  // so the surface's own size and content never matter after setup. Each
   // failed attempt dropped its video subsystem handles, so setting the hint
   // and re-entering setup re-initializes video on the next driver.
   let resampler = crate::resample::SharedResampler::new();
@@ -215,8 +218,8 @@ fn setup_headless(
   Ok((window, platform))
 }
 
-// Interactive loop only: a headless surface is fixed at the size set up,
-// which is exactly what the window readback assumes.
+// Interactive loop only: the stepped loop publishes its window's size itself
+// (stepped.rs).
 fn apply_main_thread_effects(event: &AlloyEvent, surface_size: &Arc<AtomicU64>) {
   if let AlloyEvent::Resize { size, display_scale, .. } = event {
     let (w, h) = ((size.width as f32 * display_scale) as u32, (size.height as f32 * display_scale) as u32);
@@ -501,7 +504,7 @@ impl App {
     let mut platform = Some(platform);
 
     if let Mode::Stepped(stepped) = mode {
-      run_stepped_loop(window.take(), cmd_rx, event_tx, stepped);
+      run_stepped_loop(window.take(), cmd_rx, event_tx, stepped, surface_size);
       // Nothing may be drawing when the window drops: dropping it unloads
       // the EGL library, and the embedder exits the process right after,
       // which would pull the driver out from under a draw still encoding.
@@ -1260,6 +1263,10 @@ impl App {
             if !window.minimize() {
               log::warn!("[alloy] background (minimize) failed: {}", crate::sdl_utils::sdl_error());
             }
+          }
+          // The interactive window is sized by the user (stepped.rs).
+          AlloyCommand::SetHeadlessWindow { .. } => {
+            log::warn!("[alloy] a headless window size was requested on an interactive window; ignored");
           }
         }
       }

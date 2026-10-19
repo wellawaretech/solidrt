@@ -1,19 +1,20 @@
 use crate::stepped::SteppedConfig;
 
 // Operating mode of the app. Run is the normal interactive loop driven by the
-// display. Stepped is the headless mode: an offscreen surface at a fixed
-// size, no frame signal of its own - the embedder steps every frame (a test
-// host, a render host) and reads the pixels it wants (a node capture, the
-// window) - and a frame nobody demanded is not drawn. Prefer matching over
-// assuming the cases.
+// display. Stepped is the headless mode: a headless window (a framebuffer
+// of the raster thread's at the size the run starts with, or the one the
+// embedder sets per engine; see stepped.rs), no frame signal of its own -
+// the embedder steps every frame (a test host, a render host) and reads the
+// pixels it wants (a node capture, the window) - and a frame nobody
+// demanded is not drawn. Prefer matching over assuming the cases.
 pub enum Mode {
   Run,
   Stepped(SteppedConfig),
 }
 
 impl Mode {
-  /// No display: an offscreen surface at a fixed size, nothing presented,
-  /// the process clock virtual (see clock.rs).
+  /// No display: a headless window, nothing presented, the process clock
+  /// virtual (see clock.rs).
   pub fn is_headless(&self) -> bool {
     matches!(self, Mode::Stepped(_))
   }

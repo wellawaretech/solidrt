@@ -499,7 +499,7 @@ evaluated after the wipe, so a database opened at module level is opened
 in the engine that uses it. A flux test gets no sandbox: it runs in its
 package's folder on purpose (relative paths), and none reads or writes
 files today. Window size and display scale per test are split off:
-[test-window-size-and-scale](../backlog/test-window-size-and-scale.md).
+[test-window-size-and-scale](../done/test-window-size-and-scale.md).
 
 **D39. "At rest" is a runtime facility, not a test feature**
 (2026-09-30). One condition, one loop (`lattice/src/settle.rs`), three
@@ -950,7 +950,7 @@ Not done in this step (the first three built on 2026-10-01, see "Step
 - A synthetic gamepad in a test.
 - The readers past the tree.
 - Window size and display scale per test:
-  [test-window-size-and-scale](../backlog/test-window-size-and-scale.md).
+  [test-window-size-and-scale](../done/test-window-size-and-scale.md).
 - The MCP bridge's new arguments (`at`, `drag`) were exercised through the
   control API with curl, not through a re-spawned bridge; the website was
   not rebuilt.

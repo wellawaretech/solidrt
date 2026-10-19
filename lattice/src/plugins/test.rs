@@ -369,6 +369,55 @@ fn set_frame_rate(ctx: Ctx<'_>, fps: f64) -> flux::rquickjs::Result<()> {
   stepper.set_fps(fps as u32).map_err(|e| Exception::throw_message(&ctx, &format!("sol:test setFrameRate(fps): {e}")))
 }
 
+/// `setWindow(width, height, scale)`: another window for this engine,
+/// before the first frame: `width` x `height` logical points (null: the
+/// run's size) at display `scale` (null: 1), so the window framebuffer is
+/// `width * scale` by `height * scale` pixels. Throws on a size or scale
+/// that is not positive, a product that is not whole pixels, a side past
+/// the GPU's largest render target, and once a frame has run. The resize
+/// lands ahead of the next frame; `windowReady` waits for it.
+fn set_window(ctx: Ctx<'_>, width: Option<f64>, height: Option<f64>, scale: Option<f64>) -> flux::rquickjs::Result<()> {
+  let stepper = stepper(&ctx, "setWindow()")?;
+  let throw = |message: String| Exception::throw_message(&ctx, &format!("sol:test setWindow: {message}"));
+  let side = |name: &str, value: Option<f64>, default: u32| -> Result<u32, String> {
+    match value {
+      None => Ok(default),
+      Some(v) if v.is_finite() && v >= 1.0 && v.fract() == 0.0 && v <= u32::MAX as f64 => Ok(v as u32),
+      Some(v) => Err(format!("the {name} must be a positive integer, got {v}")),
+    }
+  };
+  let (default_width, default_height) = stepper.window();
+  let width = side("width", width, default_width).map_err(throw)?;
+  let height = side("height", height, default_height).map_err(throw)?;
+  let scale = match scale {
+    None => 1.0,
+    Some(s) if s.is_finite() && s > 0.0 => s,
+    Some(s) => return Err(throw(format!("the scale must be a positive number, got {s}"))),
+  };
+  let pixels = |side: u32| -> Result<u32, String> {
+    let px = side as f64 * scale;
+    if px.fract() != 0.0 {
+      return Err(format!(
+        "{side} x {scale} is not a whole number of pixels; pick a size the scale multiplies to whole pixels"
+      ));
+    }
+    Ok(px as u32)
+  };
+  let (pixel_width, pixel_height) = (pixels(width).map_err(throw)?, pixels(height).map_err(throw)?);
+  if let Some(alloy) = flux::gui::alloy_context(&ctx) {
+    let max = alloy.gpu_limits().max_texture_size;
+    if pixel_width > max || pixel_height > max {
+      return Err(throw(format!(
+        "{pixel_width} x {pixel_height} pixels is past the GPU's largest render target ({max} pixels a side)"
+      )));
+    }
+  }
+  let scale = scale as f32;
+  stepper.set_window(width, height, scale).map_err(throw)?;
+  ctx.userdata::<WindowReady>().expect("window ready installed").expect((width, height, scale));
+  Ok(())
+}
+
 /// `time()`: app time as of the last frame, in ms.
 fn time(ctx: Ctx<'_>) -> flux::rquickjs::Result<f64> {
   Ok(stepper(&ctx, "time()")?.time_ms())
@@ -422,6 +471,7 @@ impl ModuleDef for SolTestModule {
     decl.declare("frame")?;
     decl.declare("frameRate")?;
     decl.declare("setFrameRate")?;
+    decl.declare("setWindow")?;
     decl.declare("time")?;
     decl.declare("windowReady")?;
     decl.declare("inputPlan")?;
@@ -445,6 +495,7 @@ impl ModuleDef for SolTestModule {
     exports.export("frame", Function::new(ctx.clone(), frame)?)?;
     exports.export("frameRate", Function::new(ctx.clone(), frame_rate)?)?;
     exports.export("setFrameRate", Function::new(ctx.clone(), set_frame_rate)?)?;
+    exports.export("setWindow", Function::new(ctx.clone(), set_window)?)?;
     exports.export("time", Function::new(ctx.clone(), time)?)?;
     if ctx.userdata::<InputPlan>().is_none() {
       ctx.store_userdata(InputPlan::default()).expect("store input plan");

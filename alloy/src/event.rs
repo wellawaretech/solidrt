@@ -82,6 +82,13 @@ pub enum AlloyCommand {
   // suspend hook has run through the event watch on the way) - and on
   // desktop minimizes the window.
   Background,
+  // The headless window's logical size and display scale from now on (see
+  // stepped::HeadlessWindow): the window framebuffer becomes `width *
+  // scale` by `height * scale` pixels and the app is told the resize, with
+  // that scale. Stepped loop only; the interactive loop's window is sized
+  // by the user and ignores it. The products must be whole pixels (the
+  // sender validates). The next EmitInitEvents restores the run's window.
+  SetHeadlessWindow { width: u32, height: u32, scale: f32 },
 }
 
 // The mouse cursor, in the CSS `cursor` vocabulary through the SolidRT lens:
@@ -637,29 +644,27 @@ pub(crate) fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
   }
 }
 
-// The headless mode's one resize event. The mode exists for machine-
-// independent frames, so the host display's scale must not leak into layout:
-// the scale is pinned to 1.0 and the size is the surface's physical size,
-// making a layout box map to output pixels 1:1 on every machine. An
-// offscreen surface has no insets, so the safe area is the full window.
-fn headless_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
-  let (w, h) = window.size_in_pixels();
+// The headless mode's resize event: the headless window's logical size and
+// its scale (see stepped::HeadlessWindow), nothing of the host display. A
+// headless window has no insets, so the safe area is the full window.
+pub(crate) fn headless_resize_event(window: &crate::stepped::HeadlessWindow) -> AlloyEvent {
+  let (w, h) = (window.width, window.height);
   AlloyEvent::Resize {
     size: ISize::new(w as i64, h as i64),
     safe_area: Rect::new(impellers::Point::new(0.0, 0.0), impellers::Size::new(w as f32, h as f32)),
-    display_scale: 1.0,
+    display_scale: window.scale,
   }
 }
 
-// The headless mode's init bundle: what the interactive loop answers
+// The headless mode's init bundle: what the stepped loop answers
 // EmitInitEvents with, for every engine a headless host builds, pinned to
 // host-independent values. The refresh rate is the rate the host steps at,
 // so a frame callback's `rate` matches the virtual clock's step. The resize
 // goes last: the app bootstraps its first frame on the first resize it sees,
 // so everything sent before it is in place when that frame is built. Theme,
-// input devices, orientation and pointer lock are not sent: an offscreen
-// surface has none, and the embedder's defaults cover their absence.
-pub(crate) fn headless_init_events(window: &sdl3::video::Window, fps: u32) -> [AlloyEvent; 2] {
+// input devices, orientation and pointer lock are not sent: a headless
+// window has none, and the embedder's defaults cover their absence.
+pub(crate) fn headless_init_events(window: &crate::stepped::HeadlessWindow, fps: u32) -> [AlloyEvent; 2] {
   [AlloyEvent::DisplayRefreshRate { hz: fps as f32 }, headless_resize_event(window)]
 }
 

@@ -312,15 +312,18 @@ fn bind_inputs(
   }
 }
 
-/// Draw `program` once into the default framebuffer (FBO 0) at the window's
-/// pixel size: the window shader pass. Attributeless, `vertex_count` vertices
-/// as triangles (3 = the covering triangle). FBO 0 is cleared to opaque black
-/// first, so a program whose geometry does not cover the window still
-/// presents a defined frame. `textures` carries the resolved sampler inputs
-/// (the layer as `uSource` first); uniforms fill by name as in every pass.
+/// Draw `program` once into the window framebuffer (`window`: None is FBO 0,
+/// Some the headless window target) at the window's pixel size: the window
+/// shader pass. Attributeless, `vertex_count` vertices as triangles (3 = the
+/// covering triangle). The framebuffer is cleared to opaque black first, so
+/// a program whose geometry does not cover the window still presents a
+/// defined frame. `textures` carries the resolved sampler inputs (the layer
+/// as `uSource` first); uniforms fill by name as in every pass.
+#[allow(clippy::too_many_arguments)]
 pub fn render_program_to_window(
   gl: &glow::Context,
   program: &ShaderProgram,
+  window: Option<glow::Framebuffer>,
   width: u32,
   height: u32,
   params: &[(String, ParamValue)],
@@ -329,24 +332,26 @@ pub fn render_program_to_window(
 ) {
   let draw =
     PassDraw::Fullscreen { program, params, textures, vertex_count, clear: Some([0.0, 0.0, 0.0, 1.0]), blend: false };
-  run_pass(gl, None, (0, 0), width, height, None, draw);
+  run_pass(gl, window, (0, 0), width, height, None, draw);
 }
 
-/// Composite `program`'s output over the default framebuffer's existing
-/// contents at the viewport rectangle `origin`/`width` x `height` (GL
-/// bottom-up coordinates): no clear, premultiplied-alpha blending - the
-/// stats overlay draw over the finished frame. A rectangle partly outside
-/// the window is clipped by the viewport transform.
+/// Composite `program`'s output over the window framebuffer's existing
+/// contents (`window` as in `render_program_to_window`) at the viewport
+/// rectangle `origin`/`width` x `height` (GL bottom-up coordinates): no
+/// clear, premultiplied-alpha blending - the stats overlay draw over the
+/// finished frame. A rectangle partly outside the window is clipped by the
+/// viewport transform.
 pub fn composite_program_over_window(
   gl: &glow::Context,
   program: &ShaderProgram,
+  window: Option<glow::Framebuffer>,
   origin: (i32, i32),
   width: u32,
   height: u32,
   textures: &[PassInput],
 ) {
   let draw = PassDraw::Fullscreen { program, params: &[], textures, vertex_count: 3, clear: None, blend: true };
-  run_pass(gl, None, origin, width, height, None, draw);
+  run_pass(gl, window, origin, width, height, None, draw);
 }
 
 /// Run one fullscreen draw of `program` into `fbo` (None = the default

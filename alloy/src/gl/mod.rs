@@ -49,7 +49,7 @@ pub(crate) use program::{
 };
 #[cfg(test)]
 pub(crate) use program::{declared_uniform_names, reads_instance_id};
-pub(crate) use readback::{flip_rows, read_fbo0_pixels, read_texture_pixels};
+pub(crate) use readback::{flip_rows, read_texture_pixels, read_window_pixels};
 pub(crate) use rig::{
   forget_window_samples, msrtt, supports_invalidate, window_fast_path, window_samples, MsrttFns, OffscreenRig,
 };

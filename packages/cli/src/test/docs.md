@@ -165,6 +165,22 @@ asserts a threshold to the millisecond sets `{ fps: 1000 }`).
 2000-01-01T00:00:00Z, in UTC, and moves with the frames. Every test starts
 at time 0 in an engine of its own, like a flux test.
 
+The window is 1280 x 720 at display scale 1 unless the test names its own:
+
+```tsx
+test("the sidebar collapses on a phone", async app => {
+  let root = await app.load(() => import("../src/index.tsx"))
+  expect(root.find({ label: "sidebar" }).exists).toBe(false)
+}, { size: [390, 844], scale: 3 })
+```
+
+`size` is the window in logical points, what `windowSize()` reads and what
+boxes are measured in; `scale` is the display scale, so the window has
+`size * scale` pixels, which is what `pixels()` and a snapshot are and what
+`displayScale()` reads. Each side times the scale must be whole pixels. The
+test after it is back at the default, like the frame rate. A breakpoint is
+tested by mounting at the size either side of it.
+
 `app.settle()` runs the app until it is at rest, which is what a test
 waits on in place of guessing a number of frames:
 

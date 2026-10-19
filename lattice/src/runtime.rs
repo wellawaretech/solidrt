@@ -338,8 +338,9 @@ impl UiRuntime for FluxRuntime {
       // The window's size has reached the engine: a stepped host waits on
       // it (queued behind the forward, so the size is there when it runs).
       #[cfg(any(feature = "go", feature = "test"))]
-      if matches!(event, AlloyEvent::Resize { .. }) {
-        eh.exec(|ctx| crate::stepped::window_ready(&ctx));
+      if let AlloyEvent::Resize { size, display_scale, .. } = event {
+        let window = (size.width as u32, size.height as u32, *display_scale);
+        eh.exec(move |ctx| crate::stepped::window_ready(&ctx, window));
       }
       // The engine's own restore ran in the forward; the runner's overlay
       // state follows it, ahead of the frame the restore requested.

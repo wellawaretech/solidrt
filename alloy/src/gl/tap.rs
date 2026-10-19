@@ -1,10 +1,11 @@
 //! The GL half of the window tap (see raster/window_tap.rs): a retained
 //! single-sample target of the tap's size, a ring of pixel pack buffers and
-//! the readback in flight. `issue` blits a rect of FBO 0 into the target
-//! (scaled, `LINEAR`) and starts the read into the ring's next buffer behind
-//! a fence; `complete` maps the buffer once the fence signalled and hands
-//! the pixels out. Nothing here waits on the GPU in the frame path:
-//! the read is asynchronous and the map comes a frame later.
+//! the readback in flight. `issue` blits a rect of the window framebuffer
+//! (FBO 0, or the headless window target) into the target (scaled,
+//! `LINEAR`) and starts the read into the ring's next buffer behind a fence;
+//! `complete` maps the buffer once the fence signalled and hands the pixels
+//! out. Nothing here waits on the GPU in the frame path: the read is
+//! asynchronous and the map comes a frame later.
 //!
 //! A multisampled FBO 0 (the Android in-tile path) cannot be blitted with a
 //! scale, so it resolves 1:1 into a retained full-size intermediate first,
@@ -94,7 +95,8 @@ impl TapReadback {
     self.pending.is_some()
   }
 
-  /// Blit `src` out of FBO 0 (a `surface`-sized, bottom-up framebuffer,
+  /// Blit `src` out of the window framebuffer (`window`: None is FBO 0, Some
+  /// the headless window target; a `surface`-sized, bottom-up framebuffer,
   /// `multisampled` or not) into the target and start the read into the
   /// ring's next buffer, stamped `timestamp_ns`. A readback still pending
   /// is completed first (waited for, bounded), so no frame is lost to the
@@ -103,6 +105,7 @@ impl TapReadback {
   pub(crate) fn issue(
     &mut self,
     gl: &glow::Context,
+    window: Option<glow::NativeFramebuffer>,
     surface: (i32, i32),
     src: TapRect,
     multisampled: bool,
@@ -122,10 +125,10 @@ impl TapReadback {
       let prev_draw = gl.get_parameter_i32(glow::DRAW_FRAMEBUFFER_BINDING);
       let prev_pack = gl.get_parameter_i32(glow::PIXEL_PACK_BUFFER_BINDING);
       let result = (|| -> Result<(), String> {
-        let mut read_from: Option<glow::NativeFramebuffer> = None;
+        let mut read_from = window;
         if multisampled {
           let fbo = self.ensure_resolve(gl, (sw, sh))?;
-          gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+          gl.bind_framebuffer(glow::READ_FRAMEBUFFER, window);
           gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(fbo));
           gl.blit_framebuffer(x0, y0, x1, y1, x0, y0, x1, y1, glow::COLOR_BUFFER_BIT, glow::NEAREST);
           read_from = Some(fbo);

@@ -47,6 +47,12 @@ agents/testing.md.
   `performance.now()` is 0 and the date starts at 2000-01-01 UTC and moves
   with the frames. Nothing waits and nothing is retried. `{ fps: 1000 }`
   as the third argument of `test` makes a frame one millisecond.
+- The window is 1280 x 720 at display scale 1 unless the test says
+  otherwise: `test(name, fn, { size: [390, 844], scale: 3 })` mounts in a
+  390 x 844 window (`windowSize()`, boxes) with 1170 x 2532 pixels
+  (`pixels()`, snapshots, `displayScale()`); the next test is back at the
+  default. A breakpoint is tested by mounting at the size either side of
+  it. Each side times the scale must be whole pixels.
 - `await app.settle()` runs the app until it is at rest: what it started
   (a fetch, a file read, a query) has landed, no timer is due and no frame
   is demanded. Use it after an action that loads or animates, in place of
