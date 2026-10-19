@@ -4,7 +4,7 @@ description: On Android every SDL_PumpEvents pushes a poll sentinel, every pushe
 created: 2026-09-21
 status: unfiled
 project: SDL (libsdl-org/SDL)
-versions: SDL 3.4.10 (sdl3-src 3.4.10); same code in release-3.4.16 and main as of 2026-09-21
+versions: SDL 3.4.10 (sdl3-src 3.4.10); same code in 3.4.18 (our pin since 2026-10-19) and main as of 2026-10-19
 link:
 ---
 

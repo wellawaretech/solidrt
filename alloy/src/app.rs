@@ -57,7 +57,7 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // the poll sentinel enabled: every pump pushes a sentinel event, every
   // pushed event sends the Android lifecycle WAKE, and that WAKE is what
   // the wait's semaphore blocks on, so the wait spins through its whole
-  // timeout (SDL 3.4.10 through main, measured 100% CPU on an idle app; see
+  // timeout (SDL 3.4.10 through 3.4.18 and main, measured 100% CPU on an idle app; see
   // okf/upstream/sdl-android-wait-event-poll-sentinel-spin.md). Without
   // the sentinel the pump pushes nothing of its own and the wait blocks.
   // The sentinel only bounds a poll drain against an event flood, and the
@@ -573,9 +573,7 @@ impl App {
     // vsync::FrameRelease.
     let mut release = crate::vsync::FrameRelease::new(vsync.is_some(), Instant::now());
 
-    // Held for the crate's one-pump invariant; the loop polls raw beside it
-    // (sdl_utils::poll_raw_event) for the events the crate has no variant for.
-    let _event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
+    let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
     // None when SDL has no gamepad support on this platform; pads already
     // plugged in surface through the Added events SDL emits on subsystem init.
     let mut gamepads = crate::gamepad::Gamepads::new(&sdl_context);
@@ -724,7 +722,7 @@ impl App {
         // SDL waits in whole milliseconds; round up so a sub-millisecond
         // remainder does not degrade into a spin on zero-length waits.
         let ms = remaining.as_millis() as u32 + (remaining.as_micros() % 1000 != 0) as u32;
-        crate::sdl_utils::wait_raw_event_timeout(ms)
+        event_pump.wait_event_timeout_ms(ms)
       };
 
       // Drain the raster thread's frame notifications. Drawing and presenting
@@ -991,15 +989,7 @@ impl App {
           }
           delivered
         };
-        for raw in first_event.into_iter().chain(std::iter::from_fn(crate::sdl_utils::poll_raw_event)) {
-          if let Some(cancel) = crate::sdl_utils::finger_cancel(&raw) {
-            let at = crate::sdl_utils::event_instant(sdl_epoch, cancel.timestamp_ns);
-            if !deliver(crate::event::translate_finger_cancel(&cancel, &window), at) {
-              break 'run;
-            }
-            continue;
-          }
-          let sdl_event = sdl3::event::Event::from_ll(raw);
+        for sdl_event in first_event.into_iter().chain(event_pump.poll_iter()) {
           if let sdl3::event::Event::Display { display_event, .. } = &sdl_event {
             use sdl3::event::DisplayEvent;
             if matches!(display_event, DisplayEvent::CurrentModeChanged | DisplayEvent::DesktopModeChanged) {

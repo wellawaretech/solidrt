@@ -4,7 +4,7 @@ description: sdl3::mouse::Cursor::set hands the pointer to SDL for as long as it
 created: 2026-09-22
 status: unfiled
 project: sdl3 (Rust bindings, github.com/revmischa/sdl3-rs)
-versions: sdl3 0.18.4 and 0.20.0 over sdl3-sys 0.6.6 (SDL 3.4.10)
+versions: sdl3 0.18.4 through 0.20.0 and master as of 2026-10-19 (our pin 0.19.0 over sdl3-sys 0.7.2, SDL 3.4.18, since 2026-10-19)
 link:
 ---
 

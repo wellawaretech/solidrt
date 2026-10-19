@@ -2,7 +2,7 @@
 title: SDL v4l2 camera enumeration does not terminate on stepwise frame-size ranges
 description: SDL's V4L2 camera backend expands a stepwise frame-size range one step at a time, so a device advertising 32x32-16384x16384 step 2 costs ~67 million probes per format; on a Raspberry Pi 4 SDL_InitSubSystem(SDL_INIT_CAMERA) never returns, and because SDL_UDEV_Scan shares its callback list the main thread's gamepad init is dragged into the same loop.
 project: SDL (github.com/libsdl-org/SDL)
-versions: SDL 3.4.10 (via sdl3-sys 0.6.6+SDL-3.4.10); loop unchanged in upstream main as of 2026-08-26
+versions: SDL 3.4.10 (via sdl3-sys 0.6.6+SDL-3.4.10); loop unchanged in 3.4.18 (sdl3-sys 0.7.2, our pin since 2026-10-19) and in upstream main as of 2026-10-19
 status: acknowledged
 link: https://github.com/libsdl-org/SDL/issues/15085
 created: 2026-08-26

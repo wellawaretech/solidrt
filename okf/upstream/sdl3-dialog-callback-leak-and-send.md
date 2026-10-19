@@ -4,7 +4,7 @@ description: sdl3::dialog boxes its callback data with Box::into_raw and never f
 created: 2026-10-15
 status: unfiled
 project: sdl3 (Rust bindings)
-versions: sdl3 0.18.4
+versions: sdl3 0.18.4; unchanged in 0.19.0 (our pin since 2026-10-19), 0.20.0 and master as of 2026-10-19
 link:
 ---
 

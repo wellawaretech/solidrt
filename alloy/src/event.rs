@@ -868,6 +868,16 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         modifiers: sdl_utils::mod_state().into(),
       })
     }
+    SdlEvent::FingerCanceled { finger_id, x, y, .. } => {
+      let (lw, lh) = touch_window_logical_size(window);
+      Some(AlloyEvent::PointerCancel {
+        pointer_id: finger_id,
+        pointer_type: PointerType::Touch,
+        x: x * lw,
+        y: y * lh,
+        modifiers: sdl_utils::mod_state().into(),
+      })
+    }
     SdlEvent::TextInput { text, .. } => Some(AlloyEvent::TextInput { text }),
     // Any display's orientation event triggers a re-query of the window's own
     // display (authoritative, and sidesteps matching display ids); a rotation
@@ -920,21 +930,6 @@ pub(crate) fn link_from_drop(payload: &str) -> Option<String> {
     Some(payload.to_string())
   } else {
     None
-  }
-}
-
-// The finger cancel, which the sdl3 crate has no Event variant for (its
-// from_ll drops the payload into Unknown), translated from the raw payload
-// the pump reads beside the crate's events (sdl_utils::finger_cancel); see
-// okf/upstream/sdl3-no-finger-cancelled-variant.md.
-pub(crate) fn translate_finger_cancel(cancel: &sdl_utils::FingerCancel, window: &sdl3::video::Window) -> AlloyEvent {
-  let (lw, lh) = touch_window_logical_size(window);
-  AlloyEvent::PointerCancel {
-    pointer_id: cancel.finger_id,
-    pointer_type: PointerType::Touch,
-    x: cancel.x * lw,
-    y: cancel.y * lh,
-    modifiers: sdl_utils::mod_state().into(),
   }
 }
 

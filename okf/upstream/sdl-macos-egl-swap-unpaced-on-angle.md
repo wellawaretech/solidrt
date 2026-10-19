@@ -4,7 +4,7 @@ description: With SDL_OPENGL_ES_DRIVER=1 on macOS, SDL swaps through eglSwapBuff
 created: 2026-09-26
 status: unfiled
 project: SDL (libsdl-org/SDL)
-versions: SDL 3.4.10 (sdl3-src 3.4.10), ANGLE 2.1.26628 (Electron v40.9.2 libEGL/libGLESv2), macOS 26.3 on Apple M1
+versions: SDL 3.4.10 (sdl3-src 3.4.10; the cocoa GL files are unchanged in 3.4.18, our pin since 2026-10-19), ANGLE 2.1.26628 (Electron v40.9.2 libEGL/libGLESv2), macOS 26.3 on Apple M1
 link:
 ---
 

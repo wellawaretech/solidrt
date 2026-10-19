@@ -8,7 +8,7 @@ name = "basic"
 
 [target.'cfg(target_os = "android")'.dependencies]
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys"] }
-sdl3 = { version = "=0.18.4", features = ["build-from-source"] }
+sdl3 = { version = "=0.19.0", features = ["build-from-source"] }
 # Bridge SDL's JNI env + activity into the process-wide ndk-context that
 # JNI-using deps (e.g. iroh's network monitoring via flux:p2p) read on Android.
 ndk-context = "=0.1.1"
@@ -44,11 +44,11 @@ impellers = { version = "=0.4.3", features = ["bindgen_live"] }
 objc2-core-video = { version = "=0.3.2", default-features = false, features = ["CVBase", "CVReturn", "CVDisplayLink", "CVHostTime"] }
 objc2-core-foundation = { version = "=0.3.2", default-features = false }
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "=0.18.4", features = ["build-from-source-static"] }
+sdl3 = { version = "=0.19.0", features = ["build-from-source-static"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "=0.18.4", features = ["build-from-source-static"] }
+sdl3 = { version = "=0.19.0", features = ["build-from-source-static"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # GetCurrentThread/SetThreadPriority for the frame thread priority boost, the
@@ -62,7 +62,7 @@ windows-sys = { version = "=0.61.2", features = ["Win32_System_Threading"] }
 # the unified build compiles no extra crate.
 windows = { version = "=0.62.2", features = ["Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi"] }
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "=0.18.4", features = ["build-from-source-static"] }
+sdl3 = { version = "=0.19.0", features = ["build-from-source-static"] }
 
 [dependencies]
 log = { workspace = true }
