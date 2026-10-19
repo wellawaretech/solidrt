@@ -237,7 +237,7 @@ when exactly one client is connected.
   second, a quarter of the hang timeout at which a driver faults the
   context, so a heavy draw on a weak GPU shows here as several
   submissions instead of one black screen (`gpuDrawSlices` in `/stats`
-  counts them; okf/plans/splat-adreno-gpu-fault.md). `groups` sums the textures and buffers by
+  counts them; okf/done/splat-adreno-gpu-fault.md). `groups` sums the textures and buffers by
   exact label (`textures`, `textureBytes`, `buffers`, `bufferBytes`,
   `bytes`): a consumer that labels every resource it creates (a tile
   layer's chunks under the layer's label) reads its footprint as one

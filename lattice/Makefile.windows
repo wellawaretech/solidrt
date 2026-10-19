@@ -1,10 +1,12 @@
 # lattice/Makefile.windows
 
-ELECTRON_VERSION   = v40.9.2
+ELECTRON_VERSION   = v43.8.0
 ELECTRON_URL       = https://github.com/electron/electron/releases/download/$(ELECTRON_VERSION)
 ANGLE_STAMP_FILE   = .angle-version
 
-ANGLE_WIN_ZIP = $(HOST_DIST)/electron-win32-x64.zip
+# The downloaded release, named by its version so a bump never re-extracts
+# an older cached one.
+ANGLE_WIN_ZIP = $(HOST_DIST)/electron-$(ELECTRON_VERSION)-win32-x64.zip
 ANGLE_EGL     = $(HOST_DIST)/libEGL.dll
 ANGLE_GLES    = $(HOST_DIST)/libGLESv2.dll
 
@@ -21,7 +23,7 @@ angle-windows:
 	if [ "$$cur" = "$(ELECTRON_VERSION)" ] && [ -f $(ANGLE_EGL) ] && [ -f $(ANGLE_GLES) ]; then \
 	  exit 0; \
 	fi; \
-	rm -f $(ANGLE_EGL) $(ANGLE_GLES); \
+	rm -f $(ANGLE_EGL) $(ANGLE_GLES) $(filter-out $(ANGLE_WIN_ZIP),$(wildcard $(HOST_DIST)/electron-*win32-x64.zip)); \
 	if [ ! -f $(ANGLE_WIN_ZIP) ]; then \
 	  echo "Downloading ANGLE ($(ELECTRON_VERSION)) from Electron..."; \
 	  curl --progress-bar --fail -L $(ELECTRON_URL)/electron-$(ELECTRON_VERSION)-win32-x64.zip -o $(ANGLE_WIN_ZIP); \

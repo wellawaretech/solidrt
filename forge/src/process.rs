@@ -5,10 +5,16 @@
 //! emit/has-listeners, the per-context dedup) and forwards to the pieces here:
 //! host metadata (`platform`/`arch`/`rss`/`home_dir`/`exec_path`/`env_vars`, the OS and host
 //! names), `kill`/`alive`, `exit`, the allocator setting
-//! (`return_large_allocations`), and `SignalStream`, which hides the
-//! unix vs non-unix OS signal split behind one async source.
+//! (`return_large_allocations`), the Windows crash line (`report_crashes`),
+//! and `SignalStream`, which hides the unix vs non-unix OS signal split
+//! behind one async source.
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+
+// The wording half compiles everywhere for its test; only Windows installs
+// the filter that calls it.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) mod crash;
 
 /// The host OS ("darwin", "win32", "linux", "android", ...).
 pub fn platform() -> &'static str {
@@ -205,4 +211,15 @@ pub fn return_large_allocations() {
   unsafe {
     libc::mallopt(libc::M_MMAP_THRESHOLD, GLIBC_MMAP_THRESHOLD);
   }
+}
+
+/// Name a crash on stderr before the process dies, on Windows: one line
+/// with the exception (an access violation, say), the address it touched
+/// and the faulting module with the offset in it, written by a last-chance
+/// exception filter that then lets the crash proceed (see `crash.rs`). A
+/// program installs it once at startup, beside its panic hook. Elsewhere
+/// the signal tells every spawner what happened, and this does nothing.
+pub fn report_crashes() {
+  #[cfg(windows)]
+  crash::install();
 }

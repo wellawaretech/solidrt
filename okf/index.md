@@ -3303,6 +3303,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
 
 Bugs in our dependencies. Status here is the dependency's, not ours.
 
+- **[Bun reports a Windows child's exit status as its low byte](upstream/bun-windows-exit-code-truncated.md)** [2026-10-19]
+  On Windows, Bun.spawn, spawnSync and node:child_process narrow a child's
+  32-bit exit status to a byte, so a crash status like 0xC0000005 reads as a
+  plain exit 5; the CLI cannot tell a crashed client from one that exited. Fix
+  PR open upstream since 2026-07.
 - **[ImpellerColorMatrix translation column is normalized, not 0..255](upstream/impeller-color-matrix-translation.md)** [2026-09-02]
   The impeller.h doc (and impellers 0.4.2 doc comment) says the color-matrix
   translation column is 0..255; the shipped implementation adds it raw in

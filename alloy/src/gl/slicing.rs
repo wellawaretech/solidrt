@@ -1,5 +1,5 @@
 //! Draw slicing under a submission time budget
-//! (okf/plans/splat-adreno-gpu-fault.md, part B).
+//! (okf/done/splat-adreno-gpu-fault.md, part B).
 //!
 //! A GPU kernel bounds one SUBMISSION's run, never a frame's: msm KGSL
 //! faults a context when 2 s pass without one of its submissions retiring

@@ -1718,6 +1718,7 @@ fn start_with(
   forge::process::return_large_allocations();
   alloy::install_logger();
   install_panic_hook();
+  forge::process::report_crashes();
   log::info!("[sol] SolidRT version {VERSION}");
 
   let handle = rt.handle().clone();

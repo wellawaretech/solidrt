@@ -1,4 +1,6 @@
+import { basename } from "node:path"
 import { resolveBinary } from "./artifacts"
+import { crashReason } from "../server/crash"
 
 // Run `cmd` in `cwd` with its output held back: the exit code and the
 // combined output, for a caller that shows the output only on failure.
@@ -31,7 +33,13 @@ export function requireBinary(name: string, needed: string | null = null) {
   process.exit(1)
 }
 
-export async function run(binary: string, args: string[]) {
+/** Run `binary` on the terminal's stdio: its exit code, or 1 after naming
+ * a crash, which the code alone would hide (server/crash.ts). */
+export async function run(binary: string, args: string[]): Promise<number> {
   let proc = Bun.spawn([binary, ...args], { stdio: ["inherit", "inherit", "inherit"] })
-  return proc.exited
+  let code = await proc.exited
+  let reason = crashReason(proc.exitCode, proc.signalCode)
+  if (reason === null) return code
+  console.error(`The ${basename(binary)} process crashed (${reason})`)
+  return 1
 }

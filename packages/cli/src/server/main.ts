@@ -25,6 +25,7 @@ import { requireBinary, solCommand } from "./binaries"
 import * as cache from "./cache"
 import { handleProxy } from "./proxy"
 import { appendLog, handleControl, onShutdownRequest, ready, resolveQuery } from "./control"
+import { crashReason } from "./crash"
 import { printIdentity } from "./identity"
 import { createTunnelEndpoint, TUNNEL_PROTOCOL } from "./tunnel"
 import { pushed, rebuildAndBroadcast, showBuildFailure } from "./rebuild"
@@ -531,8 +532,11 @@ if (config.client) {
   // The server outlives its client: a wedged or crashed client is restarted
   // with `sol client` (it reattaches by cwd) without losing the server, its
   // bundle, the watcher or the MCP session. The server stops on quit/signal.
-  child.status().then(() => {
+  child.status().then((status) => {
     localClient = null
-    if (!shuttingDown) console.log("[cli] Local client exited; the server keeps running (sol client reattaches)")
+    if (shuttingDown) return
+    let reason = crashReason(status.code, status.signal)
+    let how = reason === null ? "exited" : `crashed (${reason})`
+    console.log(`[cli] Local client ${how}; the server keeps running (sol client reattaches)`)
   })
 }

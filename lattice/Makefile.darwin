@@ -1,13 +1,15 @@
 # lattice/Makefile.darwin
 
-ELECTRON_VERSION   = v40.9.2
+ELECTRON_VERSION   = v43.8.0
 ELECTRON_URL       = https://github.com/electron/electron/releases/download/$(ELECTRON_VERSION)
 ANGLE_STAMP_FILE   = .angle-version
 
 DARWIN_ARCH = arm64
 
 DARWIN_DIST      = $(SOLIDRT_HOME)/dist/$(HOST_PLATFORM)
-ANGLE_DARWIN_ZIP = $(DARWIN_DIST)/electron-darwin-$(DARWIN_ARCH).zip
+# The downloaded release, named by its version so a bump never re-extracts
+# an older cached one.
+ANGLE_DARWIN_ZIP = $(DARWIN_DIST)/electron-$(ELECTRON_VERSION)-darwin-$(DARWIN_ARCH).zip
 ANGLE_EGL        = $(DARWIN_DIST)/libEGL.dylib
 ANGLE_GLES       = $(DARWIN_DIST)/libGLESv2.dylib
 
@@ -24,7 +26,7 @@ angle-darwin:
 	if [ "$$cur" = "$(ELECTRON_VERSION)" ] && [ -f $(ANGLE_EGL) ] && [ -f $(ANGLE_GLES) ]; then \
 	  exit 0; \
 	fi; \
-	rm -f $(ANGLE_EGL) $(ANGLE_GLES); \
+	rm -f $(ANGLE_EGL) $(ANGLE_GLES) $(filter-out $(ANGLE_DARWIN_ZIP),$(wildcard $(DARWIN_DIST)/electron-*darwin-$(DARWIN_ARCH).zip)); \
 	if [ ! -f $(ANGLE_DARWIN_ZIP) ]; then \
 	  echo "Downloading ANGLE ($(ELECTRON_VERSION)) from Electron..."; \
 	  curl --progress-bar --fail -L $(ELECTRON_URL)/electron-$(ELECTRON_VERSION)-darwin-$(DARWIN_ARCH).zip -o $(ANGLE_DARWIN_ZIP); \

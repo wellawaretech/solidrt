@@ -53,6 +53,7 @@ async fn main() {
     forge::tty::restore();
     default_panic(info);
   }));
+  forge::process::report_crashes();
 
   let mut args = std::env::args().skip(1).peekable();
   #[cfg(feature = "test")]
