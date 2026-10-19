@@ -320,7 +320,7 @@ fn texture_honors_parent_cross_axis_alignment() {
   tree.root = Some(1);
   size(&mut tree, 1, 400.0, 300.0);
   size(&mut tree, 2, 100.0, 50.0);
-  tree.node_mut(1).style_mut().expect("root").align_items = Some(AlignItems::CENTER);
+  tree.node_mut(1).style_mut().expect("root").align_items = AlignItems::CENTER;
   let platform = PlatformContext::new(Vec::new());
   let alloy = headless();
 
@@ -665,4 +665,115 @@ fn contained_view_lays_out_its_children_in_the_box_it_gets() {
   assert_eq!(box_of(&tree, 4), Size::new(400.0, 637.0), "the body keeps its size inside");
   let loc = tree.node(4).layout_data().location();
   assert_xy(Point::new(loc.x, loc.y), 0.0, 0.0);
+}
+
+// An absolute box is placed against its parent: every kind starts relative
+// (base_style), so every node is the containing block of its absolute
+// children. It sizes and insets from the parent's box and takes no space in
+// its flow. Under taffy's static initial position it would resolve against
+// the root (here 100x30 at (290, 250)).
+#[test]
+fn absolute_child_places_against_its_parent() {
+  // root(1, 400x300 row) > spacer(2, 100 wide), pane(3, 200x200) > badge(4, absolute,
+  //                                                              25% x 10%, right 10 bottom 20),
+  //                                                              item(5, 50x50)
+  let mut tree = RenderTree::new();
+  for id in 1..=5 {
+    tree.create_node(id, attached());
+  }
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, None).expect("insert");
+  tree.insert_node(3, 4, None).expect("insert");
+  tree.insert_node(3, 5, None).expect("insert");
+  tree.root = Some(1);
+  tree.node_mut(1).style_mut().expect("root").flex_direction = FlexDirection::Row;
+  size(&mut tree, 1, 400.0, 300.0);
+  size(&mut tree, 2, 100.0, 300.0);
+  size(&mut tree, 3, 200.0, 200.0);
+  size(&mut tree, 5, 50.0, 50.0);
+  let badge = tree.node_mut(4).style_mut().expect("badge");
+  badge.position = Position::Absolute;
+  badge.inset.right = length(10.0);
+  badge.inset.bottom = length(20.0);
+  badge.size = taffy::Size { width: percent(0.25), height: percent(0.1) };
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(box_of(&tree, 4), Size::new(50.0, 20.0), "percentages of the pane, not the root");
+  let loc = tree.node(4).layout_data().location();
+  assert_xy(Point::new(loc.x, loc.y), 140.0, 160.0);
+  let loc = tree.node(5).layout_data().location();
+  assert_xy(Point::new(loc.x, loc.y), 0.0, 0.0);
+}
+
+// An absolute item with a grid placement insets from its grid area: the
+// out-of-flow pass reads the areas the grid stored (LayoutData::detailed). A
+// node that stops being a grid drops them, and the item insets from the
+// container's padding box again.
+#[test]
+fn absolute_grid_item_insets_from_its_grid_area() {
+  // root(1, 400x300) > grid(2, 200x200, two 100px columns and rows)
+  //                    > item(3, absolute, 10x10, column 2 / row 2, left 5 top 5)
+  let mut tree = RenderTree::new();
+  for id in 1..=3 {
+    tree.create_node(id, attached());
+  }
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.root = Some(1);
+  size(&mut tree, 1, 400.0, 300.0);
+  size(&mut tree, 2, 200.0, 200.0);
+  size(&mut tree, 3, 10.0, 10.0);
+  let grid = tree.node_mut(2).style_mut().expect("grid");
+  grid.display = Display::Grid;
+  grid.grid_template_columns = vec![length(100.0), length(100.0)];
+  grid.grid_template_rows = vec![length(100.0), length(100.0)];
+  let item = tree.node_mut(3).style_mut().expect("item");
+  item.position = Position::Absolute;
+  item.grid_column = taffy::Line { start: taffy::style_helpers::line(2), end: auto() };
+  item.grid_row = taffy::Line { start: taffy::style_helpers::line(2), end: auto() };
+  item.inset.left = length(5.0);
+  item.inset.top = length(5.0);
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+
+  layout(&mut tree, &platform, &alloy);
+  let loc = tree.node(3).layout_data().location();
+  assert_xy(Point::new(loc.x, loc.y), 105.0, 105.0);
+
+  display(&mut tree, 2, Display::Flex);
+  layout(&mut tree, &platform, &alloy);
+  let loc = tree.node(3).layout_data().location();
+  assert_xy(Point::new(loc.x, loc.y), 5.0, 5.0);
+}
+
+// A contained container lays its children out in an inner pass
+// (LayoutContext::boxed_layout), and the out-of-flow pass runs there too: an
+// absolute child is placed against the box the container got.
+#[test]
+fn contained_view_places_absolute_children_in_its_box() {
+  // root(1, 400x300 column) > pane(2, 200x100, contained)
+  //                           > badge(3, absolute, 20x20, right 10 bottom 10)
+  let mut tree = RenderTree::new();
+  for id in 1..=3 {
+    tree.create_node(id, attached());
+  }
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.root = Some(1);
+  size(&mut tree, 1, 400.0, 300.0);
+  size(&mut tree, 2, 200.0, 100.0);
+  size(&mut tree, 3, 20.0, 20.0);
+  contain(&mut tree, 2);
+  let badge = tree.node_mut(3).style_mut().expect("badge");
+  badge.position = Position::Absolute;
+  badge.inset.right = length(10.0);
+  badge.inset.bottom = length(10.0);
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+
+  layout(&mut tree, &platform, &alloy);
+  let loc = tree.node(3).layout_data().location();
+  assert_xy(Point::new(loc.x, loc.y), 170.0, 70.0);
 }

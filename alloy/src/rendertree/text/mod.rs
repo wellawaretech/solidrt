@@ -19,8 +19,8 @@ use crate::impellers::{
 use crate::rendertree::text::glyphs::{split_phase, weight_value, Face, Hint, StyleKey};
 use crate::rendertree::text::layout::{PlacedRun, Run, Wrap};
 use crate::rendertree::{
-  grid, Bounded, BuildContext, Buildable, Damage, Element, ElementKind, Measurable, MeasureContext, PaintState,
-  PlatformContext,
+  base_style, grid, Bounded, BuildContext, Buildable, Damage, Element, ElementKind, Measurable, MeasureContext,
+  PaintState, PlatformContext,
 };
 use crate::Context;
 use shape::OwnedCache;
@@ -1203,7 +1203,7 @@ impl Text {
   }
 
   pub fn initial_style() -> Style {
-    Style { display: Display::Block, ..Default::default() }
+    Style { display: Display::Block, ..base_style() }
   }
 
   pub fn with_layout(self) -> Element {

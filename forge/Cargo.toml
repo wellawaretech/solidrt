@@ -67,7 +67,7 @@ hyper = { version = "=1.12.0", features = ["server", "http1"] }
 hyper-util = { version = "=0.1.21", features = ["tokio"] }
 http-body-util = "=0.1.5"
 # The digest core behind crypto.subtle.digest.
-sha2 = "=0.11.0"
+sha2 = "=0.11.1"
 # forge::compression (CompressionStream / DecompressionStream): deflate, the
 # zlib format and the gzip framing's CRC-32, on the pure-Rust backend. Already
 # in the tree (image -> png depends on it).
@@ -86,7 +86,7 @@ blake3 = "=1.8.7"
 tokio-util = { version = "=0.7.20", features = ["io"] }
 # The fetch cache's metadata blob (response snapshot stored next to the body).
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
+serde_json = "=1.0.154"
 percent-encoding = "=2.3.2"
 # Raw terminal mode and key events for forge::tty (a safe binding crate:
 # termios on unix, the Console API on Windows). No event-stream: keys are
@@ -110,7 +110,7 @@ iroh = "=1.3.0"
 # TLS it implies are what iroh picks for the client half too.
 iroh-relay = { version = "=1.3.0", default-features = false, features = ["server"], optional = true }
 # Cross-platform PATH lookup for the subprocess `which` (handles Windows PATHEXT).
-which = "=7.0.3"
+which = "=8.0.6"
 # UDP socket options the flux:net multicast beacon needs (SO_REUSEADDR/REUSEPORT)
 # that tokio's UdpSocket::bind doesn't expose: bind via socket2, then adopt with
 # UdpSocket::from_std. Already in the tree (tokio depends on it).
@@ -171,7 +171,7 @@ ndk-context = "=0.1.1"
 # compilation; `wat` so text sources parse on this lane too. Measured at
 # +7.8 MB of runtime.
 [target.'cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(target_os = "ios")))'.dependencies]
-wasmtime = { version = "=49.0.2", default-features = false, features = ["runtime", "std", "cranelift", "wat"], optional = true }
+wasmtime = { version = "=49.0.3", default-features = false, features = ["runtime", "std", "cranelift", "wat"], optional = true }
 
 # The foreground-job check behind forge::tty::is_terminal (tcgetpgrp /
 # getpgrp, safe wrappers), and CLOCK_MONOTONIC for forge::video's transport
@@ -195,7 +195,7 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Stor
 [build-dependencies]
 # Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the
 # Android build can link clang_rt.builtins; see build.rs.
-cc = "=1.6.0"
+cc = "=1.8.0"
 # Drives the vendored libopus's CMake project (build.rs); already in the tree
 # (sdl3-sys builds SDL with it).
 cmake = "=0.1.58"

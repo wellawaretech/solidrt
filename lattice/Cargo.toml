@@ -45,7 +45,7 @@ half = "=2.7.1"
 rquickjs = { workspace = true }
 # taffy stays: the properties plugins assign taffy Style directly. The render
 # tree (and its lyon/svgtypes path deps) moved to alloy.
-taffy = "=0.14.0"
+taffy = "=0.15.0"
 base64 = { version = "=0.23.1", optional = true }
 tokio = { workspace = true }
 tokio-websockets = { version = "=0.13.3", features = ["client", "fastrand", "sha1_smol"], optional = true }
@@ -54,10 +54,10 @@ http = { version = "=1.5.0", optional = true }
 # Every build since stage 3b: the packed runner reads manifest.json (folder
 # boot, src/manifest.rs); stage 4 OTA needs it in packed apps anyway.
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = { version = "=1.0.151" }
+serde_json = { version = "=1.0.154" }
 # Version-store integrity: manifest hash = version id, bundle hash verify
 # (src/go/store.rs). go-only until packed apps read the store (stage 4).
-sha2 = { version = "=0.11.0", optional = true }
+sha2 = { version = "=0.11.1", optional = true }
 # Window icon rasterization (src/go/icon.rs): SVG source -> RGBA pixels for
 # SDL_SetWindowIcon. Deliberately go-only so the production runtime stays
 # raster-free (packed apps get icons from platform packaging, stage 3); same
@@ -79,7 +79,7 @@ libloading = "=0.9.0"
 # Android reaches the dev server via the adb-reverse loopback instead, and
 # receiving mDNS there would need a WifiManager.MulticastLock, so it is excluded.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-mdns-sd = "=0.20.2"
+mdns-sd = "=0.21.5"
 
 # The per-user protocol registration a packed app writes on
 # registerProtocolHandler (src/links.rs), through Microsoft's safe registry

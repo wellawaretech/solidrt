@@ -5,7 +5,7 @@ use crate::impellers::{
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{
-  replaced_size, Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
+  base_style, replaced_size, Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
 };
 use taffy::{Display, Style};
 
@@ -262,7 +262,7 @@ impl Texture {
     // Stretch only reaches a texture whose cross size is auto; the
     // measured axis then follows the intrinsic ratio via replaced_size,
     // and alignSelf="flex-start" is the per-node opt-out, as on the web.
-    Style { display: Display::Block, ..Default::default() }
+    Style { display: Display::Block, ..base_style() }
   }
 
   pub fn with_layout(self) -> Element {

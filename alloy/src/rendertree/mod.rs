@@ -21,7 +21,7 @@ pub use kinds::{
   fit_rects, FilterState, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle,
   ShadowState, Texture, TextureFit, View, Window, DEFAULT_STROKE_WIDTH,
 };
-pub use layout::{LayoutContext, LayoutData};
+pub use layout::{base_style, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
 pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
 pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextAnchor, TextOverflow, TextRun, ATOM_CHAR};

@@ -3,7 +3,9 @@ use super::{PaintState, ShadowState};
 use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
-use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
+use crate::rendertree::{
+  base_style, Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
+};
 use lyon_algorithms::aabb::bounding_box;
 use lyon_algorithms::hit_test::hit_test_path;
 use lyon_path::geom::{point, vector, Angle, ArcFlags, CubicBezierSegment, QuadraticBezierSegment, SvgArc};
@@ -419,7 +421,7 @@ impl Path {
   }
 
   pub fn initial_style() -> taffy::Style {
-    taffy::Style { display: taffy::Display::Block, ..Default::default() }
+    taffy::Style { display: taffy::Display::Block, ..base_style() }
   }
 
   pub fn with_layout(self) -> Element {

@@ -3,7 +3,9 @@ use crate::gpu::NodeShader;
 use crate::impellers::{DisplayListBuilder, Matrix};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
-use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Point, Rect, Size, Vector};
+use crate::rendertree::{
+  base_style, Bounded, BuildContext, Buildable, Element, ElementKind, Point, Rect, Size, Vector,
+};
 use std::cell::Cell;
 use taffy::{FlexDirection, Style};
 
@@ -492,7 +494,7 @@ impl View {
   // The style a layout view starts with; layout-prop resets restore fields
   // from here (a view's block axis is the column, unlike taffy's row).
   pub fn initial_style() -> Style {
-    Style { flex_direction: FlexDirection::Column, ..Style::default() }
+    Style { flex_direction: FlexDirection::Column, ..base_style() }
   }
 
   pub fn with_layout(self) -> Element {

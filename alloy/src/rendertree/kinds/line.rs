@@ -3,7 +3,9 @@ use super::PaintState;
 use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
-use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
+use crate::rendertree::{
+  base_style, Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
+};
 
 // Endpoints default to spanning the box: (0,0) to (box.w, box.h), matching how
 // a rect with unset w/h fills its box. Explicit endpoints are detached-only.
@@ -348,7 +350,7 @@ impl Line {
   }
 
   pub fn initial_style() -> taffy::Style {
-    taffy::Style { display: taffy::Display::Block, ..Default::default() }
+    taffy::Style { display: taffy::Display::Block, ..base_style() }
   }
 
   pub fn with_layout(self) -> Element {

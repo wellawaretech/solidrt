@@ -3,7 +3,9 @@ use super::{PaintState, ShadowState};
 use crate::impellers::{ClipOperation, DisplayListBuilder, DrawStyle, Paint, Point, Rect, RoundingRadii, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
-use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
+use crate::rendertree::{
+  base_style, Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct Rectangle {
@@ -235,7 +237,7 @@ impl Rectangle {
   }
 
   pub fn initial_style() -> taffy::Style {
-    taffy::Style { display: taffy::Display::Block, ..Default::default() }
+    taffy::Style { display: taffy::Display::Block, ..base_style() }
   }
 
   pub fn with_layout(self) -> Element {

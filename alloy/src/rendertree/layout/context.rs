@@ -2,8 +2,9 @@ use taffy::prelude::*;
 use taffy::tree::LayoutInput;
 use taffy::{
   compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_hidden_layout,
-  compute_leaf_layout, CacheTree, CoreStyle, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer,
-  RequestedAxis, ResolveOrZero, RunMode, SizingMode,
+  compute_leaf_layout, compute_oof_layout, CacheTree, CoreStyle, DetailedGridInfo, DetailedLayoutInfo,
+  LayoutBlockContainer, LayoutContainingBlock, LayoutFlexboxContainer, LayoutGridContainer, RequestedAxis,
+  ResolveOrZero, RunMode, SizingMode,
 };
 
 use super::super::tree::RenderTree;
@@ -15,10 +16,10 @@ pub struct LayoutData {
   pub computed: Layout,
   pub cache: taffy::tree::Cache,
   pub layout_children: Vec<NodeId>,
-  // True only when JSX explicitly set `position="relative"`. taffy's default
-  // position is Relative for every node, so this flag is what distinguishes a
-  // deliberately declared positioning context from the implicit default. It is
-  // the stop point when resolving a node's container-relative bounding box.
+  // True only when JSX explicitly set `position="relative"`. Every kind starts
+  // relative (base_style), so this flag is what distinguishes a deliberately
+  // declared positioning context from the implicit default. It is the stop
+  // point when resolving a node's container-relative bounding box.
   pub positioning_context: bool,
   // `computed` is a real placement: written by a performing layout pass, not
   // the zero box taffy's hidden pass writes under a `display: none`. False
@@ -35,6 +36,11 @@ pub struct LayoutData {
   // follows its own box (okf/done/fill-leaf-intrinsic-size.md). Written by
   // Element::set_contain_size.
   pub contain_size: bool,
+  // A grid's tracks and item areas from its last performing pass
+  // (set_detailed_grid_info): the out-of-flow pass resolves the insets of an
+  // absolute item with a grid placement against its grid area from here.
+  // None for any other display (container_layout drops it).
+  pub detailed: DetailedLayoutInfo<String>,
 }
 
 impl LayoutData {
@@ -47,6 +53,7 @@ impl LayoutData {
       positioning_context: false,
       laid_out: false,
       contain_size: false,
+      detailed: DetailedLayoutInfo::None,
     }
   }
 
@@ -224,14 +231,27 @@ impl<'a> LayoutContext<'a> {
     output
   }
 
-  // taffy's container algorithm for a display.
+  // taffy's container algorithm for a display, then the out-of-flow pass:
+  // the algorithm leaves the absolute children out of the flow, and the pass
+  // places them against the box it solved. Only a performing pass places
+  // them, as in taffy's own tree, so a measure never writes a box that a
+  // cached final pass would not rewrite.
   fn container_layout(&mut self, node_id: NodeId, display: Display, inputs: LayoutInput) -> taffy::LayoutOutput {
-    match display {
+    let mut output = match display {
       Display::Flex => compute_flexbox_layout(self, node_id, inputs),
       Display::Block | Display::FlowRoot => compute_block_layout(self, node_id, inputs, None),
       Display::Grid => compute_grid_layout(self, node_id, inputs),
       Display::None => self.hidden_layout(node_id),
+    };
+    if inputs.run_mode == RunMode::PerformLayout {
+      // The pass reads grid areas from whatever the node last stored; a node
+      // that stopped being a grid has none to inset from.
+      if display != Display::Grid {
+        self.render_tree.node_mut(u64::from(node_id)).layout_data_mut().detailed = DetailedLayoutInfo::None;
+      }
+      compute_oof_layout(self, node_id, &mut output);
     }
+    output
   }
 
   // A layout boundary: a container that lays out on both sides of its box.
@@ -519,6 +539,30 @@ impl<'a> LayoutContext<'a> {
   }
 }
 
+impl<'a> LayoutContainingBlock for LayoutContext<'a> {
+  type OofItemStyle<'b>
+    = &'b Style
+  where
+    Self: 'b;
+
+  fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
+    &self.render_tree.node(u64::from(node_id)).layout_data().style
+  }
+
+  // No hoisted lists are kept. Every node starts relative (base_style), so an
+  // absolute box's containing block is its parent: the out-of-flow pass
+  // writes its box in the parent's frame, and paint, hit testing and culling
+  // reach it through the element tree like any child. Only taffy's
+  // round_layout reads the lists back, and alloy snaps its own boxes.
+  fn clear_hoisted_children(&mut self, _node_id: NodeId) {}
+
+  fn add_hoisted_children(&mut self, _node_id: NodeId, _hoisted: &[NodeId]) {}
+
+  fn get_detailed_layout_info(&self, node_id: NodeId) -> &DetailedLayoutInfo<String> {
+    &self.render_tree.node(u64::from(node_id)).layout_data().detailed
+  }
+}
+
 impl<'a> LayoutFlexboxContainer for LayoutContext<'a> {
   type FlexboxContainerStyle<'b>
     = &'b Style
@@ -573,5 +617,10 @@ impl<'a> LayoutGridContainer for LayoutContext<'a> {
 
   fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_> {
     &self.render_tree.node(u64::from(child_node_id)).layout_data().style
+  }
+
+  fn set_detailed_grid_info(&mut self, node_id: NodeId, detailed_grid_info: DetailedGridInfo<String>) {
+    self.render_tree.node_mut(u64::from(node_id)).layout_data_mut().detailed =
+      DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
   }
 }

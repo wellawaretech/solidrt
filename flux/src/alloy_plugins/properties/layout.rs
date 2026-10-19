@@ -149,7 +149,7 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Result<Option<
       };
     }
     "alignItems" => {
-      style.align_items = Some(match str_of(value, "alignItems")? {
+      style.align_items = match str_of(value, "alignItems")? {
         "start" => AlignItems::START,
         "end" => AlignItems::END,
         "flex-start" => AlignItems::FLEX_START,
@@ -162,10 +162,10 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Result<Option<
             "Unknown alignItems value \"{v}\"; expected start, end, flex-start, flex-end, center, baseline or stretch"
           ))
         }
-      });
+      };
     }
     "justifyContent" => {
-      style.justify_content = Some(match str_of(value, "justifyContent")? {
+      style.justify_content = match str_of(value, "justifyContent")? {
         "start" => JustifyContent::START,
         "end" => JustifyContent::END,
         "flex-start" => JustifyContent::FLEX_START,
@@ -180,10 +180,10 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Result<Option<
             "Unknown justifyContent value \"{v}\"; expected start, end, flex-start, flex-end, center, space-between, space-around, space-evenly or stretch"
           ))
         }
-      });
+      };
     }
     "alignContent" => {
-      style.align_content = Some(match str_of(value, "alignContent")? {
+      style.align_content = match str_of(value, "alignContent")? {
         "start" => AlignContent::START,
         "end" => AlignContent::END,
         "flex-start" => AlignContent::FLEX_START,
@@ -198,7 +198,7 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Result<Option<
             "Unknown alignContent value \"{v}\"; expected start, end, flex-start, flex-end, center, space-between, space-around, space-evenly or stretch"
           ))
         }
-      });
+      };
     }
 
     // Flex item

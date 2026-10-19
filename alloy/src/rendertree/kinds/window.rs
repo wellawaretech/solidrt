@@ -1,7 +1,7 @@
 use crate::gpu::WindowShader;
 use crate::impellers::DisplayListBuilder;
 use crate::rendertree::Damage;
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind};
+use crate::rendertree::{base_style, BuildContext, Buildable, Element, ElementKind};
 use crate::AlloyCommand;
 use std::cell::RefCell;
 use std::sync::mpsc::Sender;
@@ -77,7 +77,7 @@ impl Window {
       display: Display::Flex,
       flex_direction: FlexDirection::Column,
       size: Size { width: percent(1.0), height: percent(1.0) },
-      ..Default::default()
+      ..base_style()
     }
   }
 
