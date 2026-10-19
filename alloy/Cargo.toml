@@ -125,4 +125,4 @@ libloading = "=0.8.9"
 [build-dependencies]
 # Compiles the vendored msdfgen core and the C shim over it (build.rs), the
 # glyph engine's distance-field generator; forge's pin.
-cc = "=1.6.0"
+cc = "=1.8.0"
