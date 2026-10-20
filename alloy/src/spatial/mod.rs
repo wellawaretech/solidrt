@@ -13,6 +13,7 @@
 // Node ids carry a generation and are never reused.
 
 mod bvh;
+mod clips;
 mod collide;
 mod cull;
 mod ik;
@@ -20,8 +21,8 @@ mod math;
 mod mover;
 mod normals;
 mod pick;
-mod players;
 mod residency;
+mod rig;
 mod springs;
 mod transitions;
 
@@ -43,14 +44,16 @@ pub use pick::{Hit, Shape, ShapeId};
 pub(crate) use collide::{segment_triangle, Query};
 // The linear narrowphase and the indexing threshold, for tests: the
 // brute-force path is the oracle the BVH path is checked against.
+pub use clips::{ChannelInterpolation, ChannelPath, ClipChannel, ClipId, ClipMarker, MarkerPhase};
 #[cfg(test)]
 #[cfg(test)]
 pub(crate) use pick::{ray_shape, BVH_MIN_TRIANGLES};
-pub use players::{
-  ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, ClipId, PlayerId, PlayerUpdate, PlayersTick, RootMotion,
-};
 pub use residency::{
   GridId, GridSpec, RegionEvent, RegionMargins, RegionRef, ResidencyStats, DEFAULT_RESIDENCY_BUDGET, VIEW_KEY_BASE,
+};
+pub use rig::{
+  AdditiveReference, ClipEvent, GroupId, LayerMode, LayerSpec, LayerUpdate, MaskId, PlayerId, PlayerSpec, PlayerUpdate,
+  PlayersTick, RestPose, RigId, RootMotion, SyncMode,
 };
 pub use springs::{
   SpringCollider, SpringId, SpringJoint, SpringJointUpdate, SpringShape, SpringsTick, SPRING_REFERENCE_STEP,
@@ -61,9 +64,12 @@ pub(crate) use springs::flow_step;
 // The damped limit clamp, for the look-at tests.
 #[cfg(test)]
 pub(crate) use ik::clamp_damped_for_test;
-// The pure sampler, for the differential tests.
+// The pure sampler, the marker walk and the rig's pure pieces, for the
+// tests.
 #[cfg(test)]
-pub(crate) use players::sample as sample_channel;
+pub(crate) use clips::{crossings as marker_crossings, sample as sample_channel};
+#[cfg(test)]
+pub(crate) use rig::{inertial_offset_for_test, sequence_for_test, step_time_for_test};
 pub use transitions::{
   Component, Lanes, MotionState, NodeEndpoint, NodeMotion, NodeTransitionConfig, NodeTransitionEntry,
 };
@@ -212,6 +218,11 @@ pub trait SinkWriter {
   /// A shared-slot group's array param, rewritten whole (slot sinks share
   /// one array value; see `SharedSlotSink`).
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool;
+  /// A rig curve's fresh value into a scalar param: of draw entry `draw`
+  /// on `target`, or a target-level param without one (see
+  /// `Spatial::bind_curve_param`). False drops the binding (the entry or
+  /// target is gone).
+  fn write_param(&mut self, target: u64, draw: Option<u64>, name: &str, value: f32) -> bool;
   /// One buffer's staged instance records: the coalesced dirty float range
   /// `[lo, hi)` plus `values`, the WHOLE staging mirror - so a writer that
   /// must publish the full record set (an ordered instance buffer gathers
@@ -813,6 +824,10 @@ struct Node {
   weights_slots: Vec<WeightsSlotSink>,
   /// In `weights_dirty` already.
   weights_queued: bool,
+  /// The node's declared rest pose (`set_rest`): what the animation rigs
+  /// compose over and the spring chains settle to. None = the pose as
+  /// it stands when something first needs a rest.
+  rest: Option<RestPose>,
   /// One per LOD level (one for a plain population); `record_level`
   /// names the one holding the pose, the others hold the hidden record.
   records: Vec<InstanceRecordSink>,
@@ -850,7 +865,8 @@ pub struct Spatial {
   /// The weights tracks' advance buffer, reused across frames.
   weights_scratch: Vec<f32>,
   transitions: NodeTransitions,
-  players: players::PlayerSet,
+  clips: clips::ClipSet,
+  rigs: rig::RigSet,
   springs: springs::SpringSet,
   ik: ik::IkSet,
   /// Per target, the clip volume its draw sinks are gated by, derived
@@ -984,6 +1000,7 @@ impl Spatial {
       weights: Vec::new(),
       weights_slots: Vec::new(),
       weights_queued: false,
+      rest: None,
       records: Vec::new(),
       record_level: 0,
       record_on: false,
@@ -2350,6 +2367,32 @@ impl Spatial {
     }
   }
 
+  /// Declare the node's rest pose (None clears it): the pose a rig over
+  /// the node composes its layers over and a spring chain on it settles
+  /// to. A rig or chain made before the declaration keeps the rest it
+  /// resolved at creation.
+  pub fn set_rest(&mut self, id: NodeId, rest: Option<RestPose>) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    if let Some(r) = &rest {
+      let finite = r.position.iter().chain(r.rotation.iter()).chain(r.scale.iter()).all(|v| v.is_finite());
+      if !finite || r.rotation.iter().map(|v| v * v).sum::<f32>() == 0.0 {
+        return Err("the rest pose must be finite with a non-zero rotation".to_string());
+      }
+    }
+    self.nodes[i as usize].rest = rest.map(|r| RestPose { rotation: transitions::quat_normalize(r.rotation), ..r });
+    Ok(())
+  }
+
+  /// The node's rest pose: its declaration, else the pose as it stands.
+  pub fn rest_of(&self, id: NodeId) -> Result<RestPose, String> {
+    let n = &self.nodes[self.resolve(id)? as usize];
+    Ok(n.rest.unwrap_or(RestPose {
+      position: n.position,
+      rotation: transitions::quat_normalize(n.rotation),
+      scale: n.scale,
+    }))
+  }
+
   /// Write the node's weights register (see `WeightsSlotSink`): staged to
   /// its weights rows at the next flush, and what `weights_of` reads back.
   /// An equal write is free.
@@ -3153,7 +3196,7 @@ impl Spatial {
     // same gap as its step (a one-shot clip started at mount finished on
     // the spot after a reload).
     if self.transitions.set_now(now_ms) {
-      self.players.last_ms = now_ms;
+      self.rigs.last_ms = now_ms;
       self.springs.last_ms = now_ms;
       self.ik.last_ms = now_ms;
     }
@@ -3683,6 +3726,8 @@ impl Spatial {
       }
       landed && group.refs > 0
     });
+    // The rigs' curve bindings: a changed curve value into its param.
+    self.flush_curve_sinks(out);
     // Instance staging publishes the same way: one coalesced dirty range
     // per buffer per flush, a group dropping with its last write.
     self.instances.retain(|buffer, group| {

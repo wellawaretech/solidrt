@@ -38,7 +38,7 @@ const DEFAULT_GRAVITY_POWER = 0
 const DEFAULT_GRAVITY_DIR: Vec3 = [0, -1, 0]
 const DEFAULT_HIT_RADIUS = 0
 /** The flux:spatial payload strides (createSpring). */
-const JOINT_FLOATS = 14
+const JOINT_FLOATS = 10
 const COLLIDER_FLOATS = 9
 const SHAPE_KIND = { sphere: 0, capsule: 1, plane: 2 } as const
 
@@ -127,13 +127,14 @@ type Chain = {
 }
 
 /** Where a setting sits in a joint's packed floats. */
-const JOINT_OFFSET = { stiffness: 7, drag: 8, gravityPower: 9, gravityDir: 10, hitRadius: 13 } as const
+const JOINT_OFFSET = { stiffness: 3, drag: 4, gravityPower: 5, gravityDir: 6, hitRadius: 9 } as const
 
 /**
  * Declare the model's spring bones. The model must be in a scene (the
  * chains bind to live core nodes; the declaration re-binds on every
- * scene enter). The chains start at rest under the pose as it stands at
- * the call. Every joint must be a node under the model; colliders
+ * scene enter). The chains start at rest - each bone's declared rest
+ * rotation (a model's file transform; else the rotation as it stands at
+ * the call) - under the pose as it stands at the call. Every joint must be a node under the model; colliders
  * and centers may be any node in the scene. Throws on a joint without a
  * tail (no child joint and a zero rest offset), a chain listing a child
  * before its parent joint, a setting out of range, or a node out of the
@@ -158,9 +159,8 @@ export function createSpringBones(model: Model, opts: SpringBonesOptions): Sprin
       let hitRadius = j.hitRadius ?? DEFAULT_HIT_RADIUS
       if (!(stiffness >= 0) || !(hitRadius >= 0)) throw new Error(where + ".joints[" + i + "]: stiffness and hitRadius must be >= 0")
       let g = j.gravityDir ?? DEFAULT_GRAVITY_DIR
-      let q = j.node.quaternion
       let at = i * JOINT_FLOATS
-      joints.set([tail[0], tail[1], tail[2], q[0], q[1], q[2], q[3], stiffness, drag, j.gravityPower ?? DEFAULT_GRAVITY_POWER, g[0], g[1], g[2], hitRadius], at)
+      joints.set([tail[0], tail[1], tail[2], stiffness, drag, j.gravityPower ?? DEFAULT_GRAVITY_POWER, g[0], g[1], g[2], hitRadius], at)
       // The core poses the joint: its JS mirror is stale from here on.
       j.node._native = true
     })

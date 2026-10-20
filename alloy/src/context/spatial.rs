@@ -97,6 +97,15 @@ impl SinkWriter for Writer<'_> {
     self.landed(self.ctx.set_target_params(target, &[(name.to_string(), ParamValue::Array(values.to_vec()))]))
   }
 
+  // A rig curve into a scalar param: an entry's, or the target's own.
+  fn write_param(&mut self, target: u64, draw: Option<u64>, name: &str, value: f32) -> bool {
+    let params = [(name.to_string(), ParamValue::Scalar(value))];
+    match draw {
+      Some(d) => self.landed(self.ctx.set_draw_params(target, d, &params)),
+      None => self.landed(self.ctx.set_target_params(target, &params)),
+    }
+  }
+
   // An instance-record staging publish. A plain buffer takes the dirty
   // range through the ordinary partial write (bounds-checked there against
   // the buffer's size); an ordered instance buffer publishes the whole

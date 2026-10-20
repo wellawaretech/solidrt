@@ -226,6 +226,13 @@ let document = {
   animations: [
     {
       name: "move",
+      extras: {
+        markers: [
+          { time: 1.5, name: "hit", data: { power: 2 } },
+          { time: 0.25, name: "swing", duration: 1 },
+        ],
+        curves: [{ name: "grip", times: [0, 2, 3], values: [0, 1, 0.5] }],
+      },
       channels: [
         { sampler: 0, target: { node: 0, path: "translation" } },
         { sampler: 1, target: { node: 4, path: "rotation" } },
@@ -441,6 +448,13 @@ let sameModel = (a: ModelData, b: ModelData, label: string, images: "named" | "b
       if (x.node !== y.node || x.path !== y.path || x.interpolation !== y.interpolation) fail(`${label}: clip ${i} channel ${k} header`)
       if (x.times.join() !== y.times.join() || x.values.join() !== y.values.join()) fail(`${label}: clip ${i} channel ${k} data`)
     }
+    if (JSON.stringify(c.markers) !== JSON.stringify(d.markers)) fail(`${label}: clip ${i} markers`)
+    if ((c.curves ?? []).length !== (d.curves ?? []).length) fail(`${label}: clip ${i} curve count`)
+    for (let k = 0; k < (c.curves ?? []).length; k++) {
+      let x = c.curves![k]!, y = d.curves![k]!
+      if (x.name !== y.name || (x.interpolation ?? "linear") !== (y.interpolation ?? "linear")) fail(`${label}: clip ${i} curve ${k} header`)
+      if (x.times.join() !== y.times.join() || x.values.join() !== y.values.join()) fail(`${label}: clip ${i} curve ${k} data`)
+    }
   }
   if (a.images.length !== b.images.length || a.images.some((img, i) => img.bytes.join() !== b.images[i]!.bytes.join())) fail(`${label}: images`)
   if (images === "named" && a.images.some((img, i) => img.name !== b.images[i]!.name)) fail(`${label}: image names`)
@@ -630,7 +644,13 @@ test("clips and sampling: linear, slerp, step, cubic", () => {
   if (model.clips.map((c) => c.name).join() !== "move,bounce") fail(`clips: ${model.clips.map((c) => c.name).join()}`)
   let move = model.clips[0]!
   let bounce = model.clips[1]!
-  if (!near(move.duration, 2) || !near(bounce.duration, 2)) fail(`clip durations: ${move.duration}, ${bounce.duration}`)
+  // A curve's last key extends the clip (3 s against the channels' 2).
+  if (!near(move.duration, 3) || !near(bounce.duration, 2)) fail(`clip durations: ${move.duration}, ${bounce.duration}`)
+  // Markers and curves come from the animation's extras, as authored.
+  if (JSON.stringify(move.markers) !== JSON.stringify([{ time: 1.5, name: "hit", data: { power: 2 } }, { time: 0.25, name: "swing", duration: 1 }])) fail(`move markers: ${JSON.stringify(move.markers)}`)
+  if (move.curves?.length !== 1 || move.curves[0]!.name !== "grip" || move.curves[0]!.interpolation !== "linear") fail(`move curves: ${JSON.stringify(move.curves)}`)
+  if (move.curves[0]!.times.join() !== "0,2,3" || move.curves[0]!.values.join() !== "0,1,0.5") fail("move curve data")
+  if (bounce.markers !== undefined || bounce.curves !== undefined) fail("bounce has no extras")
   // The weights channel targets a node WITHOUT morph targets, so it has
   // nothing to weigh and is skipped; the other three are kept, their
   // targets remapped to the compact node table.

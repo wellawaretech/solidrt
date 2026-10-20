@@ -20,7 +20,7 @@
 // one time track share theirs. decodeModel restores the same identities
 // (one view per block), so the runtime uploads shared bytes once.
 
-import type { ModelChannel, ModelData, ModelExtras, ModelImage, ModelMaterial, ModelNode, ModelSkin } from "./gltf.ts"
+import type { ModelChannel, ModelClip, ModelData, ModelExtras, ModelImage, ModelMarker, ModelMaterial, ModelNode, ModelSkin } from "./gltf.ts"
 import { layoutStride, vertexView, VERTEX_FORMATS } from "./geometry.ts"
 import type { VertexAttribute } from "@solidrt/core/gpu"
 import type { Geometry, MorphTargets, VertexLayout } from "./geometry.ts"
@@ -61,7 +61,10 @@ const MAGIC = 0x4d4c4f53
 // Version 11 names the images: an image record is its block and the
 // image's name (ModelImage.name), which labels its texture. A
 // version-10 file has blocks alone and is rejected the same way.
-const VERSION = 11
+// Version 12 adds a clip's markers (JSON on the clip header) and curves
+// (named float tracks, blocks like channels). A version-11 file has
+// neither and is rejected like every earlier version.
+const VERSION = 12
 
 // The named layouts the container writes by name; a custom attribute-list
 // layout (a skinned primitive with COLOR_0, a withAttribute channel) is
@@ -122,7 +125,9 @@ type ChannelHeader = {
   values: Block
 }
 
-type ClipHeader = { name: string; duration: number; channels: ChannelHeader[] }
+type CurveHeader = { name: string; interpolation: ModelChannel["interpolation"]; times: Block; values: Block }
+
+type ClipHeader = { name: string; duration: number; channels: ChannelHeader[]; markers?: ModelMarker[]; curves?: CurveHeader[] }
 
 type Header = {
   nodes: ModelNode[]
@@ -206,17 +211,24 @@ export function encodeModel(data: ModelData): Uint8Array {
   let images: ImageHeader[] = data.images.map((image) => ({ ...push(image.bytes), name: image.name }))
   let floats = (f: Float32Array): Block => pushOnce(f)
   let skins: SkinHeader[] = data.skins.map((skin) => ({ joints: skin.joints, inverseBind: floats(skin.inverseBind), jointBounds: floats(skin.jointBounds) }))
-  let clips: ClipHeader[] = data.clips.map((clip) => ({
-    name: clip.name,
-    duration: clip.duration,
-    channels: clip.channels.map((c) => ({
-      node: c.node,
-      path: c.path,
-      interpolation: c.interpolation,
-      times: floats(c.times),
-      values: floats(c.values),
-    })),
-  }))
+  let clips: ClipHeader[] = data.clips.map((clip) => {
+    let header: ClipHeader = {
+      name: clip.name,
+      duration: clip.duration,
+      channels: clip.channels.map((c) => ({
+        node: c.node,
+        path: c.path,
+        interpolation: c.interpolation,
+        times: floats(c.times),
+        values: floats(c.values),
+      })),
+    }
+    if (clip.markers !== undefined && clip.markers.length > 0) header.markers = clip.markers
+    if (clip.curves !== undefined && clip.curves.length > 0) {
+      header.curves = clip.curves.map((c) => ({ name: c.name, interpolation: c.interpolation ?? "linear", times: floats(c.times), values: floats(c.values) }))
+    }
+    return header
+  })
   let header: Header = { nodes: data.nodes, materials: data.materials, images, geometries, parts, skins, clips, bounds: Array.from(data.bounds) }
   if (data.extras !== undefined) header.extras = data.extras
   if (data.blobs !== undefined) {
@@ -312,17 +324,22 @@ export function decodeModel(bytes: Uint8Array): ModelData {
   let images: ModelImage[] = header.images.map((image) => ({ bytes: new Uint8Array(buffer, payload + image.offset, image.bytes), name: image.name }))
   let floats = (block: Block): Float32Array => viewAt(block, () => new Float32Array(buffer, payload + block.offset, block.bytes / 4))
   let skins: ModelSkin[] = header.skins.map((skin) => ({ joints: skin.joints, inverseBind: floats(skin.inverseBind), jointBounds: floats(skin.jointBounds) }))
-  let clips = header.clips.map((clip) => ({
-    name: clip.name,
-    duration: clip.duration,
-    channels: clip.channels.map((c) => ({
-      node: c.node,
-      path: c.path,
-      interpolation: c.interpolation,
-      times: floats(c.times),
-      values: floats(c.values),
-    })),
-  }))
+  let clips = header.clips.map((clip) => {
+    let out: ModelClip = {
+      name: clip.name,
+      duration: clip.duration,
+      channels: clip.channels.map((c) => ({
+        node: c.node,
+        path: c.path,
+        interpolation: c.interpolation,
+        times: floats(c.times),
+        values: floats(c.values),
+      })),
+    }
+    if (clip.markers !== undefined) out.markers = clip.markers
+    if (clip.curves !== undefined) out.curves = clip.curves.map((c) => ({ name: c.name, interpolation: c.interpolation, times: floats(c.times), values: floats(c.values) }))
+    return out
+  })
   let data: ModelData = { nodes: header.nodes, parts, skins, clips, materials: header.materials, images, bounds: Float32Array.from(header.bounds) }
   if (header.extras !== undefined) data.extras = header.extras
   if (header.blobs !== undefined) {

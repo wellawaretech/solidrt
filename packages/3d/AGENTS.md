@@ -2910,35 +2910,131 @@ their own formats, positions and normals as floats.
 
 ### Animation
 
-Animation: `createMixer(model)` plays `model.clips` by name -
-`mixer.play(name, { loop?, speed?, fadeMs? })` (fadeMs crossfades: the
-named clip fades in, everything else fades out - Unity's CrossFade,
-Godot's play-with-blend), `mixer.stop({ fadeMs? })`, `mixer.playing()`,
-`mixer.onFinish` for `loop: false` clips (the pose holds at the end).
+Animation: `createMixer(model)` plays `model.clips` by name through
+the spatial core's RIG - the core's animation state for one model
+(Unity's Animator, Godot's AnimationMixer, Unreal's AnimInstance): the
+joint table, the rest pose, ordered layers, the players on them and
+the sync groups. `mixer.play(name, { loop?, speed?, fadeMs?, blend?,
+layer?, mask?, start?, end?, time?, weight?, exclusive?, fadeOutMs?,
+additiveReference?, inPlace? })`, `mixer.stop({ fadeMs?, layer? })`,
+`mixer.playing(layer?)`, `mixer.onFinish(name, layer)` for `loop: false`
+clips (the pose holds at the end), `onLoop(name, layer)` on every wrap.
 Playback is CORE-DRIVEN: there is no update() and no frame loop to
-register - clips are registered with the spatial core once and players
-sample, weight-blend and write joint TRS natively each frame, so a
-playing character costs zero JS per frame (gate other work on
-`mixer.playing()`). play() requires the model to be IN a scene (players
-bind live arena nodes; removing the model drops them - a re-added model
-plays again from play()). The players run on the model node's time:
+register - clips are registered with the spatial core once and the rig
+samples, blends and writes joint TRS natively each frame, so a playing
+character costs zero JS per frame (gate other work on
+`mixer.playing()`). play() requires the model to be IN a scene (the rig
+binds live arena nodes; removing the model drops it - a re-added model
+plays again from play()). The rig runs on the model node's time:
 `setTimeScale(model, 0)` (or on any ancestor, the scene root included)
-pauses every clip and crossfade of the model where it stands and resumes
-it from there - Three's `mixer.timeScale`, Unity's `Animator.speed`
-under `Time.timeScale` (see Retargeted motion). Three traps that follow from core ownership:
-(1) players advance BEFORE your onFrame, which is therefore the
-post-animation hook - read a freshly posed joint and overwrite it
-(root-motion strips, skeleton copies) in plain setTransform, last write
-wins, all published by the same flush; (2) the JS
-`position`/`quaternion` fields of player-animated joints (and of the
-model node under root motion "apply") go STALE (they hold the last JS
-write) - read poses with `getTransform(node)`, which reads the core;
-writes to such a node always go through (setTransform skips its
-usual equal-value short-circuit there, so a teleport back to the last
-JS-written spot is not lost); (3) a channel nothing plays leaves the node's pose
-alone; the draw sort follows native pose writes like any move (the core
-re-keys what it recomputed), so an animated transparent sorts as it
-animates.
+pauses every clip, fade and transition of the model where it stands
+and resumes it from there - Three's `mixer.timeScale`, Unity's
+`Animator.speed` under `Time.timeScale` (see Retargeted motion).
+
+THE BLEND, per joint and per layer in order (what every engine's tree
+flattens to; `okf/done/3d-animation-layers.md` has the reasoning):
+the BASE layer's players blend over the REST pose - their weights
+normalized when they sum to one or more, and below one the rest shows
+through for the remainder, so `stop({ fadeMs })` fades to rest instead
+of popping, and a player lacking a channel another player on its layer
+animates contributes rest for it (no snap when clips of different
+coverage crossfade); each higher "override" layer composes its own
+blend OVER the result by its weight times its mask's share per joint;
+each "additive" layer adds its players' deltas. A joint no player on
+any layer animates keeps its pose. LAYERS: `createMixer(model, {
+layers: { aim: { mode: "override", mask: { include: [{ node: "spine",
+subtree: true }] } }, hit: { mode: "additive" } } })` or
+`mixer.layer(name, opts)` (ordered by first declaration; the base is
+"base"), `play(name, { layer })`, `setLayerWeight(name, w, { fadeMs })`
+ramped in core (an aim switched on and off with no per-frame JS; a
+layer at 0 costs no sampling), `removeLayer(name)`. MASKS (Unity's
+AvatarMask, Godot's filters, Unreal's blend masks): `{ include?,
+exclude?, soft? }` of joints by node or name, `subtree: true` taking
+every joint under one (the spine-up mask is ONE entry), `soft: [{
+node, share }]` for a partial share (a 0.5 on the shoulder so the mask
+does not crease); per layer, or per play (`play(name, { mask })`, the
+two multiply). ADDITIVE clips are turned into deltas against a
+reference once, in core, and cached: `additiveReference` "first" (the
+clip's own first frame, the default - author the flinch from the
+pose it leaves), "rest", or `{ clip, time }`; positions add, rotations
+compose, scales multiply, morph weights and curves add, the weight
+slerping the delta from identity. A ONE-SHOT on a layer: `play(name, {
+layer: "hit", loop: false, fadeOutMs: 150 })` fades out before its end
+in core and returns to what is under it (Godot's OneShot, Unreal's
+montage blend-out), onFinish still firing at the end.
+
+TRANSITIONS blend two ways. `fadeMs` with the default `blend:
+"crossfade"` fades the clip in and the others on its layer out (both
+sampled meanwhile - Unity's CrossFade, Godot's play-with-blend). `blend:
+"inertial"` is Unreal's inertialization: the clip starts at full weight
+at once and the core decays the pose's offset from where it was, with
+its velocity, on a quintic that lands with zero velocity and never
+overshoots - one sample per frame, no averaging of two cycles, so it
+is THE transition for locomotion (walk to run, run to crouch) and the
+one that hides any jump (`mixer.inertialize(ms)` before a seek, a
+group change or a layer switched on). SYNC GROUPS (Unreal's; Unity's
+blend-tree time warp): `mixer.group(name, ["walk", "run"], { sync?:
+"time" | "markers" })` keeps the named clips in phase whenever they
+play together - the heaviest leads, the others follow its normalized
+time, or the markers common to every clip (left and right foot plants)
+with `sync: "markers"` - so a walk-run blend does not foot-slide.
+`createBlendSpace(mixer, { samples: [{ clip: "walk", position: 1.5 },
+{ clip: "run", position: 4 }], layer?, sync?, fadeMs? })` is the
+weight policy over such a group: 1D between neighbours, 2D by
+Delaunay triangles (Godot's blend spaces, Unity's blend trees), `set(
+position)` a few weight writes, nothing per frame; `play(name, {
+weight, exclusive: false })` and `setWeight(name, w, { fadeMs })` are
+the pieces it is made of. SUBCLIPS: `play(name, { start, end })` in
+seconds (Three's subclip, Godot's play_section) - the time stays
+within the window, loops within it, finishes at `end`; `time(name)`
+reads a playing clip's time, `seek(name, t)` scrubs (clamped),
+`setSpeed(name, s)` retimes. MARKERS (Unity's AnimationEvent, Unreal's
+notifies and notify states, Godot's markers): `ModelClip.markers`
+from the file (a glTF animation's `extras.markers: [{ time, name,
+duration?, data? }]`, kept by the `sol tool 3d/model` bake) or
+`mixer.markers(clip, list)`; the core fires `mixer.onMarker({ clip,
+name, phase, time, data?, weight, layer })` when a player crosses one -
+once per crossing however long the frame, loop wraps and reverse play
+included, with the player's effective weight so you threshold a
+footstep at 0.01 yourself; a marker with `duration` is a WINDOW
+(`phase` "begin"/"end", the end also fired on a stop, a drop or a
+finish inside it; `mixer.inside(clip, name)` reads it), a seek fires
+none of the instants it jumps over but ends the windows it leaves and
+begins those it lands in. CURVES (Unreal's animation curves): a clip's
+named float tracks (`ModelClip.curves`, a glTF animation's
+`extras.curves: [{ name, times, values, interpolation? }]`) blend like
+the pose into `mixer.curve(name)`, drive an IK solver's weight in
+core (`ik.setWeight(i, { mixer, curve: "footPlant" })`) and drive a
+SHADER PARAM in core: `mixer.bindCurve("glow", mesh, "uGlow")` routes
+the curve into that scalar param of every entry the mesh draws with
+its material, `mixer.bindCurve("exposure", scene, "uExposure")` into a
+scene-wide param, written at the flush whenever the value changed (the
+way uModel reaches an entry), kept across re-enters; `unbindCurve`
+removes it. The rest pose the layers compose over is each joint's
+DECLARED rest (a model's file transform, published to the core at
+every scene enter; the spring chains settle to the same), else the
+pose when the rig is made. A rig over any nodes, for clips authored in
+code: `createMixer({ root, nodes, clips, rest? })` with channels
+indexing `nodes` (`rest` declares the nodes' rest); `mixer.dispose()`
+frees it.
+
+Three traps that follow from core ownership: (1) the rig advances
+BEFORE your onFrame, which is therefore the post-animation hook - read
+a freshly posed joint and overwrite it (skeleton copies, a procedural
+tweak) in plain setTransform, last write wins, all published by the
+same flush; (2) the JS `position`/`quaternion` fields of rig-animated
+joints (and of the model node under root motion "apply") go STALE
+(they hold the last JS write) - read poses with `getTransform(node)`,
+which reads the core; writes to such a node always go through
+(setTransform skips its usual equal-value short-circuit there, so a
+teleport back to the last JS-written spot is not lost); (3) a channel
+nothing plays leaves the node's pose alone, and an additive delta on a
+joint no override layer animates applies over the REST pose; the draw
+sort follows native pose writes like any move (the core re-keys what
+it recomputed), so an animated transparent sorts as it animates. Not
+here, additive when wanted: model-space blends (Unreal's mesh-space
+additive for aim offsets under a bent spine), culling of off-screen
+rigs, humanoid joint naming and mirroring.
 
 ### Root motion
 
@@ -2952,7 +3048,10 @@ root's position track - last key minus first, past a fraction of the
 model's height - so run cycles play in place and a taunt that roams and
 returns does not (pinning THOSE pushes the slide into the feet);
 `mixer.travels(name)` reads the verdict. The root is the topmost node
-any position channel of the clip targets. The strip is baked into a
+any position channel of the clip targets, provided the clip animates
+something beneath it too: a clip translating one lone joint (a sliding
+prop, a test track) has no root and is never pinned, and an additive
+clip is never pinned either (its deltas carry no travel). The strip is baked into a
 second core clip on first in-place play, so it costs no per-frame JS and
 crossfades like any other clip. A GAME wants the travel kept and moved
 onto the character: `createMixer(model, { rootMotion: "apply" |
@@ -2967,8 +3066,11 @@ applyRootMotion: the character walks and turns where its clip says),
 (`{ position, yaw }`), for a controller to spend through its own
 movement (Godot's get_root_motion_position). Zero per-frame JS in
 "apply"; one read per frame in "report". Loop wraps are continuous
-(the clip's net drift is added across the wrap), crossfades weight the
-deltas like the poses, and a clip's travel is given in the root's
+(the clip's net drift is added across the wrap), the deltas are
+weighted by the player's EFFECTIVE weight (its own times its layer's
+times the root's mask share: a legs-only base keeps the travel, an
+upper-body override contributes none, an additive clip never does), and
+a clip's travel is given in the root's
 CURRENT facing (its own turn so far undone), so a turn that wanders
 out and back ends where the clip says and two blending clips agree on
 the frame. The object form `{ mode, up?, vertical? }` names the root's
@@ -2997,7 +3099,10 @@ virtual tail for a leaf), `colliders` indices into the options' list of
 in the collider node's space; `inside` keeps the tails WITHIN a sphere
 or capsule, a skirt around the legs), and `center` the node whose space
 the chain is solved in (its own motion then does not swing the chain -
-VRM's center; default world space). The handle has `reset()` (every
+VRM's center; default world space). A bone turns from its DECLARED
+rest rotation (a model's file transform, published at every scene
+enter: the same rest a mixer's layers compose over), else from its
+rotation at the call. The handle has `reset()` (every
 tail back at rest under the current pose, what a teleport wants),
 `setJoint(chain, joint, { stiffness?, drag?, gravityPower?,
 gravityDir?, hitRadius? })` (the AUTHORED settings, for tuning and

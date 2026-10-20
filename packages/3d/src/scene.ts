@@ -67,7 +67,7 @@ import type { EnvironmentOptions, Prefilter } from "./environment.ts"
 export type { EnvironmentOptions } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTimeScale, setTransition, timeRate, worldInto } from "./node.ts"
-import type { SceneHooks, SceneNode, ScenePointerListener } from "./node.ts"
+import type { SceneHooks, SceneNode, ScenePointerListener, CurveBinding } from "./node.ts"
 import { checkInstancePairing, checkMask, checkOrderPairing, drawCount, instanceBinding, localBounds, markLiveRecords, publishRecords, spriteScreenPx } from "./mesh.ts"
 import type { InstancedMesh, InstanceNode, Mesh, MeshInstances, ResolvedInstanceOrder } from "./mesh.ts"
 import type { CastingLight, Light } from "./light.ts"
@@ -1692,6 +1692,27 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // Created when the scene mask admits the mesh, dropped when it stops:
   // the same lifecycle a view entry has, so `_buffers` (not `_entry`) is
   // the attached-to-the-scene sentinel.
+  // Mixer curves routed into a mesh's scalar params (Mixer.bindCurve):
+  // applied to every entry the mesh has and gets, through the core's
+  // curve sinks (one per entry); a binding whose mixer has no rig yet
+  // waits for the mixer to re-apply it.
+  let curveBindings = new Map<Mesh, CurveBinding[]>()
+  let applyCurve = (mesh: Mesh, b: CurveBinding, on: boolean) => {
+    let rig = b.mixer._rig
+    if (rig === null) return
+    let route = (t: TextureId, entry: DrawId) => (on ? spatial.bindCurveParam(rig, b.curve, t, b.param, entry) : spatial.unbindCurveParam(rig, b.curve, t, entry))
+    if (mesh._entry !== null) route(texture, mesh._entry)
+    for (let v of views) {
+      let entry = v.entries.get(mesh)
+      if (entry !== undefined && v.override === null) route(v.texture, entry)
+    }
+  }
+  let applyCurves = (mesh: Mesh, entryTexture: TextureId, entry: DrawId) => {
+    for (let b of curveBindings.get(mesh) ?? []) {
+      let rig = b.mixer._rig
+      if (rig !== null) spatial.bindCurveParam(rig, b.curve, entryTexture, b.param, entry)
+    }
+  }
   let attachScene = (mesh: Mesh) => {
     if (mesh._entry !== null) return
     if ((mesh.layers & sceneMask) === 0) return
@@ -1730,9 +1751,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // engine-side order registry was just (re)built empty, and only a
     // full publish seeds the gathered buffer and the retained copy.
     if (order !== null) markLiveRecords(mesh)
+    if (mesh._entry !== null) applyCurves(mesh, texture, mesh._entry)
   }
   let detachScene = (mesh: Mesh) => {
     if (mesh._entry === null) return
+    for (let b of curveBindings.get(mesh) ?? []) if (b.mixer._rig !== null) spatial.unbindCurveParam(b.mixer._rig, b.curve, texture, mesh._entry)
     if (mesh._node !== null) spatial.unbindDraw(mesh._node, texture)
     if (!disposed) removeDraw(texture, mesh._entry)
     mesh._entry = null
@@ -1787,12 +1810,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     })
     spatial.bindDraw(mesh._node!, v.texture, entry, drawBinding(material, mesh, inst))
     v.entries.set(mesh, entry)
+    if (v.override === null) applyCurves(mesh, v.texture, entry)
   }
   let detachView = (v: ViewRecord, mesh: Mesh) => {
     v.skipped.delete(mesh)
     let entry = v.entries.get(mesh)
     if (entry === undefined) return
     v.entries.delete(mesh)
+    for (let b of curveBindings.get(mesh) ?? []) if (b.mixer._rig !== null) spatial.unbindCurveParam(b.mixer._rig, b.curve, v.texture, entry)
     if (mesh._node !== null) spatial.unbindDraw(mesh._node, v.texture)
     if (!v.disposed) removeDraw(v.texture, entry)
   }
@@ -2350,6 +2375,22 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         let entry = v.entries.get(mesh)
         if (entry !== undefined && v.override === null) setDrawParams(v.texture, entry, params)
       }
+    },
+    _bindCurve(mesh, binding) {
+      if (disposed) return
+      let list = curveBindings.get(mesh)
+      if (list === undefined) curveBindings.set(mesh, (list = []))
+      if (!list.includes(binding)) list.push(binding)
+      if (mesh._buffers !== null) applyCurve(mesh, binding, true)
+    },
+    _unbindCurve(mesh, binding) {
+      let list = curveBindings.get(mesh)
+      if (list === undefined) return
+      let i = list.indexOf(binding)
+      if (i < 0) return
+      list.splice(i, 1)
+      if (list.length === 0) curveBindings.delete(mesh)
+      if (mesh._buffers !== null && !disposed) applyCurve(mesh, binding, false)
     },
     _setCount(mesh) {
       // The core composes the count with the visibility switch: a hidden

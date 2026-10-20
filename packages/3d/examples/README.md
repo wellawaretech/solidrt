@@ -35,6 +35,15 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   planted on a sloped floor from ground rays the core casts on the
   floor's collider layer, the hips dropping for the lower foot; the only
   per-frame JS moves the targets.
+- `animation-layers.tsx` - the mixer's layered model, composed in core
+  (`createMixer` layers, `createBlendSpace`): a walk-run blend space in
+  a marker-synced group on the base (the plants land together at any
+  mix), an upper-body `aim` on a masked override layer faded in and out
+  in core, a `flinch` one-shot on an additive layer fading out before
+  its end, a crouch taken through an inertial transition, foot-plant
+  markers counted by `onMarker`, and a clip curve driving a lookAt
+  solver's weight so the head turns mid-cycle; the script is a few
+  timers, nothing per frame.
 - `exits.tsx` - lifecycle animation on nodes: crates that pop in
   (`from`) and shrink away (`exit`, an ease-in of its own) when tapped,
   the component unmount being the `destroy` the exit rides on, a ghost

@@ -56,12 +56,6 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
-- **[Animation layers - masks, additive blending, subclips and markers in the core players](plans/3d-animation-layers.md)** [2026-10-20]
-  The clip players grow Unity's layer model (ordered layers with a weight, an
-  override or additive mode and a bone mask; Godot's Blend2/Add2 with filters,
-  Three's additive actions), subclip windows and time markers fired as events,
-  all evaluated in the spatial core so "aim while running", a flinch over a
-  walk, a trimmed clip and a footstep on frame 12 cost zero per-frame JS.
 - **[Occlusion culling in the spatial core's cull pass](plans/3d-occlusion-culling.md)** [2026-10-20]
   Authored occluders rasterized to a small CPU depth buffer per target on the
   sort thread, every node's world box tested against it in the flush's cull
@@ -1129,6 +1123,15 @@ Finished, kept for the reasoning.
   top-level headings across 1910 lines, with individual APIs documented inside
   multi-hundred-word paragraphs, so finding one prop means grepping the source
   instead.
+- **[Animation layers - a rig in the core with layers, masks, additive deltas, inertial blends, sync groups, windows, markers and curves](done/3d-animation-layers.md)** [2026-10-20]
+  The clip players grow into a rig per model (Unity's Animator, Godot's
+  AnimationMixer, Unreal's AnimInstance, ozz's pose buffer) that composes
+  ordered override and additive layers over the rest pose with shared bone
+  masks, bakes additive deltas once, blends transitions by crossfade or
+  inertialization, syncs cycles in groups, enforces subclip windows and fires
+  markers, windows and curves, all evaluated in the spatial core so "aim while
+  running", a flinch over a walk, a walk-to-run blend space, a trimmed clip
+  and a footstep on frame 12 cost zero per-frame JS.
 - **[A 3d camera cannot be told to go somewhere, or to frame something](done/3d-camera-glide-and-fit.md)** [2026-09-11]
   createOrbitCamera and createFirstPersonCamera move only by input deltas and
   snapping set(), so "show me this object" and "return to the default view"
@@ -2939,6 +2942,13 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   The decisions behind createCamera2d, each against Godot's Camera2D, Unity's
   Cinemachine and Three's MapControls (plus the map/whiteboard libraries for
   the canvas half), and the traps met building and verifying it.
+- **[What the animation rig found](notes/3d-animation-layers-findings.md)** [2026-10-20]
+  Facts that hold without the animation-layers plan - the Gears of War
+  inertialization quintic front-loads its decay and needs the overshoot cap, a
+  marker window is a state a seek must close and open, a binding's mask-share
+  cache must refresh before the root-motion pass, a core call that adds motion
+  must request a frame, and a sync group's leader must be copied out before
+  its followers are written.
 - **[Where a native 3D layer can beat the browser libraries](notes/3d-differentiators.md)** [2026-08-05]
   Both halves of the Three.js comparison beyond feature count - where solidrt
   can end up ahead, and where it loses. Retained draw list makes per-frame

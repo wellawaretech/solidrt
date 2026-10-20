@@ -27,7 +27,6 @@ fn joint(node: u64, drag: f32, gravity_power: f32, hit_radius: f32) -> SpringJoi
   SpringJoint {
     node,
     tail: [0.0, -BONE, 0.0],
-    rest_rotation: Q,
     stiffness: 1.0,
     drag,
     gravity_power,

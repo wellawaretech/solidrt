@@ -32,6 +32,10 @@ impl SinkWriter for Sink {
   fn write_shared(&mut self, _: u64, _: &str, _: &[f32]) -> bool {
     true
   }
+  fn write_param(&mut self, _: u64, _: Option<u64>, _: &str, _: f32) -> bool {
+    true
+  }
+
   fn write_instances(&mut self, _: u64, _: u32, _: u32, _: &[f32]) -> bool {
     true
   }
@@ -534,7 +538,6 @@ fn a_spring_hanging_from_a_solved_bone_lags_it_in_the_same_frame() {
   let joint = |node| SpringJoint {
     node,
     tail: [0.0, -0.1, 0.0],
-    rest_rotation: Q,
     stiffness: 1.0,
     drag: 0.4,
     gravity_power: 0.0,

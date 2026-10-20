@@ -207,11 +207,39 @@ export type ModelChannel = {
 
 /** One named animation: baked channels over the model's nodes - what the
  * mixer plays and what animation-core will consume. */
+/** A time marker on a clip (Unity's AnimationEvent, Unreal's notify,
+ * Godot's marker), fired by the mixer as the player crosses `time`; with
+ * a `duration` above 0 a window (Unreal's notify state) with a begin and
+ * an end. `data` rides along to the event. A glTF carries them in the
+ * animation's `extras.markers`. */
+export type ModelMarker = {
+  time: number
+  name: string
+  duration?: number
+  data?: unknown
+}
+
+/** A named float track on a clip (Unreal's animation curves): sampled
+ * and blended like the pose into the mixer's curves (`mixer.curve`),
+ * bindable to an IK solver's weight. One value per key (three for
+ * "cubic", the channel layout). A glTF carries them in the animation's
+ * `extras.curves`. */
+export type ModelCurve = {
+  name: string
+  interpolation?: ModelChannel["interpolation"]
+  times: Float32Array
+  values: Float32Array
+}
+
 export type ModelClip = {
   name: string
   /** Seconds: the largest key time over the channels. */
   duration: number
   channels: ModelChannel[]
+  /** The clip's markers (none when absent). */
+  markers?: ModelMarker[]
+  /** The clip's float curves (none when absent). */
+  curves?: ModelCurve[]
   /** @internal The core clip id once a mixer registered it; freed by
    * model.dispose. */
   _core?: number
@@ -1307,7 +1335,16 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       if (input.count > 0) duration = Math.max(duration, input.data[input.count - 1]!)
       channels.push({ node: materialize(pending), path, interpolation, times: input.data, values: output.data })
     }
-    return { name: clipName, duration, channels }
+    let clip: ModelClip = { name: clipName, duration, channels }
+    let markers = clipMarkers(anim.extras, clipName)
+    if (markers !== undefined) clip.markers = markers
+    let curves = clipCurves(anim.extras, clipName)
+    if (curves !== undefined) {
+      clip.curves = curves
+      for (let c of curves) if (c.times.length > 0) duration = Math.max(duration, c.times[c.times.length - 1]!)
+      clip.duration = duration
+    }
+    return clip
   })
 
   // Nothing grew the box (no parts, or skinned parts whose weights reach
@@ -1322,6 +1359,35 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
 /** An object's glTF `extras` as a JSON object, or undefined when absent,
  * not an object, or empty - so the field appears only where there is
  * data. */
+/** An animation's `extras.markers`: `[{ time, name, duration?, data? }]`
+ * (seconds), authored by an exporter or a script. */
+function clipMarkers(extras: any, clip: string): ModelMarker[] | undefined {
+  let list = extras?.markers
+  if (!Array.isArray(list)) return undefined
+  return list.map((m: any, i: number): ModelMarker => {
+    if (typeof m?.time !== "number" || typeof m?.name !== "string") throw new Error("parseGltf: animation " + clip + " extras.markers[" + i + "] needs a numeric time and a name")
+    let out: ModelMarker = { time: m.time, name: m.name }
+    if (typeof m.duration === "number") out.duration = m.duration
+    if (m.data !== undefined) out.data = m.data
+    return out
+  })
+}
+
+/** An animation's `extras.curves`: `[{ name, times, values,
+ * interpolation? }]` (seconds and one value per key, plain arrays). */
+function clipCurves(extras: any, clip: string): ModelCurve[] | undefined {
+  let list = extras?.curves
+  if (!Array.isArray(list)) return undefined
+  return list.map((c: any, i: number): ModelCurve => {
+    let where = "parseGltf: animation " + clip + " extras.curves[" + i + "]"
+    if (typeof c?.name !== "string" || !Array.isArray(c.times) || !Array.isArray(c.values)) throw new Error(where + " needs a name, times and values")
+    let interpolation: ModelChannel["interpolation"] = c.interpolation === "step" ? "step" : c.interpolation === "cubic" ? "cubic" : "linear"
+    let perKey = interpolation === "cubic" ? 3 : 1
+    if (c.values.length !== c.times.length * perKey) throw new Error(where + " has " + c.values.length + " values for " + c.times.length + " keys")
+    return { name: c.name, interpolation, times: Float32Array.from(c.times), values: Float32Array.from(c.values) }
+  })
+}
+
 function extrasOf(owner: any): ModelExtras | undefined {
   let extras = owner?.extras
   if (typeof extras !== "object" || extras === null || Array.isArray(extras)) return undefined

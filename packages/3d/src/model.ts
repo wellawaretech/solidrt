@@ -296,6 +296,9 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   let groups: SceneNode[] = data.nodes.map((n) => {
     let group = createGroup()
     setTransform(group, { position: n.position, quaternion: n.rotation, scale: n.scale })
+    // The file's transform is the node's rest pose: what a mixer's
+    // layers compose over and a spring chain settles to.
+    group._rest = Float32Array.from([...n.position, ...n.rotation, ...n.scale])
     return group
   })
   data.nodes.forEach((n, i) => add(n.parent === null ? model : groups[n.parent]!, groups[i]!))

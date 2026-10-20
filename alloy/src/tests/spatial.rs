@@ -19,6 +19,7 @@ pub(super) enum Write {
   Shared { target: u64, name: String, values: Vec<f32> },
   Instances { buffer: u64, first: u32, values: Vec<f32> },
   Texture { texture: u64, values: Vec<f32> },
+  Param { target: u64, draw: Option<u64>, name: String, value: f32 },
 }
 
 /// Records every write it is handed; a write on a resource id listed in
@@ -64,6 +65,11 @@ impl SinkWriter for Recorder {
     self.writes.push(Write::Shared { target, name: name.to_string(), values: values.to_vec() });
     self.landed(target)
   }
+  fn write_param(&mut self, target: u64, draw: Option<u64>, name: &str, value: f32) -> bool {
+    self.writes.push(Write::Param { target, draw, name: name.to_string(), value });
+    self.landed(target)
+  }
+
   fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]) -> bool {
     // Record the range slice under `first`, matching the plain write path.
     self.writes.push(Write::Instances { buffer, first: lo, values: values[lo as usize..hi as usize].to_vec() });

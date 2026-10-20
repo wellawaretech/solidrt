@@ -146,6 +146,11 @@ export type SceneHooks = {
   _detachLight(light: Light): void
   _lightChanged(): void
   _setParams(mesh: Mesh, params: ShaderParams): void
+  /** Route one of a mixer's curves into a scalar param of the mesh's
+   * entries (its own and every view's drawing its material), now and at
+   * every later entry the mesh gets; `_unbindCurve` removes it. */
+  _bindCurve(mesh: Mesh, binding: CurveBinding): void
+  _unbindCurve(mesh: Mesh, binding: CurveBinding): void
   _setCount(mesh: Mesh): void
   /** Re-point the mesh's entries at its (replaced) instance buffers. */
   _setBuffer(mesh: Mesh): void
@@ -267,10 +272,21 @@ export type SceneNode = {
    * is in a scene (a model's spring bones): entered after the children
    * are live, left before the core node goes. null for the common case. */
   _bindings: SubtreeBinding[] | null
+  /** The node's declared rest pose (ten floats: position, quaternion,
+   * scale), published to the core at every scene enter: what a mixer's
+   * layers compose over and a spring chain settles to. A model sets its
+   * file's transforms; null for the common case (the pose as it stands
+   * when a rig or chain first needs a rest). */
+  _rest: Float32Array | null
 }
 
 /** A subtree declaration's core half (see SceneNode._bindings). */
 export type SubtreeBinding = { enter(): void; leave(): void }
+
+/** A mixer curve routed into a mesh's scalar param (see Mixer.bindCurve);
+ * the mixer's rig is read at bind time, so a rig made later (the model's
+ * next scene enter) re-applies through the mixer. */
+export type CurveBinding = { mixer: { _rig: number | null }; curve: string; param: string }
 
 /** The settled component of a node transition: a transform component,
  * or "weights" for the morph target weights lane. */
@@ -427,6 +443,7 @@ export function makeNode(kind: SceneNode["kind"]): SceneNode {
     _cullBounds: null,
     _lod: null,
     _bindings: null,
+    _rest: null,
   }
 }
 
@@ -585,6 +602,7 @@ export function enterScene(node: SceneNode, scene: SceneHooks): void {
   // gets its state when a morphing entry first needs it (activateMorph).
   if (node._morph !== null) activateMorph(node)
   if (node._cullBounds !== null) spatial.setCullBounds(node._node, node._cullBounds)
+  if (node._rest !== null) spatial.setRest(node._node, node._rest)
   if (node.kind === "mesh") {
     spatial.setLayers(node._node, (node as Mesh).layers)
     scene._attach(node as Mesh)

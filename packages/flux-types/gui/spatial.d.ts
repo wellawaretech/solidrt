@@ -766,62 +766,173 @@ declare module "flux:spatial" {
 
   /** A registered clip's handle (createClip). */
   export type ClipId = number
+  /** A rig's handle (createRig). */
+  export type RigId = number
   /** A playing clip instance's handle (createPlayer). */
   export type PlayerId = number
+  /** A bone mask's handle (createMask). */
+  export type MaskId = number
+  /** A sync group's handle (createGroup). */
+  export type GroupId = number
 
   /**
    * Register a baked animation clip: `duration` in seconds, `meta` five
    * words per channel - [targetSlot, path (0 position, 1 rotation,
-   * 2 scale, 3 weights), interpolation (0 step, 1 linear, 2 cubic),
-   * keyCount, elements] - and `times`/`values` every channel's key arrays
-   * concatenated in meta order (`elements` floats per key: 3 for position
-   * and scale, 4 for rotation, one per morph target for weights - the
-   * TRS counts are checked; cubic stores three elements per key:
-   * in-tangent, value, out-tangent, tangents per second - the glTF
-   * CUBICSPLINE layout). A weights channel writes the target node's
-   * weights register (setWeights), blended across players like a TRS
-   * path. A clip is shared data: `targetSlot`
-   * indexes the target table each PLAYER supplies, so one clip drives
-   * any number of instances, and retargeting is a different table.
+   * 2 scale, 3 weights, 4 curve), interpolation (0 step, 1 linear,
+   * 2 cubic), keyCount, elements] - and `times`/`values` every channel's
+   * key arrays concatenated in meta order (`elements` floats per key: 3
+   * for position and scale, 4 for rotation, one per morph target for
+   * weights, 1 for a curve - the TRS counts are checked; cubic stores
+   * three elements per key: in-tangent, value, out-tangent, tangents per
+   * second - the glTF CUBICSPLINE layout). A clip is shared data: a
+   * joint channel's `targetSlot` indexes the JOINT TABLE of the rig a
+   * player binds it to (createRig), so one clip drives any number of
+   * instances and retargeting is another rig; a weights channel writes
+   * the slot's node's weights register (setWeights); a curve channel's
+   * slot indexes `curves`, the clip's curve names, and feeds the rig's
+   * curve of that name (readCurve). Key times must ascend.
    */
-  export function createClip(duration: number, meta: Uint32Array, times: Float32Array, values: Float32Array): ClipId
+  export function createClip(duration: number, meta: Uint32Array, times: Float32Array, values: Float32Array, curves?: string[]): ClipId
   /** Free a clip. Players still on it drop at their next advance (a
    * "dropped" spatialClipEnd). */
   export function destroyClip(clip: ClipId): void
   /**
-   * Start playing `clip`: `targets[slot]` is the node each channel
-   * animates, `clock` the node whose rate (setTimeScale) the player's
-   * time, fades and root motion run at - a player has one time over many
-   * targets, so the node it is attached to names the clock: the model's
-   * root for a mixer. Every target and the clock must be a live scene
-   * node (throws otherwise). Players advance on the frame clock BEFORE
-   * each frame's JS, sample and weight-blend every active player per
-   * (node, path) - two players on one node crossfade - and write the
-   * blended TRS into the arena, so frame handlers read and may overwrite
-   * freshly posed nodes (last write wins) and the frame's flush
-   * publishes the result. `opts` (the setPlayer field names): `speed`
-   * scales clip time (1 = as authored, the default); `loop` wraps (the
-   * default), else the player holds its final pose and reports once;
-   * `weight`/`fade` start the crossfade state (weight 0..1, default 1;
-   * fade = weight change per second, default 0 - positive fades in,
-   * negative out; past 0 the player is removed). When a player finishes
-   * or is removed without finishing (faded out, clip, clock or target
-   * destroyed), the "spatialClipEnd" engine event (sol:events) fires with
-   * payload { player, reason: "finished" | "dropped" }, before the same
-   * frame's handlers.
+   * Replace a clip's markers: `times` (seconds) with `durations` (0 for
+   * an instant marker, else a window) and `names` alongside, one entry
+   * each. The core sorts them by time; a "spatialClipMarker" event names
+   * a marker by its index in that order. A player already on the clip
+   * takes them from its next advance.
    */
-  export function createPlayer(clip: ClipId, targets: NodeId[], clock: NodeId, opts?: { speed?: number; loop?: boolean; weight?: number; fade?: number }): PlayerId
+  export function setClipMarkers(clip: ClipId, times: Float32Array, durations: Float32Array, names: string[]): void
+  /**
+   * The additive form of a clip: a NEW clip whose keys are deltas
+   * against a reference, so that playing it on an additive layer over
+   * the reference pose reproduces the authored clip - Three's
+   * makeClipAdditive, Unity's additive reference pose, Godot's Sub2.
+   * `{ kind: "first" }` takes the clip's own first frame, `{ kind:
+   * "clip", clip, time }` another clip at a time (a channel it lacks
+   * falls back to the first frame), `{ kind: "rest", rig }` the rig's
+   * rest pose (a joint the rig lacks falls back likewise; a curve's
+   * rest is 0). Positions and weights subtract, a rotation is
+   * left-multiplied by the reference's inverse, a scale divides.
+   * Markers and curve names carry over. Free it like any clip.
+   */
+  export function deriveAdditiveClip(clip: ClipId, reference: { kind: "first" } | { kind: "clip"; clip: ClipId; time: number } | { kind: "rest"; rig: RigId }): ClipId
+  /**
+   * Declare a node's rest pose - ten floats: position xyz, quaternion
+   * xyzw, scale xyz - or null to clear it: what a rig over the node
+   * composes its layers over (a stop-with-fade lands on it) and what a
+   * spring chain on it turns from and settles to. A rig or chain made
+   * before the declaration keeps the rest it resolved at its create (the
+   * pose as it stood). A model declares its file's node transforms at
+   * every scene enter. Throws on a dead node or a zero rotation.
+   */
+  export function setRest(node: NodeId, rest: Float32Array | null): void
+  /**
+   * Create a rig - one model's animation state, Unity's Animator,
+   * Godot's AnimationMixer, Unreal's AnimInstance: `joints` the nodes
+   * clip channels' target slots index (in order), `clock` the node whose
+   * rate (setTimeScale) the rig's time, fades and root motion run at
+   * (the model's root for a mixer). The layers compose over each joint's
+   * REST pose: its setRest declaration, else the pose as it stands at
+   * the create. The joints' morph weights as they stand are the rest
+   * weights. Every node must be a live scene node (throws otherwise); a
+   * later death drops the rig: one "spatialClipEnd" (reason "dropped")
+   * per player, then "spatialRigEnd" `{ rig }`. The base layer (index 0,
+   * override, weight 1, unmasked) exists from the start.
+   *
+   * Rigs advance on the frame clock BEFORE each frame's JS: every player
+   * steps its time, each layer in order composes its players' blend over
+   * the pose so far, and the fed joints are written into the arena, so
+   * frame handlers read and may overwrite freshly posed nodes (last
+   * write wins) and the frame's flush publishes the result. Per joint
+   * and path, an override layer normalizes its players' weighted
+   * contributions when they sum to one or more; below one the remainder
+   * is what is UNDER the layer (the rest pose for the base), and a
+   * player lacking a channel another player on the layer animates
+   * contributes that same "under" for it; the result composes over the
+   * pose so far by the layer weight times its mask's share for the
+   * joint. An additive layer adds its players' weighted deltas (a delta
+   * clip from deriveAdditiveClip: positions and weights add, rotations
+   * compose, scales multiply) scaled the same way. A joint no player on
+   * any layer animates is left alone.
+   */
+  export function createRig(clock: NodeId, joints: NodeId[]): RigId
+  /** Remove a rig and its players at once (no events), the joints
+   * holding whatever was last written. */
+  export function destroyRig(rig: RigId): void
+  /**
+   * Append a layer above the rig's existing ones; returns its index.
+   * `weight` 0..1 (default 1), `mode` "override" (default) or
+   * "additive", `mask` a mask id (default none: every joint). A layer at
+   * weight 0 costs no sampling (its players' time still runs).
+   */
+  export function createLayer(rig: RigId, opts?: { weight?: number; mode?: "override" | "additive"; mask?: MaskId }): number
+  /** Write a layer's weight (ramped over `fadeMs` of the rig's time;
+   * absent or 0 snaps) and mask (null clears). The base layer's weight
+   * fades it toward rest. */
+  export function setLayer(rig: RigId, index: number, update: { weight?: number; fadeMs?: number; mask?: MaskId | null }): void
+  /** Remove a layer above the base and its players (no events); the
+   * layers above move down one index. */
+  export function destroyLayer(rig: RigId, index: number): void
+  /**
+   * Register a bone mask (Unity's AvatarMask, Godot's filters, Unreal's
+   * blend masks): `shares[i]` (0..1) for `nodes[i]`, `defaultShare` for
+   * every other node. Shared by any number of layers and players
+   * (createLayer/createPlayer `mask`); a layer's and a player's shares
+   * multiply. A mask is keyed by node, so one serves every clip of a
+   * rig. setMask re-resolves every binding at the next advance.
+   */
+  export function createMask(defaultShare: number, nodes: NodeId[], shares: Float32Array): MaskId
+  export function setMask(mask: MaskId, defaultShare: number, nodes: NodeId[], shares: Float32Array): void
+  /** Free a mask; a layer or player still naming it blends unmasked. */
+  export function destroyMask(mask: MaskId): void
+  /**
+   * Start playing `clip` on `rig`: `opts` (the setPlayer field names)
+   * `layer` (default 0, the base), `speed` scales clip time (1 = as
+   * authored), `loop` wraps (the default; a "spatialClipLoop" per wrap),
+   * else the player holds its final pose and reports once; `weight`/
+   * `fade` start the crossfade state (weight 0..1, default 1; fade =
+   * weight change per second, default 0 - positive fades in, negative
+   * out; past 0 the player is removed); `mask` a per-player mask on top
+   * of the layer's; `window` `[start, end]` seconds the time stays
+   * within (loops within, finishes at `end`); `fadeOut` seconds before a
+   * non-looping player's end at which it starts fading out so it ends
+   * on what is under it (then "finished" AND "dropped" are reported);
+   * `time` the start time (default 0). Every joint channel must target
+   * a slot the rig has. When a player finishes or is removed without
+   * finishing (faded out, clip or rig destroyed), the "spatialClipEnd"
+   * engine event (sol:events) fires with payload { player, reason:
+   * "finished" | "dropped" }, before the same frame's handlers; a marker
+   * crossing fires "spatialClipMarker" { player, marker (its index),
+   * phase: "instant" | "begin" | "end", weight (the player's times its
+   * layer's), layer } - once per crossing however long the frame, loop
+   * wraps and reverse play included, a window's end also on a stop
+   * inside it; a seek fires none of the instants it jumps over, ends
+   * the windows it leaves and begins those it lands in.
+   */
+  export function createPlayer(rig: RigId, clip: ClipId, opts?: { layer?: number; speed?: number; loop?: boolean; weight?: number; fade?: number; mask?: MaskId; window?: [number, number]; fadeOut?: number; time?: number }): PlayerId
   /** Write the given fields of a player - the O(changes) crossfade
-   * channel. Setting `time` (seconds) also re-arms a finished player's
-   * end report. Throws on an id that already dropped. */
-  export function setPlayer(player: PlayerId, update: { weight?: number; fade?: number; speed?: number; time?: number }): void
+   * channel. Setting `time` (seconds, clamped to the window) also
+   * re-arms a finished player's end report; `window` null clears the
+   * subclip, `mask` null the mask. Returns the window changes a seek
+   * made, at once, as `[marker, phase, ...]` pairs (phase 1 begin,
+   * 2 end; a seek fires no instants) - the caller's to report, since
+   * they are its own doing. Throws on an id that already dropped. */
+  export function setPlayer(player: PlayerId, update: { weight?: number; fade?: number; speed?: number; time?: number; window?: [number, number] | null; mask?: MaskId | null }): number[]
+  /** A player's current `[time, weight]` (seconds; the fade included). */
+  export function readPlayer(player: PlayerId): [number, number]
+  /** Whether a player is inside the window of marker `marker` (an index
+   * in the clip's sorted markers) as of the last advance. */
+  export function markerInside(player: PlayerId, marker: number): boolean
   /**
    * Bind root motion to a player: `channel` of `clip` (a position channel
    * - normally the ROOT track of the authored clip, while the player
    * plays an in-place variant that holds the root still) is sampled at
    * the player's time each advance, and its travel since the previous
    * advance (continuous across a loop wrap, weighted by the player's
-   * weight) is reported as one "spatialRootMotion" engine event
+   * EFFECTIVE weight: its own times its layer's times the root joint's
+   * mask shares) is reported as one "spatialRootMotion" engine event
    * (sol:events) per advance, payload { player, x, y, z, yaw }, before
    * the frame's handlers. The translation is given in the root's CURRENT
    * facing (the clip's own turn so far undone), i.e. the character's
@@ -835,14 +946,63 @@ declare module "flux:spatial" {
    * [0, 1, 0]); `opts.vertical: false` drops the component along it from
    * the delta (the height stays in the pose). Binding primes at the
    * player's current time, so the next advance already delivers. A
-   * second call rebinds. Throws on a dropped player, a wrong channel
-   * kind, a zero up axis, or a dead anchor.
+   * second call rebinds. Throws on a dropped player, a player on an
+   * additive layer (a delta clip has no travel), a wrong channel kind,
+   * a zero up axis, or a dead anchor.
    */
   export function bindRootMotion(player: PlayerId, clip: ClipId, channel: number, rotation?: number, anchor?: NodeId, opts?: { up?: [number, number, number]; vertical?: boolean }): void
   /** Remove a player at once, holding whatever pose it last wrote (no
-   * event; stop-with-fade is a setPlayer fade write instead). A dropped
-   * id is fine. */
-  export function destroyPlayer(player: PlayerId): void
+   * end event; stop-with-fade is a setPlayer fade write instead).
+   * Returns the markers whose windows the player was inside, which end
+   * with it: the caller's to report. A dropped id is fine (empty). */
+  export function destroyPlayer(player: PlayerId): number[]
+  /**
+   * Make a sync group of `players` on `rig` (Unreal's sync groups,
+   * Unity's blend-tree time warp): every advance the heaviest member
+   * leads and the others take its phase, so a walk and a run blended
+   * half and half land their feet together. `sync` "time" (the default)
+   * aligns normalized time within the members' windows; "markers"
+   * aligns the markers common to every member's clip (matched by name
+   * and order; a member whose sequence differs falls back to time). A
+   * member's own speed scales the group while it leads. A player leaves
+   * its previous group.
+   */
+  export function createGroup(rig: RigId, players: PlayerId[], sync?: "time" | "markers"): GroupId
+  /** Replace a group's members. */
+  export function setGroup(group: GroupId, players: PlayerId[]): void
+  /** Dissolve a group; its members keep their own time from here. */
+  export function destroyGroup(group: GroupId): void
+  /**
+   * Request an inertial transition (Unreal's inertialization): at the
+   * next advance every joint the layers feed keeps the offset from the
+   * pose the rig last wrote - with the velocity from the two previous
+   * outputs - and decays it over `ms` of the rig's time on a quintic
+   * that lands at zero with zero velocity, its duration capped so the
+   * curve never overshoots. Call it in the frame of the change it
+   * smooths (a player swapped at full weight, a stop, a layer switched
+   * on, a seek); a request during a running transition re-captures
+   * from the pose as it stands. One sample per frame, no averaging of
+   * two cycles: the transition for locomotion.
+   */
+  export function inertialize(rig: RigId, ms: number): void
+  /** A rig's curve (the clips' float tracks, blended like the pose) as
+   * of the last advance, or undefined when no playing clip fed it this
+   * frame. */
+  export function readCurve(rig: RigId, name: string): number | undefined
+  /**
+   * Route a rig's curve into the scalar param `name` of draw entry
+   * `draw` on `target` (no draw: a target-level param, a scene-wide
+   * uniform): every flush after an advance that fed the curve writes
+   * its value when it changed, the way a node's world matrix reaches
+   * uModel - a clip drives a material's opacity or a light's intensity
+   * with no JS per frame. A curve no clip on the rig carries yet binds
+   * all the same and writes once one does; a second bind on the same
+   * (curve, target, draw) replaces the name; the binding drops by itself
+   * when the entry or target dies. Throws on an unknown rig.
+   */
+  export function bindCurveParam(rig: RigId, curve: string, target: TextureId, name: string, draw?: DrawId): void
+  /** Remove a curve's binding on (target, draw); a missing one is fine. */
+  export function unbindCurveParam(rig: RigId, curve: string, target: TextureId, draw?: DrawId): void
   /**
    * Fill `out` (a Float32Array of 10) with the node's CURRENT local
    * transform - position xyz, quaternion xyzw, scale xyz - as the arena
@@ -860,10 +1020,10 @@ declare module "flux:spatial" {
    * SpringBoneSimulator3D, three-vrm's VRMSpringBoneJoint. `jointNodes`
    * lists the simulated bones PARENTS FIRST (a joint whose parent node is
    * another listed joint's must come after it; throws otherwise), and
-   * `joints` carries 14 floats per joint in that order: the tail xyz in
+   * `joints` carries 10 floats per joint in that order: the tail xyz in
    * the bone's own space (where the chain continues: the next joint's
-   * rest position, or a leaf's virtual tail; must not be zero), the rest
-   * local rotation xyzw the solve turns from, then VRM's settings -
+   * rest position, or a leaf's virtual tail; must not be zero), then
+   * VRM's settings -
    * stiffness (the pull back toward the rest direction), drag (0 none ..
    * 1 total), gravity power, gravity direction xyz (world space, any
    * length) and the tail's hit radius against colliders. `colliderNodes`
@@ -1059,8 +1219,14 @@ declare module "flux:spatial" {
    * transition. Throws for a feet solver (its targets are the ground). */
   export function setIkTarget(ik: IkId, index: number, target: IkTarget | null): void
   /** Ramp a solver's weight to `weight` over `fadeMs` of the clock's
-   * time (linear, the players' fade shape); absent or 0 snaps. */
+   * time (linear, the players' fade shape); absent or 0 snaps. Unbinds
+   * a curve (bindIkWeightCurve). */
   export function setIkWeight(ik: IkId, index: number, weight: number, fadeMs?: number): void
+  /** Bind a solver's weight to a rig's curve (readCurve): every advance
+   * the weight takes the curve's value as of that frame's players (an
+   * authored foot-plant or grip track); a frame the curve is not fed
+   * keeps the last weight. setIkWeight unbinds. */
+  export function bindIkWeightCurve(ik: IkId, index: number, rig: RigId, name: string): void
   /** The last solve's residual: the distance left to the target (world
    * units; a look-at's angle left, radians; a feet solver's largest over
    * its planted feet). */

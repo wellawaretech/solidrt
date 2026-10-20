@@ -74,6 +74,10 @@ impl SinkWriter for Sink {
   fn write_shared(&mut self, _: u64, _: &str, _: &[f32]) -> bool {
     true
   }
+  fn write_param(&mut self, _: u64, _: Option<u64>, _: &str, _: f32) -> bool {
+    true
+  }
+
   fn write_instances(&mut self, _: u64, _: u32, _: u32, _: &[f32]) -> bool {
     true
   }

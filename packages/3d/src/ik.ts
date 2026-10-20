@@ -28,6 +28,7 @@ import * as spatial from "flux:spatial"
 import type { IkId, IkLimit as CoreLimit, IkPoint as CorePoint, IkSolverSpec as CoreSpec, IkTarget as CoreTarget, NodeId } from "flux:spatial"
 import type { SceneNode } from "./node.ts"
 import type { Model } from "./model.ts"
+import type { Mixer } from "./mixer.ts"
 import type { Quat, Vec3 } from "./math.ts"
 
 /** The bones' forward and up axes a look-at turns, in their own space
@@ -189,11 +190,18 @@ export type IkOptions = {
  * the kind and the weight (which has setWeight). */
 export type IkSolverUpdate = IkSolverSpec extends infer S ? (S extends IkSolverSpec ? Partial<Omit<S, "kind" | "weight">> : never) : never
 
+/** A solver weight that follows one of the mixer's curves (a clip's
+ * float track, `ModelClip.curves`): the authored foot-plant or grip
+ * weight, read in core every frame. */
+export type IkCurveWeight = { mixer: Mixer; curve: string }
+
 export type Ik = {
   /** Ramp solver `index`'s weight to `weight` over `fadeMs` (default 0,
    * a snap) of the model's time: the aim lifts off and the hand lets go
-   * smoothly, no per-frame JS. Weight 0 costs no solve. */
-  setWeight(index: number, weight: number, opts?: { fadeMs?: number }): void
+   * smoothly, no per-frame JS. Weight 0 costs no solve. A curve weight
+   * (`{ mixer, curve }`) binds the weight to that curve of the mixer's
+   * playing clips instead, until the next plain write. */
+  setWeight(index: number, weight: number | IkCurveWeight, opts?: { fadeMs?: number }): void
   /** Move solver `index`'s target; null for none (a look-at then eases
    * back to the animated pose). A point moved to another point tracks
    * (feed a cursor every frame); a node switch, a loss or a find starts
@@ -215,6 +223,8 @@ export type Ik = {
 type Stack = {
   model: Model
   solvers: IkSolverSpec[]
+  /** Per solver, the curve its weight follows (null: its own weight). */
+  curves: (IkCurveWeight | null)[]
   id: IkId | null
 }
 
@@ -233,7 +243,7 @@ export function createIk(model: Model, opts: IkOptions): Ik {
     checkSolver(copy, model, "createIk: solvers[" + i + "]")
     return copy
   })
-  let stack: Stack = { model, solvers, id: null }
+  let stack: Stack = { model, solvers, curves: solvers.map(() => null), id: null }
   let at = (index: number, what: string): IkSolverSpec => {
     let s = solvers[index]
     if (s === undefined) throw new Error("createIk." + what + ": no solver " + index + " (the stack has " + solvers.length + ")")
@@ -256,8 +266,15 @@ export function createIk(model: Model, opts: IkOptions): Ik {
   return {
     setWeight(index, weight, o) {
       let s = at(index, "setWeight")
+      if (typeof weight === "object") {
+        if (typeof weight.curve !== "string") throw new Error("createIk.setWeight: a curve weight names the curve")
+        stack.curves[index] = weight
+        bindCurve(stack, index)
+        return
+      }
       if (!(weight >= 0 && weight <= 1)) throw new Error("createIk.setWeight: the weight must be within 0..1")
       s.weight = weight
+      stack.curves[index] = null
       if (stack.id !== null) spatial.setIkWeight(stack.id, index, weight, o?.fadeMs ?? 0)
     },
     setTarget(index, target) {
@@ -293,6 +310,23 @@ function bind(stack: Stack): void {
   let clock = stack.model._node
   if (clock === null) return
   stack.id = spatial.createIk(clock, stack.solvers.map((s) => packSolver(s, stack.model, "createIk")))
+  stack.curves.forEach((c, i) => {
+    if (c !== null) bindCurve(stack, i)
+  })
+}
+
+/** Bind a solver's weight to its mixer curve while both are in the
+ * core (the mixer's rig exists once the model is in a scene; a mixer
+ * made after the stack binds at the model's next scene enter). */
+function bindCurve(stack: Stack, index: number): void {
+  let c = stack.curves[index]
+  if (c === null || c === undefined || stack.id === null) return
+  let rig = c.mixer._rig
+  if (rig === null) {
+    console.warn("createIk.setWeight: the mixer has no rig yet (the model is not in a scene); the curve binds at the next scene enter")
+    return
+  }
+  spatial.bindIkWeightCurve(stack.id, index, rig, c.curve)
 }
 
 /** The structural checks that need no live core node: the joints under

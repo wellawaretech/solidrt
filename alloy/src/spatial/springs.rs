@@ -64,8 +64,8 @@
 
 use std::collections::HashMap;
 
+use super::clips::quat_multiply;
 use super::math::{invert_affine, rotate_vector, transform_point, transform_vector};
-use super::players::quat_multiply;
 use super::transitions::quat_normalize;
 use super::{compose, multiply, Mat4, NodeId, Spatial, IDENTITY};
 
@@ -107,9 +107,9 @@ const ROTATION_EPSILON: f32 = 1e-6;
 const ANTIPARALLEL_EPSILON: f32 = 1e-6;
 
 /// One simulated bone. `tail` is where the chain continues, in the bone's
-/// own space (the next joint's rest position; a leaf's virtual tail);
-/// `rest_rotation` the bone's rest local rotation, which the solve turns
-/// from. Settings are VRM's: `stiffness` pulls the tail back toward the
+/// own space (the next joint's rest position; a leaf's virtual tail); the
+/// bone turns from its node's rest rotation (`Spatial::set_rest`, else
+/// the rotation as it stands at creation). Settings are VRM's: `stiffness` pulls the tail back toward the
 /// rest direction, `drag` damps the motion (0 none, 1 total), gravity is
 /// `gravity_dir` (world space, any length) at `gravity_power`, `hit_radius`
 /// the tail's radius against colliders. Lengths are in the bone's own
@@ -118,7 +118,6 @@ const ANTIPARALLEL_EPSILON: f32 = 1e-6;
 pub struct SpringJoint {
   pub node: NodeId,
   pub tail: [f32; 3],
-  pub rest_rotation: [f32; 4],
   pub stiffness: f32,
   pub drag: f32,
   pub gravity_power: f32,
@@ -226,6 +225,8 @@ struct Joint {
   /// |tail| in the bone's own units: what the sim-space length is
   /// divided by for the bone's scale factor.
   rest_length: f32,
+  /// The node's rest rotation at creation (the bone turns from it).
+  rest_rotation: [f32; 4],
   /// The joint listed earlier whose node is this bone's parent, else the
   /// parent's matrix is read from the arena.
   parent_joint: Option<usize>,
@@ -321,24 +322,23 @@ impl Spatial {
         return Err(format!("joint {i}: the tail must not be zero"));
       }
       check_settings(&spec).map_err(|e| format!("joint {i}: {e}"))?;
-      if !spec.rest_rotation.iter().all(|v| v.is_finite()) {
-        return Err(format!("joint {i}: the rest rotation must be finite"));
-      }
+      let rest_rotation = self.rest_of(spec.node)?.rotation;
       let scale = self.nodes[idx as usize].scale;
       let scaled = [spec.tail[0] * scale[0], spec.tail[1] * scale[1], spec.tail[2] * scale[2]];
       let axis = normalize_or(scaled, [0.0, 0.0, 1.0]);
       // The parent joint: resolved now and rechecked per frame (a reparent
       // falls back to the arena's matrix).
       let parent_joint = self.nodes[idx as usize].parent.and_then(|p| by_node.get(&p).copied());
-      rest_rotation_check(&spec).map_err(|e| format!("joint {i}: {e}"))?;
+      rest_rotation_check(rest_rotation).map_err(|e| format!("joint {i}: {e}"))?;
       built.push(Joint {
         flow: Flow::new(spec.drag),
         axis,
         rest_length,
+        rest_rotation,
         parent_joint,
         x: [0.0; 3],
         u: [0.0; 3],
-        written: quat_normalize(spec.rest_rotation),
+        written: rest_rotation,
         spec,
       });
     }
@@ -390,7 +390,7 @@ impl Spatial {
     let mut wrote = false;
     for j in &chain.joints {
       if let Ok(idx) = self.resolve(j.spec.node) {
-        wrote |= self.write_rotation(idx, quat_normalize(j.spec.rest_rotation));
+        wrote |= self.write_rotation(idx, quat_normalize(j.rest_rotation));
       }
     }
     wrote
@@ -542,7 +542,7 @@ impl Spatial {
       let j = &mut chain.joints[i];
       j.x = add(pos, rest_vec);
       j.u = [0.0; 3];
-      let rest = quat_normalize(j.spec.rest_rotation);
+      let rest = quat_normalize(j.rest_rotation);
       let idx = self.resolve(j.spec.node).map_err(|_| ())?;
       wrote |= self.write_rotation(idx, rest);
       j.written = rest;
@@ -604,7 +604,7 @@ impl Spatial {
         // undone.
         let parent_inv = invert_affine(&parent_sim);
         let in_parent = normalize_or(transform_vector(&parent_inv, sub(x, pos)), rest_dir);
-        let rest = quat_normalize(j.spec.rest_rotation);
+        let rest = quat_normalize(j.rest_rotation);
         let to = rotate_vector(quat_conjugate(rest), in_parent);
         let q = quat_normalize(quat_multiply(rest, quat_from_to(j.axis, to)));
         let idx = self.resolve(j.spec.node).map_err(|_| ())?;
@@ -637,7 +637,7 @@ impl Spatial {
     let n = &self.nodes[super::index(j.spec.node)];
     let pos = transform_point(&parent_sim, n.position);
     let scaled = [j.spec.tail[0] * n.scale[0], j.spec.tail[1] * n.scale[1], j.spec.tail[2] * n.scale[2]];
-    let rest_vec = transform_vector(&parent_sim, rotate_vector(quat_normalize(j.spec.rest_rotation), scaled));
+    let rest_vec = transform_vector(&parent_sim, rotate_vector(quat_normalize(j.rest_rotation), scaled));
     let scale = length(rest_vec) / j.rest_length;
     (pos, rest_vec, scale, parent_sim)
   }
@@ -672,8 +672,8 @@ fn check_settings(spec: &SpringJoint) -> Result<(), String> {
 }
 
 /// The rest rotation checked finite (its normalization is per use).
-fn rest_rotation_check(spec: &SpringJoint) -> Result<(), String> {
-  if spec.rest_rotation.iter().all(|v| v.is_finite()) && length4(spec.rest_rotation) > 0.0 {
+fn rest_rotation_check(rest_rotation: [f32; 4]) -> Result<(), String> {
+  if rest_rotation.iter().all(|v| v.is_finite()) && length4(rest_rotation) > 0.0 {
     Ok(())
   } else {
     Err("the rest rotation must be a finite, non-zero quaternion".to_string())

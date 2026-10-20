@@ -29,10 +29,10 @@
 
 use std::collections::HashMap;
 
+use super::clips::quat_multiply;
 use super::math::{invert_affine, rotate_vector, transform_point, transform_vector};
-use super::players::quat_multiply;
 use super::transitions::{quat_normalize, slerp};
-use super::{compose, multiply, Mat4, NodeId, QueryFilter, Spatial, IDENTITY};
+use super::{compose, multiply, Mat4, NodeId, QueryFilter, RigId, Spatial, IDENTITY};
 
 pub type IkId = u64;
 
@@ -316,6 +316,9 @@ struct Solver {
   reach: f32,
   /// A joint or target node died: skipped from then on.
   dead: bool,
+  /// The weight follows a rig's curve (an authored foot-plant track)
+  /// instead of its own ramp: read every advance.
+  curve: Option<(RigId, String)>,
 }
 
 struct Stack {
@@ -412,10 +415,11 @@ impl Spatial {
       if old.spec.kind() != spec.kind() {
         return Err(format!("solver {index} is a {} solver, not {}", old.spec.kind(), spec.kind()));
       }
-      let (weight, target, rate) = (old.weight, old.weight_target, old.weight_rate);
+      let (weight, target, rate, curve) = (old.weight, old.weight_target, old.weight_rate, old.curve.clone());
       let mut solver = self.build_solver(stack, spec, weight)?;
       solver.weight_target = target;
       solver.weight_rate = rate;
+      solver.curve = curve;
       stack.solvers[index] = solver;
       Ok(())
     })();
@@ -464,6 +468,7 @@ impl Spatial {
     let count = stack.solvers.len();
     let solver =
       stack.solvers.get_mut(index).ok_or_else(|| format!("solver {index} out of range (the stack has {count})"))?;
+    solver.curve = None;
     solver.weight_target = weight;
     if fade_ms <= 0.0 || (weight - solver.weight).abs() <= WEIGHT_SETTLE {
       solver.weight = weight;
@@ -471,6 +476,22 @@ impl Spatial {
     } else {
       solver.weight_rate = (weight - solver.weight) / (fade_ms / 1000.0);
     }
+    Ok(())
+  }
+
+  /// Bind a solver's weight to a rig's curve (`curve_value`): every
+  /// advance the weight takes the curve's value as of that frame's
+  /// players (a frame the curve is not fed keeps the last weight). A
+  /// `set_ik_weight` unbinds. Errors: a dropped id, an index out of
+  /// range, an unknown rig.
+  pub fn bind_ik_weight_curve(&mut self, id: IkId, index: usize, rig: RigId, name: String) -> Result<(), String> {
+    self.rig_index(rig)?;
+    let stack = self.ik.stacks.iter_mut().find(|s| s.id == id).ok_or_else(|| format!("ik {id} not found"))?;
+    let count = stack.solvers.len();
+    let solver =
+      stack.solvers.get_mut(index).ok_or_else(|| format!("solver {index} out of range (the stack has {count})"))?;
+    solver.curve = Some((rig, name));
+    solver.weight_rate = 0.0;
     Ok(())
   }
 
@@ -515,6 +536,14 @@ impl Spatial {
     let mut tick = IkTick::default();
     set.stacks.retain_mut(|stack| {
       let Some(rate) = super::rate_in(&self.nodes, stack.clock) else { return false };
+      for solver in &mut stack.solvers {
+        if let Some((rig, name)) = &solver.curve {
+          if let Ok(Some(v)) = self.curve_value(*rig, name) {
+            solver.weight = v.clamp(0.0, 1.0);
+            solver.weight_target = solver.weight;
+          }
+        }
+      }
       self.step_stack(stack, (frame_dt * rate as f64) as f32, &mut tick);
       true
     });
@@ -766,7 +795,7 @@ impl Spatial {
         SolverState::Feet(FeetState { legs, offset: 0.0, offset_target: 0.0 })
       }
     };
-    Ok(Solver { spec, state, weight, weight_target: weight, weight_rate: 0.0, reach: 0.0, dead: false })
+    Ok(Solver { spec, state, weight, weight_target: weight, weight_rate: 0.0, reach: 0.0, dead: false, curve: None })
   }
 
   /// Whether `idx` is `ancestor` or sits under it.

@@ -15,16 +15,17 @@ use crate::alloy_plugins::properties::transition::{
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::{elements_mut_of, elements_of, OptArg};
 use alloy::spatial::{
-  vertex_normals, write_channel, ChainMethod, ChainSpec, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent,
-  Component, DrawOrder, DrawQueue, DrawSink, FeetSpec, GridSpec, IkLimit, IkPoint, IkSolverSpec, IkTarget, IkUp,
-  InstanceProjection, InstanceRecordSink, LegSpec, LodLevel, LookAtBone, LookAtLimit, LookAtSpec, MoveOptions,
-  NodeEndpoint, NodeMotion, NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter,
-  RegionEvent, RegionMargins, RegionRef, RootMotion, Shape, SharedSlotSink, SpringCollider, SpringJoint,
-  SpringJointUpdate, SpringShape, TextureSlotSink, TwoBoneSpec, Volume,
+  vertex_normals, write_channel, AdditiveReference, ChainMethod, ChainSpec, ChannelInterpolation, ChannelPath,
+  ClipChannel, ClipEvent, ClipMarker, Component, DrawOrder, DrawQueue, DrawSink, FeetSpec, GridSpec, IkLimit, IkPoint,
+  IkSolverSpec, IkTarget, IkUp, InstanceProjection, InstanceRecordSink, LayerMode, LayerSpec, LayerUpdate, LegSpec,
+  LodLevel, LookAtBone, LookAtLimit, LookAtSpec, MarkerPhase, MoveOptions, NodeEndpoint, NodeMotion,
+  NodeTransitionConfig, NodeTransitionEntry, PlayerSpec, PlayerUpdate, Projection, QueryFilter, RegionEvent,
+  RegionMargins, RegionRef, RestPose, RootMotion, Shape, SharedSlotSink, SpringCollider, SpringJoint,
+  SpringJointUpdate, SpringShape, SyncMode, TextureSlotSink, TwoBoneSpec, Volume,
 };
 
 /// Floats per joint in createSpring's joint payload (see `create_spring`).
-const SPRING_JOINT_FLOATS: usize = 14;
+const SPRING_JOINT_FLOATS: usize = 10;
 /// Floats per collider in createSpring's collider payload.
 const SPRING_COLLIDER_FLOATS: usize = 9;
 
@@ -139,10 +140,30 @@ impl ModuleDef for SpatialModule {
     decl.declare("readWeights")?;
     decl.declare("createClip")?;
     decl.declare("destroyClip")?;
+    decl.declare("setClipMarkers")?;
+    decl.declare("deriveAdditiveClip")?;
+    decl.declare("setRest")?;
+    decl.declare("createRig")?;
+    decl.declare("destroyRig")?;
+    decl.declare("createLayer")?;
+    decl.declare("setLayer")?;
+    decl.declare("destroyLayer")?;
+    decl.declare("createMask")?;
+    decl.declare("setMask")?;
+    decl.declare("destroyMask")?;
     decl.declare("createPlayer")?;
     decl.declare("setPlayer")?;
+    decl.declare("readPlayer")?;
+    decl.declare("markerInside")?;
     decl.declare("bindRootMotion")?;
     decl.declare("destroyPlayer")?;
+    decl.declare("createGroup")?;
+    decl.declare("setGroup")?;
+    decl.declare("destroyGroup")?;
+    decl.declare("inertialize")?;
+    decl.declare("readCurve")?;
+    decl.declare("bindCurveParam")?;
+    decl.declare("unbindCurveParam")?;
     decl.declare("readTransform")?;
     decl.declare("createSpring")?;
     decl.declare("destroySpring")?;
@@ -154,6 +175,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("setIkSolver")?;
     decl.declare("setIkTarget")?;
     decl.declare("setIkWeight")?;
+    decl.declare("bindIkWeightCurve")?;
     decl.declare("readIkReach")?;
     decl.declare("bindPoseRecord")?;
     decl.declare("bindMatrixRecord")?;
@@ -222,10 +244,30 @@ impl ModuleDef for SpatialModule {
     exports.export("readWeights", Function::new(ctx.clone(), read_weights)?)?;
     exports.export("createClip", Function::new(ctx.clone(), create_clip)?)?;
     exports.export("destroyClip", Function::new(ctx.clone(), destroy_clip)?)?;
+    exports.export("setClipMarkers", Function::new(ctx.clone(), set_clip_markers)?)?;
+    exports.export("deriveAdditiveClip", Function::new(ctx.clone(), derive_additive_clip)?)?;
+    exports.export("setRest", Function::new(ctx.clone(), set_rest)?)?;
+    exports.export("createRig", Function::new(ctx.clone(), create_rig)?)?;
+    exports.export("destroyRig", Function::new(ctx.clone(), destroy_rig)?)?;
+    exports.export("createLayer", Function::new(ctx.clone(), create_layer)?)?;
+    exports.export("setLayer", Function::new(ctx.clone(), set_layer)?)?;
+    exports.export("destroyLayer", Function::new(ctx.clone(), destroy_layer)?)?;
+    exports.export("createMask", Function::new(ctx.clone(), create_mask)?)?;
+    exports.export("setMask", Function::new(ctx.clone(), set_mask)?)?;
+    exports.export("destroyMask", Function::new(ctx.clone(), destroy_mask)?)?;
     exports.export("createPlayer", Function::new(ctx.clone(), create_player)?)?;
     exports.export("setPlayer", Function::new(ctx.clone(), set_player)?)?;
+    exports.export("readPlayer", Function::new(ctx.clone(), read_player)?)?;
+    exports.export("markerInside", Function::new(ctx.clone(), marker_inside)?)?;
     exports.export("bindRootMotion", Function::new(ctx.clone(), bind_root_motion)?)?;
     exports.export("destroyPlayer", Function::new(ctx.clone(), destroy_player)?)?;
+    exports.export("createGroup", Function::new(ctx.clone(), create_group)?)?;
+    exports.export("setGroup", Function::new(ctx.clone(), set_group)?)?;
+    exports.export("destroyGroup", Function::new(ctx.clone(), destroy_group)?)?;
+    exports.export("inertialize", Function::new(ctx.clone(), inertialize)?)?;
+    exports.export("readCurve", Function::new(ctx.clone(), read_curve)?)?;
+    exports.export("bindCurveParam", Function::new(ctx.clone(), bind_curve_param)?)?;
+    exports.export("unbindCurveParam", Function::new(ctx.clone(), unbind_curve_param)?)?;
     exports.export("readTransform", Function::new(ctx.clone(), read_transform)?)?;
     exports.export("createSpring", Function::new(ctx.clone(), create_spring)?)?;
     exports.export("destroySpring", Function::new(ctx.clone(), destroy_spring)?)?;
@@ -237,6 +279,7 @@ impl ModuleDef for SpatialModule {
     exports.export("setIkSolver", Function::new(ctx.clone(), set_ik_solver)?)?;
     exports.export("setIkTarget", Function::new(ctx.clone(), set_ik_target)?)?;
     exports.export("setIkWeight", Function::new(ctx.clone(), set_ik_weight)?)?;
+    exports.export("bindIkWeightCurve", Function::new(ctx.clone(), bind_ik_weight_curve)?)?;
     exports.export("readIkReach", Function::new(ctx.clone(), read_ik_reach)?)?;
     exports.export("bindPoseRecord", Function::new(ctx.clone(), bind_pose_record)?)?;
     exports.export("bindMatrixRecord", Function::new(ctx.clone(), bind_matrix_record)?)?;
@@ -1261,18 +1304,22 @@ fn read_weights(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::Re
 
 // Meta words per channel in createClip's packed layout.
 const CLIP_META_WORDS: usize = 5;
+/// Floats per joint in createRig's rest payload: position xyz, quaternion
+/// xyzw, scale xyz.
+const REST_FLOATS: usize = 10;
 
 /// Register a baked clip: `meta` is [targetSlot, path (0 position,
-/// 1 rotation, 2 scale, 3 weights), interpolation (0 step, 1 linear,
-/// 2 cubic), keyCount, elements] per channel; `times` and `values` are
-/// every channel's key arrays concatenated in meta order. One crossing
-/// per clip.
+/// 1 rotation, 2 scale, 3 weights, 4 curve), interpolation (0 step,
+/// 1 linear, 2 cubic), keyCount, elements] per channel; `times` and
+/// `values` are every channel's key arrays concatenated in meta order;
+/// `curves` names the curve channels' slots. One crossing per clip.
 fn create_clip<'js>(
   ctx: Ctx<'js>,
   duration: f64,
   meta: TypedArray<'js, u32>,
   times: TypedArray<'js, f32>,
   values: TypedArray<'js, f32>,
+  curves: OptArg<Vec<String>>,
 ) -> rquickjs::Result<u64> {
   let meta = elements_of(&ctx, &meta, "createClip")?;
   let times = elements_of(&ctx, &times, "createClip")?;
@@ -1289,7 +1336,8 @@ fn create_clip<'js>(
       1 => ChannelPath::Rotation,
       2 => ChannelPath::Scale,
       3 => ChannelPath::Weights,
-      other => return Err(throw_str(&ctx, &format!("createClip: channel {i} path {other} is not 0, 1, 2 or 3"))),
+      4 => ChannelPath::Curve,
+      other => return Err(throw_str(&ctx, &format!("createClip: channel {i} path {other} is not 0 to 4"))),
     };
     let interpolation = match entry[2] {
       0 => ChannelInterpolation::Step,
@@ -1323,7 +1371,7 @@ fn create_clip<'js>(
   super::gui(&ctx)
     .alloy
     .spatial()
-    .create_clip(duration, channels)
+    .create_clip(duration, channels, curves.0.unwrap_or_default())
     .map_err(|e| throw_str(&ctx, &format!("createClip: {e}")))
 }
 
@@ -1331,53 +1379,324 @@ fn destroy_clip(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
   super::gui(&ctx).alloy.spatial().destroy_clip(id).map_err(|e| throw_str(&ctx, &format!("destroyClip: {e}")))
 }
 
-/// Start a player: `targets[slot]` is the node each clip channel's target
-/// slot animates. Every target must be a live scene node.
-/// Start a player on `clip` over `targets`, clocked on `clock`; `opts` is
-/// `{ speed?, loop?, weight?, fade? }` (defaults 1, true, 1, 0), the
-/// setPlayer field names.
-fn create_player<'js>(
+/// Replace a clip's markers: `times` and `durations` (seconds, a
+/// Float32Array each, 0 duration for an instant) with `names` alongside.
+fn set_clip_markers<'js>(
   ctx: Ctx<'js>,
   clip: u64,
-  targets: Vec<u64>,
-  clock: u64,
-  opts: OptArg<Object<'js>>,
-) -> rquickjs::Result<u64> {
-  let mut speed = 1.0f32;
-  let mut looped = true;
-  let mut weight = 1.0f32;
-  let mut fade = 0.0f32;
-  if let Some(o) = opts.0 {
-    if let Some(v) = o.get::<_, Option<f64>>("speed")? {
-      speed = v as f32;
-    }
-    if let Some(v) = o.get::<_, Option<bool>>("loop")? {
-      looped = v;
-    }
-    if let Some(v) = o.get::<_, Option<f64>>("weight")? {
-      weight = v as f32;
-    }
-    if let Some(v) = o.get::<_, Option<f64>>("fade")? {
-      fade = v as f32;
-    }
+  times: TypedArray<'js, f32>,
+  durations: TypedArray<'js, f32>,
+  names: Vec<String>,
+) -> rquickjs::Result<()> {
+  let times = elements_of(&ctx, &times, "setClipMarkers")?;
+  let durations = elements_of(&ctx, &durations, "setClipMarkers")?;
+  if times.len() != durations.len() || times.len() != names.len() {
+    return Err(throw_str(&ctx, "setClipMarkers: times, durations and names must be the same length"));
   }
+  let markers = times
+    .iter()
+    .zip(durations.iter())
+    .zip(names)
+    .map(|((&time, &duration), name)| ClipMarker { time, duration, name })
+    .collect();
   super::gui(&ctx)
     .alloy
     .spatial()
-    .create_player(clip, targets, clock, speed, looped, weight, fade)
-    .map_err(|e| throw_str(&ctx, &format!("createPlayer: {e}")))
+    .set_clip_markers(clip, markers)
+    .map_err(|e| throw_str(&ctx, &format!("setClipMarkers: {e}")))
 }
 
-/// Write the given fields of a player: { weight?, fade?, speed?, time? }.
-/// Setting time re-arms a finished player's end report.
-fn set_player<'js>(ctx: Ctx<'js>, id: u64, value: Object<'js>) -> rquickjs::Result<()> {
+/// The additive form of a clip against a reference: `{ kind: "first" }`
+/// (the clip's own first frame), `{ kind: "clip", clip, time }` or
+/// `{ kind: "rest", rig }`. Returns a new clip.
+fn derive_additive_clip<'js>(ctx: Ctx<'js>, clip: u64, reference: Object<'js>) -> rquickjs::Result<u64> {
+  let kind: String = reference.get("kind")?;
+  let reference = match kind.as_str() {
+    "first" => AdditiveReference::FirstFrame,
+    "clip" => {
+      AdditiveReference::Clip { clip: reference.get::<_, u64>("clip")?, time: reference.get::<_, f64>("time")? as f32 }
+    }
+    "rest" => AdditiveReference::Rest { rig: reference.get::<_, u64>("rig")? },
+    other => {
+      return Err(throw_str(&ctx, &format!("deriveAdditiveClip: reference kind '{other}' is not first, clip or rest")))
+    }
+  };
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .derive_additive(clip, reference)
+    .map_err(|e| throw_str(&ctx, &format!("deriveAdditiveClip: {e}")))
+}
+
+/// Create a rig over `joints` clocked on `clock`; the layers compose
+/// over each joint's rest pose (setRest, else the pose as it stands).
+fn create_rig(ctx: Ctx<'_>, clock: u64, joints: Vec<u64>) -> rquickjs::Result<u64> {
+  let st = super::gui(&ctx);
+  let result = st.alloy.spatial().create_rig(clock, joints).map_err(|e| throw_str(&ctx, &format!("createRig: {e}")))?;
+  st.platform.request_frame();
+  Ok(result)
+}
+
+/// Declare a node's rest pose: ten floats (position xyz, quaternion
+/// xyzw, scale xyz), or null to clear it.
+fn set_rest<'js>(ctx: Ctx<'js>, id: u64, rest: OptArg<TypedArray<'js, f32>>) -> rquickjs::Result<()> {
+  let pose = match rest.0 {
+    None => None,
+    Some(array) => {
+      let r = elements_of(&ctx, &array, "setRest")?;
+      if r.len() != REST_FLOATS {
+        return Err(throw_str(&ctx, &format!("setRest: rest must hold {REST_FLOATS} floats")));
+      }
+      Some(RestPose { position: [r[0], r[1], r[2]], rotation: [r[3], r[4], r[5], r[6]], scale: [r[7], r[8], r[9]] })
+    }
+  };
+  super::gui(&ctx).alloy.spatial().set_rest(id, pose).map_err(|e| throw_str(&ctx, &format!("setRest: {e}")))
+}
+
+/// Route a rig's curve into scalar param `name` of draw entry `draw` on
+/// `target` (no draw: a target-level param), written at every flush the
+/// value changed.
+fn bind_curve_param(
+  ctx: Ctx<'_>,
+  rig: u64,
+  curve: String,
+  target: u64,
+  name: String,
+  draw: OptArg<u64>,
+) -> rquickjs::Result<()> {
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .bind_curve_param(rig, &curve, target, draw.0, name)
+    .map_err(|e| throw_str(&ctx, &format!("bindCurveParam: {e}")))
+}
+
+fn unbind_curve_param(ctx: Ctx<'_>, rig: u64, curve: String, target: u64, draw: OptArg<u64>) -> rquickjs::Result<()> {
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .unbind_curve_param(rig, &curve, target, draw.0)
+    .map_err(|e| throw_str(&ctx, &format!("unbindCurveParam: {e}")))
+}
+
+fn destroy_rig(ctx: Ctx<'_>, rig: u64) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().destroy_rig(rig).map_err(|e| throw_str(&ctx, &format!("destroyRig: {e}")))
+}
+
+fn layer_mode(ctx: &Ctx<'_>, mode: Option<String>, api: &str) -> rquickjs::Result<LayerMode> {
+  match mode.as_deref() {
+    None | Some("override") => Ok(LayerMode::Override),
+    Some("additive") => Ok(LayerMode::Additive),
+    Some(other) => Err(throw_str(ctx, &format!("{api}: mode '{other}' is not override or additive"))),
+  }
+}
+
+/// A `mask` field: absent = untouched, null = none, a number = a mask id.
+fn mask_field<'js>(ctx: &Ctx<'js>, o: &Object<'js>, api: &str) -> rquickjs::Result<Option<Option<u64>>> {
+  let v: Value<'js> = o.get("mask")?;
+  if v.is_undefined() {
+    return Ok(None);
+  }
+  if v.is_null() {
+    return Ok(Some(None));
+  }
+  match v.as_number() {
+    Some(n) => Ok(Some(Some(n as u64))),
+    None => Err(throw_str(ctx, &format!("{api}: mask must be a mask id or null"))),
+  }
+}
+
+/// Append a layer: `opts` is `{ weight?, mode?: "override" | "additive",
+/// mask? }` (defaults 1, override, none). Returns its index.
+fn create_layer<'js>(ctx: Ctx<'js>, rig: u64, opts: OptArg<Object<'js>>) -> rquickjs::Result<u32> {
+  let mut spec = LayerSpec { weight: 1.0, mode: LayerMode::Override, mask: None };
+  if let Some(o) = opts.0 {
+    if let Some(v) = o.get::<_, Option<f64>>("weight")? {
+      spec.weight = v as f32;
+    }
+    spec.mode = layer_mode(&ctx, o.get::<_, Option<String>>("mode")?, "createLayer")?;
+    spec.mask = mask_field(&ctx, &o, "createLayer")?.flatten();
+  }
+  let st = super::gui(&ctx);
+  let result = st
+    .alloy
+    .spatial()
+    .create_layer(rig, spec)
+    .map(|i| i as u32)
+    .map_err(|e| throw_str(&ctx, &format!("createLayer: {e}")))?;
+  st.platform.request_frame();
+  Ok(result)
+}
+
+/// Write a layer's `{ weight?, fadeMs?, mask? }` (mask null clears).
+fn set_layer<'js>(ctx: Ctx<'js>, rig: u64, index: u32, update: Object<'js>) -> rquickjs::Result<()> {
+  let update = LayerUpdate {
+    weight: update.get::<_, Option<f64>>("weight")?.map(|v| v as f32),
+    fade_ms: update.get::<_, Option<f64>>("fadeMs")?.unwrap_or(0.0) as f32,
+    mask: mask_field(&ctx, &update, "setLayer")?,
+  };
+  let st = super::gui(&ctx);
+  st.alloy.spatial().set_layer(rig, index as usize, update).map_err(|e| throw_str(&ctx, &format!("setLayer: {e}")))?;
+  st.platform.request_frame();
+  Ok(())
+}
+
+fn destroy_layer(ctx: Ctx<'_>, rig: u64, index: u32) -> rquickjs::Result<()> {
+  let st = super::gui(&ctx);
+  let result = st
+    .alloy
+    .spatial()
+    .destroy_layer(rig, index as usize)
+    .map_err(|e| throw_str(&ctx, &format!("destroyLayer: {e}")))?;
+  st.platform.request_frame();
+  Ok(result)
+}
+
+fn mask_shares<'js>(
+  ctx: &Ctx<'js>,
+  nodes: Vec<u64>,
+  shares: &TypedArray<'js, f32>,
+  api: &str,
+) -> rquickjs::Result<Vec<(u64, f32)>> {
+  let shares = elements_of(ctx, shares, api)?;
+  if shares.len() != nodes.len() {
+    return Err(throw_str(ctx, &format!("{api}: one share per node")));
+  }
+  Ok(nodes.into_iter().zip(shares.iter().copied()).collect())
+}
+
+/// Register a mask: `default` for every node not listed, `shares[i]` for
+/// `nodes[i]`.
+fn create_mask<'js>(
+  ctx: Ctx<'js>,
+  default: f64,
+  nodes: Vec<u64>,
+  shares: TypedArray<'js, f32>,
+) -> rquickjs::Result<u64> {
+  let shares = mask_shares(&ctx, nodes, &shares, "createMask")?;
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .create_mask(default as f32, shares)
+    .map_err(|e| throw_str(&ctx, &format!("createMask: {e}")))
+}
+
+fn set_mask<'js>(
+  ctx: Ctx<'js>,
+  id: u64,
+  default: f64,
+  nodes: Vec<u64>,
+  shares: TypedArray<'js, f32>,
+) -> rquickjs::Result<()> {
+  let shares = mask_shares(&ctx, nodes, &shares, "setMask")?;
+  let st = super::gui(&ctx);
+  st.alloy.spatial().set_mask(id, default as f32, shares).map_err(|e| throw_str(&ctx, &format!("setMask: {e}")))?;
+  st.platform.request_frame();
+  Ok(())
+}
+
+fn destroy_mask(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().destroy_mask(id).map_err(|e| throw_str(&ctx, &format!("destroyMask: {e}")))
+}
+
+/// A `window` field: absent = untouched, null = the whole clip,
+/// `[start, end]` = a subclip.
+fn window_field<'js>(ctx: &Ctx<'js>, o: &Object<'js>, api: &str) -> rquickjs::Result<Option<Option<(f64, f64)>>> {
+  let v: Value<'js> = o.get("window")?;
+  if v.is_undefined() {
+    return Ok(None);
+  }
+  if v.is_null() {
+    return Ok(Some(None));
+  }
+  let pair: Vec<f64> =
+    Vec::from_js(ctx, v).map_err(|_| throw_str(ctx, &format!("{api}: window must be [start, end] or null")))?;
+  if pair.len() != 2 {
+    return Err(throw_str(ctx, &format!("{api}: window must be [start, end] or null")));
+  }
+  Ok(Some(Some((pair[0], pair[1]))))
+}
+
+/// Start a player on `clip` on `rig`; `opts` is `{ layer?, speed?, loop?,
+/// weight?, fade?, mask?, window?, fadeOut?, time? }` (the setPlayer
+/// field names; defaults 0, 1, true, 1, 0, none, none, 0, 0).
+fn create_player<'js>(ctx: Ctx<'js>, rig: u64, clip: u64, opts: OptArg<Object<'js>>) -> rquickjs::Result<u64> {
+  let mut spec = PlayerSpec::default();
+  if let Some(o) = opts.0 {
+    if let Some(v) = o.get::<_, Option<f64>>("layer")? {
+      spec.layer = v as usize;
+    }
+    if let Some(v) = o.get::<_, Option<f64>>("speed")? {
+      spec.speed = v as f32;
+    }
+    if let Some(v) = o.get::<_, Option<bool>>("loop")? {
+      spec.looped = v;
+    }
+    if let Some(v) = o.get::<_, Option<f64>>("weight")? {
+      spec.weight = v as f32;
+    }
+    if let Some(v) = o.get::<_, Option<f64>>("fade")? {
+      spec.fade = v as f32;
+    }
+    if let Some(v) = o.get::<_, Option<f64>>("fadeOut")? {
+      spec.fade_out = v as f32;
+    }
+    if let Some(v) = o.get::<_, Option<f64>>("time")? {
+      spec.time = v;
+    }
+    spec.mask = mask_field(&ctx, &o, "createPlayer")?.flatten();
+    spec.window = window_field(&ctx, &o, "createPlayer")?.flatten();
+  }
+  let st = super::gui(&ctx);
+  let result =
+    st.alloy.spatial().create_player(rig, clip, spec).map_err(|e| throw_str(&ctx, &format!("createPlayer: {e}")))?;
+  st.platform.request_frame();
+  Ok(result)
+}
+
+/// Write the given fields of a player: { weight?, fade?, speed?, time?,
+/// window?, mask? }. Setting time re-arms a finished player's end report
+/// and returns the window changes the seek made as [marker, phase, ...]
+/// pairs (phase 1 begin, 2 end).
+fn set_player<'js>(ctx: Ctx<'js>, id: u64, value: Object<'js>) -> rquickjs::Result<Vec<u32>> {
   let update = PlayerUpdate {
     weight: value.get::<_, Option<f64>>("weight")?.map(|v| v as f32),
     fade: value.get::<_, Option<f64>>("fade")?.map(|v| v as f32),
     speed: value.get::<_, Option<f64>>("speed")?.map(|v| v as f32),
     time: value.get::<_, Option<f64>>("time")?,
+    window: window_field(&ctx, &value, "setPlayer")?,
+    mask: mask_field(&ctx, &value, "setPlayer")?,
   };
-  super::gui(&ctx).alloy.spatial().set_player(id, update).map_err(|e| throw_str(&ctx, &format!("setPlayer: {e}")))
+  let st = super::gui(&ctx);
+  let changes = st.alloy.spatial().set_player(id, update).map_err(|e| throw_str(&ctx, &format!("setPlayer: {e}")))?;
+  st.platform.request_frame();
+  Ok(changes.iter().flat_map(|&(m, phase)| [m as u32, marker_phase_code(phase)]).collect())
+}
+
+/// The wire code of a marker phase (0 instant, 1 begin, 2 end).
+fn marker_phase_code(phase: MarkerPhase) -> u32 {
+  match phase {
+    MarkerPhase::Instant => 0,
+    MarkerPhase::Begin => 1,
+    MarkerPhase::End => 2,
+  }
+}
+
+/// A player's current time (seconds) and weight: `[time, weight]`.
+fn read_player(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<Vec<f64>> {
+  let st = super::gui(&ctx);
+  let time = st.alloy.spatial().player_time(id).map_err(|e| throw_str(&ctx, &format!("readPlayer: {e}")))?;
+  let weight = st.alloy.spatial().player_weight(id).map_err(|e| throw_str(&ctx, &format!("readPlayer: {e}")))?;
+  Ok(vec![time, weight as f64])
+}
+
+/// Whether a player is inside marker `marker`'s window.
+fn marker_inside(ctx: Ctx<'_>, id: u64, marker: u32) -> rquickjs::Result<bool> {
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .marker_inside(id, marker as usize)
+    .map_err(|e| throw_str(&ctx, &format!("markerInside: {e}")))
 }
 
 /// Bind root motion to a player: `channel` of `clip` (a position channel,
@@ -1416,9 +1735,65 @@ fn bind_root_motion<'js>(
     .map_err(|e| throw_str(&ctx, &format!("bindRootMotion: {e}")))
 }
 
-fn destroy_player(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
-  super::gui(&ctx).alloy.spatial().destroy_player(id);
+/// Remove a player at once; returns the markers whose windows it was
+/// inside (they end with it).
+fn destroy_player(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<Vec<u32>> {
+  let st = super::gui(&ctx);
+  let ended = st.alloy.spatial().destroy_player(id);
+  st.platform.request_frame();
+  Ok(ended.into_iter().map(|m| m as u32).collect())
+}
+
+fn sync_mode(ctx: &Ctx<'_>, mode: Option<String>, api: &str) -> rquickjs::Result<SyncMode> {
+  match mode.as_deref() {
+    None | Some("time") => Ok(SyncMode::Time),
+    Some("markers") => Ok(SyncMode::Markers),
+    Some(other) => Err(throw_str(ctx, &format!("{api}: sync '{other}' is not time or markers"))),
+  }
+}
+
+/// Make a sync group of `players` on `rig`, synced by `sync` ("time",
+/// the default, or "markers").
+fn create_group(ctx: Ctx<'_>, rig: u64, players: Vec<u64>, sync: OptArg<String>) -> rquickjs::Result<u64> {
+  let mode = sync_mode(&ctx, sync.0, "createGroup")?;
+  let st = super::gui(&ctx);
+  let result =
+    st.alloy.spatial().create_group(rig, players, mode).map_err(|e| throw_str(&ctx, &format!("createGroup: {e}")))?;
+  st.platform.request_frame();
+  Ok(result)
+}
+
+fn set_group(ctx: Ctx<'_>, id: u64, players: Vec<u64>) -> rquickjs::Result<()> {
+  let st = super::gui(&ctx);
+  let result = st.alloy.spatial().set_group(id, players).map_err(|e| throw_str(&ctx, &format!("setGroup: {e}")))?;
+  st.platform.request_frame();
+  Ok(result)
+}
+
+fn destroy_group(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
+  let st = super::gui(&ctx);
+  let result = st.alloy.spatial().destroy_group(id).map_err(|e| throw_str(&ctx, &format!("destroyGroup: {e}")))?;
+  st.platform.request_frame();
+  Ok(result)
+}
+
+/// Request an inertial transition on a rig over `ms`.
+fn inertialize(ctx: Ctx<'_>, rig: u64, ms: f64) -> rquickjs::Result<()> {
+  let st = super::gui(&ctx);
+  st.alloy.spatial().inertialize(rig, ms as f32).map_err(|e| throw_str(&ctx, &format!("inertialize: {e}")))?;
+  st.platform.request_frame();
   Ok(())
+}
+
+/// A rig's curve as of the last advance; undefined for a curve no clip
+/// fed this frame.
+fn read_curve(ctx: Ctx<'_>, rig: u64, name: String) -> rquickjs::Result<Option<f64>> {
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .curve_value(rig, &name)
+    .map(|v| v.map(|v| v as f64))
+    .map_err(|e| throw_str(&ctx, &format!("readCurve: {e}")))
 }
 
 /// Fill `out` (a Float32Array of 10) with the node's current local TRS
@@ -1470,12 +1845,11 @@ fn create_spring<'js>(
     .map(|(&node, f)| SpringJoint {
       node,
       tail: [f[0], f[1], f[2]],
-      rest_rotation: [f[3], f[4], f[5], f[6]],
-      stiffness: f[7],
-      drag: f[8],
-      gravity_power: f[9],
-      gravity_dir: [f[10], f[11], f[12]],
-      hit_radius: f[13],
+      stiffness: f[3],
+      drag: f[4],
+      gravity_power: f[5],
+      gravity_dir: [f[6], f[7], f[8]],
+      hit_radius: f[9],
     })
     .collect();
   let cf = elements_of(&ctx, &colliders, "createSpring")?;
@@ -1805,6 +2179,18 @@ fn set_ik_weight(ctx: Ctx<'_>, id: u64, index: u32, weight: f64, fade_ms: OptArg
   Ok(())
 }
 
+/// Bind a solver's weight to a rig's curve (readCurve) from here on; a
+/// setIkWeight unbinds.
+fn bind_ik_weight_curve(ctx: Ctx<'_>, id: u64, index: u32, rig: u64, name: String) -> rquickjs::Result<()> {
+  let st = super::gui(&ctx);
+  st.alloy
+    .spatial()
+    .bind_ik_weight_curve(id, index as usize, rig, name)
+    .map_err(|e| throw_str(&ctx, &format!("bindIkWeightCurve: {e}")))?;
+  st.platform.request_frame();
+  Ok(())
+}
+
 /// The last solve's residual.
 fn read_ik_reach(ctx: Ctx<'_>, id: u64, index: u32) -> rquickjs::Result<f64> {
   let st = super::gui(&ctx);
@@ -1942,8 +2328,11 @@ pub(crate) fn advance_transitions(ctx: &Ctx<'_>) -> bool {
 }
 
 /// Hand JS what the native motion of this frame's advance produced, as
-/// engine events: one "spatialClipEnd" per finished or dropped player,
-/// payload `{ player, reason }` (reason "finished" or "dropped"), one
+/// engine events: one "spatialClipEnd" per finished or dropped player
+/// (`{ player, reason }`), one "spatialClipLoop" per wrap (`{ player }`),
+/// one "spatialClipMarker" per marker crossing (`{ player, marker, phase,
+/// weight, layer }`), one "spatialRigEnd" per rig whose clock or joint
+/// died (`{ rig }`), one
 /// "spatialRootMotion" per bound player's delta, payload `{ player, x,
 /// y, z, yaw }`, and one "spatialTransitionEnd" per settled track,
 /// payload `{ node, component }`, then the residency gate's changes: one
@@ -1966,14 +2355,36 @@ pub(crate) fn deliver_motion(ctx: &Ctx<'_>) {
   let settled = st.alloy.spatial().take_settled_transitions();
   let regions = st.alloy.spatial().take_region_events();
   for event in clips {
-    let obj = Object::new(ctx.clone()).expect("create spatialClipEnd object");
-    let (player, reason) = match event {
-      ClipEvent::Finished(id) => (id, "finished"),
-      ClipEvent::Dropped(id) => (id, "dropped"),
-    };
-    obj.set("player", player).expect("set player");
-    obj.set("reason", reason).expect("set reason");
-    crate::emit_event(ctx, "spatialClipEnd", obj);
+    let obj = Object::new(ctx.clone()).expect("create spatial clip event object");
+    match event {
+      ClipEvent::Finished(id) | ClipEvent::Dropped(id) => {
+        let reason = if matches!(event, ClipEvent::Finished(_)) { "finished" } else { "dropped" };
+        obj.set("player", id).expect("set player");
+        obj.set("reason", reason).expect("set reason");
+        crate::emit_event(ctx, "spatialClipEnd", obj);
+      }
+      ClipEvent::Loop(id) => {
+        obj.set("player", id).expect("set player");
+        crate::emit_event(ctx, "spatialClipLoop", obj);
+      }
+      ClipEvent::Marker { player, marker, phase, weight, layer } => {
+        let phase = match phase {
+          MarkerPhase::Instant => "instant",
+          MarkerPhase::Begin => "begin",
+          MarkerPhase::End => "end",
+        };
+        obj.set("player", player).expect("set player");
+        obj.set("marker", marker as u32).expect("set marker");
+        obj.set("phase", phase).expect("set phase");
+        obj.set("weight", weight as f64).expect("set weight");
+        obj.set("layer", layer as u32).expect("set layer");
+        crate::emit_event(ctx, "spatialClipMarker", obj);
+      }
+      ClipEvent::RigDropped(rig) => {
+        obj.set("rig", rig).expect("set rig");
+        crate::emit_event(ctx, "spatialRigEnd", obj);
+      }
+    }
   }
   for (player, delta, yaw) in root_motion {
     let obj = Object::new(ctx.clone()).expect("create spatialRootMotion object");

@@ -6,7 +6,7 @@ created: 2026-09-08
 
 # 3D feature parity
 
-**Measure, 2026-10-20: 48 of 117 rows that at least two engines ship, we ship.** Per area: Geometry and helpers 5/8; Materials 7/24; Lights and shadows 8/13; Renderer and post 9/27; Objects, scene graph, spatial 5/13; Animation 7/12; Loaders and assets 3/11; Controls and camera 3/5; Math 1/4.
+**Measure, 2026-10-20: 53 of 118 rows that at least two engines ship, we ship.** Per area: Geometry and helpers 5/8; Materials 7/24; Lights and shadows 8/13; Renderer and post 9/27; Objects, scene graph, spatial 5/13; Animation 12/13; Loaders and assets 3/11; Controls and camera 3/5; Math 1/4.
 
 The measure of `@solidrt/3d` against the three engines it is built from the
 practice of. [3d-roadmap](3d-roadmap.md) still owns the destination and the
@@ -208,11 +208,13 @@ the engine is in the way any more.
 | Feature | Three | Unity | Godot | us | item |
 | --- | --- | --- | --- | --- | --- |
 | Clip playback, crossfade, blending | yes | yes | yes | yes: in core | |
-| Author keyframe tracks in code; animate any property | yes | yes: AnimationClip.SetCurve | yes: Animation.add_track | no: clips are glTF-only, model-bound | untracked |
-| Additive blending | yes | yes: layers | yes: AnimationNodeAdd2 (v) | no | [3d-animation-layers](../plans/3d-animation-layers.md) |
-| Bone masks / layers | partial: per-action weight only | yes: AvatarMask, layers | yes: blend filters | no | [3d-animation-layers](../plans/3d-animation-layers.md) |
-| Subclip / trim | yes | yes: at import | partial | no | [3d-animation-layers](../plans/3d-animation-layers.md) |
-| Animation events / markers | partial: finished, loop | yes: AnimationEvent | yes: method tracks, markers | partial: finished only | [3d-animation-layers](../plans/3d-animation-layers.md) |
+| Author keyframe tracks in code; animate any property | yes | yes: AnimationClip.SetCurve | yes: Animation.add_track | partial: a rig over any nodes (createMixer RigSpec) takes code-authored TRS, weights and curve clips; properties outside the arena (materials, lights) do not animate | [3d-animation-layers](../done/3d-animation-layers.md) |
+| Additive blending | yes | yes: layers | yes: AnimationNodeAdd2 (v) | yes: additive layers, deltas baked in core | [3d-animation-layers](../done/3d-animation-layers.md) |
+| Bone masks / layers | partial: per-action weight only | yes: AvatarMask, layers | yes: blend filters | yes: ordered layers, shared masks with soft shares, in core | [3d-animation-layers](../done/3d-animation-layers.md) |
+| Subclip / trim | yes | yes: at import | partial | yes: player windows | [3d-animation-layers](../done/3d-animation-layers.md) |
+| Animation events / markers | partial: finished, loop | yes: AnimationEvent | yes: method tracks, markers | yes: markers and windows fired in core, loop, finished | [3d-animation-layers](../done/3d-animation-layers.md) |
+| Sync groups / blend spaces | no: crossFadeTo warp | yes: blend trees, sync layers | yes: BlendSpace1D/2D, sync (v) | yes: sync groups (time, markers) in core, createBlendSpace | [3d-animation-layers](../done/3d-animation-layers.md) |
+| Inertial transitions | no | no | no | yes: inertialization in core | [3d-animation-layers](../done/3d-animation-layers.md) |
 | Inverse kinematics | addon: CCDIKSolver | yes: Animator IK, Rigging package | yes: SkeletonIK3D (deprecated) (v), modifiers | yes: look-at, two-bone, chain (FABRIK and CCD), foot placement with ground queries, in core | [3d-ik](../done/3d-ik.md) |
 | Spring bones / secondary motion | addon: three-vrm | no: asset store (Dynamic Bone, Magica) | yes: SpringBoneSimulator3D | yes: in core | [3d-spring-bones](../plans/3d-spring-bones.md) |
 | Root motion | no | yes | yes | yes | |
