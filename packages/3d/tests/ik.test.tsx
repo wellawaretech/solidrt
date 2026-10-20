@@ -116,3 +116,27 @@ test("a weight fade is ramped in core", async app => {
   await app.settle({ maxMs: SETTLE_MS })
   expect(dist(worldPosition(wrist), target)).toBeLessThan(1e-3)
 })
+
+test("a stack over plain nodes: a two-bone limb under a group reaches a point", async app => {
+  let scene = await mounted(app)
+  let rig = createGroup()
+  let shoulder = createGroup()
+  let elbow = createGroup()
+  let wrist = createGroup()
+  setTransform(shoulder, { position: [0.3, 1, 0] })
+  setTransform(elbow, { position: [0, -BONE, 0] })
+  setTransform(wrist, { position: [0, -BONE, 0] })
+  add(rig, shoulder)
+  add(shoulder, elbow)
+  add(elbow, wrist)
+  add(scene.root, rig)
+  let target: Vec3 = [0.5, 0.6, 0.1]
+  let ik = createIk(rig, { solvers: [{ kind: "twoBone", root: shoulder, mid: elbow, tip: wrist, target: { point: target } }] })
+  await app.settle({ maxMs: SETTLE_MS })
+  expect(dist(worldPosition(wrist), target)).toBeLessThan(1e-3)
+  expect(ik.reach(0)).toBeLessThan(1e-3)
+  // A joint outside the subtree is refused.
+  let stray = createGroup()
+  add(scene.root, stray)
+  expect(() => createIk(rig, { solvers: [{ kind: "lookAt", bones: [stray], target: { point: target } }] })).toThrow("not under the root")
+})

@@ -1,7 +1,8 @@
-// Spring bones for models: `createSpringBones(model, { colliders, springs })`
-// declares the chains that lag behind the animated bones they hang from -
-// hair, a hood, a skirt, a tail, a cable - and the spatial core solves
-// them: Unity's SpringBone, Godot's SpringBoneSimulator3D, three-vrm's
+// Spring bones: `createSpringBones(root, { colliders, springs })` declares
+// the chains under `root` - a model, or any node whose subtree is the rig
+// (a group of plain nodes, as createMixer's rig over nodes) - that lag
+// behind the animated bones they hang from - hair, a hood, a skirt, a
+// tail, a cable - and the spatial core solves them: Unity's SpringBone, Godot's SpringBoneSimulator3D, three-vrm's
 // VRMSpringBoneManager, in VRM's vocabulary (per joint: stiffness, drag,
 // gravity power and direction, hit radius; colliders as spheres, capsules
 // and planes, shared by index; an optional center). Nothing to call per
@@ -14,8 +15,8 @@
 // projections run at 240 Hz substeps), so authored values mean what they
 // mean in three-vrm and a 50, 60 or 120 Hz display draws the same motion.
 //
-// The declaration lives on the model node and re-applies on every scene
-// enter, like setTransition: the chains bind when the model is in a scene
+// The declaration lives on the root node and re-applies on every scene
+// enter, like setTransition: the chains bind when the root is in a scene
 // (its joints are live core nodes), drop with it, and come back when it
 // is added again. The chain owns its joints' rotations: a setTransform
 // on one is overwritten at the step, and getTransform/worldPosition on
@@ -25,7 +26,6 @@
 import * as spatial from "flux:spatial"
 import type { NodeId, SpringId } from "flux:spatial"
 import type { SceneNode } from "./node.ts"
-import type { Model } from "./model.ts"
 import type { Vec3 } from "./math.ts"
 
 /** VRM's virtual tail for a chain's last bone: 7 cm along the bone's own
@@ -44,7 +44,7 @@ const SHAPE_KIND = { sphere: 0, capsule: 1, plane: 2 } as const
 
 /** One simulated bone of a chain. */
 export type SpringJointSpec = {
-  /** The bone this joint turns: a node under the model. */
+  /** The bone this joint turns: a node under the root. */
   node: SceneNode
   /** Where the chain continues, in the bone's own space. Default: the
    * rest position of the next listed joint that is this bone's child,
@@ -130,18 +130,20 @@ type Chain = {
 const JOINT_OFFSET = { stiffness: 3, drag: 4, gravityPower: 5, gravityDir: 6, hitRadius: 9 } as const
 
 /**
- * Declare the model's spring bones. The model must be in a scene (the
- * chains bind to live core nodes; the declaration re-binds on every
- * scene enter). The chains start at rest - each bone's declared rest
- * rotation (a model's file transform; else the rotation as it stands at
- * the call) - under the pose as it stands at the call. Every joint must be a node under the model; colliders
- * and centers may be any node in the scene. Throws on a joint without a
- * tail (no child joint and a zero rest offset), a chain listing a child
- * before its parent joint, a setting out of range, or a node out of the
- * scene.
+ * Declare the spring bones under `root`: a model, or any node whose
+ * subtree holds the joints (a group of plain nodes, the rig-over-nodes
+ * form of createMixer). The root must be in a scene (the chains bind to
+ * live core nodes; the declaration re-binds on every scene enter). The
+ * chains start at rest - each bone's declared rest rotation (a model's
+ * file transform; else the rotation as it stands at the call) - under
+ * the pose as it stands at the call. Every joint must be a node under
+ * the root; colliders and centers may be any node in the scene. Throws
+ * on a joint without a tail (no child joint and a zero rest offset), a
+ * chain listing a child before its parent joint, a setting out of range,
+ * or a node out of the scene.
  */
-export function createSpringBones(model: Model, opts: SpringBonesOptions): SpringBones {
-  if (model._node === null) throw new Error("createSpringBones: the model must be in a scene (add() it first)")
+export function createSpringBones(root: SceneNode, opts: SpringBonesOptions): SpringBones {
+  if (root._node === null) throw new Error("createSpringBones: the root must be in a scene (add() it first)")
   let colliders = opts.colliders ?? []
   let chains: Chain[] = opts.springs.map((spec, ci) => {
     let where = "createSpringBones: springs[" + ci + "]"
@@ -149,7 +151,7 @@ export function createSpringBones(model: Model, opts: SpringBonesOptions): Sprin
     let nodes = spec.joints.map((j) => j.node)
     let joints = new Float32Array(nodes.length * JOINT_FLOATS)
     spec.joints.forEach((j, i) => {
-      if (!under(j.node, model)) throw new Error(where + ".joints[" + i + "] is not a node of the model")
+      if (!under(j.node, root)) throw new Error(where + ".joints[" + i + "] is not under the root")
       if (j.node._destroyed) throw new Error(where + ".joints[" + i + "] was destroyed")
       let tail = j.tail ?? defaultTail(spec.joints, i)
       if (tail === null) throw new Error(where + ".joints[" + i + "] needs a tail: it has no child joint and a zero rest offset")
@@ -191,7 +193,7 @@ export function createSpringBones(model: Model, opts: SpringBonesOptions): Sprin
   })
   let chainAt = (index: number, what: string): Chain => {
     let chain = chains[index]
-    if (chain === undefined) throw new Error("createSpringBones." + what + ": no chain " + index + " (the model has " + chains.length + ")")
+    if (chain === undefined) throw new Error("createSpringBones." + what + ": no chain " + index + " (the declaration has " + chains.length + ")")
     return chain
   }
 
@@ -207,8 +209,8 @@ export function createSpringBones(model: Model, opts: SpringBonesOptions): Sprin
     },
   }
   binding.enter()
-  if (model._bindings === null) model._bindings = []
-  model._bindings.push(binding)
+  if (root._bindings === null) root._bindings = []
+  root._bindings.push(binding)
 
   return {
     reset() {
@@ -234,7 +236,7 @@ export function createSpringBones(model: Model, opts: SpringBonesOptions): Sprin
     },
     dispose() {
       binding.leave()
-      let list = model._bindings
+      let list = root._bindings
       if (list !== null) {
         let i = list.indexOf(binding)
         if (i >= 0) list.splice(i, 1)
@@ -266,9 +268,9 @@ function bind(chain: Chain): void {
   if (chain.force[0] !== 0 || chain.force[1] !== 0 || chain.force[2] !== 0) spatial.setSpringForce(chain.id, chain.force)
 }
 
-/** Whether `node` is `model` itself or sits somewhere under it. */
-function under(node: SceneNode, model: Model): boolean {
-  for (let n: SceneNode | null = node; n !== null; n = n.parent) if (n === model) return true
+/** Whether `node` is `owner` itself or sits somewhere under it. */
+function under(node: SceneNode, owner: SceneNode): boolean {
+  for (let n: SceneNode | null = node; n !== null; n = n.parent) if (n === owner) return true
   return false
 }
 

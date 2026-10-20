@@ -1,8 +1,10 @@
-// Inverse kinematics for models: `createIk(model, { solvers })` declares
-// a stack of solvers over the model's joints - a look-at (a head on the
-// camera, a torso on a target), a two-bone limb (a hand on a handle, a
-// weapon on a cursor), a chain (a tail, a tentacle, a rope arm) and foot
-// placement (feet on a slope, the hips lowered) - and the spatial core
+// Inverse kinematics: `createIk(root, { solvers })` declares a stack of
+// solvers over the joints under `root` - a model, or any node whose
+// subtree is the rig (a group of plain nodes, as createMixer's rig over
+// nodes) - a look-at (a head on the camera, a torso on a target), a
+// two-bone limb (a hand on a handle, a weapon on a cursor), a chain (a
+// tail, a tentacle, a rope arm) and foot placement (feet on a slope, the
+// hips lowered) - and the spatial core
 // steps them every frame AFTER your onFrame and its transitions and
 // BEFORE the spring bones: the pose post-pass, where Unity's
 // OnAnimatorIK runs (then LateUpdate), Godot's SkeletonModifier3D stack
@@ -18,7 +20,7 @@
 // the solvers run in declared order, each over the previous one's
 // result - a look-at on the spine before a two-bone on the arm is the
 // normal case, and the only way a hand reaches a point the turned torso
-// moved it toward. The declaration lives on the model node and
+// moved it toward. The declaration lives on the root node and
 // re-applies on every scene enter, like setTransition. The stack owns
 // its joints: a setTransform on one in the frame is solved over, and
 // getTransform/worldPosition on one during the frame read the previous
@@ -27,7 +29,6 @@
 import * as spatial from "flux:spatial"
 import type { IkId, IkLimit as CoreLimit, IkPoint as CorePoint, IkSolverSpec as CoreSpec, IkTarget as CoreTarget, NodeId } from "flux:spatial"
 import type { SceneNode } from "./node.ts"
-import type { Model } from "./model.ts"
 import type { Mixer } from "./mixer.ts"
 import type { Quat, Vec3 } from "./math.ts"
 
@@ -157,7 +158,7 @@ export type IkChainSpec = {
  * against the meshes on `layers` (REQUIRED: a collider layer the model's
  * own meshes are not on, as scene.raycast's layers). `height` per leg is
  * the sole's distance below the ankle (default: measured from the
- * model's ground plane at the declaration, so declare at rest). A foot
+ * root's ground plane at the declaration, so declare at rest). A foot
  * within `plantHeight` (default 0.05) of its rest height is planted and
  * lifts over the next `plantBand` (default 0.1), following the clip; the
  * hips move along `up` (default world +y) by the planted foot that needs
@@ -197,7 +198,7 @@ export type IkCurveWeight = { mixer: Mixer; curve: string }
 
 export type Ik = {
   /** Ramp solver `index`'s weight to `weight` over `fadeMs` (default 0,
-   * a snap) of the model's time: the aim lifts off and the hand lets go
+   * a snap) of the root's time: the aim lifts off and the hand lets go
    * smoothly, no per-frame JS. Weight 0 costs no solve. A curve weight
    * (`{ mixer, curve }`) binds the weight to that curve of the mixer's
    * playing clips instead, until the next plain write. */
@@ -221,7 +222,7 @@ export type Ik = {
 }
 
 type Stack = {
-  model: Model
+  root: SceneNode
   solvers: IkSolverSpec[]
   /** Per solver, the curve its weight follows (null: its own weight). */
   curves: (IkCurveWeight | null)[]
@@ -229,21 +230,23 @@ type Stack = {
 }
 
 /**
- * Declare the model's IK stack. The model must be in a scene (the stack
- * binds to live core nodes; the declaration re-binds on every scene
- * enter). Every joint must be a node under the model; targets, poles and
- * up references may be any node in the scene. Throws on a tip that is
- * not under its root, a mid not between them, a feet solver without
- * `layers`, a setting out of range, or a node out of the scene.
+ * Declare the IK stack under `root`: a model, or any node whose subtree
+ * holds the joints (a group of plain nodes, the rig-over-nodes form of
+ * createMixer). The root must be in a scene (the stack binds to live
+ * core nodes; the declaration re-binds on every scene enter). Every
+ * joint must be a node under the root; targets, poles and up references
+ * may be any node in the scene. Throws on a tip that is not under its
+ * root, a mid not between them, a feet solver without `layers`, a
+ * setting out of range, or a node out of the scene.
  */
-export function createIk(model: Model, opts: IkOptions): Ik {
-  if (model._node === null) throw new Error("createIk: the model must be in a scene (add() it first)")
+export function createIk(root: SceneNode, opts: IkOptions): Ik {
+  if (root._node === null) throw new Error("createIk: the root must be in a scene (add() it first)")
   let solvers = opts.solvers.map((spec, i) => {
     let copy = { ...spec } as IkSolverSpec
-    checkSolver(copy, model, "createIk: solvers[" + i + "]")
+    checkSolver(copy, root, "createIk: solvers[" + i + "]")
     return copy
   })
-  let stack: Stack = { model, solvers, curves: solvers.map(() => null), id: null }
+  let stack: Stack = { root, solvers, curves: solvers.map(() => null), id: null }
   let at = (index: number, what: string): IkSolverSpec => {
     let s = solvers[index]
     if (s === undefined) throw new Error("createIk." + what + ": no solver " + index + " (the stack has " + solvers.length + ")")
@@ -260,8 +263,8 @@ export function createIk(model: Model, opts: IkOptions): Ik {
     },
   }
   binding.enter()
-  if (model._bindings === null) model._bindings = []
-  model._bindings.push(binding)
+  if (root._bindings === null) root._bindings = []
+  root._bindings.push(binding)
 
   return {
     setWeight(index, weight, o) {
@@ -286,9 +289,9 @@ export function createIk(model: Model, opts: IkOptions): Ik {
     setSolver(index, update) {
       let s = at(index, "setSolver")
       let next = { ...s, ...(update as object), kind: s.kind, weight: s.weight } as IkSolverSpec
-      checkSolver(next, model, "createIk.setSolver: solvers[" + index + "]")
+      checkSolver(next, root, "createIk.setSolver: solvers[" + index + "]")
       solvers[index] = next
-      if (stack.id !== null) spatial.setIkSolver(stack.id, index, packSolver(next, model, "createIk.setSolver"))
+      if (stack.id !== null) spatial.setIkSolver(stack.id, index, packSolver(next, root, "createIk.setSolver"))
     },
     reach(index) {
       at(index, "reach")
@@ -296,7 +299,7 @@ export function createIk(model: Model, opts: IkOptions): Ik {
     },
     dispose() {
       binding.leave()
-      let list = model._bindings
+      let list = root._bindings
       if (list !== null) {
         let i = list.indexOf(binding)
         if (i >= 0) list.splice(i, 1)
@@ -307,9 +310,9 @@ export function createIk(model: Model, opts: IkOptions): Ik {
 
 /** Create the stack in the core over the nodes' live ids. */
 function bind(stack: Stack): void {
-  let clock = stack.model._node
+  let clock = stack.root._node
   if (clock === null) return
-  stack.id = spatial.createIk(clock, stack.solvers.map((s) => packSolver(s, stack.model, "createIk")))
+  stack.id = spatial.createIk(clock, stack.solvers.map((s) => packSolver(s, stack.root, "createIk")))
   stack.curves.forEach((c, i) => {
     if (c !== null) bindCurve(stack, i)
   })
@@ -330,32 +333,32 @@ function bindCurve(stack: Stack, index: number): void {
 }
 
 /** The structural checks that need no live core node: the joints under
- * the model and on descendant paths, the feet's layer; the joints marked
+ * the owner and on descendant paths, the feet's layer; the joints marked
  * core-posed. */
-function checkSolver(s: IkSolverSpec, model: Model, where: string): void {
+function checkSolver(s: IkSolverSpec, owner: SceneNode, where: string): void {
   switch (s.kind) {
     case "lookAt": {
       if (s.bones.length === 0) throw new Error(where + " has no bones")
       for (let b of s.bones) {
         let node = "node" in b ? b.node : b
-        own(node, model, where + " bone")
+        own(node, owner, where + " bone")
       }
       break
     }
     case "twoBone":
-      limb(s.root, s.mid, s.tip, model, where)
+      limb(s.root, s.mid, s.tip, owner, where)
       break
     case "chain": {
       let path = pathBetween(s.root, s.tip, where)
       if (path.length < 2) throw new Error(where + ": a chain needs a tip below its root")
-      for (let n of path) own(n, model, where + " joint")
+      for (let n of path) own(n, owner, where + " joint")
       break
     }
     case "feet": {
       if (s.legs.length === 0) throw new Error(where + " has no legs")
-      if (typeof s.layers !== "number") throw new Error(where + ": feet need `layers`, the collider layer the ground rays see (the model's own meshes must not be on it)")
-      own(s.hips, model, where + " hips")
-      s.legs.forEach((l, i) => limb(l.root, l.mid, l.tip, model, where + ".legs[" + i + "]"))
+      if (typeof s.layers !== "number") throw new Error(where + ": feet need `layers`, the collider layer the ground rays see (the rig's own meshes must not be on it)")
+      own(s.hips, owner, where + " hips")
+      s.legs.forEach((l, i) => limb(l.root, l.mid, l.tip, owner, where + ".legs[" + i + "]"))
       break
     }
     default:
@@ -363,24 +366,24 @@ function checkSolver(s: IkSolverSpec, model: Model, where: string): void {
   }
 }
 
-function limb(root: SceneNode, mid: SceneNode, tip: SceneNode, model: Model, where: string): void {
+function limb(root: SceneNode, mid: SceneNode, tip: SceneNode, owner: SceneNode, where: string): void {
   let path = pathBetween(root, tip, where)
   let at = path.indexOf(mid)
   if (at <= 0 || at >= path.length - 1) throw new Error(where + ": the mid must lie strictly between the root and the tip")
-  for (let n of path) own(n, model, where + " joint")
+  for (let n of path) own(n, owner, where + " joint")
 }
 
-/** A joint must be a live node under the model; the core poses it from
+/** A joint must be a live node under the owner; the core poses it from
  * here on, so its JS mirror is stale. */
-function own(node: SceneNode, model: Model, what: string): void {
+function own(node: SceneNode, owner: SceneNode, what: string): void {
   if (node._destroyed) throw new Error(what + " was destroyed")
-  if (!under(node, model)) throw new Error(what + " is not a node of the model")
+  if (!under(node, owner)) throw new Error(what + " is not under the root")
   node._native = true
 }
 
-/** Whether `node` is `model` itself or sits somewhere under it. */
-function under(node: SceneNode, model: Model): boolean {
-  for (let n: SceneNode | null = node; n !== null; n = n.parent) if (n === model) return true
+/** Whether `node` is `owner` itself or sits somewhere under it. */
+function under(node: SceneNode, owner: SceneNode): boolean {
+  for (let n: SceneNode | null = node; n !== null; n = n.parent) if (n === owner) return true
   return false
 }
 
@@ -420,14 +423,14 @@ function pair(v: number | [number, number] | undefined): [number, number] {
   return v
 }
 
-/** The scene root above the model: what the ground rays are scoped to. */
-function sceneRoot(model: Model): NodeId {
-  let top: SceneNode = model
+/** The scene root above the owner: what the ground rays are scoped to. */
+function sceneRoot(owner: SceneNode): NodeId {
+  let top: SceneNode = owner
   while (top.parent !== null) top = top.parent
   return idOf(top, "createIk: the scene root")
 }
 
-function packSolver(s: IkSolverSpec, model: Model, where: string): CoreSpec {
+function packSolver(s: IkSolverSpec, owner: SceneNode, where: string): CoreSpec {
   let target = s.kind === "feet" ? undefined : s.target === null || s.target === undefined ? null : packTarget(s.target, where)
   switch (s.kind) {
     case "lookAt":
@@ -477,7 +480,7 @@ function packSolver(s: IkSolverSpec, model: Model, where: string): CoreSpec {
         hips: idOf(s.hips, where + " hips"),
         legs: s.legs.map((l) => ({ root: idOf(l.root, where + " leg root"), mid: idOf(l.mid, where + " leg mid"), tip: idOf(l.tip, where + " leg tip"), height: l.height })),
         up: s.up ?? WORLD_UP,
-        filter: { root: sceneRoot(model), layers: s.layers },
+        filter: { root: sceneRoot(owner), layers: s.layers },
         rise: s.rise ?? FEET_RISE,
         drop: s.drop ?? FEET_DROP,
         plantHeight: s.plantHeight ?? PLANT_HEIGHT,

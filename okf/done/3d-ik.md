@@ -27,8 +27,9 @@ they are the last per-frame JS a rigged character pays.
 
 ## Done looks like
 
-- `createIk(model, { solvers })` in `@solidrt/3d`: a stack of solvers
-  over the model's joints, declared once, applied in order every frame.
+- `createIk(root, { solvers })` in `@solidrt/3d`: a stack of solvers
+  over the joints under `root` (a model, or any node subtree: the
+  rig-over-nodes form), declared once, applied in order every frame.
   Four kinds, the engines' vocabulary:
   - `lookAt` (Unity `SetLookAtPosition` with body/head/eyes weights,
     Godot `LookAtModifier3D`, Rigging's `MultiAimConstraint`): a bone

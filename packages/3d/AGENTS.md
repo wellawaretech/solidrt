@@ -3085,9 +3085,11 @@ Mixamo's standing turns (external/mixamo-turn).
 ### Spring bones
 
 Secondary motion - hair, a hood, a skirt, a tail, a cable: chains that
-lag behind the bones they hang from - is `createSpringBones(model, {
-colliders?, springs })`, solved in the spatial core (Unity's SpringBone,
-Godot's SpringBoneSimulator3D, three-vrm's VRMSpringBoneManager) with
+lag behind the bones they hang from - is `createSpringBones(root, {
+colliders?, springs })` (`root` a model, or any node whose subtree holds
+the joints: a group of plain nodes, as createMixer's rig over nodes),
+solved in the spatial core (Unity's SpringBone, Godot's
+SpringBoneSimulator3D, three-vrm's VRMSpringBoneManager) with
 VRM's vocabulary, so a VRM's `secondaryAnimation`/`VRMC_springBone`
 values go straight in: each spring is `{ joints, colliders?, center? }`,
 its joints PARENTS FIRST, each `{ node, tail?, stiffness?, drag?,
@@ -3139,10 +3141,11 @@ design.
 
 Anything that bends the animated pose toward the world - a head on the
 camera, a hand on a handle, a weapon on a cursor, a tail on a point,
-feet on a slope - is `createIk(model, { solvers })`, a stack of solvers
-solved in the spatial core (Unity's Animator IK and Animation Rigging,
-Godot's SkeletonModifier3D stack, Unreal's Control Rig nodes) in their
-vocabulary. Four kinds, `{ kind, ..., weight? }` each: `lookAt` (`bones`
+feet on a slope - is `createIk(root, { solvers })` (`root` a model, or
+any node whose subtree holds the joints, as createMixer's rig over
+nodes), a stack of solvers solved in the spatial core (Unity's Animator
+IK and Animation Rigging, Godot's SkeletonModifier3D stack, Unreal's
+Control Rig nodes) in their vocabulary. Four kinds, `{ kind, ..., weight? }` each: `lookAt` (`bones`
 root first - spine, neck, head - each a node or `{ node, share }`; the
 shares distribute the aim, the last bone reaching the target exactly;
 `forward`/`upAxis` the bones' own axes, default +z/+y; `up` a roll
@@ -3163,7 +3166,7 @@ plus `legs: [{ root, mid, tip, height? }]` whose targets are GROUND HITS
 the core takes itself: a ray `rise` above each animated foot down to
 `drop` below it on `layers` - REQUIRED, a collider layer the model's own
 meshes are not on, as `scene.raycast` takes it - the sole `height` below
-the ankle (measured from the model's ground plane at the declaration,
+the ankle (measured from the root's ground plane at the declaration,
 so declare at rest), a foot planted within `plantHeight` of its rest
 height and lifting over `plantBand` with the clip, the hips moved along
 `up` by the planted foot that needs it most so both feet reach, eased by

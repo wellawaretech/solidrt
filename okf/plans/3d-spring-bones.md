@@ -20,7 +20,8 @@ it compose by hand.
 
 ## Done looks like
 
-- `createSpringBones(model, { colliders, springs })` in `@solidrt/3d`:
+- `createSpringBones(root, { colliders, springs })` in `@solidrt/3d`
+  (`root` a model, or any node subtree, the rig-over-nodes form):
   per-joint settings in the VRM 1.0 / three-vrm / Godot vocabulary
   (stiffness, drag, gravity power and direction, hit radius, tail), an
   optional center node, colliders shared by index. `reset()`,
