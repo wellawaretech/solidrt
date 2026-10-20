@@ -88,13 +88,12 @@ import {
 } from "@solidrt/core/gpu"
 import type { AttributeAccess, BufferId, DrawId, ResourcePool, ShaderParams, TextureId, VertexAttribute } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
-import type { GridId, ViewKey } from "flux:spatial"
+import type { GridId } from "flux:spatial"
 import { registerStat } from "sol:dev"
 import { on } from "sol:events"
 import { checkAtlases, frameIndex } from "./atlas.ts"
 import type { Atlas } from "./atlas.ts"
 import { unprojectCamera } from "./camera.ts"
-import type { CameraState } from "./camera.ts"
 import { isFrame, writeFrame } from "./frames.ts"
 import type { Frame } from "./frames.ts"
 import { atlasBindings, RECORD_ATTRIBUTES } from "./glsl.ts"
@@ -131,6 +130,9 @@ const MIP_CHAIN_FACTOR = 4 / 3
 // in BYTES, so a tile layer and a 3d grid share one scene limit; the
 // layer's own `maxTexels` stays in texels, its unit, and converts here.
 const CHUNK_TEXEL_BYTES = 4
+// The identity node transform [x, y, z, qx, qy, qz, qw, sx, sy, sz] the
+// layer's world root is created with.
+const WORLD_TRANSFORM = new Float32Array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1])
 
 export type Tint = [number, number, number, number]
 
@@ -247,10 +249,20 @@ export type TileLayerOptions = {
   enter?: number
   leave?: number
   /**
+   * An integer priority among the app's grids and regions (default 0):
+   * a higher priority enters first whatever the distance and is
+   * evicted last - the ground layer before its decoration layer, before
+   * the sprite populations over it, when the enter budget is short
+   * (setResidencyBudget).
+   */
+  priority?: number
+  /**
    * The layer's texture budget in texels: the most its resident chunks
    * may hold at once, counted as chunk targets at the current density,
-   * mip chain included (a resident chunk with no cells holds no texture
-   * but counts as one).
+   * mip chain included - a chunk's MEASURED bytes once it holds a
+   * target (its records and style buffers on top), the estimate of one
+   * target until then, so a resident chunk with no cells weighs
+   * nothing and a sparse world sits below its budget.
    * Past it the residency gate evicts the chunk least needed, the
    * furthest from any viewer in `leave`s, for one more needed; a chunk
    * nothing can make room for waits, wanted, until a view moves
@@ -492,12 +504,14 @@ type ChunkStyle = { bytes: Uint8Array; buffer: BufferId | null; fields: Attribut
 // target it binds (a chunk back from the pool may hold another id).
 type ImageEntry = { draw: DrawId; texture: TextureId }
 
-// One view of the layer: the shell, its gate key, its entries by image
-// key, and under wrap the chunk-index range its world box covers
-// ([c0, c1, r0, r1], the image set's only camera dependence).
+// One view of the layer: the shell (the gate's viewer, which the shell
+// pushes), its entries by image key, and under wrap the chunk-index
+// range its world box covers ([c0, c1, r0, r1], the image set's only
+// camera dependence).
 type TileView = {
   view: ViewHandle
-  key: ViewKey | null
+  /** Disposed: the shell withdrew its viewer; nothing more to sync. */
+  gone: boolean
   entries: Map<number, ImageEntry>
   range: [number, number, number, number] | null
   /** The entry set may have changed (residency, a write, a range
@@ -709,31 +723,6 @@ function frameSize(frame: Frame, atlas: Atlas): [number, number] {
   return [Math.abs(frame.u1 - frame.u0) * atlas.width, Math.abs(frame.v1 - frame.v0) * atlas.height]
 }
 
-// The orthographic view a view pushes to the gate: world pixels to clip
-// through the camera mapping (projectCamera) with the viewport's center at
-// the view origin, so the gate's eye (the point enters are paced by) is
-// the viewport center, and clip x/y spanning the viewport. Column-major,
-// the core's matrix layout; the plane is z = 0 and the view direction -z.
-function viewMatrices(camera: CameraState, width: number, height: number, view: Float32Array, proj: Float32Array): void {
-  let zoom = camera.zoom
-  let c = Math.cos(camera.rotation)
-  let s = Math.sin(camera.rotation)
-  view.fill(0)
-  view[0] = zoom * c
-  view[1] = zoom * s
-  view[4] = -zoom * s
-  view[5] = zoom * c
-  view[10] = 1
-  view[12] = camera.pivotX - width / 2 - zoom * (c * camera.x - s * camera.y)
-  view[13] = camera.pivotY - height / 2 - zoom * (s * camera.x + c * camera.y)
-  view[15] = 1
-  proj.fill(0)
-  proj[0] = 2 / width
-  proj[5] = -2 / height
-  proj[10] = -1
-  proj[15] = 1
-}
-
 /**
  * Create a baked tile layer of `tileW` x `tileH` pixel cells, every cell
  * drawing one atlas frame at the frame's own size, baked into chunk
@@ -836,9 +825,12 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
   if (!(Number.isFinite(enter) && enter >= 0 && Number.isFinite(leave) && leave >= enter)) {
     throw new Error(`createTileLayer: enter must be non-negative and leave at least enter, got ${enter} and ${leave}`)
   }
+  let priority = opts?.priority
+  if (priority !== undefined && !Number.isInteger(priority)) throw new Error(`createTileLayer: priority must be an integer, got ${priority}`)
   // A chunk's cost to the residency limits: its target's texels at the
-  // current density, the mip chain included (the grid's weight,
-  // re-pushed on setDensity).
+  // current density, the mip chain included - the grid's ESTIMATE per
+  // cell (re-pushed on setDensity) until the chunk holds a target, when
+  // its measured bytes (chunkBytes) replace it.
   let chunkTexels = (n: number) => Math.ceil(targetW * n * (targetH * n) * (mipmap ? MIP_CHAIN_FACTOR : 1))
   let maxTexels = opts?.maxTexels
   if (maxTexels !== undefined && !(Number.isFinite(maxTexels) && maxTexels >= chunkTexels(density))) {
@@ -931,7 +923,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     let cy = chunk.y + chunk.height / 2
     let nearest = Infinity
     for (let tv of views) {
-      if (tv.key === null) continue
+      if (tv.gone) continue
       let { width, height } = tv.view.size()
       let [ex, ey] = unprojectCamera(tv.view.camera(), width / 2, height / 2)
       let dx = cx - ex
@@ -1175,6 +1167,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     takeResources(chunk)
     touch(chunk)
     markViews()
+    weigh(chunk)
   }
   // Give the chunk's GPU side back; its records stay (the caller drops
   // them under retain "none").
@@ -1185,7 +1178,32 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     chunk.dirty = false
     chunk.wrote = false
     markViews()
+    weigh(chunk)
   }
+  // The bytes a resident chunk holds: its target at the current density
+  // (the mip chain included) and its record and style buffers; nothing
+  // without a target (an empty chunk).
+  let chunkBytes = (chunk: Chunk): number => {
+    if (chunk.texture === null) return 0
+    let bytes = chunkTexels(density) * CHUNK_TEXEL_BYTES + chunk.records!.byteLength
+    for (let style of chunk.styles) bytes += style.bytes.byteLength
+    return bytes
+  }
+  // Report a wanted chunk's measured bytes to the gate's limits (in place
+  // of the grid's estimate from here on). A chunk the gate let go of
+  // holds no state there, so only a wanted one is weighed; a leave
+  // clears `wanted` before it releases.
+  let weigh = (chunk: Chunk) => {
+    if (!chunk.wanted) return
+    spatial.setCellWeight(grid, [chunk.chunkCol, chunk.chunkRow, 0], chunkBytes(chunk))
+  }
+  // The record and style buffers of one chunk, the part of a measured
+  // chunk the texel budget does not count: the grid's limit is the
+  // budget's bytes plus those buffers for as many chunks as the budget
+  // holds at density `n`, so `maxTexels` holds exactly the chunks it
+  // promises.
+  let recordBytes = perChunk * (INSTANCE_FLOATS * Float32Array.BYTES_PER_ELEMENT + shapes.reduce((sum, shape) => sum + shape.stride, 0))
+  let gridLimit = (n: number): number | undefined => (maxTexels === undefined ? undefined : maxTexels * CHUNK_TEXEL_BYTES + Math.floor(maxTexels / chunkTexels(n)) * recordBytes)
   // The chunk's object is let go of when nothing remains to remember: no
   // records, not wanted.
   let forget = (chunk: Chunk) => {
@@ -1202,6 +1220,8 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     resident.add(chunk)
     if (chunk.records === null && fill !== undefined) fill(chunk)
     if (chunk.count > 0) acquire(chunk)
+    // Weighed either way: an empty chunk weighs nothing, not the estimate.
+    else weigh(chunk)
     layer.onEnter?.(chunk)
   }
   let leaveChunk = (i: number, j: number) => {
@@ -1220,7 +1240,13 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     forget(chunk)
     layer.onLeave?.(chunk)
   }
+  // The layer's WORLD to the gate: chunks are records, not nodes, so a
+  // root node of its own (at identity) names it; its views are scoped
+  // to it and its grid declared under it, as a sprite layer's are under
+  // the layer root.
+  let world = spatial.createNode(WORLD_TRANSFORM, true)
   let grid = spatial.createGrid({
+    root: world,
     origin: [0, 0, 0],
     cell: [chunkW, chunkH, 0],
     enter,
@@ -1231,7 +1257,8 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
         : [floorDiv(bounds.col, chunkTiles), floorDiv(bounds.row, chunkTiles), 0, floorDiv(bounds.col + bounds.cols - 1, chunkTiles), floorDiv(bounds.row + bounds.rows - 1, chunkTiles), 0],
     wrap: wrap === null ? undefined : [wrap.cols / chunkTiles, wrap.rows / chunkTiles, 0],
     weight: chunkTexels(density) * CHUNK_TEXEL_BYTES,
-    limit: maxTexels === undefined ? undefined : maxTexels * CHUNK_TEXEL_BYTES,
+    limit: gridLimit(density),
+    priority,
     label,
   })
   handlers.set(grid, { enter: enterChunk, leave: leaveChunk })
@@ -1344,8 +1371,10 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
         targetSizes.set(chunk.texture, targetW * n * (targetH * n))
       }
       touch(chunk, false)
+      weigh(chunk)
     }
     spatial.setGridWeight(grid, chunkTexels(n) * CHUNK_TEXEL_BYTES)
+    if (maxTexels !== undefined) spatial.setGridLimit(grid, gridLimit(n)!)
   }
   // Each view's wish for the density: its target texels per world pixel
   // (oversample times zoom).
@@ -1370,14 +1399,12 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     if (maxTexels !== undefined) n = Math.max(1, Math.min(n, Math.floor(Math.sqrt(maxTexels / chunkTexels(1)))))
     applyDensity(n)
   }
-  // A view's camera, size or oversample changed: its gate view, its
-  // density wish and, under wrap, its image range follow.
+  // A view's camera, size or oversample changed (the view shell pushed
+  // the gate's viewer already): its density wish and, under wrap, its
+  // image range follow.
   let viewChanged = (tv: TileView) => {
-    if (tv.key === null || disposed) return
+    if (tv.gone || disposed) return
     let cam = tv.view.camera()
-    let { width, height } = tv.view.size()
-    viewMatrices(cam, width, height, gateView, gateProj)
-    spatial.setView(tv.key, gateView, gateProj)
     viewsDirty = true
     scheduleFlush()
     wishes.set(tv, tv.view.oversample * cam.zoom)
@@ -1389,9 +1416,6 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     tv.range = range
     tv.dirty = true
   }
-  let gateView = new Float32Array(16)
-  let gateProj = new Float32Array(16)
-
   let layer: TileLayer = {
     atlases,
     material,
@@ -1423,9 +1447,10 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     },
     createView(vopts) {
       if (disposed) throw new Error("createView: the layer is disposed")
-      let tv: TileView = { view: undefined as unknown as ViewHandle, key: spatial.allocViewKey(), entries: new Map(), range: null, dirty: true }
+      let tv: TileView = { view: undefined as unknown as ViewHandle, gone: false, entries: new Map(), range: null, dirty: true }
       tv.view = createViewShell(vopts, {
         label,
+        root: world,
         pick: () => [],
         cameraParams: cam => tileCameraParams(cam, chunkW, chunkH),
         // uTint is the VIEW's tint over the bake (identity until a
@@ -1435,15 +1460,15 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
         disposing() {
           views.delete(tv)
           wishes.delete(tv)
-          // The entries die with the target.
+          // The entries die with the target; the shell withdraws the
+          // viewer.
           tv.entries.clear()
-          if (tv.key !== null && !disposed) {
-            spatial.setView(tv.key, null)
+          tv.gone = true
+          if (!disposed) {
             viewsDirty = true
             scheduleFlush()
             resolve()
           }
-          tv.key = null
         },
       })
       views.add(tv)
@@ -1665,6 +1690,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
       dirty.clear()
       handlers.delete(grid)
       spatial.destroyGrid(grid)
+      spatial.destroyNode(world)
       // The views first: their entries bind the chunk targets.
       for (let tv of [...views]) tv.view.dispose()
       // The resident chunks' GPU side is destroyed outright: a shared pool

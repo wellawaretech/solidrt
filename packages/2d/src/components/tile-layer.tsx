@@ -89,6 +89,7 @@ export type TileLayerProps = LayerPointerProps &
   overhang?: number
   enter?: number
   leave?: number
+  priority?: number
   maxTexels?: number
   retain?: "records" | "none"
   fill?: (chunk: TileChunk) => void
@@ -156,7 +157,7 @@ export type TileLayerProps = LayerPointerProps &
 
 // The props that describe a layer the component creates - meaningless,
 // hence rejected, on an adopted one (`layer`), which was created already.
-const CREATION_PROPS = ["tileW", "tileH", "atlases", "frames", "material", "chunkTiles", "bounds", "wrap", "overhang", "enter", "leave", "maxTexels", "retain", "fill", "pool", "density", "maxDensity", "mipmap", "chunkClearColor"] as const
+const CREATION_PROPS = ["tileW", "tileH", "atlases", "frames", "material", "chunkTiles", "bounds", "wrap", "overhang", "enter", "leave", "priority", "maxTexels", "retain", "fill", "pool", "density", "maxDensity", "mipmap", "chunkClearColor"] as const
 
 /**
  * Owns a tile layer (over `atlases`; or adopts an existing one through
@@ -202,6 +203,7 @@ export let TileLayer: ParentComponent<TileLayerProps> = props => {
       overhang: props.overhang,
       enter: props.enter,
       leave: props.leave,
+      priority: props.priority,
       maxTexels: props.maxTexels,
       retain: props.retain,
       fill: props.fill,

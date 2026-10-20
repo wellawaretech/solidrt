@@ -987,9 +987,12 @@ export type Scene = {
    * Godot's intersect_shape), each with its deepest contact. Tested per
    * triangle in world space against the same shapes raycast() uses, so
    * an undrawn collider layer answers through `opts.layers`, and any
-   * transform holds; an instanced mesh or sprite counts by its box.
-   * Surfaces, not solids: a volume wholly inside a closed mesh with no
-   * triangle in reach touches nothing. Unordered; reflects pending writes
+   * transform holds; a sprite counts by its box, an instanced mesh by
+   * its instances (each a shape), and a record mesh's population box is
+   * a ray's alone (never a solid to a body). A mesh is a surface (a
+   * volume wholly inside a closed mesh with no triangle in reach touches
+   * nothing), a box a solid (a volume whose center lies inside it is
+   * pushed out of the nearest face). Unordered; reflects pending writes
    * like raycast().
    */
   overlap(volume: Volume, opts?: QueryOptions): Overlap[]
@@ -2031,10 +2034,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // before it renders.
   let viewScratch = new Float32Array(16)
   let projScratch = new Float32Array(16)
+  // Scoped to this scene's world (its root node), so the residency
+  // gate never has a scene's camera want another scene's or a 2d
+  // layer's regions.
   let setView = (target: TextureId, cam: Camera) => {
     viewScratch.set(cam.view)
     projScratch.set(cam.proj)
-    spatial.setView(target, viewScratch, projScratch)
+    spatial.setView(target, viewScratch, projScratch, root._node!)
   }
   let lodBiasExplicit: number | null = opts?.lodBias ?? null
   if (lodBiasExplicit !== null && !(lodBiasExplicit > 0 && Number.isFinite(lodBiasExplicit))) {
@@ -2299,12 +2305,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // own node stays OUT of the index: explicit population bounds are
       // its cull box only (else the cull group of its instances). A
       // record mesh's records are opaque, so its explicit bounds are its
-      // box in the index (without them it is not picked at all), as is a
+      // box in the index (without them it is not picked at all) for RAYS
+      // alone - a population's box is no solid to a body, which would be
+      // walled by or pushed out of the whole population - as is a
       // sprite's unit box (its triangles lie wherever the camera is, not
-      // where the geometry says).
+      // where the geometry says), which IS a solid.
       if (inst === null && !mesh._sprite) spatial.setShape(mesh._node!, bufs.shape)
       else if (inst !== null && inst.nodes !== null) spatial.setCullBounds(mesh._node!, inst.bounds)
-      else spatial.setBounds(mesh._node!, localBounds(mesh))
+      else {
+        spatial.setBounds(mesh._node!, localBounds(mesh))
+        spatial.setCollide(mesh._node!, inst === null)
+      }
       // A rebuilt entry (setGeometry) re-shapes the live instances to the
       // new geometry; their record bindings are untouched. On a first
       // entry none has a core node yet - they enter after the mesh -

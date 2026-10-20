@@ -47,6 +47,8 @@ export type {
   Capsule,
   Circle,
   GroupOptions,
+  DestroyOptions,
+  ReparentOptions,
   Impact,
   MoveOptions,
   MoveResult,
@@ -80,6 +82,8 @@ export type { MoveLayer } from "./collision.ts"
 export type { ViewHandle, ViewOptions } from "./views.ts"
 export { createTileLayer, setBakeBudget, TILE_FLIP_X, TILE_FLIP_Y, TILE_TRANSPOSE } from "./tiles.ts"
 export type { TileCellOptions, TileChunk, TileLayer as TileLayerHandle, TileLayerOptions, TileRect } from "./tiles.ts"
+export { createRegion, createRegionGrid, createStreamingSource } from "./region.ts"
+export type { Region as RegionHandle, RegionCell, RegionContent, RegionGrid as RegionGridHandle, RegionGridOptions, RegionOptions, RegionState, StreamingSource } from "./region.ts"
 
 export type { NodeMotionSpec, NodeTransitionSpec } from "flux:spatial"
 export { fullFrame, grid, isFrame, namedFrames } from "./frames.ts"
@@ -99,5 +103,5 @@ export { layoutText } from "./text-layout.ts"
 export type { GlyphPlacement, TextAlign, TextAnchor, TextAnchorY, TextLayout, TextLayoutOptions, TextLine } from "./text-layout.ts"
 export { addText, destroyText, setText } from "./text.ts"
 export type { AddTextOptions, TextPose, TextRun, TextStyle } from "./text.ts"
-export { Camera2d, Group, Sprite, SpriteLayer, Text2d, TileLayer, View2d, useSpriteLayer, Shot, Shots } from "./components/index.ts"
-export type { BubblingSpritePointerProps, Camera2dProps, GroupProps, LayerPointerProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps, View2dProps, DensityProps, OutputLeaf, ShotProps, ShotsProps } from "./components/index.ts"
+export { Camera2d, Group, Region, RegionGrid, Sprite, SpriteLayer, Text2d, TileLayer, View2d, useSpriteLayer, Shot, Shots } from "./components/index.ts"
+export type { BubblingSpritePointerProps, Camera2dProps, GroupProps, LayerPointerProps, RegionGridProps, RegionProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps, View2dProps, DensityProps, OutputLeaf, ShotProps, ShotsProps } from "./components/index.ts"

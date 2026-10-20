@@ -33,6 +33,7 @@ Contents:
   - [Camera control](#camera-control)
   - [Layer tint](#layer-tint)
   - [Views](#views)
+  - [Regions](#regions)
   - [Retargeted motion](#retargeted-motion)
   - [Frame-rate motion](#frame-rate-motion)
   - [Frame animation](#frame-animation)
@@ -310,12 +311,26 @@ child out first to keep it), children first so each plays its own
 removal verb, the same word with the same meaning as @solidrt/3d's
 `destroy`: a sprite cannot exist outside its layer, so there is no
 detach here (3d's `remove`), and a sprite that should come back is
-hidden (`visible: false`).
+hidden (`visible: false`). `destroySprite(sprite, { snap: true })` /
+`destroyGroup(group, { snap: true })` free NOW, playing no declared
+exit (the declaration is cleared first, so the core frees at once and
+the slot recycles this flush): a region's teardown, a level reset,
+anything torn down off screen - Unity's deferred Destroy under an exit
+animation is how streamed objects outlive their cell.
 A handle's x/y are local to its group; `worldPosition(sprite | group)`
 reads the layer-pixel position composed through every enclosing group
 from the core's world matrix (@solidrt/3d's worldPosition) - under a
 transition the pose of this frame, since native motion steps before the
-frame's JS.
+frame's JS. A re-parent (`setSpriteParent`, `setGroup`'s `parent`)
+keeps the LOCAL fields by default, so the handle moves with the frame
+change; `{ keepWorld: true }` keeps the WORLD pose instead (Unity's
+SetParent with worldPositionStays), rewriting x, y, rotation and w/h
+(a group's scale) in the new frame from the core's world matrices as
+the tree stands now - a passenger stepping off a moving platform, a
+sprite re-homed out of a leaving region. The kept pose is this frame's:
+under a transition in flight the mid-flight pose is kept and the rest
+of the motion dropped (its target was spelled in the old frame; the
+declaration stays), so write the target again if it still applies.
 
 ### Visibility
 
@@ -634,6 +649,83 @@ another of an existing layer (a minimap). Not yet, all additive: a
 tint, and a viewport over SEVERAL layers under one camera (their
 scene-level camera) - okf/backlog/2d-layer-views-additive.md.
 
+### Regions
+
+A sprite layer STREAMS by the spatial core's residency gate the way the
+tile layer does (Residency under the tile layer below; the contract in
+the Residency section of @solidrt/3d's AGENTS.md, which this mirrors
+one dimension down): `createRegionGrid(layer, { cell: [w, h], enter?,
+leave?, origin?, bounds?, weight?, limit?, priority?, retain?,
+...content })` / `<RegionGrid>` is a root group of the layer whose
+every cell a viewer wants within `enter` of its view (kept until beyond
+`leave`; defaults half a cell and one and a half, the tile layer's)
+becomes a child Region at the cell's corner - Unreal's World Partition,
+Minecraft's chunks, for POPULATIONS: a city's cars by block, a
+bullet-hell's enemies by zone, where the tile layer streams the ground
+- and `createRegion(layer, { x, y, width, height, enter, leave,
+parent?, ...content })` / `<Region>` is a bounded group placed like any
+group (a level section, a boss room; Unreal's level streaming volume)
+that moves with its group. VIEWERS are every view of every layer (the
+view shell pushes its camera over its viewport to the gate on creation
+and on every camera or size write: the main view, a minimap, a
+split-screen pane - scoped to the layer's WORLD, its root node, so a
+3d scene's camera or another layer's view never wants this layer's
+cells) and `createStreamingSource(layer, { x, y, radius })` beyond them
+(a cut-scene's look-ahead, a second player on a server, a teleport
+destination loaded before the cut; moved with `setPosition`).
+Cells are `[w, h]` in layer pixels, 0 unbounded along an axis (`[512,
+0]` streams a side-scroller by column); `bounds` is an inclusive
+cell-index box; a sprite grid has no `wrap` (the layer draws no seam
+copies of a cell; okf/done/2d-wrap-around.md has the recipe); a
+`<RegionGrid>` under a `<Group>` throws, since the gate's grid is layer
+space.
+
+What a region HOLDS is the app's, through core's lifecycle: `load(region,
+signal)` prepares the data off the thread (a file read, a decode, a
+`"use isolate"` generator; async, abortable; absent, `build` gets
+undefined); `build(region, data)` adds sprites under `region.content`
+(`addSprite(layer, { parent: region.content, ... })`, positions
+cell-local; as a generator, a `yield` after every batch of a few
+hundred runs the creates one step per slice of the frame budget,
+core's `setSliceBudget`; a `<RegionGrid build>` returns JSX mounted
+there instead, one step); `unload(region, data)` runs at leave BEFORE
+the content goes, with the data (an editable world reads its cell back
+here); `proxy(region)` makes the sprite or group drawn under
+`region.group` while the content is not shown (a far-ring stand-in; most
+layers pass none - a 2d far ring is the mip chain's job). The content
+is HIDDEN until the build completes (pick, pickRect and the queries
+skip it), shown in the frame the last step ran in, and MEASURED then:
+the record bytes of every sprite under it (pose, sprite and style
+records; `region.measure()` after content added later) are what the
+gate's limits weigh the cell by in place of the estimate, so a grid
+`limit` or the scene-wide `setResidencyLimit` counts what is there.
+`priority` orders grids and layers when the enter budget is short
+(`setResidencyBudget`): the ground tile layer before its decoration
+layer before the populations. A leave aborts a load in flight, cancels
+a build under way (the generator's `finally` runs), runs `unload`, and
+SNAPS the teardown (`destroyGroup` with `snap`: no exit plays, the
+slots recycle this flush - a region leaves off screen); a failed load
+or build is fail-soft (`state` "failed", `onError`, the next enter
+retries). `region.state` is the gate's "pending"/"stalled" until the
+enter, then "loading", "building", "shown" or "failed";
+`grid.cells()`, `cellAt(i, j)`, `cellOrigin`, `setLimit`, `setWeight`,
+`forget` (drop the retained data), `onStateChange`/`onError`, `dispose`.
+`/stats` reports the gate (`regionsWanted`, `regionsResident`,
+`regionsStalled`, `residentWeight`) and the handlers (`app.regionsLoading`,
+`regionsBuilding`, `regionsShown`, `regionsFailed`).
+
+OWNERSHIP, the rule every streamed world needs: a region owns what sits
+under its content and destroys it at leave, and a handle kept to one of
+those sprites is inert from then on (`layer` null). A sprite that must
+outlive its cell - an enemy chasing the player across the border, a
+projectile - is re-homed by the app, `setSpriteParent(sprite, elsewhere,
+{ keepWorld: true })` as it crosses or in `unload` at the latest, the
+way Minecraft moves an entity between chunks. Two more rules from the
+engines that got them wrong: draw order across cells is slot order (a
+re-entered cell takes whatever slots are free), so a streamed world
+wants `orderBy`; and `enter` must cover half the largest sprite's
+extent, or a sprite near a cell edge pops in late.
+
 ### Retargeted motion
 
 Retargeted motion is NATIVE: `setSpriteTransition(sprite, { position:
@@ -805,11 +897,12 @@ textures: zero per-frame cost however many tiles exist.
 The layer is a HANDLER over the core's residency gate (the Residency
 section of @solidrt/3d's AGENTS.md; flux:spatial `createGrid`): its
 chunk grid is a grid of regions (`cell: [chunkW, chunkH, 0]`), every
-VIEW (`layer.createView`; `<TileLayer>` makes one) pushes an
-orthographic view of its viewport on every camera, size or oversample
-write, flushed to the core at the layer's own flush (the frame's
-publish pass) like a sprite layer's sync, and the gate's
-`spatialRegionEnter` / `spatialRegionLeave` events drive the GPU side.
+VIEW (`layer.createView`; `<TileLayer>` makes one) is a viewer - the
+view shell every layer kind shares pushes an orthographic view of its
+viewport to the gate on creation and on every camera or size write,
+scoped to the layer's own world (a root node the layer makes for it) -
+and the gate's `spatialRegionEnter` / `spatialRegionLeave` events drive
+the GPU side.
 A chunk is wanted while within `enter` of any view (default half a
 chunk) and kept until
 beyond `leave` (default one and a half chunks; both in world pixels, the
@@ -879,20 +972,29 @@ idle targets included); `/stats` reports the gate (`regionsWanted`,
 `regionEnters`/`regionLeaves` and the window's pair, `residentWeight`)
 and the pools' traffic (`app.poolHits`, `app.poolMisses`,
 `app.poolHeld`, every pool summed). `maxTexels` is the layer's texture
-budget: the grid's cells weigh a chunk's texels at the current density,
-its mip chain included (re-weighed on `setDensity`) and the budget is the grid's
-limit, so past it the gate evicts the chunk least needed - furthest from
-any view in `leave`s - for one more needed, the eviction's leave
-before the enter (the evicted set reaches the pool first; the enter takes
-a retired set, which that one becomes a frame later), and a chunk
-nothing can make room for waits, wanted and stalled, until a view moves
-(Unreal's streaming pool, one grid at a time; `setResidencyLimit` is the
-scene-wide form over every grid). The budget bounds the resident COUNT,
-never the quality: a world that fills it shows holes at its far edge
-rather than blur everywhere, and a resident chunk with no cells holds no
-texture but still weighs a chunk, so a sparse world sits below its
-budget. It must hold at least one chunk at the density in force
-(throws otherwise, at creation and at `setDensity`).
+budget: a chunk is admitted by the grid's ESTIMATE (one target's texels
+at the current density, its mip chain included, re-estimated on
+`setDensity`) and weighed by its MEASURED bytes once it holds one (the
+target plus its record and style buffers, `setCellWeight`; nothing
+while it holds no cell), the budget is the grid's limit (the texels'
+bytes plus the buffers of as many chunks as they hold, so it holds
+exactly the chunks it promises), and past it the gate evicts the chunk
+least needed - furthest from any view in `leave`s - for one more
+needed, the eviction's leave before the enter (the evicted set reaches
+the pool first; the enter takes a retired set, which that one becomes a
+frame later), and a chunk nothing can make room for waits, wanted and
+stalled, until a view moves or the limit changes (Unreal's streaming
+pool, one grid at a time; `setResidencyLimit` is the scene-wide form
+over every grid and region, bytes everywhere). The budget bounds the
+resident COUNT, never the quality: a world that fills it shows holes at
+its far edge rather than blur everywhere, and a resident chunk with no
+cells holds no texture and weighs nothing, so a sparse world sits below
+its budget. It must hold at least one chunk at the density in force
+(throws otherwise, at creation and at `setDensity`). `priority` (an
+integer, default 0) orders the layer among the app's grids and regions
+when the enter budget is short (`setResidencyBudget`): the ground
+layer before its decoration layer before the sprite populations
+(Regions above), and evicted last.
 
 ### Cells: frames, symmetry, overhang
 
@@ -1038,7 +1140,9 @@ holds the design and the condition it waits on).
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
 | `Camera2d` | createCamera2d's options (world?, min/maxZoom?, pivot?, follow?, offset?, panSpeed?, zoomSpeed?, rollSpeed?, damping?, inertia?, x?, y?, zoom?, rotation?), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view; its `size()` the viewport) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
 | `View2d` | a `<SpriteLayer>` child: one more view of the layer from a camera of its own (layer.createView as a component): width?, height? (view pixels, live - both, or neither = FILL exactly as SpriteLayer's own view: the leaf fills its sized parent and the view sizes to that box), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample?, maxPixels? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture, leaf) (as SpriteLayer's; else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, pointer? (this view's feed, fed from its root), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW from its map (inside, `useSpriteLayer()` reports the view as `viewport` and the feed as `pointer`); `<Sprite>`/`<Group>` children mount to the layer as outside |
-| `TileLayer` | tileW, tileH, atlases (Atlas[], the tilesets bound as one bake; mount-fixed) or layer (an existing createTileLayer handle to show again under a camera of its own, a minimap: the component adds a view and its leaf, the layer's lifetime, cells and hooks stay its maker's, so the creation props and onEnter/onLeave throw), frames? (the tileset `setTiles` indices name), chunkClearColor?, material? (the bake's material, `unlit()` default; mount-fixed), params? (layer.setParams as a prop; live, each change re-bakes), chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), bounds?, wrap?, overhang?, enter?, leave?, retain?, fill?, pool?, maxTexels?, density? (pin the bake density; live), maxDensity?, mipmap? (TileLayerOptions, creation-fixed; with `layer` they are its maker's), onEnter?, onLeave? (the layer's residency hooks), label?, ref?(layer) - the layer; plus its OWN VIEW, exactly `<SpriteLayer>`'s: width?, height? (view pixels - both, or neither = FILL the parent's box; mount-fixed), camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY; the view's camera and the gate's viewer; live, partial), clearColor? (the ground every chunk draws over), oversample?, maxOversample?, maxPixels? (the view's auto pick), viewRef?(view), output?(texture, leaf), events?, pointer?, onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root, every event over the world: `event.sprite` is always null); a `<Camera2d>` child drives the view |
+| `Region` | x, y, width, height (the box, in the enclosing `<Group>`'s frame), enter, leave, weight?, priority?, retain?, label? (createRegion's, mount-fixed), load?, build (the content JSX, mounted under the region's content group with the loaded data), unload?, proxy? (JSX under the region's group while not shown), onStateChange?, onError?, ref?(region) - an explicit region (Regions above); move it through `ref` with setGroup on `region.group` |
+| `RegionGrid` | cell, origin?, enter?, leave?, bounds?, weight?, limit?, priority?, retain?, label? (createRegionGrid's, mount-fixed), load?, build (per cell, mounted under the cell's content group), unload?, proxy?, onStateChange?, onError?, ref?(grid) - a region grid at the layer root (throws under a `<Group>`) |
+| `TileLayer` | tileW, tileH, atlases (Atlas[], the tilesets bound as one bake; mount-fixed) or layer (an existing createTileLayer handle to show again under a camera of its own, a minimap: the component adds a view and its leaf, the layer's lifetime, cells and hooks stay its maker's, so the creation props and onEnter/onLeave throw), frames? (the tileset `setTiles` indices name), chunkClearColor?, material? (the bake's material, `unlit()` default; mount-fixed), params? (layer.setParams as a prop; live, each change re-bakes), chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), bounds?, wrap?, overhang?, enter?, leave?, priority?, retain?, fill?, pool?, maxTexels?, density? (pin the bake density; live), maxDensity?, mipmap? (TileLayerOptions, creation-fixed; with `layer` they are its maker's), onEnter?, onLeave? (the layer's residency hooks), label?, ref?(layer) - the layer; plus its OWN VIEW, exactly `<SpriteLayer>`'s: width?, height? (view pixels - both, or neither = FILL the parent's box; mount-fixed), camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY; the view's camera and the gate's viewer; live, partial), clearColor? (the ground every chunk draws over), oversample?, maxOversample?, maxPixels? (the view's auto pick), viewRef?(view), output?(texture, leaf), events?, pointer?, onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root, every event over the world: `event.sprite` is always null); a `<Camera2d>` child drives the view |
 
 ### SpriteLayer and useSpriteLayer
 
@@ -1313,6 +1417,19 @@ hover, wheel and tap rules headless.
   query runs the layer's pending batch first, so write-then-query in one
   tick is coherent. Producers moving nodes between flushes are one frame
   stale to picking, like every query.
+- A sprite is a SOLID to overlap, sweep and moveAndSlide: a volume whose
+  center lies inside it is pushed out of the nearest edge (its column
+  is deep, so never along z), where a mesh in @solidrt/3d is a surface.
+  The push-out depth carries the whole volume clear; a body teleported
+  deep into a wide sprite comes out of the nearest side, which may not
+  be the side it came from.
+- `destroySprite`/`destroyGroup` play a declared `exit` unless told
+  `{ snap: true }`: a leaving node keeps its slot until the exit
+  settles, so a subtree torn down off screen (a region, a level reset)
+  without `snap` holds its slots for the exit's duration.
+- `keepWorld` keeps THIS frame's pose: a transition in flight is cut
+  there (the declaration stays), since its target was spelled in the old
+  frame. Re-home at rest where you can, or write the target again.
 - The queries are per-body answers - a hit test, a marquee, a blast
   radius, one mover call per character - not a collision broadphase. A
   bullets-vs-crowd test at frame rate is hundreds of core queries per

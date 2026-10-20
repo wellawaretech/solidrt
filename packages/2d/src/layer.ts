@@ -127,6 +127,10 @@ const PICK_RAY_START = -1
 const UP_2D: [number, number] = [0, -1]
 // worldPosition's world-matrix scratch (column-major; translation at 12, 13).
 const WORLD = new Float32Array(16)
+// keepWorld's second scratch: the new parent's world matrix.
+const WORLD_PARENT = new Float32Array(16)
+// The pose keepWorld composes: [x, y, angle, sx, sy].
+const LOCAL_POSE = new Float64Array(5)
 
 // Settle routing: the core's "spatialTransitionEnd" event carries the node
 // id, so the handles with a transition DECLARED are indexed by node (only
@@ -176,6 +180,60 @@ function declareTransition(node: NodeId, handle: Sprite | SpriteGroup, transitio
 }
 
 /**
+ * A node's pose in the frame of `parent` (null = the layer root, identity)
+ * as the tree stands now - the world matrix the core holds, pending
+ * writes included, so under a transition the pose of THIS frame - into
+ * LOCAL_POSE as [x, y, angle, sx, sy]: the plane's 2x2 and translation of
+ * inverse(parent world) * node world, the angle `atan2(m[1], m[0])` and
+ * sy negated under a mirroring (the core's own Pose2D rule). What
+ * `keepWorld` re-homes a handle by.
+ */
+function localPoseIn(node: NodeId, parent: SpriteGroup | null): void {
+  spatial.worldMatrix(node, WORLD)
+  let a = 1
+  let b = 0
+  let c = 0
+  let d = 1
+  let tx = 0
+  let ty = 0
+  if (parent !== null) {
+    spatial.worldMatrix(parent.node, WORLD_PARENT)
+    let det = WORLD_PARENT[0]! * WORLD_PARENT[5]! - WORLD_PARENT[1]! * WORLD_PARENT[4]!
+    if (det === 0) throw new Error("keepWorld: the new parent's frame is collapsed (a zero scale)")
+    a = WORLD_PARENT[5]! / det
+    b = -WORLD_PARENT[1]! / det
+    c = -WORLD_PARENT[4]! / det
+    d = WORLD_PARENT[0]! / det
+    tx = -(a * WORLD_PARENT[12]! + c * WORLD_PARENT[13]!)
+    ty = -(b * WORLD_PARENT[12]! + d * WORLD_PARENT[13]!)
+  }
+  let m0 = a * WORLD[0]! + c * WORLD[1]!
+  let m1 = b * WORLD[0]! + d * WORLD[1]!
+  let m4 = a * WORLD[4]! + c * WORLD[5]!
+  let m5 = b * WORLD[4]! + d * WORLD[5]!
+  LOCAL_POSE[0] = a * WORLD[12]! + c * WORLD[13]! + tx
+  LOCAL_POSE[1] = b * WORLD[12]! + d * WORLD[13]! + ty
+  LOCAL_POSE[2] = Math.atan2(m1, m0)
+  LOCAL_POSE[3] = Math.hypot(m0, m1)
+  LOCAL_POSE[4] = Math.hypot(m4, m5) * (m0 * m5 - m1 * m4 < 0 ? -1 : 1)
+}
+
+/**
+ * Snap a node's local transform to TRANSFORM, through nothing: a running
+ * transition would overwrite a raw write at the next frame (the producer
+ * rule) and would carry a target spelled in the OLD parent's frame, so a
+ * declared node's declaration is cleared around the write (its tracks
+ * end where they stand, which is the kept pose) and put back for the
+ * writes that follow.
+ */
+function snapTransform(handle: SpriteState | GroupState, node: NodeId): void {
+  let declaration = handle._transition
+  if (declaration !== null) spatial.setTransition(node, null)
+  spatial.setTransform(node, TRANSFORM)
+  if (declaration !== null) spatial.setTransition(node, declaration)
+}
+
+/**
  * One sprite: a handle into its layer. Read via getSprite; write through
  * setSprite so changes publish. The pointer handlers are plain assignable
  * fields - they touch no GPU state (the scene-graph handler rule).
@@ -214,6 +272,9 @@ export type Sprite = {
    * layer's sprites) - the bubble path; writes go through
    * setSpriteParent/addSprite's `parent`. */
   readonly _parent: SpriteGroup | null
+  /** The transition as declared to the core (setSpriteTransition), null
+   * for none; internal - what a snapping write restores. */
+  readonly _transition: NodeTransition | string | null
   onPointerDown?: (event: SpritePointerEvent) => void
   onPointerMove?: (event: SpritePointerEvent) => void
   onPointerUp?: (event: SpritePointerEvent) => void
@@ -542,6 +603,8 @@ export type SpriteGroup = {
    * membership writes go through addSprite/addGroup/setSpriteParent/
    * setGroup. */
   readonly _children: Set<SpriteState | GroupState>
+  /** See Sprite._transition. */
+  readonly _transition: NodeTransition | string | null
   /** Bubbled from a hit child sprite; see SpritePointerEvent. A group
    * never receives enter/leave (hover pairs on the sprite alone). */
   onPointerDown?: (event: SpritePointerEvent) => void
@@ -573,6 +636,11 @@ export type GroupOptions = {
   visible?: boolean
   /** Reparent (null = make the group a root). */
   parent?: SpriteGroup | null
+  /** With `parent`: keep the group's WORLD pose across the re-parent (its
+   * x, y, rotation and scale are rewritten in the new frame; Unity's
+   * SetParent with worldPositionStays), where the default keeps the LOCAL
+   * fields. See setSpriteParent for the rule under a transition. */
+  keepWorld?: boolean
 }
 
 /** What both layer kinds share; the free sprite functions dispatch on it. */
@@ -644,7 +712,8 @@ export type LayerBase = {
   _add(opts?: AddSpriteOptions): Sprite
   _write(sprite: SpriteState, opts: SpriteOptions): void
   _read(sprite: Sprite): Required<SpriteOptions>
-  _destroy(sprite: SpriteState): void
+  /** `snap`: free now, playing no exit (destroySprite). */
+  _destroy(sprite: SpriteState, snap?: boolean): void
   _schedule(): void
   /** The layer's JS-owned record stream, what records()/updateRecords
    * read and mark: a records layer's whole records, a node layer's
@@ -802,7 +871,7 @@ export type SpriteLayer = LayerBase & {
   /** The core node every sprite and group of the layer sits under: what
    * scopes the layer's queries in the arena shared with 3d scenes. */
   _root: NodeId
-  _destroyGroup(group: GroupState): void
+  _destroyGroup(group: GroupState, snap?: boolean): void
   /** Write a sprite's outline (rgb 0..1 and a width in world pixels)
    * for a distance-field atlas to draw under it; internal, the text
    * runs' write (text.ts). A colour atlas ignores the field. */
@@ -1094,6 +1163,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
 
   let views = createViews({
     label,
+    root,
     pipeline: gpu.pipeline,
     quad: gpu.quad,
     textures: { ...atlasBindings(atlases.map(a => a.texture)), ...material.textures },
@@ -1331,6 +1401,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
         _flipY: false,
         _visible: opts?.visible ?? true,
         _parent: opts?.parent ?? null,
+        _transition: null,
       }
       fillTransform(sprite._x, sprite._y, sprite._rot, sprite._w, sprite._h)
       let node = spatial.createNode(TRANSFORM, sprite._visible)
@@ -1409,7 +1480,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
         visible: sprite._visible,
       }
     },
-    _destroy(sprite) {
+    _destroy(sprite, snap) {
       sprite.layer = null
       dropClamp(sprite)
       if (sprite._parent) {
@@ -1423,8 +1494,10 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       // exit until the core frees it (the freed event lands after the
       // flush that zeroed the slot), then recycles. Otherwise the free is
       // immediate: the slot zeroes at the next core flush (zero scale =
-      // nothing drawn) and recycles now.
+      // nothing drawn) and recycles now. A snap undeclares first, so the
+      // free is the immediate kind whatever the sprite declared.
       let slot = sprite._slot
+      if (snap && sprite._transition !== null) spatial.setTransition(node, null)
       if (spatial.exitNode(node)) {
         leaving.add(node)
         onFreed(node, () => {
@@ -1436,9 +1509,10 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       }
       layer._schedule()
     },
-    _destroyGroup(group) {
+    _destroyGroup(group, snap) {
       let node = group.node
       declared.delete(node)
+      if (snap && group._transition !== null) spatial.setTransition(node, null)
       if (spatial.exitNode(node)) {
         leaving.add(node)
         onFreed(node, () => leaving.delete(node))
@@ -1522,8 +1596,20 @@ export function getSprite(sprite: Sprite): Required<SpriteOptions> | null {
  * there is no detach; a sprite that should come back is hidden
  * (`visible: false`), Unity's SetActive.
  */
-export function destroySprite(sprite: Sprite): void {
-  sprite.layer?._destroy(sprite)
+export function destroySprite(sprite: Sprite, opts?: DestroyOptions): void {
+  sprite.layer?._destroy(sprite, opts?.snap === true)
+}
+
+/**
+ * How a sprite or group is let go of: `snap` frees it NOW, playing no
+ * declared `exit` (the node's declaration is cleared first, so the core
+ * frees it at once and its slot recycles this flush) - a region's
+ * teardown, a level reset, anything torn down off screen, where an exit
+ * animating to nobody would only hold the slot. Default false: a
+ * declared exit plays.
+ */
+export type DestroyOptions = {
+  snap?: boolean
 }
 
 /**
@@ -1555,19 +1641,47 @@ export function worldPosition(target: Sprite | SpriteGroup): [number, number] | 
  * them (it holds its local pose, not its world pose; worldPosition reads
  * the composed one). Node layer only.
  */
-export function setSpriteParent(sprite: Sprite, parent: SpriteGroup | null): void {
+export function setSpriteParent(sprite: Sprite, parent: SpriteGroup | null, opts?: ReparentOptions): void {
   let layer = sprite.layer
   if (!layer) return
   if (sprite.node === null) throw new Error("setSpriteParent: record layers have no groups")
   if (parent && parent.layer !== layer) throw new Error("setSpriteParent: group belongs to another layer")
+  if (parent === sprite._parent) return
+  let s: SpriteState = sprite
+  if (opts?.keepWorld === true) {
+    localPoseIn(s.node!, parent)
+    s._x = LOCAL_POSE[0]!
+    s._y = LOCAL_POSE[1]!
+    s._rot = LOCAL_POSE[2]!
+    s._w = LOCAL_POSE[3]!
+    s._h = LOCAL_POSE[4]!
+    fillTransform(s._x, s._y, s._rot, s._w, s._h)
+    snapTransform(s, s.node!)
+  }
   // A sprite with a node is on a node layer (the throw above), which TS
   // cannot narrow through sprite.layer.
   spatial.setParent(sprite.node, parent ? parent.node : (layer as SpriteLayer)._root)
-  let s: SpriteState = sprite
   if (s._parent) s._parent._children.delete(s)
   s._parent = parent
   if (parent) parent._children.add(s)
   layer._schedule()
+}
+
+/**
+ * How a re-parent treats the pose: `keepWorld` keeps the handle's WORLD
+ * pose (Unity's SetParent with worldPositionStays), rewriting its local
+ * fields in the new frame from the core's world matrices as the tree
+ * stands now - a sprite re-homed from a leaving region's group to the
+ * root, a passenger stepping off a moving platform; the default keeps
+ * the LOCAL fields, so the handle moves with the frame change (the
+ * cheaper write, and what a mount wants). The kept pose is THIS frame's:
+ * under a transition in flight the mid-flight pose is kept and the rest
+ * of the motion dropped (its target was spelled in the old frame; the
+ * declaration stays for the writes that follow), so write the target
+ * again in the new frame if it still applies.
+ */
+export type ReparentOptions = {
+  keepWorld?: boolean
 }
 
 /** A lifecycle endpoint in the object form: the value (2d units, as the
@@ -1682,6 +1796,7 @@ export function setSpriteTransition(sprite: Sprite, transition: SpriteTransition
   if (sprite.node === null) throw new Error("setSpriteTransition: record sprites have no node transitions")
   let node = toNodeTransition(transition)
   spatial.setTransition(sprite.node, node)
+  ;(sprite as SpriteState)._transition = node
   declareTransition(sprite.node, sprite, node)
 }
 
@@ -1692,6 +1807,7 @@ export function setGroupTransition(group: SpriteGroup, transition: SpriteTransit
   if (group.layer === null) return
   let node = toNodeTransition(transition)
   spatial.setTransition(group.node, node)
+  ;(group as GroupState)._transition = node
   declareTransition(group.node, group, node)
 }
 
@@ -1738,6 +1854,7 @@ export function addGroup(layer: SpriteLayer, opts?: GroupOptions): SpriteGroup {
     _visible: opts?.visible ?? true,
     _parent: opts?.parent ?? null,
     _children: new Set(),
+    _transition: null,
   } as GroupState
   writeGroupTransform(group)
   group.node = spatial.createNode(TRANSFORM, group._visible)
@@ -1776,8 +1893,21 @@ export function setGroup(group: SpriteGroup, opts: GroupOptions): void {
     spatial.setVisible(group.node, opts.visible)
     moved = true
   }
-  if (opts.parent !== undefined) {
+  if (opts.parent !== undefined && opts.parent !== g._parent) {
     if (opts.parent && opts.parent.layer !== layer) throw new Error("setGroup: parent group belongs to another layer")
+    if (opts.keepWorld === true) {
+      // The pose written above (if any) is pending in the core and counts
+      // in the world matrix read here; the uniform scale takes the
+      // frame's x scale (a mirroring parent would have made it negative,
+      // which a group's scale never is).
+      localPoseIn(group.node, opts.parent)
+      g._x = LOCAL_POSE[0]!
+      g._y = LOCAL_POSE[1]!
+      g._rot = LOCAL_POSE[2]!
+      g._scale = LOCAL_POSE[3]!
+      writeGroupTransform(group)
+      snapTransform(g, group.node)
+    }
     spatial.setParent(group.node, opts.parent ? opts.parent.node : layer._root)
     if (g._parent) g._parent._children.delete(g)
     g._parent = opts.parent
@@ -1799,15 +1929,23 @@ export function setGroup(group: SpriteGroup, opts: GroupOptions): void {
  * frees. A component tree unmounts children first and never sees the
  * recursion.
  */
-export function destroyGroup(group: SpriteGroup): void {
+export function destroyGroup(group: SpriteGroup, opts?: DestroyOptions): void {
   let layer = group.layer
   if (!layer) return
   let g: GroupState = group
+  let snap = opts?.snap === true
+  // A snap undeclares the group first: its stagger would otherwise space
+  // the children's frees, and the children's own declarations go as each
+  // is destroyed.
+  if (snap && g._transition !== null) {
+    spatial.setTransition(g.node, null)
+    g._transition = null
+  }
   // Children first, over a snapshot (each removal edits _children); the
   // set only groups carry tells the two handle kinds apart.
   for (let child of [...g._children]) {
-    if ("_children" in child) destroyGroup(child)
-    else destroySprite(child)
+    if ("_children" in child) destroyGroup(child, opts)
+    else destroySprite(child, opts)
   }
   g.layer = null
   if (g._parent) {
@@ -1815,5 +1953,5 @@ export function destroyGroup(group: SpriteGroup): void {
     g._parent = null
   }
   layer._groups.delete(group)
-  layer._destroyGroup(g)
+  layer._destroyGroup(g, snap)
 }

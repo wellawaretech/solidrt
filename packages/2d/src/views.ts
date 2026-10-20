@@ -22,9 +22,23 @@
 // with the view's camera undone over the layer's pick, the view as the
 // root of the walk: a sprite under a minimap gets its ordinary handlers,
 // and the view's listeners are the last stop.
+//
+// Every view of a layer with regions is a VIEWER to the spatial core's
+// residency gate: the shell pushes its camera over its viewport as an
+// orthographic view (viewMatrices, under a key of its own: flux:spatial
+// allocViewKey) on creation and on every camera or size write, scoped to
+// the layer's world (its root node, so a 3d scene's cells and another
+// layer's are never wanted by it), and withdraws it at dispose. So a
+// region grid over a sprite layer (region.ts) and a tile layer's chunks
+// (tiles.ts) are wanted by whatever shows that world - the main view, a
+// minimap, a split-screen pane - with no viewer bookkeeping in the layer
+// kinds. The record layer has no regions, so its views push none.
 import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawBuffers, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
 import type { BufferId, DrawId, InstanceOrder, RenderPipelineId, ShaderParams, TextureBindings, TextureId } from "@solidrt/core/gpu"
-import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera } from "./camera.ts"
+import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera, viewMatrices } from "./camera.ts"
+import { requestFrame } from "@solidrt/core"
+import * as spatial from "flux:spatial"
+import type { NodeId, ViewKey } from "flux:spatial"
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import { spriteDispatch } from "./dispatch.ts"
 import type { PointerFeed } from "@solidrt/core"
@@ -121,8 +135,13 @@ export type ViewShellDeps = {
   /** Create the view's draw target of `width` x `height` TEXELS seeded
    * with `params` (the viewport, the camera, the kind's own). */
   createTarget: (width: number, height: number, params: ShaderParams, opts: { clearColor: [number, number, number, number]; label: string }) => TextureId
+  /** The world the view is a viewer of, for the residency gate: the
+   * layer's root node, which scopes the viewer to the layer's own
+   * regions (flux:spatial setView `root`); null for a layer with no
+   * regions to want (the record layer), whose views push no viewer. */
+  root: NodeId | null
   /** After the camera, the size or the oversample changed (the tile
-   * layer pushes its gate view and its density wish here). */
+   * layer takes its density wish here). */
   changed?: (view: ViewHandle) => void
   /** Before the view's target is destroyed. */
   disposing?: (view: ViewHandle) => void
@@ -151,6 +170,20 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
   let thrash = thrashSentinel(`view "${label}"`)
   let disposed = false
   let listeners = new Set<LayerPointerListener>()
+  // The gate's viewer: the camera over the viewport, pushed whenever
+  // either changes, scoped to the layer's world. The target's params
+  // write demands the frame whose flush tests the regions; the first
+  // push, before any entry, asks for it itself.
+  let viewer: ViewKey | null = deps.root === null ? null : spatial.allocViewKey()
+  let gateView = new Float32Array(16)
+  let gateProj = new Float32Array(16)
+  let pushViewer = () => {
+    if (viewer === null) return
+    viewMatrices(cam, width, height, gateView, gateProj)
+    spatial.setView(viewer, gateView, gateProj, deps.root!)
+  }
+  pushViewer()
+  if (viewer !== null) requestFrame()
   let view: ViewHandle = {
     texture,
     handlers: undefined as unknown as LayerHandlers,
@@ -162,6 +195,7 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
       height = h
       setTargetSize(texture, w * oversample, h * oversample)
       setTargetParams(texture, { uViewport: [w, h] })
+      pushViewer()
       deps.changed?.(view)
     },
     listen(listener) {
@@ -186,6 +220,7 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
       checkCamera(update)
       applyCamera(cam, update)
       setTargetParams(texture, deps.cameraParams(cam))
+      pushViewer()
       deps.changed?.(view)
     },
     camera() {
@@ -208,6 +243,11 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
       if (disposed) return
       disposed = true
       listeners.clear()
+      // The viewer goes first: what it alone wanted leaves with it.
+      if (viewer !== null) {
+        spatial.setView(viewer, null)
+        requestFrame()
+      }
       deps.disposing?.(view)
       // The entries die with their target.
       destroyTexture(texture)
@@ -249,6 +289,9 @@ export type ViewDeps = {
   pick: (x: number, y: number, zoom: number) => Sprite[]
   /** The layer's key order (`orderBy`), declared by ONE live entry. */
   order?: InstanceOrder
+  /** The layer's root node, the world its views are viewers of (see
+   * ViewShellDeps.root); null for a layer with no regions. */
+  root: NodeId | null
 }
 
 /** The layer side of its views: create, and fan out what changes. */
@@ -295,6 +338,7 @@ export function createViews(deps: ViewDeps): Views {
       let record: ViewRecord = { view: undefined as unknown as ViewHandle, entry: 0 as DrawId }
       let view = createViewShell(opts, {
         label: deps.label,
+        root: deps.root,
         pick: deps.pick,
         cameraParams,
         createTarget: (w, h, params, o) => createDrawTarget(w, h, { ...params, uTint: deps.tint(), ...deps.params() }, { textures: deps.textures, clearColor: o.clearColor, label: o.label, autoFree: false }),

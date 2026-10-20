@@ -323,9 +323,13 @@ declare module "flux:spatial" {
    * move. A target is a texture id, or a key from allocViewKey for a view
    * without a target (a 2d camera, whose composite pushes its
    * orthographic view and projection on camera change); a viewer that
-   * stops (null) wants no region.
+   * stops (null) wants no region. `root` scopes the viewer to a WORLD
+   * for the gate: the id of a root node (a 2d layer's root, a 3d
+   * scene's), so it wants only the grids declared with that `root`
+   * (GridSpec) and the explicit regions under that node; absent, it
+   * wants every world's. The arena is one; worlds are its roots.
    */
-  export function setView(target: TextureId | ViewKey, view: Float32Array, proj: Float32Array): void
+  export function setView(target: TextureId | ViewKey, view: Float32Array, proj: Float32Array, root?: NodeId): void
   export function setView(target: TextureId | ViewKey, view: null): void
   /** A viewer key for setView, for a view with no target of its own. */
   export function allocViewKey(): ViewKey
@@ -396,7 +400,9 @@ declare module "flux:spatial" {
    * images), `weight` the handler's ESTIMATED cost of one resident cell
    * in a unit of its choosing (bytes; default 1, 0 = free under every
    * limit) that the limits admit a cell by until the handler measures it
-   * (setCellWeight), `limit` the grid's own cap on resident weight (see
+   * (setCellWeight; a cell approached again is admitted by what it
+   * measured last time, remembered for the last few thousand left
+   * cells), `limit` the grid's own cap on resident weight (see
    * setResidencyLimit for how a cap evicts), `priority` the order among
    * grids and regions (an integer, default 0: higher enters first
    * whatever the distance and is evicted last - a collision grid before
@@ -414,6 +420,9 @@ declare module "flux:spatial" {
     limit?: number
     priority?: number
     label?: string
+    /** The world the grid lives in: the id of a root node (see setView's
+     * `root`). A grid with none is wanted by every viewer. */
+    root?: NodeId
   }
   /**
    * Create a grid of regions (GridSpec); returns its id. A cell is wanted
@@ -477,6 +486,11 @@ declare module "flux:spatial" {
   /** Whether frustums gate the node's draw sinks (default true), and the
    * world-unit margin the test grows its box by (default 0). */
   export function setCull(node: NodeId, enabled: boolean, margin: number): void
+  /** Whether the node's box is a SOLID to overlap, sweep and moveAndSlide
+   * (default true); false keeps the box in the picking index for rays
+   * alone - a record population's box, which stands for instances a ray
+   * can name but a body should not be walled by or pushed out of. */
+  export function setCollide(node: NodeId, enabled: boolean): void
   /** A local box for culling ONLY - the node stays out of the picking
    * index (setBounds is the indexed one). null falls back to its bounds. */
   export function setCullBounds(node: NodeId, bounds: Float32Array | null): void
@@ -669,11 +683,13 @@ declare module "flux:spatial" {
    * Every shown node with bounds the volume touches, each with its
    * deepest contact. A node with a shape is tested per triangle in world
    * space, so it holds under any transform; a node without one is its
-   * local box's twelve triangles (a flat rect is four of them, so a
-   * rotated sprite tests exactly - the 2d marquee's box query is a "box"
-   * volume). Surfaces, not solids: a volume wholly inside a closed mesh
-   * with no triangle in reach touches nothing. Unordered; reads the index
-   * as of the last flush, like raycast.
+   * local box (a flat rect is four of its twelve triangles, so a rotated
+   * sprite tests exactly - the 2d marquee's box query is a "box" volume).
+   * A shape is a SURFACE: a volume wholly inside a closed mesh with no
+   * triangle in reach touches nothing, the trimesh contract. A box is a
+   * SOLID: a volume whose center lies inside it contacts the nearest
+   * face, the push that carries it clear (never a push deeper in).
+   * Unordered; reads the index as of the last flush, like raycast.
    */
   export function overlap(kind: VolumeKind, volume: Float32Array, filter?: QueryFilter): Overlap[]
   /**

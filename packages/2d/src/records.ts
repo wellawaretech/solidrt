@@ -411,6 +411,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
 
   let views = createViews({
     label,
+    root: null,
     pipeline: gpu.pipeline,
     quad: gpu.quad,
     textures: { ...atlasBindings(atlases.map(a => a.texture)), ...material.textures },
@@ -504,7 +505,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
         for (let s of styles) grownFrom.push(growStyle(s, next))
         layer._records = new Float32Array(stream.bytes.buffer)
       }
-      let sprite: SpriteState = { layer, node: null, _slot: index, _x: 0, _y: 0, _w: 0, _h: 0, _rot: 0, _flipX: false, _flipY: false, _visible: true, _parent: null }
+      let sprite: SpriteState = { layer, node: null, _slot: index, _x: 0, _y: 0, _w: 0, _h: 0, _rot: 0, _flipX: false, _flipY: false, _visible: true, _parent: null, _transition: null }
       layer._order.push(sprite)
       writeRecord(sprite, record, atlas)
       // No outline until a raw writer sets one: the slot may hold a

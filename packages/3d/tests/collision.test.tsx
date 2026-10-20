@@ -2,7 +2,7 @@
 // Collision, scene.ts, collision.ts), pinned against a running scene so
 // the copies cannot drift from the runtime: a sweep is exact, testing is
 // in world space, the slide filter, layers and the { meshes } include-list,
-// the box tier of an instanced mesh, and moveAndSlide's landing. The scene
+// the box tier of a record mesh (a ray's alone), and moveAndSlide's landing. The scene
 // is GPU state, so this is an app test. A query flushes the pending
 // writes, so no frame is run after the mount.
 
@@ -121,16 +121,18 @@ test("layers: a scene-masked-out mesh is invisible to overlap and sweep unless t
   expect(scene.overlap({ center: [0, 0, 0], radius: 3 }, { meshes: [wide] }).length).toBe(0)
 })
 
-test("the box tier: an instanced mesh contacts by its population box like any surface", async app => {
+test("the box tier: a record mesh's population box is a ray's alone, never a wall or a solid to a body", async app => {
   let { scene, instanced } = await mounted(app)
-  // A sphere 0.3 into the box's face at y = 9.
-  let contacts = scene.overlap({ center: [0, 8.7, 0], radius: 0.5 })
-  expect(contacts.length).toBe(1)
-  let contact = contacts[0]!
-  expect(contact.mesh).toBe(instanced)
-  expect(contact.depth).toBeCloseTo(0.2, DIGITS)
-  expect(contact.normal).toBeCloseTo([0, -1, 0], DIGITS)
-  expect(contact.point).toBeCloseTo([0, 9, 0], DIGITS)
+  // A sphere 0.3 into the box's face at y = 9, and one wholly inside:
+  // no contact either way, and a sweep through the box is free.
+  expect(scene.overlap({ center: [0, 8.7, 0], radius: 0.5 })).toEqual([])
+  expect(scene.overlap({ center: [0, 10, 0], radius: 0.5 })).toEqual([])
+  expect(scene.sweep({ center: [0, 6, 0], radius: 0.5 }, [0, 8, 0])).toEqual([])
+  // A ray still names the population by its box (nearest first; the
+  // scene's other meshes lie further down).
+  let hits = scene.raycast([0, 20, 0], [0, -1, 0])
+  expect(hits[0]!.mesh).toBe(instanced)
+  expect(hits[0]!.point).toBeCloseTo([0, 11, 0], DIGITS)
 })
 
 test("moveAndSlide lands a capsule a skin above the floor and reports it", async app => {

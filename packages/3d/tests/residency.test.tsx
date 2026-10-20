@@ -288,7 +288,7 @@ test("a streaming source wants the cells around it that no camera sees", async a
   add(scene.root, grid)
   await app.settle()
   expect(grid.cells()).toEqual([])
-  let source = createStreamingSource({ position: [150, 50, DEPTH / 2], radius: 5 })
+  let source = createStreamingSource(scene, { position: [150, 50, DEPTH / 2], radius: 5 })
   await app.settle()
   expect(grid.cells().map(c => c.cell!.join(","))).toEqual(["1,0,0"])
   source.setPosition([250, 50, DEPTH / 2])
@@ -298,7 +298,7 @@ test("a streaming source wants the cells around it that no camera sees", async a
   source.dispose()
   await app.settle()
   expect(grid.cells()).toEqual([])
-  expect(() => createStreamingSource({ position: [0, 0, 0], radius: 0 })).toThrow()
+  expect(() => createStreamingSource(scene, { position: [0, 0, 0], radius: 0 })).toThrow()
   grid.dispose()
 })
 

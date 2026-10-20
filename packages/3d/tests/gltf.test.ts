@@ -649,7 +649,8 @@ test("clips and sampling: linear, slerp, step, cubic", () => {
   // Markers and curves come from the animation's extras, as authored.
   if (JSON.stringify(move.markers) !== JSON.stringify([{ time: 1.5, name: "hit", data: { power: 2 } }, { time: 0.25, name: "swing", duration: 1 }])) fail(`move markers: ${JSON.stringify(move.markers)}`)
   if (move.curves?.length !== 1 || move.curves[0]!.name !== "grip" || move.curves[0]!.interpolation !== "linear") fail(`move curves: ${JSON.stringify(move.curves)}`)
-  if (move.curves[0]!.times.join() !== "0,2,3" || move.curves[0]!.values.join() !== "0,1,0.5") fail("move curve data")
+  let grip = move.curves?.[0]
+  if (grip === undefined || grip.times.join() !== "0,2,3" || grip.values.join() !== "0,1,0.5") fail("move curve data")
   if (bounce.markers !== undefined || bounce.curves !== undefined) fail("bounce has no extras")
   // The weights channel targets a node WITHOUT morph targets, so it has
   // nothing to weigh and is skipped; the other three are kept, their

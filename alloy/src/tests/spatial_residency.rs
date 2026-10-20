@@ -121,6 +121,7 @@ fn plane_grid(enter: f32, leave: f32) -> GridSpec {
     limit: None,
     priority: 0,
     label: None,
+    root: None,
   }
 }
 
@@ -311,6 +312,7 @@ fn grid_cells_beyond_the_depth_reach_stay_out_under_a_perspective_view() {
       limit: None,
       priority: 0,
       label: None,
+      root: None,
     })
     .expect("grid");
   // Eye at z = 100 looking down -z with a far plane at 1000: the frustum
@@ -710,4 +712,82 @@ fn an_enter_and_its_leave_within_one_delivery_collapse_to_nothing() {
   s.flush(&mut Sink);
   assert_eq!(s.take_region_events(), vec![Leave(Node(far)), Enter(Node(near))]);
   assert_eq!(s.residency_stats().enters, 2);
+}
+
+#[test]
+fn a_viewer_scoped_to_a_world_wants_only_that_worlds_grids_and_regions() {
+  let mut s = Spatial::new();
+  let world_a = s.create([0.0; 3], Q, ONE, true);
+  let world_b = s.create([0.0; 3], Q, ONE, true);
+  // Cells straddling y = 0 (origin y -5), so a unit cube at y = 0 wants
+  // one cell per grid.
+  let grid_a =
+    s.create_grid(GridSpec { root: Some(world_a), origin: [0.0, -5.0, 0.0], ..plane_grid(0.0, 5.0) }).expect("grid a");
+  let grid_b =
+    s.create_grid(GridSpec { root: Some(world_b), origin: [0.0, -5.0, 0.0], ..plane_grid(0.0, 5.0) }).expect("grid b");
+  let open = s.create_grid(GridSpec { origin: [100.0, -5.0, 0.0], ..plane_grid(0.0, 5.0) }).expect("open grid");
+  // An explicit region under world a, and one under no world.
+  let in_a = region_at(&mut s, 5.0, 0.0, 5.0);
+  s.set_parent(in_a, Some(world_a)).expect("parent");
+  let loose = region_at(&mut s, 105.0, 0.0, 5.0);
+  // A viewer of world a over the origin: a's cell and a's region, not
+  // b's; the open grid is wanted by every viewer, so its cell at 100 is
+  // not in reach and the loose region neither.
+  s.set_view(1, cube_at(5.0));
+  s.set_view_root(1, Some(world_a));
+  let events = step(&mut s);
+  assert!(events.iter().any(|e| matches!(e, Enter(Cell { grid, .. }) if *grid == grid_a)), "a's cell: {events:?}");
+  assert!(!events.iter().any(|e| matches!(e, Enter(Cell { grid, .. }) if *grid == grid_b)), "not b's: {events:?}");
+  assert!(events.iter().any(|e| matches!(e, Enter(Node(n)) if *n == in_a)), "a's region: {events:?}");
+  assert!(!events.iter().any(|e| matches!(e, Enter(Node(n)) if *n == loose)));
+  // The same viewer over the open grid and the loose region wants them.
+  s.set_view(1, cube_at(105.0));
+  let events = step(&mut s);
+  assert!(events.iter().any(|e| matches!(e, Enter(Cell { grid, .. }) if *grid == open)), "open grid: {events:?}");
+  assert!(events.iter().any(|e| matches!(e, Enter(Node(n)) if *n == loose)), "loose region: {events:?}");
+  // An unscoped viewer over the origin wants both worlds' cells.
+  s.set_view(2, cube_at(5.0));
+  let events = step(&mut s);
+  assert!(
+    events.iter().any(|e| matches!(e, Enter(Cell { grid, .. }) if *grid == grid_b)),
+    "unscoped wants b: {events:?}"
+  );
+  // Re-scoping viewer 2 to world b drops a's region and keeps b's cell.
+  s.set_view_root(2, Some(world_b));
+  s.set_view(1, None);
+  let events = step(&mut s);
+  assert!(events.iter().any(|e| matches!(e, Leave(Node(n)) if *n == in_a)), "a's region leaves: {events:?}");
+  assert!(
+    events.iter().any(|e| matches!(e, Leave(Cell { grid, .. }) if *grid == grid_a)),
+    "a's cell leaves: {events:?}"
+  );
+  assert!(s.cell_state(grid_b, [0, 0, 0]).expect("grid").is_some(), "b's cell stays wanted");
+}
+
+#[test]
+fn a_cell_approached_again_is_admitted_by_what_it_measured_last_time() {
+  let mut s = Spatial::new();
+  // A grid whose estimate admits anything; the cell at the origin
+  // measures 40 once built, over a limit of 30.
+  let grid = s
+    .create_grid(GridSpec { weight: 1.0, limit: Some(30.0), origin: [0.0, -5.0, 0.0], ..plane_grid(0.0, 5.0) })
+    .expect("grid");
+  s.set_view(1, cube_at(5.0));
+  let events = step(&mut s);
+  assert_eq!(events, vec![Enter(Cell { grid, cell: [0, 0, 0] })], "admitted by the estimate");
+  s.set_cell_weight(grid, [0, 0, 0], 40.0).expect("weight");
+  // Away and back: the cell is known to weigh 40, which the limit never
+  // admits, so it waits stalled instead of entering to be evicted.
+  s.set_view(1, cube_at(500.0));
+  let events = step(&mut s);
+  assert!(events.iter().any(|e| matches!(e, Leave(Cell { .. }))), "left: {events:?}");
+  s.set_view(1, cube_at(5.0));
+  let events = step(&mut s);
+  assert!(!events.iter().any(|e| matches!(e, Enter(Cell { .. }))), "not re-admitted: {events:?}");
+  assert_eq!(s.cell_state(grid, [0, 0, 0]).expect("grid"), Some(RegionState::Stalled));
+  // A wider limit admits it, at its remembered weight.
+  s.set_grid_limit(grid, Some(50.0)).expect("limit");
+  let events = step(&mut s);
+  assert!(events.iter().any(|e| matches!(e, Enter(Cell { .. }))), "admitted at 40 under 50: {events:?}");
+  assert_eq!(s.residency_stats().weight, 40.0);
 }

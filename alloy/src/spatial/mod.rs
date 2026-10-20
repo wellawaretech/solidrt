@@ -777,6 +777,14 @@ fn node_triangles(
   }
 }
 
+/// The top ancestor of node `i`: the root its world is named by.
+fn top_of(nodes: &[Node], mut i: u32) -> u32 {
+  while let Some(p) = nodes[i as usize].parent {
+    i = p;
+  }
+  i
+}
+
 /// The twelve triangles of a local box, two per face; every test they
 /// feed is two-sided, so the winding is immaterial.
 fn box_triangles(bounds: &Box3) -> [[[f32; 3]; 3]; 12] {
@@ -869,6 +877,11 @@ struct Node {
   /// Whether frustums gate this node's draw sinks at all (the per-object
   /// opt-out for geometry a vertex stage moves beyond its box).
   cull: bool,
+  /// Whether the node's box is a SOLID to the volume queries (overlap,
+  /// sweep, the mover; default true): false keeps a box in the picking
+  /// index for rays alone - a record population's box stands for
+  /// instances a ray can name but a body should not be walled by.
+  collide: bool,
   /// World units the frustum test widens the box by on every side.
   cull_margin: f32,
   /// Nodes whose world boxes, united, stand in for this node's own in the
@@ -1078,6 +1091,7 @@ impl Spatial {
       cull_bounds: None,
       world_box: None,
       cull: true,
+      collide: true,
       cull_margin: 0.0,
       cull_group: Vec::new(),
       cull_owners: Vec::new(),
@@ -1712,6 +1726,20 @@ impl Spatial {
 
   /// Whether frustums gate the node's draw sinks, and the world-unit
   /// margin the test widens its box by.
+  /// Whether the node's box answers the volume queries (see `Node::collide`).
+  pub fn set_collide(&mut self, id: NodeId, enabled: bool) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    self.nodes[i as usize].collide = enabled;
+    Ok(())
+  }
+
+  /// Scope a viewer to a world for the residency gate: the id of a root
+  /// node (a 2d layer's, a 3d scene's), or None for every world. See
+  /// `GridSpec::root`.
+  pub fn set_view_root(&mut self, target: u64, root: Option<NodeId>) {
+    self.residency.set_view_root(target, root);
+  }
+
   pub fn set_cull(&mut self, id: NodeId, enabled: bool, margin: f32) -> Result<(), String> {
     let i = self.resolve(id)?;
     let n = &mut self.nodes[i as usize];
@@ -3146,7 +3174,7 @@ impl Spatial {
     self.bvh.raycast(origin, d, &mut |i| candidates.push(i));
     let mut hits = Vec::new();
     for i in candidates {
-      let Some((bounds, world, shape)) = self.collider(i, filter, root) else {
+      let Some((bounds, world, shape)) = self.collider(i, filter, root, false) else {
         continue;
       };
       // The ray in the node's local frame: an affine map preserves the
@@ -3185,11 +3213,16 @@ impl Spatial {
   /// Every shown node with bounds the volume touches, each with its
   /// deepest contact (point on the node's surface, the direction out of
   /// it, the depth along that direction). A node with a shape is tested
-  /// per triangle in world space, so it holds under any transform; a node
-  /// without one is its local box's twelve. Surfaces, not solids: a volume
-  /// wholly inside a closed mesh with no triangle in reach touches
-  /// nothing, the trimesh contract everywhere. Unordered; reads the index
-  /// as of the last flush, like `raycast`.
+  /// per triangle in world space, so it holds under any transform - a
+  /// SURFACE: a volume wholly inside a closed mesh with no triangle in
+  /// reach touches nothing, the trimesh contract everywhere. A node
+  /// without a shape is its local box as a SOLID: tested by the box's
+  /// twelve triangles from outside, and from inside (the volume's center
+  /// within the box, a sprite's column or a bounded group) by the
+  /// shortest push that carries the volume clear of it (`Query::
+  /// solid_box_contact`: the push a 2d circle over a sprite takes
+  /// sideways, never into it). Unordered;
+  /// reads the index as of the last flush, like `raycast`.
   pub fn overlap(&mut self, volume: &Volume, filter: &QueryFilter) -> Result<Vec<Overlap>, String> {
     let root = self.filter_root(filter)?;
     let query = collide::Query::new(volume);
@@ -3198,17 +3231,22 @@ impl Spatial {
     self.bvh.query(&aabb, &mut |i| candidates.push(i));
     let mut out = Vec::new();
     for i in candidates {
-      let Some((bounds, world, shape)) = self.collider(i, filter, root) else {
+      let Some((bounds, world, shape)) = self.collider(i, filter, root, true) else {
         continue;
       };
       let mut best: Option<collide::Contact> = None;
-      node_triangles(&mut self.shapes, shape, &bounds, &world, &aabb, &mut |tri| {
-        if let Some(c) = query.overlap_triangle(&tri) {
-          if best.is_none_or(|b| c.2 > b.2) {
-            best = Some(c);
+      if shape.is_none() {
+        best = query.solid_box_contact(&bounds, &world);
+      }
+      if best.is_none() {
+        node_triangles(&mut self.shapes, shape, &bounds, &world, &aabb, &mut |tri| {
+          if let Some(c) = query.overlap_triangle(&tri) {
+            if best.is_none_or(|b| c.2 > b.2) {
+              best = Some(c);
+            }
           }
-        }
-      });
+        });
+      }
       if let Some((point, normal, depth)) = best {
         out.push(Overlap { node: self.id_of(i), point, normal, depth });
       }
@@ -3220,9 +3258,11 @@ impl Spatial {
   /// touches on the way, each at its first touch (time as a fraction of
   /// the motion, the touch point, the normal facing the volume), earliest
   /// first. A node already in contact reports time 0 while the motion
-  /// closes in, and nothing while it leaves or slides along the contact.
-  /// Same testing and index contract as `overlap`; a zero motion
-  /// touches nothing.
+  /// closes in, and nothing while it leaves or slides along the contact;
+  /// inside a solid box (see `overlap`) the contact is the nearest face,
+  /// so a motion deeper in is a touch at 0 and one toward that face is
+  /// the leave. Same testing and index contract as `overlap`; a zero
+  /// motion touches nothing.
   pub fn sweep(&mut self, volume: &Volume, motion: [f32; 3], filter: &QueryFilter) -> Result<Vec<Impact>, String> {
     let root = self.filter_root(filter)?;
     let query = collide::Query::new(volume);
@@ -3231,17 +3271,28 @@ impl Spatial {
     self.bvh.query(&aabb, &mut |i| candidates.push(i));
     let mut out = Vec::new();
     for i in candidates {
-      let Some((bounds, world, shape)) = self.collider(i, filter, root) else {
+      let Some((bounds, world, shape)) = self.collider(i, filter, root, true) else {
         continue;
       };
       let mut first: Option<(f32, [f32; 3], [f32; 3])> = None;
-      node_triangles(&mut self.shapes, shape, &bounds, &world, &aabb, &mut |tri| {
-        if let Some(h) = query.sweep_triangle(motion, &tri) {
-          if first.is_none_or(|f| h.0 < f.0) {
-            first = Some(h);
+      let mut inside = false;
+      if shape.is_none() {
+        if let Some((point, normal, _)) = query.solid_box_contact(&bounds, &world) {
+          inside = true;
+          if pick::dot(motion, normal) < 0.0 {
+            first = Some((0.0, point, normal));
           }
         }
-      });
+      }
+      if !inside {
+        node_triangles(&mut self.shapes, shape, &bounds, &world, &aabb, &mut |tri| {
+          if let Some(h) = query.sweep_triangle(motion, &tri) {
+            if first.is_none_or(|f| h.0 < f.0) {
+              first = Some(h);
+            }
+          }
+        });
+      }
       if let Some((time, point, normal)) = first {
         out.push(Impact { node: self.id_of(i), time, point, normal });
       }
@@ -3259,10 +3310,17 @@ impl Spatial {
   /// What the queries test a node by: its local box, world matrix and
   /// (resolvable) shape; None for a node the queries skip - not shown,
   /// leaving (a node animating out is a ghost: painted and nothing else),
-  /// no bounds, or outside the filter.
-  fn collider(&self, i: u32, filter: &QueryFilter, root: Option<u32>) -> Option<(Box3, Mat4, Option<ShapeId>)> {
+  /// no bounds, outside the filter, or (for a `volume` query: overlap,
+  /// sweep, the mover) a box with `collide` off, which rays alone test.
+  fn collider(
+    &self,
+    i: u32,
+    filter: &QueryFilter,
+    root: Option<u32>,
+    volume: bool,
+  ) -> Option<(Box3, Mat4, Option<ShapeId>)> {
     let n = &self.nodes[i as usize];
-    if !n.alive || !n.shown || n.leaving {
+    if !n.alive || !n.shown || n.leaving || (volume && !n.collide) {
       return None;
     }
     let bounds = n.bounds?;

@@ -25,12 +25,12 @@
 // units compare. A region held back by a limit is wanted and STALLED: no
 // event, and no frame demanded for it until a view moves.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::bvh::Box3;
 use super::cull::Frustum;
 use super::math::invert;
-use super::{LodView, Mat4, Node, NodeId};
+use super::{top_of, LodView, Mat4, Node, NodeId};
 
 /// A grid handle (`create_grid`), counted from 1.
 pub type GridId = u64;
@@ -138,7 +138,30 @@ pub struct GridSpec {
   pub limit: Option<f64>,
   pub priority: i32,
   pub label: Option<String>,
+  /// The WORLD the grid lives in, as the id of a root node (a 2d layer's
+  /// root, a 3d scene's): a viewer scoped to a root (`set_view_root`)
+  /// wants only the grids and regions of that world, where one scoped to
+  /// none wants every world's and a grid with none is wanted by every
+  /// viewer. The spatial arena is one; worlds are its roots.
+  pub root: Option<u64>,
 }
+
+/// Whether a viewer scoped to `viewer_root` tests a region or grid of
+/// `region_root`: they meet when either names no world or both name the
+/// same one.
+fn in_scope(viewer_root: Option<u64>, region_root: Option<u64>) -> bool {
+  match (viewer_root, region_root) {
+    (Some(a), Some(b)) => a == b,
+    _ => true,
+  }
+}
+
+/// How many left cells' measured weights a grid remembers (most recent
+/// first out): a cell approached again is admitted by what it weighed
+/// last time rather than by the grid's estimate, so a world's limit
+/// counts known content; sixteen bytes a cell, bounded so an endless
+/// procedural world costs nothing for what it has long left behind.
+const REMEMBERED_CELLS: usize = 4096;
 
 /// A weight or limit must be finite and not negative; a limit positive.
 fn validate_weight(weight: f64) -> Result<(), String> {
@@ -303,6 +326,22 @@ struct Grid {
   spec: GridSpec,
   /// Only the wanted cells: a cell nobody wants has no state at all.
   cells: HashMap<[i32; 3], Wanted>,
+  /// The measured weights of cells that left, the last REMEMBERED_CELLS
+  /// of them in `remembered_order` (oldest first).
+  remembered: HashMap<[i32; 3], f64>,
+  remembered_order: VecDeque<[i32; 3]>,
+}
+
+/// Keep a left cell's measured weight for its next approach.
+fn remember(remembered: &mut HashMap<[i32; 3], f64>, order: &mut VecDeque<[i32; 3]>, cell: [i32; 3], weight: f64) {
+  if remembered.insert(cell, weight).is_none() {
+    order.push_back(cell);
+  }
+  while order.len() > REMEMBERED_CELLS {
+    if let Some(oldest) = order.pop_front() {
+      remembered.remove(&oldest);
+    }
+  }
 }
 
 impl Grid {
@@ -347,6 +386,9 @@ struct Viewer {
 
 pub(super) struct Residency {
   viewers: HashMap<u64, Viewer>,
+  /// The world a viewer is scoped to (`set_view_root`), by viewer; a
+  /// viewer absent here wants every world's regions.
+  viewer_roots: HashMap<u64, u64>,
   /// Viewers whose view changed or went since the last pass.
   dirty: Vec<u64>,
   grids: HashMap<GridId, Grid>,
@@ -375,6 +417,7 @@ impl Default for Residency {
   fn default() -> Self {
     Residency {
       viewers: HashMap::new(),
+      viewer_roots: HashMap::new(),
       dirty: Vec::new(),
       grids: HashMap::new(),
       next_grid: 1,
@@ -448,6 +491,18 @@ impl Residency {
       }
     }
     if !self.dirty.contains(&target) {
+      self.dirty.push(target);
+    }
+  }
+
+  /// Scope a viewer to a world (the id of a root node), or with None to
+  /// every world (see GridSpec::root). Takes effect at the next pass.
+  pub(super) fn set_view_root(&mut self, target: u64, root: Option<u64>) {
+    let changed = match root {
+      Some(r) => self.viewer_roots.insert(target, r) != Some(r),
+      None => self.viewer_roots.remove(&target).is_some(),
+    };
+    if changed && !self.dirty.contains(&target) {
       self.dirty.push(target);
     }
   }
@@ -563,7 +618,9 @@ impl Residency {
     spec.validate()?;
     let id = self.next_grid;
     self.next_grid += 1;
-    self.grids.insert(id, Grid { spec, cells: HashMap::new() });
+    self
+      .grids
+      .insert(id, Grid { spec, cells: HashMap::new(), remembered: HashMap::new(), remembered_order: VecDeque::new() });
     // Every viewer enumerates the new grid at the next pass.
     self.mark_all_dirty();
     Ok(id)
@@ -689,6 +746,10 @@ impl Residency {
   fn test_regions(&mut self, nodes: &mut [Node], region_nodes: &[u32], dirty: &[u64]) {
     let all: Vec<u64> = self.viewers.keys().copied().collect();
     for &i in region_nodes {
+      // The region's world: its top ancestor (the layer or scene root);
+      // a root node's region belongs to no world, so every viewer tests it.
+      let top = top_of(nodes, i);
+      let world = if top == i { None } else { Some(node_id(top, &nodes[top as usize])) };
       let node = &mut nodes[i as usize];
       let id = node_id(i, node);
       let world_box = node.world_box;
@@ -698,8 +759,9 @@ impl Residency {
       let viewers: &[u64] = if moved { &all } else { dirty };
       for &v in viewers {
         let had = region.wanted.wanted_by.contains(&v);
+        let scoped = in_scope(self.viewer_roots.get(&v).copied(), world);
         let want = match (self.viewers.get(&v), world_box) {
-          (Some(viewer), Some(b)) => viewer.frustum.intersects(&b, region.spec.margins.margin(had)),
+          (Some(viewer), Some(b)) => scoped && viewer.frustum.intersects(&b, region.spec.margins.margin(had)),
           _ => false,
         };
         if want && !had {
@@ -730,7 +792,7 @@ impl Residency {
   }
 
   fn enumerate_grids(&mut self, dirty: &[u64]) {
-    let Residency { viewers, grids, events, pending, stalled, leaves_total, .. } = self;
+    let Residency { viewers, viewer_roots, grids, events, pending, stalled, leaves_total, .. } = self;
     for (&gid, grid) in grids.iter_mut() {
       for &v in dirty {
         // Forget the viewer everywhere first, remembering where it was:
@@ -746,7 +808,10 @@ impl Residency {
         let Some(viewer) = viewers.get(&v) else {
           continue;
         };
-        let spec = &grid.spec;
+        if !in_scope(viewer_roots.get(&v).copied(), grid.spec.root) {
+          continue;
+        }
+        let Grid { spec, cells, remembered, .. } = grid;
         let Some(reach) = viewer.reach(spec.margins.leave) else {
           continue;
         };
@@ -771,9 +836,13 @@ impl Residency {
               if !viewer.frustum.reaches_sides(&b, margin) || viewer.depth_of(&b) > margin {
                 continue;
               }
-              let state = grid.cells.entry(cell).or_insert_with(|| {
+              // A cell approached again weighs what it measured last
+              // time, until the handler measures it anew.
+              let state = cells.entry(cell).or_insert_with(|| {
                 *pending += 1;
-                Wanted::new()
+                let mut fresh = Wanted::new();
+                fresh.measured = remembered.remove(&cell);
+                fresh
               });
               if !state.wanted_by.contains(&v) {
                 state.wanted_by.push(v);
@@ -782,9 +851,13 @@ impl Residency {
           }
         }
       }
-      grid.cells.retain(|&cell, state| {
+      let Grid { cells, remembered, remembered_order, .. } = grid;
+      cells.retain(|&cell, state| {
         if !state.wanted_by.is_empty() {
           return true;
+        }
+        if let Some(weight) = state.measured {
+          remember(remembered, remembered_order, cell, weight);
         }
         if state.resident {
           *leaves_total += 1;

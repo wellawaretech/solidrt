@@ -518,3 +518,143 @@ fn move_and_slide_honors_the_query_filter() {
   let r = s.move_and_slide(&ball(0.0, 2.0, 0.0), [0.0, -3.0, 0.0], &MoveOptions::default(), &under).expect("move");
   assert!(r.floor.is_some(), "the root itself is under the root");
 }
+
+/// A node without a shape: its box, a solid to the volume queries.
+fn add_box(s: &mut Spatial, bounds: [f32; 6], position: [f32; 3], rotation: [f32; 4], scale: [f32; 3]) -> u64 {
+  let n = s.create(position, rotation, scale, true);
+  s.set_bounds(n, Some(bounds)).expect("bounds");
+  n
+}
+
+#[test]
+fn a_volume_inside_a_plain_box_pushes_out_of_the_nearest_face() {
+  let mut s = Spatial::new();
+  // A sprite-like column: 8 x 8 in the plane, deep along z, scaled from
+  // a unit box as the 2d layer does.
+  let column = add_box(&mut s, [-0.5, -0.5, -100.0, 0.5, 0.5, 100.0], [10.0, 20.0, 0.0], Q, [8.0, 8.0, 1.0]);
+  flush(&mut s);
+  // Wholly inside, a little right of center: out through the +x face,
+  // 3 to the face plus the radius.
+  let hits = s.overlap(&sphere([11.0, 20.0, 0.0], 1.0), &QueryFilter::default()).expect("overlap");
+  assert_eq!(hits.len(), 1);
+  assert_eq!(hits[0].node, column);
+  assert!(near(hits[0].normal, [1.0, 0.0, 0.0]), "normal {:?}", hits[0].normal);
+  assert!(close(hits[0].depth, 4.0), "depth {}", hits[0].depth);
+  assert!(near(hits[0].point, [14.0, 20.0, 0.0]), "point {:?}", hits[0].point);
+  // A center inside near a face but reaching through it: still out, never
+  // deeper in (the triangle contact alone would have pushed inward).
+  let hits = s.overlap(&sphere([13.0, 20.0, 0.0], 3.0), &QueryFilter::default()).expect("overlap");
+  assert_eq!(hits.len(), 1);
+  assert!(near(hits[0].normal, [1.0, 0.0, 0.0]));
+  assert!(close(hits[0].depth, 4.0), "depth {}", hits[0].depth);
+  // A box volume inside: its extent along the normal counts.
+  let hits = s.overlap(&obb([11.0, 20.0, 0.0], [1.0, 2.0, 1.0], Q), &QueryFilter::default()).expect("overlap");
+  assert_eq!(hits.len(), 1);
+  assert!(near(hits[0].normal, [1.0, 0.0, 0.0]));
+  assert!(close(hits[0].depth, 4.0), "depth {}", hits[0].depth);
+  // Moving deeper in touches at 0 against that face; moving out is the
+  // leave; a center outside is the surface test as before.
+  let hits = s.sweep(&sphere([11.0, 20.0, 0.0], 1.0), [-2.0, 0.0, 0.0], &QueryFilter::default()).expect("sweep");
+  assert_eq!(hits.len(), 1);
+  assert!(close(hits[0].time, 0.0) && near(hits[0].normal, [1.0, 0.0, 0.0]));
+  let hits = s.sweep(&sphere([11.0, 20.0, 0.0], 1.0), [2.0, 0.0, 0.0], &QueryFilter::default()).expect("sweep");
+  assert!(hits.is_empty());
+  let hits = s.overlap(&sphere([15.0, 20.0, 0.0], 1.5), &QueryFilter::default()).expect("overlap");
+  assert_eq!(hits.len(), 1);
+  assert!(
+    near(hits[0].normal, [1.0, 0.0, 0.0]) && close(hits[0].depth, 0.5),
+    "outside: {:?} {}",
+    hits[0].normal,
+    hits[0].depth
+  );
+  // A shaped node keeps the surface contract: inside the unit cube,
+  // nothing in reach, nothing touched.
+  let cube =
+    add_shape(&mut s, cube_shape(), [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5], [50.0, 0.0, 0.0], Q, [10.0, 10.0, 10.0]);
+  flush(&mut s);
+  let hits = s.overlap(&sphere([50.0, 0.0, 0.0], 1.0), &QueryFilter::default()).expect("overlap");
+  assert!(hits.iter().all(|h| h.node != cube));
+}
+
+/// `v` normalized, flipped to point along `toward`.
+fn unit_toward(v: [f32; 3], toward: [f32; 3]) -> [f32; 3] {
+  let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+  let sign = if v[0] * toward[0] + v[1] * toward[1] + v[2] * toward[2] < 0.0 { -1.0 } else { 1.0 };
+  [v[0] * sign / l, v[1] * sign / l, v[2] * sign / l]
+}
+
+#[test]
+fn a_sheared_solid_box_pushes_out_along_its_true_face_normal() {
+  // A unit box rotated 45 degrees about z under a parent scaled 4x along
+  // x: a parallelogram column in world space, whose +x face normal is
+  // NOT the carried x axis (the shear tilts it).
+  let mut s = Spatial::new();
+  let parent = s.create([0.0; 3], Q, [4.0, 1.0, 1.0], true);
+  let half = std::f32::consts::FRAC_PI_8;
+  let child = add_box(&mut s, [-0.5, -0.5, -10.0, 0.5, 0.5, 10.0], [0.0; 3], [0.0, 0.0, half.sin(), half.cos()], ONE);
+  s.set_parent(child, Some(parent)).expect("parent");
+  flush(&mut s);
+  // The world edge vectors of the box: the carried local axes. The +x
+  // face spans ey and z, so its outward normal is their cross, toward ex.
+  let c = std::f32::consts::FRAC_1_SQRT_2;
+  let ex = [4.0 * c, c, 0.0];
+  let ey = [-4.0 * c, c, 0.0];
+  let n = unit_toward([-ey[1], ey[0], 0.0], ex);
+  // A sphere at local (0.4, 0, 0): 0.1 local units short of the +x face,
+  // which in world is 0.1 * (ex . n) away - the nearest face by far.
+  let center = [0.4 * ex[0], 0.4 * ex[1], 0.0];
+  let distance = 0.1 * (ex[0] * n[0] + ex[1] * n[1]);
+  let hits = s.overlap(&sphere(center, 0.1), &QueryFilter::default()).expect("overlap");
+  assert_eq!(hits.len(), 1);
+  assert_eq!(hits[0].node, child);
+  assert!(near(hits[0].normal, n), "normal {:?}, expected {:?}", hits[0].normal, n);
+  assert!(close(hits[0].depth, distance + 0.1), "depth {}, expected {}", hits[0].depth, distance + 0.1);
+  // A body inside the sheared column: the mover pushes it out along that
+  // normal first (its skin on top), so a zero motion lands it on the face.
+  let r = slide(&mut s, sphere(center, 0.1), [0.0; 3]);
+  let push = distance + 0.1 + MoveOptions::default().skin;
+  let expected = [n[0] * push, n[1] * push, 0.0];
+  assert!(near(r.motion, expected), "pushed by {:?}, expected {:?}", r.motion, expected);
+}
+
+#[test]
+fn a_thin_box_volume_inside_a_solid_box_takes_the_shortest_push() {
+  let mut s = Spatial::new();
+  let column = add_box(&mut s, [-0.5, -0.5, -100.0, 0.5, 0.5, 100.0], [0.0; 3], Q, [8.0, 8.0, 1.0]);
+  flush(&mut s);
+  // A 7.8 x 0.2 slab on the diagonal of the 8 x 8 column: out along a
+  // face costs 4 plus the slab's reach there (4 * sqrt(2) / 2 * 2 =
+  // 6.83); out along its own thin axis costs the column's reach on that
+  // axis plus the half thickness (4 * sqrt(2) + 0.1 = 5.76), the shorter.
+  let c = std::f32::consts::FRAC_1_SQRT_2;
+  let eighth = std::f32::consts::FRAC_PI_8;
+  let hits = s
+    .overlap(&obb([0.0; 3], [3.9, 0.1, 1.0], [0.0, 0.0, eighth.sin(), eighth.cos()]), &QueryFilter::default())
+    .expect("overlap");
+  assert_eq!(hits.len(), 1);
+  assert_eq!(hits[0].node, column);
+  assert!(close(hits[0].depth, 8.0 * c + 0.1), "depth {}", hits[0].depth);
+  let n = hits[0].normal;
+  assert!(close(n[0].abs(), c) && close(n[1].abs(), c) && close(n[2], 0.0) && n[0] * n[1] < 0.0, "normal {:?}", n);
+  // The same slab axis-aligned: a face is the shortest push again.
+  let hits = s.overlap(&obb([1.0, 0.0, 0.0], [3.9, 0.1, 1.0], Q), &QueryFilter::default()).expect("overlap");
+  assert!(close(hits[0].depth, 4.0 - 0.0 + 0.1) || close(hits[0].depth, 3.0 + 3.9), "depth {}", hits[0].depth);
+}
+
+#[test]
+fn a_box_with_collide_off_is_a_rays_alone() {
+  let mut s = Spatial::new();
+  let population = add_box(&mut s, [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5], [0.0; 3], Q, [20.0, 20.0, 20.0]);
+  s.set_collide(population, false).expect("collide");
+  flush(&mut s);
+  // Inside the population's box: no overlap, no sweep, the mover moves
+  // freely - where a ray still names the box.
+  assert!(s.overlap(&sphere([1.0, 0.0, 0.0], 1.0), &QueryFilter::default()).expect("overlap").is_empty());
+  assert!(s.sweep(&sphere([1.0, 0.0, 0.0], 1.0), [-5.0, 0.0, 0.0], &QueryFilter::default()).expect("sweep").is_empty());
+  let r = slide(&mut s, sphere([1.0, 0.0, 0.0], 1.0), [3.0, 0.0, 0.0]);
+  assert!(near(r.motion, [3.0, 0.0, 0.0]), "moved freely: {:?}", r.motion);
+  let hits = s.raycast([-50.0, 0.0, 0.0], [1.0, 0.0, 0.0], &QueryFilter::default()).expect("raycast");
+  assert!(hits.iter().any(|h| h.node == population), "a ray still picks the box");
+  s.set_collide(population, true).expect("collide");
+  assert_eq!(s.overlap(&sphere([1.0, 0.0, 0.0], 1.0), &QueryFilter::default()).expect("overlap").len(), 1);
+}

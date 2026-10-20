@@ -24,7 +24,7 @@
 // (`spawn`, `shown`, `teardown`) are what a node form adds; an app with
 // no node form passes none.
 import * as spatial from "flux:spatial"
-import type { GridId, NodeId, RegionSpec } from "flux:spatial"
+import type { GridId, NodeId, RegionSpec, ViewKey } from "flux:spatial"
 import { on } from "sol:events"
 import { registerStat } from "sol:dev"
 import { slice } from "./slice"
@@ -42,6 +42,9 @@ export type RegionCell = [number, number, number]
  */
 export function setResidencyLimit(bytes: number | null): void {
   spatial.setResidencyLimit(bytes)
+  // The gate re-weighs at its next pass, which a frame's flush runs; a
+  // limit write alone demands none.
+  requestFrame()
 }
 
 /**
@@ -52,6 +55,7 @@ export function setResidencyLimit(bytes: number | null): void {
 export function setResidencyBudget(enters: number): void {
   if (!(Number.isInteger(enters) && enters >= 0)) throw new Error(`setResidencyBudget: enters per frame must be a non-negative integer, got ${enters}`)
   spatial.setResidencyBudget(enters)
+  requestFrame()
 }
 
 /** Where a region stands: the gate's "pending" (wanted, its enter not
@@ -164,12 +168,18 @@ export type RegionGridOptions<T> = RegionHandler<T, Region<T>> & {
    * (default 0). */
   retain?: number
   label?: string
+  /** The world the grid lives in: the id of a root node (a 2d layer's
+   * root, a 3d scene's), so only viewers scoped to it want the cells
+   * (flux:spatial GridSpec.root); none, every viewer's. `start` may
+   * name it instead, where it is known only then. */
+  root?: NodeId
   hooks?: RegionHooks<Region<T>>
 }
 
 export type RegionGrid<T> = {
-  /** Declare the grid to the gate (cells enter from the next flush). */
-  start(): void
+  /** Declare the grid to the gate (cells enter from the next flush);
+   * `root` names the world when the options did not. */
+  start(root?: NodeId): void
   /** End the grid: every held cell leaves now (unload, teardown). */
   stop(): void
   /** The gate's id while started, else null. */
@@ -426,6 +436,9 @@ function makeLifecycle<T>(
       if (!(Number.isFinite(weight) && weight >= 0)) throw new Error(`measure: weight must be finite and not negative, got ${weight}`)
       if (life.held === "unwanted") return
       measure(weight)
+      // The limits re-weigh at the next pass (a measure inside the
+      // frame's drain meets this frame's; one made later needs a frame).
+      requestFrame()
     },
     attach(node) {
       if (shape.cell !== null) throw new Error("attach: a grid cell is bound by its grid")
@@ -521,12 +534,13 @@ class GridImpl<T> implements RegionGrid<T> {
     this.retainer = new Retainer<T>(opts.retain ?? 0)
   }
 
-  start(): void {
+  start(root?: NodeId): void {
     if (this.disposed) throw new Error("start: the grid was disposed")
     if (this.grid !== null) return
     subscribe()
     let o = this.opts
     this.grid = spatial.createGrid({
+      root: root ?? o.root,
       origin: o.origin,
       cell: o.cell,
       enter: o.enter,
@@ -560,12 +574,21 @@ class GridImpl<T> implements RegionGrid<T> {
 
   setLimit(limit: number | null): void {
     this.opts = { ...this.opts, limit: limit ?? undefined }
-    if (this.grid !== null) spatial.setGridLimit(this.grid, limit)
+    if (this.grid !== null) {
+      spatial.setGridLimit(this.grid, limit)
+      // The gate re-weighs at its next pass: a stalled cell the new
+      // limit admits enters there, so the pass needs its frame.
+      requestFrame()
+    }
   }
 
   setWeight(weight: number): void {
+    if (!(Number.isFinite(weight) && weight >= 0)) throw new Error(`setWeight: weight must be finite and not negative, got ${weight}`)
     this.opts = { ...this.opts, weight }
-    if (this.grid !== null) spatial.setGridWeight(this.grid, weight)
+    if (this.grid !== null) {
+      spatial.setGridWeight(this.grid, weight)
+      requestFrame()
+    }
   }
 
   forget(): void {
@@ -633,4 +656,84 @@ export function createRegionGrid<T = undefined>(opts: RegionGridOptions<T>): Reg
   checkMargins(opts, "createRegionGrid")
   if (opts.retain !== undefined && !(Number.isInteger(opts.retain) && opts.retain >= 0)) throw new Error(`createRegionGrid: retain must be a count >= 0, got ${opts.retain}`)
   return new GridImpl<T>(opts)
+}
+
+/**
+ * A streaming source beyond the cameras (Unreal's streaming source
+ * component): a point with a radius that wants the regions around it -
+ * the world ahead of a fast vehicle, a teleport destination loaded before
+ * the cut, a server-side player, a cut-scene's look-ahead. A viewer to
+ * the gate (a cube view of the radius around the point, which a planar
+ * 2d grid meets as a square) and nothing to the renderer. Move it with
+ * `setPosition`; `dispose` withdraws it. The 3d package exports this as
+ * is; the 2d package's form takes a point in its plane.
+ */
+export type StreamingSource = {
+  setPosition(position: [number, number, number]): void
+  setRadius(radius: number): void
+  readonly position: [number, number, number]
+  readonly radius: number
+  dispose(): void
+}
+
+/**
+ * `root` scopes the source to a world (the id of a root node: a 2d
+ * layer's root, a 3d scene's) as the gate scopes any viewer; absent, it
+ * wants every world's regions. The packages' forms take the layer or
+ * scene and pass its root.
+ */
+export function createStreamingSource(opts: { position: [number, number, number]; radius: number; root?: NodeId }): StreamingSource {
+  let key: ViewKey | null = spatial.allocViewKey()
+  let position: [number, number, number] = [opts.position[0], opts.position[1], opts.position[2]]
+  let radius = opts.radius
+  if (position.some(v => !Number.isFinite(v))) throw new Error("createStreamingSource: position must be finite, got " + position.join(", "))
+  if (!(Number.isFinite(radius) && radius > 0)) throw new Error("createStreamingSource: radius must be a positive distance, got " + radius)
+  // The view: a translation to the point; the projection: the symmetric
+  // orthographic box of the radius about it (both column-major, the
+  // core's layout). Only the translation and the three scales change.
+  let view = new Float32Array(16)
+  let proj = new Float32Array(16)
+  view[0] = view[5] = view[10] = view[15] = 1
+  proj[15] = 1
+  let push = () => {
+    if (key === null) return
+    view[12] = -position[0]
+    view[13] = -position[1]
+    view[14] = -position[2]
+    let scale = 1 / radius
+    proj[0] = scale
+    proj[5] = scale
+    proj[10] = -scale
+    spatial.setView(key, view, proj, opts.root)
+    // A viewer push alone demands no frame (a camera's params write
+    // does): ask for the flush that tests the regions against it.
+    requestFrame()
+  }
+  push()
+  return {
+    setPosition(p) {
+      if (!(Number.isFinite(p[0]) && Number.isFinite(p[1]) && Number.isFinite(p[2]))) throw new Error("setPosition: position must be finite, got " + p.join(", "))
+      position[0] = p[0]
+      position[1] = p[1]
+      position[2] = p[2]
+      push()
+    },
+    setRadius(r) {
+      if (!(Number.isFinite(r) && r > 0)) throw new Error("setRadius: radius must be a positive distance, got " + r)
+      radius = r
+      push()
+    },
+    get position() {
+      return position
+    },
+    get radius() {
+      return radius
+    },
+    dispose() {
+      if (key === null) return
+      spatial.setView(key, null)
+      key = null
+      requestFrame()
+    },
+  }
 }

@@ -108,6 +108,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("lodLevel")?;
     decl.declare("setLodReference")?;
     decl.declare("setCull")?;
+    decl.declare("setCollide")?;
     decl.declare("setCullBounds")?;
     decl.declare("setCullGroup")?;
     decl.declare("setOccluder")?;
@@ -221,6 +222,7 @@ impl ModuleDef for SpatialModule {
     exports.export("lodLevel", Function::new(ctx.clone(), lod_level)?)?;
     exports.export("setLodReference", Function::new(ctx.clone(), set_lod_reference)?)?;
     exports.export("setCull", Function::new(ctx.clone(), set_cull)?)?;
+    exports.export("setCollide", Function::new(ctx.clone(), set_collide)?)?;
     exports.export("setCullBounds", Function::new(ctx.clone(), set_cull_bounds)?)?;
     exports.export("setCullGroup", Function::new(ctx.clone(), set_cull_group)?)?;
     exports.export("setOccluder", Function::new(ctx.clone(), set_occluder)?)?;
@@ -661,12 +663,15 @@ fn box_arg(ctx: &Ctx<'_>, bounds: &OptArg<TypedArray<'_, f32>>, api: &str) -> rq
 }
 
 /// What a target sees: its view and projection as two Float32Arrays of
-/// 16 (column-major), or null to forget the target.
+/// 16 (column-major), or null to forget the target; `root` the world the
+/// residency gate scopes the viewer to (a root node id), absent for every
+/// world.
 fn set_view(
   ctx: Ctx<'_>,
   target: u64,
   view: OptArg<TypedArray<'_, f32>>,
   proj: OptArg<TypedArray<'_, f32>>,
+  root: OptArg<u64>,
 ) -> rquickjs::Result<()> {
   let matrices = match (&view.0, &proj.0) {
     (Some(v), Some(p)) => {
@@ -684,7 +689,10 @@ fn set_view(
     (None, None) => None,
     _ => return Err(throw_str(&ctx, "setView: view and proj come together, or null to forget the target")),
   };
-  super::gui(&ctx).alloy.spatial().set_view(target, matrices);
+  let gui = super::gui(&ctx);
+  let mut spatial = gui.alloy.spatial();
+  spatial.set_view_root(target, if matrices.is_some() { root.0 } else { None });
+  spatial.set_view(target, matrices);
   Ok(())
 }
 
@@ -724,6 +732,12 @@ fn set_cull(ctx: Ctx<'_>, id: u64, enabled: bool, margin: f64) -> rquickjs::Resu
     .spatial()
     .set_cull(id, enabled, margin as f32)
     .map_err(|e| throw_str(&ctx, &format!("setCull: {e}")))
+}
+
+/// Whether the node's box is a solid to the volume queries (default
+/// true); false keeps it in the picking index for rays alone.
+fn set_collide(ctx: Ctx<'_>, id: u64, enabled: bool) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().set_collide(id, enabled).map_err(|e| throw_str(&ctx, &format!("setCollide: {e}")))
 }
 
 fn set_cull_bounds(ctx: Ctx<'_>, id: u64, bounds: OptArg<TypedArray<'_, f32>>) -> rquickjs::Result<()> {
@@ -952,7 +966,7 @@ fn array_field<T: for<'a> FromJs<'a> + Copy + Default, const N: usize>(
 }
 
 /// A grid of regions from `{ origin, cell, enter, leave, bounds?, wrap?,
-/// weight?, limit?, priority?, label? }`; returns its id.
+/// weight?, limit?, priority?, label?, root? }`; returns its id.
 fn create_grid<'js>(ctx: Ctx<'js>, spec: Object<'js>) -> rquickjs::Result<u64> {
   let origin = array_field::<f32, 3>(&ctx, &spec, "origin", "createGrid")?
     .ok_or_else(|| throw_str(&ctx, "createGrid: origin is required"))?;
@@ -965,6 +979,7 @@ fn create_grid<'js>(ctx: Ctx<'js>, spec: Object<'js>) -> rquickjs::Result<u64> {
   let limit: Option<f64> = spec.get("limit")?;
   let priority = priority_arg(&ctx, &spec, "createGrid")?;
   let label: Option<String> = spec.get("label")?;
+  let root: Option<u64> = spec.get("root")?;
   super::gui(&ctx)
     .alloy
     .spatial()
@@ -978,6 +993,7 @@ fn create_grid<'js>(ctx: Ctx<'js>, spec: Object<'js>) -> rquickjs::Result<u64> {
       limit,
       priority,
       label,
+      root,
     })
     .map_err(|e| throw_str(&ctx, &format!("createGrid: {e}")))
 }

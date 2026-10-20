@@ -9,9 +9,9 @@
 // axis test with the box's interval moving in time. No iteration, no
 // tolerance to tune.
 
-use super::math::rotate_vector;
+use super::math::{invert_affine, normal_matrix, rotate_vector, transform_point, transform_vector};
 use super::pick::{cross, dot};
-use super::{Box3, NodeId};
+use super::{Box3, Mat4, NodeId};
 
 /// Squared length below which a segment is a point and a separating axis
 /// (an edge/edge cross product) is degenerate; the point's sphere and
@@ -86,6 +86,93 @@ impl Query {
         ],
       }),
     }
+  }
+
+  /// The volume's center: a capsule's midpoint, a box's center.
+  pub fn center(&self) -> V3 {
+    match self {
+      Query::Capsule { a, b, .. } => scale(add(*a, *b), 0.5),
+      Query::Box(obb) => obb.center,
+    }
+  }
+
+  /// How far the volume reaches from its center against the unit
+  /// direction `n`: the push along `n` that carries the whole volume
+  /// past a plane its center lies on.
+  pub fn extent(&self, n: V3) -> f32 {
+    match self {
+      Query::Capsule { a, b, radius } => dot(sub(*b, *a), n).abs() * 0.5 + radius,
+      Query::Box(obb) => (0..3).map(|i| obb.half[i] * dot(obb.axes[i], n).abs()).sum(),
+    }
+  }
+
+  /// The contact with a SOLID box - a node's local `bounds` carried by
+  /// its `world` matrix, any affine (a sheared column under a scaled
+  /// parent included) - for a volume whose center lies inside it: the
+  /// shortest push that carries the whole volume clear, as (the point on
+  /// the box's boundary the push aims at, the unit push direction, the
+  /// depth). None for a center outside, where the box's faces answer as
+  /// triangles (overlap_triangle), the exact test for any affine box.
+  /// The candidate pushes are the six faces' outward normals (the
+  /// inverse-transpose carries them, so a sheared face keeps its true
+  /// normal) and, for a box volume, its own three axes: the separating
+  /// axes a face-to-face contact can have; an edge pair never gives the
+  /// shortest push while one box's center lies inside the other.
+  pub fn solid_box_contact(&self, bounds: &Box3, world: &Mat4) -> Option<Contact> {
+    let center = self.center();
+    let local = transform_point(&invert_affine(world), center);
+    for k in 0..3 {
+      if !(bounds[k] <= local[k] && local[k] <= bounds[k + 3]) {
+        return None;
+      }
+    }
+    let normals = normal_matrix(world);
+    let mut best: Option<Contact> = None;
+    let mut consider = |n: V3, reach: f32, point: V3| {
+      let depth = reach + self.extent(n);
+      if best.is_none_or(|b| depth < b.2) {
+        best = Some((point, n, depth));
+      }
+    };
+    // The faces: the plane distance from the center along the outward
+    // normal, the point the center drops onto.
+    for k in 0..3 {
+      for (side, sign) in [(bounds[k], -1.0f32), (bounds[k + 3], 1.0f32)] {
+        let mut axis = [0.0f32; 3];
+        axis[k] = sign;
+        let n = transform_vector(&normals, axis);
+        let l2 = dot(n, n);
+        if l2 < DEGENERATE_EPSILON {
+          continue;
+        }
+        let n = scale(n, 1.0 / l2.sqrt());
+        let mut on_face = local;
+        on_face[k] = side;
+        let face_point = transform_point(world, on_face);
+        consider(n, dot(n, sub(face_point, center)).max(0.0), face_point);
+      }
+    }
+    // A box volume's own axes: the node box's reach along the axis from
+    // its own center, the push past the nearer of its two ends.
+    if let Query::Box(obb) = self {
+      let box_center = transform_point(
+        world,
+        [(bounds[0] + bounds[3]) * 0.5, (bounds[1] + bounds[4]) * 0.5, (bounds[2] + bounds[5]) * 0.5],
+      );
+      let edges: [V3; 3] = [
+        transform_vector(world, [(bounds[3] - bounds[0]) * 0.5, 0.0, 0.0]),
+        transform_vector(world, [0.0, (bounds[4] - bounds[1]) * 0.5, 0.0]),
+        transform_vector(world, [0.0, 0.0, (bounds[5] - bounds[2]) * 0.5]),
+      ];
+      for axis in obb.axes {
+        let reach: f32 = edges.iter().map(|e| dot(*e, axis).abs()).sum();
+        let offset = dot(sub(center, box_center), axis);
+        for (n, side) in [(axis, reach - offset), (neg(axis), reach + offset)] {
+          consider(n, side.max(0.0), add(center, scale(n, side.max(0.0))));
+        }
+      }
+    }
+    best
   }
 
   /// The world box holding the volume, and the whole of its motion.

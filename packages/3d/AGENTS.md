@@ -427,7 +427,7 @@ every camera write (`setView`) is a viewer, so the scene, each view and
 each shadow tile want regions, and a region is wanted if ANY of them
 wants it (a minimap beside the main view, a shadow camera; a region
 beyond its load distance that still casts into view does so through
-its proxy); `createStreamingSource({ position, radius })` is a viewer
+its proxy); `createStreamingSource(scene, { position, radius })` is a viewer
 beyond the cameras, Unreal's streaming source - the world ahead of a
 fast vehicle, a teleport destination loaded before the cut - moved
 with `setPosition`. The test is the cull test with hysteresis: wanted
@@ -1402,9 +1402,13 @@ the fraction of the motion, earliest first. Both take raycast's `opts`
 (`{ layers, meshes }`) and test per triangle in WORLD space against the
 same shapes, so any transform holds, an instanced mesh or sprite counts
 by its box, and the physics-collider pattern is one `{ layers }` away.
-Two contracts to know: the tests are SURFACES (a volume wholly inside a
+Two contracts to know: a mesh is a SURFACE (a volume wholly inside a
 closed mesh with no triangle in reach touches nothing - the trimesh rule
-in every engine), and a sweep from a volume already in contact reports
+in every engine) where a box - a sprite, a bounded group - is a SOLID (a
+volume whose center lies inside it is pushed out of the nearest face; a
+record mesh's population box is a ray's alone, `setCollide` off, so a
+body is never walled by a whole population), and a sweep from a volume
+already in contact reports
 time 0 only while the motion closes in; leaving or sliding along the
 contact is no hit, which is what lets a slide along a wall proceed. A
 zero motion touches nothing. The filters run in the core: every query
@@ -4014,10 +4018,12 @@ successors) as ordinary content, the model-loading split repeated:
   under a still pointer fires nothing until the next move - the same
   limit the element hit test has (hit-test-per-frame is an open platform
   item). Do not poll pick() per frame to fake it.
-- overlap()/sweep() test SURFACES, the trimesh contract everywhere: a
+- overlap()/sweep() test a mesh as a SURFACE, the trimesh contract: a
   volume wholly inside a closed mesh with no triangle in reach touches
   nothing, and a body whose center has passed through a wall reports
-  the push-out on the side its center is on. Keep a skin (moveAndSlide
+  the push-out on the side its center is on (a box - a sprite, a bounded
+  group - is a solid and pushes out of its nearest face; a record mesh's
+  population box is out of the volume queries). Keep a skin (moveAndSlide
   does) and never teleport a body into geometry expecting it to come
   out the far side.
 - moveAndSlide owns no gravity and no velocity: fold the fall into

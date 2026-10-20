@@ -109,3 +109,35 @@ export function cameraParams(camera: CameraState): { uCamera: [number, number, n
     uCameraRot: [Math.cos(camera.rotation), Math.sin(camera.rotation), camera.pivotX, camera.pivotY],
   }
 }
+
+/**
+ * The orthographic view a view pushes to the residency gate (flux:spatial
+ * setView, the viewer every layer kind's view is): world pixels to clip
+ * through the camera mapping (projectCamera) with the viewport's center
+ * at the view origin, so the gate's eye (the point enters are paced by)
+ * is the viewport center, and clip x/y spanning the viewport. Written
+ * into `view` and `proj` (16 floats each, column-major, the core's
+ * matrix layout); the plane is z = 0 and the view direction -z, so a
+ * planar grid (`cell: [w, h, 0]`) is tested by its x/y extent alone.
+ * Internal - views.ts pushes it on every camera, size or oversample
+ * write.
+ */
+export function viewMatrices(camera: CameraState, width: number, height: number, view: Float32Array, proj: Float32Array): void {
+  let zoom = camera.zoom
+  let c = Math.cos(camera.rotation)
+  let s = Math.sin(camera.rotation)
+  view.fill(0)
+  view[0] = zoom * c
+  view[1] = zoom * s
+  view[4] = -zoom * s
+  view[5] = zoom * c
+  view[10] = 1
+  view[12] = camera.pivotX - width / 2 - zoom * (c * camera.x - s * camera.y)
+  view[13] = camera.pivotY - height / 2 - zoom * (s * camera.x + c * camera.y)
+  view[15] = 1
+  proj.fill(0)
+  proj[0] = 2 / width
+  proj[5] = -2 / height
+  proj[10] = -1
+  proj[15] = 1
+}

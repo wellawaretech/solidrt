@@ -14,10 +14,10 @@
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
 import type { DecodedImage } from "@solidrt/core"
-import { createSignal } from "@solidrt/core"
+import { createSignal, setResidencyBudget } from "@solidrt/core"
 import { readTexture } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
-import { createAtlas, createTileLayer, fullFrame, setBakeBudget, TileLayer, TILE_FLIP_X, TILE_FLIP_Y, TILE_TRANSPOSE } from "../src/index.ts"
+import { createAtlas, createTileLayer, fullFrame, setBakeBudget, TileLayer, TILE_FLIP_X, TILE_FLIP_Y, TILE_TRANSPOSE, INSTANCE_FLOATS } from "../src/index.ts"
 import type { TileCamera, TileChunk, TileLayerHandle, TileLayerOptions, ViewHandle } from "../src/index.ts"
 
 // Cells are 8 px, chunks two cells (16 px): a 32 x 32 viewport at the
@@ -433,11 +433,12 @@ test("maxTexels caps the resident chunks: the gate evicts the chunk furthest fro
   expect(group.buffers).toBe(1)
   expect(group.bytes > 0).toBe(true)
   // The gate as /stats reports it: one resident, two wanted but stalled
-  // behind the budget, the resident weight one chunk's bytes (rgba8
-  // texels: the gate weighs in bytes, the layer's budget is in texels).
+  // behind the budget, the resident weight the chunk's measured bytes:
+  // its target (rgba8 texels: the gate weighs in bytes, the layer's
+  // budget is in texels) and its record buffer.
   let stats = app.stats() as { regionsResident: number; regionsStalled: number; regionsWanted: number; residentWeight: number; app: { poolMisses: number; poolHits: number } }
   expect([stats.regionsResident, stats.regionsStalled, stats.regionsWanted]).toEqual([1, 2, 3])
-  expect(stats.residentWeight).toBe(CHUNK * CHUNK * 4)
+  expect(stats.residentWeight).toBe(CHUNK * CHUNK * 4 + CHUNK_TILES * CHUNK_TILES * INSTANCE_FLOATS * 4)
   let misses = stats.app.poolMisses
   // At rest the GPU is done with every frame submitted (settle waits for
   // the raster thread), which is what lets the pool hand a freed set
@@ -659,4 +660,51 @@ test("bakes are paced under the bake budget: re-bakes of drawn chunks go nearest
   } finally {
     setBakeBudget(DEFAULT_BAKE_BUDGET)
   }
+})
+
+test("a resident chunk weighs its measured bytes: nothing while empty, its target and buffers once it holds a cell", async app => {
+  let { layer } = await mounted(app, {}, false)
+  layer.createView({ width: VIEW, height: VIEW })
+  await app.settle()
+  let weight = () => (app.stats() as { residentWeight: number }).residentWeight
+  expect(cellsOf(layer.resident()).length).toBe(4)
+  expect(weight()).toBe(0)
+  // One cell: its chunk takes a target and weighs it; a second cell in
+  // the same chunk adds nothing; a cell in another chunk doubles it.
+  layer.setTiles(0, 0, 1, 1, new Uint16Array([0]))
+  await app.settle()
+  let chunk = weight()
+  expect(chunk).toBeGreaterThan(0)
+  layer.setTiles(1, 1, 1, 1, new Uint16Array([0]))
+  await app.settle()
+  expect(weight()).toBe(chunk)
+  layer.setTiles(2, 0, 1, 1, new Uint16Array([0]))
+  await app.settle()
+  expect(weight()).toBe(2 * chunk)
+  // Emptied, the chunk gives its target back and weighs nothing again.
+  layer.setTiles(0, 0, 2, 2, new Int16Array([-1, -1, -1, -1]))
+  await app.settle()
+  expect(weight()).toBe(chunk)
+  expect(cellsOf(layer.resident()).length).toBe(4)
+})
+
+test("priority orders two layers' chunks under a budget of one enter per frame", async app => {
+  setResidencyBudget(1)
+  let order: string[] = []
+  await app.mount(() => {
+    let atlas = createAtlas(solid([255, 255, 255], TILE, TILE), { label: "res-atlas" })
+    for (let [label, priority] of [
+      ["low", 0],
+      ["high", 1],
+    ] as const) {
+      let layer = createTileLayer(TILE, TILE, [atlas], { chunkTiles: CHUNK_TILES, frames: [fullFrame(atlas)], label, priority, ...BAND })
+      layer.setTiles(SEED.col, SEED.row, SEED.cols, SEED.rows, new Uint16Array(SEED.cols * SEED.rows).fill(0))
+      layer.onEnter = () => order.push(label)
+      layer.createView({ width: VIEW, height: VIEW })
+    }
+    return <view width={VIEW} height={VIEW} />
+  })
+  await app.settle()
+  expect(order).toEqual(["high", "high", "high", "high", "low", "low", "low", "low"])
+  expect(() => createTileLayer(TILE, TILE, [], { priority: 0.5 })).toThrow()
 })

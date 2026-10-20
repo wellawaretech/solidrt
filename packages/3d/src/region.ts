@@ -14,10 +14,9 @@
 // built and the proxy shown while it is not (HLOD, Unreal's rule), the
 // measured GPU bytes reported to the gate's limits, and the resource
 // pool the freed buffers and textures wait in.
-import { createRegion as createCoreRegion, createRegionGrid as createCoreGrid, requestFrame } from "@solidrt/core"
-import type { Region as CoreRegion, RegionCell, RegionGrid as CoreGrid, RegionHandler, RegionState } from "@solidrt/core"
-import * as spatial from "flux:spatial"
-import type { ViewKey } from "flux:spatial"
+import { createRegion as createCoreRegion, createRegionGrid as createCoreGrid, createStreamingSource as createCoreStreamingSource } from "@solidrt/core"
+import type { Region as CoreRegion, RegionCell, RegionGrid as CoreGrid, RegionHandler, RegionState, StreamingSource } from "@solidrt/core"
+import type { Scene } from "./scene.ts"
 import { ensureResourcePool } from "./resource-pool.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import type { GeometryBuffers } from "./geometry-gpu.ts"
@@ -29,10 +28,9 @@ import type { ModelData } from "./gltf.ts"
 import { add, createGroup, destroy, remove, setTransform, setVisible } from "./node.ts"
 import type { SceneNode, SubtreeBinding } from "./node.ts"
 import type { Mesh } from "./mesh.ts"
-import { mat4, orthographic } from "./math.ts"
 import type { Vec3 } from "./math.ts"
 
-export type { RegionCell, RegionState } from "@solidrt/core"
+export type { RegionCell, RegionState, StreamingSource } from "@solidrt/core"
 
 /** The bytes of one instance matrix record (a mat4 of floats). */
 const INSTANCE_MATRIX_BYTES = 64
@@ -203,7 +201,7 @@ type NodeState<T> = {
 
 let stateOf = new WeakMap<RegionNode<unknown>, NodeState<unknown>>()
 
-function makeRegionNode<T>(core: CoreRegion<T>, cell: RegionCell | null, label: string | undefined, makeProxy: RegionContent<T>["proxy"]): RegionNode<T> {
+function makeRegionNode<T>(core: CoreRegion<T>, cell: RegionCell | null, label: string | undefined, makeProxy: RegionContent<T>["proxy"], grid: RegionGridNode<T> | null): RegionNode<T> {
   let node = createGroup() as RegionNode<T>
   let content = createGroup()
   setVisible(content, false)
@@ -231,7 +229,14 @@ function makeRegionNode<T>(core: CoreRegion<T>, cell: RegionCell | null, label: 
     return bytes
   }
   core.onStateChange = (_, s) => node.onStateChange?.(node, s)
-  core.onError = (_, e) => node.onError?.(node, e)
+  // The error goes to the region's listener, else its grid's, else the
+  // console (core would fall through the same way, but sees only this
+  // forwarder); resolved at the failure, so a listener set later counts.
+  core.onError = (_, e) => {
+    let listener = node.onError ?? grid?.onError
+    if (listener !== undefined) listener(node, e)
+    else console.error("A region's load or build failed" + (label !== undefined ? ` (${label})` : "") + ":", e)
+  }
   nodeOf.set(core as CoreRegion<unknown>, node as RegionNode<unknown>)
   stateOf.set(node as RegionNode<unknown>, state as NodeState<unknown>)
   if (makeProxy !== undefined) showProxy(state)
@@ -359,7 +364,7 @@ export function createRegion<T = undefined>(opts: RegionOptions<T>): RegionNode<
     label: opts.label,
     hooks: { shown, teardown: core => teardown(core, true) },
   })
-  let node = makeRegionNode(core, null, opts.label, opts.proxy) as RegionNode<T> & { dispose(): void }
+  let node = makeRegionNode(core, null, opts.label, opts.proxy, null) as RegionNode<T> & { dispose(): void }
   node._cullBounds = bounds
   let binding: SubtreeBinding = {
     enter() {
@@ -410,7 +415,7 @@ export function createRegionGrid<T = undefined>(opts: RegionGridOptions<T>): Reg
     label: opts.label,
     hooks: {
       spawn(region) {
-        let child = makeRegionNode(region, region.cell, opts.label, opts.proxy)
+        let child = makeRegionNode(region, region.cell, opts.label, opts.proxy, node)
         setTransform(child, { position: cellOrigin(region.cell!) })
         add(node, child)
       },
@@ -422,10 +427,15 @@ export function createRegionGrid<T = undefined>(opts: RegionGridOptions<T>): Reg
   // the cell nodes under this one carry the content. The node's own
   // transform is not folded into the gate's origin (a grid is placed at
   // identity, or `origin` says where it sits).
+  // Declared under the scene's world (its root node, the top of the
+  // grid's ancestry here), so only that scene's cameras and sources
+  // want the cells.
   node._bindings = [
     {
       enter() {
-        core.start()
+        let top: SceneNode = node
+        while (top.parent !== null) top = top.parent
+        core.start(top._node!)
       },
       leave() {
         core.stop()
@@ -435,10 +445,6 @@ export function createRegionGrid<T = undefined>(opts: RegionGridOptions<T>): Reg
   core.onStateChange = (region, s) => {
     let child = nodeOf.get(region as CoreRegion<unknown>) as RegionNode<T> | undefined
     if (child !== undefined) node.onStateChange?.(child, s)
-  }
-  core.onError = (region, e) => {
-    let child = nodeOf.get(region as CoreRegion<unknown>) as RegionNode<T> | undefined
-    if (child !== undefined) node.onError?.(child, e)
   }
   Object.defineProperties(node, {
     label: { value: opts.label, enumerable: true },
@@ -481,67 +487,13 @@ export function* buildModel<T>(region: RegionNode<T>, data: ModelData, opts?: Mo
 }
 
 /**
- * A streaming source beyond the cameras (Unreal's streaming source
- * component): a point with a radius that wants the regions around it -
- * the world ahead of a fast vehicle, a teleport destination loaded before
- * the cut, a server-side player. A viewer to the gate (a cube view of
- * the radius around the point) and nothing to the renderer. Move it
- * with `setPosition`; `dispose` withdraws it.
+ * A streaming source in a scene (core's createStreamingSource scoped to
+ * the scene's world; Unreal's streaming source component): a point with
+ * a radius that wants the scene's regions around it - the world ahead
+ * of a fast vehicle, a teleport destination loaded before the cut, a
+ * server-side player. A viewer to the gate and nothing to the renderer.
+ * Move it with `setPosition`; `dispose` withdraws it.
  */
-export type StreamingSource = {
-  setPosition(position: Vec3): void
-  setRadius(radius: number): void
-  readonly position: Vec3
-  readonly radius: number
-  dispose(): void
-}
-
-export function createStreamingSource(opts: { position: Vec3; radius: number }): StreamingSource {
-  let key: ViewKey | null = spatial.allocViewKey()
-  let position: Vec3 = [opts.position[0], opts.position[1], opts.position[2]]
-  let radius = opts.radius
-  if (!(Number.isFinite(radius) && radius > 0)) throw new Error("createStreamingSource: radius must be a positive distance, got " + radius)
-  let view = mat4()
-  let proj = mat4()
-  let viewOut = new Float32Array(16)
-  let projOut = new Float32Array(16)
-  let push = () => {
-    if (key === null) return
-    view[12] = -position[0]
-    view[13] = -position[1]
-    view[14] = -position[2]
-    orthographic(proj, -radius, radius, radius, -radius, -radius, radius)
-    viewOut.set(view)
-    projOut.set(proj)
-    spatial.setView(key, viewOut, projOut)
-    // A viewer push alone demands no frame (a camera's params write
-    // does): ask for the flush that tests the regions against it.
-    requestFrame()
-  }
-  push()
-  return {
-    setPosition(p) {
-      position[0] = p[0]
-      position[1] = p[1]
-      position[2] = p[2]
-      push()
-    },
-    setRadius(r) {
-      if (!(Number.isFinite(r) && r > 0)) throw new Error("setRadius: radius must be a positive distance, got " + r)
-      radius = r
-      push()
-    },
-    get position() {
-      return position
-    },
-    get radius() {
-      return radius
-    },
-    dispose() {
-      if (key === null) return
-      spatial.setView(key, null)
-      key = null
-      requestFrame()
-    },
-  }
+export function createStreamingSource(scene: Scene, opts: { position: Vec3; radius: number }): StreamingSource {
+  return createCoreStreamingSource({ position: [opts.position[0], opts.position[1], opts.position[2]], radius: opts.radius, root: scene.root._node! })
 }
