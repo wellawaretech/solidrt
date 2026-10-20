@@ -15,6 +15,7 @@
 mod bvh;
 mod collide;
 mod cull;
+mod ik;
 mod math;
 mod mover;
 mod normals;
@@ -28,6 +29,10 @@ use std::collections::{HashMap, HashSet};
 
 pub use bvh::{ray_box_distance, Box3};
 pub use collide::{Impact, Overlap, Volume};
+pub use ik::{
+  ChainMethod, ChainSpec, FeetSpec, IkId, IkLimit, IkPoint, IkSolverSpec, IkTarget, IkTick, IkUp, LegSpec, LookAtBone,
+  LookAtLimit, LookAtSpec, TwoBoneSpec,
+};
 pub use math::{compose, invert_affine, multiply, normal_matrix, transform_point, transform_vector, IDENTITY};
 pub use mover::{MoveOptions, MoveResult};
 pub use normals::{vertex_normals, write_channel};
@@ -53,6 +58,9 @@ pub use springs::{
 // The flow's pure step, for the frame-rate tests.
 #[cfg(test)]
 pub(crate) use springs::flow_step;
+// The damped limit clamp, for the look-at tests.
+#[cfg(test)]
+pub(crate) use ik::clamp_damped_for_test;
 // The pure sampler, for the differential tests.
 #[cfg(test)]
 pub(crate) use players::sample as sample_channel;
@@ -76,7 +84,7 @@ pub type NodeId = u64;
 /// subtree in an arena shared by every scene and layer), whose `layers`
 /// intersect the mask, and, with `nodes`, only those listed. The default
 /// admits everything.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct QueryFilter {
   pub root: Option<NodeId>,
   /// A layer mask; None admits every mask (a node's `layers` of 0 is then
@@ -844,6 +852,7 @@ pub struct Spatial {
   transitions: NodeTransitions,
   players: players::PlayerSet,
   springs: springs::SpringSet,
+  ik: ik::IkSet,
   /// Per target, the clip volume its draw sinks are gated by, derived
   /// from its view (`set_view`; a target without one never culls).
   frustums: HashMap<u64, Frustum>,
@@ -3146,6 +3155,7 @@ impl Spatial {
     if self.transitions.set_now(now_ms) {
       self.players.last_ms = now_ms;
       self.springs.last_ms = now_ms;
+      self.ik.last_ms = now_ms;
     }
   }
 

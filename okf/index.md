@@ -62,13 +62,12 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   Three's additive actions), subclip windows and time markers fired as events,
   all evaluated in the spatial core so "aim while running", a flinch over a
   walk, a trimmed clip and a footstep on frame 12 cost zero per-frame JS.
-- **[Inverse kinematics - a solver stack in the spatial core's pose post-pass](plans/3d-ik.md)** [2026-10-20]
-  Look-at, two-bone, chain (FABRIK and CCD) and foot-placement solvers
-  declared once per model and stepped natively after the frame's JS, before
-  the spring bones (Unity's Animator IK and Animation Rigging, Godot's
-  SkeletonModifier3D stack, Unreal's Control Rig nodes), targets read from
-  arena nodes or ground queries, weights ramped in core, so a character that
-  aims, reaches, looks and plants its feet costs zero per-frame JS.
+- **[Occlusion culling in the spatial core's cull pass](plans/3d-occlusion-culling.md)** [2026-10-20]
+  Authored occluders rasterized to a small CPU depth buffer per target on the
+  sort thread, every node's world box tested against it in the flush's cull
+  pass as a second gate beside the frustum test (Godot's OccluderInstance3D
+  model, Unity's occludee semantics), so a dense scene on a phone stops
+  drawing what its nearest walls cover with zero per-frame JS.
 - **[Spring bones - secondary motion solved in the spatial core](plans/3d-spring-bones.md)** [2026-10-19]
   A native chain solver for hair, skirts, tails and cables (Unity's
   SpringBone, Godot's SpringBoneSimulator3D, three-vrm's VRMSpringBoneJoint),
@@ -267,12 +266,6 @@ Shaped, not started.
   real-world meshes (Draco/meshopt), tangents and the second UV set,
   per-material samplers, merge-by-material and runtime decoding of fetched
   content (morph targets have their own item).
-- **[Occlusion culling in the spatial core's cull pass](backlog/3d-occlusion-culling.md)** [2026-10-20]
-  Frustum culling cannot know that a closed shell hides its interior, so a
-  dense scene draws everything behind its walls; the candidate is Godot's
-  software occlusion (authored occluders rasterized to a small CPU depth
-  buffer per target, every node's world box tested against it in the flush's
-  cull pass), which needs an explicit yes or no before it is built.
 - **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
   Four independent mechanisms silently drop a mesh from a target - frustum
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the
@@ -1228,6 +1221,13 @@ Finished, kept for the reasoning.
   post-effect slot (resolve/setResolve, hdrTexture), with the stock bloom
   option, the AgX and Neutral curves and the app-resolved atlas recipe landed
   the same day. Left open: the low-end cost measurement."
+- **[Inverse kinematics - a solver stack in the spatial core's pose post-pass](done/3d-ik.md)** [2026-10-20]
+  Look-at, two-bone, chain (FABRIK and CCD) and foot-placement solvers
+  declared once per model and stepped natively after the frame's JS, before
+  the spring bones (Unity's Animator IK and Animation Rigging, Godot's
+  SkeletonModifier3D stack, Unreal's Control Rig nodes), targets read from
+  arena nodes or ground queries, weights ramped in core, so a character that
+  aims, reaches, looks and plants its feet costs zero per-frame JS.
 - **[3d instances as spatial arena nodes - the full-matrix record projection](done/3d-instance-citizenship.md)** [2026-09-06]
   An instanced mesh's records are JS-written floats, so native transitions,
   clip players and per-instance picking never reach an instance, while every
@@ -2954,6 +2954,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   and each Unity/Godot cell says whether it was verified against the engine's
   docs or written from memory. Grew out of the Three-only feature survey
   (2026-09-08, revised 09-11) on 2026-09-22.
+- **[What the IK solver stack found](notes/3d-ik-findings.md)** [2026-10-20]
+  Facts that hold without the IK plan - Unity's two-bone turn sign under
+  right-handed math, FABRIK's and CCD's collinear degeneracy and Godot's
+  magnet seed (once, not per sweep), Godot's LookAtModifier3D limit and
+  transition semantics, and the picking index answering a ground ray with the
+  character's own meshes.
 - **[3D LOD measurements and traps](notes/3d-lod-measurements.md)** [2026-09-11]
   What building level of detail in the spatial core established - the
   projection's negative proj[5], the half-diagonal measure, and the per-frame

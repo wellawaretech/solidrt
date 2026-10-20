@@ -2,6 +2,7 @@
 title: Inverse kinematics - a solver stack in the spatial core's pose post-pass
 description: Look-at, two-bone, chain (FABRIK and CCD) and foot-placement solvers declared once per model and stepped natively after the frame's JS, before the spring bones (Unity's Animator IK and Animation Rigging, Godot's SkeletonModifier3D stack, Unreal's Control Rig nodes), targets read from arena nodes or ground queries, weights ramped in core, so a character that aims, reaches, looks and plants its feet costs zero per-frame JS.
 created: 2026-10-20
+completed: 2026-10-20
 ---
 
 # Inverse kinematics
@@ -109,6 +110,19 @@ convention. Consequence, documented as for the springs:
 solve, and a JS write to a solved joint is overwritten every frame while
 the solver's weight is above 0 (Unity's rule: a script that writes a
 bone the IK pass owns loses).
+
+**Frames are matrices, not quaternions.** A quaternion composed down
+the path cannot carry a mirroring ancestor (a negative scale, which
+glTF exports of mirrored rigs do carry); the matrix does. So the solver
+keeps only the world matrix per path node and reads every rotation it
+needs off that matrix's orthonormal part: a bone's forward is the
+matrix times the local axis, a world-space turn becomes the local
+rotation `Pn^T D Pn` over the parent's orthonormal part (a proper
+rotation even when that part is a reflection), and a tip's orientation
+goal is read in Three's decompose convention (the x axis negated under
+a negative determinant) so a target orientation under a mirrored arm
+means what it means in Three. The mirrored-rig test pins every joint
+of a reflected rig at the reflection of its plain twin.
 
 **A stack, not a set.** Solvers run in declared order and each sees the
 previous one's result, the Godot modifier-stack and Unity rig-layer
@@ -222,3 +236,16 @@ kinds) is additive.
 
 ## Findings
 
+The engine facts this work surfaced are cut to
+[3d-ik-findings](../notes/3d-ik-findings.md). What stays is the one
+mechanism that only makes sense with this plan in place: solving from
+the primary pose needs no pose-reset protocol with the players. A stack
+keeps, per joint, the rotation it last wrote and the input it last
+solved from; at the frame's post-pass a joint whose rotation differs
+from the stack's last write was written by something else (a player, a
+transition, the frame's JS) and that write is the new input, otherwise
+last frame's input stands. So a static pose under a half-weight aim
+holds (the test pins it), a player's frame-by-frame writes are the
+inputs, and a JS write to a solved joint is solved over rather than
+lost. Unity gets the same by re-evaluating the animation every frame;
+Godot's modifiers run over a pose the skeleton re-takes.

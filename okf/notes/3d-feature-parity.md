@@ -6,7 +6,7 @@ created: 2026-09-08
 
 # 3D feature parity
 
-**Measure, 2026-10-20: 47 of 117 rows that at least two engines ship, we ship.** Per area: Geometry and helpers 5/8; Materials 7/24; Lights and shadows 8/13; Renderer and post 9/27; Objects, scene graph, spatial 5/13; Animation 6/12; Loaders and assets 3/11; Controls and camera 3/5; Math 1/4.
+**Measure, 2026-10-20: 48 of 117 rows that at least two engines ship, we ship.** Per area: Geometry and helpers 5/8; Materials 7/24; Lights and shadows 8/13; Renderer and post 9/27; Objects, scene graph, spatial 5/13; Animation 7/12; Loaders and assets 3/11; Controls and camera 3/5; Math 1/4.
 
 The measure of `@solidrt/3d` against the three engines it is built from the
 practice of. [3d-roadmap](3d-roadmap.md) still owns the destination and the
@@ -168,7 +168,7 @@ geometry has no fix and decals are blocked on it.
 | Views: multiple cameras, render to texture | yes | yes | yes: SubViewport | yes | |
 | Frustum culling | yes | yes | yes | yes | core-side |
 | Level of detail | yes | yes | yes | yes | core-side |
-| Occlusion culling | no | yes | yes: occluders | no | [3d-occlusion-culling](../backlog/3d-occlusion-culling.md), awaiting a yes or no |
+| Occlusion culling | no | yes | yes: occluders | no | [3d-occlusion-culling](../plans/3d-occlusion-culling.md) |
 | XR | yes: WebXR | yes | yes | no | [vr-openxr](../backlog/vr-openxr.md) |
 | Decals | addon: DecalGeometry | yes: Decal Projector (v) | yes: Decal node | no | untracked; blocked on polygon offset |
 | Planar reflection / water | addon | HDRP only | no: SSR only | no | Three-only at runtime; cheap for us (a view with a mirrored camera) |
@@ -213,7 +213,7 @@ the engine is in the way any more.
 | Bone masks / layers | partial: per-action weight only | yes: AvatarMask, layers | yes: blend filters | no | [3d-animation-layers](../plans/3d-animation-layers.md) |
 | Subclip / trim | yes | yes: at import | partial | no | [3d-animation-layers](../plans/3d-animation-layers.md) |
 | Animation events / markers | partial: finished, loop | yes: AnimationEvent | yes: method tracks, markers | partial: finished only | [3d-animation-layers](../plans/3d-animation-layers.md) |
-| Inverse kinematics | addon: CCDIKSolver | yes: Animator IK, Rigging package | yes: SkeletonIK3D (deprecated) (v), modifiers | no | [3d-ik](../plans/3d-ik.md) |
+| Inverse kinematics | addon: CCDIKSolver | yes: Animator IK, Rigging package | yes: SkeletonIK3D (deprecated) (v), modifiers | yes: look-at, two-bone, chain (FABRIK and CCD), foot placement with ground queries, in core | [3d-ik](../done/3d-ik.md) |
 | Spring bones / secondary motion | addon: three-vrm | no: asset store (Dynamic Bone, Magica) | yes: SpringBoneSimulator3D | yes: in core | [3d-spring-bones](../plans/3d-spring-bones.md) |
 | Root motion | no | yes | yes | yes | |
 | Skeleton sharing / wardrobe | yes: SkeletonUtils | yes: humanoid retarget | yes: retarget at import | yes: bindSkeleton (sharing; no retarget) | |

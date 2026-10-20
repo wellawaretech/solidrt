@@ -38,6 +38,7 @@ mod resample;
 mod router;
 mod spatial;
 mod spatial_collide;
+mod spatial_ik;
 mod spatial_normals;
 mod spatial_players;
 mod spatial_residency;

@@ -15,11 +15,12 @@ use crate::alloy_plugins::properties::transition::{
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::{elements_mut_of, elements_of, OptArg};
 use alloy::spatial::{
-  vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawOrder,
-  DrawQueue, DrawSink, GridSpec, InstanceProjection, InstanceRecordSink, LodLevel, MoveOptions, NodeEndpoint,
-  NodeMotion, NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter, RegionEvent,
-  RegionMargins, RegionRef, RootMotion, Shape, SharedSlotSink, SpringCollider, SpringJoint, SpringJointUpdate,
-  SpringShape, TextureSlotSink, Volume,
+  vertex_normals, write_channel, ChainMethod, ChainSpec, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent,
+  Component, DrawOrder, DrawQueue, DrawSink, FeetSpec, GridSpec, IkLimit, IkPoint, IkSolverSpec, IkTarget, IkUp,
+  InstanceProjection, InstanceRecordSink, LegSpec, LodLevel, LookAtBone, LookAtLimit, LookAtSpec, MoveOptions,
+  NodeEndpoint, NodeMotion, NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter,
+  RegionEvent, RegionMargins, RegionRef, RootMotion, Shape, SharedSlotSink, SpringCollider, SpringJoint,
+  SpringJointUpdate, SpringShape, TextureSlotSink, TwoBoneSpec, Volume,
 };
 
 /// Floats per joint in createSpring's joint payload (see `create_spring`).
@@ -148,6 +149,12 @@ impl ModuleDef for SpatialModule {
     decl.declare("resetSpring")?;
     decl.declare("setSpringJoint")?;
     decl.declare("setSpringForce")?;
+    decl.declare("createIk")?;
+    decl.declare("destroyIk")?;
+    decl.declare("setIkSolver")?;
+    decl.declare("setIkTarget")?;
+    decl.declare("setIkWeight")?;
+    decl.declare("readIkReach")?;
     decl.declare("bindPoseRecord")?;
     decl.declare("bindMatrixRecord")?;
     decl.declare("unbindRecord")?;
@@ -225,6 +232,12 @@ impl ModuleDef for SpatialModule {
     exports.export("resetSpring", Function::new(ctx.clone(), reset_spring)?)?;
     exports.export("setSpringJoint", Function::new(ctx.clone(), set_spring_joint)?)?;
     exports.export("setSpringForce", Function::new(ctx.clone(), set_spring_force)?)?;
+    exports.export("createIk", Function::new(ctx.clone(), create_ik)?)?;
+    exports.export("destroyIk", Function::new(ctx.clone(), destroy_ik)?)?;
+    exports.export("setIkSolver", Function::new(ctx.clone(), set_ik_solver)?)?;
+    exports.export("setIkTarget", Function::new(ctx.clone(), set_ik_target)?)?;
+    exports.export("setIkWeight", Function::new(ctx.clone(), set_ik_weight)?)?;
+    exports.export("readIkReach", Function::new(ctx.clone(), read_ik_reach)?)?;
     exports.export("bindPoseRecord", Function::new(ctx.clone(), bind_pose_record)?)?;
     exports.export("bindMatrixRecord", Function::new(ctx.clone(), bind_matrix_record)?)?;
     exports.export("unbindRecord", Function::new(ctx.clone(), unbind_record)?)?;
@@ -1544,6 +1557,262 @@ fn set_spring_joint<'js>(ctx: Ctx<'js>, id: u64, joint: u32, update: Object<'js>
   Ok(())
 }
 
+/// A required number of a spec object.
+fn num_of(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<f32> {
+  obj.get::<_, Option<f64>>(key)?.map(|v| v as f32).ok_or_else(|| throw_str(ctx, &format!("{api}: {key} is required")))
+}
+
+/// A required node id of a spec object.
+fn node_of(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<u64> {
+  obj.get::<_, Option<u64>>(key)?.ok_or_else(|| throw_str(ctx, &format!("{api}: {key} is required")))
+}
+
+/// An optional `[x, y, z]` of a spec object.
+fn vec3_of(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<Option<[f32; 3]>> {
+  match obj.get::<_, Option<Vec<f64>>>(key)? {
+    None => Ok(None),
+    Some(v) if v.len() == 3 => Ok(Some([v[0] as f32, v[1] as f32, v[2] as f32])),
+    Some(_) => Err(throw_str(ctx, &format!("{api}: {key} must be [x, y, z]"))),
+  }
+}
+
+fn vec3_req(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<[f32; 3]> {
+  vec3_of(ctx, obj, key, api)?.ok_or_else(|| throw_str(ctx, &format!("{api}: {key} is required")))
+}
+
+/// An optional `[x, y, z, w]` of a spec object.
+fn quat_of(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<Option<[f32; 4]>> {
+  match obj.get::<_, Option<Vec<f64>>>(key)? {
+    None => Ok(None),
+    Some(v) if v.len() == 4 => Ok(Some([v[0] as f32, v[1] as f32, v[2] as f32, v[3] as f32])),
+    Some(_) => Err(throw_str(ctx, &format!("{api}: {key} must be [x, y, z, w]"))),
+  }
+}
+
+/// A point: `{ node }` or `{ position, space? }`.
+fn point_of<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, api: &str) -> rquickjs::Result<IkPoint> {
+  if let Some(node) = obj.get::<_, Option<u64>>("node")? {
+    return Ok(IkPoint::Node(node));
+  }
+  Ok(IkPoint::Point { position: vec3_req(ctx, obj, "position", api)?, space: obj.get::<_, Option<u64>>("space")? })
+}
+
+/// A target: null/undefined for none, `{ node }`, or `{ position,
+/// rotation?, space? }`.
+fn target_of<'js>(ctx: &Ctx<'js>, value: Value<'js>, api: &str) -> rquickjs::Result<Option<IkTarget>> {
+  if value.is_null() || value.is_undefined() {
+    return Ok(None);
+  }
+  let obj = Object::from_js(ctx, value).map_err(|_| throw_str(ctx, &format!("{api}: a target is an object")))?;
+  if let Some(node) = obj.get::<_, Option<u64>>("node")? {
+    return Ok(Some(IkTarget::Node(node)));
+  }
+  Ok(Some(IkTarget::Point {
+    position: vec3_req(ctx, &obj, "position", api)?,
+    rotation: quat_of(ctx, &obj, "rotation", api)?,
+    space: obj.get::<_, Option<u64>>("space")?,
+  }))
+}
+
+fn target_field<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, api: &str) -> rquickjs::Result<Option<IkTarget>> {
+  target_of(ctx, obj.get::<_, Value<'js>>("target")?, api)
+}
+
+fn point_field<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, key: &str, api: &str) -> rquickjs::Result<Option<IkPoint>> {
+  match obj.get::<_, Option<Object<'js>>>(key)? {
+    None => Ok(None),
+    Some(o) => point_of(ctx, &o, api).map(Some),
+  }
+}
+
+/// A chain limit: `{ kind: "hinge", axis, min, max }` or `{ kind:
+/// "cone", swing, twist }`.
+fn limit_of<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, api: &str) -> rquickjs::Result<IkLimit> {
+  let kind: String = obj.get("kind")?;
+  match kind.as_str() {
+    "hinge" => Ok(IkLimit::Hinge {
+      axis: vec3_req(ctx, obj, "axis", api)?,
+      min: num_of(ctx, obj, "min", api)?,
+      max: num_of(ctx, obj, "max", api)?,
+    }),
+    "cone" => Ok(IkLimit::Cone { swing: num_of(ctx, obj, "swing", api)?, twist: num_of(ctx, obj, "twist", api)? }),
+    other => Err(throw_str(ctx, &format!("{api}: unknown limit kind {other:?}"))),
+  }
+}
+
+/// One solver spec object (see `createIk` in spatial.d.ts) and its
+/// weight.
+fn solver_of<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, api: &str) -> rquickjs::Result<(IkSolverSpec, f32)> {
+  let kind: String = obj.get("kind")?;
+  let weight = obj.get::<_, Option<f64>>("weight")?.unwrap_or(1.0) as f32;
+  let spec = match kind.as_str() {
+    "lookAt" => {
+      let mut bones = Vec::new();
+      for b in obj.get::<_, Array<'js>>("bones")?.iter::<Object<'js>>() {
+        let b = b?;
+        bones.push(LookAtBone { node: node_of(ctx, &b, "node", api)?, share: num_of(ctx, &b, "share", api)? });
+      }
+      let up = match obj.get::<_, Option<Object<'js>>>("up")? {
+        None => None,
+        Some(u) => Some(IkUp { vector: vec3_req(ctx, &u, "vector", api)?, space: u.get::<_, Option<u64>>("space")? }),
+      };
+      let limit = match obj.get::<_, Option<Object<'js>>>("limit")? {
+        None => None,
+        Some(l) => {
+          let pair = |key: &str| -> rquickjs::Result<[f32; 2]> {
+            match l.get::<_, Option<Vec<f64>>>(key)? {
+              Some(v) if v.len() == 2 => Ok([v[0] as f32, v[1] as f32]),
+              _ => Err(throw_str(ctx, &format!("{api}: limit.{key} must be [min, max]"))),
+            }
+          };
+          Some(LookAtLimit { yaw: pair("yaw")?, pitch: pair("pitch")?, damp: num_of(ctx, &l, "damp", api)? })
+        }
+      };
+      IkSolverSpec::LookAt(LookAtSpec {
+        bones,
+        target: target_field(ctx, obj, api)?,
+        forward: vec3_req(ctx, obj, "forward", api)?,
+        up_axis: vec3_req(ctx, obj, "upAxis", api)?,
+        up,
+        limit,
+        ease_ms: num_of(ctx, obj, "easeMs", api)?,
+      })
+    }
+    "twoBone" => IkSolverSpec::TwoBone(TwoBoneSpec {
+      root: node_of(ctx, obj, "root", api)?,
+      mid: node_of(ctx, obj, "mid", api)?,
+      tip: node_of(ctx, obj, "tip", api)?,
+      target: target_field(ctx, obj, api)?,
+      pole: point_field(ctx, obj, "pole", api)?,
+      pole_angle: num_of(ctx, obj, "poleAngle", api)?,
+      position_weight: num_of(ctx, obj, "positionWeight", api)?,
+      rotation_weight: num_of(ctx, obj, "rotationWeight", api)?,
+      soft: num_of(ctx, obj, "soft", api)?,
+      stretch: num_of(ctx, obj, "stretch", api)?,
+    }),
+    "chain" => {
+      let method: String = obj.get("method")?;
+      let method = match method.as_str() {
+        "fabrik" => ChainMethod::Fabrik,
+        "ccd" => ChainMethod::Ccd,
+        other => return Err(throw_str(ctx, &format!("{api}: unknown chain method {other:?}"))),
+      };
+      let mut limits = Vec::new();
+      if let Some(list) = obj.get::<_, Option<Array<'js>>>("limits")? {
+        for l in list.iter::<Object<'js>>() {
+          let l = l?;
+          let limit: Object<'js> = l.get("limit")?;
+          limits.push((node_of(ctx, &l, "node", api)?, limit_of(ctx, &limit, api)?));
+        }
+      }
+      IkSolverSpec::Chain(ChainSpec {
+        root: node_of(ctx, obj, "root", api)?,
+        tip: node_of(ctx, obj, "tip", api)?,
+        target: target_field(ctx, obj, api)?,
+        method,
+        iterations: num_of(ctx, obj, "iterations", api)?.max(0.0) as u32,
+        tolerance: num_of(ctx, obj, "tolerance", api)?,
+        magnet: point_field(ctx, obj, "magnet", api)?,
+        limits,
+        rotation_weight: num_of(ctx, obj, "rotationWeight", api)?,
+      })
+    }
+    "feet" => {
+      let mut legs = Vec::new();
+      for l in obj.get::<_, Array<'js>>("legs")?.iter::<Object<'js>>() {
+        let l = l?;
+        legs.push(LegSpec {
+          root: node_of(ctx, &l, "root", api)?,
+          mid: node_of(ctx, &l, "mid", api)?,
+          tip: node_of(ctx, &l, "tip", api)?,
+          height: l.get::<_, Option<f64>>("height")?.map(|v| v as f32),
+        });
+      }
+      IkSolverSpec::Feet(FeetSpec {
+        hips: node_of(ctx, obj, "hips", api)?,
+        legs,
+        up: vec3_req(ctx, obj, "up", api)?,
+        filter: filter_arg(OptArg(obj.get::<_, Option<Object<'js>>>("filter")?))?,
+        rise: num_of(ctx, obj, "rise", api)?,
+        drop: num_of(ctx, obj, "drop", api)?,
+        plant_height: num_of(ctx, obj, "plantHeight", api)?,
+        plant_band: num_of(ctx, obj, "plantBand", api)?,
+        hips_ease_ms: num_of(ctx, obj, "hipsEaseMs", api)?,
+        rotation_weight: num_of(ctx, obj, "rotationWeight", api)?,
+      })
+    }
+    other => return Err(throw_str(ctx, &format!("{api}: unknown solver kind {other:?}"))),
+  };
+  Ok((spec, weight))
+}
+
+/// Declare an IK stack (see `alloy::spatial::ik`): the solver spec
+/// objects in order, each with its `weight`.
+fn create_ik<'js>(ctx: Ctx<'js>, clock: u64, solvers: Array<'js>) -> rquickjs::Result<u64> {
+  let mut specs = Vec::with_capacity(solvers.len());
+  for s in solvers.iter::<Object<'js>>() {
+    specs.push(solver_of(&ctx, &s?, "createIk")?);
+  }
+  let st = super::gui(&ctx);
+  let id = st.alloy.spatial().create_ik(clock, specs).map_err(|e| throw_str(&ctx, &format!("createIk: {e}")))?;
+  // The first solve lands at the next post-pass: a frame must run it.
+  st.platform.request_frame();
+  Ok(id)
+}
+
+fn destroy_ik(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
+  let st = super::gui(&ctx);
+  // The joints go back to the primary pose on the spot: a frame must
+  // publish it.
+  if st.alloy.spatial().destroy_ik(id) {
+    st.platform.request_frame();
+  }
+  Ok(())
+}
+
+/// Replace a solver's settings (a full spec object of the same kind).
+fn set_ik_solver<'js>(ctx: Ctx<'js>, id: u64, index: u32, spec: Object<'js>) -> rquickjs::Result<()> {
+  let (spec, _) = solver_of(&ctx, &spec, "setIkSolver")?;
+  let st = super::gui(&ctx);
+  st.alloy
+    .spatial()
+    .set_ik_solver(id, index as usize, spec)
+    .map_err(|e| throw_str(&ctx, &format!("setIkSolver: {e}")))?;
+  st.platform.request_frame();
+  Ok(())
+}
+
+/// Move a solver's target (null for none).
+fn set_ik_target<'js>(ctx: Ctx<'js>, id: u64, index: u32, target: Value<'js>) -> rquickjs::Result<()> {
+  let target = target_of(&ctx, target, "setIkTarget")?;
+  let st = super::gui(&ctx);
+  st.alloy
+    .spatial()
+    .set_ik_target(id, index as usize, target)
+    .map_err(|e| throw_str(&ctx, &format!("setIkTarget: {e}")))?;
+  st.platform.request_frame();
+  Ok(())
+}
+
+/// Ramp a solver's weight over `fadeMs` (0 or absent snaps).
+fn set_ik_weight(ctx: Ctx<'_>, id: u64, index: u32, weight: f64, fade_ms: OptArg<f64>) -> rquickjs::Result<()> {
+  let st = super::gui(&ctx);
+  st.alloy
+    .spatial()
+    .set_ik_weight(id, index as usize, weight as f32, fade_ms.0.unwrap_or(0.0) as f32)
+    .map_err(|e| throw_str(&ctx, &format!("setIkWeight: {e}")))?;
+  st.platform.request_frame();
+  Ok(())
+}
+
+/// The last solve's residual.
+fn read_ik_reach(ctx: Ctx<'_>, id: u64, index: u32) -> rquickjs::Result<f64> {
+  let st = super::gui(&ctx);
+  let reach =
+    st.alloy.spatial().ik_reach(id, index as usize).map_err(|e| throw_str(&ctx, &format!("readIkReach: {e}")))?;
+  Ok(reach as f64)
+}
+
 /// Set the chain's runtime force (a Float32Array of 3, world space).
 fn set_spring_force(ctx: Ctx<'_>, id: u64, force: TypedArray<'_, f32>) -> rquickjs::Result<()> {
   let f = elements_of(&ctx, &force, "setSpringForce")?;
@@ -1757,11 +2026,13 @@ pub(crate) fn tick(ctx: &Ctx<'_>) -> SpatialTick {
   };
   st.alloy.spatial().start_transitions();
   let active = st.alloy.spatial().check_exits();
-  // The pose post-pass: the spring chains step over the frame's final
-  // primary pose (players, transitions and the frame's own writes), and
-  // the flush below publishes their joints.
+  // The pose post-pass: the IK stacks bend the frame's final primary
+  // pose (players, transitions and the frame's own writes) toward the
+  // world, the spring chains step over the result, and the flush below
+  // publishes their joints.
+  let ik = st.alloy.spatial().advance_ik();
   let springs = st.alloy.spatial().advance_springs();
-  let active = active || springs.active;
+  let active = active || ik.active || springs.active;
   let freed = st.alloy.spatial().take_freed();
   let wrote = st.alloy.spatial_flush();
   let regions = st.alloy.spatial().residency_demand();

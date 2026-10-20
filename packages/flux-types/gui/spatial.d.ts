@@ -923,4 +923,146 @@ declare module "flux:spatial" {
    * dropped id or a non-finite force.
    */
   export function setSpringForce(spring: SpringId, force: Float32Array): void
+
+  /** An IK stack's handle (createIk). */
+  export type IkId = number
+  /** Where a solver aims: a live node (read at solve time, so a moving
+   * target costs nothing), or a point in world space or in `space`'s
+   * frame. */
+  export type IkPoint = { node: NodeId } | { position: [number, number, number]; space?: NodeId }
+  /** A target: a node (its position and rotation), or a point with an
+   * optional rotation (xyzw) in the same space. */
+  export type IkTarget = { node: NodeId } | { position: [number, number, number]; rotation?: [number, number, number, number]; space?: NodeId }
+  /** A chain joint's limit, in the joint's own frame relative to its
+   * primary rotation (radians): a hinge turns about `axis` within
+   * min..max; a cone bounds the swing away from the bone axis (toward
+   * the next joint) and the twist about it. */
+  export type IkLimit = { kind: "hinge"; axis: [number, number, number]; min: number; max: number } | { kind: "cone"; swing: number; twist: number }
+  /** A look-at: `bones` root first (spine, neck, head), each with its
+   * `share` of the aim (fractions of what remains; the last takes all,
+   * so the chain reaches the target exactly); `forward` and `upAxis` the
+   * bones' own axes; `up` a roll reference (`{ vector, space? }`, else
+   * the shortest arc); `limit` yaw and pitch `[min, max]` about the last
+   * bone's rest forward with `damp` the fraction past which the approach
+   * eases instead of clamping (1 = hard); `easeMs` the time-based
+   * transition on a target switch, loss or flip through the back. */
+  export type IkLookAtSpec = {
+    kind: "lookAt"
+    bones: { node: NodeId; share: number }[]
+    target?: IkTarget | null
+    forward: [number, number, number]
+    upAxis: [number, number, number]
+    up?: { vector: [number, number, number]; space?: NodeId }
+    limit?: { yaw: [number, number]; pitch: [number, number]; damp: number }
+    easeMs: number
+    weight?: number
+  }
+  /** A two-bone limb: `root`, `mid`, `tip` a descendant path, solved in
+   * closed form; `pole` the bend plane (else the animated bend, the rest
+   * bend when straight), `poleAngle` a twist about the root-target axis
+   * after it; `positionWeight` the reach, `rotationWeight` how much the
+   * tip takes the target's rotation; `soft` the reach band as a fraction
+   * of the limb (0 off) and `stretch` the most the limb lengthens past
+   * full reach (0 off). */
+  export type IkTwoBoneSpec = {
+    kind: "twoBone"
+    root: NodeId
+    mid: NodeId
+    tip: NodeId
+    target?: IkTarget | null
+    pole?: IkPoint
+    poleAngle: number
+    positionWeight: number
+    rotationWeight: number
+    soft: number
+    stretch: number
+    weight?: number
+  }
+  /** A chain from `root` to `tip` (every node between is a joint):
+   * `method` fabrik (the chain is turned onto the target first, then
+   * swept; a magnet turns the interior toward it and says which way a
+   * chain lying on the target's axis folds) or ccd (limits exact), up to
+   * `iterations` sweeps until the tip is within `tolerance` (world
+   * units); `limits` per joint; `rotationWeight` the tip's. */
+  export type IkChainSpec = {
+    kind: "chain"
+    root: NodeId
+    tip: NodeId
+    target?: IkTarget | null
+    method: "fabrik" | "ccd"
+    iterations: number
+    tolerance: number
+    magnet?: IkPoint
+    limits?: { node: NodeId; limit: IkLimit }[]
+    rotationWeight: number
+    weight?: number
+  }
+  /** Foot placement: `legs` two-bone limbs under `hips`, their targets
+   * GROUND HITS the core takes itself - a ray from `rise` above each
+   * animated foot down to `drop` below it through `filter` (a collider
+   * layer; the model's own meshes must not answer) - the sole `height`
+   * below the tip (measured against the clock node's plane at creation
+   * when absent), a foot planted while within `plantHeight` of its rest
+   * height and lifting over `plantBand`, the hips moved along `up` by
+   * the planted foot that needs it most (eased by `hipsEaseMs`), each
+   * planted foot aligned to its ground normal by `rotationWeight`. */
+  export type IkFeetSpec = {
+    kind: "feet"
+    hips: NodeId
+    legs: { root: NodeId; mid: NodeId; tip: NodeId; height?: number }[]
+    up: [number, number, number]
+    filter?: QueryFilter
+    rise: number
+    drop: number
+    plantHeight: number
+    plantBand: number
+    hipsEaseMs: number
+    rotationWeight: number
+    weight?: number
+  }
+  export type IkSolverSpec = IkLookAtSpec | IkTwoBoneSpec | IkChainSpec | IkFeetSpec
+  /**
+   * Declare an IK stack: the solvers in order, stepped once per frame
+   * AFTER the frame's JS and its transitions and BEFORE the spring bones
+   * (the pose post-pass: Unity's OnAnimatorIK before LateUpdate, Godot's
+   * modifier stack), each over the previous one's result, at `clock`'s
+   * rate (setTimeScale). Every frame each solver sees the PRIMARY pose -
+   * what the players, the transitions and the frame's JS wrote - not its
+   * own last result: a joint written over since the stack's last write
+   * takes that write as its input, otherwise last frame's input stands,
+   * so a static pose under a half-weight aim holds instead of creeping.
+   * The stack OWNS its joints: a write in the frame is solved over, and
+   * a read during the frame (readTransform, worldMatrix) sees the
+   * previous frame's solve. Solves run in world space over matrices
+   * composed on the fly, so a placed, turned or scaled model solves
+   * identically and bone lengths follow the pose. `weight` (default 1)
+   * blends each solver from the primary pose; 0 costs no solve. The
+   * eases (weights, the look-at transition, the hips offset) are
+   * per-second rates over the frame delta. A settled stack asks for no
+   * frames; a stack whose clock dies drops, a solver whose joint or
+   * target node dies is skipped from then on. Throws on a dead node, a
+   * tip not under its root, a mid not between them, a setting out of
+   * range.
+   */
+  export function createIk(clock: NodeId, solvers: IkSolverSpec[]): IkId
+  /** Drop a stack, its joints put back to the primary pose (what the
+   * players and the frame's JS wrote). A dropped id is fine. */
+  export function destroyIk(ik: IkId): void
+  /** Replace a solver's settings live: a full spec of the same kind
+   * (any joints; a new chain re-registers). The weight and its ramp
+   * carry over, the eases restart. Throws on a dropped id, an index out
+   * of range, a kind change or a bad spec. */
+  export function setIkSolver(ik: IkId, index: number, spec: IkSolverSpec): void
+  /** Move a solver's target; null for none (a look-at eases back to the
+   * primary pose). A point moved to another point tracks (feed a cursor
+   * every frame); a node switch, a loss or a find starts the look-at's
+   * transition. Throws for a feet solver (its targets are the ground). */
+  export function setIkTarget(ik: IkId, index: number, target: IkTarget | null): void
+  /** Ramp a solver's weight to `weight` over `fadeMs` of the clock's
+   * time (linear, the players' fade shape); absent or 0 snaps. */
+  export function setIkWeight(ik: IkId, index: number, weight: number, fadeMs?: number): void
+  /** The last solve's residual: the distance left to the target (world
+   * units; a look-at's angle left, radians; a feet solver's largest over
+   * its planted feet). */
+  export function readIkReach(ik: IkId, index: number): number
 }

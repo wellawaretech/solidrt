@@ -644,7 +644,7 @@ impl Spatial {
 
   /// Write a rotation through the snap path when it differs from the
   /// node's; whether it did.
-  fn write_rotation(&mut self, idx: u32, q: [f32; 4]) -> bool {
+  pub(super) fn write_rotation(&mut self, idx: u32, q: [f32; 4]) -> bool {
     let n = &mut self.nodes[idx as usize];
     if !differs(q, n.rotation) {
       return false;

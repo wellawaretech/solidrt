@@ -26,6 +26,15 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   target: `lookAt` for a +z solid, `quatFromTo` for aiming a y-axis cone,
   and a `quatSlerp` damped follow that visibly lags; all driven from
   onFrame through refs, no per-frame signals.
+- `ik.tsx` - inverse kinematics solved in core (`createIk`): one
+  meshless biped with the four solver kinds stacked on it - a `lookAt`
+  shared by spine, neck and head at an orbiting ball (limited, so the
+  ball passing behind eases through rest instead of snapping), a
+  `twoBone` arm on a circling handle with a pole and a soft reach band,
+  a FABRIK `chain` tail chasing a point under a magnet, and `feet`
+  planted on a sloped floor from ground rays the core casts on the
+  floor's collider layer, the hips dropping for the lower foot; the only
+  per-frame JS moves the targets.
 - `exits.tsx` - lifecycle animation on nodes: crates that pop in
   (`from`) and shrink away (`exit`, an ease-in of its own) when tapped,
   the component unmount being the `destroy` the exit rides on, a ghost

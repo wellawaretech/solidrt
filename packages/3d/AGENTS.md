@@ -68,6 +68,7 @@ Contents:
   - [Animation](#animation)
   - [Root motion](#root-motion)
   - [Spring bones](#spring-bones)
+  - [Inverse kinematics](#inverse-kinematics)
   - [Skins](#skins)
   - [Not in the subset](#not-in-the-subset)
 - [Traps](#traps)
@@ -3029,6 +3030,79 @@ chain asks for no frames. The VRM extension itself is the app's to
 parse (no reader here yet); `okf/plans/3d-spring-bones.md` holds the
 design.
 
+### Inverse kinematics
+
+Anything that bends the animated pose toward the world - a head on the
+camera, a hand on a handle, a weapon on a cursor, a tail on a point,
+feet on a slope - is `createIk(model, { solvers })`, a stack of solvers
+solved in the spatial core (Unity's Animator IK and Animation Rigging,
+Godot's SkeletonModifier3D stack, Unreal's Control Rig nodes) in their
+vocabulary. Four kinds, `{ kind, ..., weight? }` each: `lookAt` (`bones`
+root first - spine, neck, head - each a node or `{ node, share }`; the
+shares distribute the aim, the last bone reaching the target exactly;
+`forward`/`upAxis` the bones' own axes, default +z/+y; `up` a roll
+reference; `limit: { yaw, pitch, damp? }` about the last bone's rest
+forward, a number symmetric or `[min, max]`, radians, Godot's
+LookAtModifier3D with its damped approach; `easeMs`, default 600, the
+transition through rest when the target switches, is lost or flips
+behind the head - no snap across the limit), `twoBone` (`root`, `mid`,
+`tip` - shoulder, elbow, wrist - closed form; `pole` the bend plane,
+else the animated bend holds; `poleAngle`; `positionWeight` the reach
+and `rotationWeight` the grip on the target's rotation; `soft` a reach
+band near full extension instead of the pop, Unreal's soft IK;
+`stretch` past it), `chain` (`root` to `tip`, every node between a
+joint; `method` "fabrik" with a `magnet` or "ccd" for exact per-joint
+`limits` - `{ hinge, min, max }` or `{ cone, twist? }` in the joint's own
+frame - `iterations`, `tolerance`, `rotationWeight`) and `feet` (`hips`
+plus `legs: [{ root, mid, tip, height? }]` whose targets are GROUND HITS
+the core takes itself: a ray `rise` above each animated foot down to
+`drop` below it on `layers` - REQUIRED, a collider layer the model's own
+meshes are not on, as `scene.raycast` takes it - the sole `height` below
+the ankle (measured from the model's ground plane at the declaration,
+so declare at rest), a foot planted within `plantHeight` of its rest
+height and lifting over `plantBand` with the clip, the hips moved along
+`up` by the planted foot that needs it most so both feet reach, eased by
+`hipsEaseMs`, each planted foot aligned to its ground normal by
+`rotationWeight`; no JS raycast per foot per frame). Targets are
+`{ node }` (ANY scene node - a socket, a pickup, the camera's node,
+another character's joint - read in the core at solve time, so a moving
+target costs nothing) or `{ point, rotation?, space? }` (world, or a
+node's frame); poles and magnets likewise without the rotation. The
+handle has `setWeight(i, w, { fadeMs? })` (ramped in core: the aim
+lifts off and the hand lets go smoothly; 0 costs no solve),
+`setTarget(i, target | null)` (a point moved to another point tracks,
+feed a cursor every frame; a lost look-at eases back), `setSolver(i,
+update)` (limits, pole, shares, method parameters, the joints
+themselves, live), `reach(i)` (the last solve's residual - distance
+left, or the look-at's angle - for "can it reach" without a second
+solve) and `dispose()` (the joints back to the pose the players and
+your frame wrote). Zero per-frame JS: the core steps every stack once
+per frame AFTER your onFrame and its transitions and BEFORE the spring
+bones - the POSE POST-PASS, Unity's order (animation, OnAnimatorIK,
+LateUpdate) and Godot's (process, modifiers in child order) - so your
+frame sets targets and overwrites joints, the solvers bend the FINAL
+primary pose toward the world, and the springs lag behind the result.
+The solvers run in declared order, each over the previous one's result:
+a lookAt on the spine before a twoBone on the arm is the normal case,
+and the only way a hand reaches a point the turned torso moved it
+toward; `feet` goes FIRST, so the limbs and chains solve under the
+moved hips. Four consequences: (1) every frame each solver solves from the
+PRIMARY pose - what the players, the transitions and your frame wrote -
+not its own last result, so a static pose under a half-weight aim holds
+instead of creeping toward the full one, and a setTransform on a solved
+joint in the frame is solved over, not lost; (2) `getTransform` /
+`worldPosition` on a solved joint during the frame read the PREVIOUS
+frame's solve (a node attached under it follows through the hierarchy
+and needs no read); (3) the model's time scale paces the eases with its
+clips; (4) solves run in world space over matrices composed on the fly,
+so a placed, turned or scaled model solves identically and bone lengths
+follow the pose (an animated scale is honoured). The declaration lives
+on the model node and re-applies on every scene enter, like
+setTransition; a settled stack (targets, joints and weights unchanged)
+asks for no frames. Not here, additive when wanted: a humanoid layer
+that names joints by body part (Unity's goals), whole-body IK, culling
+of off-screen solves. `okf/done/3d-ik.md` holds the design.
+
 ### Skins
 
 Skins need nothing further: each skin's uBones palette
@@ -3282,6 +3356,29 @@ successors) as ordinary content, the model-loading split repeated:
 - `extras` fields exist only where the file HAD data (an empty object
   is dropped), so read them with `?.` - `model.extras?.spawn`, not
   `model.extras.spawn`.
+- An IK solver owns its joints: a `setTransform` on one in the frame is
+  solved over (the solve runs after your onFrame), a read of one in the
+  frame sees the previous frame's solve, and the solve of a solver at
+  weight 0.5 does NOT creep toward the full aim frame by frame - it is
+  re-taken from the animated pose every frame. A hand that must stay on
+  a handle while the torso turns is a `twoBone` AFTER the `lookAt` in
+  the stack, not a second stack.
+- A `twoBone` pole decides which way the elbow or knee goes, and a pole
+  on the wrong side folds the limb through the body (the forearm sweeps
+  across the torso). Put it on the joint's natural side: outward and a
+  little back for an elbow, forward for a knee, in the model's space
+  so it turns with the character. Mind the rig's handedness: a VRM 0.x
+  faces -Z, so the character's LEFT is -x (her left arm's pole is at
+  negative x) and a look-at's `forward` is `[0, 0, -1]`. Without a pole
+  the animated bend direction holds, which a straight T-pose arm does
+  not have, so give arms a pole.
+- `feet` needs `layers`: the ground rays run against the scene's picking
+  index, which holds the model's own meshes too (a skinned mesh picks by
+  its bind-pose box at the model root), so a ray that sees every layer
+  lands on the character. Put the ground on a collider layer (the
+  physics-collider pattern: a hidden or visible mesh with `layers` set)
+  and name it; the model's meshes stay off it. Declare `feet` with the
+  model at rest on its ground plane, or give each leg its `height`.
 
 ### Materials and color
 
