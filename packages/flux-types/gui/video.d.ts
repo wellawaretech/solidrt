@@ -145,13 +145,18 @@ declare module "flux:video" {
     present?: "texture"
     /**
      * Play live, this many seconds behind the newest frame delivered (see
-     * `record` without `to`). Playback settles that far behind the live
-     * edge (at least about three quarters of a second: the buffering
-     * floor), a backlog beyond it (a stall's bytes arriving at once, a
-     * pause) is cut to the newest keyframe inside the latency, and a play
-     * after a pause resumes at the live edge. Absent, a stream without an
-     * end plays as delivered and never catches up. Seeks do nothing on a
-     * stream either way.
+     * `record` without `to`): the source is paced by its sender, a stall
+     * is a real stall, and the player holds only the frames the latency
+     * asks for. Playback settles that far behind the live edge, a backlog
+     * beyond it (a stall's bytes arriving at once, a pause) is skipped
+     * back to the latency (the frames up to it decoded unshown, which
+     * shows as `buffering`), and a play after a pause resumes at the live
+     * edge. The floor is 0.15 s, about five frames at 30 fps: a smaller
+     * value is raised to it silently. The floor is in time, not frames,
+     * so a source at a low frame rate (a screencast at 10 fps) wants a
+     * larger latency, a few of its frame intervals. Absent, a stream
+     * without an end plays as delivered with a file's deep buffer and
+     * never catches up. Seeks do nothing on a stream either way.
      */
     latency?: number
     /**

@@ -589,12 +589,6 @@ Shaped, not started.
   transfer() was parked on the rquickjs quickjs-ng bump, and the workspace is
   on rquickjs 0.14.0 since, so check whether the steal is now the safe
   from_source over a slot-holding source and build stages 1+2 together.
-- **[Give live sources their own buffering floor](backlog/live-latency-floor.md)** [2026-10-17]
-  A live player cannot play closer than 0.75 s behind the sender, whatever
-  `latency` asks, because the live form inherits the file stream's low water
-  (0.5 s) plus a 250 ms hysteresis as its resume floor; a call therefore runs
-  about a second behind. A sender-paced source needs a floor of a few frames,
-  so the three buffering constants should follow the source kind.
 - **[Content damage for live-sampled textures](backlog/live-texture-content-damage.md)** [2026-09-12]
   A texture whose pixels change behind an unchanged id produces no damage,
   because nodes displaying it hold a live reference and need none to show the
@@ -2165,6 +2159,13 @@ Finished, kept for the reasoning.
   bring Surface, theme.material and theme.elevation into the package on one
   shadow rect per surface, migrating every component in one pass with flat as
   the stock look and lit as a preset.
+- **[Give live sources their own buffering floor](done/live-latency-floor.md)** [2026-10-20]
+  A live player could not play closer than 0.75 s behind the sender, whatever
+  `latency` asked, because the live form inherited the file stream's low water
+  plus a hysteresis as its resume floor; the buffering thresholds now follow
+  the playback policy the `latency` option declares, the floor is 0.15 s, and
+  a stall's backlog is skipped back to the latency through the keyframe before
+  it instead of landing on a keyframe.
 - **[Local pointer coordinates](done/local-pointer-coords.md)** [2026-07-25]
   Reintroduce per-node localX/localY on pointer events (already carried
   through hit testing, dropped in flux marshalling), and cap move hit-tests to

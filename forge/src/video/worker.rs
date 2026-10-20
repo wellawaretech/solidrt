@@ -33,9 +33,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::audio::AudioTrack;
-use super::reader::{Next, Reader, ReaderHandle};
+use super::reader::{Next, Reader, ReaderHandle, Status};
 use super::transport::{
   classify, Anchor, AudioSink, AudioSupply, AudioSync, Buffering, Clock, Command, Controls, Release, Shared, Supply,
+  Thresholds,
 };
 use super::{AudioPacket, MediaInfo, StreamError};
 
@@ -57,6 +58,9 @@ const INPUT_STALL: Duration = Duration::from_millis(2000);
 // the reader has not queued it yet. Well above a paused device's resume
 // delay, which is tens of milliseconds.
 const AUDIO_START_TIMEOUT: Duration = Duration::from_millis(300);
+// A release wait longer than this is logged at debug level: longer than
+// a frame interval, so a picture held for the sound shows in the log.
+const WAIT_LOG_NS: i64 = 40_000_000;
 // How often that wait looks at the sink's position.
 const AUDIO_START_POLL: Duration = Duration::from_millis(2);
 
@@ -209,8 +213,8 @@ impl Player {
       reader.set_tracks(true, false);
     }
     let handle = reader.handle();
-    // A live reader settles at its own resume buffer (see reader::Live).
-    let resume_buffer_us = reader.live().map_or(super::transport::STREAM_RESUME_BUFFER_US, |live| live.resume_us);
+    // A live reader buffers by its own thresholds (see reader::Live).
+    let thresholds = reader.live().map_or(Thresholds::FILE, |live| live.thresholds());
     let (controls, rx, shared) = Controls::new();
     let worker_shared = shared.clone();
     thread::Builder::new()
@@ -258,7 +262,8 @@ impl Player {
           show_one: false,
           epoch: 0,
           resume_pending: false,
-          buffering: Buffering::with_resume(resume_buffer_us),
+          buffering: Buffering::new(thresholds),
+          catching_up: false,
           input_stalled_since: None,
           pending: VecDeque::new(),
           dropped: 0,
@@ -377,6 +382,9 @@ struct Worker<'h> {
   epoch: u64,
   resume_pending: bool,
   buffering: Buffering,
+  // A live catch-up's frames up to its target are being decoded unshown:
+  // the picture is held, which is published as buffering.
+  catching_up: bool,
   // When the presenter first refused input with a packet waiting.
   input_stalled_since: Option<Instant>,
   // Commands received while waiting for a frame's release time, handled at
@@ -395,6 +403,7 @@ impl Worker<'_> {
         self.lose();
       }
       self.poll_reader();
+      self.publish_buffering();
       // Keep the sink fed whatever the play state (a paused sink holds its
       // queue), so play starts with audio ready and a seek's preroll is
       // decoded while the picture is still held.
@@ -432,6 +441,7 @@ impl Worker<'_> {
           return;
         }
       }
+      self.publish_buffering();
       self.sync_releasing();
       if self.idle() {
         continue;
@@ -515,16 +525,18 @@ impl Worker<'_> {
     self.reset_clock();
   }
 
-  // The reader cut its queues to a keyframe and resumes there (a live
-  // catch-up): the presenter flushes, the sound clears and prerolls from the
-  // resume position the reader publishes, the clock anchors afresh.
+  // The reader cut its queues and resumes at the latency (a live
+  // catch-up): the frames up to the resume position the reader publishes
+  // are decoded unshown, the sound clears and prerolls from there, the
+  // clock anchors afresh. The presenter is not flushed: the reader's queue
+  // may continue the group the decoder is in (no keyframe to cut to), and
+  // what the decoder holds is before the target, so it is skipped on the
+  // way out like the rest.
   fn adopt_epoch(&mut self, epoch: u64) {
-    if let Err(e) = self.presenter.flush() {
-      log::warn!("[forge::video] catch-up: flush: {e}");
-    }
     self.epoch = epoch;
     self.resume_pending = true;
     self.skip_until = None;
+    self.catching_up = true;
     self.stop_audio();
     self.input_eos = false;
     self.output_eos = false;
@@ -550,15 +562,25 @@ impl Worker<'_> {
             audio.seek(resume_us);
           }
         }
+      } else if let (Some(skip_until), Some(resume_us)) = (self.skip_until, status.resume_us) {
+        // The live edge moved on while the frames up to the target were
+        // still being decoded: the reader moved the target within the
+        // epoch, and the skip and the audio discard follow it.
+        if resume_us > skip_until {
+          self.skip_until = Some(resume_us);
+          if let Some(audio) = self.audio.as_mut() {
+            audio.seek(resume_us);
+          }
+        }
       }
-      if let Some(error) = status.error {
+      if let Some(error) = &status.error {
         if !self.failed {
-          self.fail(error);
+          self.fail(error.clone());
         }
       }
     }
     let supply = Supply {
-      lead_us: status.lead_us,
+      lead_us: self.judged_lead_us(&status),
       ended: status.ended,
       failed: self.failed,
       capped: status.capped,
@@ -568,18 +590,39 @@ impl Worker<'_> {
         .map(|audio| AudioSupply { queued_packets: status.audio_queued, sink_us: audio.queued_us() }),
     };
     match self.buffering.update(self.playing && !self.failed && !self.output_eos, &supply) {
-      Some(true) => {
-        // The sink pauses while it still holds audio, so its position
-        // stays truthful for the resume.
-        self.stop_audio();
-        self.shared.set_buffering(true);
-      }
-      Some(false) => {
-        self.shared.set_buffering(false);
-        self.reset_clock();
-      }
+      // The sink pauses while it still holds audio, so its position stays
+      // truthful for the resume.
+      Some(true) => self.stop_audio(),
+      Some(false) => self.reset_clock(),
       None => {}
     }
+  }
+
+  // The lead the buffering rule judges: what the reader holds beyond the
+  // content time the viewer is at now (the anchor's reading), so a frame
+  // released early by the release lead does not read as a shorter lead,
+  // which at a live latency of a few frames is a third of the budget.
+  // While buffering the picture stands still at the last released frame
+  // (the anchor is kept for the resume, but its reading runs on), before
+  // the anchor is set (a resume, a seek, a catch-up) and against a stepped
+  // clock (whose reading stands still between steps) the reader's own
+  // lead, from the last released frame, is the viewer's.
+  fn judged_lead_us(&self, status: &Status) -> i64 {
+    if self.clock.stepped || self.buffering.active() {
+      return status.lead_us;
+    }
+    match self.anchor.content_at(self.clock.now()) {
+      Some(content_us) => status.newest_us - content_us,
+      None => status.lead_us,
+    }
+  }
+
+  // Publish whether the picture is held for the source: buffering proper,
+  // or a live catch-up decoding up to its target. Neither shows while
+  // paused or at the end.
+  fn publish_buffering(&mut self) {
+    let held = (self.buffering.active() || self.catching_up) && self.playing && !self.output_eos;
+    self.shared.set_buffering(held);
   }
 
   // Forget the anchor and the audio lead with it (play, resume, seek,
@@ -673,7 +716,16 @@ impl Worker<'_> {
         log::warn!("[forge::video] discard: {e}");
       }
     } else {
+      if self.skip_until.is_some() {
+        log::debug!(
+          "[forge::video] epoch {} first frame at {} ms (skipped up to {} ms)",
+          self.epoch,
+          pts_us / 1000,
+          self.skip_until.unwrap_or(0) / 1000
+        );
+      }
       self.skip_until = None;
+      self.catching_up = false;
       let result = if self.show_one {
         // A step while paused: the picture goes out for now.
         self.show_one = false;
@@ -699,6 +751,14 @@ impl Worker<'_> {
         let lead_ns = if self.clock.stepped { i64::MAX } else { self.presenter.lead_ns() };
         match classify(release_ns - now_ns, lead_ns) {
           Release::Wait(wait_ns) => {
+            if wait_ns > WAIT_LOG_NS {
+              log::debug!(
+                "[forge::video] frame at {} ms waits {} ms (content now {:?} ms)",
+                pts_us / 1000,
+                wait_ns / 1_000_000,
+                self.anchor.content_at(now_ns).map(|c| c / 1000)
+              );
+            }
             wait_for_release(&self.rx, &mut self.pending, wait_ns);
             self.presenter.release_at(release_ns)
           }
@@ -736,9 +796,7 @@ impl Worker<'_> {
   fn finish(&mut self) {
     self.output_eos = true;
     self.shared.set_finished(true);
-    if self.buffering.active() {
-      self.shared.set_buffering(false);
-    }
+    self.publish_buffering();
     if self.dropped > 0 {
       log::info!("[forge::video] playback dropped {} late frames", self.dropped);
     }
@@ -787,7 +845,11 @@ pub(crate) fn start_audio(
     let left = deadline.saturating_duration_since(Instant::now());
     if left.is_zero() {
       let waited_ms = AUDIO_START_TIMEOUT.as_millis();
-      log::info!("[forge::video] sink did not start within {waited_ms} ms: picture anchored on itself");
+      let queued_ms = audio.queued_us() / 1000;
+      log::info!(
+        "[forge::video] sink did not start within {waited_ms} ms ({queued_ms} ms queued, ended {}): picture anchored on itself",
+        audio.ended()
+      );
       return;
     }
     match rx.recv_timeout(left.min(AUDIO_START_POLL)) {
@@ -804,7 +866,11 @@ pub(crate) fn start_audio(
   }
   if let Some(content_us) = audio.content_time_us() {
     let jump_us = audio.sink_position_us() - from_us;
-    log::info!("[forge::video] audio start: sink position jumped {jump_us}us, anchored at content {content_us}us");
+    log::info!(
+      "[forge::video] audio start: sink position jumped {jump_us}us, anchored at content {content_us}us ({} ms queued, base {:?})",
+      audio.queued_us() / 1000,
+      audio.base_us().map(|(pts, at)| (pts / 1000, at / 1000))
+    );
     anchor.set(clock.now(), content_us);
   }
 }

@@ -23,6 +23,7 @@ use std::thread::{self, JoinHandle};
 
 use tokio::sync::oneshot;
 
+use super::transport::{Thresholds, LIVE_MIN_LATENCY_US, STREAM_RESUME_BUFFER_US};
 use super::{AudioPacket, Demuxer, ErrorKind, MediaInfo, Packet, StreamError, VideoAu, WebmDemuxer};
 use crate::source::{ByteSource, Handle};
 
@@ -37,34 +38,36 @@ pub const STREAM_MAX_BUFFER_BYTES: usize = 24 * 1024 * 1024;
 // The peak bitrate the byte cap is sized for (a 4K VP9 stream), for the
 // ordering test only: the cap is what binds.
 pub const PEAK_BITRATE_BPS: usize = 20_000_000;
-// Live playback (see `Live`): how far the lead may run past the resume
-// buffer before the reader drops to the newest keyframe inside it. Above
-// the buffering hysteresis, so a resume never trips a catch-up, and below
-// what a viewer would call lag.
-pub const LIVE_CATCH_UP_MARGIN_US: i64 = 500_000;
-// The least a live resume buffer is: above the low water (so buffering can
-// end) by a hysteresis a bursty source does not cross every frame.
-pub const LIVE_MIN_RESUME_US: i64 = super::transport::STREAM_LOW_WATER_US + 250_000;
+// Live playback (see `Live`): how far the lead may run past the latency
+// before the reader cuts back to it. Above the live buffering hysteresis
+// (the latency floor minus the live low water) plus a burst of a few
+// frames, so a resume from buffering never trips a cut, and below what a
+// viewer would call lag.
+pub const LIVE_CATCH_UP_MARGIN_US: i64 = 200_000;
 
 /// The live policy of a reader opened with a latency: the clip is played
-/// that far behind the newest packet. The resume buffer (what buffering
-/// waits for, and what playback settles at) is the latency, floored at
-/// `LIVE_MIN_RESUME_US` and capped at the file resume buffer. A lead past
-/// it by `LIVE_CATCH_UP_MARGIN_US` (a stall's backlog arriving at once, a
-/// pause) is cut: the queues drop to the newest keyframe inside the
-/// latency and a new epoch resumes there, which the player takes as a seek
-/// (the sound cleared and prerolled, the clock re-anchored). Seeking is
-/// structural (a stream cannot), the end is the stream's end.
+/// that far behind the newest packet, the latency raised to
+/// `LIVE_MIN_LATENCY_US` and capped at the file resume buffer. The latency
+/// is also the resume buffer: what buffering waits for, and what playback
+/// settles at (`Thresholds::live`). A lead past it by
+/// `LIVE_CATCH_UP_MARGIN_US` (a stall's backlog arriving at once, a pause)
+/// is cut (`State::catch_up`): the epoch resumes at the latency, through
+/// the keyframe before it, which the player takes as a seek (the frames up
+/// to the target decoded unshown, the sound cleared and prerolled, the
+/// clock re-anchored). Seeking is structural (a stream cannot), the end is
+/// the stream's end.
 #[derive(Clone, Copy, Debug)]
 pub struct Live {
   pub latency_us: i64,
-  pub resume_us: i64,
 }
 
 impl Live {
   pub fn with_latency(latency_us: i64) -> Live {
-    let resume_us = latency_us.clamp(LIVE_MIN_RESUME_US, super::transport::STREAM_RESUME_BUFFER_US);
-    Live { latency_us, resume_us }
+    Live { latency_us: latency_us.clamp(LIVE_MIN_LATENCY_US, STREAM_RESUME_BUFFER_US) }
+  }
+
+  pub fn thresholds(&self) -> Thresholds {
+    Thresholds::live(self.latency_us)
   }
 }
 
@@ -85,10 +88,15 @@ pub struct Status {
   pub epoch: u64,
   /// Where this epoch's playback resumes, once the demuxer has found the
   /// keyframe (the seek target, or that keyframe when it comes later); None
-  /// while the seek is in flight.
+  /// while the seek is in flight. A live catch-up moves it forward within
+  /// the epoch while the player is still decoding up to it.
   pub resume_us: Option<i64>,
-  /// How far the newest demuxed packet runs ahead of the player's head.
+  /// How far the newest demuxed packet runs ahead of the player's head
+  /// (the last frame released, or the epoch's resume position before
+  /// one is).
   pub lead_us: i64,
+  /// The newest demuxed packet's time.
+  pub newest_us: i64,
   /// The byte cap binds: the reader waits with the lead short of the
   /// read-ahead, so a player must not wait for more.
   pub capped: bool,
@@ -136,6 +144,10 @@ struct State {
   source: Option<Handle>,
   // The live policy, None for a file or an on-demand stream.
   live: Option<Live>,
+  // A live catch-up set the epoch's resume position and no frame has been
+  // released since: the player is decoding up to it unshown, and a further
+  // catch-up moves the position instead of starting an epoch.
+  prerolling: bool,
 }
 
 impl State {
@@ -162,37 +174,57 @@ impl State {
       _ => {}
     }
     if let Some(live) = self.live {
-      if self.lead_us() > live.resume_us + LIVE_CATCH_UP_MARGIN_US {
+      if self.lead_us() > live.latency_us + LIVE_CATCH_UP_MARGIN_US {
         self.catch_up(live);
       }
     }
   }
 
-  /// Cut the queues to the newest keyframe inside the latency (the oldest
-  /// keyframe at or after `newest - latency`, else the newest keyframe
-  /// before it) and start a new epoch there. Nothing happens without a
-  /// keyframe to cut to.
+  /// Bring the epoch back to the latency: it resumes at the first queued
+  /// frame at or past `newest - latency` (else the newest frame), the
+  /// video queue drops to the newest keyframe at or before that frame
+  /// when one is queued (the frames from there to the target are decoded
+  /// unshown by the player, as after a seek; without one the decoder holds
+  /// the group's state already), and the audio queue drops to the track's
+  /// seek preroll before it. From normal play that starts a new epoch (the
+  /// player re-anchors on the target); while the player is still decoding
+  /// up to a previous cut's target the target moves within the epoch, so
+  /// the decode continues instead of starting over, through a newer
+  /// keyframe when one is queued. Nothing happens with the target already
+  /// at the front of the queue.
   fn catch_up(&mut self, live: Live) {
-    let target = self.newest_us - live.latency_us;
-    let at = self
+    let target_us = self.newest_us - live.latency_us;
+    let Some(at) = self
       .video
       .iter()
-      .position(|au| au.sync && au.pts_us >= target)
-      .or_else(|| self.video.iter().rposition(|au| au.sync));
-    // The oldest queued frame is the one to resume at: nothing to cut.
-    let Some(at) = at.filter(|&at| at > 0) else { return };
+      .position(|au| au.pts_us >= target_us)
+      .or_else(|| (!self.video.is_empty()).then_some(self.video.len() - 1))
+    else {
+      return;
+    };
     let resume_us = self.video[at].pts_us;
-    let dropped_video: usize = self.video.drain(..at).map(|au| au.data.len()).sum();
-    let kept = self.audio.iter().position(|p| p.pts_us >= resume_us).unwrap_or(self.audio.len());
+    if self.resume_us == Some(resume_us) && self.prerolling {
+      return;
+    }
+    let keyframe = self.video.iter().take(at + 1).rposition(|au| au.sync).unwrap_or(0);
+    let dropped_video: usize = self.video.drain(..keyframe).map(|au| au.data.len()).sum();
+    let preroll_us = self.info.as_ref().and_then(|info| info.audio.as_ref()).map_or(0, |audio| audio.seek_preroll_us);
+    let kept = self.audio.iter().position(|p| p.pts_us >= resume_us - preroll_us).unwrap_or(self.audio.len());
     let dropped_audio: usize = self.audio.drain(..kept).map(|p| p.data.len()).sum();
     self.bytes -= dropped_video + dropped_audio;
-    self.epoch += 1;
+    let moved = self.prerolling;
+    if !moved {
+      self.epoch += 1;
+      self.prerolling = true;
+    }
+    let backlog_ms = (resume_us - self.head_us) / 1000;
     self.resume_us = Some(resume_us);
     self.head_us = resume_us;
     log::debug!(
-      "[forge::video] live catch-up: {} ms of backlog dropped, resuming at {} ms",
-      (resume_us - target + live.latency_us) / 1000,
-      resume_us / 1000
+      "[forge::video] live catch-up: {backlog_ms} ms of backlog skipped, {} at {} ms, the queue from {} ms",
+      if moved { "target moved to" } else { "resuming" },
+      resume_us / 1000,
+      self.video[0].pts_us / 1000
     );
   }
 
@@ -260,6 +292,7 @@ impl Reader {
         info: None,
         source: None,
         live,
+        prerolling: false,
       }),
       wake: Condvar::new(),
     });
@@ -318,6 +351,7 @@ impl Reader {
     state.epoch += 1;
     state.clear();
     state.resume_us = None;
+    state.prerolling = false;
     state.head_us = target_us;
     state.newest_us = target_us;
     state.ended = false;
@@ -371,10 +405,22 @@ impl Reader {
     }
   }
 
-  /// A frame at `pts_us` was released: the head moves there.
+  /// A frame at `pts_us` was released (or dropped as late): the head moves
+  /// there, and a live catch-up's target has been reached. A release from
+  /// before the epoch's resume position (a frame the player had in hand
+  /// when the epoch started) does not move the head back.
   pub fn released(&self, pts_us: i64) {
     let mut state = self.shared.lock();
+    if state.resume_us.is_some_and(|resume_us| pts_us < resume_us) {
+      log::debug!(
+        "[forge::video] release at {} ms before the epoch's resume at {} ms: head kept",
+        pts_us / 1000,
+        state.resume_us.unwrap_or(0) / 1000
+      );
+      return;
+    }
     state.head_us = pts_us;
+    state.prerolling = false;
     self.shared.wake.notify_all();
   }
 
@@ -384,6 +430,7 @@ impl Reader {
       epoch: state.epoch,
       resume_us: state.resume_us,
       lead_us: state.lead_us(),
+      newest_us: state.newest_us,
       capped: state.capped(),
       ended: state.ended,
       audio_queued: state.audio.len(),

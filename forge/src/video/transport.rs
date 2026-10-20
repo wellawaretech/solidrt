@@ -57,6 +57,9 @@ pub const AUDIO_SYNC_SMOOTHING: i64 = 8;
 // re-anchor behind the sound and start over. A larger lead is closed in
 // several moves, one per frame.
 pub const AUDIO_SYNC_MAX_SHIFT_US: i64 = STALL_REANCHOR_NS / 2000;
+// The buffering thresholds of a file (or an on-demand stream), a source
+// that delivers in bursts: see `Thresholds::FILE`.
+//
 // Buffering starts when the reader's lead over the head falls below this:
 // the source is not keeping up, and stopping here (with a little still to
 // show) beats stopping on an empty queue. Above the sink's low water plus
@@ -69,6 +72,54 @@ pub const STREAM_RESUME_BUFFER_US: i64 = 2_000_000;
 // less than this: the sound is about to underrun, which would freeze the
 // audio clock (an underrun is padded with silence the sink does not count).
 pub const SINK_LOW_WATER_US: i64 = 100_000;
+// The buffering thresholds of a live source, one paced by its sender (a
+// frame per interval, a stall a real stall): see `Thresholds::live`.
+//
+// The least a live player plays behind the newest frame, and what a
+// `latency` under it is raised to: about five frames at 30 fps, which
+// covers one frame of arrival swing (the lead is measured per frame), the
+// release lead, and the jitter a Wi-Fi hop adds. The header carries no
+// frame rate, so the floor is in time: a source at a low frame rate asks
+// for a larger latency.
+pub const LIVE_MIN_LATENCY_US: i64 = 150_000;
+// Buffering starts, on a live source, when the lead (or the sink's hold)
+// falls below this: the release lead, under which the next frame is
+// already due. The floor minus this is the hysteresis a live lead must not
+// swing across between frames.
+pub const LIVE_LOW_WATER_US: i64 = RELEASE_LEAD_NS / 1000;
+
+/// What the buffering rule judges a supply against, one set per playback
+/// policy: a file or an on-demand stream, delivered in bursts, holds a
+/// deep buffer; a live source, paced by its sender, holds the few frames
+/// the latency asks for, since a buffer never grows past what the sender
+/// has made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Thresholds {
+  /// Buffering starts when the reader's lead falls under this.
+  pub low_water_us: i64,
+  /// Buffering also starts when the audio queue is empty and the sink
+  /// holds less than this.
+  pub sink_low_water_us: i64,
+  /// Buffering ends once the lead has grown back to this.
+  pub resume_us: i64,
+}
+
+impl Thresholds {
+  /// A file or an on-demand stream.
+  pub const FILE: Thresholds = Thresholds {
+    low_water_us: STREAM_LOW_WATER_US,
+    sink_low_water_us: SINK_LOW_WATER_US,
+    resume_us: STREAM_RESUME_BUFFER_US,
+  };
+
+  /// A live source played `latency_us` behind its newest frame (at or
+  /// above `LIVE_MIN_LATENCY_US`): the latency is the resume buffer, and
+  /// the sink's low water is the lead's, since on a live source the sink
+  /// holds about the whole lead.
+  pub fn live(latency_us: i64) -> Thresholds {
+    Thresholds { low_water_us: LIVE_LOW_WATER_US, sink_low_water_us: LIVE_LOW_WATER_US, resume_us: latency_us }
+  }
+}
 
 /// The system clock frames are scheduled on: CLOCK_MONOTONIC in nanoseconds
 /// on unix (Android's `System.nanoTime`, which
@@ -418,21 +469,17 @@ pub struct AudioSupply {
 /// rules never disagree); left once the lead is back at the resume
 /// buffer, or when nothing more is coming: the end, a failure, the byte
 /// cap. A paused player is not buffering. Pure, like AudioSync.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Buffering {
   active: bool,
-  // What the lead must grow back to for buffering to end: the file resume
-  // buffer, or a live reader's (see reader::Live).
-  resume_us: i64,
+  // The policy's thresholds: a file's, or a live reader's (see
+  // reader::Live).
+  thresholds: Thresholds,
 }
 
 impl Buffering {
-  pub fn new() -> Buffering {
-    Buffering::with_resume(STREAM_RESUME_BUFFER_US)
-  }
-
-  pub fn with_resume(resume_us: i64) -> Buffering {
-    Buffering { active: false, resume_us }
+  pub fn new(thresholds: Thresholds) -> Buffering {
+    Buffering { active: false, thresholds }
   }
 
   pub fn active(&self) -> bool {
@@ -443,8 +490,9 @@ impl Buffering {
   /// when it ends, None when nothing changes.
   pub fn update(&mut self, playing: bool, supply: &Supply) -> Option<bool> {
     let settled = supply.ended || supply.failed || supply.capped;
+    let Thresholds { low_water_us, sink_low_water_us, resume_us } = self.thresholds;
     if self.active {
-      if !playing || settled || supply.lead_us >= self.resume_us {
+      if !playing || settled || supply.lead_us >= resume_us {
         self.active = false;
         return Some(false);
       }
@@ -453,8 +501,8 @@ impl Buffering {
     if !playing || settled {
       return None;
     }
-    let audio_starving = supply.audio.is_some_and(|a| a.queued_packets == 0 && a.sink_us < SINK_LOW_WATER_US);
-    let short = supply.lead_us < STREAM_LOW_WATER_US || (audio_starving && supply.lead_us < self.resume_us);
+    let audio_starving = supply.audio.is_some_and(|a| a.queued_packets == 0 && a.sink_us < sink_low_water_us);
+    let short = supply.lead_us < low_water_us || (audio_starving && supply.lead_us < resume_us);
     if short {
       self.active = true;
       return Some(true);

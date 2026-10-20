@@ -150,6 +150,12 @@ impl AudioTrack {
     self.done = false;
   }
 
+  /// The last pushed chunk's content time and where it landed in the
+  /// sink, for the log.
+  pub fn base_us(&self) -> Option<(i64, i64)> {
+    self.base
+  }
+
   /// The content time the speaker is at, from the sink's position; None
   /// until something has been pushed.
   pub fn content_time_us(&self) -> Option<i64> {

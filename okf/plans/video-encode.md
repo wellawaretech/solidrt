@@ -252,14 +252,16 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   need yet (a dropped connection is a fresh recording, which begins on a
   keyframe).
 - **The call's delay.** Read by eye on the laptop and Pixel call
-  (2026-10-17): about a second. That is the live resume floor
-  (`LIVE_MIN_RESUME_US`, the stream low water plus 250 ms, 0.75 s) plus
-  the pipe, the same figure the screencast gave, and a `latency` of 0.3 s
-  cannot go below it; a call wants the floor itself lowered (a live
-  source paced by its sender needs less buffer than a network file), the
-  one knob left for the delay: [[live-latency-floor]]. A clock read off
-  the two screens (the phone held in front of the laptop camera shows its
-  own clock twice) is still owed as the exact number.
+  (2026-10-17): about a second. That was the live resume floor of the
+  time (the stream low water plus 250 ms, 0.75 s) plus the pipe, the same
+  figure the screencast gave, and a `latency` of 0.3 s could not go below
+  it. The floor is 0.15 s since 2026-10-20 ([[live-latency-floor]], done:
+  the live thresholds follow the `latency` option, a stall's backlog is
+  skipped back to the latency); the call runs at it on the laptop and the
+  Pixel over the relay with no buffering episode, no skipped or late
+  frame and no cut over a minute each way, and the glass to glass delay
+  read off the laptop's clock in the Pixel's picture of it is 0.2 to
+  0.3 s (okf/done/live-latency-floor.md).
 - **Owed on the Pixel 7**: the phone as the sender over a direct path after the noq
   bump (okf/upstream/noq-udp-android-eio-ecn-cmsg-send-stall.md), when
   `paths: "relay"` stops being needed for it; the live bitrate (its

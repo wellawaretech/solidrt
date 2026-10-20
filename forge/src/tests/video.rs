@@ -382,9 +382,9 @@ fn transport_clock_is_monotonic() {
 #[test]
 fn transport_buffering_holds_until_the_resume_buffer_and_resumes_on_the_audio_clock() {
   use crate::video::transport::{
-    Anchor, AudioSupply, Buffering, Supply, SINK_LOW_WATER_US, STREAM_LOW_WATER_US, STREAM_RESUME_BUFFER_US,
+    Anchor, AudioSupply, Buffering, Supply, Thresholds, SINK_LOW_WATER_US, STREAM_LOW_WATER_US, STREAM_RESUME_BUFFER_US,
   };
-  let mut buffering = Buffering::new();
+  let mut buffering = Buffering::new(Thresholds::FILE);
   let plenty = Supply { lead_us: STREAM_RESUME_BUFFER_US * 2, ..Supply::default() };
   // Paused: never.
   assert_eq!(buffering.update(false, &Supply::default()), None);
@@ -434,10 +434,51 @@ fn transport_buffering_holds_until_the_resume_buffer_and_resumes_on_the_audio_cl
 }
 
 #[test]
+fn live_thresholds_hold_the_lead_at_the_latency() {
+  use crate::video::reader::Live;
+  use crate::video::transport::{
+    AudioSupply, Buffering, Supply, Thresholds, LIVE_LOW_WATER_US, LIVE_MIN_LATENCY_US, STREAM_RESUME_BUFFER_US,
+  };
+  // The latency is floored and capped, and is the resume buffer.
+  assert_eq!(Live::with_latency(LIVE_MIN_LATENCY_US / 2).latency_us, LIVE_MIN_LATENCY_US);
+  assert_eq!(Live::with_latency(STREAM_RESUME_BUFFER_US * 2).latency_us, STREAM_RESUME_BUFFER_US);
+  let live = Live::with_latency(300_000);
+  assert_eq!(live.latency_us, 300_000);
+  assert_eq!(live.thresholds().resume_us, 300_000);
+  // At the floor: the lead swinging between the low water and the latency
+  // is no buffering, under the low water it is, and it ends at the
+  // latency, not at the file's resume buffer.
+  let at_floor = Thresholds::live(LIVE_MIN_LATENCY_US);
+  let mut buffering = Buffering::new(at_floor);
+  let swing = Supply { lead_us: LIVE_LOW_WATER_US + 1, ..Supply::default() };
+  assert_eq!(buffering.update(true, &swing), None);
+  let short = Supply { lead_us: LIVE_LOW_WATER_US - 1, ..Supply::default() };
+  assert_eq!(buffering.update(true, &short), Some(true));
+  let back = Supply { lead_us: LIVE_MIN_LATENCY_US, ..Supply::default() };
+  assert_eq!(buffering.update(true, &back), Some(false));
+  // The sink's low water is the live one: on a live source the sink holds
+  // about the whole lead, so the file's would trip on every jitter.
+  let sink_swing = Some(AudioSupply { queued_packets: 0, sink_us: LIVE_LOW_WATER_US + 1 });
+  let under_latency = Supply { lead_us: LIVE_MIN_LATENCY_US - 1, audio: sink_swing, ..Supply::default() };
+  assert_eq!(buffering.update(true, &under_latency), None);
+  let sink_short = Some(AudioSupply { queued_packets: 0, sink_us: LIVE_LOW_WATER_US - 1 });
+  let starving = Supply { lead_us: LIVE_MIN_LATENCY_US - 1, audio: sink_short, ..Supply::default() };
+  assert_eq!(buffering.update(true, &starving), Some(true));
+  assert_eq!(buffering.update(true, &back), Some(false));
+}
+
+#[test]
 fn transport_constants_are_ordered() {
   use crate::video::audio::AUDIO_LOOKAHEAD_US;
-  use crate::video::reader::{PEAK_BITRATE_BPS, STREAM_MAX_BUFFER_BYTES, STREAM_READ_AHEAD_US};
-  use crate::video::transport::{RELEASE_LEAD_NS, SINK_LOW_WATER_US, STREAM_LOW_WATER_US, STREAM_RESUME_BUFFER_US};
+  use crate::video::reader::{
+    LIVE_CATCH_UP_MARGIN_US, PEAK_BITRATE_BPS, STREAM_MAX_BUFFER_BYTES, STREAM_READ_AHEAD_US,
+  };
+  use crate::video::transport::{
+    LIVE_LOW_WATER_US, LIVE_MIN_LATENCY_US, RELEASE_LEAD_NS, SINK_LOW_WATER_US, STREAM_LOW_WATER_US,
+    STREAM_RESUME_BUFFER_US,
+  };
+  // A frame interval at the 30 fps the live floor is sized for.
+  const FRAME_US: i64 = 1_000_000 / 30;
   // The reader reads ahead past the resume buffer plus the sink's share.
   assert!(STREAM_READ_AHEAD_US > STREAM_RESUME_BUFFER_US + AUDIO_LOOKAHEAD_US);
   // The byte cap holds the read-ahead at the peak bitrate.
@@ -446,4 +487,13 @@ fn transport_constants_are_ordered() {
   // Buffering starts before the picture or the sound can starve.
   assert!(STREAM_LOW_WATER_US > SINK_LOW_WATER_US + RELEASE_LEAD_NS / 1000);
   assert!(STREAM_RESUME_BUFFER_US > STREAM_LOW_WATER_US);
+  // The live set: the low water covers the release lead, the floor leaves
+  // a hysteresis of more than a frame above it (the lead is measured per
+  // frame), the catch-up margin clears that hysteresis so a resume never
+  // trips a cut, and the floor is under the file's resume buffer, which
+  // caps the latency.
+  assert!(LIVE_LOW_WATER_US >= RELEASE_LEAD_NS / 1000);
+  assert!(LIVE_MIN_LATENCY_US > LIVE_LOW_WATER_US + FRAME_US);
+  assert!(LIVE_CATCH_UP_MARGIN_US > LIVE_MIN_LATENCY_US - LIVE_LOW_WATER_US);
+  assert!(LIVE_MIN_LATENCY_US < STREAM_RESUME_BUFFER_US);
 }

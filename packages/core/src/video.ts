@@ -35,8 +35,8 @@ export type VideoOptions = {
   fit?: "contain" | "cover"
   /**
    * Play live, this many seconds behind the newest frame delivered: for a
-   * stream source (a p2p stream's `readable`, a recording's). See
-   * flux:video's `VideoOpenOptions.latency`.
+   * stream source (a p2p stream's `readable`, a recording's), 0.15 s at
+   * the least. See flux:video's `VideoOpenOptions.latency`.
    */
   latency?: number
   /**
