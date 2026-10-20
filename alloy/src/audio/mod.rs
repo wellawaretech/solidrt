@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use engine::{clamp_rate, pcm_all_finite, Command, Ramp, Slot, Source, Voice, SLOT_TABLE};
-pub use engine::{Pcm, VoiceShared, MAX_BUSES, MAX_LIVE_TRACKS};
+pub use engine::{Pcm, VoiceShared, MAX_BUSES, MAX_LIVE_TRACKS, OPEN_CUTOFF_HZ};
 
 use device::Device;
 use ring::{RingConsumer, RingProducer, RingShared};
@@ -77,10 +77,27 @@ impl Default for PlayOptions {
   }
 }
 
+/// Where the spatial pass places a voice (`set_audio_spatial`): its pan,
+/// the gain and rate multipliers UNDER the voice's own gain and rate (so
+/// `set_audio_gain` on a placed voice keeps meaning "how loud is this
+/// thing"), and the low-pass cutoff in Hz (`OPEN_CUTOFF_HZ` and above:
+/// open). Computed by the spatial core's emitter pass from node and
+/// listener positions; this module only applies it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpatialParams {
+  pub pan: f32,
+  pub gain: f32,
+  pub rate: f32,
+  pub cutoff: f32,
+}
+
 /// The mixer's counters: what `/stats` shows about audio.
 pub struct AudioStats {
   pub live_voices: usize,
   pub underruns: u64,
+  /// Spatial placements written so far (`set_audio_spatial`): what says
+  /// whether a still scene costs the mixer nothing.
+  pub spatial_writes: u64,
   /// The longest callback render pass since the last read, in ms.
   pub render_max_ms: f64,
   pub device_rate: u32,
@@ -117,6 +134,9 @@ struct TrackHandle {
   stream: Option<Arc<StreamControl>>,
   /// Which clip it plays (a stream's next play stops the voice before it).
   sound: Option<u64>,
+  /// Placed by the spatial pass (`set_audio_spatial`): its pan is the
+  /// emitter's, so a direct pan set is refused until `clear_audio_spatial`.
+  spatial: bool,
 }
 
 struct SinkEntry {
@@ -252,6 +272,8 @@ pub struct AudioRegistry {
   // Voice table slots not in use, and each slot's generation so far.
   free_slots: RefCell<Option<Vec<u32>>>,
   generations: RefCell<Vec<u32>>,
+  /// Spatial placements sent so far (see `AudioStats::spatial_writes`).
+  spatial_writes: Cell<u64>,
 }
 
 impl AudioRegistry {
@@ -382,7 +404,7 @@ impl AudioRegistry {
       return Err(e);
     }
     let id = self.next(&self.next_id);
-    self.tracks.borrow_mut().insert(id, TrackHandle { slot, shared, sample_rate, bus, stream, sound });
+    self.tracks.borrow_mut().insert(id, TrackHandle { slot, shared, sample_rate, bus, stream, sound, spatial: false });
     Ok(id)
   }
 
@@ -510,9 +532,14 @@ impl crate::context::Context {
 
   /// Position a playing track in the stereo field, pan in [-1, 1]
   /// (clamped), 0 = center; equal-power law. Ramps over `ramp_ms` like
-  /// `set_audio_gain` (a never-panned voice ramps from center).
+  /// `set_audio_gain` (a never-panned voice ramps from center). Refused
+  /// while the track is placed by an emitter (`set_audio_spatial`): the
+  /// pan is the emitter's then.
   pub fn set_audio_pan(&self, id: u64, pan: f32, ramp_ms: f64) -> Result<(), String> {
     let device = self.audio.device()?;
+    if self.audio.tracks.borrow().get(&id).is_some_and(|t| t.spatial && !t.shared.ended()) {
+      return Err("the playback is attached to an emitter, which owns its pan; detach it first".into());
+    }
     self.audio.send_to_track(id, |slot| Command::SetPan { slot, pan, frames: self.audio.frames(&device, ramp_ms) });
     Ok(())
   }
@@ -527,6 +554,46 @@ impl crate::context::Context {
       rate: clamp_rate(rate),
       frames: self.audio.frames(&device, ramp_ms),
     });
+    Ok(())
+  }
+
+  /// Place a playing track where the spatial pass says (see
+  /// `SpatialParams`), every value ramping over `ramp_ms` (0 = at once).
+  /// The track's own gain, rate and envelope are untouched: the
+  /// multipliers compose under them. Returns false for a track that is
+  /// gone (ended, or never known), the caller's cue to release whatever
+  /// binding produced the write; a placement is never an error there,
+  /// since live control races with natural completion by design.
+  pub fn set_audio_spatial(&self, id: u64, params: SpatialParams, ramp_ms: f64) -> Result<bool, String> {
+    let device = self.audio.device()?;
+    let mut tracks = self.audio.tracks.borrow_mut();
+    let Some(track) = tracks.get_mut(&id).filter(|t| !t.shared.ended()) else {
+      return Ok(false);
+    };
+    track.spatial = true;
+    device.send(Command::SetSpatial {
+      slot: track.slot,
+      pan: params.pan,
+      gain: params.gain.max(0.0),
+      rate: params.rate,
+      cutoff: params.cutoff,
+      frames: self.audio.frames(&device, ramp_ms),
+    });
+    self.audio.spatial_writes.set(self.audio.spatial_writes.get() + 1);
+    Ok(true)
+  }
+
+  /// Undo `set_audio_spatial`: the multipliers ramp back to 1 and the
+  /// filter opens over `ramp_ms`; the pan stays where the pass left it
+  /// (there is no "unpanned" to return to), and `set_audio_pan` is
+  /// accepted again. A no-op for a track that is gone.
+  pub fn clear_audio_spatial(&self, id: u64, ramp_ms: f64) -> Result<(), String> {
+    let device = self.audio.device()?;
+    let mut tracks = self.audio.tracks.borrow_mut();
+    if let Some(track) = tracks.get_mut(&id).filter(|t| !t.shared.ended()) {
+      track.spatial = false;
+      device.send(Command::ClearSpatial { slot: track.slot, frames: self.audio.frames(&device, ramp_ms) });
+    }
     Ok(())
   }
 
@@ -672,6 +739,7 @@ impl crate::context::Context {
     Some(AudioStats {
       live_voices: engine.live_voices,
       underruns: engine.underruns,
+      spatial_writes: self.audio.spatial_writes.get(),
       render_max_ms: render_max_nanos as f64 / 1_000_000.0,
       device_rate: shared.device_rate,
       device_frames: shared.device_frames,

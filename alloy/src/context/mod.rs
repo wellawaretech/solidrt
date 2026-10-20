@@ -170,6 +170,9 @@ pub struct Context {
   /// The spatial core (transform hierarchy + sinks); see `crate::spatial`.
   /// Its draw sinks resolve to this context's draw entries.
   spatial: RefCell<Spatial>,
+  /// When the spatial core last flushed: the interval a placed voice
+  /// glides over to the next flush's values (context/spatial.rs).
+  spatial_flushed_at: Cell<Option<Instant>>,
 }
 
 /// An overlay declaration (see `Context::set_overlay`): the
@@ -234,6 +237,7 @@ impl Context {
       yuv_groups: RefCell::new(HashMap::new()),
       frame_wake,
       spatial: RefCell::new(Spatial::new()),
+      spatial_flushed_at: Cell::new(None),
     }
   }
 

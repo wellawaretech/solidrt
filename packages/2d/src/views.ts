@@ -33,10 +33,18 @@
 // (tiles.ts) are wanted by whatever shows that world - the main view, a
 // minimap, a split-screen pane - with no viewer bookkeeping in the layer
 // kinds. The record layer has no regions, so its views push none.
+//
+// The same viewer is what a POSITIONAL SOUND is heard from: `listener()`
+// makes the view's flux:audio listener over its key, so a sound placed at
+// a sprite's node (core's `emitter` option with `{ node: sprite.node }`)
+// pans and fades as the camera moves, with no per-frame JS. The record
+// layer's sprites have no nodes, so its views have no listener.
 import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawBuffers, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
 import type { BufferId, DrawId, InstanceOrder, RenderPipelineId, ShaderParams, TextureBindings, TextureId } from "@solidrt/core/gpu"
 import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera, viewMatrices } from "./camera.ts"
 import { originCell, requestFrame, snapOrigin } from "@solidrt/core"
+import { createListener } from "flux:audio"
+import type { Listener, ListenerOptions } from "@solidrt/core/audio"
 import * as spatial from "flux:spatial"
 import type { NodeId, ViewKey } from "flux:spatial"
 import type { CameraState, CameraUpdate } from "./camera.ts"
@@ -128,6 +136,17 @@ export type ViewHandle = {
    * just works - @solidrt/3d's handlersFor, one dimension down.
    */
   handlersFor(layout: () => { width: number; height: number }): LayerHandlers
+  /**
+   * The view's audio listener (flux:audio), made on the first call over
+   * the view's camera: what a positional sound on one of the layer's
+   * sprites is heard from (core's `emitter` option with `{ node:
+   * sprite.node, listener: view.listener() }`). `options` apply to the
+   * creation (layer units are PIXELS, so give `speedOfSound` in pixels per
+   * second, or `doppler: 0` on the emitters); later calls return the same
+   * listener. Destroyed with the view. Throws on a record layer's view
+   * (its sprites have no nodes to place sound on).
+   */
+  listener(options?: ListenerOptions): Listener
   dispose(): void
 }
 
@@ -183,6 +202,7 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
   // write demands the frame whose flush tests the regions; the first
   // push, before any entry, asks for it itself.
   let viewer: ViewKey | null = deps.root === null ? null : spatial.allocViewKey()
+  let listener: Listener | null = null
   let gateView = new Float64Array(16)
   let gateProj = new Float64Array(16)
   // The viewer's render origin: the camera point itself, so the gate
@@ -252,10 +272,21 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
     handlersFor(layout) {
       return dispatch(layout)
     },
+    listener(options) {
+      if (viewer === null) {
+        throw new Error("view.listener: a record layer's sprites have no nodes to place sound on; positional sound needs a sprite layer")
+      }
+      if (listener === null) listener = createListener({ view: viewer }, options)
+      return listener
+    },
     dispose() {
       if (disposed) return
       disposed = true
       listeners.clear()
+      if (listener !== null) {
+        listener.destroy()
+        listener = null
+      }
       // The viewer goes first: what it alone wanted leaves with it.
       if (viewer !== null) {
         spatial.setView(viewer, null)

@@ -658,7 +658,17 @@ like the `<SpriteLayer>`'s own view when given no size; the
 output={false}>` has none, showing only through its `<View2d>` children
 (examples/split-screen.tsx). examples/views.tsx is the live guard.
 `<TileLayer>` owns one view the same way and `<TileLayer layer>` adds
-another of an existing layer (a minimap). Not yet, all additive: a
+another of an existing layer (a minimap). A view is also what a
+POSITIONAL SOUND is heard from: `view.listener({ speedOfSound? })` is
+the view's flux:audio listener over its camera (made on first call,
+destroyed with the view), and a core Sound placed with `emitter: {
+node: sprite.node, listener: view.listener(), refDistance, maxDistance,
+doppler }` (@solidrt/core/audio) pans and fades as the camera moves,
+with no per-frame JS - the same emitter pass @solidrt/3d's attachSound
+rides. Layer units are PIXELS: give refDistance and maxDistance in
+pixels and `speedOfSound` in pixels per second, or `doppler: 0`. A
+record layer's sprites have no nodes, so its views have no listener.
+Not yet, all additive: a
 `layers` bitmask (a markers-only minimap), `into` tiling, per-view
 tint, and a viewport over SEVERAL layers under one camera (their
 scene-level camera) - okf/backlog/2d-layer-views-additive.md.

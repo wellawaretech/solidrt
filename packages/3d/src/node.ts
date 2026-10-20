@@ -8,6 +8,7 @@
 
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeMotionSpec, NodeTransition, OccluderShape } from "flux:spatial"
+import type { Listener } from "@solidrt/core/audio"
 import { on } from "sol:events"
 import { createMutableTexture, destroyTexture } from "@solidrt/core/gpu"
 import type { ShaderParams, TextureId } from "@solidrt/core/gpu"
@@ -177,6 +178,9 @@ export type SceneHooks = {
   /** Push the node's LOD declaration (`_lod`) to the core: at scene enter
    * once its level children are in, and on every setLod. */
   _bindLod(node: SceneNode): void
+  /** The scene's audio listener (created on first use): what a positional
+   * sound on a node of this scene is heard by (attachSound, sound.ts). */
+  _listener(): Listener
 }
 
 /** A node's LOD declaration (createLod/setLod, createInstancedLod): the

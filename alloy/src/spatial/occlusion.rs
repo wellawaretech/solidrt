@@ -23,7 +23,8 @@
 // interpolates, linear across the screen under any projection, so
 // interpolating it per texel is exact.
 
-use super::bvh::Box3;
+use super::bvh::{ray_box_distance, Box3};
+use super::pick::ray_points;
 use super::Mat4;
 
 /// The buffer's width in texels; the height follows the target's aspect.
@@ -60,14 +61,92 @@ const DEGENERATE_AREA: f64 = 1e-6;
 /// lies inside it.
 const SPHERE_SUBDIVISIONS: u32 = 1;
 
-/// An occluder's triangles in node space.
+/// What an occluder does to a sound whose straight path to the listener
+/// it crosses (spatial audio occlusion, `emitters.rs`): the gain the
+/// voice is scaled by and the low-pass cutoff (Hz) it closes to, composed
+/// over every occluder crossed (gains multiply, the lowest cutoff wins).
+/// FMOD and Wwise express occlusion the same way, a level and a low-pass.
+/// The defaults are an interior wall heard through, soft enough that a
+/// game stays audible.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OccluderAudio {
+  pub gain: f32,
+  pub cutoff: f32,
+}
+
+/// The gain a sound keeps through an occluder that says nothing else:
+/// about -12 dB.
+pub const OCCLUSION_AUDIO_GAIN: f32 = 0.25;
+/// The low-pass cutoff (Hz) an occluder that says nothing else closes a
+/// sound to: the brightness a wall takes.
+pub const OCCLUSION_AUDIO_CUTOFF_HZ: f32 = 2000.0;
+
+impl Default for OccluderAudio {
+  fn default() -> Self {
+    OccluderAudio { gain: OCCLUSION_AUDIO_GAIN, cutoff: OCCLUSION_AUDIO_CUTOFF_HZ }
+  }
+}
+
+/// An occluder's triangles in node space, with its node-space box (the
+/// audio segment's coarse test) and what it does to sound passing
+/// through (None: it blocks sight only, a glass wall).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Occluder {
   positions: Vec<[f64; 3]>,
   indices: Vec<[u32; 3]>,
+  bounds: Box3,
+  audio: Option<OccluderAudio>,
+}
+
+/// The node-space box around a triangle list.
+fn bounds_of(positions: &[[f64; 3]]) -> Box3 {
+  let mut b = [f64::INFINITY, f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+  for p in positions {
+    for k in 0..3 {
+      b[k] = b[k].min(p[k]);
+      b[k + 3] = b[k + 3].max(p[k]);
+    }
+  }
+  b
 }
 
 impl Occluder {
+  fn new(positions: Vec<[f64; 3]>, indices: Vec<[u32; 3]>) -> Occluder {
+    let bounds = bounds_of(&positions);
+    Occluder { positions, indices, bounds, audio: Some(OccluderAudio::default()) }
+  }
+
+  /// What the occluder does to sound crossing it: the default blocking
+  /// unless this says otherwise; None blocks sight only.
+  pub fn with_audio(mut self, audio: Option<OccluderAudio>) -> Occluder {
+    self.audio = audio;
+    self
+  }
+
+  pub fn audio(&self) -> Option<&OccluderAudio> {
+    self.audio.as_ref()
+  }
+
+  /// The node-space box around the triangles.
+  pub fn bounds(&self) -> &Box3 {
+    &self.bounds
+  }
+
+  /// Whether the node-space segment from `o` to `o + d` crosses any
+  /// triangle (either side; the end points themselves excluded, so an
+  /// emitter sitting on a wall is not behind it). The box is tested
+  /// first: a miss there is the common answer, at six divisions.
+  pub fn crossed(&self, o: [f64; 3], d: [f64; 3]) -> bool {
+    if !matches!(ray_box_distance(o, d, &self.bounds), Some(t) if t <= 1.0) {
+      return false;
+    }
+    self.indices.iter().any(|tri| {
+      let (a, b, c) =
+        (self.positions[tri[0] as usize], self.positions[tri[1] as usize], self.positions[tri[2] as usize]);
+      matches!(ray_points(a, b, c, o, d), Some((t, _, _, _)) if t > 0.0 && t < 1.0)
+    })
+  }
+
   /// A solid box (Godot's BoxOccluder3D): twelve triangles over its
   /// faces. Assumes the shape it stands for is solid.
   pub fn box3(b: Box3) -> Occluder {
@@ -86,17 +165,14 @@ impl Occluder {
       indices.push([f[0], f[1], f[2]]);
       indices.push([f[0], f[2], f[3]]);
     }
-    Occluder { positions, indices }
+    Occluder::new(positions, indices)
   }
 
   /// A quad of `width` by `height` in the node's XY plane, centered at its
   /// origin (Godot's QuadOccluder3D); two-sided.
   pub fn quad(width: f64, height: f64) -> Occluder {
     let (hw, hh) = (width / 2.0, height / 2.0);
-    Occluder {
-      positions: vec![[-hw, -hh, 0.0], [hw, -hh, 0.0], [hw, hh, 0.0], [-hw, hh, 0.0]],
-      indices: vec![[0, 1, 2], [0, 2, 3]],
-    }
+    Occluder::new(vec![[-hw, -hh, 0.0], [hw, -hh, 0.0], [hw, hh, 0.0], [-hw, hh, 0.0]], vec![[0, 1, 2], [0, 2, 3]])
   }
 
   /// A solid sphere (Godot's SphereOccluder3D) as an inscribed icosphere:
@@ -166,7 +242,7 @@ impl Occluder {
       let l = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
       *p = [center[0] + p[0] / l * radius, center[1] + p[1] / l * radius, center[2] + p[2] / l * radius];
     }
-    Occluder { positions, indices }
+    Occluder::new(positions, indices)
   }
 
   /// Any triangle list in node space (Godot's ArrayOccluder3D): a mesh's
@@ -182,7 +258,7 @@ impl Occluder {
         return Err(format!("occluder triangle {k} indexes past the {n} positions"));
       }
     }
-    Ok(Occluder { positions, indices })
+    Ok(Occluder::new(positions, indices))
   }
 
   pub fn triangles(&self) -> usize {

@@ -42,6 +42,14 @@ impl Recorder {
 }
 
 impl SinkWriter for Recorder {
+  fn write_emitter(
+    &mut self,
+    _voice: u64,
+    _output: &crate::spatial::EmitterOutput,
+    _ramp: crate::spatial::EmitterRamp,
+  ) -> bool {
+    true
+  }
   fn write_params(&mut self, target: u64, draw: u64, model: &Mat4f, normal: Option<&Mat4f>) -> bool {
     self.writes.push(Write::Params { target, draw, model: *model, normal: normal.copied() });
     self.landed(target)

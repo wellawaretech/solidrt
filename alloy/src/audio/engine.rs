@@ -39,6 +39,22 @@ const FEED_FRAMES: usize = 512;
 /// The resampler's ratio range (SDL_SetAudioStreamFrequencyRatio).
 const MIN_RATE: f32 = 0.01;
 const MAX_RATE: f32 = 100.0;
+/// A low-pass cutoff (Hz) at or above this is fully open: once a cutoff
+/// ramp has landed here the filter is bypassed and its state cleared.
+/// Above hearing, so an open filter colors nothing and the bypass is
+/// seamless.
+pub const OPEN_CUTOFF_HZ: f32 = 20_000.0;
+/// The low-pass's lowest cutoff: below it the biquad's coefficients lose
+/// precision in f32 at the device rates in use, and nothing audible is
+/// left to pass anyway.
+const MIN_CUTOFF_HZ: f32 = 20.0;
+/// The cutoff's ceiling as a fraction of the device rate: a biquad tuned
+/// near Nyquist is ill-conditioned (a 20 kHz cutoff on a 44.1 kHz device
+/// lands here instead).
+const CUTOFF_RATE_FRACTION: f32 = 0.45;
+/// The low-pass's Q: Butterworth, flat up to the cutoff with no resonant
+/// bump, so the occlusion filter colors by cutoff alone.
+const LOWPASS_Q: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
 /// Map a pan position in [-1, 1] (clamped) to per-channel gains using the
 /// equal-power law, so perceived loudness stays constant as a sound sweeps
@@ -137,6 +153,69 @@ impl Ramp {
       self.value = if self.remaining == 0 { self.target } else { self.value + self.step * n as f32 };
     }
     self.value
+  }
+}
+
+/// A second-order low-pass (the RBJ cookbook biquad, Butterworth Q) over
+/// the voice's converted stereo, in transposed direct form II: the
+/// spatial pass closes it for an occluded voice. Coefficients are
+/// recomputed per block from the ramped cutoff (a block parameter, like
+/// the rate); the state carries across so a cutoff sweep is continuous.
+pub(crate) struct LowPass {
+  b0: f32,
+  b1: f32,
+  b2: f32,
+  a1: f32,
+  a2: f32,
+  /// Per channel: the two delay elements.
+  state: [[f32; 2]; 2],
+  /// The cutoff the coefficients are for.
+  cutoff: f32,
+}
+
+impl LowPass {
+  /// An open filter: identity coefficients, cleared state.
+  pub(crate) fn open() -> LowPass {
+    LowPass { b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0, state: [[0.0; 2]; 2], cutoff: OPEN_CUTOFF_HZ }
+  }
+
+  /// Retune to `cutoff` Hz at `device_rate` (clamped to the filter's
+  /// range); a no-op at the cutoff already set.
+  pub(crate) fn set_cutoff(&mut self, cutoff: f32, device_rate: u32) {
+    let ceiling = device_rate as f32 * CUTOFF_RATE_FRACTION;
+    let cutoff = if cutoff.is_nan() { ceiling } else { cutoff.clamp(MIN_CUTOFF_HZ, ceiling) };
+    if cutoff == self.cutoff {
+      return;
+    }
+    self.cutoff = cutoff;
+    let w0 = 2.0 * std::f32::consts::PI * cutoff / device_rate as f32;
+    let (sin, cos) = w0.sin_cos();
+    let alpha = sin / (2.0 * LOWPASS_Q);
+    let a0 = 1.0 + alpha;
+    self.b0 = (1.0 - cos) / 2.0 / a0;
+    self.b1 = (1.0 - cos) / a0;
+    self.b2 = self.b0;
+    self.a1 = -2.0 * cos / a0;
+    self.a2 = (1.0 - alpha) / a0;
+  }
+
+  /// Filter interleaved stereo frames in place.
+  pub(crate) fn process(&mut self, frames: &mut [f32]) {
+    for frame in frames.chunks_exact_mut(2) {
+      for (channel, sample) in frame.iter_mut().enumerate() {
+        let x = *sample;
+        let z = &mut self.state[channel];
+        let y = self.b0 * x + z[0];
+        z[0] = self.b1 * x - self.a1 * y + z[1];
+        z[1] = self.b2 * x - self.a2 * y;
+        *sample = y;
+      }
+    }
+  }
+
+  /// Forget what passed through: the state an open filter resumes from.
+  pub(crate) fn reset(&mut self) {
+    self.state = [[0.0; 2]; 2];
   }
 }
 
@@ -280,6 +359,20 @@ pub(crate) struct Voice {
   /// None: unspatialized (no pan processing at all).
   pub(crate) pan: Option<Ramp>,
   pub(crate) rate: Ramp,
+  /// The spatial pass's layer under the voice's own gain and rate: the
+  /// distance (and occlusion) attenuation and the doppler ratio, both 1
+  /// for an unbound voice. Kept apart so `set_gain`/`set_rate` on a
+  /// bound voice keep meaning "how loud / how fast is this thing".
+  pub(crate) spatial_gain: Ramp,
+  pub(crate) spatial_rate: Ramp,
+  /// The low-pass cutoff in Hz, block-stepped like the rate; at or above
+  /// `OPEN_CUTOFF_HZ` the filter is bypassed.
+  pub(crate) cutoff: Ramp,
+  pub(crate) lowpass: LowPass,
+  /// Whether the low-pass ran on the last block (its state is live).
+  filtering: bool,
+  /// The device rate the cutoff is tuned against.
+  device_rate: u32,
   /// The fade-in/fade-out envelope, apart from the user gain.
   pub(crate) envelope: Ramp,
   /// The envelope reaching its target ends the voice (a fade-out stop).
@@ -322,6 +415,12 @@ impl Voice {
       gain: Ramp::at(1.0),
       pan: None,
       rate: Ramp::at(1.0),
+      spatial_gain: Ramp::at(1.0),
+      spatial_rate: Ramp::at(1.0),
+      cutoff: Ramp::at(OPEN_CUTOFF_HZ),
+      lowpass: LowPass::open(),
+      filtering: false,
+      device_rate,
       envelope: Ramp::at(1.0),
       ends_on_envelope: false,
       bus: None,
@@ -458,6 +557,23 @@ pub(crate) enum Command {
     rate: f32,
     frames: u32,
   },
+  /// The spatial pass's placement of a voice: its pan, the gain and rate
+  /// multipliers under the voice's own, and the low-pass cutoff, all
+  /// ramped together over `frames`.
+  SetSpatial {
+    slot: Slot,
+    pan: f32,
+    gain: f32,
+    rate: f32,
+    cutoff: f32,
+    frames: u32,
+  },
+  /// Detach: the multipliers ramp back to 1 and the filter opens; the pan
+  /// stays where the pass left it.
+  ClearSpatial {
+    slot: Slot,
+    frames: u32,
+  },
   SetLoop {
     slot: Slot,
     looping: bool,
@@ -531,6 +647,13 @@ impl Engine {
     EngineStats { live_voices: self.live, underruns: self.underruns }
   }
 
+  /// The converter ratio a voice last set, for tests; None for an empty
+  /// slot.
+  #[cfg(test)]
+  pub(crate) fn ratio_of(&self, index: usize) -> Option<f32> {
+    self.slots[index].as_ref().map(|v| v.last_ratio)
+  }
+
   /// Apply commands in order, draining the vector.
   pub(crate) fn apply(&mut self, commands: &mut Vec<Command>) {
     for command in commands.drain(..) {
@@ -561,6 +684,26 @@ impl Engine {
         Command::SetRate { slot, rate, frames } => {
           if let Some(voice) = self.voice(slot) {
             voice.rate.set(rate, frames);
+          }
+        }
+        Command::SetSpatial { slot, pan, gain, rate, cutoff, frames } => {
+          if let Some(voice) = self.voice(slot) {
+            voice.pan.get_or_insert_with(|| Ramp::at(0.0)).set(pan, frames);
+            voice.spatial_gain.set(gain.max(0.0), frames);
+            voice.spatial_rate.set(rate, frames);
+            // Open to open is no ramp: a ramp in flight would keep the
+            // low-pass running on an unoccluded voice for every block a
+            // placement arrives in.
+            let stays_open =
+              cutoff >= OPEN_CUTOFF_HZ && voice.cutoff.current() >= OPEN_CUTOFF_HZ && voice.cutoff.done();
+            voice.cutoff.set(cutoff, if stays_open { 0 } else { frames });
+          }
+        }
+        Command::ClearSpatial { slot, frames } => {
+          if let Some(voice) = self.voice(slot) {
+            voice.spatial_gain.set(1.0, frames);
+            voice.spatial_rate.set(1.0, frames);
+            voice.cutoff.set(OPEN_CUTOFF_HZ, frames);
           }
         }
         Command::SetLoop { slot, looping } => {
@@ -668,7 +811,7 @@ impl Engine {
     if paused {
       return true;
     }
-    let ratio = clamp_rate(voice.rate.advance_by(frames));
+    let ratio = clamp_rate(voice.rate.advance_by(frames) * voice.spatial_rate.advance_by(frames));
     if ratio != voice.last_ratio {
       voice.converter.set_ratio(ratio);
       voice.last_ratio = ratio;
@@ -696,6 +839,18 @@ impl Engine {
       }
     }
     let got = voice.converter.get(&mut self.voice_out[..frames * 2]);
+    // The low-pass, a block parameter like the rate: tuned to the ramp's
+    // value after this block, run while the cutoff is below open or still
+    // ramping there, bypassed (state cleared) once it has landed open.
+    let cutoff = voice.cutoff.advance_by(got);
+    if cutoff < OPEN_CUTOFF_HZ || !voice.cutoff.done() {
+      voice.lowpass.set_cutoff(cutoff, voice.device_rate);
+      voice.lowpass.process(&mut self.voice_out[..got * 2]);
+      voice.filtering = true;
+    } else if voice.filtering {
+      voice.lowpass.reset();
+      voice.filtering = false;
+    }
     // Pan gains at the block's ends, interpolated across it.
     let (l0, r0, l1, r1) = match &mut voice.pan {
       Some(pan) => {
@@ -708,7 +863,7 @@ impl Engine {
     let bus_curve = voice.bus.map(|b| &self.bus_curves[b]);
     let step = if got > 1 { 1.0 / (got - 1) as f32 } else { 0.0 };
     for k in 0..got {
-      let mut g = voice.gain.advance() * voice.envelope.advance() * self.master_curve[k];
+      let mut g = voice.gain.advance() * voice.spatial_gain.advance() * voice.envelope.advance() * self.master_curve[k];
       if let Some(curve) = bus_curve {
         g *= curve[k];
       }

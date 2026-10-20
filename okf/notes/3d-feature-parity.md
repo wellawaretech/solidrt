@@ -200,7 +200,7 @@ the engine is in the way any more.
 | Joints, character controller | no | yes | yes | no | non-goal: a custom runtime module ([physics-core](../done/physics-core.md)) |
 | Vehicle | no | yes: WheelCollider | yes: VehicleBody3D | no | non-goal: a custom runtime module ([physics-vehicle-controller](../done/physics-vehicle-controller.md)) |
 | Navigation mesh / pathfinding | no | yes | yes | no | untracked |
-| Spatial audio (emitter, listener) | yes: PositionalAudio | yes | yes: AudioStreamPlayer3D | no | [spatial-audio-emitters](../backlog/spatial-audio-emitters.md) |
+| Spatial audio (emitter, listener) | yes: PositionalAudio | yes | yes: AudioStreamPlayer3D | yes: attachSound, scene.listener; distance, doppler, occlusion low-pass in core | [spatial-audio-emitters](../plans/spatial-audio-emitters.md) |
 | Declarative transitions on nodes | no | no | yes: Tween | yes | |
 
 ## Animation

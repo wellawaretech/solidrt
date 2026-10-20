@@ -63,6 +63,9 @@ children add more views (a minimap, a split screen). Camera control is
 the app binds to the view's pointer feed, a gamepad or the keyboard
 (`camera2dBindings`), with follow, framing, bounds, inertia and shake; and
 `<Shots>` blends between `<Shot>` children, Cinemachine's virtual cameras.
+A view is also what a positional sound is heard from (`view.listener()`):
+a sound placed at a sprite's node pans and fades with the camera, in the
+spatial core, with no per-frame JS.
 
 In the package: atlas creation, slicing and extrusion (`createAtlas`,
 `grid`, `namedFrames`, `fullFrame`, `extrudeGrid`, `extrudeRects`), the

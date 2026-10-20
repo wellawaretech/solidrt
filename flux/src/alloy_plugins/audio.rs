@@ -2,14 +2,18 @@
 //! (the mixer) and forge::audio (the decoders). Loading (`load`, `loadPcm`,
 //! `stream`) yields a clip handle; starting a clip (or the fire-and-forget
 //! `play`) yields a playback handle with live controls; `createSink` yields
-//! a sink handle for samples pushed as they are produced. Raw sound, track
-//! and sink ids stay in Rust.
+//! a sink handle for samples pushed as they are produced; `createListener`
+//! yields the listener a playback is placed against when it is attached to
+//! a spatial node (`playback.attach`, the `emitter` play option: the
+//! spatial core then writes its pan, gain, rate and low-pass). Raw sound,
+//! track, sink and listener ids stay in Rust.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use alloy::audio::{AudioTrackReader, ClipFormat, ClipSource, Pcm};
+use alloy::audio::{AudioTrackReader, ClipFormat, ClipSource, Pcm, SpatialParams};
+use alloy::spatial::{DistanceModel, EmitterParams, EmitterSource, ListenerSource, SPEED_OF_SOUND};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, FromJs, Function, JsLifetime, Object, TypedArray, Value};
 
@@ -59,6 +63,9 @@ struct Inner {
   sinks: RefCell<HashSet<u64>>,
   /// The buses this engine set a gain or pause on, which its end resets.
   buses: RefCell<HashSet<String>>,
+  /// The audio listeners this engine created and has not destroyed: what
+  /// its end destroys (the emitters on them go with their voices).
+  listeners: RefCell<HashSet<u64>>,
   /// Whether the app set the device's master gain, which its end restores.
   master_gain_set: Cell<bool>,
 }
@@ -78,6 +85,10 @@ impl Drop for Inner {
     }
     for sound in self.sounds.get_mut().drain() {
       alloy.unload_sound(sound);
+    }
+    for listener in self.listeners.get_mut().drain() {
+      // Already gone when the spatial plugin reset the arena first.
+      let _ = alloy.spatial().destroy_listener(listener);
     }
     for bus in self.buses.get_mut().drain() {
       if let Err(e) = alloy.set_bus_gain(&bus, DEFAULT_GAIN, 0.0).and_then(|()| alloy.set_bus_paused(&bus, false)) {
@@ -114,6 +125,7 @@ pub(crate) fn store_state(ctx: &Ctx<'_>) {
       sounds: RefCell::new(HashSet::new()),
       sinks: RefCell::new(HashSet::new()),
       buses: RefCell::new(HashSet::new()),
+      listeners: RefCell::new(HashSet::new()),
       master_gain_set: Cell::new(false),
     })))
     .expect("store audio state");
@@ -124,10 +136,10 @@ fn state(ctx: &Ctx<'_>) -> Rc<Inner> {
 }
 
 /// The `flux:audio` module. Handles are bound objects (playback: `{ stop,
-/// pause, resume, setGain, setPan, setRate, setLoop, position, ended }`;
-/// clip: `{ duration, play, unload }`; sink: `{ id, push, queuedMs,
-/// positionMs, pause, resume, clear, setGain, close }`) so raw ids stay in
-/// Rust.
+/// pause, resume, setGain, setPan, setRate, setLoop, attach, detach,
+/// position, ended }`; clip: `{ duration, play, unload }`; sink: `{ id,
+/// push, queuedMs, positionMs, pause, resume, clear, setGain, close }`;
+/// listener: `{ id, set, destroy }`) so raw ids stay in Rust.
 pub struct AudioModule;
 
 impl ModuleDef for AudioModule {
@@ -142,6 +154,7 @@ impl ModuleDef for AudioModule {
     decl.declare("setMasterGain")?;
     decl.declare("setBusGain")?;
     decl.declare("createSink")?;
+    decl.declare("createListener")?;
     decl.declare("outputSampleRate")?;
     Ok(())
   }
@@ -157,6 +170,7 @@ impl ModuleDef for AudioModule {
     exports.export("setMasterGain", Function::new(ctx.clone(), set_master_gain_impl)?)?;
     exports.export("setBusGain", Function::new(ctx.clone(), set_bus_gain_impl)?)?;
     exports.export("createSink", Function::new(ctx.clone(), create_sink_impl)?)?;
+    exports.export("createListener", Function::new(ctx.clone(), create_listener_impl)?)?;
     exports.export("outputSampleRate", Function::new(ctx.clone(), output_sample_rate_impl)?)?;
     Ok(())
   }
@@ -184,6 +198,15 @@ where
 fn stop_builder<F>(f: F) -> F
 where
   F: for<'js> Fn(Ctx<'js>, OptArg<Object<'js>>) -> rquickjs::Result<()>,
+{
+  f
+}
+
+/// And for a capturing closure taking an object (an emitter, a listener
+/// source) and an options bag.
+fn object_arg_builder<F>(f: F) -> F
+where
+  F: for<'js> Fn(Ctx<'js>, Object<'js>, OptArg<Object<'js>>) -> rquickjs::Result<()>,
 {
   f
 }
@@ -218,7 +241,91 @@ fn read_options(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result
   if let Some(bus) = &parsed.bus {
     check_bus(ctx, "play", bus)?;
   }
+  if parsed.pan.is_some() && emitter_of(options)?.is_some() {
+    return Err(throw_str(ctx, "play: pan and emitter are exclusive (the emitter owns the pan)"));
+  }
   Ok(parsed)
+}
+
+/// The `emitter` play option, when given.
+fn emitter_of<'js>(options: &OptArg<Object<'js>>) -> rquickjs::Result<Option<Object<'js>>> {
+  match &options.0 {
+    Some(opts) => opts.get::<_, Option<Object<'js>>>("emitter"),
+    None => Ok(None),
+  }
+}
+
+/// A listener source `{ node }` or `{ view }` (exactly one).
+fn read_listener_source(ctx: &Ctx<'_>, who: &str, source: &Object<'_>) -> rquickjs::Result<ListenerSource> {
+  let node = source.get::<_, Option<f64>>("node")?;
+  let view = source.get::<_, Option<f64>>("view")?;
+  match (node, view) {
+    (Some(n), None) => Ok(ListenerSource::Node(check_id(ctx, who, "node", n)?)),
+    (None, Some(v)) => Ok(ListenerSource::View(check_id(ctx, who, "view", v)?)),
+    _ => Err(throw_str(ctx, &format!("{who}: a listener source is {{ node }} or {{ view }}, exactly one"))),
+  }
+}
+
+/// A node, target or view id: a non-negative integer in the range of the
+/// ids the runtime hands out.
+fn check_id(ctx: &Ctx<'_>, who: &str, what: &str, id: f64) -> rquickjs::Result<u64> {
+  if !(id.is_finite() && id >= 0.0 && id.fract() == 0.0 && id <= u64::MAX as f64) {
+    return Err(throw_str(ctx, &format!("{who}: {what} must be an id (a non-negative integer)")));
+  }
+  Ok(id as u64)
+}
+
+/// The `{ speedOfSound? }` listener options.
+fn read_speed_of_sound(ctx: &Ctx<'_>, who: &str, options: &OptArg<Object<'_>>) -> rquickjs::Result<f64> {
+  let Some(opts) = &options.0 else { return Ok(SPEED_OF_SOUND) };
+  let speed = opts.get::<_, Option<f64>>("speedOfSound")?.unwrap_or(SPEED_OF_SOUND);
+  if !(speed.is_finite() && speed > 0.0) {
+    return Err(throw_str(ctx, &format!("{who}: speedOfSound must be a finite number > 0")));
+  }
+  Ok(speed)
+}
+
+/// An emitter `{ node | position, listener, distanceModel?, refDistance?,
+/// maxDistance?, rolloff?, doppler? }`: the source, the listener's id and
+/// the parameters (the ranges are the core's to check at bind).
+fn read_emitter(
+  ctx: &Ctx<'_>,
+  who: &str,
+  emitter: &Object<'_>,
+) -> rquickjs::Result<(EmitterSource, u64, EmitterParams)> {
+  let node = emitter.get::<_, Option<f64>>("node")?;
+  let position = emitter.get::<_, Option<Vec<f64>>>("position")?;
+  let source = match (node, position) {
+    (Some(n), None) => EmitterSource::Node(check_id(ctx, who, "emitter.node", n)?),
+    (None, Some(p)) if p.len() == 3 => EmitterSource::Fixed([p[0], p[1], p[2]]),
+    (None, Some(_)) => return Err(throw_str(ctx, &format!("{who}: emitter.position must be [x, y, z]"))),
+    _ => return Err(throw_str(ctx, &format!("{who}: an emitter names a node or a position, exactly one"))),
+  };
+  let listener = emitter
+    .get::<_, Option<Object<'_>>>("listener")?
+    .and_then(|l| l.get::<_, Option<f64>>("id").ok().flatten())
+    .ok_or_else(|| throw_str(ctx, &format!("{who}: emitter.listener must be a Listener (createListener)")))?;
+  let listener = check_id(ctx, who, "emitter.listener", listener)?;
+  let defaults = EmitterParams::default();
+  let model = match emitter.get::<_, Option<String>>("distanceModel")?.as_deref() {
+    None | Some("inverse") => DistanceModel::Inverse,
+    Some("linear") => DistanceModel::Linear,
+    Some("exponential") => DistanceModel::Exponential,
+    Some(other) => {
+      return Err(throw_str(
+        ctx,
+        &format!("{who}: distanceModel must be \"inverse\", \"linear\" or \"exponential\", got \"{other}\""),
+      ))
+    }
+  };
+  let params = EmitterParams {
+    ref_distance: emitter.get::<_, Option<f64>>("refDistance")?.unwrap_or(defaults.ref_distance),
+    max_distance: emitter.get::<_, Option<f64>>("maxDistance")?.unwrap_or(defaults.max_distance),
+    rolloff: emitter.get::<_, Option<f64>>("rolloff")?.unwrap_or(defaults.rolloff),
+    model,
+    doppler: emitter.get::<_, Option<f64>>("doppler")?.unwrap_or(defaults.doppler),
+  };
+  Ok((source, listener, params))
 }
 
 fn check_bus(ctx: &Ctx<'_>, who: &str, bus: &str) -> rquickjs::Result<()> {
@@ -321,17 +428,138 @@ fn playback_handle<'js>(ctx: &Ctx<'js>, track_id: u64, reader: AudioTrackReader)
     "setLoop",
     Function::new(ctx.clone(), move |ctx: Ctx<'_>, looping: bool| set_loop_impl(ctx, track_id, looping))?,
   )?;
+  obj.set(
+    "attach",
+    Function::new(ctx.clone(), object_arg_builder(move |ctx, emitter, _| attach_impl(ctx, track_id, emitter)))?,
+  )?;
+  obj.set(
+    "detach",
+    Function::new(ctx.clone(), stop_builder(move |ctx, options| detach_impl(ctx, track_id, options)))?,
+  )?;
   let position_reader = reader.clone();
   obj.set("position", Function::new(ctx.clone(), move || position_reader.position())?)?;
   obj.set("ended", Function::new(ctx.clone(), move || reader.ended())?)?;
   Ok(obj)
 }
 
-/// Start a voice, note it, and wrap it.
-fn started<'js>(ctx: &Ctx<'js>, state: &Inner, id: u64) -> rquickjs::Result<Object<'js>> {
+/// Start a voice, note it, place it if the options name an emitter (the
+/// placement lands in the same mix block as the start, so the first sample
+/// is already placed), and wrap it.
+fn started<'js>(
+  ctx: &Ctx<'js>,
+  state: &Inner,
+  id: u64,
+  options: &OptArg<Object<'js>>,
+) -> rquickjs::Result<Object<'js>> {
   state.track_started(id);
   let reader = state.gui.alloy.audio_track_reader(id).ok_or_else(|| throw_str(ctx, "play: track vanished"))?;
+  if let Some(emitter) = emitter_of(options)? {
+    if let Err(e) = attach(ctx, "play", id, &emitter) {
+      // A refused emitter must not leave a plain voice playing at full level.
+      state.gui.alloy.stop_audio(id, 0.0);
+      state.tracks.borrow_mut().remove(&id);
+      return Err(e);
+    }
+  }
   playback_handle(ctx, id, reader)
+}
+
+/// Bind a track to an emitter and place it at once (no ramp): the core
+/// evaluates the binding against the tree as it stands and the mixer
+/// applies it in its next block. A track that ended is left alone.
+fn attach(ctx: &Ctx<'_>, who: &str, track_id: u64, emitter: &Object<'_>) -> rquickjs::Result<()> {
+  let (source, listener, params) = read_emitter(ctx, who, emitter)?;
+  let alloy = &super::gui(ctx).alloy;
+  if alloy.audio_ended(track_id) {
+    return Ok(());
+  }
+  let output = alloy
+    .spatial()
+    .bind_emitter(track_id, source, listener, params)
+    .map_err(|e| throw_str(ctx, &format!("{who}: {e}")))?;
+  let placed = SpatialParams { pan: output.pan, gain: output.gain, rate: output.rate, cutoff: output.cutoff };
+  let landed = alloy.set_audio_spatial(track_id, placed, 0.0).map_err(|e| throw_str(ctx, &format!("{who}: {e}")))?;
+  if !landed {
+    alloy.spatial().unbind_emitter(track_id);
+  }
+  Ok(())
+}
+
+/// playback.attach(emitter): place the playback at a node or position,
+/// heard by a listener (see `read_emitter`); attaching again updates.
+fn attach_impl<'js>(ctx: Ctx<'js>, track_id: u64, emitter: Object<'js>) -> rquickjs::Result<()> {
+  attach(&ctx, "attach", track_id, &emitter)
+}
+
+/// playback.detach({ rampMs? }): the placement's gain and rate layers ramp
+/// back to 1 and the low-pass opens; the pan stays where the emitter left
+/// it, and setPan is accepted again.
+fn detach_impl<'js>(ctx: Ctx<'js>, track_id: u64, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
+  let ramp_ms = read_ramp_ms(&ctx, "detach", &options)?;
+  let alloy = &super::gui(&ctx).alloy;
+  alloy.spatial().unbind_emitter(track_id);
+  alloy.clear_audio_spatial(track_id, ramp_ms).map_err(|e| throw_str(&ctx, &format!("detach: {e}")))
+}
+
+/// createListener(source, { speedOfSound? }) -> listener: what emitters
+/// are heard by, a node's position and axes or a target's view (the
+/// camera). Several may exist, one per scene.
+fn create_listener_impl<'js>(
+  ctx: Ctx<'js>,
+  source: Object<'js>,
+  options: OptArg<Object<'js>>,
+) -> rquickjs::Result<Object<'js>> {
+  let listener_source = read_listener_source(&ctx, "createListener", &source)?;
+  let speed = read_speed_of_sound(&ctx, "createListener", &options)?;
+  let state = state(&ctx);
+  let id = state
+    .gui
+    .alloy
+    .spatial()
+    .create_listener(listener_source, speed)
+    .map_err(|e| throw_str(&ctx, &format!("createListener: {e}")))?;
+  state.listeners.borrow_mut().insert(id);
+  listener_handle(&ctx, id)
+}
+
+/// The bound listener object: `{ id, set, destroy }`.
+fn listener_handle<'js>(ctx: &Ctx<'js>, id: u64) -> rquickjs::Result<Object<'js>> {
+  let obj = Object::new(ctx.clone())?;
+  obj.set("id", id as f64)?;
+  obj.set(
+    "set",
+    Function::new(
+      ctx.clone(),
+      object_arg_builder(move |ctx, source, options| listener_set_impl(ctx, id, source, options)),
+    )?,
+  )?;
+  obj.set("destroy", Function::new(ctx.clone(), move |ctx: Ctx<'_>| listener_destroy_impl(ctx, id))?)?;
+  Ok(obj)
+}
+
+/// listener.set(source, { speedOfSound? }): re-point the listener (a camera
+/// switch, a node taking over); its emitters re-place at the next frame.
+fn listener_set_impl<'js>(
+  ctx: Ctx<'js>,
+  id: u64,
+  source: Object<'js>,
+  options: OptArg<Object<'js>>,
+) -> rquickjs::Result<()> {
+  let listener_source = read_listener_source(&ctx, "listener.set", &source)?;
+  let speed = read_speed_of_sound(&ctx, "listener.set", &options)?;
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_listener(id, listener_source, speed)
+    .map_err(|e| throw_str(&ctx, &format!("listener.set: {e}")))
+}
+
+/// listener.destroy(): the emitters heard by it are released (their
+/// playbacks keep the last placement); idempotent.
+fn listener_destroy_impl(ctx: Ctx<'_>, id: u64) {
+  let state = state(&ctx);
+  let _ = state.gui.alloy.spatial().destroy_listener(id);
+  state.listeners.borrow_mut().remove(&id);
 }
 
 /// play(bytes, { loop?, gain?, pan?, rate?, fadeInMs?, bus? }) -> playback.
@@ -348,7 +576,7 @@ fn play_impl<'js>(
   let state = state(&ctx);
   let id =
     state.gui.alloy.play_audio(to_alloy(pcm), &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
-  started(&ctx, &state, id)
+  started(&ctx, &state, id, &options)
 }
 
 /// Wrap a loaded sound id in a clip handle (`{ duration, play, unload }`),
@@ -443,7 +671,7 @@ fn play_sound_impl<'js>(ctx: Ctx<'js>, sound_id: u64, options: OptArg<Object<'js
   let play_options = read_options(&ctx, &options)?;
   let state = state(&ctx);
   let id = state.gui.alloy.play_sound(sound_id, &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
-  started(&ctx, &state, id)
+  started(&ctx, &state, id, &options)
 }
 
 fn set_gain_impl<'js>(ctx: Ctx<'js>, id: u64, gain: f32, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {

@@ -533,11 +533,24 @@ declare module "flux:spatial" {
    * sided), a solid sphere, or any triangle list (`indices` absent: the
    * positions in triples). Box and sphere assume a solid; a triangle
    * occludes exactly what lies behind it. */
-  export type OccluderShape =
+  export type OccluderShape = (
     | { box: Float32Array }
     | { quad: [number, number] }
     | { sphere: { center: [number, number, number]; radius: number } }
     | { mesh: { positions: Float32Array; indices?: Uint16Array | Uint32Array } }
+  ) & {
+    /**
+     * What the occluder does to a positional SOUND whose straight path to
+     * its listener it crosses (flux:audio emitters): absent, the default
+     * blocking (a gain of 0.25, about -12 dB, and a low-pass at 2000 Hz: an
+     * interior wall heard through); `false`, sight only (a glass wall);
+     * `{ gain?, cutoff? }`, its own level (0..1) and cutoff (Hz). Occluders
+     * crossed compose: gains multiply, the lowest cutoff wins. One
+     * authoring for sight and sound; a hidden occluder blocks neither.
+     */
+    audio?: OccluderAudio | false
+  }
+  export type OccluderAudio = { gain?: number; cutoff?: number }
   /** The node's occluder (null clears it): rasterized into every
    * occluding target's depth buffer under the node's world matrix while
    * the node is shown. A node never occludes itself. */

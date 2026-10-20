@@ -168,6 +168,7 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
   if let Some(a) = r.audio {
     put("audioVoices", a.live_voices.into());
     put("audioUnderruns", a.underruns.into());
+    put("audioSpatialWrites", a.spatial_writes.into());
     put("audioRenderMaxMs", round2_64(a.render_max_ms).into());
     put("audioDeviceRate", a.device_rate.into());
     put("audioDeviceFrames", a.device_frames.into());

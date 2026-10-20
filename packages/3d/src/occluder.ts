@@ -12,9 +12,15 @@
 // triangles move in the vertex stage (skinned, morphing, a sprite, an
 // instanced population) has no geometry to occlude with and refuses
 // "geometry": give it a proxy shape at the node instead.
+//
+// The same occluders block SOUND: a positional sound (attachSound) whose
+// straight path to the listener crosses a shown occluder is dimmed and
+// dulled by the occluder's `audio` (a gain and a low-pass cutoff; the
+// defaults are an interior wall heard through), `audio: false` makes an
+// occluder sight-only (glass). One authoring for sight and sound.
 
 import * as spatial from "flux:spatial"
-import type { CullState as CoreCullState, OccluderShape } from "flux:spatial"
+import type { CullState as CoreCullState, OccluderAudio, OccluderShape } from "flux:spatial"
 import { geometryAttribute, geometryBounds, geometryTopology, geometryVertexCount } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import type { SceneNode } from "./node.ts"
@@ -35,14 +41,22 @@ export type CullState = CoreCullState
  * max xyz; `{ quad: [width, height] }` a two-sided quad in the node's XY
  * plane centered at its origin (Godot's QuadOccluder3D, the one-wall
  * shape); `{ sphere: { center, radius } }` a solid sphere; `{ geometry }`
- * a proxy geometry (a low-poly hull of the mesh, a triangle list). */
+ * a proxy geometry (a low-poly hull of the mesh, a triangle list). The
+ * object forms (`{ shape: "geometry" | "bounds" }` for the two
+ * shortcuts) take `audio`: what the occluder does to a positional sound
+ * crossing it - absent, the default blocking (a gain of 0.25 and a
+ * low-pass at 2000 Hz); `false`, sight only; `{ gain?, cutoff? }`, its
+ * own level (0..1) and cutoff (Hz). */
 export type OccluderSpec =
   | "geometry"
   | "bounds"
-  | { box: Float32Array | number[] }
-  | { quad: [number, number] }
-  | { sphere: { center: Vec3; radius: number } }
-  | { geometry: Geometry }
+  | ((
+      | { shape: "geometry" | "bounds" }
+      | { box: Float32Array | number[] }
+      | { quad: [number, number] }
+      | { sphere: { center: Vec3; radius: number } }
+      | { geometry: Geometry }
+    ) & { audio?: OccluderAudio | false })
 
 /**
  * Declare what the node occludes (null clears it). Takes effect in every
@@ -93,6 +107,15 @@ export function occludersFromMeshes(scene: Scene, opts: { minSize: number }): Me
 }
 
 function resolve(node: SceneNode, spec: OccluderSpec): OccluderShape {
+  if (typeof spec === "object" && "shape" in spec) {
+    let shape = resolve(node, spec.shape)
+    return spec.audio === undefined ? shape : { ...shape, audio: spec.audio }
+  }
+  if (typeof spec === "object" && spec.audio !== undefined) {
+    let { audio, ...rest } = spec
+    if (audio !== false && !(typeof audio === "object" && audio !== null)) throw new Error("setOccluder: audio is false or { gain?, cutoff? }")
+    return { ...resolve(node, rest as OccluderSpec), audio }
+  }
   if (spec === "geometry") {
     let mesh = asMesh(node, spec)
     let reason = canOccludeByGeometry(mesh)

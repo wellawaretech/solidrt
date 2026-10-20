@@ -27,7 +27,7 @@ On the dev client on the TV (armeabi-v7a, see the device loop notes):
 
 ## What it involves
 
-`make android-client ANDROID_ABI=armeabi-v7a CARGO_BUILD_JOBS=8`, the APK
-steps of `apk-run` in lattice/Makefile.android for that ABI, `adb connect`
-to the TV, a probe app with debug commands that start a dialog, driven
-over the control API.
+`make android-client ANDROID_ABI=armeabi-v7a CARGO_BUILD_JOBS=8` (the APK,
+staged into dist/android/armeabi-v7a/), `adb connect` to the TV and `adb
+install -r` of that APK, a probe app with debug commands that start a
+dialog, driven over the control API.

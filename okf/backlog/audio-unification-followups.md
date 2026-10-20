@@ -47,6 +47,22 @@ Each entry is small on its own; pick one, give it its own item if it grows.
   free a bus when it has no voices and its gain is unity, or document.
 - **Underruns are counted per block.** A stat per ring (which voice
   starved) would name the pusher; today the count is global.
+- **A placed voice costs the callback several times a plain one.**
+  `probes/spatial-audio-probe.tsx` (2026-10-21, this machine at 2 to 3
+  GHz): twenty voices placed by the spatial pass and driving read
+  `audioRenderMaxMs` 4 to 6 ms per 1024-frame block, the same twenty
+  detached 0.7 to 1.4 ms, placed and PARKED (no writes at all) 5 to 7 ms,
+  so the cost is in the placed render path, not the commands; doppler
+  off changes little, so it is not the resampler ratio; the one window
+  with the wall occluder hidden (no voice filtered) read 0.76 ms. That
+  points at the per-voice low-pass on the six or so occluded voices,
+  which is far more than a biquad's five multiply-adds per sample should
+  cost: suspect denormals in the filter state (no flush-to-zero on the
+  audio thread) or the per-block coefficient path. Profile on a cool
+  machine (the EC clamp to 400 MHz made every late reading meaningless:
+  100 ms blocks and 30 fps with doppler off) and on the TV, where the
+  block budget is the question. Audio-side cost of
+  okf/plans/spatial-audio-emitters.md.
 - **Streams seek only via a restart.** `stream.rs` has the restart
   machinery at any frame; a `Playback.seek(seconds)` for streamed (and
   decoded) playbacks is a command away.

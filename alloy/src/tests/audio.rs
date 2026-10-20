@@ -2,7 +2,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::audio::engine::{
-  clamp_rate, pan_gains, pcm_all_finite, Command, Converter, Engine, Ramp, Slot, Source, Voice, VoiceShared,
+  clamp_rate, pan_gains, pcm_all_finite, Command, Converter, Engine, LowPass, Ramp, Slot, Source, Voice, VoiceShared,
+  OPEN_CUTOFF_HZ,
 };
 use crate::audio::ring::{ring, RingConsumer};
 use crate::audio::Pcm;
@@ -478,4 +479,113 @@ fn positions_are_net_of_the_device_queue() {
   engine.render(&mut out, 0, 0);
   assert_eq!(shared.position(), 200);
   assert_eq!(shared.backlog.load(std::sync::atomic::Ordering::Acquire), FEED - 200);
+}
+
+#[test]
+fn spatial_gain_and_rate_multiply_under_the_voice_s_own() {
+  let mut engine = Engine::new(2);
+  let (voice, _) = clip_voice(0, vec![1.0; 400]);
+  let slot = voice.slot;
+  // Start and placement in one block: the first sample is already placed.
+  apply(
+    &mut engine,
+    vec![
+      Command::Start(voice),
+      Command::SetGain { slot, gain: 0.5, frames: 0 },
+      Command::SetSpatial { slot, pan: 0.0, gain: 0.25, rate: 2.0, cutoff: OPEN_CUTOFF_HZ, frames: 0 },
+    ],
+  );
+  let out = render(&mut engine, 4);
+  let half = std::f32::consts::FRAC_1_SQRT_2;
+  assert_near(out[0], 0.5 * 0.25 * half, "voice gain x spatial gain x center pan, first sample");
+  // The ratio handed to the converter is the product of the two rates.
+  assert_near(engine.ratio_of(0).expect("voice"), 2.0, "rate x spatial rate");
+  // A later voice gain set composes with the placement, not over it.
+  apply(&mut engine, vec![Command::SetGain { slot, gain: 1.0, frames: 0 }]);
+  let out = render(&mut engine, 4);
+  assert_near(out[0], 0.25 * half, "the voice gain changed, the placement stayed");
+  // Clearing ramps the multipliers back to 1 and leaves the pan.
+  apply(&mut engine, vec![Command::ClearSpatial { slot, frames: 4 }]);
+  let out = render(&mut engine, 4);
+  assert_near(out[0], (0.25 + 0.75 / 4.0) * half, "first step of the ramp back");
+  assert_near(out[6], 1.0 * half, "landed at 1, still center panned");
+  assert_near(engine.ratio_of(0).expect("voice"), 1.0, "rate back to the voice's own");
+}
+
+#[test]
+fn spatial_placement_ramps_every_value_together() {
+  let mut engine = Engine::new(2);
+  let (voice, _) = clip_voice(0, vec![1.0; 400]);
+  let slot = voice.slot;
+  apply(
+    &mut engine,
+    vec![
+      Command::Start(voice),
+      Command::SetSpatial { slot, pan: -1.0, gain: 1.0, rate: 1.0, cutoff: OPEN_CUTOFF_HZ, frames: 0 },
+    ],
+  );
+  render(&mut engine, 1);
+  apply(
+    &mut engine,
+    vec![Command::SetSpatial { slot, pan: 1.0, gain: 0.0, rate: 1.0, cutoff: OPEN_CUTOFF_HZ, frames: 10 }],
+  );
+  let out = render(&mut engine, 10);
+  // Gain ramps per sample from 1 toward 0; pan sweeps left to right
+  // across the block: the left channel starts near 0.9 and ends at 0.
+  assert!(out[0] > 0.85 && out[0] < 0.95, "left at the start: {}", out[0]);
+  assert_eq!(out[18], 0.0, "gain landed at 0");
+  assert_eq!(out[19], 0.0);
+}
+
+#[test]
+fn lowpass_passes_dc_and_attenuates_above_the_cutoff() {
+  // A 1 kHz cutoff at 48 kHz: a constant passes unchanged once settled, a
+  // tone at 8 kHz (three octaves up) loses over 30 dB (a second-order
+  // Butterworth falls 12 dB per octave).
+  const RATE: u32 = 48_000;
+  let mut lp = LowPass::open();
+  lp.set_cutoff(1000.0, RATE);
+  let mut dc = vec![1.0; 2 * 4800];
+  lp.process(&mut dc);
+  assert_near(dc[dc.len() - 2], 1.0, "dc settled to unity");
+  lp.reset();
+  let mut tone: Vec<f32> = (0..4800)
+    .flat_map(|i| {
+      let v = (i as f32 * 8000.0 * std::f32::consts::TAU / RATE as f32).sin();
+      [v, v]
+    })
+    .collect();
+  lp.process(&mut tone);
+  let peak = tone[tone.len() - 2000..].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+  assert!(peak < 0.03, "8 kHz through a 1 kHz low-pass: peak {peak}");
+  // The cutoff clamps to the device's range and NaN reads as open.
+  let mut lp2 = LowPass::open();
+  lp2.set_cutoff(f32::NAN, RATE);
+  lp2.set_cutoff(1.0, RATE);
+  let mut probe = vec![1.0; 2 * 10];
+  lp2.process(&mut probe);
+  assert!(probe.iter().all(|v| v.is_finite()), "a clamped cutoff stays finite");
+}
+
+#[test]
+fn an_open_cutoff_bypasses_the_filter_exactly_and_a_closed_one_filters() {
+  let mut engine = Engine::new(2);
+  // A high-frequency alternating signal: a low-pass dulls it, bypass does not.
+  let samples: Vec<f32> = (0..600).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
+  let (voice, _) = clip_voice(0, samples.clone());
+  let slot = voice.slot;
+  apply(&mut engine, vec![Command::Start(voice)]);
+  let out = left(&render(&mut engine, 100));
+  assert_eq!(out[50], samples[50], "open: the sample passes untouched");
+  apply(&mut engine, vec![Command::SetSpatial { slot, pan: 0.0, gain: 1.0, rate: 1.0, cutoff: 500.0, frames: 0 }]);
+  let out = left(&render(&mut engine, 200));
+  let peak = out[100..].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+  assert!(peak < 0.05, "a Nyquist tone through a 500 Hz low-pass: peak {peak}");
+  // Opening again: once the ramp lands at open the filter is bypassed and
+  // the raw signal is back exactly.
+  apply(&mut engine, vec![Command::ClearSpatial { slot, frames: 100 }]);
+  render(&mut engine, 100);
+  let out = render(&mut engine, 100);
+  let half = std::f32::consts::FRAC_1_SQRT_2;
+  assert_near(out[20].abs(), half, "bypassed: the alternating signal at center pan");
 }

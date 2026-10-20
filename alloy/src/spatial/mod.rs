@@ -16,6 +16,7 @@ mod bvh;
 mod clips;
 mod collide;
 mod cull;
+mod emitters;
 mod ik;
 mod math;
 mod mover;
@@ -31,6 +32,10 @@ use std::collections::{HashMap, HashSet};
 
 pub use bvh::{ray_box_distance, Box3};
 pub use collide::{Impact, Overlap, Volume};
+pub use emitters::{
+  DistanceModel, EmitterOutput, EmitterParams, EmitterRamp, EmitterSource, EmitterStats, ListenerId, ListenerSource,
+  SPEED_OF_SOUND,
+};
 pub use ik::{
   ChainMethod, ChainSpec, FeetSpec, IkId, IkLimit, IkPoint, IkSolverSpec, IkTarget, IkTick, IkUp, LegSpec, LookAtBone,
   LookAtLimit, LookAtSpec, TwoBoneSpec,
@@ -41,7 +46,10 @@ pub use math::{
 };
 pub use mover::{MoveOptions, MoveResult};
 pub use normals::{vertex_normals, write_channel};
-pub use occlusion::{Occluder, OCCLUDER_TRIANGLE_BUDGET, OCCLUSION_BUFFER_WIDTH};
+pub use occlusion::{
+  Occluder, OccluderAudio, OCCLUDER_TRIANGLE_BUDGET, OCCLUSION_AUDIO_CUTOFF_HZ, OCCLUSION_AUDIO_GAIN,
+  OCCLUSION_BUFFER_WIDTH,
+};
 pub use pick::{Hit, Shape, ShapeId};
 // The per-triangle narrowphase, for tests: the brute-force oracle the
 // indexed volume queries are checked against.
@@ -320,6 +328,12 @@ pub trait SinkWriter {
   /// one row of a 4-texel-wide rgba32f texture) per bound slot. At most one
   /// write per texture per flush (see `TextureSlotSink`).
   fn write_texture(&mut self, texture: u64, values: &[f32]) -> bool;
+  /// A placed voice's fresh spatial parameters (`bind_emitter`): its pan,
+  /// the gain and rate multipliers under its own, the low-pass cutoff.
+  /// `ramp` says how to glide there: over the frame interval (something
+  /// moved) or the occlusion smoothing time (the ray's answer flipped).
+  /// False means the voice is gone, and the core releases the emitter.
+  fn write_emitter(&mut self, voice: u64, output: &EmitterOutput, ramp: EmitterRamp) -> bool;
 }
 
 /// How a shared-slot sink projects the node's world transform into its
@@ -967,6 +981,10 @@ struct Node {
   /// The occluder this node carries (`set_occluder`): its triangles in
   /// node space, rasterized under the node's world matrix while shown.
   occluder: Option<Box<Occluder>>,
+  /// Audio emitters and listeners bound to this node (`emitters.rs`):
+  /// while any, a move sets `audio_moved` for the emitter pass.
+  audio_refs: u32,
+  audio_moved: bool,
 }
 
 #[derive(Default)]
@@ -1068,6 +1086,9 @@ pub struct Spatial {
   /// Targets whose occlusion buffer was rebuilt or dropped this flush:
   /// every sink on them is re-tested by the cull pass.
   occlusion_retest: Vec<u64>,
+  /// Spatial audio: the listeners, the bound voices and the view frames
+  /// (`emitters.rs`).
+  emitters: emitters::EmitterSet,
 }
 
 /// The layer mask a node starts with: layer 0 alone, Three's default.
@@ -1164,6 +1185,8 @@ impl Spatial {
       lod_check: false,
       region: None,
       occluder: None,
+      audio_refs: 0,
+      audio_moved: false,
     };
     let i = match self.free.pop() {
       Some(i) => {
@@ -1207,6 +1230,7 @@ impl Spatial {
 
   fn free_node(&mut self, i: u32) {
     let id = self.id_of(i);
+    self.node_audio_freed(id);
     if let Some(p) = self.nodes[i as usize].parent {
       self.nodes[p as usize].children.retain(|&c| c != i);
     }
@@ -1261,6 +1285,7 @@ impl Spatial {
     n.shape = None;
     if n.occluder.take().is_some() {
       self.occluders_moved = true;
+      self.emitters.occluders_changed = true;
     }
     n.lod_level = None;
     n.lod_scope = None;
@@ -1605,6 +1630,18 @@ impl Spatial {
       None => {
         self.view_projs.remove(&target);
       }
+    }
+    // The listeners' camera frame, from the world view (the arena's f64,
+    // no origin to undo): a change moves every listener on the target.
+    let frame_changed = match self.views.get(&target) {
+      Some((v, _)) => {
+        let frame = emitters::ViewFrame::from_view(v);
+        self.emitters.view_frames.insert(target, frame) != Some(frame)
+      }
+      None => self.emitters.view_frames.remove(&target).is_some(),
+    };
+    if frame_changed {
+      self.emitters.view_moved(target);
     }
     if frustum_changed {
       if let Some(occ) = self.occlusion.get_mut(&target) {
@@ -1951,6 +1988,7 @@ impl Spatial {
     if n.occluder.is_some() && !had {
       self.occluders.push(i);
     }
+    self.emitters.occluders_changed = true;
     self.occluders_moved = true;
     Ok(())
   }
@@ -3773,6 +3811,7 @@ impl Spatial {
       self.rigs.last_ms = now_ms;
       self.springs.last_ms = now_ms;
       self.ik.last_ms = now_ms;
+      self.emitters.last_ms = now_ms;
     }
   }
 
@@ -4344,6 +4383,9 @@ impl Spatial {
         landed && group.refs > 0
       });
     }
+    // Spatial audio last: the worlds, the view frames and the occluders
+    // are all current, and its writes are the mixer's, not a paint's.
+    self.emitter_pass(out);
   }
 
   fn has_queued_ancestor(&self, i: u32) -> bool {
@@ -4385,6 +4427,11 @@ impl Spatial {
     let touched = changed || shown != n.shown || n.queued || scope != n.lod_scope;
     if n.occluder.is_some() && (changed || shown != n.shown) {
       self.occluders_moved = true;
+      self.emitters.occluders_changed = true;
+    }
+    if changed && n.audio_refs > 0 {
+      n.audio_moved = true;
+      self.emitters.any_moved = true;
     }
     n.shown = shown;
     n.lod_scope = scope;

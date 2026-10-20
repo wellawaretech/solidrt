@@ -1008,6 +1008,14 @@ struct ParamRecorder {
 }
 
 impl SinkWriter for ParamRecorder {
+  fn write_emitter(
+    &mut self,
+    _voice: u64,
+    _output: &crate::spatial::EmitterOutput,
+    _ramp: crate::spatial::EmitterRamp,
+  ) -> bool {
+    true
+  }
   fn write_params(&mut self, _: u64, _: u64, _: &crate::spatial::Mat4f, _: Option<&crate::spatial::Mat4f>) -> bool {
     true
   }

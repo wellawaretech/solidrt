@@ -14,6 +14,14 @@ const FRAME: f64 = 1000.0 / 60.0;
 struct Sink;
 
 impl SinkWriter for Sink {
+  fn write_emitter(
+    &mut self,
+    _voice: u64,
+    _output: &crate::spatial::EmitterOutput,
+    _ramp: crate::spatial::EmitterRamp,
+  ) -> bool {
+    true
+  }
   fn write_params(&mut self, _: u64, _: u64, _: &Mat4f, _: Option<&Mat4f>) -> bool {
     true
   }

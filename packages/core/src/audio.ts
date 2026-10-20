@@ -4,14 +4,20 @@
 // is disposed. Each play() is cheap (no re-decode). `createPcmSound` is the
 // same over raw samples the app generated itself; `createSoundStream` reads
 // a large track from a file on demand instead of decoding it into memory;
-// `createSink` plays samples as the app produces them.
+// `createSink` plays samples as the app produces them. A sound is placed in
+// the world with `emitter` (the option, or `setEmitter`): bound to a
+// spatial node or a fixed position and heard by a `createListener`
+// listener, the spatial core writes its pan, distance gain, doppler rate
+// and occlusion low-pass after every flush that moved something, with no
+// per-frame JS; @solidrt/3d's `attachSound` and a 2d view's `listener()`
+// wire the scene's nodes and camera to this.
 //
 // The imperative primitive lives in the `flux:audio` module; import
-// { play, load, loadPcm, stream, createSink } from "flux:audio" for
-// non-reactive use.
+// { play, load, loadPcm, stream, createSink, createListener } from
+// "flux:audio" for non-reactive use.
 
 import { createSignal, onCleanup } from "@solidjs/signals"
-import { createSink as openSink, load, loadPcm, stream } from "flux:audio"
+import { createListener as openListener, createSink as openSink, load, loadPcm, stream } from "flux:audio"
 import { file } from "flux:fs"
 
 type FluxFile = ReturnType<typeof file>
@@ -19,6 +25,19 @@ type FluxFile = ReturnType<typeof file>
 type Clip = ReturnType<typeof load>
 type Playback = ReturnType<Clip["play"]>
 type FluxSink = ReturnType<typeof openSink>
+
+/** A positional sound's listener (flux:audio createListener): what it is
+ * heard from, a spatial node or a target's view (the camera). */
+export type Listener = ReturnType<typeof openListener>
+/** `{ node }` or `{ view }`: where a listener hears from. */
+export type ListenerSource = Parameters<typeof openListener>[0]
+/** `{ speedOfSound? }`: world units per second (343 for metres). */
+export type ListenerOptions = NonNullable<Parameters<typeof openListener>[1]>
+/** Where a sound is placed and how it falls off (flux:audio
+ * EmitterOptions): a node or a fixed position, the listener, the Web
+ * Audio distance model (inverse by default), refDistance, maxDistance,
+ * rolloff, and the doppler factor (1 physical, 0 off). */
+export type EmitterOptions = Parameters<Playback["attach"]>[0]
 
 export type SoundOptions = {
   /** Repeat the clip until stopped. Defaults to false. */
@@ -39,6 +58,12 @@ export type SoundOptions = {
   fadeInMs?: number
   /** Bus name for every voice of this sound (see flux:audio `stop({ bus })`). */
   bus?: string
+  /**
+   * Place every voice in the world (see {@link EmitterOptions}): the core
+   * then owns its pan, so `pan` is not applied while an emitter is set.
+   * Live via {@link Sound.setEmitter}.
+   */
+  emitter?: EmitterOptions
   /**
    * Let play() stack overlapping voices instead of restarting. Defaults to
    * true: rapid triggers overlap. Set false for a single-voice sound where each
@@ -82,6 +107,8 @@ export type SoundStreamOptions = {
   fadeInMs?: number
   /** Bus name for the stream's voice (see flux:audio `stop({ bus })`). */
   bus?: string
+  /** Place the voice in the world (see {@link SoundOptions.emitter}). */
+  emitter?: EmitterOptions
 }
 
 /** A decoded sound with reactive lifecycle. */
@@ -96,8 +123,18 @@ export type Sound = {
   resume(): void
   /** Set the volume of every live voice, and of voices started later. */
   setGain(gain: number, options?: SoundRampOptions): void
-  /** Set the stereo position of every live voice, and of voices started later. */
+  /**
+   * Set the stereo position of every live voice, and of voices started
+   * later. Not applied while an emitter is set (the core owns the pan).
+   */
   setPan(pan: number, options?: SoundRampOptions): void
+  /**
+   * Place every live voice in the world, and voices started later (see
+   * {@link EmitterOptions}); null releases the placement (live voices keep
+   * their last pan, gain and rate layers ramp back to 1). Attaching again
+   * updates; the same node keeps its velocity history.
+   */
+  setEmitter(emitter: EmitterOptions | null): void
   /** Set the playback rate of every live voice, and of voices started later. */
   setRate(rate: number, options?: SoundRampOptions): void
   /**
@@ -125,7 +162,15 @@ export type Sound = {
 function reactiveSound(
   loader: () => Clip,
   overlap: boolean,
-  initial: { loop?: boolean; gain?: number; pan?: number; rate?: number; fadeInMs?: number; bus?: string },
+  initial: {
+    loop?: boolean
+    gain?: number
+    pan?: number
+    rate?: number
+    fadeInMs?: number
+    bus?: string
+    emitter?: EmitterOptions
+  },
 ): Sound {
   let [error, setError] = createSignal<Error | undefined>(undefined, { ownedWrite: true })
   let [playing, setPlaying] = createSignal(false, { ownedWrite: true })
@@ -138,6 +183,7 @@ function reactiveSound(
   let rate = initial.rate
   let fadeInMs = initial.fadeInMs
   let bus = initial.bus
+  let emitter: EmitterOptions | null = initial.emitter ?? null
   try {
     clip = loader()
   } catch (e) {
@@ -169,7 +215,10 @@ function reactiveSound(
       if (!clip) return
       if (overlap) prune()
       else stopAll()
-      voices.push(clip.play({ loop, gain, pan, rate, fadeInMs, bus }))
+      // The emitter owns the pan: a stored pan waits for the emitter's end.
+      voices.push(
+        clip.play({ loop, gain, pan: emitter === null ? pan : undefined, rate, fadeInMs, bus, emitter: emitter ?? undefined }),
+      )
       setPlaying(true)
     },
     stop: stopAll,
@@ -188,8 +237,17 @@ function reactiveSound(
     },
     setPan(value, options) {
       pan = value
+      if (emitter !== null) return
       prune()
       for (let v of voices) v.setPan(value, options)
+    },
+    setEmitter(value) {
+      emitter = value
+      prune()
+      for (let v of voices) {
+        if (value !== null) v.attach(value)
+        else v.detach()
+      }
     },
     setRate(value, options) {
       rate = value
@@ -274,6 +332,19 @@ export function createSink(options: SinkOptions): Sink {
 }
 
 /**
+ * A listener for positional sounds (see {@link Listener}), destroyed when
+ * the reactive owner is disposed; the emitters heard by it are released
+ * with it. @solidrt/3d's scene and a 2d view make their own; this is for
+ * placing sound against a node or a view by hand. Opens no audio device.
+ * For imperative use, call createListener() from "flux:audio".
+ */
+export function createListener(source: ListenerSource, options?: ListenerOptions): Listener {
+  let listener = openListener(source, options)
+  onCleanup(() => listener.destroy())
+  return listener
+}
+
+/**
  * Decodes a sound once and owns its lifecycle: releases the clip and stops its
  * voices when the reactive owner is disposed. play() replays without decoding.
  * For imperative use, call load()/play() from "flux:audio".
@@ -286,6 +357,7 @@ export function createSound(source: Uint8Array, options: SoundOptions = {}): Sou
     rate: options.rate,
     fadeInMs: options.fadeInMs,
     bus: options.bus,
+    emitter: options.emitter,
   })
 }
 
@@ -310,6 +382,7 @@ export function createPcmSound(
     rate: options.rate,
     fadeInMs: options.fadeInMs,
     bus: options.bus,
+    emitter: options.emitter,
   })
 }
 
@@ -331,5 +404,6 @@ export function createSoundStream(source: string | FluxFile, options: SoundStrea
     rate: options.rate,
     fadeInMs: options.fadeInMs,
     bus: options.bus,
+    emitter: options.emitter,
   })
 }

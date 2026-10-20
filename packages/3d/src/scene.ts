@@ -67,10 +67,12 @@ import type { EnvironmentOptions, Prefilter } from "./environment.ts"
 export type { EnvironmentOptions } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTimeScale, setTransition, timeRate, worldInto } from "./node.ts"
-import type { SceneHooks, SceneNode, ScenePointerListener, CurveBinding } from "./node.ts"
+import type { SceneHooks, SceneNode, ScenePointerListener, CurveBinding, SubtreeBinding } from "./node.ts"
 import { checkInstancePairing, checkMask, checkOrderPairing, drawCount, instanceBinding, localBounds, markLiveRecords, publishRecords, spriteScreenPx } from "./mesh.ts"
 import type { InstancedMesh, InstanceNode, Mesh, MeshInstances, ResolvedInstanceOrder } from "./mesh.ts"
 import type { CullState } from "./occluder.ts"
+import { createListener } from "flux:audio"
+import type { Listener, ListenerSource } from "@solidrt/core/audio"
 import type { CastingLight, Light } from "./light.ts"
 
 const IDENTITY = mat4()
@@ -475,6 +477,10 @@ export type SceneOptions = {
    * via scene.setOcclusion; views decide for themselves (ViewOptions),
    * shadow tiles and probe faces never occlusion-cull. */
   occlusion?: boolean
+  /** The speed of sound for the scene's audio listener, in WORLD UNITS
+   * per second (default 343, right for metres): what positional sounds'
+   * doppler is measured against (attachSound). */
+  speedOfSound?: number
   /** Scene-wide shadow settings. `quality` is the soft shadow kernel's
    * tier (see ShadowQuality): the taps every casting light spends per
    * receiving fragment and the filter width of a light that sets no
@@ -933,6 +939,21 @@ export type Scene = {
   /** Occlusion culling in the scene's own render from now on
    * (SceneOptions.occlusion live). */
   setOcclusion(enabled: boolean): void
+  /**
+   * The scene's audio listener (flux:audio), created on first use: what
+   * positional sounds on the scene's nodes are heard by (attachSound).
+   * It hears from the scene's camera until setListener names a node.
+   * For placing a sound by hand through @solidrt/core/audio's emitter
+   * option; destroyed with the scene.
+   */
+  listener(): Listener
+  /**
+   * Hear positional sounds from this node instead of the camera (a
+   * third-person rig's body, a first-person head), its local -z forward
+   * and +x right; null returns to the camera. The node must be in this
+   * scene or outside any; while it is out of the scene the camera hears.
+   */
+  setListener(node: SceneNode | null): void
   /** Why the mesh is not drawn in the scene's own render, or "on": the
    * first of "hidden", "frustum", "occluded", "lod" that applies, as the
    * core last decided it (after a settle, the state the next frame draws
@@ -2200,7 +2221,26 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     }
   }
 
+  // Spatial audio: the scene's listener, made on the first positional sound,
+  // hears from the camera (the buffer target's view, the core's camera
+  // frame) until setListener names a node; a named node hears while it is
+  // in the scene (a subtree binding re-points the listener on every enter
+  // and leave, since the core node is new each time).
+  let listener: Listener | null = null
+  let listenerNode: SceneNode | null = null
+  let listenerBinding: SubtreeBinding | null = null
+  let listenerOptions = opts?.speedOfSound === undefined ? undefined : { speedOfSound: opts.speedOfSound }
+  let listenerSource = (): ListenerSource =>
+    listenerNode !== null && listenerNode._node !== null && listenerNode._scene === hooks ? { node: listenerNode._node } : { view: texture }
+  let ensureListener = (): Listener => {
+    if (listener === null) listener = createListener(listenerSource(), listenerOptions)
+    return listener
+  }
+  let pointListener = (source: ListenerSource) => {
+    if (listener !== null) listener.set(source, listenerOptions)
+  }
   let hooks: SceneHooks = {
+    _listener: ensureListener,
     _schedule() {
       if (scheduled || disposed) return
       scheduled = true
@@ -2815,6 +2855,28 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       spatial.setOcclusion(texture, enabled)
       hooks._schedule()
     },
+    listener: ensureListener,
+    setListener(node) {
+      if (disposed) return
+      if (node !== null && node._destroyed) throw new Error("scene.setListener: the node was destroyed")
+      if (node !== null && node._scene !== null && node._scene !== hooks) throw new Error("scene.setListener: the node is in another scene")
+      if (listenerNode !== null && listenerBinding !== null && listenerNode._bindings !== null) {
+        let i = listenerNode._bindings.indexOf(listenerBinding)
+        if (i >= 0) listenerNode._bindings.splice(i, 1)
+      }
+      listenerNode = node
+      listenerBinding = null
+      if (node !== null) {
+        listenerBinding = {
+          enter: () => pointListener(listenerSource()),
+          // Runs before the core node goes: back to the camera.
+          leave: () => pointListener({ view: texture }),
+        }
+        if (node._bindings === null) node._bindings = []
+        node._bindings.push(listenerBinding)
+      }
+      pointListener(listenerSource())
+    },
     cullState(mesh) {
       if (disposed || mesh._node === null) return null
       return spatial.cullState(mesh._node, texture)
@@ -3171,6 +3233,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (root._node !== null) {
         spatial.destroyNode(root._node)
         root._node = null
+      }
+      if (listener !== null) {
+        listener.destroy()
+        listener = null
       }
       spatial.setView(texture, null)
       // Drain the zeroed direction slots the teardown queued while the

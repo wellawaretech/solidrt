@@ -19,9 +19,10 @@ use alloy::spatial::{
   ClipChannel, ClipEvent, ClipMarker, Component, DrawOrder, DrawQueue, DrawSink, FeetSpec, GridSpec, IkLimit, IkPoint,
   IkSolverSpec, IkTarget, IkUp, InstanceProjection, InstanceRecordSink, LayerMode, LayerSpec, LayerUpdate, LegSpec,
   LodLevel, LookAtBone, LookAtLimit, LookAtSpec, MarkerPhase, MoveOptions, NodeEndpoint, NodeMotion,
-  NodeTransitionConfig, NodeTransitionEntry, Occluder, PlayerSpec, PlayerUpdate, Projection, QueryFilter, RegionEvent,
-  RegionMargins, RegionRef, RegionSpec, RegionState, RestPose, RootMotion, Shape, SharedSlotSink, SpringCollider,
-  SpringJoint, SpringJointUpdate, SpringShape, SyncMode, TextureSlotSink, TwoBoneSpec, Volume,
+  NodeTransitionConfig, NodeTransitionEntry, Occluder, OccluderAudio, PlayerSpec, PlayerUpdate, Projection,
+  QueryFilter, RegionEvent, RegionMargins, RegionRef, RegionSpec, RegionState, RestPose, RootMotion, Shape,
+  SharedSlotSink, SpringCollider, SpringJoint, SpringJointUpdate, SpringShape, SyncMode, TextureSlotSink, TwoBoneSpec,
+  Volume,
 };
 
 /// Floats per joint in createSpring's joint payload (see `create_spring`).
@@ -781,7 +782,34 @@ fn set_occluder<'js>(ctx: Ctx<'js>, id: u64, shape: OptArg<Object<'js>>) -> rqui
   super::gui(&ctx).alloy.spatial().set_occluder(id, occluder).map_err(|e| throw_str(&ctx, &format!("setOccluder: {e}")))
 }
 
+/// The shape plus its `audio` field: absent = the default blocking (the
+/// core's gain and cutoff), `false` = sight only, `{ gain?, cutoff? }` =
+/// its own values.
 fn occluder_arg<'js>(ctx: &Ctx<'js>, o: &Object<'js>, api: &str) -> rquickjs::Result<Occluder> {
+  let shape = occluder_shape(ctx, o, api)?;
+  let audio: Value<'js> = o.get("audio")?;
+  if audio.is_undefined() || audio.is_null() {
+    return Ok(shape);
+  }
+  if let Some(flag) = audio.as_bool() {
+    return Ok(if flag { shape } else { shape.with_audio(None) });
+  }
+  let Some(spec) = audio.as_object() else {
+    return Err(throw_str(ctx, &format!("{api}: audio must be false or {{ gain?, cutoff? }}")));
+  };
+  let defaults = OccluderAudio::default();
+  let gain = spec.get::<_, Option<f64>>("gain")?.unwrap_or(defaults.gain as f64);
+  let cutoff = spec.get::<_, Option<f64>>("cutoff")?.unwrap_or(defaults.cutoff as f64);
+  if !(gain.is_finite() && (0.0..=1.0).contains(&gain)) {
+    return Err(throw_str(ctx, &format!("{api}: audio.gain must be a number in [0, 1]")));
+  }
+  if !(cutoff.is_finite() && cutoff > 0.0) {
+    return Err(throw_str(ctx, &format!("{api}: audio.cutoff must be a finite number > 0 (Hz)")));
+  }
+  Ok(shape.with_audio(Some(OccluderAudio { gain: gain as f32, cutoff: cutoff as f32 })))
+}
+
+fn occluder_shape<'js>(ctx: &Ctx<'js>, o: &Object<'js>, api: &str) -> rquickjs::Result<Occluder> {
   if let Some(b) = o.get::<_, Option<TypedArray<'js, f32>>>("box")? {
     let f = elements_of(ctx, &b, api)?;
     if f.len() != 6 {

@@ -14,8 +14,96 @@
 // One mixer plays everything: clips, streams, sinks and video audio, each
 // voice under its own gain, its bus's gain and the master gain, every gain
 // rampable sample-accurately.
+//
+// A playback can be placed in the world: attached to a spatial node (or a
+// fixed position) and heard by a Listener (a node, or a target's view: the
+// camera), the spatial core writes its pan, distance gain, doppler rate
+// and occlusion low-pass from the flushed world matrices, every frame
+// something moved and never otherwise. Three's PositionalAudio, Unity's
+// AudioSource, Godot's AudioStreamPlayer3D; the Web Audio PannerNode
+// vocabulary. Zero per-frame JS on the audio side.
 
 declare module "flux:audio" {
+  import type { NodeId, ViewKey } from "flux:spatial"
+  import type { TextureId } from "flux:gpu"
+
+  /**
+   * What a {@link Listener} hears from: a spatial node (its world position;
+   * its local -z is forward and +x right, Three's AudioListener), or a
+   * target's view as `setView` last wrote it (the camera itself, with no
+   * node to keep in step; a view key from `allocViewKey` is a view like
+   * any target's).
+   */
+  type ListenerSource = { node: NodeId } | { view: TextureId | ViewKey }
+
+  type ListenerOptions = {
+    /**
+     * The speed of sound in WORLD UNITS per second: what the doppler shift
+     * is measured against, and the one knob that fixes the world's unit
+     * (343 for metres, the default; a 2d layer in pixels wants its own, or
+     * `doppler: 0` on its emitters). A finite number > 0.
+     */
+    speedOfSound?: number
+  }
+
+  /**
+   * The ear emitters are heard by. One per scene in practice (so
+   * split-screen works); an emitter names the one it is placed against.
+   */
+  type Listener = {
+    /** The listener's id (what an emitter option carries). */
+    readonly id: number
+    /**
+     * Re-point the listener (a camera switch, a node taking over from the
+     * view): its emitters re-place at the next frame. A changed source
+     * forgets the velocity history, so the switch itself is no motion.
+     */
+    set(source: ListenerSource, options?: ListenerOptions): void
+    /**
+     * Forget the listener. Emitters heard by it are released (their
+     * playbacks keep the last placement written). Idempotent.
+     */
+    destroy(): void
+  }
+
+  /** Web Audio's PannerNode distance models (the laws in {@link EmitterOptions}). */
+  type DistanceModel = "inverse" | "linear" | "exponential"
+
+  /**
+   * Where a playback sounds from and how it falls off: the PannerNode
+   * vocabulary plus a doppler factor. With `dc` the distance clamped to
+   * [refDistance, maxDistance] and `r`, `m`, `f` those three values, the
+   * gain is `r / (r + rolloff (dc - r))` (inverse), `1 - rolloff (dc - r) /
+   * (m - r)` (linear) or `(dc / r) ^ -rolloff` (exponential), a multiplier
+   * UNDER the playback's own gain (setGain keeps meaning "how loud is this
+   * thing"). The pan is the lateral angle to the emitter, blended to center
+   * inside refDistance (a source you stand inside surrounds you). The rate
+   * is the doppler ratio from the velocities the core derives from the
+   * positions (smoothed; a jump faster than sound is a teleport), times
+   * `doppler`; 0 switches it off. Occluders with audio properties
+   * (`setOccluder`'s `audio`) crossing the straight path dim and dull the
+   * sound (a gain and a low-pass). All of it is written by the core after
+   * each flush that moved something, with zero JS per frame.
+   */
+  type EmitterOptions = {
+    /** The node the sound follows (exactly one of `node` and `position`). */
+    node?: NodeId
+    /** A fixed world position instead of a node: a one-shot at a point. */
+    position?: [number, number, number]
+    /** The listener the sound is placed against. */
+    listener: Listener
+    /** Default "inverse". */
+    distanceModel?: DistanceModel
+    /** World units; full level within it. Default 1; a finite number > 0. */
+    refDistance?: number
+    /** World units; the falloff stops here. Default 10000; >= refDistance. */
+    maxDistance?: number
+    /** How fast the level falls past refDistance. Default 1; >= 0 (0: none). */
+    rolloff?: number
+    /** The doppler factor: 1 the physical shift (default), 0 off, more exaggerates. */
+    doppler?: number
+  }
+
   /** Options for {@link play} and {@link Clip.play}. */
   type PlayOptions = {
     /** Repeat the clip until stopped (see {@link Playback.setLoop}). Defaults to false. */
@@ -45,6 +133,13 @@ declare module "flux:audio" {
      * paused ({@link pause}) and stopped ({@link stop}) as a group.
      */
     bus?: string
+    /**
+     * Place the playback in the world from its first sample (see
+     * {@link EmitterOptions}; exactly like {@link Playback.attach} right
+     * after starting, but with no plain first block). Exclusive with `pan`:
+     * the emitter owns the pan.
+     */
+    emitter?: EmitterOptions
   }
 
   /** Options for the live setters ({@link Playback.setGain} and friends). */
@@ -112,9 +207,29 @@ declare module "flux:audio" {
     /**
      * Move the stereo position while playing (see {@link PlayOptions.pan}).
      * A ramped set on a never-panned playback sweeps from center. A no-op
-     * after the playback finished.
+     * after the playback finished. Throws while the playback is attached
+     * to an emitter, which owns the pan.
      */
     setPan(pan: number, options?: RampOptions): void
+    /**
+     * Place the playback in the world (see {@link EmitterOptions}): bound to
+     * a node or a fixed position and heard by a listener, the core writes
+     * its pan, gain and rate layers and its low-pass from then on, at once
+     * for the placement as the tree stands and after every flush that
+     * moved something. Attaching again updates the binding (the same node
+     * keeps its velocity history). A no-op after the playback finished;
+     * throws on a node or listener that does not exist, or parameters out
+     * of range.
+     */
+    attach(emitter: EmitterOptions): void
+    /**
+     * Release the placement: the gain and rate layers ramp back to 1 and
+     * the low-pass opens (over `rampMs`); the pan stays where the emitter
+     * left it, and setPan is accepted again. A node leaving the scene or a
+     * destroyed listener releases the binding the same way, with no ramp
+     * of its own.
+     */
+    detach(options?: RampOptions): void
     /**
      * Change the playback rate while playing (see {@link PlayOptions.rate}) -
      * a live rate sweep is how an engine revs or a doppler pass falls.
@@ -298,4 +413,11 @@ declare module "flux:audio" {
    * Opens the audio device on first use, like the load and play calls.
    */
   export function outputSampleRate(): number
+  /**
+   * A listener for positional playbacks (see {@link Listener}): what they
+   * are heard from, a node or a target's view. Costs nothing while no
+   * emitter names it; does not open the audio device. Call `destroy()`
+   * when done (an app reload destroys what it left).
+   */
+  export function createListener(source: ListenerSource, options?: ListenerOptions): Listener
 }

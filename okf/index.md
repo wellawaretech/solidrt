@@ -132,6 +132,13 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   renderer module confine Impeller to that module with no visible change and
   no added per-op cost, so a replacement can be built as a second
   implementation and Impeller deleted.
+- **[Spatial audio - emitter and listener nodes on the spatial core](plans/spatial-audio-emitters.md)** [2026-08-30]
+  A playback bound to a spatial node (or a fixed position) and heard by a
+  listener (a node, or a target's view - the camera), the core writing its
+  pan, distance gain, doppler rate and occlusion low-pass from the flushed
+  world matrices with zero per-frame JS; the Web Audio PannerNode vocabulary,
+  a per-voice low-pass in the mixer, occlusion over the same occluders culling
+  uses, one law for 3d scenes and 2d layers.
 - **[A splat cloud's SH3 texture is 48 bytes per splat where a palette holds it in 3](plans/splat-palette-sh.md)** [2026-10-18]
   The .sol3s SH block stores a byte per coefficient (16/32/48 bytes per splat
   at degree 1/2/3, 48 MB at 1M splats with SH3) while sogs and Unity's
@@ -806,13 +813,6 @@ Shaped, not started.
   file or line, so finding it in an app with a dozen effects is a manual hunt;
   the diagnostics are subscribable and the dev server already remaps stack
   frames, so a location is attachable on our side.
-- **[Spatial audio - emitter and listener nodes on the spatial core](backlog/spatial-audio-emitters.md)** [2026-08-30]
-  Every voice knob a positional sound needs exists (pan, gain, rate, all
-  ramped) but nothing places a sound in the world, so an engine note or a
-  passing kart is per-voice-per-frame JS - compute the relative position and
-  velocity from the camera and write three setters. Bind a playback to a
-  spatial node and name a listener node, and the core writes pan/gain/rate
-  from the flushed world matrices; the JS pattern stays valid.
 - **[The cull pass costs microseconds per sink on a phone core](backlog/spatial-cull-pass-per-sink-cost.md)** [2026-10-20]
   A camera move re-tests every draw sink on the target, and on the tablet that
   is 5.6 to 6.6 ms for 1600 sinks, about 3.5 us each, for a frustum test and a

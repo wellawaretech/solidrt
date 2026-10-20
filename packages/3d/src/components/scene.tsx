@@ -104,6 +104,9 @@ export type SceneProps = ScenePointerProps &
    * prop; default true): meshes wholly behind the shown occluders are not
    * drawn. Reactive. */
   occlusion?: boolean
+  /** The speed of sound for the scene's audio listener, world units per
+   * second (default 343: metres); see SceneOptions.speedOfSound. */
+  speedOfSound?: number
   /** Scene-wide shadow settings: `quality` (scene.setShadowQuality) is
    * the soft shadow kernel's tier, "hard" | "low" | "medium" | "high" -
    * the tap count every light with a `radius` above 1 or a size spends,
@@ -221,6 +224,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
       quality: props.quality,
       lodBias: props.lodBias,
       occlusion: props.occlusion,
+      speedOfSound: props.speedOfSound,
       blendSpace: props.blendSpace,
       resolve: props.resolve,
       bloom: props.bloom,

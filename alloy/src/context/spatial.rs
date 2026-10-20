@@ -1,7 +1,11 @@
 use crate::gpu::{validate_params, DrawUpdate, ParamValue, TextureFormat};
 use crate::raster::RasterCmd;
+use std::time::Instant;
+
+use crate::audio::SpatialParams;
 use crate::spatial::{
-  DrawSink, InstanceRecordSink, Mat4f, NodeId, SharedSlotSink, SinkWriter, Spatial, TextureSlotSink, WeightsSlotSink,
+  DrawSink, EmitterOutput, EmitterRamp, InstanceRecordSink, Mat4f, NodeId, SharedSlotSink, SinkWriter, Spatial,
+  TextureSlotSink, WeightsSlotSink,
 };
 
 use super::mirror::entry_mirror;
@@ -18,7 +22,21 @@ use super::Context;
 struct Writer<'a> {
   ctx: &'a Context,
   wrote: bool,
+  /// What a placed voice glides over to this flush's values: the wall
+  /// interval since the previous flush, clamped (below).
+  frame_ramp_ms: f64,
 }
+
+/// A placed voice reaches each flush's values over the interval since the
+/// previous flush, so its pan, gain and rate trace a continuous line
+/// between frames instead of stepping. Clamped: a stall must not smear a
+/// value over a second, a burst of flushes must not click.
+const EMITTER_RAMP_MIN_MS: f64 = 4.0;
+const EMITTER_RAMP_MAX_MS: f64 = 100.0;
+/// How long an occlusion change takes to settle: a wall coming between
+/// listener and emitter dims the sound over this rather than clicking it,
+/// and a segment flickering at an edge hovers rather than stutters.
+const OCCLUSION_RAMP_MS: f64 = 150.0;
 
 impl Writer<'_> {
   fn landed(&mut self, result: Result<(), String>) -> bool {
@@ -153,6 +171,24 @@ impl SinkWriter for Writer<'_> {
       data.resize(frame, 0);
     }
     self.landed(self.ctx.update_texture(texture, &data, 0))
+  }
+
+  // A spatial placement into the mixer. Not a paint: `wrote` stays. A
+  // voice that has ended releases its emitter silently (live control
+  // races with natural completion by design); a mixer error warns once.
+  fn write_emitter(&mut self, voice: u64, output: &EmitterOutput, ramp: EmitterRamp) -> bool {
+    let ramp_ms = match ramp {
+      EmitterRamp::Frame => self.frame_ramp_ms,
+      EmitterRamp::Occlusion => OCCLUSION_RAMP_MS,
+    };
+    let params = SpatialParams { pan: output.pan, gain: output.gain, rate: output.rate, cutoff: output.cutoff };
+    match self.ctx.set_audio_spatial(voice, params, ramp_ms) {
+      Ok(landed) => landed,
+      Err(e) => {
+        log::warn!("[spatial] emitter write dropped, binding released: {e}");
+        false
+      }
+    }
   }
 }
 
@@ -326,14 +362,24 @@ impl Context {
   /// Change a sink's "on" instance count; written at once if the entry is
   /// on. The caller must request a frame when this returns true.
   pub fn spatial_set_count(&self, node: NodeId, count: u32) -> Result<bool, String> {
-    let mut writer = Writer { ctx: self, wrote: false };
+    let mut writer = Writer { ctx: self, wrote: false, frame_ramp_ms: EMITTER_RAMP_MIN_MS };
     self.spatial.borrow_mut().set_sink_count(node, count, &mut writer)
   }
 
   /// Recompute every changed subtree and write the sinks. Returns whether
   /// anything was written (the caller requests a frame if so).
   pub fn spatial_flush(&self) -> bool {
-    let mut writer = Writer { ctx: self, wrote: false };
+    let now = Instant::now();
+    let frame_ramp_ms = match self.spatial_flushed_at.replace(Some(now)) {
+      Some(last) => {
+        (now.saturating_duration_since(last).as_secs_f64() * 1000.0).clamp(EMITTER_RAMP_MIN_MS, EMITTER_RAMP_MAX_MS)
+      }
+      None => EMITTER_RAMP_MIN_MS,
+    };
+    // Voices that ended free their emitters before the pass, by the
+    // registry's word (the core never learns a voice's state otherwise).
+    self.spatial.borrow_mut().release_emitters(|voice| self.audio_ended(voice));
+    let mut writer = Writer { ctx: self, wrote: false, frame_ramp_ms };
     self.spatial.borrow_mut().flush(&mut writer);
     writer.wrote
   }
