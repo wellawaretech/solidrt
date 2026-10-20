@@ -60,18 +60,18 @@ impl LayoutData {
   // The one seam where taffy's computed layout converts into the euclid paint
   // vocabulary. Everything downstream of layout (hit testing, bounding boxes,
   // compositing) reads the box through these instead of `computed` directly.
-  pub fn location(&self) -> crate::impellers::Point {
-    crate::impellers::Point::new(self.computed.location.x, self.computed.location.y)
+  pub fn location(&self) -> crate::renderer::Point {
+    crate::renderer::Point::new(self.computed.location.x, self.computed.location.y)
   }
 
-  pub fn size(&self) -> crate::impellers::Size {
-    crate::impellers::Size::new(self.computed.size.width, self.computed.size.height)
+  pub fn size(&self) -> crate::renderer::Size {
+    crate::renderer::Size::new(self.computed.size.width, self.computed.size.height)
   }
 
   /// The solved box in the parent's frame: location and size as the pass
   /// wrote them, whatever a layout slide paints (`Element::painted_box`).
-  pub fn solved_box(&self) -> crate::impellers::Rect {
-    crate::impellers::Rect::new(self.location(), self.size())
+  pub fn solved_box(&self) -> crate::renderer::Rect {
+    crate::renderer::Rect::new(self.location(), self.size())
   }
 
   // A border box of `size` inset by this layout's padding and border,
@@ -80,15 +80,15 @@ impl LayoutData {
   // (okf/done/padding-box-divergence.md). Paint and hit both derive it from
   // here (through Element::content_box, which passes the painted size), so
   // they cannot disagree.
-  pub fn content_box_of(&self, size: crate::impellers::Size) -> crate::impellers::Rect {
+  pub fn content_box_of(&self, size: crate::renderer::Size) -> crate::renderer::Rect {
     let c = &self.computed;
     let left = c.padding.left + c.border.left;
     let top = c.padding.top + c.border.top;
     let right = c.padding.right + c.border.right;
     let bottom = c.padding.bottom + c.border.bottom;
-    crate::impellers::Rect::new(
-      crate::impellers::Point::new(left, top),
-      crate::impellers::Size::new(size.width - left - right, size.height - top - bottom),
+    crate::renderer::Rect::new(
+      crate::renderer::Point::new(left, top),
+      crate::renderer::Size::new(size.width - left - right, size.height - top - bottom),
     )
   }
 }
@@ -147,7 +147,7 @@ impl<'a> LayoutContext<'a> {
       },
     );
     let margin = self.margin(atom);
-    let size = crate::impellers::Size::new(
+    let size = crate::renderer::Size::new(
       output.size.width + margin.horizontal_axis_sum(),
       output.size.height + margin.vertical_axis_sum(),
     );
@@ -271,7 +271,7 @@ impl<'a> LayoutContext<'a> {
     &mut self,
     node_id: NodeId,
     inputs: LayoutInput,
-    intrinsic: crate::impellers::Size,
+    intrinsic: crate::renderer::Size,
     inner: impl FnOnce(Size<f32>) -> Size<f32>,
     display: Display,
   ) -> taffy::LayoutOutput {
@@ -321,11 +321,11 @@ impl<'a> LayoutContext<'a> {
     &mut self,
     node_id: NodeId,
     inputs: LayoutInput,
-    design: crate::impellers::Size,
+    design: crate::renderer::Size,
     display: Display,
   ) -> taffy::LayoutOutput {
     let contained = self.render_tree.node(u64::from(node_id)).layout_data().contain_size;
-    let intrinsic = if contained { crate::impellers::Size::zero() } else { design };
+    let intrinsic = if contained { crate::renderer::Size::zero() } else { design };
     self.boxed_layout(node_id, inputs, intrinsic, |_| Size { width: design.width, height: design.height }, display)
   }
 
@@ -334,7 +334,7 @@ impl<'a> LayoutContext<'a> {
   // inside the children in the box the parent solved, as any container lays
   // them out.
   fn contained_layout(&mut self, node_id: NodeId, inputs: LayoutInput, display: Display) -> taffy::LayoutOutput {
-    self.boxed_layout(node_id, inputs, crate::impellers::Size::zero(), |solved| solved, display)
+    self.boxed_layout(node_id, inputs, crate::renderer::Size::zero(), |solved| solved, display)
   }
 }
 
@@ -447,7 +447,7 @@ impl<'a> LayoutContext<'a> {
             // of its content reaches the parent and the kind's own measure
             // is not consulted (a text still lays its lines out at paint).
             let size = if contained {
-              replaced_size(known, crate::impellers::Size::zero())
+              replaced_size(known, crate::renderer::Size::zero())
             } else {
               kind.measure(&MeasureContext { platform, alloy, known, available })
             };

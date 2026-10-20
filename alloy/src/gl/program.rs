@@ -12,7 +12,7 @@ use crate::gpu::vocab::{PipelineDesc, ShaderStage};
 // covering vertices are computed in the shader with no vertex buffer. vUV is the
 // 0..1 screen coordinate with origin at the displayed top-left: a fragment at
 // the bottom of the framebuffer (clip y = -1) lands in texture memory row 0,
-// which Impeller samples as the top, so vUV = p needs no extra flip.
+// which the renderer samples as the top, so vUV = p needs no extra flip.
 const VERTEX_SRC: &str = r"#version 300 es
 out vec2 vUV;
 void main() {

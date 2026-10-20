@@ -221,7 +221,7 @@ async fn run_hook(exec: Option<ExecHandle>, name: &'static str, deadline: std::t
   }
 }
 
-use alloy::impellers::ISize;
+use alloy::renderer::ISize;
 #[cfg(feature = "go")]
 use alloy::rendertree::FontPayload;
 use alloy::rendertree::{PlatformContext, RenderTree};

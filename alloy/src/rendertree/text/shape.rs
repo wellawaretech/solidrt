@@ -3,11 +3,12 @@
 // (ParaKey), plus the line layouts derived from them per width. The
 // breaking itself is text::layout.
 use super::{OverflowWrap, Text, TextAnchor, TextOverflow, TextRun, ATOM_CHAR, MAX_CACHED_WIDTHS};
-use crate::impellers::{FontStyle, FontWeight, Size, TextAlignment};
+use crate::renderer::Size;
 use crate::rendertree::text::glyphs::{Fallback, ShapedGlyphs};
 use crate::rendertree::text::layout::{self, Align, Layout, LineCursor, LineExtent, Run, RunMetrics, Wrap};
 use crate::rendertree::text::CaretStop;
 use crate::rendertree::text::RunStyle;
+use crate::rendertree::text::{FontStyle, FontWeight, TextAlignment};
 use crate::rendertree::{PaintState, PlatformContext};
 use std::rc::Rc;
 

@@ -1,6 +1,7 @@
 use super::dash::{box_outline, dashed_path, walked_length, Dash, Piece};
 use super::{PaintState, ShadowState};
-use crate::impellers::{ClipOperation, DisplayListBuilder, DrawStyle, Paint, Point, Rect, RoundingRadii, Size};
+use crate::renderer::prelude::*;
+use crate::renderer::{ClipOperation, DisplayListBuilder, DrawStyle, Paint, Point, Rect, RoundingRadii, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{
@@ -28,13 +29,7 @@ pub struct Rectangle {
 fn clip_out(builder: &mut DisplayListBuilder, rect: &Rect, radii: Option<[f32; 4]>) {
   match radii {
     Some([tl, tr, br, bl]) => {
-      let corner = |r: f32| Point::new(r, r);
-      let radii = RoundingRadii {
-        top_left: corner(tl),
-        top_right: corner(tr),
-        bottom_right: corner(br),
-        bottom_left: corner(bl),
-      };
+      let radii = RoundingRadii::circular([tl, tr, br, bl]);
       crate::rendertree::counters::note_clip(true);
       builder.clip_rounded_rect(rect, &radii, ClipOperation::Difference);
     }
@@ -48,13 +43,7 @@ fn clip_out(builder: &mut DisplayListBuilder, rect: &Rect, radii: Option<[f32; 4
 fn draw(builder: &mut DisplayListBuilder, path: &Rect, radii: Option<[f32; 4]>, paint: &Paint) {
   match radii {
     Some([tl, tr, br, bl]) => {
-      let corner = |r: f32| Point::new(r, r);
-      let radii = RoundingRadii {
-        top_left: corner(tl),
-        top_right: corner(tr),
-        bottom_right: corner(br),
-        bottom_left: corner(bl),
-      };
+      let radii = RoundingRadii::circular([tl, tr, br, bl]);
       crate::rendertree::counters::note_draw();
       builder.draw_rounded_rect(path, &radii, paint);
     }

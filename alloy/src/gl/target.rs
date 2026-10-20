@@ -64,10 +64,10 @@ pub(super) enum TargetKind {
 
 /// An FBO-backed RGBA8 target texture rendered by shader passes: either a
 /// fullscreen fragment pass or an ordered list of mesh draws. The target's GL
-/// name is also adopted into Impeller (and held in the TextureRegistry); this
+/// name is also adopted by the renderer (and held in the TextureRegistry); this
 /// struct keeps the FBO and draw state so the same texture can be re-rendered
 /// with new params. Like GpuTexture it never deletes the target name:
-/// Impeller owns it once adopted, and deleting here would double-free.
+/// the renderer owns it once adopted, and deleting here would double-free.
 pub struct ShaderTexture {
   kind: TargetKind,
   fbo: glow::Framebuffer,
@@ -109,7 +109,7 @@ pub struct ShaderTexture {
   /// pass with the front-face rule inverted - GL's cube faces are seen
   /// from outside, the x mirror of a 2D target's image, and the app
   /// mirrors its projection to match. `width` == `height` == the face
-  /// edge. The name is never Impeller-adopted (cube maps are sampler-only),
+  /// edge. The name is never renderer-adopted (cube maps are sampler-only),
   /// so the owner deletes it.
   cube: bool,
 }
@@ -593,7 +593,7 @@ impl ShaderTexture {
       let prev_draw = gl.get_parameter_i32(glow::DRAW_FRAMEBUFFER_BINDING);
       let scissor = gl.is_enabled(glow::SCISSOR_TEST);
       let (w, h) = (self.width as i32, self.height as i32);
-      // The blit honours the scissor, which Impeller may have left enabled.
+      // The blit honours the scissor, which the renderer may have left enabled.
       gl.disable(glow::SCISSOR_TEST);
       gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(*msaa_fbo));
       gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(self.fbo));
@@ -863,7 +863,7 @@ impl ShaderTexture {
   /// Recreate the render target at a new size - and, with `samples`, over
   /// new multisample storage at that count (1 = none) - keeping the
   /// compiled programs, FBO, entries, and draw state; the caller re-renders
-  /// afterwards. The old target texture is NOT deleted here: Impeller owns
+  /// afterwards. The old target texture is NOT deleted here: the renderer owns
   /// its GL name via the adopted Texture handle (see register_shader_target),
   /// which dies with the UI side's last reference once the registry entry
   /// is replaced. On error the old target is left attached and the shader
@@ -895,7 +895,7 @@ impl ShaderTexture {
       // shader keeps rendering at its previous size. The storage view borrows
       // this target's GL names (no ownership: nothing is deleted through it).
       // A depth texture follows the color target's rule: a fresh name at the
-      // new size (the old one is Impeller-owned once adopted, so it is
+      // new size (the old one is renderer-owned once adopted, so it is
       // neither respecified nor deleted here). Renderbuffer depth is resized
       // in place by attach_storage.
       let depth = match old_depth {
@@ -979,7 +979,7 @@ impl ShaderTexture {
   /// every entry's VAO), and drop its uses of pipelines, programs, and vertex
   /// buffers - which delete the underlying GL objects only when nothing else
   /// (a registry, another target) still holds them. The target texture is NOT
-  /// deleted here, and neither is a depth texture: Impeller owns both via
+  /// deleted here, and neither is a depth texture: the renderer owns both via
   /// the adopted Texture handles in the TextureRegistry, and those handles
   /// are responsible for deletion (a registration that never adopted the
   /// depth texture deletes it itself, see the raster owner).
@@ -1477,7 +1477,7 @@ impl ShaderTexture {
   /// manual target, whose pass may be non-idempotent and therefore must not
   /// run outside an explicit render. Creation and resize would otherwise
   /// leave undefined storage. Scissor, color/depth masks, clear values and
-  /// the FBO binding are Impeller-cached state on this shared context: force,
+  /// the FBO binding are renderer-cached state on this shared context: force,
   /// clear, and put everything back (same contract as `run_pass`).
   pub fn clear(&self, gl: &glow::Context) {
     let [r, g, b, a] = self.mesh().map(|m| m.clear_color).unwrap_or([0.0; 4]);
@@ -1505,7 +1505,7 @@ impl ShaderTexture {
           let prev_depth_mask = gl.get_parameter_i32(glow::DEPTH_WRITEMASK) != 0;
           let prev_clear_depth = gl.get_parameter_f32(glow::DEPTH_CLEAR_VALUE);
           gl.depth_mask(true);
-          // Always the far plane; Impeller's clip passes leave 0.0 behind (see
+          // Always the far plane; the renderer's clip passes leave 0.0 behind (see
           // run_pass).
           gl.clear_depth_f32(1.0);
           gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);

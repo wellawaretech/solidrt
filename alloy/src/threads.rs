@@ -1,4 +1,4 @@
-//! Thread bootstrap: spawns sol-raster (sole owner of the GL and Impeller
+//! Thread bootstrap: spawns sol-raster (sole owner of the GL context and the renderer
 //! contexts, see raster/) and sol-ui (JS, layout, paint; zero GL) and wires
 //! the command channel between them.
 
@@ -44,7 +44,7 @@ pub(crate) fn run_context(
   let context_wake = wake.clone();
 
   // The raster thread: sole owner of the process's single GL context and
-  // Impeller context for the engine's lifetime. Impeller's GLES contract
+  // renderer for the engine's lifetime. The renderer's GLES contract
   // requires exactly this: one context, used only on the thread it was
   // created on. Everything GL arrives over the command channel (raster.rs).
   let spawn_raster = std::thread::Builder::new().name("sol-raster".into()).spawn(move || {
@@ -62,17 +62,17 @@ pub(crate) fn run_context(
     }
 
     let gl = crate::gl::create_gl_context(&*binding);
-    let impeller_ctx = crate::gl::create_impeller_context(&*binding);
+    let renderer = crate::gl::create_renderer(&*binding);
     unsafe {
       let vendor = gl.get_parameter_string(glow::VENDOR);
-      let renderer = gl.get_parameter_string(glow::RENDERER);
+      let renderer_name = gl.get_parameter_string(glow::RENDERER);
       let version = gl.get_parameter_string(glow::VERSION);
       let limits = crate::gl::query_limits(&gl);
-      log::info!("[alloy] GPU ready: {vendor} | {renderer} | {version}");
-      crate::set_gpu_info(crate::GpuInfo { vendor, renderer, version, limits });
+      log::info!("[alloy] GPU ready: {vendor} | {renderer_name} | {version}");
+      crate::set_gpu_info(crate::GpuInfo { vendor, renderer: renderer_name, version, limits });
     }
 
-    let state = RasterState::new(gl, impeller_ctx, binding, surface_size, sink, raster_stats, tx, wake);
+    let state = RasterState::new(gl, renderer, binding, surface_size, sink, raster_stats, tx, wake);
     // Map the window now rather than at the first frame, so a UI thread that
     // never submits one is still visible on Wayland (see prime_window).
     state.prime_window();

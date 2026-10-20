@@ -1,7 +1,7 @@
 // The text layer's gradient mapping (rendertree/text/gradient.rs): a run's
 // gradient paint resolved to the layer's pixels for the glyph pass.
 use crate::gpu::{GradientKind, GradientTile, RAMP_WIDTH};
-use crate::impellers::{Color, Point, Size};
+use crate::renderer::{Color, Point, Size};
 use crate::rendertree::text::gradient::layer_gradient;
 use crate::rendertree::{Gradient, GradientStop};
 

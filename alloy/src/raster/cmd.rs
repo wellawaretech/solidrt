@@ -3,7 +3,7 @@
 //! the enum every new GPU feature extends first; the calling conventions
 //! (fire-and-forget vs blocking RPC) are documented on the module.
 
-use impellers::{DisplayList, Texture};
+use crate::renderer::{DisplayList, Texture};
 use std::sync::mpsc;
 
 use crate::gpu::{
@@ -15,7 +15,7 @@ use crate::gpu::{
 /// color output, and the depth texture when the target has one
 /// (`DepthStorage::Texture`). The UI side registers each under its own id.
 pub struct TargetHandles {
-  /// The color's Impeller adoption; None for a draw target of a format
+  /// The color's renderer adoption; None for a draw target of a format
   /// other than rgba8 (sampler-only, never displayed: the raster side owns
   /// and deletes the name, as for a cube map).
   pub color: Option<Texture>,
@@ -129,7 +129,7 @@ pub(crate) enum RasterCmd {
   /// channel.
   RebindWindowSurface,
   /// Create (or replace, same id) a sampleable pixel texture (RGBA8 or R8)
-  /// and adopt it into Impeller. Replies with the adopted handle for UI-side
+  /// and adopt it into the renderer. Replies with the adopted handle for UI-side
   /// registration.
   CreateTexture {
     id: u64,
@@ -145,7 +145,7 @@ pub(crate) enum RasterCmd {
   },
   /// Create a cube map at `id` from six `size` x `size` faces in GL order
   /// (+X, -X, +Y, -Y, +Z, -Z), or from an explicit mip chain (the full
-  /// chain level-major, `check_cube_faces`). Never adopted into Impeller (a cube name
+  /// chain level-major, `check_cube_faces`). Never adopted by the renderer (a cube name
   /// has no 2D adoption), so the reply is bare: the UI side registers the
   /// entry without a handle.
   CreateCubeTexture {
@@ -159,7 +159,7 @@ pub(crate) enum RasterCmd {
   },
   /// Create a volume at `id` (`shape` D3 or D2Array): `depth` slices or
   /// layers of `width` x `height`, `pixels` the whole volume slice-major.
-  /// Never adopted into Impeller like a cube map, so the reply is bare.
+  /// Never adopted by the renderer like a cube map, so the reply is bare.
   CreateVolumeTexture {
     id: u64,
     shape: TextureShape,
@@ -283,8 +283,8 @@ pub(crate) enum RasterCmd {
   },
   /// Create a cube draw target at `id`: a `size` x `size` cube map as the
   /// color of a manual draw target rendered face by face (RenderTarget
-  /// with a face), over one shared depth renderbuffer. Never adopted into
-  /// Impeller (cube maps are sampler-only), so the reply is bare and the
+  /// with a face), over one shared depth renderbuffer. Never adopted by the
+  /// renderer (cube maps are sampler-only), so the reply is bare and the
   /// raster side deletes the name on destroy, as for uploaded cube maps.
   CreateCubeDrawTarget {
     id: u64,
@@ -353,7 +353,7 @@ pub(crate) enum RasterCmd {
   /// Install (Some) or clear (None) the overlay: a small diagnostics
   /// quad composited over every subsequent frame, after the window shader
   /// pass. The declaration's display list is rasterized into a small
-  /// retained layer (an Impeller surface draw always clears its target, so
+  /// retained layer (a renderer draw always clears its target, so
   /// it can never draw straight onto the finished frame) and blended over
   /// FBO 0 each frame. Retained here because it changes on its own cadence
   /// (once per second), decoupled from frames; fire-and-forget on this
@@ -406,14 +406,14 @@ pub(crate) enum RasterCmd {
   CopyTexture { src: u64, dst: u64 },
   /// Drop raster-side bookkeeping for a texture id (and destroy its shader
   /// program/FBO when the id is a shader target). The GL name itself is owned
-  /// by the adopted Impeller Texture and dies with the UI side's last handle.
+  /// by the adopted renderer Texture and dies with the UI side's last handle.
   DestroyTexture { id: u64 },
-  /// Register an already-adopted Impeller texture (a snapshot boundary's
+  /// Register an already-adopted renderer texture (a snapshot boundary's
   /// retained rasterization) under a registry id so shader passes can
   /// sample it by id, and mark the id's content changed so targets sampling
   /// it re-render at the next flush. Sent after every rasterization of a
   /// boundary whose texture has been vended (`snapshotTexture`): the name
-  /// stays Impeller-owned, so the raster side only mirrors it. Ordered
+  /// stays renderer-owned, so the raster side only mirrors it. Ordered
   /// behind the rasterization that produced it and ahead of the frame.
   AdoptTexture { id: u64, texture: Texture, width: u32, height: u32 },
   /// Create an interleaved vertex buffer from raw bytes.
@@ -550,7 +550,7 @@ impl RasterCmd {
     )
   }
 
-  /// Whether this command carries an Impeller handle or a display list of
+  /// Whether this command carries a renderer handle or a display list of
   /// the UI thread's making: what a recovered context must refuse until the
   /// UI thread has resynced to it (see `Resync`). Everything else works by
   /// registry id, which recovery keeps.

@@ -301,7 +301,7 @@ fn radius_animates_uniform_only() {
 
 #[test]
 fn color_animates_in_oklab_and_settles() {
-  use crate::impellers::Color;
+  use crate::renderer::Color;
   let mut tree = tree_with_animated_rect(LINEAR_100);
   tree.set_transition_now(0.0);
   // Rect default color is whatever PaintState defaults to; write a known
@@ -338,7 +338,7 @@ fn color_animates_in_oklab_and_settles() {
 
 #[test]
 fn oklab_roundtrip_is_exact_enough() {
-  use crate::impellers::Color;
+  use crate::renderer::Color;
   for (r, g, b, a) in
     [(1.0, 0.0, 0.0, 1.0), (0.0, 1.0, 0.0, 0.5), (0.1, 0.2, 0.9, 0.0), (1.0, 1.0, 1.0, 1.0), (0.0, 0.0, 0.0, 1.0)]
   {
@@ -1189,7 +1189,7 @@ const SHADOW: ShadowState = ShadowState {
   dy: 8.0,
   blur: 16.0,
   spread: 2.0,
-  color: crate::impellers::Color::new_srgba(0.0, 0.0, 0.0, 0.5),
+  color: crate::renderer::Color::new_srgba(0.0, 0.0, 0.0, 0.5),
 };
 
 #[test]

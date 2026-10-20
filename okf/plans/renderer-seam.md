@@ -72,7 +72,7 @@ first draft, and it is the wrong seam for two reasons.
 The builder already runs on the UI thread (`frame.rs` records the frame,
 `context/mod.rs` sends the finished list to the raster thread). The
 translation would have run on the raster thread, and
-[display-list-op-cost](display-list-op-cost.md) measured that thread's
+[display-list-op-cost](../backlog/display-list-op-cost.md) measured that thread's
 per-op walk as the TV's bottleneck: a second walk of every op lands on
 exactly the thread that cannot afford it.
 
@@ -131,7 +131,7 @@ and the path cache per element stays as it is.
   own vocabulary, and `pub use impellers` is gone.
 - No visible change: the snapshot suites pass with identical pixels.
 - No regression on the TV: the animated-frame cost in
-  [display-list-op-cost](display-list-op-cost.md) is re-measured before
+  [display-list-op-cost](../backlog/display-list-op-cost.md) is re-measured before
   and after, on a release client. By construction nothing per-op changes
   (an enum conversion and a newtype call), so this is a check, not a
   budget.
@@ -197,5 +197,60 @@ pixels.
 An own plain-data op list is also out of scope. It becomes worth having
 only if something consumes it, such as a culling pass that stops handing
 the renderer the full scene every frame
-([display-list-op-cost](display-list-op-cost.md)); that pass would run on
+([display-list-op-cost](../backlog/display-list-op-cost.md)); that pass would run on
 the UI thread, where the damage is already known, and is its own item.
+
+## Steps
+
+Decided 2026-10-20: traits per renderer type, consumed through aliases.
+The sweep is one compile unit: once the rendertree records through the
+renderer's types, the raster side must draw them, so steps 2 to 5 landed
+together (step 1 alone compiles on its own).
+
+1. **Add `alloy/src/renderer/`.** `mod.rs` states the contract (traits,
+   cfg selection, aliases), `vocab.rs` the own vocabulary, `impeller/` the
+   newtypes over the `impellers` types. No callers change.
+2. **Rendertree and text** import `crate::renderer` instead of
+   `crate::impellers`: the kinds, text and its decorations, `composite.rs`,
+   `boundary.rs`, `frame.rs`, `color.rs`; the dash walker's `Pen` targets
+   the renderer path builder; the text enums become own types, which
+   reaches lattice's overlay and the flux font and text parsers.
+3. **Flux properties and lattice** parse props into the own enums.
+   JS-facing strings do not change.
+4. **Raster side.** The renderer replaces the Impeller context in the
+   raster state, the five adoption sites become `import_texture`, the three
+   `wrap_fbo` sites become `draw` with a target, the texture entry's
+   `impeller` field becomes `handle`, and the context-restored event and
+   the capture paths carry the alias.
+5. **Close the seam.** Tests move to the aliases, `pub use impellers` goes,
+   and a check fails when `impellers` is named outside
+   `renderer/impeller/`.
+
+Verification after each step: the flux gui tests, the alloy tests and the
+app snapshot suites through `sol test`, pixel-identical. Before step 1 and
+after step 5: the TV run from
+[display-list-op-cost](../backlog/display-list-op-cost.md) on a release
+client.
+
+## Status 2026-10-20
+
+Built, uncommitted. `alloy/src/renderer/` holds `vocab.rs`, `contract.rs`,
+`impeller.rs` and the aliases; `impellers` is named by `impeller.rs` alone,
+which `make renderer-seam-check` enforces (also a CI step). Call sites
+import `crate::renderer::prelude::*` for the trait methods and the aliases
+for the types. The text enums live in `rendertree::text`; the texture
+entry's handle field is `handle`; the GL-name handover kept the codebase's
+word, `adopt_texture`. A contract test (`alloy/src/tests/renderer.rs`)
+records every op through the aliases without a GL context.
+
+Verified: alloy 818 unit tests, flux 83 gui tests, `sol test` 840 of 841
+(the one failure, a splat palette pq bake, runs on the unchanged `flux`
+binary and is unrelated), all pixel-identical by construction (no draw
+changed, only the types it goes through).
+
+Owed: the TV re-measure of
+[display-list-op-cost](../backlog/display-list-op-cost.md) on a release
+client. Untracked alloy examples that probe Impeller's own API
+(paragraphs, `wrap_fbo`) keep their `alloy::impellers` imports and no
+longer compile without the re-export; they were probes of the thing the
+seam hides.

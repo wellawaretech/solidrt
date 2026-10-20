@@ -294,7 +294,7 @@ impl Context {
     format: TextureFormat,
   ) -> Result<u64, String> {
     self.gpu_limits().check_target(spec.width, spec.height, &spec.sampler)?;
-    // rgba8 is the one format Impeller displays and reads back; rgba8-srgb
+    // rgba8 is the one format the renderer displays and reads back; rgba8-srgb
     // (encodes on write) and rgba16f (keeps the range: HDR views, bakes)
     // make a sampler-only target - a pass source, never a `<texture>`.
     self.gpu_limits().check_render_format(format)?;
@@ -702,7 +702,7 @@ impl Context {
   /// declared-but-optimized-out uniform reflects as absent and reports "no
   /// active uniform"), and the target re-renders (sampler inputs
   /// re-resolved) at the raster thread's next dirty flush, as do any targets
-  /// sampling it, transitively. The output keeps its id and Impeller texture
+  /// sampling it, transitively. The output keeps its id and renderer texture
   /// (no re-adoption); only the GL contents change.
   ///
   /// A draw target's target-level params are its SHARED params: values every

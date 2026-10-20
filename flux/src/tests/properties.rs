@@ -702,7 +702,7 @@ fn null_resets_props_to_defaults() {
   apply_el(&mut el, "color", text("red")).expect("color applies");
   apply_el(&mut el, "color", PropValue::Null).expect("null resets color");
   let ElementKind::Rectangle(r) = &el.kind else { panic!("rect kind") };
-  assert_eq!(r.paint.draw_style, alloy::impellers::DrawStyle::Fill);
+  assert_eq!(r.paint.draw_style, alloy::renderer::DrawStyle::Fill);
   assert_eq!(r.paint.color.red, 0.5);
 
   // A span's color null drops the paint OVERRIDE (inherit the paragraph's
@@ -768,7 +768,7 @@ fn float_typed_arrays_marshal_as_number_lists() {
 // line into a polygon).
 #[test]
 fn line_draw_style_null_resets_to_stroke() {
-  use alloy::impellers::DrawStyle;
+  use alloy::renderer::DrawStyle;
   let style = |el: &Element| el.kind.paint().expect("line has paint").draw_style;
   let mut el = Element::from_kind("d-line").expect("known kind");
   assert_eq!(style(&el), DrawStyle::Stroke);

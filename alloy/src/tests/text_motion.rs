@@ -4,7 +4,8 @@
 // the scale moves and re-records once it holds. Headless, so the text's
 // own glyph pass fails and it holds no layer; the rule on a layer that
 // exists is pinned on the function, the boundary's side on the walk.
-use crate::impellers::DisplayListBuilder;
+use crate::renderer::prelude::*;
+use crate::renderer::DisplayListBuilder;
 use crate::rendertree::composite::{apply_content_changes, paint_phase};
 use crate::rendertree::text::{raster_density, raster_scale, scale_held, scale_observed, RasterScale, ScaleSeen, Text};
 use crate::rendertree::*;

@@ -1,6 +1,6 @@
 //! The device pixel grid (rendertree/grid.rs): what the paint-time snap does
 //! to a box under a translate, a scale, a raster root, and a rotation.
-use crate::impellers::{Matrix, Point, Size};
+use crate::renderer::{Matrix, Point, Size};
 use crate::rendertree::grid::{at_scale, raster, shift, snap_box, through};
 use crate::rendertree::Vector;
 

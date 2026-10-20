@@ -1,12 +1,9 @@
 use super::shadow::{blur_reach, BLUR_RADIUS_TO_SIGMA};
-use crate::impellers::{ColorFilter, ColorMatrix, ImageFilter, TileMode};
+use crate::renderer::prelude::*;
+use crate::renderer::{ColorFilter, ColorMatrix, ImageFilter, TileMode};
 
-// The ImpellerColorMatrix header says the translation column is 0..255, but
-// the shipped implementation adds it raw in normalized 0..1 color space
-// (verified live: a 255 offset renders white, a normalized invert renders
-// correctly - okf/upstream/impeller-color-matrix-translation.md). The
-// composition below is normalized throughout, so the column passes through
-// unscaled.
+// The renderer's ColorMatrix is normalized throughout (channels and the
+// translation column both 0..1), and so is the composition below.
 
 // Rec. 601-derived luminance weights, the constants SVG's feColorMatrix
 // saturate/hueRotate types are specified with (CSS filter functions defer to
@@ -15,8 +12,8 @@ const LUM_R: f32 = 0.213;
 const LUM_G: f32 = 0.715;
 const LUM_B: f32 = 0.072;
 
-/// A subtree filter on a view (CSS `filter` semantics through built-in
-/// Impeller filters): the composited children, run through the set color
+/// A subtree filter on a view (CSS `filter` semantics through the
+/// renderer's filters): the composited children, run through the set color
 /// operations (one fused color matrix) and then the blur. Field semantics
 /// match the CSS filter functions of the same names; `hue_rotate` is radians
 /// (this API's rotate convention), `blur` a CSS-style radius in logical px.
@@ -75,19 +72,19 @@ impl FilterState {
     *self == FilterState::default()
   }
 
-  /// The blur as an Impeller image filter; None when unset or zero. Decal
+  /// The blur as an image filter; None when unset or zero. Decal
   /// tiling keeps the region's surroundings transparent, so a blurred panel
   /// fades at its edge instead of smearing clamped border pixels.
   pub fn to_image_filter(&self) -> Option<ImageFilter> {
     let radius = self.blur.filter(|r| *r > 0.0)?;
     let sigma = radius * BLUR_RADIUS_TO_SIGMA;
-    Some(ImageFilter::new_blur(sigma, sigma, TileMode::Decal))
+    Some(ImageFilter::gaussian_blur(sigma, sigma, TileMode::Decal))
   }
 
-  /// All set color operations fused into one Impeller color filter; None
-  /// when no color key is set.
+  /// All set color operations fused into one color filter; None when no
+  /// color key is set.
   pub fn to_color_filter(&self) -> Option<ColorFilter> {
-    self.color_matrix().map(ColorFilter::new_matrix)
+    self.color_matrix().map(|m| ColorFilter::matrix(&m))
   }
 
   /// How far the blur can paint past the subtree's extent, per side.
@@ -99,9 +96,9 @@ impl FilterState {
   /// sub-pixel blur when only color keys are set - the backdrop argument is
   /// what makes save_layer capture the pixels beneath at all, and the color
   /// transform then rides the restore paint (composite::emit_backdrop). A
-  /// blur stands in for the identity because the prebuilt Impeller's matrix
-  /// image filter cannot be constructed at all
-  /// (ImpellerImageFilterCreateMatrixNew returns null -
+  /// blur stands in for the identity because the contract has no identity
+  /// image filter: the one the prebuilt Impeller offers cannot be
+  /// constructed at all (ImpellerImageFilterCreateMatrixNew returns null -
   /// okf/upstream/impeller-image-filter-matrix-null.md).
   /// Clamp tiling: the backdrop is a filled surface, so unlike the subtree
   /// blur there is no transparent edge for Decal to preserve, and Decal
@@ -115,7 +112,7 @@ impl FilterState {
       Some(radius) => radius * BLUR_RADIUS_TO_SIGMA,
       None => BACKDROP_CAPTURE_SIGMA,
     };
-    ImageFilter::new_blur(sigma, sigma, TileMode::Clamp)
+    ImageFilter::gaussian_blur(sigma, sigma, TileMode::Clamp)
   }
 
   // The fused normalized matrix, applied in a fixed documented order:

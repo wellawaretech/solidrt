@@ -1,18 +1,16 @@
-//! Pixel readback: an adopted texture's contents, or the window backbuffer.
+//! Pixel readback: a renderer texture's contents, or the window backbuffer.
 
 use super::rig::{prev_framebuffer, prev_renderbuffer, window_samples};
+use crate::renderer::prelude::*;
+use crate::renderer::{ISize, Texture};
 use glow::HasContext;
-use impellers::{ISize, Texture};
-use std::num::NonZeroU32;
 
-/// Read back an Impeller GL texture's RGBA8 pixels by attaching its handle to
+/// Read back a renderer texture's RGBA8 pixels by attaching its GL name to
 /// a temporary framebuffer and calling glReadPixels. Returns memory-order rows
 /// (row 0 first), which is image top-to-bottom for every texture alloy
 /// produces.
 pub(crate) fn read_texture_pixels(gl: &glow::Context, texture: &Texture, size: ISize) -> Result<Vec<u8>, String> {
-  let gl_handle = texture.get_opengl_handle();
-  let tex =
-    glow::NativeTexture(NonZeroU32::new(gl_handle as u32).ok_or_else(|| "texture has no GL handle".to_string())?);
+  let tex = texture.gl_name().ok_or_else(|| "texture has no GL handle".to_string())?;
   let (width, height) = (size.width as i32, size.height as i32);
 
   unsafe {

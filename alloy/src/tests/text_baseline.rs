@@ -13,9 +13,9 @@
 //
 // and read the diff: every changed line is a word or a paragraph whose
 // layout moved.
-use crate::impellers::{FontStyle, FontWeight};
 use crate::rendertree::text::layout::{self, Align, LineCursor, LineExtent, Run, Wrap};
 use crate::rendertree::text::{prepare_units, Fallback, PreparedUnit, RunStyle};
+use crate::rendertree::text::{FontStyle, FontWeight};
 use crate::rendertree::{FontPayload, PaintState, PlatformContext};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};

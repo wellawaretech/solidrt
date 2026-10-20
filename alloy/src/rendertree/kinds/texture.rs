@@ -1,5 +1,6 @@
 use super::PaintState;
-use crate::impellers::{
+use crate::renderer::prelude::*;
+use crate::renderer::{
   ColorSource, DisplayListBuilder, Matrix, Point, Rect, RoundingRadii, Size, TextureSampling, TileMode,
 };
 use crate::rendertree::hit::{HitContext, Hittable};
@@ -99,9 +100,9 @@ impl Buildable for Texture {
       log::warn!("[texture] build: tex_id={} not in registry", tex_id);
       return;
     };
-    // No Impeller handle, nothing to draw: a non-2D shape, or a draw target
-    // of a format other than rgba8 (sampler-only, see TextureEntry::impeller).
-    let Some(impeller) = &entry.impeller else {
+    // No renderer handle, nothing to draw: a non-2D shape, or a draw target
+    // of a format other than rgba8 (sampler-only, see TextureEntry::handle).
+    let Some(handle) = &entry.handle else {
       log::warn!(
         "[texture] build: texture {tex_id} is sampler-only ({} {}); <texture> cannot display it (sample it from a pass)",
         entry.format.name(),
@@ -120,11 +121,11 @@ impl Buildable for Texture {
     // `to_paint`, not `to_paint_in`: the draw ignores color sources, so
     // resolving a box-relative gradient would build one per frame for nothing.
     let paint = self.paint.to_paint();
-    // Display sampling follows the texture's declared filter (Impeller
+    // Display sampling follows the texture's declared filter (the renderer
     // applies it per draw; the GL-side sampler objects cover shader passes).
     let sampling = match entry.sampler().filter {
       crate::gpu::SamplerFilter::Linear => TextureSampling::Linear,
-      crate::gpu::SamplerFilter::Nearest => TextureSampling::NearestNeighbor,
+      crate::gpu::SamplerFilter::Nearest => TextureSampling::Nearest,
     };
     match self.radius {
       // A rounded image: the rounded rect filled with the texture as its
@@ -145,22 +146,16 @@ impl Buildable for Texture {
           dst_rect.origin.x - src_rect.origin.x * sx,
           dst_rect.origin.y - src_rect.origin.y * sy,
         );
-        let source = ColorSource::new_image(impeller, TileMode::Clamp, TileMode::Clamp, sampling, Some(&to_dst));
+        let source = ColorSource::image(handle, TileMode::Clamp, TileMode::Clamp, sampling, Some(&to_dst));
         let mut paint = paint;
         paint.set_color_source(&source);
-        let corner = |r: f32| Point::new(r, r);
-        let radii = RoundingRadii {
-          top_left: corner(tl),
-          top_right: corner(tr),
-          bottom_right: corner(br),
-          bottom_left: corner(bl),
-        };
+        let radii = RoundingRadii::circular([tl, tr, br, bl]);
         crate::rendertree::counters::note_draw();
         builder.draw_rounded_rect(&dst_rect, &radii, &paint);
       }
       _ => {
         crate::rendertree::counters::note_draw();
-        builder.draw_texture_rect(impeller, &src_rect, &dst_rect, sampling, Some(&paint));
+        builder.draw_texture_rect(handle, &src_rect, &dst_rect, sampling, Some(&paint));
       }
     }
   }

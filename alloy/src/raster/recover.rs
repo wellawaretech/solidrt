@@ -6,7 +6,7 @@
 //! Nothing of the dead context is deleted by hand: its objects go with the
 //! context when the platform destroys it (GL's contract), and on a lost
 //! context every delete is a no-op anyway. The one ordering that matters is
-//! Impeller's: its context is dropped while the context it was created on is
+//! the renderer's: it is dropped while the context it was created on is
 //! still current, before the binding is released. The old registries stay
 //! alive through the rebuild as the blueprint - a texture's size, shape,
 //! format and sampling, a buffer's size, a program's sources, a target's draw
@@ -17,7 +17,8 @@ use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 
-use impellers::ISize;
+use crate::renderer::prelude::*;
+use crate::renderer::{ISize, Texture};
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -59,7 +60,7 @@ impl RasterState {
     }
     let RasterState {
       gl,
-      impeller_ctx,
+      renderer,
       binding,
       surface_size,
       last_size,
@@ -92,9 +93,9 @@ impl RasterState {
       ..
     } = self;
 
-    // Impeller first, on the context it was created on; then no context on
-    // this thread, so the platform may destroy it.
-    drop(impeller_ctx);
+    // The renderer first, on the context it was created on; then no context
+    // on this thread, so the platform may destroy it.
+    drop(renderer);
     if !binding.release() {
       log::warn!("[alloy] releasing the lost GL context failed: {}", binding.error());
     }
@@ -118,18 +119,18 @@ impl RasterState {
       log::warn!("[alloy] set swap interval failed: {}", binding.error());
     }
     let gl = gl::create_gl_context(&*binding);
-    let impeller_ctx = gl::create_impeller_context(&*binding);
+    let renderer = gl::create_renderer(&*binding);
     unsafe {
       use glow::HasContext;
       let vendor = gl.get_parameter_string(glow::VENDOR);
-      let renderer = gl.get_parameter_string(glow::RENDERER);
+      let renderer_name = gl.get_parameter_string(glow::RENDERER);
       let version = gl.get_parameter_string(glow::VERSION);
       let limits = gl::query_limits(&gl);
-      log::info!("[alloy] GPU ready: {vendor} | {renderer} | {version} (recovered context)");
-      crate::set_gpu_info(crate::GpuInfo { vendor, renderer, version, limits });
+      log::info!("[alloy] GPU ready: {vendor} | {renderer_name} | {version} (recovered context)");
+      crate::set_gpu_info(crate::GpuInfo { vendor, renderer: renderer_name, version, limits });
     }
     gl::forget_window_samples();
-    let mut state = RasterState::new(gl, impeller_ctx, binding, surface_size, sink, stats, tx, wake);
+    let mut state = RasterState::new(gl, renderer, binding, surface_size, sink, stats, tx, wake);
     state.guilty_resets = guilty_resets;
     state.demand_latch = demand_latch;
     state.last_size = last_size;
@@ -139,7 +140,7 @@ impl RasterState {
     state.node_shader_exec_micros = node_shader_exec_micros;
     state.node_shader_vertices = node_shader_vertices;
 
-    let mut handles: Vec<(u64, impellers::Texture)> = Vec::new();
+    let mut handles: Vec<(u64, Texture)> = Vec::new();
     let mut lost = LostContent::default();
     // What the engine refills itself: a camera's stream texture at the next
     // frame, a video's planes at the next latch.
@@ -169,7 +170,7 @@ impl RasterState {
       };
       if gpu.shape == TextureShape::D2 {
         let size = ISize::new(gpu.width as i64, gpu.height as i64);
-        match gl::adopt_texture(&gpu, &state.impeller_ctx, size) {
+        match state.renderer.adopt_texture(gpu.gl_texture, size) {
           Some(handle) => handles.push((*id, handle)),
           None => {
             log::warn!("[alloy] context recovery: texture {id} not adopted");
@@ -257,7 +258,7 @@ impl RasterState {
       };
       let adopted = meta.shape == TextureShape::D2 && !unadopted.contains(id);
       if adopted {
-        match gl::adopt_texture(&gpu, &state.impeller_ctx, size) {
+        match state.renderer.adopt_texture(gpu.gl_texture, size) {
           Some(handle) => handles.push((*id, handle)),
           None => {
             log::warn!("[alloy] context recovery: target {id} not adopted");
@@ -280,7 +281,7 @@ impl RasterState {
           format: TextureFormat::Depth24,
           label: textures.get(depth_id).and_then(|t| t.label.clone()),
         };
-        match gl::adopt_texture(&depth_gpu, &state.impeller_ctx, size) {
+        match state.renderer.adopt_texture(depth_gpu.gl_texture, size) {
           Some(handle) => {
             handles.push((*depth_id, handle));
             state.textures.insert(*depth_id, depth_gpu);

@@ -95,7 +95,7 @@ pub(super) fn create_target(
 /// The target texture alone (creation and resize share it), at `format`'s
 /// storage (a color-renderable one, checked UI-side): LINEAR, clamp, no
 /// mips - the default MIN_FILTER references mipmaps, which would make the
-/// texture sampling-incomplete (reads as black) when Impeller samples it.
+/// texture sampling-incomplete (reads as black) when the renderer samples it.
 /// Restores the texture binding it touches.
 pub(super) unsafe fn create_target_texture(
   gl: &glow::Context,
@@ -128,9 +128,9 @@ pub(super) unsafe fn create_target_texture(
 
 /// A mesh target's depth storage (see `DepthStorage`). `Buffer` is the
 /// private renderbuffer, deleted with the target. `Texture` is a
-/// `DEPTH_COMPONENT24` texture that the owner adopts into Impeller under its
+/// `DEPTH_COMPONENT24` texture that the owner adopts into the renderer under its
 /// own registry id exactly like the color target, so it follows the color
-/// target's ownership rule: never deleted here once registered (Impeller
+/// target's ownership rule: never deleted here once registered (the renderer
 /// deletes the name when the adopted handle drops), and replaced by a fresh
 /// name on resize so in-flight users of the old one stay valid.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -483,7 +483,7 @@ pub fn create_layer_target(
   let MeshStorage { target, fbo, .. } =
     create_mesh_storage(gl, width, height, DepthStorage::None, 1, TextureFormat::Rgba8)?;
   unsafe {
-    // Scissor, color mask, and clear color are Impeller-cached state on this
+    // Scissor, color mask, and clear color are renderer-cached state on this
     // shared context: force a full clear and put all three back.
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
     let scissor = gl.is_enabled(glow::SCISSOR_TEST);

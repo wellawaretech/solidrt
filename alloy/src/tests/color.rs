@@ -1,5 +1,5 @@
 use crate::color::*;
-use crate::impellers::Color;
+use crate::renderer::Color;
 
 #[test]
 fn parse_covers_the_css_grammar() {

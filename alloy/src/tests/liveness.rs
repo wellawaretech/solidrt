@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use impellers::{ISize, Point, Rect, Size};
+use crate::renderer::{ISize, Point, Rect, Size};
 
 use crate::event::AlloyEvent;
 use crate::liveness::SurfaceLiveness;

@@ -1,5 +1,7 @@
 Alloy is the platform and rendering layer: SDL3 for windowing, input, and
-audio; Impeller for 2D paint; glow as the single trusted GL path; and the
+audio; Impeller for 2D paint, behind the renderer seam in `src/renderer/`
+(the one module that names the `impellers` crate, see
+okf/plans/renderer-seam.md); glow as the single trusted GL path; and the
 rendertree - Alloy's own scene graph with taffy-based layout (cached), hit
 testing and pointer routing, damage tracking, and compositing. Target is
 cross-platform (Linux, Android, Windows, macOS, iOS), OpenGL ES 3.0 minimum.
@@ -15,13 +17,13 @@ OS-specific it is (the root CLAUDE.md, Projects, has the rule).
 # Threads and frame loop
 Three threads: main pumps SDL events and does frame bookkeeping, sol-ui runs
 JS/layout/paint and builds display lists (zero GL), sol-raster owns the
-process's single GL context + Impeller context and executes every GL command
+process's single GL context + the renderer and executes every GL command
 (see raster.rs). Non-negotiable decisions:
-- All GL lives on sol-raster; that is Impeller's GLES contract (one context,
-  used only on its creating thread). Context methods marshal into RasterCmds
-  over one ordered channel: fire-and-forget for frames/uploads/param writes,
-  blocking RPC for creates/compiles/readbacks. Never add GL or Impeller
-  context use anywhere else.
+- All GL lives on sol-raster; that is the renderer's GLES contract (one
+  context, used only on its creating thread). Context methods marshal into
+  RasterCmds over one ordered channel: fire-and-forget for frames/uploads/
+  param writes, blocking RPC for creates/compiles/readbacks. Never add GL or
+  renderer use anywhere else.
 - The main loop blocks on the SDL event queue plus a FrameReady push from the
   raster thread. The old 8ms poll cap was removed; do not reintroduce
   polling. Send-then-wake ordering matters.

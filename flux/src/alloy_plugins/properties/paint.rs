@@ -1,4 +1,4 @@
-use alloy::impellers::{BlendMode, DrawStyle, Matrix, Point, StrokeCap, StrokeJoin, TileMode};
+use alloy::renderer::{BlendMode, DrawStyle, Matrix, Point, StrokeCap, StrokeJoin, TileMode};
 
 use super::{decode_color, f32_of, opt, opt_f32, str_of};
 use crate::alloy_plugins::value::PropValue;

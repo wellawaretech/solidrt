@@ -1,4 +1,4 @@
-use crate::impellers::{Color, DrawStyle, Point, Rect, Size};
+use crate::renderer::{Color, DrawStyle, Point, Rect, Size};
 use crate::rendertree::{Gradient, GradientStop, GradientUnits, PaintState, DEFAULT_STROKE_WIDTH};
 
 fn stop(offset: f32, r: f32, g: f32, b: f32) -> GradientStop {

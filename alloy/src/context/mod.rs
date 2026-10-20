@@ -1,4 +1,4 @@
-use impellers::DisplayList;
+use crate::renderer::DisplayList;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -33,7 +33,7 @@ pub use window_tap::WindowTap;
 
 // All GL work - texture uploads, shader passes, offscreen rasterization,
 // compositing, present - runs on the raster thread, which owns the process's
-// single GL context and single Impeller context (see raster.rs for why).
+// single GL context and single renderer (see raster.rs for why).
 // Context is the UI thread's handle on it: methods marshal into RasterCmds,
 // either fire-and-forget sends or blocking RPCs. The UI side keeps just enough
 // bookkeeping (texture dims, shader kinds, buffer sizes) to validate ids and
@@ -259,7 +259,7 @@ impl Context {
   /// thread the handles it refuses frames over are gone (`RasterCmd::Resync`).
   /// The caller drops the render tree's paint caches and the text atlas's
   /// GPU side around this, then requests a frame.
-  pub fn restore_handles(&self, handles: Vec<(u64, impellers::Texture)>) {
+  pub fn restore_handles(&self, handles: Vec<(u64, crate::renderer::Texture)>) {
     for (id, handle) in handles {
       self.textures.replace_handle(id, handle);
     }
@@ -405,7 +405,7 @@ impl Context {
   /// quad the raster thread composites over every frame, after the window
   /// shader pass. Never part of the app's display list, so a window shader
   /// cannot warp it and updating it invalidates no retained frame state
-  /// (an Impeller surface draw always clears its target, so the overlay is
+  /// (a renderer draw always clears its target, so the overlay is
   /// rasterized into a small retained layer once per declaration and drawn
   /// over FBO 0 as a blended copy pass each frame). Retained raster-side;
   /// send again to refresh the figures. The caller must request a frame for

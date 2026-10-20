@@ -2,7 +2,8 @@
 // one run per wrap unit, so it draws decorations itself, one rect per line,
 // from the fonts' own metrics (read per face at registration, see
 // glyphs::Face::underline).
-use crate::impellers::{DisplayListBuilder, Point, Rect, Size};
+use crate::renderer::prelude::*;
+use crate::renderer::{DisplayListBuilder, Point, Rect, Size};
 use crate::rendertree::text::layout::{Layout, PlacedRun};
 use crate::rendertree::PaintState;
 

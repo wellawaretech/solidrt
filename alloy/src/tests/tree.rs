@@ -1,3 +1,4 @@
+use crate::renderer::prelude::*;
 use taffy::NodeId;
 
 use crate::rendertree::*;
@@ -211,7 +212,7 @@ fn text_collects_styled_runs_from_nested_spans() {
   tree.create_node(1, Text::default().with_layout());
   tree.create_node(2, Span { text: "Hello, ".into(), ..Default::default() }.no_layout());
   let mut outer = Span::default();
-  outer.set_font_weight(Some(crate::impellers::FontWeight::Bold));
+  outer.set_font_weight(Some(crate::rendertree::text::FontWeight::Bold));
   tree.create_node(3, outer.no_layout());
   let mut inner = Span::default();
   inner.set_font_size(Some(30.0));
@@ -227,7 +228,7 @@ fn text_collects_styled_runs_from_nested_spans() {
   assert_eq!(runs[0].text, "Hello, ");
   assert_eq!(runs[0].overrides, RunOverrides::default());
   assert_eq!(runs[1].text, "world");
-  assert_eq!(runs[1].overrides.font_weight, Some(crate::impellers::FontWeight::Bold));
+  assert_eq!(runs[1].overrides.font_weight, Some(crate::rendertree::text::FontWeight::Bold));
   assert_eq!(runs[1].overrides.font_size, Some(30.0));
   match &tree.node(1).kind {
     ElementKind::Text(t) => assert_eq!(t.computed_text, "Hello, world"),
@@ -247,12 +248,12 @@ fn text_collects_styled_runs_from_nested_spans() {
   // The inner span's own size still wins over the outer's.
   assert_eq!(runs_of(&tree, 1)[1].overrides.font_size, Some(30.0));
   tree.edit(4, |el| match &mut el.kind {
-    ElementKind::Span(s) => s.set_font_style(Some(crate::impellers::FontStyle::Italic)),
+    ElementKind::Span(s) => s.set_font_style(Some(crate::rendertree::text::FontStyle::Italic)),
     _ => unreachable!(),
   });
   let run = &runs_of(&tree, 1)[1];
-  assert_eq!(run.overrides.font_style, Some(crate::impellers::FontStyle::Italic));
-  assert_eq!(run.overrides.font_weight, Some(crate::impellers::FontWeight::Bold));
+  assert_eq!(run.overrides.font_style, Some(crate::rendertree::text::FontStyle::Italic));
+  assert_eq!(run.overrides.font_weight, Some(crate::rendertree::text::FontWeight::Bold));
 
   // Removing the outer span drops its runs.
   tree.delete_node(1, 3);
@@ -896,7 +897,7 @@ fn boundary_shader_input_hit_keeps_the_bake() {
   tree.create_node(0, attached());
   shaded_boundary(&mut tree, 1, 9);
   tree.insert_node(0, 1, None).expect("insert");
-  let dl = || crate::impellers::DisplayListBuilder::new(None).build().expect("build empty display list");
+  let dl = || crate::renderer::DisplayListBuilder::new(None).build().expect("build empty display list");
   let rec = || RecordingCache { dl: dl(), backdrops: BakedBackdrops::None, grid_scale: None, holds_text: false };
   *tree.node(0).paint_cache.borrow_mut() = Some(PaintCache::Recording(rec()));
   *tree.node(1).paint_cache.borrow_mut() = Some(PaintCache::Recording(rec()));
@@ -931,7 +932,7 @@ fn content_hit_invalidates_the_boundary_cache_path() {
     Damage::None
   });
   *tree.node(0).paint_cache.borrow_mut() = Some(PaintCache::Recording(RecordingCache {
-    dl: crate::impellers::DisplayListBuilder::new(None).build().expect("build empty display list"),
+    dl: crate::renderer::DisplayListBuilder::new(None).build().expect("build empty display list"),
     backdrops: BakedBackdrops::None,
     grid_scale: None,
     holds_text: false,
@@ -964,20 +965,20 @@ fn texture_referencer_index_tracks_lifecycle() {
   assert!(tree.texture_referencers().is_empty());
 }
 
-fn frame(w: f32, h: f32) -> crate::impellers::Rect {
-  crate::impellers::Rect::new(crate::impellers::Point::zero(), crate::impellers::Size::new(w, h))
+fn frame(w: f32, h: f32) -> crate::renderer::Rect {
+  crate::renderer::Rect::new(crate::renderer::Point::zero(), crate::renderer::Size::new(w, h))
 }
 
 // A detached text painted once (painted_extent lays it out like build does)
 // with the given text, x and anchor, and its bounds in the frame.
 fn painted_text(
   platform: &PlatformContext,
-  frame: crate::impellers::Rect,
+  frame: crate::renderer::Rect,
   content: &str,
   x: f32,
   anchor: Option<TextAnchor>,
   w: Option<f32>,
-) -> (Text, crate::impellers::Rect) {
+) -> (Text, crate::renderer::Rect) {
   let mut t = Text::default();
   t.set_plain_text(content.to_string());
   t.set_x(Some(x));
@@ -1053,7 +1054,7 @@ fn boxed_text_bounds_follow_the_aligned_ink() {
   let mut t = Text::default();
   t.set_plain_text("hello".to_string());
   t.set_x(Some(50.0));
-  t.set_text_alignment(Some(crate::impellers::TextAlignment::Right));
+  t.set_text_alignment(Some(crate::rendertree::text::TextAlignment::Right));
   t.painted_extent(&platform, wide);
   let b = t.detached_bounds(wide.size);
   let eps = 1e-3;

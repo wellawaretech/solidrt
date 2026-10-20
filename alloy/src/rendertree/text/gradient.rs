@@ -8,7 +8,7 @@
 // text-local pixels from that origin, its transform mapping gradient space
 // into them as it does for every other element.
 use crate::gpu::{GlyphGradient, GradientKind, GradientTile, RAMP_WIDTH};
-use crate::impellers::{Matrix, Point, Size, TileMode};
+use crate::renderer::{Matrix, Point, Size, TileMode};
 use crate::rendertree::{Gradient, GradientStop, GradientUnits};
 
 // A 2D affine map as two rows over (x, y, 1).
@@ -82,7 +82,7 @@ fn ramp(stops: &[GradientStop]) -> Option<Vec<[u8; 4]>> {
         let span = b.offset - a.offset;
         let f = if span > 0.0 { ((t - a.offset) / span).clamp(0.0, 1.0) } else { 1.0 };
         let mix = |x: f32, y: f32| x + (y - x) * f;
-        crate::impellers::Color::new_srgba(
+        crate::renderer::Color::new_srgba(
           mix(a.color.red, b.color.red),
           mix(a.color.green, b.color.green),
           mix(a.color.blue, b.color.blue),

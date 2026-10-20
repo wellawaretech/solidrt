@@ -30,8 +30,8 @@ mod timing;
 
 pub(crate) use buffer::{release_buffer, GpuBuffer};
 pub(crate) use context::{
-  adopt_texture, configure_opengl, create_gl_context, create_impeller_context, create_window_gl_context,
-  drop_window_multisampling, query_limits, setup_opengl_platform, SdlGlBinding,
+  configure_opengl, create_gl_context, create_renderer, create_window_gl_context, drop_window_multisampling,
+  query_limits, setup_opengl_platform, SdlGlBinding,
 };
 pub(crate) use device_loss::DeviceProbe;
 pub(crate) use draw::{

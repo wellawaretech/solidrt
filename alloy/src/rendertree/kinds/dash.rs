@@ -1,7 +1,8 @@
 // The dash walker shared by line and path: a pattern in local units, the
 // pieces of geometry it walks, and the pen it draws every "on" run into.
 
-use crate::impellers::{FillType, Path as ImpPath, PathBuilder, Point, Rect};
+use crate::renderer::prelude::*;
+use crate::renderer::{contract, FillType, Path as DrawPath, PathBuilder, Point, Rect};
 use lyon_path::geom::{point, CubicBezierSegment, LineSegment, QuadraticBezierSegment};
 use std::ops::Range;
 
@@ -61,16 +62,16 @@ pub trait Pen {
 
 impl Pen for PathBuilder {
   fn move_to(&mut self, p: Point) {
-    PathBuilder::move_to(self, p);
+    contract::PathBuilder::move_to(self, p);
   }
   fn line_to(&mut self, p: Point) {
-    PathBuilder::line_to(self, p);
+    contract::PathBuilder::line_to(self, p);
   }
   fn quadratic_to(&mut self, ctrl: Point, p: Point) {
-    PathBuilder::quadratic_curve_to(self, ctrl, p);
+    contract::PathBuilder::quadratic_to(self, ctrl, p);
   }
   fn cubic_to(&mut self, ctrl1: Point, ctrl2: Point, p: Point) {
-    PathBuilder::cubic_curve_to(self, ctrl1, ctrl2, p);
+    contract::PathBuilder::cubic_to(self, ctrl1, ctrl2, p);
   }
 }
 
@@ -245,10 +246,10 @@ pub fn oval_outline(rect: Rect) -> Vec<Piece> {
 }
 
 // The dashed stroke of `pieces` as one path for Impeller to stroke.
-pub fn dashed_path(pieces: impl Iterator<Item = Piece>, dash: Dash) -> ImpPath {
+pub fn dashed_path(pieces: impl Iterator<Item = Piece>, dash: Dash) -> DrawPath {
   let mut out = PathBuilder::default();
   walk_dashes(pieces, dash, &mut out);
-  out.take_path_new(FillType::NonZero)
+  out.build(FillType::NonZero)
 }
 
 // The length the walker travels over `pieces`.

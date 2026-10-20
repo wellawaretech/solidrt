@@ -1,4 +1,4 @@
-use crate::impellers::{Point, Rect, Size};
+use crate::renderer::{Point, Rect, Size};
 use crate::rendertree::{fit_rects, TextureFit};
 
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -95,7 +95,7 @@ fn degenerate_sizes_pass_through() {
 // comes back as an unknown property.
 #[test]
 fn texture_exposes_its_paint() {
-  use crate::impellers::BlendMode;
+  use crate::renderer::BlendMode;
   use crate::rendertree::{Damage, ElementKind, Texture};
 
   let mut kind = ElementKind::Texture(Texture::default());

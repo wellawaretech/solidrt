@@ -31,11 +31,16 @@ pub enum FrameOutput {
   /// raster thread blocks on the reply.
   ContextLost { detail: String, reply: mpsc::Sender<Option<Box<dyn GlBinding>>> },
   /// The raster thread rebuilt every GPU resource on the fresh context:
-  /// `handles` are the new Impeller adoptions per texture id, for the UI
+  /// `handles` are the new renderer adoptions per texture id, for the UI
   /// thread's registry (its old ones belong to the dead context), and
   /// `lost` what the app has to re-supply. Forwarded to the UI thread as
   /// `AlloyEvent::ContextRestored`.
-  ContextRestored { handles: Vec<(u64, impellers::Texture)>, lost: crate::gpu::LostContent, guilty: bool, losses: u64 },
+  ContextRestored {
+    handles: Vec<(u64, crate::renderer::Texture)>,
+    lost: crate::gpu::LostContent,
+    guilty: bool,
+    losses: u64,
+  },
 }
 
 /// Physical framebuffer size packed for atomic hand-off from the main thread

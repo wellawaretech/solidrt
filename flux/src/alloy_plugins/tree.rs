@@ -184,7 +184,7 @@ impl<'js> IntoJs<'js> for JsBoundingBox {
 
 // The packed 0xRRGGBBAA form parseColor hands back to JS (the inverse of
 // properties::packed_to_color).
-fn color_to_packed(c: alloy::impellers::Color) -> u32 {
+fn color_to_packed(c: alloy::renderer::Color) -> u32 {
   let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
   (b(c.red) << 24) | (b(c.green) << 16) | (b(c.blue) << 8) | b(c.alpha)
 }
@@ -675,7 +675,7 @@ fn warm_text<'js>(ctx: Ctx<'js>, styles: rquickjs::Array<'js>) -> rquickjs::Resu
       size: style.font_size,
       weight: alloy::rendertree::text::glyphs::weight_value(style.font_weight),
       stretch: style.font_stretch,
-      italic: style.font_style == alloy::impellers::FontStyle::Italic,
+      italic: style.font_style == alloy::rendertree::FontStyle::Italic,
       text,
     });
   }

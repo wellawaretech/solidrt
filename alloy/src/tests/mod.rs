@@ -33,6 +33,7 @@ mod paint;
 mod path;
 mod present;
 mod release;
+mod renderer;
 mod resample;
 mod router;
 mod spatial;

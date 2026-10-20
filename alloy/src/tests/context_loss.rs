@@ -113,12 +113,12 @@ fn recovery_rebuilds_every_object_behind_its_id() {
   let binding: Box<dyn GlBinding> = Box::new(HeadlessEglBinding(egl.clone()));
   assert!(binding.bind(), "GL make-current failed: {}", binding.error());
   let gl_ctx = gl::create_gl_context(&*binding);
-  let impeller = gl::create_impeller_context(&*binding);
+  let renderer = gl::create_renderer(&*binding);
   let (tx, rx) = mpsc::channel();
   let stats = Arc::new(RasterStats::new());
   let surface_size = Arc::new(AtomicU64::new(pack_size(SURFACE, SURFACE)));
   let mut state =
-    RasterState::new(gl_ctx, impeller, binding, surface_size, FrameSink::Discard, stats.clone(), tx, None);
+    RasterState::new(gl_ctx, renderer, binding, surface_size, FrameSink::Discard, stats.clone(), tx, None);
 
   // What the UI thread registers: an uploaded texture, a buffer, a two-stage
   // program and a shader target (rendered at flush, so not the app's to

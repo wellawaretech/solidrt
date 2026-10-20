@@ -8,14 +8,13 @@ mod words;
 
 pub use decoration::{Underline, UnderlineMetrics};
 pub use glyphs::Fallback;
-pub use runs::{RunOverrides, RunStyle, Span, TextRun, ATOM_CHAR};
+pub use runs::{FontStyle, FontWeight, RunOverrides, RunStyle, Span, TextAlignment, TextRun, ATOM_CHAR};
 pub use shape::{prepare_units, PreparedRun, PreparedUnit};
 pub use words::{CaretStop, ShapedWord, WordCache};
 
 use crate::gpu::{GlyphGroup, GlyphQuad};
-use crate::impellers::{
-  DisplayListBuilder, FontStyle, FontWeight, Point, Rect, Size, TextAlignment, Texture, TextureSampling,
-};
+use crate::renderer::prelude::*;
+use crate::renderer::{DisplayListBuilder, Point, Rect, Size, Texture, TextureSampling};
 use crate::rendertree::text::glyphs::{split_phase, weight_value, Face, Hint, StyleKey};
 use crate::rendertree::text::layout::{PlacedRun, Run, Wrap};
 use crate::rendertree::{

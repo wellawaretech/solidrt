@@ -1,9 +1,42 @@
 use super::Text;
-use crate::impellers::{FontStyle, FontWeight, Size};
+use crate::renderer::Size;
 use crate::rendertree::kinds::hash_f32;
 use crate::rendertree::text::layout::{Clear, Side};
 use crate::rendertree::{Damage, Element, ElementKind, PaintState};
 use std::hash::{Hash, Hasher};
+
+/// A font's weight, CSS's nine steps: `weight_value` reads the discriminant
+/// as the CSS number (Thin 100 through Black 900).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FontWeight {
+  Thin = 0,
+  ExtraLight = 1,
+  Light = 2,
+  Regular = 3,
+  Medium = 4,
+  SemiBold = 5,
+  Bold = 6,
+  ExtraBold = 7,
+  Black = 8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FontStyle {
+  Normal,
+  Italic,
+}
+
+/// Where the lines sit in the text box. Start and End follow the writing
+/// direction (left-to-right only today, so they read as Left and Right).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextAlignment {
+  Left,
+  Right,
+  Center,
+  Justify,
+  Start,
+  End,
+}
 
 /// The character an inline atom occupies in the paragraph text: U+FFFC OBJECT
 /// REPLACEMENT CHARACTER, whose UAX #14 class allows a break before and after

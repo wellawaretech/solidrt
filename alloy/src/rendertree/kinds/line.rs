@@ -1,6 +1,7 @@
 use super::dash::{dashed_path as dashed, walked_length, Dash, Piece};
 use super::PaintState;
-use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path, PathBuilder, Point, Rect, Size};
+use crate::renderer::prelude::*;
+use crate::renderer::{DisplayListBuilder, DrawStyle, FillType, Path, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{
@@ -121,7 +122,7 @@ fn polyline_path(points: &[f32], closed: bool) -> Path {
   if closed {
     path.close();
   }
-  path.take_path_new(FillType::NonZero)
+  path.build(FillType::NonZero)
 }
 
 // The polyline's segments as walker pieces.

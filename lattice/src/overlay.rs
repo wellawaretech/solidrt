@@ -1,9 +1,8 @@
-use alloy::impellers::{
-  Color, DisplayListBuilder, FontStyle, FontWeight, Paint, Point, Rect, Size, TextAlignment, TextureSampling,
-};
+use alloy::renderer::prelude::*;
+use alloy::renderer::{Color, DisplayListBuilder, Paint, Point, Rect, Size, TextureSampling};
 use alloy::rendertree::text::glyphs::{weight_value, WarmRequest};
 use alloy::rendertree::text::TextImage;
-use alloy::rendertree::{PlatformContext, Text};
+use alloy::rendertree::{FontStyle, FontWeight, PlatformContext, Text, TextAlignment};
 
 use crate::stats::StatsSnapshot;
 
@@ -232,7 +231,7 @@ fn push_hud_lines(text: &mut String, s: &StatsSnapshot, gpu_pct: Option<f32>) {
   if ops.blends + ops.gradients > 0 {
     text.push_str(&format!("\n{} BLD {} GRD", ops.blends, ops.gradients));
   }
-  // Textures currently held in the registry (GL/Impeller texture pairs in use).
+  // Textures currently held in the registry (GL/renderer texture pairs in use).
   if s.textures > 0 {
     text.push_str(&format!("\n{} TEX", s.textures));
   }

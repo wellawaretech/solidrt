@@ -80,7 +80,7 @@ fn pixel_origin_is_absolute() {
 
 // Maps a point through the matrix on the z = 0 plane (no perspective in these
 // tests, so no divide needed).
-fn map(m: &crate::impellers::Matrix, x: f32, y: f32) -> (f32, f32) {
+fn map(m: &crate::renderer::Matrix, x: f32, y: f32) -> (f32, f32) {
   (x * m.m11 + y * m.m21 + m.m41, x * m.m12 + y * m.m22 + m.m42)
 }
 

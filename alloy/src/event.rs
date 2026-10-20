@@ -1,4 +1,4 @@
-use impellers::{ISize, Rect};
+use crate::renderer::{ISize, Rect};
 use sdl3::event::Event as SdlEvent;
 use sdl3::keyboard::Scancode;
 
@@ -368,7 +368,7 @@ impl EventSender {
 pub enum AlloyEvent {
   // The GL context was lost and the engine rebuilt every GPU resource on a
   // fresh one (okf/done/gpu-context-loss.md): `handles` are the new
-  // Impeller adoptions per texture id for the UI thread's registry (its old
+  // renderer adoptions per texture id for the UI thread's registry (its old
   // ones belong to the dead context), `lost` the ids whose content the app
   // alone can re-supply, `guilty` whether the driver attributed the reset to
   // this context's own work (a pass past its hang timeout; the app's load
@@ -377,7 +377,7 @@ pub enum AlloyEvent {
   // installs the handles, drops its paint caches, resyncs the raster thread,
   // and tells the app.
   ContextRestored {
-    handles: Vec<(u64, crate::impellers::Texture)>,
+    handles: Vec<(u64, crate::renderer::Texture)>,
     lost: crate::gpu::LostContent,
     guilty: bool,
     losses: u64,
@@ -639,7 +639,10 @@ pub(crate) fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
   let r = sdl_utils::window_safe_area(window);
   AlloyEvent::Resize {
     size: ISize::new((w as f32 / scale) as i64, (h as f32 / scale) as i64),
-    safe_area: Rect::new(impellers::Point::new(r.x as f32, r.y as f32), impellers::Size::new(r.w as f32, r.h as f32)),
+    safe_area: Rect::new(
+      crate::renderer::Point::new(r.x as f32, r.y as f32),
+      crate::renderer::Size::new(r.w as f32, r.h as f32),
+    ),
     display_scale: scale,
   }
 }
@@ -651,7 +654,7 @@ pub(crate) fn headless_resize_event(window: &crate::stepped::HeadlessWindow) -> 
   let (w, h) = (window.width, window.height);
   AlloyEvent::Resize {
     size: ISize::new(w as i64, h as i64),
-    safe_area: Rect::new(impellers::Point::new(0.0, 0.0), impellers::Size::new(w as f32, h as f32)),
+    safe_area: Rect::new(crate::renderer::Point::new(0.0, 0.0), crate::renderer::Size::new(w as f32, h as f32)),
     display_scale: window.scale,
   }
 }
@@ -771,8 +774,10 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
       let display_scale = sdl_utils::window_display_scale(window);
       let size = ISize::new((w as f32 / display_scale) as i64, (h as f32 / display_scale) as i64);
       let r = sdl_utils::window_safe_area(window);
-      let safe_area =
-        Rect::new(impellers::Point::new(r.x as f32, r.y as f32), impellers::Size::new(r.w as f32, r.h as f32));
+      let safe_area = Rect::new(
+        crate::renderer::Point::new(r.x as f32, r.y as f32),
+        crate::renderer::Size::new(r.w as f32, r.h as f32),
+      );
       Some(AlloyEvent::Resize { size, safe_area, display_scale })
     }
     // SDL reports mouse coordinates in window units, which are logical points

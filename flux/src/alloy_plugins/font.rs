@@ -336,7 +336,7 @@ fn request_glyphs<'js>(ctx: Ctx<'js>, font: u64, glyphs: Vec<f64>) -> rquickjs::
         weight: face.weight_setting(weight),
         width: face.width_setting(entry.style.font_stretch),
         synthetic_bold: face.synthetic_bold(weight),
-        synthetic_italic: entry.style.font_style == alloy::impellers::FontStyle::Italic && face.synthetic_italic(),
+        synthetic_italic: entry.style.font_style == alloy::rendertree::FontStyle::Italic && face.synthetic_italic(),
         // A handle's cells are placed by their sampler (msdf) or drawn at
         // whole pixels (mask): one phase, no darkening policy, the hinting
         // the handle was created with.

@@ -4,8 +4,8 @@
 //! `gpu::texture`; everything here takes the live context and runs on the
 //! raster thread.
 
+use crate::renderer::ISize;
 use glow::HasContext;
-use impellers::ISize;
 use std::num::NonZeroU32;
 
 use super::pass::{bind_target, binding_query};
@@ -19,8 +19,8 @@ use crate::gpu::texture::{
 /// never freed (process-lifetime). Alloy's own passes bind one of these
 /// alongside each sampled texture unit: a bound sampler object overrides
 /// texture-object parameters, so per-texture sampling state holds
-/// regardless of what Impeller writes into the texture objects it draws,
-/// and nothing alloy sets leaks into Impeller's own draws (the pass unbinds
+/// regardless of what the renderer writes into the texture objects it draws,
+/// and nothing alloy sets leaks into the renderer's own draws (the pass unbinds
 /// on exit). The anisotropy levels are clamped to the device maximum here,
 /// the one place GL exists: a state keeps the app's requested level, the
 /// object behind it samples at what the device can do (1 without
@@ -160,7 +160,7 @@ pub(crate) fn warm_compare_sampler(gl: &glow::Context, samplers: &SamplerCache) 
       }
     };
     // The clear that leaves the texture in the state a fresh shadow atlas
-    // is in. Depth mask and clear-depth value are Impeller-cached state:
+    // is in. Depth mask and clear-depth value are renderer-cached state:
     // saved and restored, as run_pass does.
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
     let prev_depth_mask = gl.get_parameter_i32(glow::DEPTH_WRITEMASK) != 0;
@@ -207,12 +207,13 @@ pub(crate) fn warm_compare_sampler(gl: &glow::Context, samplers: &SamplerCache) 
   }
 }
 
-/// A GL texture that is adopted into Impeller right after creation. Impeller
-/// takes ownership of the GL name and deletes it when its Texture drops, so
+/// A GL texture that is adopted by the renderer right after creation. The
+/// renderer takes ownership of the GL name and deletes it when its Texture
+/// drops, so
 /// GpuTexture deliberately does NOT delete the name (no Drop impl) - doing so
 /// would double-free the name and corrupt whatever live texture reuses it.
 /// The exception is every non-2D shape (a cube map, a 3D texture, an array
-/// texture): Impeller adopts 2D names only, so such a name stays ours and
+/// texture): the renderer adopts 2D names only, so such a name stays ours and
 /// the raster thread deletes it on destroy. Raster-thread-only: creation
 /// and uploads are GL work.
 pub struct GpuTexture {
@@ -322,10 +323,10 @@ impl GpuTexture {
         glow::PixelUnpackData::Slice(None),
       );
       // No mips exist: the default MIN_FILTER references mipmaps, which would
-      // make the texture sampling-incomplete (reads as black) when Impeller
+      // make the texture sampling-incomplete (reads as black) when the renderer
       // samples it. Completeness fallback only - the declared SamplerState is
       // applied via sampler objects in alloy's passes and via per-draw
-      // sampling in Impeller, never through these parameters (Impeller
+      // sampling in the renderer, never through these parameters (the renderer
       // rewrites them on every draw of the texture). Depth and 32-bit float
       // textures are only complete at NEAREST (float linear needs an
       // extension).
@@ -384,7 +385,7 @@ impl GpuTexture {
         offset += len;
       }
       // The chain is complete as uploaded (or absent); the fallback filter
-      // keeps the object sampling-complete for Impeller like `new`.
+      // keeps the object sampling-complete for the renderer like `new`.
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAX_LEVEL, levels as i32 - 1);
       let filter = fallback_filter(format);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
@@ -780,7 +781,7 @@ impl GpuTexture {
       } else {
         gl.tex_sub_image_2d(target, 0, 0, 0, width, height, gl_format, ty, pixels);
       }
-      // Unpack alignment is context state shared with Impeller's own uploads
+      // Unpack alignment is context state shared with the renderer's own uploads
       // (glyph atlas), which assume the GL default of 4; restore it.
       if alignment != 4 {
         gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);

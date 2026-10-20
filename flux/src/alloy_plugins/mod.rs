@@ -174,7 +174,7 @@ pub fn alloy_context(ctx: &Ctx<'_>) -> Option<Arc<alloy::Context>> {
 /// text atlas) before the app hears it. No-op before the GUI is installed.
 pub(crate) fn restore_context(
   ctx: &Ctx<'_>,
-  handles: Vec<(u64, alloy::impellers::Texture)>,
+  handles: Vec<(u64, alloy::renderer::Texture)>,
   lost: &mut alloy::LostContent,
 ) {
   let Some(gui) = try_gui(ctx) else { return };

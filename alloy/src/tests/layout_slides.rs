@@ -1,4 +1,4 @@
-use crate::impellers::Point;
+use crate::renderer::Point;
 use crate::rendertree::composite::layout_phase;
 use crate::rendertree::hit::{DefaultHitTester, HitTester};
 use crate::rendertree::*;

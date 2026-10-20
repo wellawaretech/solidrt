@@ -1,6 +1,6 @@
 //! Shader/pipeline/draw-target lifecycle and the dirty flush: creating the
 //! target kinds (fragment, pipeline, draw list, sub-target), registering and
-//! adopting their storage into Impeller, the fire-and-forget entry writes,
+//! adopting their storage into the renderer, the fire-and-forget entry writes,
 //! resize, the copy pass, and flush_dirty's dependency-ordered propagation
 //! over the sampler graph (propagation_order, pure and unit-tested).
 
@@ -8,10 +8,10 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
 
-use impellers::{ISize, Texture};
+use crate::renderer::prelude::*;
+use crate::renderer::{ISize, Texture};
 
 use super::{cmd, ensure_copy_program, resolve_entry_buffers, RasterState, RasterStats};
-use crate::gl;
 use crate::gl::{
   take_slice_report, GpuTexture, PassInput, PassTimer, SamplerCache, ShaderProgram, ShaderTexture, Timed,
 };
@@ -194,7 +194,7 @@ impl RasterState {
   /// Resize an existing shader/pipeline target in place: a new target texture
   /// on the same FBO and program, re-rendered at the new size with the
   /// last-applied params (a manual target is cleared instead - the pass only
-  /// runs on RenderTarget), then adopted into Impeller. Replies with the new
+  /// runs on RenderTarget), then adopted by the renderer. Replies with the new
   /// handle so the UI side re-registers it under the same id; the old handle
   /// keeps the old GL name alive until in-flight display lists drop it.
   pub(super) fn resize_shader_texture(
@@ -206,7 +206,7 @@ impl RasterState {
   ) -> Result<cmd::TargetHandles, String> {
     let shader = self.shaders.get_mut(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
     // An unadopted target's old name is this thread's to free once the
-    // resize has allocated the new one (Impeller frees every adopted name).
+    // resize has allocated the new one (the renderer frees every adopted name).
     let unadopted = self.unadopted.contains(&id);
     let old_name = self.textures.get(&id).map(|old| old.gl_texture);
     shader.reshape(&self.gl, width, height, samples)?;
@@ -239,10 +239,10 @@ impl RasterState {
           format: TextureFormat::Depth24,
           label,
         };
-        let impeller =
-          gl::adopt_texture(&depth_gpu, &self.impeller_ctx, size).ok_or("adopt resized depth texture failed")?;
+        let handle =
+          self.renderer.adopt_texture(depth_gpu.gl_texture, size).ok_or("adopt resized depth texture failed")?;
         self.textures.insert(depth_id, depth_gpu);
-        Some(impeller)
+        Some(handle)
       }
       _ => None,
     };
@@ -254,11 +254,11 @@ impl RasterState {
       self.reseed_resized(id);
       return Ok(cmd::TargetHandles { color: None, depth });
     }
-    match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
-      Some(impeller) => {
+    match self.renderer.adopt_texture(gpu.gl_texture, size) {
+      Some(handle) => {
         self.textures.insert(id, gpu);
         self.reseed_resized(id);
-        Ok(cmd::TargetHandles { color: Some(impeller), depth })
+        Ok(cmd::TargetHandles { color: Some(handle), depth })
       }
       // Should-not-happen path (adoption of a valid GL name): the shader keeps
       // rendering into the new target, but the registry entry still shows the
@@ -381,7 +381,7 @@ impl RasterState {
   ///
   /// With `DepthStorage::Texture` the depth texture is adopted and
   /// registered under `depth_id` beside the color: the same ownership as
-  /// the color (Impeller deletes the name when the handle drops), and the
+  /// the color (the renderer deletes the name when the handle drops), and the
   /// same fixed sampling its id declares (`SamplerState::DEPTH`).
   pub(super) fn create_draw_target(
     &mut self,
@@ -399,7 +399,7 @@ impl RasterState {
         .with_load(spec.load);
     let depth_texture = shader.depth_texture();
     let depth_label = spec.label.as_ref().map(|l| format!("{l}.depth"));
-    // Impeller adopts rgba8 alone (what it displays and reads back); any
+    // the renderer adopts rgba8 alone (what it displays and reads back); any
     // other format is a sampler-only target, registered without a handle.
     let color = if format == TextureFormat::Rgba8 {
       match self.register_shader_target(id, shader, width, height, spec.label, "adopt draw target failed") {
@@ -429,16 +429,16 @@ impl RasterState {
           format: TextureFormat::Depth24,
           label: depth_label,
         };
-        match gl::adopt_texture(&gpu, &self.impeller_ctx, ISize::new(width as i64, height as i64)) {
-          Some(impeller) => {
+        match self.renderer.adopt_texture(gpu.gl_texture, ISize::new(width as i64, height as i64)) {
+          Some(handle) => {
             self.textures.insert(depth_id, gpu);
             self.target_depths.insert(id, depth_id);
             self.depth_owners.insert(depth_id, id);
-            Some(impeller)
+            Some(handle)
           }
           None => {
             // Roll the color registration back: dropping `color` lets
-            // Impeller delete that name; the depth name is still ours.
+            // the renderer delete that name; the depth name is still ours.
             self.textures.remove(&id);
             self.dirty.remove(&id);
             if let Some(shader) = self.shaders.remove(&id) {
@@ -456,7 +456,7 @@ impl RasterState {
 
   /// Create a cube draw target (see `RasterCmd::CreateCubeDrawTarget`):
   /// registered like an uploaded cube map - a cube-shaped texture entry
-  /// with no Impeller adoption, the name deleted by `release_texture` on
+  /// with no renderer adoption, the name deleted by `release_texture` on
   /// destroy - plus its shader, cleared now (a manual target's defined
   /// initial contents, all six faces).
   pub(super) fn create_cube_draw_target(
@@ -578,7 +578,7 @@ impl RasterState {
     }
   }
 
-  /// Adopt a new shader/pipeline target into Impeller and record it under
+  /// Adopt a new shader/pipeline target into the renderer and record it under
   /// `id` in both the texture and shader maps. The target starts dirty: its
   /// first render happens at the next flush, before anything observes its
   /// pixels, so the blocking create RPC never pays for a draw. A manual
@@ -599,7 +599,7 @@ impl RasterState {
     self.dirty.insert(id);
   }
 
-  /// Register a 2D target whose format Impeller does not adopt (see
+  /// Register a 2D target whose format the renderer does not adopt (see
   /// `create_draw_target`): in the texture map for sampling, in the shader
   /// map for rendering, and in `unadopted` so `release_texture` deletes
   /// the name.
@@ -652,8 +652,8 @@ impl RasterState {
       format: TextureFormat::Rgba8,
       label,
     };
-    match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
-      Some(impeller) => {
+    match self.renderer.adopt_texture(gpu.gl_texture, size) {
+      Some(handle) => {
         self.textures.insert(id, gpu);
         if shader.manual() {
           shader.clear(&self.gl);
@@ -661,7 +661,7 @@ impl RasterState {
           self.dirty.insert(id);
         }
         self.shaders.insert(id, shader);
-        Ok(impeller)
+        Ok(handle)
       }
       None => {
         shader.destroy(&self.gl);

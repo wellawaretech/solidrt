@@ -21,7 +21,7 @@
 // land on, and the map (None past a 3d matrix, rotated past a 2d rotation)
 // says so. A scale is fine: the grid is finer or coarser in frame units,
 // but it is still a grid.
-use crate::impellers::{Matrix, Point, Size};
+use crate::renderer::{Matrix, Point, Size};
 use crate::rendertree::Vector;
 
 /// The transform from the walk's current frame to the device pixels of the

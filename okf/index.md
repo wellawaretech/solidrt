@@ -116,6 +116,14 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   as a root error boundary around the app's window (error window with reset)
   plus per-node containment in the renderer's effect/insert exports, with the
   verified mechanics and the measured cost.
+- **[A renderer seam in alloy, the first step to replacing Impeller](plans/renderer-seam.md)** [2026-10-19]
+  The rendertree, the flux plugins and the lattice overlay call Impeller's
+  display-list builder directly, and the raster side calls Impeller and passes
+  its textures around (60 files name impellers); own vocabulary types plus
+  opaque builder, list, path and texture types owned by one cfg-selected
+  renderer module confine Impeller to that module with no visible change and
+  no added per-op cost, so a replacement can be built as a second
+  implementation and Impeller deleted.
 - **[A splat cloud's SH3 texture is 48 bytes per splat where a palette holds it in 3](plans/splat-palette-sh.md)** [2026-10-18]
   The .sol3s SH block stores a byte per coefficient (16/32/48 bytes per splat
   at degree 1/2/3, 48 MB at 1M splats with SH3) while sogs and Unity's
@@ -629,14 +637,6 @@ Shaped, not started.
   its own microtask checkpoint; the frame's publish pass coalesces only what
   the frame's JS writes, so a drag at a high event rate publishes many times
   per frame.
-- **[A renderer seam in alloy, the first step to replacing Impeller](backlog/own-display-list.md)** [2026-10-19]
-  The rendertree, the flux plugins and the lattice overlay call Impeller's
-  display-list builder directly, and the raster side calls Impeller and passes
-  its textures around (60 files name impellers); own vocabulary types plus
-  opaque builder, list, path and texture types owned by one cfg-selected
-  renderer module confine Impeller to that module with no visible change and
-  no added per-op cost, so a replacement can be built as a second
-  implementation and Impeller deleted.
 - **[Owner-scoped registerDebug](backlog/owner-scoped-register-debug.md)** [2026-08-02]
   Registrations reset on hot reload, so commands must register at module init
   - which forces any app state a command touches up to module scope; an

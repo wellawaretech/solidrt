@@ -1,4 +1,4 @@
-use alloy::impellers::{FontStyle, FontWeight, TextAlignment};
+use alloy::rendertree::{FontStyle, FontWeight, TextAlignment};
 
 use super::{opt, opt_f32, opt_positive_f32, paint, str_of};
 use crate::alloy_plugins::value::PropValue;

@@ -1,8 +1,8 @@
-//! The raster thread: sole owner of the process's GL context and Impeller
+//! The raster thread: sole owner of the process's GL context and renderer
 //! context. The UI (JS) thread builds display lists and value types only; every
 //! GL operation arrives here as a `RasterCmd` over one ordered channel, so
 //! parameter updates always apply before the frames that sample them. This is
-//! Impeller's GLES contract (one context, created and used on exactly one
+//! the renderer's GLES contract (one context, created and used on exactly one
 //! thread) and it is what keeps ANGLE / D3D11 and mobile GLES drivers stable;
 //! see okf/backlog/angle-cross-context-impeller-textures.md.
 //!
@@ -42,7 +42,8 @@ pub(crate) use repaint::WindowRoute;
 pub(crate) use targets::propagation_order;
 pub use window_tap::TapSize;
 
-use impellers::{Context as ImpellerContext, ISize};
+use crate::renderer::prelude::*;
+use crate::renderer::{ISize, Renderer};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -126,7 +127,7 @@ pub struct RasterStats {
   /// stays at zero with `timer_queries` false.
   pub(crate) pass_exec_micros: AtomicU64,
   /// GPU-side execution time of the window draw of each presented frame
-  /// (Impeller's display list plus the window shader composite, not the
+  /// (the renderer's display list plus the window shader composite, not the
   /// pass flush before it and not the present), microseconds, from the same
   /// timer queries. Per frame this is the number to hold against the
   /// refresh period; it is what explains `fence_timeouts`.
@@ -425,7 +426,7 @@ pub(crate) struct CameraTapEntry {
 
 pub(crate) struct RasterState {
   gl: glow::Context,
-  impeller_ctx: ImpellerContext,
+  renderer: Renderer,
   // The context binding this thread draws through: bind/rebind, present,
   // proc-address (see backend::GlBinding).
   binding: Box<dyn GlBinding>,
@@ -439,7 +440,7 @@ pub(crate) struct RasterState {
   // carry belongs to the dead context (okf/done/gpu-context-loss.md).
   awaiting_resync: bool,
   // Texture ids registered through AdoptTexture (a snapshot boundary's
-  // rasterization, Impeller-owned on the UI side): a recovery drops them,
+  // rasterization, renderer-owned on the UI side): a recovery drops them,
   // the paint walk re-publishes them after its next rasterization.
   adopted_snapshots: HashSet<u64>,
   // Physical framebuffer size (see backend::pack_size), published by the main
@@ -539,7 +540,7 @@ pub(crate) struct RasterState {
   // Window taps (see window_tap.rs): each drawn frame is read back into
   // them, asynchronously, and completed at the next frame.
   window_taps: HashMap<u64, window_tap::WindowTapEntry>,
-  /// 2D names Impeller never adopted (draw targets of a format other than
+  /// 2D names the renderer never adopted (draw targets of a format other than
   /// rgba8: sampler-only, never displayed): this thread's to delete, like
   /// every cube map's (see `release_texture`).
   unadopted: HashSet<u64>,
@@ -624,7 +625,7 @@ pub(crate) struct RasterState {
 /// (held by Rc so DestroyProgram cannot pull it out from under the pass), and
 /// the retained layer target the frame resolves into. The layer is allocated
 /// by the first shaded frame, reallocated on window resize, and freed when
-/// the shader is cleared; it is never adopted into Impeller and has no
+/// the shader is cleared; it is never adopted by the renderer and has no
 /// registry id - it exists only as the source of the shader pass.
 struct WindowShaderState {
   spec: WindowShader,
@@ -737,7 +738,7 @@ impl RasterState {
   #[allow(clippy::too_many_arguments)]
   pub(crate) fn new(
     gl: glow::Context,
-    impeller_ctx: ImpellerContext,
+    renderer: Renderer,
     binding: Box<dyn GlBinding>,
     surface_size: Arc<AtomicU64>,
     sink: FrameSink,
@@ -762,7 +763,7 @@ impl RasterState {
     let device = gl::DeviceProbe::resolve();
     RasterState {
       gl,
-      impeller_ctx,
+      renderer,
       binding,
       robustness,
       device,
@@ -1109,8 +1110,8 @@ impl RasterState {
               log::warn!("[alloy] texture copy failed: {e}");
             }
           }
-          RasterCmd::AdoptTexture { id, texture, width, height } => match offscreen::gl_name(&texture) {
-            Ok(gl_texture) => {
+          RasterCmd::AdoptTexture { id, texture, width, height } => match texture.gl_name() {
+            Some(gl_texture) => {
               let label = Some("snapshot".to_string());
               self.adopted_snapshots.insert(id);
               self.textures.insert(
@@ -1128,13 +1129,13 @@ impl RasterState {
               );
               self.dirty.insert(id);
             }
-            Err(e) => log::warn!("[alloy] adopt snapshot texture {id} failed: {e}"),
+            None => log::warn!("[alloy] adopt snapshot texture {id} failed: texture has no GL handle"),
           },
           RasterCmd::DestroyTexture { id } => {
             self.release_texture(id);
             self.dirty.remove(&id);
             // The depth texture goes with its target (its name is
-            // Impeller-owned like the color, so removal is bookkeeping).
+            // renderer-owned like the color, so removal is bookkeeping).
             if let Some(depth_id) = self.target_depths.remove(&id) {
               self.textures.remove(&depth_id);
               self.depth_owners.remove(&depth_id);
@@ -1233,7 +1234,7 @@ impl RasterState {
               let size = ISize::new(width as i64, height as i64);
               gl::read_texture_pixels(&self.gl, &texture, size)
               // The intermediate texture drops here, on the context thread;
-              // Impeller frees its GL name.
+              // the renderer frees its GL name.
             });
             reply(tx, result);
           }

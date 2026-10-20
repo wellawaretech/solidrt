@@ -1,12 +1,13 @@
 //! The capture and readback path: offscreen rasterization of display lists
-//! into adopted textures (snapshot boundaries, node captures), independent of
-//! the frame loop in the parent module.
+//! into renderer textures (snapshot boundaries, node captures), independent
+//! of the frame loop in the parent module.
 
 use std::num::NonZeroU32;
 use std::sync::atomic::Ordering;
 
+use crate::renderer::prelude::*;
+use crate::renderer::{DisplayList, DisplayListBuilder, ISize, Texture};
 use glow::HasContext;
-use impellers::{DisplayList, ISize, Texture};
 
 use super::RasterState;
 use crate::gl;
@@ -15,15 +16,15 @@ use crate::gpu::NodeShader;
 use crate::gpu::SamplerState;
 
 impl RasterState {
-  /// Rasterize a display list into a new adopted texture of the given pixel
-  /// size, ready for sampling.
+  /// Rasterize a display list into a new renderer texture of the given
+  /// pixel size, ready for sampling.
   pub(super) fn rasterize(&mut self, dl: &DisplayList, width: u32, height: u32, aa: bool) -> Result<Texture, String> {
     let size = ISize::new(width as i64, height as i64);
     let flipped = flip_for_fbo(dl, height)?;
-    gl::render_display_list_to_texture(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, &flipped, size, aa)
+    gl::render_display_list_to_texture(&self.gl, &mut self.renderer, &mut self.offscreen_rig, &flipped, size, aa)
   }
 
-  /// Re-rasterize a display list into an existing adopted texture whose
+  /// Re-rasterize a display list into an existing renderer texture whose
   /// backing is exactly `width` x `height` (the UI thread only reuses at an
   /// exact match).
   pub(super) fn rasterize_into(
@@ -38,7 +39,7 @@ impl RasterState {
     let flipped = flip_for_fbo(dl, height)?;
     gl::render_display_list_into_texture(
       &self.gl,
-      &mut self.impeller_ctx,
+      &mut self.renderer,
       &mut self.offscreen_rig,
       &flipped,
       texture,
@@ -63,7 +64,7 @@ impl RasterState {
     let atlas_size = (gpu.width, gpu.height);
     gl::render_glyphs(
       &self.gl,
-      &mut self.impeller_ctx,
+      &mut self.renderer,
       &mut self.glyph_rig,
       groups,
       gpu.gl_texture,
@@ -100,7 +101,7 @@ impl RasterState {
       Some(texture) => {
         gl::render_display_list_into_texture(
           &self.gl,
-          &mut self.impeller_ctx,
+          &mut self.renderer,
           &mut self.offscreen_rig,
           &flipped,
           &texture,
@@ -109,14 +110,9 @@ impl RasterState {
         )?;
         texture
       }
-      None => gl::render_display_list_to_texture(
-        &self.gl,
-        &mut self.impeller_ctx,
-        &mut self.offscreen_rig,
-        &flipped,
-        size,
-        aa,
-      )?,
+      None => {
+        gl::render_display_list_to_texture(&self.gl, &mut self.renderer, &mut self.offscreen_rig, &flipped, size, aa)?
+      }
     };
     let history = match (shader.previous, history) {
       (false, _) => None,
@@ -133,7 +129,7 @@ impl RasterState {
   fn create_history_texture(&mut self, width: u32, height: u32) -> Result<Texture, String> {
     let (tex, fbo) = crate::gl::create_layer_target(&self.gl, width, height, [0.0; 4])?;
     unsafe { self.gl.delete_framebuffer(fbo) };
-    match unsafe { self.impeller_ctx.adopt_opengl_texture(width, height, 1, tex.0.get() as u64) } {
+    match self.renderer.adopt_texture(tex, ISize::new(width as i64, height as i64)) {
       Some(adopted) => Ok(adopted),
       None => {
         unsafe { self.gl.delete_texture(tex) };
@@ -143,10 +139,10 @@ impl RasterState {
   }
 
   /// One node shader pass: `shader.program` over `source` into `output`
-  /// (allocated, adopted and returned when None - Impeller then owns the GL
-  /// name, like every snapshot texture). The boundary's rasterization binds
-  /// as `uSource` through a runtime sampler (linear/clamp), never its
-  /// texture-object state: Impeller rewrites object state on textures it
+  /// (allocated, adopted and returned when None - the renderer then owns
+  /// the GL name, like every snapshot texture). The boundary's rasterization
+  /// binds as `uSource` through a runtime sampler (linear/clamp), never its
+  /// texture-object state: the renderer rewrites object state on textures it
   /// touches, so on this shared context only a bound sampler object is a
   /// reliable contract. Extra declared inputs resolve through the registry
   /// by id with their declared sampling, a missing id dropping to unbound
@@ -207,7 +203,7 @@ impl RasterState {
     unsafe { self.gl.delete_framebuffer(fbo) };
     match output {
       Some(texture) => Ok(texture),
-      None => match unsafe { self.impeller_ctx.adopt_opengl_texture(width, height, 1, out_name.0.get() as u64) } {
+      None => match self.renderer.adopt_texture(out_name, ISize::new(width as i64, height as i64)) {
         Some(adopted) => Ok(adopted),
         None => {
           unsafe { self.gl.delete_texture(out_name) };
@@ -218,11 +214,9 @@ impl RasterState {
   }
 }
 
-/// The GL name behind an adopted Impeller texture, as a glow handle.
-pub(super) fn gl_name(texture: &Texture) -> Result<glow::NativeTexture, String> {
-  NonZeroU32::new(texture.get_opengl_handle() as u32)
-    .map(glow::NativeTexture)
-    .ok_or_else(|| "texture has no GL handle".to_string())
+/// The GL name behind a renderer texture, for a pass of our own.
+fn gl_name(texture: &Texture) -> Result<glow::NativeTexture, String> {
+  texture.gl_name().ok_or_else(|| "texture has no GL handle".to_string())
 }
 
 /// Wrap `tex` in a scratch framebuffer for one pass; the caller deletes it.
@@ -246,7 +240,7 @@ fn pass_fbo(gl: &glow::Context, tex: glow::NativeTexture) -> Result<glow::Frameb
 /// A wrapped FBO is treated like a window backbuffer, which GL stores
 /// bottom-up; pre-flip the content so the texture ends up upright.
 pub(super) fn flip_for_fbo(dl: &DisplayList, height: u32) -> Result<DisplayList, String> {
-  let mut flipped = impellers::DisplayListBuilder::new(None);
+  let mut flipped = DisplayListBuilder::new(None);
   flipped.translate(0.0, height as f32);
   flipped.scale(1.0, -1.0);
   flipped.draw_display_list(dl, 1.0);

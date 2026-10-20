@@ -1,4 +1,4 @@
-use impellers::{DisplayList, Texture};
+use crate::renderer::{DisplayList, Texture};
 
 use crate::gpu::{validate_params, validate_texture_bindings, NodeShader, TextureShape};
 use crate::raster::RasterCmd;
@@ -82,7 +82,7 @@ impl Context {
   }
 
   /// Rasterize a display list into a new GPU texture of the given pixel size,
-  /// ready for sampling. The texture is owned by Impeller (and the caller's
+  /// ready for sampling. The texture is owned by the renderer (and the caller's
   /// handle), not by the registry. `aa: false` renders single-sample (no
   /// coverage AA), for boundaries that opted out.
   pub fn render_display_list_to_texture(
@@ -122,7 +122,7 @@ impl Context {
   /// id) into a new adopted texture of `width` x `height` pixels under
   /// `policy`, or `into` the storage of an earlier call at exactly that
   /// size. Transparent where no glyph lands; glyphs composite over each
-  /// other premultiplied. The texture is owned by Impeller and the caller's
+  /// other premultiplied. The texture is owned by the renderer and the caller's
   /// handle, like a snapshot's.
   pub fn rasterize_glyphs(
     &self,
@@ -236,7 +236,7 @@ impl Context {
         entry.format.name()
       ));
     }
-    let Some(impeller) = &entry.impeller else {
+    let Some(handle) = &entry.handle else {
       let what = if entry.shape == TextureShape::D2 {
         "a draw target of a format other than rgba8".to_string()
       } else {
@@ -245,7 +245,7 @@ impl Context {
       return Err(format!("texture {id} is sampler-only ({what}): render it through a pass to read it"));
     };
     let (width, height) = (entry.width(), entry.height());
-    let pixels = self.read_texture(impeller, width, height)?;
+    let pixels = self.read_texture(handle, width, height)?;
     Ok((width, height, pixels))
   }
 

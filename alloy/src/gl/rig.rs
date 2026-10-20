@@ -19,7 +19,7 @@ pub(super) fn prev_renderbuffer(name: i32) -> Option<glow::NativeRenderbuffer> {
 }
 
 /// 4x multisampling for every rig rasterization: window frames and
-/// repaint-boundary snapshots alike. Impeller's GL backend has no analytic
+/// repaint-boundary snapshots alike. the renderer's GL backend has no analytic
 /// path AA; it relies on the target framebuffer being multisampled. The
 /// window itself is created single-sample and gets its anti-aliasing from
 /// the rig's resolve (see `render_display_list_to_window`).
@@ -281,7 +281,7 @@ pub(super) enum OffscreenDraw {
   Done,
   /// The multisampled framebuffer was incomplete; retry single-sample.
   MsaaUnavailable,
-  /// A GL object failed to allocate or Impeller failed to draw.
+  /// A GL object failed to allocate or the renderer failed to draw.
   Failed(String),
 }
 
@@ -299,7 +299,7 @@ pub(crate) fn supports_invalidate(gl: &glow::Context) -> bool {
 
 /// True when the window's default framebuffer is multisampled (the Android
 /// in-tile fast path): frames then draw straight into FBO 0 and a damage
-/// patch cannot apply - Impeller clears the wrapped target, and there is no
+/// patch cannot apply - the renderer clears the wrapped target, and there is no
 /// rig to blit from (see draw::render_display_list_to_window).
 pub(crate) fn window_fast_path(gl: &glow::Context) -> bool {
   window_samples(gl) >= 2

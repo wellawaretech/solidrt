@@ -51,6 +51,11 @@ jobs:
       - name: Manifests
         run: make manifests-check
 
+      # The renderer seam: only alloy's Impeller module may name the
+      # impellers crate (okf/plans/renderer-seam.md).
+      - name: Renderer seam
+        run: make renderer-seam-check
+
       # --all-targets so tests, examples and bins compile too: without it a
       # broken test or probe example passes CI untouched. The capabilities
       # (video, ktx2, wasm-native) are lattice's default features, so the

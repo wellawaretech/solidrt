@@ -14,7 +14,7 @@
 // in whichever frame the walk is currently in.
 use std::cell::Cell;
 
-use crate::impellers::{Matrix, Point, Rect, Size};
+use crate::renderer::{Matrix, Point, Rect, Size};
 use crate::rendertree::{
   BoundaryMode, Bounded, Element, ElementKind, PlatformContext, RenderTree, ShadowState, Vector,
 };

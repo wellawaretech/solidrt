@@ -5,7 +5,7 @@
 //! overlay composited over the finished frame. The layer/overlay state
 //! structs live with RasterState in the parent module.
 
-use impellers::{DisplayList, ISize};
+use crate::renderer::{DisplayList, ISize};
 
 use super::offscreen::flip_for_fbo;
 use super::repaint::WindowRoute;
@@ -24,7 +24,7 @@ impl RasterState {
   /// stepped.rs). The EGL surface beneath is never drawn to headless: its
   /// size does not matter and its content is never read. Color only, like
   /// the window shader's layer: every frame reaches it as a rig resolve or
-  /// a pass, never as a direct Impeller draw, so the rig carries the depth
+  /// a pass, never as a direct renderer draw, so the rig carries the depth
   /// and stencil. A fresh target starts cleared, so a readback before any
   /// frame is defined.
   pub(super) fn window_framebuffer(&mut self, size: ISize) -> Result<Option<glow::NativeFramebuffer>, String> {
@@ -82,7 +82,7 @@ impl RasterState {
     }
     match gl::render_display_list_to_window(
       &self.gl,
-      &mut self.impeller_ctx,
+      &mut self.renderer,
       &mut self.offscreen_rig,
       dl,
       size,
@@ -161,7 +161,7 @@ impl RasterState {
 
       gl::render_display_list_to_layer(
         &self.gl,
-        &mut self.impeller_ctx,
+        &mut self.renderer,
         &mut self.offscreen_rig,
         &flipped,
         size,
@@ -173,7 +173,7 @@ impl RasterState {
 
     // The layer binds as uSource, the history layer (when declared and live)
     // as uPrevious - internal textures, no sampler object (their linear/clamp
-    // object state stands; Impeller never draws them). Extra declared inputs
+    // object state stands; the renderer never draws them). Extra declared inputs
     // resolve through the registry by id with their declared sampling, a
     // missing id dropping to unbound (samples black), the same contract as
     // shader targets.
@@ -261,7 +261,7 @@ impl RasterState {
       let size = ISize::new(width as i64, height as i64);
       if let Err(e) = gl::render_display_list_to_layer(
         &self.gl,
-        &mut self.impeller_ctx,
+        &mut self.renderer,
         &mut self.offscreen_rig,
         &ov.decl.dl,
         size,

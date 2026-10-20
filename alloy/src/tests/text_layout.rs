@@ -412,8 +412,11 @@ const SHRINK_WRAP_WORDS: [&str; 12] =
 // Font sizes the sweep lays out at, logical px: small print to a heading.
 const SHRINK_WRAP_SIZES: [f32; 5] = [11.0, 12.0, 13.0, 14.0, 24.0];
 // Weights the sweep lays out at: the shipped Noto Sans' instances.
-const SHRINK_WRAP_WEIGHTS: [crate::impellers::FontWeight; 3] =
-  [crate::impellers::FontWeight::Regular, crate::impellers::FontWeight::Medium, crate::impellers::FontWeight::Bold];
+const SHRINK_WRAP_WEIGHTS: [crate::rendertree::text::FontWeight; 3] = [
+  crate::rendertree::text::FontWeight::Regular,
+  crate::rendertree::text::FontWeight::Medium,
+  crate::rendertree::text::FontWeight::Bold,
+];
 // The pill's horizontal padding, logical px.
 const SHRINK_WRAP_PADDING: f32 = 12.0;
 
@@ -433,9 +436,9 @@ fn shrink_wrapped_box(
   alloy: &crate::Context,
   word: &str,
   size: f32,
-  weight: crate::impellers::FontWeight,
+  weight: crate::rendertree::text::FontWeight,
   padded: bool,
-) -> crate::impellers::Size {
+) -> crate::renderer::Size {
   use crate::rendertree::{RenderTree, Text, View};
   use taffy::prelude::*;
   let mut text = Text::default();

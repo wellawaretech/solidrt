@@ -3,7 +3,8 @@
 //! rect that covers a change's old and new pixels, degrades to Full on
 //! anything uncertain, and reports None on an unchanged frame.
 
-use crate::impellers::{Color, DisplayListBuilder, Point, Rect, Size};
+use crate::renderer::prelude::*;
+use crate::renderer::{Color, DisplayListBuilder, Point, Rect, Size};
 use crate::rendertree::composite::paint_phase;
 use crate::rendertree::*;
 use std::sync::Arc;

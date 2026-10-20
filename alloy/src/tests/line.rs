@@ -2,7 +2,7 @@
 // segment, precedence over the endpoints. Hit testing is the observable that
 // needs no platform; build and measure walk the same segments/extent.
 
-use crate::impellers::{DrawStyle, Point, Rect, Size, StrokeCap, StrokeJoin};
+use crate::renderer::{DrawStyle, Point, Rect, Size, StrokeCap, StrokeJoin};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::kinds::dash::{walk_dashes, Dash, Pen};
 use crate::rendertree::kinds::line::pieces;

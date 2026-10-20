@@ -1,6 +1,7 @@
 use super::dash::{walk_dashes, walked_length, Dash, Pen, Piece, DASH_TOLERANCE};
 use super::{PaintState, ShadowState};
-use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point, Rect, Size};
+use crate::renderer::contract::{DisplayListBuilder as _, Paint as _, PathBuilder as _};
+use crate::renderer::{DisplayListBuilder, DrawStyle, FillType, Path as DrawPath, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{
@@ -49,7 +50,7 @@ pub struct Path {
   pub off_length: Option<f32>,
   pub dash_offset: Option<f32>,
   pub path_length: Option<f32>,
-  path: RefCell<Option<ImpPath>>,
+  path: RefCell<Option<DrawPath>>,
   // The geometry's tight extent (curve extrema, not control points), in the
   // path's own space before the x/y translate; None while nothing is drawn.
   bounds: RefCell<Option<Rect>>,
@@ -153,7 +154,7 @@ impl Path {
             lyon_builder.end(false);
           }
           let pt = resolve(abs, x, y, &cursor);
-          path_builder.move_to(pt);
+          Pen::move_to(&mut path_builder, pt);
           lyon_builder.begin(point(pt.x, pt.y));
           lyon_open = true;
           cursor = (pt.x, pt.y);
@@ -164,7 +165,7 @@ impl Path {
         PathSegment::LineTo { abs, x, y } => {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let pt = resolve(abs, x, y, &cursor);
-          path_builder.line_to(pt);
+          Pen::line_to(&mut path_builder, pt);
           lyon_builder.line_to(point(pt.x, pt.y));
           cursor = (pt.x, pt.y);
           last_cubic_cp2 = None;
@@ -174,7 +175,7 @@ impl Path {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let pt = resolve(abs, x, 0.0, &cursor);
           let pt = Point::new(pt.x, cursor.1);
-          path_builder.line_to(pt);
+          Pen::line_to(&mut path_builder, pt);
           lyon_builder.line_to(point(pt.x, pt.y));
           cursor = (pt.x, pt.y);
           last_cubic_cp2 = None;
@@ -184,7 +185,7 @@ impl Path {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let pt = resolve(abs, 0.0, y, &cursor);
           let pt = Point::new(cursor.0, pt.y);
-          path_builder.line_to(pt);
+          Pen::line_to(&mut path_builder, pt);
           lyon_builder.line_to(point(pt.x, pt.y));
           cursor = (pt.x, pt.y);
           last_cubic_cp2 = None;
@@ -195,7 +196,7 @@ impl Path {
           let cp1 = resolve(abs, x1, y1, &cursor);
           let cp2 = resolve(abs, x2, y2, &cursor);
           let end = resolve(abs, x, y, &cursor);
-          path_builder.cubic_curve_to(cp1, cp2, end);
+          Pen::cubic_to(&mut path_builder, cp1, cp2, end);
           lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_cubic_cp2 = Some(cp2);
@@ -210,7 +211,7 @@ impl Path {
           };
           let cp2 = resolve(abs, x2, y2, &cursor);
           let end = resolve(abs, x, y, &cursor);
-          path_builder.cubic_curve_to(cp1, cp2, end);
+          Pen::cubic_to(&mut path_builder, cp1, cp2, end);
           lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_cubic_cp2 = Some(cp2);
@@ -220,7 +221,7 @@ impl Path {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let cp = resolve(abs, x1, y1, &cursor);
           let end = resolve(abs, x, y, &cursor);
-          path_builder.quadratic_curve_to(cp, end);
+          Pen::quadratic_to(&mut path_builder, cp, end);
           lyon_builder.quadratic_bezier_to(point(cp.x, cp.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_quad_cp = Some(cp);
@@ -234,7 +235,7 @@ impl Path {
             None => Point::new(cursor.0, cursor.1),
           };
           let end = resolve(abs, x, y, &cursor);
-          path_builder.quadratic_curve_to(cp, end);
+          Pen::quadratic_to(&mut path_builder, cp, end);
           lyon_builder.quadratic_bezier_to(point(cp.x, cp.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_quad_cp = Some(cp);
@@ -258,7 +259,7 @@ impl Path {
             let cp1 = Point::new(cb.ctrl1.x, cb.ctrl1.y);
             let cp2 = Point::new(cb.ctrl2.x, cb.ctrl2.y);
             let end_pt = Point::new(cb.to.x, cb.to.y);
-            path_builder.cubic_curve_to(cp1, cp2, end_pt);
+            Pen::cubic_to(&mut path_builder, cp1, cp2, end_pt);
             lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end_pt.x, end_pt.y));
           }
           cursor = (end.x, end.y);
@@ -289,7 +290,7 @@ impl Path {
       *self.bounds.borrow_mut() = Some(Rect::new(Point::new(bb.min.x, bb.min.y), size));
     }
     self.shape.set(stroke_shape(&lyon));
-    *self.path.borrow_mut() = Some(path_builder.take_path_new(self.fill_rule));
+    *self.path.borrow_mut() = Some(path_builder.build(self.fill_rule));
     *self.lyon_path.borrow_mut() = Some(lyon);
   }
 
@@ -406,14 +407,14 @@ impl Path {
     }
   }
 
-  fn dashed_path(&self, dash: Dash) -> ImpPath {
+  fn dashed_path(&self, dash: Dash) -> DrawPath {
     let mut out = PathBuilder::default();
     self.walk_dashed(dash, &mut out);
-    out.take_path_new(FillType::NonZero)
+    out.build(FillType::NonZero)
   }
 
   // A box-relative gradient resolves against the path's bounding box.
-  fn paint_in_bounds(&self) -> crate::impellers::Paint {
+  fn paint_in_bounds(&self) -> crate::renderer::Paint {
     match *self.bounds.borrow() {
       Some(rect) => self.paint.to_paint_in(&rect),
       None => self.paint.to_paint(),
@@ -587,7 +588,7 @@ impl Hittable for Path {
     let test_pt = point(pt.x, pt.y);
 
     let lyon_fill_rule = match self.fill_rule {
-      FillType::Odd => lyon_path::FillRule::EvenOdd,
+      FillType::EvenOdd => lyon_path::FillRule::EvenOdd,
       _ => lyon_path::FillRule::NonZero,
     };
 

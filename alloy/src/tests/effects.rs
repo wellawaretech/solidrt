@@ -2,7 +2,7 @@
 // fused color matrix. The draw side is covered live (the effects probe);
 // these pin the arithmetic partial repaint and culling depend on.
 
-use crate::impellers::{Point, Rect, Size};
+use crate::renderer::{Point, Rect, Size};
 use crate::rendertree::cull::{envelope, Extent};
 use crate::rendertree::kinds::matrix_for_tests;
 use crate::rendertree::*;
@@ -38,7 +38,7 @@ fn shadow() -> ShadowState {
     dy: 20.0,
     blur: 8.0,
     spread: 4.0,
-    color: crate::impellers::Color::new_srgba(0.0, 0.0, 0.0, 0.4),
+    color: crate::renderer::Color::new_srgba(0.0, 0.0, 0.0, 0.4),
   }
 }
 

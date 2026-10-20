@@ -2,7 +2,7 @@
 // with caps and joins read off the parsed `d`. And its dashed stroke: the
 // shared walker over the flattened subpaths.
 
-use crate::impellers::{DrawStyle, Point, Rect, Size, StrokeCap, StrokeJoin};
+use crate::renderer::{DrawStyle, Point, Rect, Size, StrokeCap, StrokeJoin};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::kinds::dash::Pen;
 use crate::rendertree::{Bounded, Path};

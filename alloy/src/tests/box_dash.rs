@@ -2,7 +2,7 @@
 // (edges and quarter arcs), what it measures, where the pattern starts,
 // and that a dash never leaves the box.
 
-use crate::impellers::{DrawStyle, Point, Rect, Size};
+use crate::renderer::{DrawStyle, Point, Rect, Size};
 use crate::rendertree::kinds::dash::{box_outline, oval_outline, walk_dashes, walked_length, Dash, Pen};
 use crate::rendertree::{Bounded, Oval, Rectangle};
 use std::f32::consts::PI;

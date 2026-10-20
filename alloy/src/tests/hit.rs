@@ -1,4 +1,4 @@
-use crate::impellers::DrawStyle;
+use crate::renderer::DrawStyle;
 use crate::rendertree::hit::{self, locals_along_path, DefaultHitTester, HitTester, Hittable};
 use crate::rendertree::*;
 

@@ -1,6 +1,6 @@
 //! Pass execution: one render into a target or the window - a fullscreen
 //! fragment draw, or clear + an ordered list of mesh draws - with the
-//! exhaustive GL save/restore that keeps Impeller (which shares this context
+//! exhaustive GL save/restore that keeps the renderer (which shares this context
 //! and caches state) working. Every change here needs that save/restore set
 //! reviewed.
 
@@ -265,12 +265,12 @@ fn apply_program(
 /// Bind each resolved sampler input to its own texture unit on its shape's
 /// target, bind the input's
 /// sampler object on that unit (its declared filter/wrap; the bound sampler
-/// overrides texture-object parameters, which Impeller rewrites at will on
+/// overrides texture-object parameters, which the renderer rewrites at will on
 /// textures it draws), and point the sampler uniform at the unit. The prior
 /// texture and sampler binding of each unit is saved into `saved` the FIRST
 /// time the pass touches it - draws reuse units from 0 up, so one save per
 /// unit covers the whole pass - and the caller restores them all at the end,
-/// so Impeller (which assumes its own units) is not left looking at our
+/// so the renderer (which assumes its own units) is not left looking at our
 /// textures or sampling through our state.
 /// Unit-cap backstop: the UI side validates binding counts against the
 /// mirrored device limits at the call site, so reaching the cap here means
@@ -379,7 +379,7 @@ pub fn render_program_to_fbo(
 /// pass; only the overlay composite positions a sub-rectangle): neutralize
 /// every piece of fixed-function state that could clip or blend the output
 /// away, execute the draw(s), and restore all of it. The save/restore set
-/// must stay exhaustive: Impeller runs full render passes on this same
+/// must stay exhaustive: the renderer runs full render passes on this same
 /// context (the process's only one) and both leaves state behind and caches
 /// what it set (see the comments below).
 pub(super) fn run_pass(
@@ -409,7 +409,7 @@ pub(super) fn run_pass(
 
     // Fixed-function state that could clip or blend the output away is off
     // for both paths; the mesh draws opt depth testing and blending back in
-    // per entry below. This set must be exhaustive: Impeller runs full render
+    // per entry below. This set must be exhaustive: the renderer runs full render
     // passes on this same context (the process's only one) and may have left
     // any of the states below active - e.g. rasterizer discard or a zero
     // sample coverage silently kills every draw while clears still land.
@@ -455,7 +455,7 @@ pub(super) fn run_pass(
         bind_inputs(gl, program, textures, &mut saved_units, max_units);
         // The covering triangle writes opaque coverage over the whole target,
         // so a clear only happens when the caller asked for one (geometry not
-        // guaranteed to cover). Clear color is Impeller-cached state: save
+        // guaranteed to cover). Clear color is renderer-cached state: save
         // and restore it around the clear.
         if let Some([r, g, b, a]) = clear {
           let mut prev_clear = [0f32; 4];
@@ -466,7 +466,7 @@ pub(super) fn run_pass(
         }
         if blended {
           // Premultiplied-alpha composite over the target's existing
-          // contents. The blend func is Impeller-cached state, same as in
+          // contents. The blend func is renderer-cached state, same as in
           // the mesh arm: save and restore it; the enable toggle is already
           // restored by the outer save.
           let prev_blend_func = [
@@ -489,7 +489,7 @@ pub(super) fn run_pass(
         // once, at the top; every entry then draws over the shared result.
         // Clear color, depth mask, depth func, clear-depth value, the blend
         // func, the scissor box and the cull face/winding are
-        // Impeller-cached state: save all of them here and restore after
+        // renderer-cached state: save all of them here and restore after
         // the list. With loadOp "load" (manual targets only) the color
         // buffer keeps its previous contents - the accumulation unlock -
         // while depth stays per-render scratch and clears with every full
@@ -512,7 +512,7 @@ pub(super) fn run_pass(
         let prev_front_face = gl.get_parameter_i32(glow::FRONT_FACE) as u32;
 
         // The clear always writes depth (glClear honors the write mask).
-        // Impeller's clip-culling passes set their own depth-clear value
+        // the renderer's clip-culling passes set their own depth-clear value
         // (0.0) on this context; clearing with that inverts the test and
         // silently discards every fragment. Always clear to the far plane.
         gl.depth_mask(true);
@@ -610,7 +610,7 @@ pub(super) fn run_pass(
               }
               None => gl.disable(glow::BLEND),
             }
-            // Face culling per entry: winding is pinned (Impeller may have
+            // Face culling per entry: winding is pinned (the renderer may have
             // left either behind) to CW - which is counter-clockwise AS
             // DISPLAYED, because the displayed image is the y flip of GL
             // window space. That makes "front" mean what WebGPU's
@@ -632,7 +632,7 @@ pub(super) fn run_pass(
         }
 
         // Re-disable what the entries may have enabled (the outer restore
-        // only re-enables) and put the Impeller-cached values back.
+        // only re-enables) and put the renderer-cached values back.
         gl.disable(glow::BLEND);
         gl.disable(glow::DEPTH_TEST);
         gl.disable(glow::CULL_FACE);
@@ -654,7 +654,7 @@ pub(super) fn run_pass(
       gl.scissor(prev_scissor_box[0], prev_scissor_box[1], prev_scissor_box[2], prev_scissor_box[3]);
     }
 
-    // Restore prior GL state for Impeller.
+    // Restore prior GL state for the renderer.
     if stencil {
       gl.enable(glow::STENCIL_TEST);
     }
@@ -864,7 +864,7 @@ unsafe fn submit_and_wait(gl: &glow::Context, hung: &mut bool, label: &str) -> u
 /// `first`: ES 3.0 has no base instance, so an instance slice starts where
 /// the pointers say. Pointer state lives in the bound VAO (the entry's);
 /// `first` 0 is the VAO as build_vao made it. The array-buffer binding is
-/// restored (Impeller-cached state).
+/// restored (renderer-cached state).
 unsafe fn point_instances(gl: &glow::Context, d: &ResolvedDraw, first: u64) {
   let prev_ab = gl.get_parameter_i32(glow::ARRAY_BUFFER_BINDING);
   for (layout, (buffer, _)) in d.desc.buffers.iter().zip(d.buffers.buffers.iter()) {

@@ -3,12 +3,12 @@
 // and the text atlas. The layout contract itself is pinned by
 // text_baseline.rs.
 use crate::gpu::{CoverageMode, CoveragePolicy, TextureFormat};
-use crate::impellers::{FontStyle, FontWeight};
 use crate::rendertree::text::glyphs::{
   split_phase, AtlasPacker, Cell, CellKind, CellRequest, Dirty, FontBytes, FontSet, Hint, InsertOutcome, Rasterizer,
   ShapeStyle, ShapedGlyphs, StyleKey, TextAtlas, TextRendering, WarmRequest, MSDF_BYTES_PER_TEXEL, PHASES,
 };
 use crate::rendertree::text::{prepare_units, Fallback, RunStyle};
+use crate::rendertree::text::{FontStyle, FontWeight};
 use crate::rendertree::{FontPayload, PaintState, PlatformContext};
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};

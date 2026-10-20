@@ -1,5 +1,5 @@
-//! The glyph pass: a text layer's quads drawn from the text atlas into an
-//! adopted texture (okf/plans/text-own-rasterizer.md, stage 2). One
+//! The glyph pass: a text layer's quads drawn from the text atlas into a
+//! renderer texture (okf/plans/text-own-rasterizer.md, stage 2). One
 //! attributeless instanced-by-arithmetic draw per group of quads: the
 //! vertex stage derives the quad and its corner from `gl_VertexID` and
 //! fetches the quad's rects and color from a float texture the pass
@@ -18,9 +18,9 @@ use super::program::ShaderProgram;
 use super::storage::create_layer_target;
 use super::{prev_framebuffer, prev_texture};
 use crate::gpu::{CoveragePolicy, GlyphGroup, GlyphQuad, ParamValue, RAMP_WIDTH};
+use crate::renderer::prelude::*;
+use crate::renderer::{ISize, Renderer, Texture};
 use glow::HasContext;
-use impellers::{Context as ImpellerContext, Texture};
-use std::num::NonZeroU32;
 use std::rc::Rc;
 
 /// Texels per row of the quad texture: three per quad (its two rects and
@@ -280,13 +280,13 @@ impl GlyphRig {
 
 /// Draw `groups` from the atlas (`atlas` its GL name and sampler,
 /// `atlas_size` its texels) into a texture of `width` x `height` under
-/// `policy`: a new adopted texture, or `into` an existing one from an
+/// `policy`: a new renderer texture, or `into` an existing one from an
 /// earlier call at exactly that size, cleared first either way. The
 /// calling thread must have the GL context current.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_glyphs(
   gl: &glow::Context,
-  impeller_ctx: &mut ImpellerContext,
+  renderer: &mut Renderer,
   rig: &mut GlyphRig,
   groups: &[GlyphGroup],
   atlas: glow::Texture,
@@ -302,9 +302,7 @@ pub(crate) fn render_glyphs(
   // layer texture.
   let (fbo, created) = match into {
     Some(texture) => {
-      let name = texture.get_opengl_handle();
-      let tex =
-        glow::NativeTexture(NonZeroU32::new(name as u32).ok_or_else(|| "texture has no GL handle".to_string())?);
+      let tex = texture.gl_name().ok_or_else(|| "texture has no GL handle".to_string())?;
       unsafe {
         let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
         let fbo = gl.create_framebuffer().map_err(|e| format!("glGenFramebuffers failed: {e}"))?;
@@ -333,7 +331,7 @@ pub(crate) fn render_glyphs(
     }
     (Err(e), None) => Err(e),
     (Ok(()), None) => Ok(into.expect("the retained texture").clone()),
-    (Ok(()), Some(tex)) => match unsafe { impeller_ctx.adopt_opengl_texture(width, height, 1, tex.0.get() as u64) } {
+    (Ok(()), Some(tex)) => match renderer.adopt_texture(tex, ISize::new(width as i64, height as i64)) {
       Some(adopted) => Ok(adopted),
       None => {
         unsafe { gl.delete_texture(tex) };

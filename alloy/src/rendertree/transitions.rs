@@ -1,6 +1,6 @@
 use crate::color::{color_to_oklab, oklab_to_color};
-use crate::impellers::{Color, Point, Rect, Size};
 use crate::motion::{scaled_step, spring_step, TrackStart};
+use crate::renderer::{Color, Point, Rect, Size};
 use crate::rendertree::{Damage, Element, ElementKind, OriginCoord, ShadowState};
 use std::cell::Cell;
 

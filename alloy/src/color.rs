@@ -1,4 +1,4 @@
-use crate::impellers::Color;
+use crate::renderer::Color;
 
 // Color facts for the platform: the CSS string grammar (csscolorparser) and
 // the perceptual math (sRGB <-> oklab, mixing, brightness). The transition

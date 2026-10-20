@@ -1,4 +1,4 @@
-use alloy::impellers::FillType;
+use alloy::renderer::FillType;
 
 use super::{decode_shadow, opt, opt_f32, opt_positive_f32, str_of};
 use crate::alloy_plugins::value::PropValue;
@@ -17,7 +17,7 @@ pub fn apply(path: &mut Path, name: &str, value: &PropValue) -> Result<Option<Da
     "fillRule" => path.set_fill_rule(opt(value, |v| {
       Ok(match str_of(v, "fillRule")? {
         "nonzero" => FillType::NonZero,
-        "evenodd" => FillType::Odd,
+        "evenodd" => FillType::EvenOdd,
         v => return Err(format!("Unknown fillRule \"{v}\"; expected nonzero or evenodd")),
       })
     })?),

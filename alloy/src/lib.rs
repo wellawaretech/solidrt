@@ -29,6 +29,7 @@ pub mod motion;
 mod present;
 mod raster;
 pub use raster::{DamageRect, PresentDamage, RasterCounters, TargetCounters};
+pub mod renderer;
 pub mod rendertree;
 pub mod resample;
 mod script;
@@ -58,7 +59,6 @@ pub mod yuv;
 #[cfg(test)]
 mod tests;
 
-pub use impellers;
 pub use sdl3;
 
 pub use app::{setup, App};

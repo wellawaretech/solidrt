@@ -1,4 +1,5 @@
-use crate::impellers::{ClipOperation, Color, DisplayListBuilder, Matrix, Paint, Point, Rect, RoundingRadii, Size};
+use crate::renderer::prelude::*;
+use crate::renderer::{ClipOperation, Color, DisplayListBuilder, Matrix, Paint, Point, Rect, RoundingRadii, Size};
 use taffy::style::Overflow;
 use taffy::{AvailableSpace, NodeId};
 
@@ -202,7 +203,7 @@ pub(crate) fn apply_content_changes(tree: &mut RenderTree, platform: &PlatformCo
 /// deleted join the deferred destroys, so a consumer still sampling one keeps
 /// its last pixels. Then deferred destroys reclaim ids the live tree no
 /// longer references - the frame's display list is already recorded (Rc'd
-/// Impeller handles keep its textures alive), and any still-referenced id
+/// renderer handles keep its textures alive), and any still-referenced id
 /// stays queued so a build never finds a hole in the registry. Gated so the
 /// tree scan only runs when a destroy is actually pending.
 pub(crate) fn release_retired_textures(tree: &mut RenderTree, alloy: &crate::Context) {
@@ -354,12 +355,7 @@ pub(super) fn apply_clip(builder: &mut DisplayListBuilder, element: &Element, si
   };
   if let Some([tl, tr, br, bl]) = clip_radius {
     let rect = Rect::new(Point::new(0.0, 0.0), Size::new(w, h));
-    let radii = RoundingRadii {
-      top_left: Point::new(tl, tl),
-      top_right: Point::new(tr, tr),
-      bottom_right: Point::new(br, br),
-      bottom_left: Point::new(bl, bl),
-    };
+    let radii = RoundingRadii::circular([tl, tr, br, bl]);
     crate::rendertree::counters::note_clip(true);
     builder.clip_rounded_rect(&rect, &radii, ClipOperation::Intersect);
   } else {

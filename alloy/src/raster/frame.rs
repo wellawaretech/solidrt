@@ -6,7 +6,7 @@
 
 use std::sync::atomic::Ordering;
 
-use impellers::{DisplayList, ISize};
+use crate::renderer::{DisplayList, ISize};
 
 use super::repaint::WindowRoute;
 use super::{

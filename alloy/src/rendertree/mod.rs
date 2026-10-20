@@ -24,24 +24,24 @@ pub use kinds::{
 pub use layout::{base_style, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
 pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
-pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextAnchor, TextOverflow, TextRun, ATOM_CHAR};
+pub use text::{
+  FontStyle, FontWeight, OverflowWrap, RunOverrides, RunStyle, Span, Text, TextAlignment, TextAnchor, TextOverflow,
+  TextRun, ATOM_CHAR,
+};
 pub use transitions::{
   AnimKind, AnimProp, AnimValue, Curve, Endpoint, Lifecycle, Slide, TransitionConfig, TransitionEntry, TransitionSpec,
 };
 pub use tree::{Match, NodeMatch, NodeQuery, NodeSnapshot, RenderTree, SlideRemaining};
 
-use crate::impellers::DisplayListBuilder;
+use crate::renderer::DisplayListBuilder;
 use crate::Cursor;
 use std::cell::{Cell, RefCell};
 use taffy::{AvailableSpace, Position, Style};
 
-// The rendertree's geometry vocabulary is euclid, spelled through the
-// impellers aliases so the types unify with every draw call. taffy geometry
-// appears only as layout input (MeasureContext) and is always written
-// taffy-qualified. Vector completes the euclid set (impellers does not alias
-// it): offsets like translate and scroll, and what point arithmetic yields.
-pub use crate::impellers::{Point, Rect, Size};
-pub type Vector = euclid::Vector2D<f32, euclid::UnknownUnit>;
+// The rendertree's geometry vocabulary is the renderer's (euclid), so the
+// types unify with every draw call. taffy geometry appears only as layout
+// input (MeasureContext) and is always written taffy-qualified.
+pub use crate::renderer::{Point, Rect, Size, Vector};
 
 /// A backdrop-filter region noted during the paint walk: the panel's box in
 /// window space and its blur reach in logical px. None when the walk could

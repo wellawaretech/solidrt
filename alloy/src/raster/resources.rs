@@ -4,10 +4,10 @@
 
 use std::sync::atomic::Ordering;
 
-use impellers::{ISize, Texture};
+use crate::renderer::prelude::*;
+use crate::renderer::{ISize, Texture};
 
 use super::RasterState;
-use crate::gl;
 use crate::gl::{GpuTexture, RenderPipeline, ShaderProgram, Timed};
 use crate::gpu::{
   AttributeTable, BufferLayout, GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo,
@@ -46,8 +46,8 @@ impl RasterState {
     // A replace-at-id with no new label is an id-stable resize: labels are
     // create-time state and follow the id through it.
     gpu.label = label.or_else(|| self.textures.get(&id).and_then(|old| old.label.clone()));
-    match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
-      Some(impeller) => {
+    match self.renderer.adopt_texture(gpu.gl_texture, size) {
+      Some(handle) => {
         let replaced = self.textures.insert(id, gpu).is_some();
         // Replacing at an existing id (an id-stable resize): same contract as
         // UpdateTexture - shaders sampling this id re-render at the next
@@ -55,10 +55,10 @@ impl RasterState {
         if replaced {
           self.dirty.insert(id);
         }
-        Ok(impeller)
+        Ok(handle)
       }
       None => {
-        // Adoption never took ownership, so the name is still ours to free.
+        // The import never took ownership, so the name is still ours to free.
         unsafe { glow::HasContext::delete_texture(&self.gl, gpu.gl_texture) };
         Err("adopt texture failed".to_string())
       }
@@ -66,7 +66,7 @@ impl RasterState {
   }
 
   /// A cube map from six faces (see `GpuTexture::new_cube`), registered
-  /// without an Impeller adoption: the name stays this thread's to delete.
+  /// without a renderer adoption: the name stays this thread's to delete.
   pub(super) fn create_cube_texture(
     &mut self,
     id: u64,
@@ -84,7 +84,7 @@ impl RasterState {
   }
 
   /// A volume (see `GpuTexture::new_volume`), registered without an
-  /// Impeller adoption like a cube map: the name stays this thread's to
+  /// renderer adoption like a cube map: the name stays this thread's to
   /// delete.
   #[allow(clippy::too_many_arguments)]
   pub(super) fn create_volume_texture(
@@ -107,8 +107,8 @@ impl RasterState {
   }
 
   /// Forget texture `id`, deleting its GL name when the name is ours (any
-  /// non-2D shape - cube map, 3D, array - or a 2D draw target Impeller
-  /// never adopted; every other 2D name is Impeller-owned and dies with its
+  /// non-2D shape - cube map, 3D, array - or a 2D draw target the renderer
+  /// never adopted; every other 2D name is renderer-owned and dies with its
   /// adopted handle). The one removal doorway for the texture map.
   pub(super) fn release_texture(&mut self, id: u64) {
     let unadopted = self.unadopted.remove(&id);

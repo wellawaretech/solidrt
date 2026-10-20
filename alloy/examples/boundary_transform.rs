@@ -18,7 +18,8 @@
 //!
 //! Run: cargo run -p alloy --example boundary_transform
 
-use alloy::impellers::{Color, DisplayListBuilder, ISize};
+use alloy::renderer::prelude::*;
+use alloy::renderer::{Color, DisplayListBuilder, ISize};
 use alloy::rendertree::composite::{paint_phase, PaintStats};
 use alloy::rendertree::{BoundaryMode, Damage, ElementKind, PlatformContext, Rectangle, RenderTree, View, Window};
 use taffy::prelude::{length, Size, Style};

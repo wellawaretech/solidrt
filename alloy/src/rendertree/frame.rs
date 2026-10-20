@@ -1,4 +1,5 @@
-use crate::impellers::{DisplayList, DisplayListBuilder};
+use crate::renderer::prelude::*;
+use crate::renderer::{DisplayList, DisplayListBuilder};
 use crate::rendertree::composite::{self, PaintStats};
 use crate::rendertree::{PlatformContext, RenderTree};
 
@@ -106,7 +107,7 @@ impl<'d> PendingFrame<'d> {
           // is resolved without a walk - only GPU-content changes land on
           // this path, and their nodes' extents are current.
           let (w, h) = platform.window_size();
-          let damage = composite::resolve_reuse_damage(tree, crate::impellers::Size::new(w, h));
+          let damage = composite::resolve_reuse_damage(tree, crate::renderer::Size::new(w, h));
           alloy.submit_clean(
             c.dl.clone(),
             crate::PresentDamage::from_frame(damage, platform.display_scale()),
@@ -171,7 +172,7 @@ impl FrameBuilder<'_> {
     present_at: std::time::Instant,
     frame: u64,
   ) -> Result<(), ()> {
-    let FrameBuilder { driver, mut builder } = self;
+    let FrameBuilder { driver, builder } = self;
     if let Some(dl) = builder.build() {
       driver.cache = Some(DlCache {
         dl: dl.clone(),

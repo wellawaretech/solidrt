@@ -1,5 +1,5 @@
 use crate::gpu::CoveragePolicy;
-use crate::impellers::{Point, Rect, Size};
+use crate::renderer::{Point, Rect, Size};
 use crate::rendertree::text::glyphs::{FontSet, Hint, TextAtlas, TextRendering};
 use crate::rendertree::text::WordCache;
 use std::borrow::Cow;

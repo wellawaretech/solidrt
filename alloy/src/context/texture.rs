@@ -1,4 +1,4 @@
-use impellers::{ISize, Texture};
+use crate::renderer::{ISize, Texture};
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -145,7 +145,7 @@ impl Context {
   }
 
   /// Create a sampleable texture from pixels (see `TextureFormat` for the
-  /// vocabulary) and adopt into Impeller, with the given sampling (how every
+  /// vocabulary) and adopt into the renderer, with the given sampling (how every
   /// consumer - shader passes and `<texture>` display - samples it) and an
   /// optional debug label. Returns the registry id assigned to the new
   /// texture; errs on a size over the device limit (named in the message),
@@ -201,7 +201,7 @@ impl Context {
     // at a live id (stream resize, camera format change) is a content change
     // behind that id like any other.
     let replace = self.textures.get(id).is_some();
-    let impeller = self.rpc(|reply| RasterCmd::CreateTexture {
+    let handle = self.rpc(|reply| RasterCmd::CreateTexture {
       id,
       width,
       height,
@@ -211,7 +211,7 @@ impl Context {
       label,
       reply,
     })??;
-    self.textures.insert(id, TextureEntry::d2(impeller, width, height, sampler, format));
+    self.textures.insert(id, TextureEntry::d2(handle, width, height, sampler, format));
     if replace {
       self.note_content(id);
     }
@@ -784,10 +784,10 @@ impl Context {
     self.textures.insert(id, entry);
     // A depth texture is re-registered at its own stable id with the fresh
     // name the resize allocated (the color rule, applied to depth).
-    if let (Some(depth_id), Some(impeller)) = (self.depth_of(id), handles.depth) {
+    if let (Some(depth_id), Some(handle)) = (self.depth_of(id), handles.depth) {
       self
         .textures
-        .insert(depth_id, TextureEntry::d2(impeller, width, height, SamplerState::DEPTH, TextureFormat::Depth24));
+        .insert(depth_id, TextureEntry::d2(handle, width, height, SamplerState::DEPTH, TextureFormat::Depth24));
     }
     // The storage is regenerated whatever the kind, manual included, so this
     // notes unconditionally (unlike the pure-mutation paths).
@@ -868,7 +868,7 @@ impl Context {
   }
 
   /// Point a borrowed id at `texture` (a snapshot boundary's rasterization,
-  /// Impeller-owned, `width` x `height` pixels): registry entry for UI-side
+  /// renderer-owned, `width` x `height` pixels): registry entry for UI-side
   /// consumers, raster-side mirror for shader passes, and a content change
   /// so everything sampling the id re-renders. Called after every
   /// rasterization of the boundary, whether the backing was reused or
@@ -891,7 +891,7 @@ impl Context {
   /// the entry and paints the old content instead of a blank. Until
   /// reclamation the id stays fully usable; afterwards the registry entry and
   /// raster-side resources (for shaders: GL program and FBO) are gone, while
-  /// in-flight display lists keep the Impeller texture alive until they drop.
+  /// in-flight display lists keep the renderer texture alive until they drop.
   pub fn destroy_texture(&self, id: u64) {
     // A depth id is owned by its target and reclaimed with it (gated
     // app-side too; backstop).

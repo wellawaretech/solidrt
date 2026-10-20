@@ -1,6 +1,7 @@
 use super::dash::{dashed_path, oval_outline, walked_length, Dash, Piece};
 use super::{PaintState, ShadowState};
-use crate::impellers::{ClipOperation, DisplayListBuilder, DrawStyle, Point, Rect, Size};
+use crate::renderer::prelude::*;
+use crate::renderer::{ClipOperation, DisplayListBuilder, DrawStyle, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{

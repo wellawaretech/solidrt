@@ -1,4 +1,4 @@
-use impellers::Texture;
+use crate::renderer::Texture;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -7,8 +7,8 @@ use std::rc::Rc;
 /// whether a mip chain exists, declared at creation as a property of the
 /// texture id. One
 /// state for both consumers - shader passes (applied via a bound GL sampler
-/// object) and `<texture>` display (the filter maps to Impeller's per-draw
-/// sampling). Never stored as GL texture-object state: Impeller configures
+/// object) and `<texture>` display (the filter maps to the renderer's per-draw
+/// sampling). Never stored as GL texture-object state: the renderer configures
 /// sampling by mutating the parameters of whatever texture it draws, so
 /// object state on a displayed texture does not survive a frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -18,7 +18,7 @@ pub struct SamplerState {
   /// The id keeps a mip chain: regenerated after every upload (data
   /// textures) or render (targets), and shader passes minify through it
   /// (trilinear for `Linear`, NEAREST_MIPMAP_LINEAR for `Nearest`). The
-  /// `<texture>` display draw samples level 0 only (Impeller per-draw
+  /// `<texture>` display draw samples level 0 only (renderer per-draw
   /// sampling). Id state, not overridable per binding: a sampler asking for
   /// mip levels on a texture without a chain is sampling-incomplete.
   pub mipmap: bool,
@@ -758,25 +758,25 @@ fn parse_base_level(base_level: Option<f64>, mipmap: bool) -> Result<Option<u8>,
   }
 }
 
-/// The UI thread's view of a registered texture: the adopted Impeller handle
+/// The UI thread's view of a registered texture: the adopted renderer handle
 /// (all a display list needs) plus dimensions for layout measure and update
 /// validation, and the sampler state (the paint walk picks the display
 /// sampling from its filter). The GL name behind it lives in the raster
 /// thread's map.
 pub struct TextureEntry {
-  /// The Impeller adoption of the GL name: what the `<texture>` display
-  /// draw and the Impeller readback consume. None for a cube map (Impeller
-  /// adopts 2D names only, and a cube map is sampling-only anyway, see
+  /// The renderer's handle on the GL name: what the `<texture>` display
+  /// draw and the readback consume. None for a cube map (the renderer
+  /// imports 2D names only, and a cube map is sampling-only anyway, see
   /// `TextureShape`) and for a 2D draw target of a format other than rgba8
-  /// (half float or sRGB storage Impeller would display raw): both are
+  /// (half float or sRGB storage the renderer would display raw): both are
   /// sampler-only, and those two consumers reject them by this field.
-  pub impeller: Option<Texture>,
+  pub handle: Option<Texture>,
   pub width: u32,
   pub height: u32,
   pub sampler: SamplerState,
   /// Pixel format of the id (rgba8 unless created otherwise); sizes update
   /// and resize validation. Display of an r8 texture shows the red channel
-  /// only (Impeller samples it as `(v, 0, 0, 1)` like any shader would).
+  /// only (the renderer samples it as `(v, 0, 0, 1)` like any shader would).
   pub format: TextureFormat,
   /// The shape (a cube map's face edge is `width` == `height`),
   /// creation-time state like `format`.
@@ -787,24 +787,24 @@ pub struct TextureEntry {
 }
 
 impl TextureEntry {
-  /// An ordinary 2D entry over its adopted Impeller handle.
-  pub fn d2(impeller: Texture, width: u32, height: u32, sampler: SamplerState, format: TextureFormat) -> Self {
-    TextureEntry { impeller: Some(impeller), width, height, sampler, format, shape: TextureShape::D2, depth: 1 }
+  /// An ordinary 2D entry over its renderer handle.
+  pub fn d2(handle: Texture, width: u32, height: u32, sampler: SamplerState, format: TextureFormat) -> Self {
+    TextureEntry { handle: Some(handle), width, height, sampler, format, shape: TextureShape::D2, depth: 1 }
   }
 
-  /// A 2D entry with no Impeller handle: a draw target of a format other
+  /// A 2D entry with no renderer handle: a draw target of a format other
   /// than rgba8, sampler-only.
   pub fn d2_sampler_only(width: u32, height: u32, sampler: SamplerState, format: TextureFormat) -> Self {
-    TextureEntry { impeller: None, width, height, sampler, format, shape: TextureShape::D2, depth: 1 }
+    TextureEntry { handle: None, width, height, sampler, format, shape: TextureShape::D2, depth: 1 }
   }
 
-  /// A cube map entry: `size` x `size` faces, no Impeller handle.
+  /// A cube map entry: `size` x `size` faces, no renderer handle.
   pub fn cube(size: u32, sampler: SamplerState, format: TextureFormat) -> Self {
-    TextureEntry { impeller: None, width: size, height: size, sampler, format, shape: TextureShape::Cube, depth: 1 }
+    TextureEntry { handle: None, width: size, height: size, sampler, format, shape: TextureShape::Cube, depth: 1 }
   }
 
   /// A volume entry (`TextureShape::D3` or `D2Array`): `depth` slices or
-  /// layers of `width` x `height`, no Impeller handle.
+  /// layers of `width` x `height`, no renderer handle.
   pub fn volume(
     shape: TextureShape,
     width: u32,
@@ -814,7 +814,7 @@ impl TextureEntry {
     format: TextureFormat,
   ) -> Self {
     debug_assert!(shape.is_volume(), "a volume entry takes a volume shape");
-    TextureEntry { impeller: None, width, height, sampler, format, shape, depth }
+    TextureEntry { handle: None, width, height, sampler, format, shape, depth }
   }
 
   pub fn width(&self) -> u32 {
@@ -875,18 +875,18 @@ impl TextureRegistry {
     self.generation.get()
   }
 
-  /// Give `id`'s entry a new Impeller adoption, every other fact unchanged:
+  /// Give `id`'s entry a new renderer adoption, every other fact unchanged:
   /// the context-loss restore (okf/done/gpu-context-loss.md), where the
   /// raster thread rebuilt the id's storage on a fresh context and the
   /// handle the entry held belongs to the dead one. A fresh entry (the
   /// `Rc` holders of the old one read it per build), and a generation bump
   /// so a retained display list over the old handles is rebuilt. An id the
   /// registry no longer knows is skipped.
-  pub fn replace_handle(&self, id: u64, impeller: Texture) {
+  pub fn replace_handle(&self, id: u64, handle: Texture) {
     let mut entries = self.entries.borrow_mut();
     let Some(old) = entries.get(&id) else { return };
     let entry = TextureEntry {
-      impeller: Some(impeller),
+      handle: Some(handle),
       width: old.width,
       height: old.height,
       sampler: old.sampler,
@@ -906,7 +906,7 @@ impl TextureRegistry {
     let mut entries = self.entries.borrow_mut();
     let Some(old) = entries.get(&id) else { return };
     let entry = TextureEntry {
-      impeller: old.impeller.clone(),
+      handle: old.handle.clone(),
       width: old.width,
       height: old.height,
       sampler,

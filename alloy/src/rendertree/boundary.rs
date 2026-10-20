@@ -6,7 +6,8 @@
 // (composite::build_recursive / record_node) stays in composite.rs and calls
 // in here at each boundary node.
 
-use crate::impellers::{
+use crate::renderer::prelude::*;
+use crate::renderer::{
   ClipOperation, DisplayList, DisplayListBuilder, Matrix, Paint, Point, Rect, Size, Texture, TextureSampling,
 };
 

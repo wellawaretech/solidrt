@@ -1,4 +1,4 @@
-use impellers::ISize;
+use crate::renderer::ISize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};

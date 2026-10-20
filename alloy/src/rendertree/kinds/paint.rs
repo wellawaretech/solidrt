@@ -1,10 +1,11 @@
-use crate::impellers::{
+use crate::renderer::prelude::*;
+use crate::renderer::{
   BlendMode, Color, ColorSource, DrawStyle, Matrix, Paint, Point, Rect, StrokeCap, StrokeJoin, TileMode,
 };
 use crate::rendertree::Damage;
 use std::hash::{Hash, Hasher};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GradientStop {
   pub offset: f32,
   pub color: Color,
@@ -24,7 +25,7 @@ pub enum GradientUnits {
 // to clone and compare. For Absolute units, `transform` maps the parametric
 // coordinates into the drawing space; for BoundingBox units it is unused (the
 // box transform is derived from the element bounds at paint time).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Gradient {
   Linear {
     start: Point,
@@ -86,25 +87,25 @@ impl Gradient {
           GradientUnits::Absolute => *transform,
           GradientUnits::BoundingBox => box_matrix(bounds?),
         };
-        Some(ColorSource::new_linear_gradient(*start, *end, &colors, &offsets, *tile, Some(&xform)))
+        Some(ColorSource::linear_gradient(*start, *end, &colors, &offsets, *tile, Some(&xform)))
       }
       Gradient::Radial { center, radius, stops, tile, transform, units, circle } => {
         let (colors, offsets) = split_stops(stops);
         match units {
           GradientUnits::Absolute => {
-            Some(ColorSource::new_radial_gradient(*center, *radius, &colors, &offsets, *tile, Some(transform)))
+            Some(ColorSource::radial_gradient(*center, *radius, &colors, &offsets, *tile, Some(transform)))
           }
           GradientUnits::BoundingBox if *circle => {
             // True circle: resolve center and radius to pixels; no stretch.
             let (x, y, w, h) = bounds?;
             let c = Point::new(x + center.x * w, y + center.y * h);
             let r = radius * w.min(h);
-            Some(ColorSource::new_radial_gradient(c, r, &colors, &offsets, *tile, None))
+            Some(ColorSource::radial_gradient(c, r, &colors, &offsets, *tile, None))
           }
           GradientUnits::BoundingBox => {
             // Ellipse: keep 0..1 coords and let the box transform stretch the circle.
             let xform = box_matrix(bounds?);
-            Some(ColorSource::new_radial_gradient(*center, *radius, &colors, &offsets, *tile, Some(&xform)))
+            Some(ColorSource::radial_gradient(*center, *radius, &colors, &offsets, *tile, Some(&xform)))
           }
         }
       }
@@ -138,7 +139,7 @@ fn average_stops(stops: &[GradientStop]) -> Color {
   Color::new_srgba(r / n, g / n, b / n, a / n)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PaintState {
   pub color: Color,
   // When set, painted as a gradient color source; `color` remains the solid
@@ -174,22 +175,9 @@ impl Default for PaintState {
   }
 }
 
-// Manual impls because impellers::Color has no PartialEq/Hash. Used as part
-// of the shaped-paragraph cache keys in rendertree/text; the floats hash by
-// bits (see hash_f32).
-impl PartialEq for PaintState {
-  fn eq(&self, other: &Self) -> bool {
-    color_eq(self.color, other.color)
-      && gradient_eq(&self.gradient, &other.gradient)
-      && self.draw_style == other.draw_style
-      && self.blend_mode == other.blend_mode
-      && self.stroke_width == other.stroke_width
-      && self.stroke_cap == other.stroke_cap
-      && self.stroke_join == other.stroke_join
-      && self.stroke_miter == other.stroke_miter
-  }
-}
-
+// Eq and a manual Hash over the float fields: the paint is part of the
+// shaped-paragraph cache keys in rendertree/text, and floats hash by bits
+// (see hash_f32).
 impl Eq for PaintState {}
 
 impl Hash for PaintState {
@@ -237,7 +225,6 @@ fn hash_color<H: Hasher>(c: Color, state: &mut H) {
   hash_f32(c.green, state);
   hash_f32(c.blue, state);
   hash_f32(c.alpha, state);
-  c.color_space.hash(state);
 }
 
 fn hash_point<H: Hasher>(p: Point, state: &mut H) {
@@ -256,29 +243,6 @@ fn hash_stops<H: Hasher>(stops: &[GradientStop], state: &mut H) {
 fn hash_matrix<H: Hasher>(m: &Matrix, state: &mut H) {
   for v in m.to_array() {
     hash_f32(v, state);
-  }
-}
-
-fn color_eq(a: Color, b: Color) -> bool {
-  a.red == b.red && a.green == b.green && a.blue == b.blue && a.alpha == b.alpha && a.color_space == b.color_space
-}
-
-fn stops_eq(a: &[GradientStop], b: &[GradientStop]) -> bool {
-  a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.offset == y.offset && color_eq(x.color, y.color))
-}
-
-fn gradient_eq(a: &Option<Gradient>, b: &Option<Gradient>) -> bool {
-  match (a, b) {
-    (None, None) => true,
-    (
-      Some(Gradient::Linear { start: s1, end: e1, stops: st1, tile: t1, transform: m1, units: u1 }),
-      Some(Gradient::Linear { start: s2, end: e2, stops: st2, tile: t2, transform: m2, units: u2 }),
-    ) => s1 == s2 && e1 == e2 && t1 == t2 && m1 == m2 && u1 == u2 && stops_eq(st1, st2),
-    (
-      Some(Gradient::Radial { center: c1, radius: r1, stops: st1, tile: t1, transform: m1, units: u1, circle: ci1 }),
-      Some(Gradient::Radial { center: c2, radius: r2, stops: st2, tile: t2, transform: m2, units: u2, circle: ci2 }),
-    ) => c1 == c2 && r1 == r2 && t1 == t2 && m1 == m2 && u1 == u2 && ci1 == ci2 && stops_eq(st1, st2),
-    _ => false,
   }
 }
 

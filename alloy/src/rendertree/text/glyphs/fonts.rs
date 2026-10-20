@@ -9,7 +9,7 @@
 // derived here once so a rasterizer on either thread hints without
 // deriving them inside a frame. Resolution by name: the alias first, then
 // the family names `family_names` reads, first registration winning.
-use crate::impellers::FontWeight;
+use crate::rendertree::text::FontWeight;
 use crate::rendertree::text::UnderlineMetrics;
 use crate::rendertree::FontPayload;
 use harfrust::font::Variation as HarfVariation;
@@ -250,7 +250,7 @@ impl FontSet {
   }
 }
 
-/// Impeller's weight enum as the CSS number the axis and the synthetic
+/// The weight enum as the CSS number the axis and the synthetic
 /// bold rule read: Thin 100 through Black 900.
 pub fn weight_value(weight: FontWeight) -> u16 {
   (weight as u16 + 1) * WEIGHT_STEP

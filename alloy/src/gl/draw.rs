@@ -8,18 +8,17 @@ use super::rig::{
   EXT_RESOLVE_COPY_SRC, MSAA_SAMPLES,
 };
 use crate::raster::{DamageRect, WindowRoute};
-use glow::HasContext;
-use impellers::{
-  ClipOperation, Context as ImpellerContext, DisplayList, DisplayListBuilder, ISize, PixelFormat, Point, Rect, Size,
-  Texture,
+use crate::renderer::prelude::*;
+use crate::renderer::{
+  ClipOperation, DisplayList, DisplayListBuilder, ISize, Point, Rect, Renderer, Size, Target, Texture,
 };
-use std::num::NonZeroU32;
+use glow::HasContext;
 
-/// Rasterize a display list into a new GL texture and adopt it into Impeller,
-/// which becomes the single owner of the GL name (adoption transfers handle
-/// ownership per the Impeller API; we never glDeleteTextures it ourselves).
-/// The calling thread must have the GL context current and `impeller_ctx` must
-/// have been created on it. The texture is later sampled on this same context
+/// Rasterize a display list into a new GL texture and adopt it into the
+/// renderer, which becomes the single owner of the GL name (see
+/// `renderer::contract::Renderer::adopt_texture`; we never glDeleteTextures
+/// it ourselves). The calling thread must have the GL context current and
+/// `renderer` must have been created on it. The texture is later sampled on this same context
 /// (the process has exactly one), so GL program order covers all ordering and
 /// no glFinish or fence is needed.
 ///
@@ -30,7 +29,7 @@ use std::num::NonZeroU32;
 /// layer had long rendered through this same rig on Android without padding.
 pub(crate) fn render_display_list_to_texture(
   gl: &glow::Context,
-  impeller_ctx: &mut ImpellerContext,
+  renderer: &mut Renderer,
   rig: &mut OffscreenRig,
   dl: &DisplayList,
   size: ISize,
@@ -40,7 +39,7 @@ pub(crate) fn render_display_list_to_texture(
   let alloc = (width, height);
   let (alloc_width, alloc_height) = alloc;
 
-  // The resolve target: a plain single-sample texture that Impeller adopts.
+  // The resolve target: a plain single-sample texture the renderer imports.
   // draw_offscreen either draws into it directly (single-sample) or resolves a
   // multisampled render into it.
   let tex = unsafe {
@@ -66,11 +65,10 @@ pub(crate) fn render_display_list_to_texture(
     tex
   };
 
-  match draw_offscreen_with_fallback(gl, impeller_ctx, rig, dl, tex, size, alloc, aa) {
-    Ok(()) => {
-      unsafe { impeller_ctx.adopt_opengl_texture(alloc_width as u32, alloc_height as u32, 1, tex.0.get() as u64) }
-        .ok_or_else(|| "failed to adopt offscreen texture".to_string())
-    }
+  match draw_offscreen_with_fallback(gl, renderer, rig, dl, tex, size, alloc, aa) {
+    Ok(()) => renderer
+      .adopt_texture(tex, ISize::new(alloc_width as i64, alloc_height as i64))
+      .ok_or_else(|| "failed to adopt offscreen texture".to_string()),
     Err(e) => {
       unsafe { gl.delete_texture(tex) };
       Err(e)
@@ -81,22 +79,20 @@ pub(crate) fn render_display_list_to_texture(
 /// Re-rasterize a display list into an already-adopted offscreen texture,
 /// reusing its storage. The texture's backing must be exactly `size` (the
 /// caller only reuses at an exact dimension match). The texture's owner is
-/// unchanged - Impeller adopted the GL name when the texture was first
+/// unchanged - the renderer took the GL name when the texture was first
 /// created and keeps it.
 pub(crate) fn render_display_list_into_texture(
   gl: &glow::Context,
-  impeller_ctx: &mut ImpellerContext,
+  renderer: &mut Renderer,
   rig: &mut OffscreenRig,
   dl: &DisplayList,
   texture: &Texture,
   size: ISize,
   aa: bool,
 ) -> Result<(), String> {
-  let gl_handle = texture.get_opengl_handle();
-  let tex =
-    glow::NativeTexture(NonZeroU32::new(gl_handle as u32).ok_or_else(|| "texture has no GL handle".to_string())?);
+  let tex = texture.gl_name().ok_or_else(|| "texture has no GL handle".to_string())?;
   let alloc = (size.width as i32, size.height as i32);
-  draw_offscreen_with_fallback(gl, impeller_ctx, rig, dl, tex, size, alloc, aa)
+  draw_offscreen_with_fallback(gl, renderer, rig, dl, tex, size, alloc, aa)
 }
 
 /// Draw `dl` into `tex` at 4x MSAA (or single-sample when the caller opted
@@ -105,7 +101,7 @@ pub(crate) fn render_display_list_into_texture(
 /// path honours).
 fn draw_offscreen_with_fallback(
   gl: &glow::Context,
-  impeller_ctx: &mut ImpellerContext,
+  renderer: &mut Renderer,
   rig: &mut OffscreenRig,
   dl: &DisplayList,
   tex: glow::NativeTexture,
@@ -116,11 +112,11 @@ fn draw_offscreen_with_fallback(
   // Match the window's 4x request, clamped to the driver ceiling.
   let max_samples = unsafe { gl.get_parameter_i32(glow::MAX_SAMPLES) };
   let samples = if !aa || rig.msaa_unavailable { 1 } else { MSAA_SAMPLES.min(max_samples) };
-  let mut outcome = draw_offscreen(gl, impeller_ctx, rig, dl, tex, size, alloc, samples);
+  let mut outcome = draw_offscreen(gl, renderer, rig, dl, tex, size, alloc, samples);
   if matches!(outcome, OffscreenDraw::MsaaUnavailable) {
     log::warn!("[alloy] offscreen MSAA unavailable; rendering snapshots without anti-aliasing");
     rig.latch_msaa_unavailable(gl);
-    outcome = draw_offscreen(gl, impeller_ctx, rig, dl, tex, size, alloc, 1);
+    outcome = draw_offscreen(gl, renderer, rig, dl, tex, size, alloc, 1);
   }
   match outcome {
     OffscreenDraw::Done => Ok(()),
@@ -135,14 +131,14 @@ fn draw_offscreen_with_fallback(
 /// a count below 2 draws straight into `tex`; >= 2 draws into the rig's
 /// multisampled storage and resolves the `alloc` subrect into `tex` with
 /// glBlitFramebuffer. `alloc` is the aligned backing size of `tex`; `size` is
-/// the logical viewport handed to Impeller. A GL context must be current.
-/// Restores the framebuffer and renderbuffer bindings it touches so
-/// Impeller's cached GL state stays valid. `tex` is detached from the rig's
+/// the logical viewport handed to the renderer. A GL context must be current.
+/// Restores the framebuffer and renderbuffer bindings it touches so the
+/// renderer's cached GL state stays valid. `tex` is detached from the rig's
 /// FBOs before returning: the rig outlives every resolve texture, and a
 /// deleted texture left attached to an unbound FBO is a dangling reference.
 fn draw_offscreen(
   gl: &glow::Context,
-  impeller_ctx: &mut ImpellerContext,
+  renderer: &mut Renderer,
   rig: &mut OffscreenRig,
   dl: &DisplayList,
   tex: glow::NativeTexture,
@@ -157,7 +153,7 @@ fn draw_offscreen(
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
     let prev_rbo = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
 
-    // The depth-stencil attachment is load-bearing either way: Impeller fills
+    // The depth-stencil attachment is load-bearing either way: the renderer fills
     // non-convex paths with stencil-then-cover and culls clips via depth;
     // without it the cover pass floods the path bounds.
     let ensured = if use_msaa { rig.ensure_msaa(gl, alloc, samples) } else { rig.ensure_ss_depth(gl, alloc) };
@@ -210,7 +206,7 @@ fn draw_offscreen(
       };
     }
 
-    // A prior Impeller pass may leave the scissor test enabled; the clear and
+    // A prior renderer pass may leave the scissor test enabled; the clear and
     // the resolve blit below both honour it.
     gl.disable(glow::SCISSOR_TEST);
     // Fresh storage is driver-defined (on Android's tile-based GPUs, leftover
@@ -219,15 +215,13 @@ fn draw_offscreen(
     gl.clear_color(0.0, 0.0, 0.0, 0.0);
     gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
 
-    // A wrapped-FBO surface is use-and-throw: draw once, then drop it.
-    let mut result = match impeller_ctx.wrap_fbo(draw_fbo.0.get() as u64, PixelFormat::RGBA8888, size) {
-      Some(mut surface) => surface.draw_display_list(dl).map_err(|e| format!("offscreen draw failed: {e}")),
-      None => Err("wrap_fbo failed for offscreen framebuffer".to_string()),
-    };
+    let mut result = renderer
+      .draw(Target { framebuffer: Some(draw_fbo), size }, dl)
+      .map_err(|e| format!("offscreen draw failed: {e}"));
 
     // Resolve the multisampled color into the single-sample adopt target. The
     // full aligned rect is blitted so content lands identically to the direct
-    // single-sample path regardless of where Impeller's viewport placed it.
+    // single-sample path regardless of where the renderer's viewport placed it.
     if result.is_ok() && use_msaa {
       let resolve_fbo = match rig.resolve_fbo {
         Some(fbo) => Some(fbo),
@@ -274,7 +268,7 @@ fn draw_offscreen(
       }
     }
     if !use_msaa {
-      // Impeller's draw may have rebound framebuffers; reclaim the draw FBO
+      // The renderer's draw may have rebound framebuffers; reclaim the draw FBO
       // to invalidate its transient depth-stencil and detach the target.
       gl.bind_framebuffer(glow::FRAMEBUFFER, Some(draw_fbo));
       if supports_invalidate(gl) {
@@ -297,7 +291,7 @@ fn draw_offscreen(
 /// Draw a frame's display list to the window along `route`: straight into
 /// FBO 0 on the multisampled fast path, otherwise through the retained rig
 /// at the window's physical size, resolved 1:1 into FBO 0. The display
-/// list is drawn unflipped: Impeller treats every wrapped FBO as a bottom-up
+/// list is drawn unflipped: the renderer treats every wrapped FBO as a bottom-up
 /// window target, so the rig content is already in window orientation and
 /// the straight blit preserves it (only offscreen textures that get sampled
 /// pre-flip; see `flip_for_fbo`). A reversed-Y resolve blit would be the
@@ -312,7 +306,7 @@ fn draw_offscreen(
 /// decided for it over an owned target.
 pub(crate) fn render_display_list_to_window(
   gl: &glow::Context,
-  impeller_ctx: &mut ImpellerContext,
+  renderer: &mut Renderer,
   rig: &mut OffscreenRig,
   dl: &DisplayList,
   size: ISize,
@@ -336,14 +330,11 @@ pub(crate) fn render_display_list_to_window(
       gl.disable(glow::SCISSOR_TEST);
       gl.clear_color(0.0, 0.0, 0.0, 0.0);
       gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
-      let result = match impeller_ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) {
-        Some(mut surface) => surface.draw_display_list(dl).map_err(|e| format!("frame draw failed: {e}")),
-        None => Err("wrap_fbo failed for window framebuffer".to_string()),
-      };
+      let result = renderer.draw(Target { framebuffer: None, size }, dl).map_err(|e| format!("frame draw failed: {e}"));
       gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
       result
     },
-    WindowRoute::Rig(patch) => render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, window, patch),
+    WindowRoute::Rig(patch) => render_display_list_via_rig(gl, renderer, rig, dl, size, window, patch),
   }
 }
 
@@ -358,18 +349,18 @@ pub(crate) fn render_display_list_to_window(
 /// latch behave exactly like the window path.
 pub(crate) fn render_display_list_to_layer(
   gl: &glow::Context,
-  impeller_ctx: &mut ImpellerContext,
+  renderer: &mut Renderer,
   rig: &mut OffscreenRig,
   dl: &DisplayList,
   size: ISize,
   layer: glow::NativeFramebuffer,
 ) -> Result<(), String> {
-  render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, Some(layer), None)
+  render_display_list_via_rig(gl, renderer, rig, dl, size, Some(layer), None)
 }
 
 fn render_display_list_via_rig(
   gl: &glow::Context,
-  impeller_ctx: &mut ImpellerContext,
+  renderer: &mut Renderer,
   rig: &mut OffscreenRig,
   dl: &DisplayList,
   size: ISize,
@@ -378,11 +369,11 @@ fn render_display_list_via_rig(
 ) -> Result<(), String> {
   let max_samples = unsafe { gl.get_parameter_i32(glow::MAX_SAMPLES) };
   let samples = if rig.msaa_unavailable { 0 } else { MSAA_SAMPLES.min(max_samples) };
-  let mut outcome = draw_and_resolve(gl, impeller_ctx, rig, dl, size, dst, samples, patch);
+  let mut outcome = draw_and_resolve(gl, renderer, rig, dl, size, dst, samples, patch);
   if matches!(outcome, OffscreenDraw::MsaaUnavailable) {
     log::warn!("[alloy] window MSAA unavailable; rendering without anti-aliasing");
     rig.latch_msaa_unavailable(gl);
-    outcome = draw_and_resolve(gl, impeller_ctx, rig, dl, size, dst, 0, patch);
+    outcome = draw_and_resolve(gl, renderer, rig, dl, size, dst, 0, patch);
   }
   match outcome {
     OffscreenDraw::Done => Ok(()),
@@ -398,11 +389,11 @@ fn render_display_list_via_rig(
 /// EXT_multisampled_render_to_texture (the blit is then a plain copy),
 /// otherwise into the explicit multisampled renderbuffers (the blit is the
 /// resolve). `samples == 0` draws single-sample. Restores the framebuffer,
-/// renderbuffer, and texture bindings it touches so Impeller's cached GL
+/// renderbuffer, and texture bindings it touches so the renderer's cached GL
 /// state stays valid.
 fn draw_and_resolve(
   gl: &glow::Context,
-  impeller_ctx: &mut ImpellerContext,
+  renderer: &mut Renderer,
   rig: &mut OffscreenRig,
   dl: &DisplayList,
   size: ISize,
@@ -516,10 +507,10 @@ fn draw_and_resolve(
     gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
 
     // Partial repaint (okf/done/partial-repaint.md): a root clip on the
-    // patch rect confines the raster - Impeller rejects ops outside a clip
+    // patch rect confines the raster - the renderer rejects ops outside a clip
     // cheaply - and the resolve below copies only that rect into `dst`,
     // whose remaining pixels the caller has verified as current (buffer
-    // age). The clip lands in the display list because Impeller manages GL
+    // age). The clip lands in the display list because the renderer manages GL
     // scissor state itself during the draw.
     let clipped;
     let draw_dl = match patch {
@@ -541,13 +532,12 @@ fn draw_and_resolve(
       None => dl,
     };
 
-    let mut result = match impeller_ctx.wrap_fbo(draw_fbo.0.get() as u64, PixelFormat::RGBA8888, size) {
-      Some(mut surface) => surface.draw_display_list(draw_dl).map_err(|e| format!("frame draw failed: {e}")),
-      None => Err("wrap_fbo failed for frame framebuffer".to_string()),
-    };
+    let mut result = renderer
+      .draw(Target { framebuffer: Some(draw_fbo), size }, draw_dl)
+      .map_err(|e| format!("frame draw failed: {e}"));
 
     // The patch in GL bottom-up coordinates: identical on the rig and dst
-    // sides (Impeller orients every wrapped FBO the same way, validated in
+    // sides (the renderer orients every wrapped FBO the same way, validated in
     // examples/partial_repaint_probe.rs phase C).
     let gl_patch = patch.map(|p| (p.x, height - (p.y + p.height), p.width, p.height));
 
@@ -555,7 +545,7 @@ fn draw_and_resolve(
       // Consume the resolved image the way the extension intends: sample
       // ext.color in a fullscreen draw into `dst`. Blitting it out instead
       // (through a wrapper FBO) is rejected by Adreno with GL_INVALID_OPERATION
-      // on frames where Impeller's draw did internal texture maintenance, so
+      // on frames where the renderer's draw did internal texture maintenance, so
       // the copy is a draw, not a blit; the bandwidth is identical (one
       // full-frame read plus one write). The fragment maps the window rect
       // out of the aligned allocation via textureSize.

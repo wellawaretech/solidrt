@@ -44,7 +44,7 @@ use alloy::{AlloyCommand, Cursor, CursorShape};
 use taffy::style::Position;
 
 use crate::alloy_plugins::value::PropValue;
-use alloy::impellers::Color;
+use alloy::renderer::Color;
 use alloy::rendertree::text::layout::{Clear, Side};
 use alloy::rendertree::{
   BoundaryMode, Damage, Element, ElementKind, FilterState, PointerEvents, ShadowState, TransitionConfig,

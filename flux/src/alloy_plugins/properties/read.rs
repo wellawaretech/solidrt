@@ -9,12 +9,10 @@
 // nothing, so untouched nodes serialize to an empty list and payloads stay
 // proportional to what the app actually set.
 
-use alloy::impellers::{
-  BlendMode, Color, DrawStyle, FillType, FontStyle, FontWeight, StrokeCap, StrokeJoin, TextAlignment,
-};
+use alloy::renderer::{BlendMode, Color, DrawStyle, FillType, StrokeCap, StrokeJoin};
 use alloy::rendertree::{
-  BoundaryMode, Element, ElementKind, Gradient, Line, OriginCoord, PaintState, TextAnchor, TextureFit, View,
-  DEFAULT_STROKE_WIDTH,
+  BoundaryMode, Element, ElementKind, FontStyle, FontWeight, Gradient, Line, OriginCoord, PaintState, TextAlignment,
+  TextAnchor, TextureFit, View, DEFAULT_STROKE_WIDTH,
 };
 
 /// A read-back property value, kept engine- and serializer-free: the caller
@@ -298,7 +296,7 @@ fn read_paint(paint: &PaintState, default_style: DrawStyle, out: &mut Vec<(&'sta
     out.push(("color", ReadValue::Str(format!("gradient({kind})"))));
   } else {
     let default = PaintState::default().color;
-    if !color_eq(paint.color, default) {
+    if paint.color != default {
       out.push(("color", ReadValue::Str(color_hex(paint.color))));
     }
   }
@@ -350,10 +348,6 @@ fn read_paint(paint: &PaintState, default_style: DrawStyle, out: &mut Vec<(&'sta
   if paint.stroke_miter != 4.0 {
     out.push(("strokeMiter", ReadValue::Num(paint.stroke_miter as f64)));
   }
-}
-
-fn color_eq(a: Color, b: Color) -> bool {
-  a.red == b.red && a.green == b.green && a.blue == b.blue && a.alpha == b.alpha
 }
 
 // #rrggbbaa, the read-back form of the packed-u32 write encoding.

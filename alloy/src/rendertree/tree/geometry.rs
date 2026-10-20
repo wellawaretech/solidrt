@@ -3,7 +3,7 @@
 //! read-only geometry surface inspection and hit consumers ask of the tree.
 
 use super::RenderTree;
-use crate::impellers::Matrix;
+use crate::renderer::Matrix;
 use crate::rendertree::{ElementKind, Point, Rect, Size, Vector};
 
 impl RenderTree {

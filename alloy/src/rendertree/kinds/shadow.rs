@@ -1,5 +1,6 @@
 use super::paint::PaintState;
-use crate::impellers::{BlurStyle, Color, ImageFilter, MaskFilter, Paint, Rect, TileMode};
+use crate::renderer::prelude::*;
+use crate::renderer::{Color, ImageFilter, MaskFilter, Paint, Rect, TileMode};
 use crate::rendertree::Vector;
 
 // CSS blur radius (the `blur` props) -> gaussian sigma, the browsers'
@@ -50,7 +51,7 @@ impl ShadowState {
     let mut paint = Paint::default();
     paint.set_color(self.color);
     if self.blur > 0.0 {
-      paint.set_mask_filter(&MaskFilter::new_blur(BlurStyle::Normal, self.blur * BLUR_RADIUS_TO_SIGMA));
+      paint.set_mask_filter(&MaskFilter::blur(self.blur * BLUR_RADIUS_TO_SIGMA));
     }
     paint
   }
@@ -100,7 +101,7 @@ impl ShadowState {
   pub fn to_layer_paint(&self) -> Paint {
     let sigma = self.blur * BLUR_RADIUS_TO_SIGMA;
     let mut paint = Paint::default();
-    paint.set_image_filter(&ImageFilter::new_blur(sigma, sigma, TileMode::Decal));
+    paint.set_image_filter(&ImageFilter::gaussian_blur(sigma, sigma, TileMode::Decal));
     paint
   }
 

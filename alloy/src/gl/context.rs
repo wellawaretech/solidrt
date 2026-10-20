@@ -1,13 +1,13 @@
 //! Context bootstrap: SDL GL attribute configuration, context creation on the
-//! main thread, the interactive GlBinding, and loading the glow and Impeller
-//! contexts on the raster thread.
+//! main thread, the interactive GlBinding, and loading the glow context and
+//! the renderer on the raster thread.
 
-use super::texture::GpuTexture;
 use crate::backend::GlBinding;
 use crate::gpu::GpuLimits;
+use crate::renderer::prelude::*;
+use crate::renderer::Renderer;
 use crate::DisplayContext;
 use glow::HasContext;
-use impellers::{Context as ImpellerContext, ISize, Texture};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
@@ -156,8 +156,8 @@ pub(crate) fn create_window_gl_context(window: &sdl3::video::Window) -> Result<s
 /// Load GLES bindings through the binding's proc-address. Must be called on
 /// the raster thread with the GL context current; the returned context drives
 /// all of alloy's GL work (texture allocation/upload, offscreen FBOs,
-/// readback) and shares the underlying GL objects with Impeller, which
-/// renders on the same context.
+/// readback) and shares the underlying GL objects with the renderer, which
+/// draws on the same context.
 pub(crate) fn create_gl_context(binding: &dyn GlBinding) -> glow::Context {
   unsafe {
     glow::Context::from_loader_function(|name| {
@@ -167,24 +167,17 @@ pub(crate) fn create_gl_context(binding: &dyn GlBinding) -> glow::Context {
   }
 }
 
-pub(crate) fn create_impeller_context(binding: &dyn GlBinding) -> ImpellerContext {
+/// Create the renderer over the context current on the raster thread; it
+/// lives as long as the context (see raster/recover.rs for the order on a
+/// context loss).
+pub(crate) fn create_renderer(binding: &dyn GlBinding) -> Renderer {
   unsafe {
-    ImpellerContext::new_opengl_es(|name| {
+    Renderer::new(&mut |name| {
       let cname = std::ffi::CString::new(name).expect("GL proc name contains null byte");
       binding.proc_address(&cname) as *mut _
     })
   }
-  .expect("Failed to create Impeller context")
-}
-
-/// Adopt a GpuTexture's GL name into Impeller (zero-copy). Adoption transfers
-/// ownership of the GL name to Impeller, which deletes it when its Texture is
-/// dropped; GpuTexture therefore never deletes the name itself.
-pub(crate) fn adopt_texture(gpu_texture: &GpuTexture, impeller_ctx: &ImpellerContext, size: ISize) -> Option<Texture> {
-  let (width, height) = (size.width as u32, size.height as u32);
-  let gl_handle = gpu_texture.gl_texture.0.get() as u64;
-
-  unsafe { impeller_ctx.adopt_opengl_texture(width, height, 1, gl_handle) }
+  .expect("Failed to create the renderer")
 }
 
 /// Keep ANGLE's libraries loaded for the process life. SDL loads them for

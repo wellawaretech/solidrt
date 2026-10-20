@@ -8,7 +8,7 @@
 
 use super::buffer_age;
 use super::{DamageRect, PresentDamage};
-use impellers::ISize;
+use crate::renderer::ISize;
 use std::collections::VecDeque;
 
 // Damage-ring depth: how many past frames' deltas are kept for buffer-age
@@ -24,7 +24,7 @@ const DAMAGE_RING: usize = 8;
 #[derive(Clone, Copy)]
 pub(crate) enum WindowRoute {
   /// Multisampled FBO 0 (the Android in-tile fast path): draw straight into
-  /// the window - no rig pass, no resolve copy. Impeller clears the wrapped
+  /// the window - no rig pass, no resolve copy. the renderer clears the wrapped
   /// target and there is no rig to blit from, so this route can never carry
   /// a patch.
   FastPath,

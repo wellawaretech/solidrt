@@ -1,5 +1,5 @@
 use crate::gpu::WindowShader;
-use crate::impellers::DisplayListBuilder;
+use crate::renderer::DisplayListBuilder;
 use crate::rendertree::Damage;
 use crate::rendertree::{base_style, BuildContext, Buildable, Element, ElementKind};
 use crate::AlloyCommand;
