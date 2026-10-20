@@ -99,7 +99,7 @@ const SPRITE_ATLAS_FIELD = 11
 const RESOLVED = Promise.resolve()
 
 // Shared marshalling scratch (the bindings copy synchronously).
-const TRANSFORM = new Float32Array(10)
+const TRANSFORM = new Float64Array(10)
 // Half depth of a sprite's index box along z, node units (a sprite's z
 // scale is 1, so world units too). A sprite is a COLUMN in the index, not
 // a flat quad: a volume query at z = 0 then only ever meets its side
@@ -109,13 +109,13 @@ const TRANSFORM = new Float32Array(10)
 // larger than any volume's reach, so the end faces never take part.
 const SPRITE_DEPTH = 1e4
 const COLUMN_BOUNDS = new Float32Array([-0.5, -0.5, -SPRITE_DEPTH, 0.5, 0.5, SPRITE_DEPTH])
-const RAY_ORIGIN = new Float32Array(3)
-const RAY_DIR = new Float32Array(3)
+const RAY_ORIGIN = new Float64Array(3)
+const RAY_DIR = new Float64Array(3)
 // Volume scratch: a "capsule" is a, b, radius (7 floats), a "box" is
 // center, half extents, quaternion (10); both packed at z = 0.
-const CAPSULE = new Float32Array(7)
-const BOX = new Float32Array(10)
-const MOTION = new Float32Array(3)
+const CAPSULE = new Float64Array(7)
+const BOX = new Float64Array(10)
+const MOTION = new Float64Array(3)
 // A box volume's half depth: any positive value inside the columns.
 const BOX_HALF_DEPTH = 1
 // The pick ray starts this far in front of the plane; it crosses every
@@ -126,9 +126,9 @@ const PICK_RAY_START = -1
 // The direction floors face in a y-down world.
 const UP_2D: [number, number] = [0, -1]
 // worldPosition's world-matrix scratch (column-major; translation at 12, 13).
-const WORLD = new Float32Array(16)
+const WORLD = new Float64Array(16)
 // keepWorld's second scratch: the new parent's world matrix.
-const WORLD_PARENT = new Float32Array(16)
+const WORLD_PARENT = new Float64Array(16)
 // The pose keepWorld composes: [x, y, angle, sx, sy].
 const LOCAL_POSE = new Float64Array(5)
 
@@ -1164,6 +1164,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   let views = createViews({
     label,
     root,
+    pose: () => pose,
     pipeline: gpu.pipeline,
     quad: gpu.quad,
     textures: { ...atlasBindings(atlases.map(a => a.texture)), ...material.textures },

@@ -97,14 +97,14 @@ const STEP_SERIES_BELOW: f64 = 1e-3;
 /// as settled: a chain whose every tail settled asks for no frame. 0.1 mm
 /// per second on a model in metres; the residual drift after the gate
 /// closes is a few micrometres.
-const SETTLE_SPEED: f32 = 1e-4;
+const SETTLE_SPEED: f64 = 1e-4;
 /// A solved rotation within this of the node's (per quaternion component)
 /// is not written: the float noise of a settled chain stays out of the
 /// flush.
-const ROTATION_EPSILON: f32 = 1e-6;
+const ROTATION_EPSILON: f64 = 1e-6;
 /// Two unit vectors closer than this to antiparallel turn about a
 /// perpendicular instead of the degenerate cross product.
-const ANTIPARALLEL_EPSILON: f32 = 1e-6;
+const ANTIPARALLEL_EPSILON: f64 = 1e-6;
 
 /// One simulated bone. `tail` is where the chain continues, in the bone's
 /// own space (the next joint's rest position; a leaf's virtual tail); the
@@ -117,12 +117,12 @@ const ANTIPARALLEL_EPSILON: f32 = 1e-6;
 #[derive(Clone, Copy, Debug)]
 pub struct SpringJoint {
   pub node: NodeId,
-  pub tail: [f32; 3],
-  pub stiffness: f32,
-  pub drag: f32,
-  pub gravity_power: f32,
-  pub gravity_dir: [f32; 3],
-  pub hit_radius: f32,
+  pub tail: [f64; 3],
+  pub stiffness: f64,
+  pub drag: f64,
+  pub gravity_power: f64,
+  pub gravity_dir: [f64; 3],
+  pub hit_radius: f64,
 }
 
 /// A change to a joint's authored settings (`set_spring_joint`): the
@@ -130,11 +130,11 @@ pub struct SpringJoint {
 /// rest rotation are the chain's structure and stay as created.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SpringJointUpdate {
-  pub stiffness: Option<f32>,
-  pub drag: Option<f32>,
-  pub gravity_power: Option<f32>,
-  pub gravity_dir: Option<[f32; 3]>,
-  pub hit_radius: Option<f32>,
+  pub stiffness: Option<f64>,
+  pub drag: Option<f64>,
+  pub gravity_power: Option<f64>,
+  pub gravity_dir: Option<[f64; 3]>,
+  pub hit_radius: Option<f64>,
 }
 
 /// A collider's shape, in its node's space. `inside` keeps the tails
@@ -142,9 +142,9 @@ pub struct SpringJointUpdate {
 /// legs); a plane keeps them on its normal's side.
 #[derive(Clone, Copy, Debug)]
 pub enum SpringShape {
-  Sphere { offset: [f32; 3], radius: f32, inside: bool },
-  Capsule { a: [f32; 3], b: [f32; 3], radius: f32, inside: bool },
-  Plane { offset: [f32; 3], normal: [f32; 3] },
+  Sphere { offset: [f64; 3], radius: f64, inside: bool },
+  Capsule { a: [f64; 3], b: [f64; 3], radius: f64, inside: bool },
+  Plane { offset: [f64; 3], normal: [f64; 3] },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -173,7 +173,7 @@ struct Flow {
 }
 
 impl Flow {
-  fn new(drag: f32) -> Self {
+  fn new(drag: f64) -> Self {
     let keep = (1.0 - drag as f64).clamp(KEEP_MIN, 1.0);
     let d = 1.0 - keep;
     let s = SPRING_REFERENCE_STEP;
@@ -191,7 +191,7 @@ impl Flow {
 
   /// One step of `t` seconds: the new (x, u) for the kick `f`, and the
   /// factor a projection's correction of x enters u by.
-  fn step(&self, x: [f32; 3], u: [f32; 3], f: [f32; 3], t: f64) -> ([f32; 3], [f32; 3], f32) {
+  fn step(&self, x: [f64; 3], u: [f64; 3], f: [f64; 3], t: f64) -> ([f64; 3], [f64; 3], f64) {
     let s = self.lambda * t;
     let (e, g1, g2) = if s < STEP_SERIES_BELOW {
       (1.0 - s + s * s / 2.0, 1.0 - s / 2.0 + s * s / 6.0, 0.5 - s / 6.0 + s * s / 24.0)
@@ -202,18 +202,17 @@ impl Flow {
     let ku = self.mu * t * g1;
     let xu = self.a * t * g1;
     let xf = self.a * self.mu * t * t * g2 + self.c * t;
-    let mut nx = [0.0f32; 3];
-    let mut nu = [0.0f32; 3];
+    let mut nx = [0.0f64; 3];
+    let mut nu = [0.0f64; 3];
     for i in 0..3 {
-      let (xi, ui, fi) = (x[i] as f64, u[i] as f64, f[i] as f64);
-      nu[i] = (e * ui + ku * fi) as f32;
-      nx[i] = (xi + xu * ui + xf * fi) as f32;
+      nu[i] = e * u[i] + ku * f[i];
+      nx[i] = x[i] + xu * u[i] + xf * f[i];
     }
     // The correction factor: the velocity a resting tail's kick leaves,
     // per unit of the displacement the projection takes back (1/S at S,
     // position verlet's rule).
     let kappa = self.mu * g1 / (self.a * self.mu * t * g2 + self.c);
-    (nx, nu, kappa as f32)
+    (nx, nu, kappa)
   }
 }
 
@@ -221,20 +220,20 @@ struct Joint {
   spec: SpringJoint,
   flow: Flow,
   /// The tail's unit direction in the bone's own space, after its scale.
-  axis: [f32; 3],
+  axis: [f64; 3],
   /// |tail| in the bone's own units: what the sim-space length is
   /// divided by for the bone's scale factor.
-  rest_length: f32,
+  rest_length: f64,
   /// The node's rest rotation at creation (the bone turns from it).
-  rest_rotation: [f32; 4],
+  rest_rotation: [f64; 4],
   /// The joint listed earlier whose node is this bone's parent, else the
   /// parent's matrix is read from the arena.
   parent_joint: Option<usize>,
   /// Tail position and velocity in simulation space.
-  x: [f32; 3],
-  u: [f32; 3],
+  x: [f64; 3],
+  u: [f64; 3],
   /// The rotation last written (what the node's holds unless JS wrote).
-  written: [f32; 4],
+  written: [f64; 4],
 }
 
 struct Chain {
@@ -247,9 +246,9 @@ struct Chain {
   by_node: HashMap<u32, usize>,
   /// The runtime force on every tail (`set_spring_force`), world space,
   /// beside the joints' authored gravity: the wind. Zero until set.
-  force: [f32; 3],
+  force: [f64; 3],
   /// `force` in simulation space, per frame.
-  force_sim: [f32; 3],
+  force_sim: [f64; 3],
   /// Per frame: the parent matrix of every joint without a parent joint
   /// (unused slots stay identity), the solved matrix of every joint, the
   /// collider shapes in simulation space.
@@ -261,9 +260,9 @@ struct Chain {
 /// A collider resolved into simulation space for one frame.
 #[derive(Clone, Copy)]
 enum SimShape {
-  Sphere { center: [f32; 3], radius: f32, inside: bool },
-  Capsule { a: [f32; 3], b: [f32; 3], radius: f32, inside: bool },
-  Plane { point: [f32; 3], normal: [f32; 3] },
+  Sphere { center: [f64; 3], radius: f64, inside: bool },
+  Capsule { a: [f64; 3], b: [f64; 3], radius: f64, inside: bool },
+  Plane { point: [f64; 3], normal: [f64; 3] },
 }
 
 #[derive(Default)]
@@ -455,7 +454,7 @@ impl Spatial {
   /// joint's authored gravity in the kick - Godot's external_force,
   /// UniVRM's ExternalForce. A constant force settles like gravity does.
   /// Errors: a dropped id, a non-finite force.
-  pub fn set_spring_force(&mut self, id: SpringId, force: [f32; 3]) -> Result<(), String> {
+  pub fn set_spring_force(&mut self, id: SpringId, force: [f64; 3]) -> Result<(), String> {
     if !force.iter().all(|v| v.is_finite()) {
       return Err("the force must be finite".to_string());
     }
@@ -592,7 +591,7 @@ impl Spatial {
         }
         let correction = sub(x, free);
         let u = add(u, scale3(correction, kappa));
-        let speed = length(sub(x, j.x)) / t as f32;
+        let speed = length(sub(x, j.x)) / t as f64;
         if speed >= SETTLE_SPEED {
           moving = true;
         }
@@ -628,7 +627,7 @@ impl Spatial {
   /// rest tail vector there (direction times bone length), the scale
   /// factor from its own units to simulation units, and its parent's
   /// simulation matrix.
-  fn joint_frame(&self, chain: &Chain, i: usize) -> ([f32; 3], [f32; 3], f32, Mat4) {
+  fn joint_frame(&self, chain: &Chain, i: usize) -> ([f64; 3], [f64; 3], f64, Mat4) {
     let j = &chain.joints[i];
     let parent_sim = match j.parent_joint {
       Some(p) => chain.solved[p],
@@ -644,7 +643,7 @@ impl Spatial {
 
   /// Write a rotation through the snap path when it differs from the
   /// node's; whether it did.
-  pub(super) fn write_rotation(&mut self, idx: u32, q: [f32; 4]) -> bool {
+  pub(super) fn write_rotation(&mut self, idx: u32, q: [f64; 4]) -> bool {
     let n = &mut self.nodes[idx as usize];
     if !differs(q, n.rotation) {
       return false;
@@ -672,7 +671,7 @@ fn check_settings(spec: &SpringJoint) -> Result<(), String> {
 }
 
 /// The rest rotation checked finite (its normalization is per use).
-fn rest_rotation_check(rest_rotation: [f32; 4]) -> Result<(), String> {
+fn rest_rotation_check(rest_rotation: [f64; 4]) -> Result<(), String> {
   if rest_rotation.iter().all(|v| v.is_finite()) && length4(rest_rotation) > 0.0 {
     Ok(())
   } else {
@@ -682,13 +681,13 @@ fn rest_rotation_check(rest_rotation: [f32; 4]) -> Result<(), String> {
 
 /// The tail held at the bone's length from its position; a tail at the
 /// position itself takes the rest direction.
-fn pos_at_length(pos: [f32; 3], tail: [f32; 3], len: f32, rest_dir: [f32; 3]) -> [f32; 3] {
+fn pos_at_length(pos: [f64; 3], tail: [f64; 3], len: f64, rest_dir: [f64; 3]) -> [f64; 3] {
   let dir = normalize_or(sub(tail, pos), rest_dir);
   add(pos, scale3(dir, len))
 }
 
 /// The tail pushed out of (or kept within) a collider, None when clear.
-fn push_out(x: [f32; 3], hit: f32, shape: &SimShape, fallback: [f32; 3]) -> Option<[f32; 3]> {
+fn push_out(x: [f64; 3], hit: f64, shape: &SimShape, fallback: [f64; 3]) -> Option<[f64; 3]> {
   let (delta, radius, inside) = match *shape {
     SimShape::Sphere { center, radius, inside } => (sub(x, center), radius, inside),
     SimShape::Capsule { a, b, radius, inside } => (sub(x, closest_on_segment(x, a, b)), radius, inside),
@@ -713,7 +712,7 @@ fn push_out(x: [f32; 3], hit: f32, shape: &SimShape, fallback: [f32; 3]) -> Opti
   }
 }
 
-fn closest_on_segment(p: [f32; 3], a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+fn closest_on_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
   let ab = sub(b, a);
   let l2 = dot(ab, ab);
   if l2 <= 0.0 {
@@ -724,7 +723,7 @@ fn closest_on_segment(p: [f32; 3], a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 }
 
 /// The shortest arc taking unit `a` onto unit `b`.
-fn quat_from_to(a: [f32; 3], b: [f32; 3]) -> [f32; 4] {
+fn quat_from_to(a: [f64; 3], b: [f64; 3]) -> [f64; 4] {
   let r = dot(a, b) + 1.0;
   if r < ANTIPARALLEL_EPSILON {
     // Half a turn about any axis perpendicular to a.
@@ -736,49 +735,49 @@ fn quat_from_to(a: [f32; 3], b: [f32; 3]) -> [f32; 4] {
   quat_normalize([c[0], c[1], c[2], r])
 }
 
-fn quat_conjugate(q: [f32; 4]) -> [f32; 4] {
+fn quat_conjugate(q: [f64; 4]) -> [f64; 4] {
   [-q[0], -q[1], -q[2], q[3]]
 }
 
-fn differs(a: [f32; 4], b: [f32; 4]) -> bool {
+fn differs(a: [f64; 4], b: [f64; 4]) -> bool {
   (0..4).any(|i| (a[i] - b[i]).abs() > ROTATION_EPSILON)
 }
 
 /// The scale a matrix carries along its first column: what a uniformly
 /// scaled node scales every length by.
-fn column_scale(m: &Mat4) -> f32 {
+fn column_scale(m: &Mat4) -> f64 {
   length([m[0], m[1], m[2]])
 }
 
-fn add(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
   [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
-fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
   [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
-fn scale3(v: [f32; 3], s: f32) -> [f32; 3] {
+fn scale3(v: [f64; 3], s: f64) -> [f64; 3] {
   [v[0] * s, v[1] * s, v[2] * s]
 }
 
-fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
   a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
   [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 
-fn length(v: [f32; 3]) -> f32 {
+fn length(v: [f64; 3]) -> f64 {
   dot(v, v).sqrt()
 }
 
-fn length4(q: [f32; 4]) -> f32 {
+fn length4(q: [f64; 4]) -> f64 {
   (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt()
 }
 
-fn normalize_or(v: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
+fn normalize_or(v: [f64; 3], fallback: [f64; 3]) -> [f64; 3] {
   let l = length(v);
   if l > 0.0 {
     scale3(v, 1.0 / l)
@@ -790,6 +789,6 @@ fn normalize_or(v: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
 /// The flow's pure step, for the tests: (x, u) after `t` seconds under
 /// the kick `f` at `drag`, and the correction factor.
 #[cfg(test)]
-pub(crate) fn flow_step(drag: f32, x: [f32; 3], u: [f32; 3], f: [f32; 3], t: f64) -> ([f32; 3], [f32; 3], f32) {
+pub(crate) fn flow_step(drag: f64, x: [f64; 3], u: [f64; 3], f: [f64; 3], t: f64) -> ([f64; 3], [f64; 3], f64) {
   Flow::new(drag).step(x, u, f, t)
 }

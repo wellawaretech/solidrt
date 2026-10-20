@@ -16,18 +16,18 @@ use super::{Box3, Mat4, NodeId};
 /// Squared length below which a segment is a point and a separating axis
 /// (an edge/edge cross product) is degenerate; the point's sphere and
 /// the parallel pair's other axes cover what the skipped test would.
-const DEGENERATE_EPSILON: f32 = 1e-12;
+const DEGENERATE_EPSILON: f64 = 1e-12;
 
-type V3 = [f32; 3];
+type V3 = [f64; 3];
 
 /// A world-space query volume.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Volume {
   /// Every point within `radius` of the segment a-b; a sphere when a == b.
-  Capsule { a: V3, b: V3, radius: f32 },
+  Capsule { a: V3, b: V3, radius: f64 },
   /// An oriented box: `half` extents along the axes of the unit
   /// quaternion `rotation` (xyzw) about `center`.
-  Box { center: V3, half: V3, rotation: [f32; 4] },
+  Box { center: V3, half: V3, rotation: [f64; 4] },
 }
 
 /// One node overlapped by a volume: its deepest contact.
@@ -39,7 +39,7 @@ pub struct Overlap {
   /// Unit direction out of the node: the volume moved `depth` along it
   /// clears the contact.
   pub normal: V3,
-  pub depth: f32,
+  pub depth: f64,
 }
 
 /// A moving volume's first touch of one node.
@@ -48,7 +48,7 @@ pub struct Impact {
   pub node: NodeId,
   /// Fraction of the motion (0..=1); 0 for a volume already in contact
   /// and moving in.
-  pub time: f32,
+  pub time: f64,
   /// World-space touch point on the node's surface.
   pub point: V3,
   /// Unit normal at the touch, facing the volume (its dot with the
@@ -58,11 +58,11 @@ pub struct Impact {
 
 /// A contact against one triangle: (point on the triangle, normal out of
 /// the triangle, depth).
-pub(crate) type Contact = (V3, V3, f32);
+pub(crate) type Contact = (V3, V3, f64);
 
 /// A volume prepared for a query: the box with its axes unpacked.
 pub(crate) enum Query {
-  Capsule { a: V3, b: V3, radius: f32 },
+  Capsule { a: V3, b: V3, radius: f64 },
   Box(Obb),
 }
 
@@ -99,7 +99,7 @@ impl Query {
   /// How far the volume reaches from its center against the unit
   /// direction `n`: the push along `n` that carries the whole volume
   /// past a plane its center lies on.
-  pub fn extent(&self, n: V3) -> f32 {
+  pub fn extent(&self, n: V3) -> f64 {
     match self {
       Query::Capsule { a, b, radius } => dot(sub(*b, *a), n).abs() * 0.5 + radius,
       Query::Box(obb) => (0..3).map(|i| obb.half[i] * dot(obb.axes[i], n).abs()).sum(),
@@ -128,7 +128,7 @@ impl Query {
     }
     let normals = normal_matrix(world);
     let mut best: Option<Contact> = None;
-    let mut consider = |n: V3, reach: f32, point: V3| {
+    let mut consider = |n: V3, reach: f64, point: V3| {
       let depth = reach + self.extent(n);
       if best.is_none_or(|b| depth < b.2) {
         best = Some((point, n, depth));
@@ -137,8 +137,8 @@ impl Query {
     // The faces: the plane distance from the center along the outward
     // normal, the point the center drops onto.
     for k in 0..3 {
-      for (side, sign) in [(bounds[k], -1.0f32), (bounds[k + 3], 1.0f32)] {
-        let mut axis = [0.0f32; 3];
+      for (side, sign) in [(bounds[k], -1.0f64), (bounds[k + 3], 1.0f64)] {
+        let mut axis = [0.0f64; 3];
         axis[k] = sign;
         let n = transform_vector(&normals, axis);
         let l2 = dot(n, n);
@@ -165,7 +165,7 @@ impl Query {
         transform_vector(world, [0.0, 0.0, (bounds[5] - bounds[2]) * 0.5]),
       ];
       for axis in obb.axes {
-        let reach: f32 = edges.iter().map(|e| dot(*e, axis).abs()).sum();
+        let reach: f64 = edges.iter().map(|e| dot(*e, axis).abs()).sum();
         let offset = dot(sub(center, box_center), axis);
         for (n, side) in [(axis, reach - offset), (neg(axis), reach + offset)] {
           consider(n, side.max(0.0), add(center, scale(n, side.max(0.0))));
@@ -221,7 +221,7 @@ impl Query {
   /// contact reports time 0 only while the motion closes in; leaving or
   /// sliding along the contact is no hit, which is what lets a slide
   /// along a wall proceed.
-  pub fn sweep_triangle(&self, motion: V3, tri: &[V3; 3]) -> Option<(f32, V3, V3)> {
+  pub fn sweep_triangle(&self, motion: V3, tri: &[V3; 3]) -> Option<(f64, V3, V3)> {
     let tn = triangle_normal(tri)?;
     match self {
       Query::Capsule { a, b, radius } => {
@@ -260,7 +260,7 @@ impl Query {
 /// The capsule's contact with a triangle: the closest pair when apart,
 /// else the triangle plane's normal toward the segment with the depth
 /// that lifts the deeper endpoint clear.
-fn capsule_contact(a: V3, b: V3, radius: f32, tri: &[V3; 3], tn: V3) -> Option<Contact> {
+fn capsule_contact(a: V3, b: V3, radius: f64, tri: &[V3; 3], tn: V3) -> Option<Contact> {
   let (ps, pt, dist) = segment_triangle(a, b, tri);
   if dist > radius {
     return None;
@@ -295,7 +295,7 @@ fn against(n: V3, motion: V3) -> V3 {
 /// reports the pierce point twice at distance 0; otherwise the closest
 /// pair lies at a segment endpoint or on a triangle edge, so it is the
 /// nearest of those five candidates.
-pub(crate) fn segment_triangle(a: V3, b: V3, tri: &[V3; 3]) -> (V3, V3, f32) {
+pub(crate) fn segment_triangle(a: V3, b: V3, tri: &[V3; 3]) -> (V3, V3, f64) {
   if let Some(p) = segment_pierce(a, sub(b, a), tri) {
     return (p, p, 0.0);
   }
@@ -431,11 +431,11 @@ fn closest_segment_segment(p1: V3, q1: V3, p2: V3, q2: V3) -> (V3, V3) {
 /// from both sides: a flat prism (the segment in the triangle plane, or a
 /// sphere's zero segment) has no outside, and for a solid one the
 /// wrong-side plane can only score behind the true entry.
-fn prism_sweep(center: V3, motion: V3, r: f32, tri: &[V3; 3], h: V3) -> Option<f32> {
+fn prism_sweep(center: V3, motion: V3, r: f64, tri: &[V3; 3], h: V3) -> Option<f64> {
   let top = [add(tri[0], h), add(tri[1], h), add(tri[2], h)];
   let bottom = [sub(tri[0], h), sub(tri[1], h), sub(tri[2], h)];
-  let mut best = f32::INFINITY;
-  let mut keep = |t: Option<f32>| {
+  let mut best = f64::INFINITY;
+  let mut keep = |t: Option<f64>| {
     if let Some(t) = t {
       best = best.min(t);
     }
@@ -456,14 +456,14 @@ fn prism_sweep(center: V3, motion: V3, r: f32, tri: &[V3; 3], h: V3) -> Option<f
 
 /// The sphere's entry through either offset plane of a convex polygon,
 /// landing inside it.
-fn face_sweep(c: V3, m: V3, r: f32, poly: &[V3]) -> Option<f32> {
+fn face_sweep(c: V3, m: V3, r: f64, poly: &[V3]) -> Option<f64> {
   let wn = cross(sub(poly[1], poly[0]), sub(poly[2], poly[0]));
   let l2 = dot(wn, wn);
   if l2 < DEGENERATE_EPSILON {
     return None;
   }
   let unit = scale(wn, 1.0 / l2.sqrt());
-  let mut best: Option<f32> = None;
+  let mut best: Option<f64> = None;
   for n in [unit, neg(unit)] {
     let denom = dot(n, m);
     if denom >= 0.0 {
@@ -487,7 +487,7 @@ fn face_sweep(c: V3, m: V3, r: f32, poly: &[V3]) -> Option<f32> {
 
 /// The sphere's entry into the finite cylinder of radius `r` around the
 /// edge p-q.
-fn edge_sweep(c: V3, m: V3, r: f32, p: V3, q: V3) -> Option<f32> {
+fn edge_sweep(c: V3, m: V3, r: f64, p: V3, q: V3) -> Option<f64> {
   let d = sub(q, p);
   let len2 = dot(d, d);
   if len2 < DEGENERATE_EPSILON {
@@ -502,14 +502,14 @@ fn edge_sweep(c: V3, m: V3, r: f32, p: V3, q: V3) -> Option<f32> {
 }
 
 /// The sphere's entry into the sphere of radius `r` at `v`.
-fn vertex_sweep(c: V3, m: V3, r: f32, v: V3) -> Option<f32> {
+fn vertex_sweep(c: V3, m: V3, r: f64, v: V3) -> Option<f64> {
   quadratic_entry(m, sub(c, v), r)
 }
 
 /// First t in 0..=1 with |w + t m| == r, the entry of a point moving by
 /// `m` from offset `w` into a sphere of radius `r` (a ray parallel to a
 /// cylinder axis arrives here with a zero `m`, and is no entry).
-fn quadratic_entry(m: V3, w: V3, r: f32) -> Option<f32> {
+fn quadratic_entry(m: V3, w: V3, r: f64) -> Option<f64> {
   let a = dot(m, m);
   if a < DEGENERATE_EPSILON {
     return None;
@@ -528,10 +528,10 @@ fn quadratic_entry(m: V3, w: V3, r: f32) -> Option<f32> {
 struct Sat {
   /// The least-penetration axis of the pose at time 0: (axis index,
   /// unit normal into the box, depth).
-  deepest: (usize, V3, f32),
+  deepest: (usize, V3, f64),
   /// The moving box's first touch: (axis index, unit normal into the
   /// box, time). None when the intervals never meet within the motion.
-  entry: Option<(usize, V3, f32)>,
+  entry: Option<(usize, V3, f64)>,
 }
 
 /// The box-frame axes: the triangle's normal first (so it wins a tie
@@ -549,7 +549,7 @@ const CROSS_AXES: usize = 4;
 /// time 0 on an axis the motion never closes, or never met at all.
 fn sat(tri: &[V3; 3], half: V3, motion: V3) -> Option<Sat> {
   let edges = [sub(tri[1], tri[0]), sub(tri[2], tri[1]), sub(tri[0], tri[2])];
-  let mut axes = [[0.0f32; 3]; 13];
+  let mut axes = [[0.0f64; 3]; 13];
   axes[NORMAL_AXIS] = cross(edges[0], edges[1]);
   for i in 0..3 {
     axes[BOX_AXES.start + i][i] = 1.0;
@@ -557,9 +557,9 @@ fn sat(tri: &[V3; 3], half: V3, motion: V3) -> Option<Sat> {
       axes[CROSS_AXES + i * 3 + j] = cross(axes[BOX_AXES.start + i], edges[j]);
     }
   }
-  let mut deepest: Option<(usize, V3, f32)> = None;
-  let mut first: Option<(usize, V3, f32)> = None;
-  let mut last = f32::INFINITY;
+  let mut deepest: Option<(usize, V3, f64)> = None;
+  let mut first: Option<(usize, V3, f64)> = None;
+  let mut last = f64::INFINITY;
   let mut apart_now = false;
   for (k, axis) in axes.iter().enumerate() {
     let l2 = dot(*axis, *axis);
@@ -568,7 +568,7 @@ fn sat(tri: &[V3; 3], half: V3, motion: V3) -> Option<Sat> {
     }
     let len = l2.sqrt();
     let unit = scale(*axis, 1.0 / len);
-    let reach: f32 = (0..3).map(|i| half[i] * unit[i].abs()).sum();
+    let reach: f64 = (0..3).map(|i| half[i] * unit[i].abs()).sum();
     let p = [dot(unit, tri[0]), dot(unit, tri[1]), dot(unit, tri[2])];
     let (lo, hi) = (p[0].min(p[1]).min(p[2]), p[0].max(p[1]).max(p[2]));
     // Static: the shorter of the two pushes that separate the intervals,
@@ -675,7 +675,7 @@ pub(crate) fn sub(a: V3, b: V3) -> V3 {
   [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
-pub(crate) fn scale(a: V3, s: f32) -> V3 {
+pub(crate) fn scale(a: V3, s: f64) -> V3 {
   [a[0] * s, a[1] * s, a[2] * s]
 }
 
@@ -683,7 +683,7 @@ fn neg(a: V3) -> V3 {
   [-a[0], -a[1], -a[2]]
 }
 
-fn dist2(a: V3, b: V3) -> f32 {
+fn dist2(a: V3, b: V3) -> f64 {
   let d = sub(a, b);
   dot(d, d)
 }

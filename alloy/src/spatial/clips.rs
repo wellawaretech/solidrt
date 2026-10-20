@@ -75,8 +75,8 @@ pub struct ClipChannel {
 /// fires on entering, `End` on leaving, and on a stop inside it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClipMarker {
-  pub time: f32,
-  pub duration: f32,
+  pub time: f64,
+  pub duration: f64,
   pub name: String,
 }
 
@@ -127,8 +127,10 @@ pub(super) fn key_layout(channel: &ClipChannel) -> (usize, usize) {
 /// Sample one channel at `time` (seconds, clamped to the key range) into
 /// `out[..elements]` (`out` at least `channel.elements` long). `cursor`
 /// caches the last lo key index; a time at or past it advances linearly,
-/// a time before it (seek, loop wrap) falls back to binary search.
-pub(crate) fn sample(channel: &ClipChannel, time: f32, cursor: &mut u32, out: &mut [f32]) {
+/// a time before it (seek, loop wrap) falls back to binary search. The
+/// keys are stored f32 (baked data, joint-local values); the sample comes
+/// out in the arena's f64.
+pub(crate) fn sample(channel: &ClipChannel, time: f64, cursor: &mut u32, out: &mut [f64]) {
   let times = &channel.times;
   let values = &channel.values;
   let keys = times.len();
@@ -137,23 +139,27 @@ pub(crate) fn sample(channel: &ClipChannel, time: f32, cursor: &mut u32, out: &m
   if keys == 0 {
     return;
   }
-  if time <= times[0] || keys == 1 {
-    out[..elements].copy_from_slice(&values[mid..mid + elements]);
+  let copy = |out: &mut [f64], at: usize| {
+    for e in 0..elements {
+      out[e] = values[at + e] as f64;
+    }
+  };
+  if time <= times[0] as f64 || keys == 1 {
+    copy(out, mid);
     return;
   }
-  if time >= times[keys - 1] {
-    let at = (keys - 1) * stride + mid;
-    out[..elements].copy_from_slice(&values[at..at + elements]);
+  if time >= times[keys - 1] as f64 {
+    copy(out, (keys - 1) * stride + mid);
     return;
   }
   // The key pair around `time`: the last key at or before it.
   let mut lo = (*cursor as usize).min(keys - 2);
-  if times[lo] > time {
+  if times[lo] as f64 > time {
     let mut a = 0;
     let mut b = lo;
     while b - a > 1 {
       let m = (a + b) >> 1;
-      if times[m] <= time {
+      if times[m] as f64 <= time {
         a = m;
       } else {
         b = m;
@@ -162,28 +168,29 @@ pub(crate) fn sample(channel: &ClipChannel, time: f32, cursor: &mut u32, out: &m
     lo = a;
   } else {
     // time < times[keys - 1] bounds the walk.
-    while times[lo + 1] <= time {
+    while times[lo + 1] as f64 <= time {
       lo += 1;
     }
   }
   *cursor = lo as u32;
   let hi = lo + 1;
-  let t0 = times[lo];
-  let t1 = times[hi];
+  let t0 = times[lo] as f64;
+  let t1 = times[hi] as f64;
   let span = t1 - t0;
   let s = if span > 0.0 { (time - t0) / span } else { 0.0 };
   let a = lo * stride + mid;
   let b = hi * stride + mid;
   match channel.interpolation {
-    ChannelInterpolation::Step => out[..elements].copy_from_slice(&values[a..a + elements]),
+    ChannelInterpolation::Step => copy(out, a),
     ChannelInterpolation::Linear => {
       if channel.path == ChannelPath::Rotation {
-        let qa = [values[a], values[a + 1], values[a + 2], values[a + 3]];
-        let qb = [values[b], values[b + 1], values[b + 2], values[b + 3]];
+        let qa = [values[a] as f64, values[a + 1] as f64, values[a + 2] as f64, values[a + 3] as f64];
+        let qb = [values[b] as f64, values[b + 1] as f64, values[b + 2] as f64, values[b + 3] as f64];
         out[..4].copy_from_slice(&slerp(qa, qb, s));
       } else {
         for e in 0..elements {
-          out[e] = values[a + e] + (values[b + e] - values[a + e]) * s;
+          let (va, vb) = (values[a + e] as f64, values[b + e] as f64);
+          out[e] = va + (vb - va) * s;
         }
       }
     }
@@ -200,10 +207,10 @@ pub(crate) fn sample(channel: &ClipChannel, time: f32, cursor: &mut u32, out: &m
       let out_tan = lo * stride + elements * 2;
       let in_tan = hi * stride;
       for e in 0..elements {
-        out[e] = h00 * values[a + e]
-          + h10 * span * values[out_tan + e]
-          + h01 * values[b + e]
-          + h11 * span * values[in_tan + e];
+        out[e] = h00 * values[a + e] as f64
+          + h10 * span * values[out_tan + e] as f64
+          + h01 * values[b + e] as f64
+          + h11 * span * values[in_tan + e] as f64;
       }
       if channel.path == ChannelPath::Rotation {
         let q = quat_normalize([out[0], out[1], out[2], out[3]]);
@@ -243,7 +250,7 @@ pub(super) fn check_channel(i: usize, c: &ClipChannel) -> Result<(), String> {
 }
 
 /// Hamilton product a * b for [x, y, z, w] quaternions.
-pub(super) fn quat_multiply(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+pub(super) fn quat_multiply(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
   let (ax, ay, az, aw) = (a[0], a[1], a[2], a[3]);
   let (bx, by, bz, bw) = (b[0], b[1], b[2], b[3]);
   [
@@ -255,7 +262,7 @@ pub(super) fn quat_multiply(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
 }
 
 /// The conjugate of a unit quaternion: its inverse.
-pub(super) fn quat_inverse(q: [f32; 4]) -> [f32; 4] {
+pub(super) fn quat_inverse(q: [f64; 4]) -> [f64; 4] {
   [-q[0], -q[1], -q[2], q[3]]
 }
 
@@ -268,7 +275,7 @@ pub(super) fn quat_inverse(q: [f32; 4]) -> [f32; 4] {
 /// by the same linear map where there is one (a rotation's and a scale's),
 /// and stay as authored where the map is a translation (a subtraction
 /// leaves a slope alone). The reference is `reference[..elements]`.
-pub(super) fn additive_channel(channel: &ClipChannel, reference: &[f32]) -> ClipChannel {
+pub(super) fn additive_channel(channel: &ClipChannel, reference: &[f64]) -> ClipChannel {
   let elements = channel.elements;
   let (stride, mid) = key_layout(channel);
   let cubic = channel.interpolation == ChannelInterpolation::Cubic;
@@ -282,9 +289,11 @@ pub(super) fn additive_channel(channel: &ClipChannel, reference: &[f32]) -> Clip
         let parts: &[usize] = if cubic { &[0, 1, 2] } else { &[0] };
         for &part in parts {
           let at = base + part * elements;
-          let q = [values[at], values[at + 1], values[at + 2], values[at + 3]];
+          let q = [values[at] as f64, values[at + 1] as f64, values[at + 2] as f64, values[at + 3] as f64];
           let d = quat_multiply(inv, q);
-          values[at..at + 4].copy_from_slice(&d);
+          for (v, x) in values[at..at + 4].iter_mut().zip(d) {
+            *v = x as f32;
+          }
         }
       }
       ChannelPath::Scale => {
@@ -293,7 +302,7 @@ pub(super) fn additive_channel(channel: &ClipChannel, reference: &[f32]) -> Clip
           let at = base + part * elements;
           for e in 0..elements {
             if reference[e] != 0.0 {
-              values[at + e] /= reference[e];
+              values[at + e] = (values[at + e] as f64 / reference[e]) as f32;
             }
           }
         }
@@ -301,7 +310,7 @@ pub(super) fn additive_channel(channel: &ClipChannel, reference: &[f32]) -> Clip
       _ => {
         let at = base + mid;
         for e in 0..elements {
-          values[at + e] -= reference[e];
+          values[at + e] = (values[at + e] as f64 - reference[e]) as f32;
         }
       }
     }
@@ -323,17 +332,17 @@ pub(super) fn additive_channel(channel: &ClipChannel, reference: &[f32]) -> Clip
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn crossings(
   markers: &[ClipMarker],
-  prev: f32,
-  now: f32,
+  prev: f64,
+  now: f64,
   forward: bool,
-  wrap: Option<(f32, f32)>,
-  window: (f32, f32),
+  wrap: Option<(f64, f64)>,
+  window: (f64, f64),
   inclusive: bool,
   inside: &mut [bool],
   out: &mut Vec<(usize, MarkerPhase)>,
 ) {
   // A step is one or two monotone segments.
-  let mut segments: [Option<(f32, f32, bool)>; 2] = [None, None];
+  let mut segments: [Option<(f64, f64, bool)>; 2] = [None, None];
   match wrap {
     None => segments[0] = Some((prev, now, inclusive)),
     Some((start, end)) => {
@@ -349,7 +358,7 @@ pub(crate) fn crossings(
   // Every edge crossed in a segment, then the segment's edges in the
   // direction of travel. Instants have one edge; a window's two edges
   // are entering and leaving by the direction crossed.
-  let mut edges: Vec<(f32, usize, MarkerPhase)> = Vec::new();
+  let mut edges: Vec<(f64, usize, MarkerPhase)> = Vec::new();
   for segment in segments.iter().flatten() {
     let (from, to, incl) = *segment;
     edges.clear();
@@ -357,7 +366,7 @@ pub(crate) fn crossings(
       if m.time < window.0 || m.time > window.1 {
         continue;
       }
-      let crossed = |t: f32| -> bool {
+      let crossed = |t: f64| -> bool {
         if forward {
           (from < t || (incl && from == t)) && t <= to
         } else {

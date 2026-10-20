@@ -26,8 +26,8 @@ const WORLD_UP: Vec3 = [0, 1, 0]
 // The FFI carriers: one transform write (position, quaternion, scale) and
 // one world-matrix read. Values are copied at the boundary, so one of each
 // serves every call.
-let transformScratch = new Float32Array(10)
-let worldRead = new Float32Array(16)
+let transformScratch = new Float64Array(10)
+let worldRead = new Float64Array(16)
 // lookAt()/worldPosition() scratch: nothing here outlives a single call.
 let worldScratch = mat4()
 let localScratch = mat4()
@@ -280,7 +280,7 @@ export type SceneNode = {
    * layers compose over and a spring chain settles to. A model sets its
    * file's transforms; null for the common case (the pose as it stands
    * when a rig or chain first needs a rest). */
-  _rest: Float32Array | null
+  _rest: Float64Array | null
 }
 
 /** A subtree declaration's core half (see SceneNode._bindings). */
@@ -792,7 +792,7 @@ export function getMorphNames(node: SceneNode): string[] {
 }
 
 /** The node's local transform in the FFI carrier. */
-export function fillTransform(node: SceneNode): Float32Array {
+export function fillTransform(node: SceneNode): Float64Array {
   let t = transformScratch
   t[0] = node.position[0]; t[1] = node.position[1]; t[2] = node.position[2]
   t[3] = node.quaternion[0]; t[4] = node.quaternion[1]; t[5] = node.quaternion[2]; t[6] = node.quaternion[3]
@@ -989,7 +989,7 @@ export function getRotation(node: SceneNode, out: Vec3 = [0, 0, 0]): Vec3 {
 }
 
 // readTransform's FFI carrier (position 3, quaternion 4, scale 3).
-let transformRead = new Float32Array(10)
+let transformRead = new Float64Array(10)
 
 /**
  * The node's CURRENT local transform as fresh arrays. In a scene this

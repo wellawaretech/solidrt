@@ -19,29 +19,29 @@ use super::collide::{add, scale, sub};
 use super::pick::dot;
 use super::{Impact, QueryFilter, Spatial, Volume};
 
-type V3 = [f32; 3];
+type V3 = [f64; 3];
 
 /// Gap the body keeps from every surface, world units (Unity's skinWidth,
 /// Godot's safe_margin): what keeps float error from sinking a resting
 /// body into its floor.
-const SKIN: f32 = 0.01;
+const SKIN: f64 = 0.01;
 /// Contacts within this angle of `up` are floor: 45 degrees, Godot's
 /// floor_max_angle and Unity's slopeLimit.
-const FLOOR_MAX_ANGLE: f32 = std::f32::consts::FRAC_PI_4;
+const FLOOR_MAX_ANGLE: f64 = std::f64::consts::FRAC_PI_4;
 /// Most contacts one call slides along before it stops where it is
 /// (Godot's max_slides).
 const MAX_SLIDES: u32 = 6;
 /// How far below the body a floor is pulled to while it is not rising
 /// (Godot's floor_snap_length).
-const FLOOR_SNAP: f32 = 0.1;
+const FLOOR_SNAP: f64 = 0.1;
 /// Passes of the depenetration loop, one contact set pushed out per pass
 /// (Godot's recovery attempts).
 const MAX_RECOVERIES: u32 = 4;
 /// Motion below which a slide stops: nothing left worth sweeping.
-const MIN_MOVE: f32 = 1e-6;
+const MIN_MOVE: f64 = 1e-6;
 /// Floor of the approach cosine the skin is divided by to retreat along
 /// the motion: a grazing contact retreats a few skins, not the whole step.
-const SKIN_MIN_COS: f32 = 0.1;
+const SKIN_MIN_COS: f64 = 0.1;
 
 /// The mover's tuning; `Default` is the engines' common setting.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -51,17 +51,17 @@ pub struct MoveOptions {
   /// Largest angle (radians) between a contact normal and `up` that still
   /// counts as floor. Steeper contacts are walls, and the body slides
   /// down them.
-  pub floor_max_angle: f32,
+  pub floor_max_angle: f64,
   /// Most contacts one call slides along.
   pub max_slides: u32,
   /// Gap kept from every surface, world units.
-  pub skin: f32,
+  pub skin: f64,
   /// How far below the body a floor is pulled to when the motion does not
   /// rise (0 disables): what keeps a walker on a ramp going down, and what
   /// decides `floor` at the end of the move - a body that ends higher than
   /// this above its floor is airborne, whatever it touched on the way. A
   /// rising motion (a jump) never snaps.
-  pub floor_snap: f32,
+  pub floor_snap: f64,
 }
 
 impl Default for MoveOptions {
@@ -200,6 +200,6 @@ fn shifted(volume: &Volume, d: V3) -> Volume {
   }
 }
 
-fn length(v: V3) -> f32 {
+fn length(v: V3) -> f64 {
   dot(v, v).sqrt()
 }

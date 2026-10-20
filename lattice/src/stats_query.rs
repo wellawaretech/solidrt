@@ -159,8 +159,8 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
     put("occluderTrianglesDrawn", o.drawn.into());
     put("occluderTrianglesSkipped", o.skipped.into());
     put("occlusionBuilds", o.builds.into());
-    put("occlusionBuildMs", round2(o.build_ms).into());
-    put("occlusionBuildMaxMs", round2(o.build_max_ms).into());
+    put("occlusionBuildMs", round2(o.build_ms as f32).into());
+    put("occlusionBuildMaxMs", round2(o.build_max_ms as f32).into());
   }
   // The mixer, read live: voices in the mix, rings outrun since the device
   // opened, and the longest callback render pass since the last query (the

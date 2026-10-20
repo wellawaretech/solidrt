@@ -1279,12 +1279,18 @@ export type ShaderMaterialClassOptions = {
    * `uniform mat4 uViewProj` (the camera's view-projection, shared by the
    * whole scene target and written once per camera move) - transform with
    * `uViewProj * uModel * vec4(aPos, 1.0)`; a source mentioning neither
-   * throws right here. The rest of the standard uniform set is opt-in by
-   * declare-and-use: `uniform mat4 uNormal` (either stage) receives the
-   * world inverse-transpose beside uModel - take `mat3(uNormal)` for
-   * normals, correct under non-uniform scale - and `uniform vec3 uCamPos`
-   * the camera's world position, shared like uViewProj (the specular /
-   * fresnel view vector: `uCamPos - worldPos`). Declare any of the
+   * throws right here. Both are RELATIVE to the target's render origin
+   * (the arena keeps the world in f64 and uploads f32 around a point
+   * near the camera): uModel's translation, uCamPos and so `uModel *
+   * aPos` are origin-relative, consistent with each other, and `uniform
+   * vec3 uOrigin` (shared like uViewProj) adds the absolute world back
+   * where an effect needs it. The rest of the standard uniform set is
+   * opt-in by declare-and-use: `uniform mat4 uNormal` (either stage)
+   * receives the world inverse-transpose beside uModel - take
+   * `mat3(uNormal)` for normals, correct under non-uniform scale - and
+   * `uniform vec3 uCamPos` the camera's position, shared like uViewProj
+   * (the specular / fresnel view vector: `uCamPos - worldPos`). Declare
+   * any of the
    * geometry's `in` attributes by name (the standard aPos vec3, aNormal
    * vec3, aUV vec2, or any channel appended with withAttribute);
    * undeclared ones are skipped. What the program READS is the engine's

@@ -102,10 +102,14 @@ export function applyCamera(camera: CameraState, update: CameraUpdate): void {
 }
 
 /** The shared params the vertex stage (glsl.ts) reads for a camera:
- * uCamera [x, y, zoom, zoom] and uCameraRot [cos, sin, pivotX, pivotY]. */
-export function cameraParams(camera: CameraState): { uCamera: [number, number, number, number]; uCameraRot: [number, number, number, number] } {
+ * uCamera [x, y, zoom, zoom] and uCameraRot [cos, sin, pivotX, pivotY].
+ * The camera point goes in relative to `origin`, the layer's render
+ * origin (views.ts): the pose records are relative to the same point
+ * (flux:spatial setInstanceOrigin), so the stage's `iPos - uCamera.xy`
+ * subtracts two small numbers however far out the world lies. */
+export function cameraParams(camera: CameraState, origin: readonly [number, number]): { uCamera: [number, number, number, number]; uCameraRot: [number, number, number, number] } {
   return {
-    uCamera: [camera.x, camera.y, camera.zoom, camera.zoom],
+    uCamera: [camera.x - origin[0], camera.y - origin[1], camera.zoom, camera.zoom],
     uCameraRot: [Math.cos(camera.rotation), Math.sin(camera.rotation), camera.pivotX, camera.pivotY],
   }
 }
@@ -122,7 +126,7 @@ export function cameraParams(camera: CameraState): { uCamera: [number, number, n
  * Internal - views.ts pushes it on every camera, size or oversample
  * write.
  */
-export function viewMatrices(camera: CameraState, width: number, height: number, view: Float32Array, proj: Float32Array): void {
+export function viewMatrices(camera: CameraState, width: number, height: number, view: Float64Array, proj: Float64Array): void {
   let zoom = camera.zoom
   let c = Math.cos(camera.rotation)
   let s = Math.sin(camera.rotation)

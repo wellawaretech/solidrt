@@ -3,27 +3,27 @@ use crate::spatial::{
   SPRING_REFERENCE_STEP,
 };
 
-const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-const ONE: [f32; 3] = [1.0, 1.0, 1.0];
+const Q: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+const ONE: [f64; 3] = [1.0, 1.0, 1.0];
 const S: f64 = SPRING_REFERENCE_STEP;
 /// The port's bone: 10 cm hanging down.
-const BONE: f32 = 0.1;
+const BONE: f64 = 0.1;
 
-fn axis_quat(axis: [f32; 3], angle: f32) -> [f32; 4] {
+fn axis_quat(axis: [f64; 3], angle: f64) -> [f64; 4] {
   let h = angle * 0.5;
   let s = h.sin();
   [axis[0] * s, axis[1] * s, axis[2] * s, h.cos()]
 }
 
-fn close(a: [f32; 3], b: [f32; 3], tol: f32) -> bool {
+fn close(a: [f64; 3], b: [f64; 3], tol: f64) -> bool {
   (0..3).all(|i| (a[i] - b[i]).abs() <= tol)
 }
 
-fn dist(a: [f32; 3], b: [f32; 3]) -> f32 {
+fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
   ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
 
-fn joint(node: u64, drag: f32, gravity_power: f32, hit_radius: f32) -> SpringJoint {
+fn joint(node: u64, drag: f64, gravity_power: f64, hit_radius: f64) -> SpringJoint {
   SpringJoint {
     node,
     tail: [0.0, -BONE, 0.0],
@@ -46,7 +46,7 @@ fn rig(s: &mut Spatial) -> (u64, u64, u64) {
   (anchor, b1, b2)
 }
 
-fn chain(s: &mut Spatial, b1: u64, b2: u64, gravity_power: f32, colliders: Vec<SpringCollider>) -> u64 {
+fn chain(s: &mut Spatial, b1: u64, b2: u64, gravity_power: f64, colliders: Vec<SpringCollider>) -> u64 {
   let anchor_clock = b1;
   s.create_spring(
     anchor_clock,
@@ -63,15 +63,15 @@ fn advance_at(s: &mut Spatial, ms: f64) -> SpringsTick {
 }
 
 /// The end of bone 2 (its tail) in world space.
-fn chain_end(s: &Spatial, b2: u64) -> [f32; 3] {
+fn chain_end(s: &Spatial, b2: u64) -> [f64; 3] {
   transform_point(&s.world(b2).expect("world"), [0.0, -BONE, 0.0])
 }
 
-fn rotation_of(s: &Spatial, n: u64) -> [f32; 4] {
+fn rotation_of(s: &Spatial, n: u64) -> [f64; 4] {
   s.transform_of(n).expect("read").1
 }
 
-fn is_identity(q: [f32; 4]) -> bool {
+fn is_identity(q: [f64; 4]) -> bool {
   (q[3].abs() - 1.0).abs() < 1e-6
 }
 
@@ -80,17 +80,17 @@ fn the_flow_is_three_vrm_at_the_reference_step() {
   let x = [0.3, -0.2, 0.5];
   let u = [1.0, 0.5, -2.0];
   let f = [0.3, -1.0, 0.2];
-  for drag in [0.0f32, 0.1, 0.4, 0.9, 0.999, 1.0] {
+  for drag in [0.0f64, 0.1, 0.4, 0.9, 0.999, 1.0] {
     let keep = (1.0 - drag).max(1e-6);
     let (nx, nu, kappa) = flow_step(drag, x, u, f, S);
     for i in 0..3 {
       let want_u = keep * u[i] + f[i];
-      let want_x = x[i] + S as f32 * want_u;
+      let want_x = x[i] + S as f64 * want_u;
       assert!((nu[i] - want_u).abs() < 1e-5, "drag {drag}: u {nu:?} vs {want_u}");
       assert!((nx[i] - want_x).abs() < 1e-6, "drag {drag}: x {nx:?} vs {want_x}");
     }
     // The correction factor is position verlet's at the reference step.
-    assert!((kappa - 1.0 / S as f32).abs() < 1e-2, "drag {drag}: kappa {kappa}");
+    assert!((kappa - 1.0 / S as f64).abs() < 1e-2, "drag {drag}: kappa {kappa}");
   }
 }
 
@@ -99,7 +99,7 @@ fn the_flow_composes_exactly() {
   let x = [0.3, -0.2, 0.5];
   let u = [1.0, 0.5, -2.0];
   let f = [0.3, -1.0, 0.2];
-  for drag in [0.0f32, 0.05, 0.4, 0.9] {
+  for drag in [0.0f64, 0.05, 0.4, 0.9] {
     let (x1, u1, _) = flow_step(drag, x, u, f, S);
     // Two halves, three thirds, and a quarter plus three quarters.
     for parts in [[0.5, 0.5, 0.0], [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0], [0.25, 0.75, 0.0]] {
@@ -144,7 +144,7 @@ fn a_turned_bone_drags_the_chain_which_settles_along_the_new_rest() {
   chain(&mut s, b1, b2, 0.0, vec![]);
   advance_at(&mut s, 0.0);
   // A quarter turn about z: the rest direction swings from -y to +x.
-  s.set_transform(anchor, [0.0, 1.0, 0.0], axis_quat([0.0, 0.0, 1.0], std::f32::consts::FRAC_PI_2), ONE).expect("turn");
+  s.set_transform(anchor, [0.0, 1.0, 0.0], axis_quat([0.0, 0.0, 1.0], std::f64::consts::FRAC_PI_2), ONE).expect("turn");
   let tick = advance_at(&mut s, S * 1000.0);
   assert!(tick.active && tick.wrote, "{tick:?}");
   // The first step lags: the bone has not followed its parent all the way.
@@ -173,7 +173,7 @@ fn bones_keep_their_length_while_swinging() {
   chain(&mut s, b1, b2, 0.5, vec![]);
   advance_at(&mut s, 0.0);
   for i in 1..=240 {
-    let q = axis_quat([1.0, 0.0, 0.0], (i as f32 / 10.0).sin() * 0.8);
+    let q = axis_quat([1.0, 0.0, 0.0], (i as f64 / 10.0).sin() * 0.8);
     s.set_transform(anchor, [0.0, 1.0, 0.0], q, ONE).expect("swing");
     advance_at(&mut s, i as f64 * S * 1000.0);
     let p1 = transform_point(&s.world(b1).expect("w"), [0.0; 3]);
@@ -189,12 +189,12 @@ fn bones_keep_their_length_while_swinging() {
 fn the_motion_does_not_depend_on_the_frame_rate() {
   // The same step response (a quarter turn under gravity) sampled at 60,
   // 120 and 50 Hz: the chain ends agree at every common instant.
-  let run = |hz: f64| -> Vec<[f32; 3]> {
+  let run = |hz: f64| -> Vec<[f64; 3]> {
     let mut s = Spatial::new();
     let (anchor, b1, b2) = rig(&mut s);
     chain(&mut s, b1, b2, 0.5, vec![]);
     advance_at(&mut s, 0.0);
-    s.set_transform(anchor, [0.0, 1.0, 0.0], axis_quat([0.0, 0.0, 1.0], std::f32::consts::FRAC_PI_2), ONE)
+    s.set_transform(anchor, [0.0, 1.0, 0.0], axis_quat([0.0, 0.0, 1.0], std::f64::consts::FRAC_PI_2), ONE)
       .expect("turn");
     let mut samples = Vec::new();
     let frames = (hz * 2.0) as u32;
@@ -361,7 +361,7 @@ fn a_center_keeps_its_own_motion_out_of_the_chain() {
       .expect("spring");
     advance_at(&mut s, 0.0);
     for i in 1..=30 {
-      s.set_transform(anchor, [i as f32 * 0.05, 1.0, 0.0], Q, ONE).expect("slide");
+      s.set_transform(anchor, [i as f64 * 0.05, 1.0, 0.0], Q, ONE).expect("slide");
       advance_at(&mut s, i as f64 * S * 1000.0);
     }
     is_identity(rotation_of(&s, b1))
@@ -410,7 +410,7 @@ fn a_force_deflects_the_chain_and_a_constant_one_settles() {
     advance_at(&mut s, i as f64 * S * 1000.0);
   }
   assert!(close(chain_end(&s, b2), [0.0, 1.0 - 2.0 * BONE, 0.0], 1e-3));
-  assert!(s.set_spring_force(id, [f32::NAN, 0.0, 0.0]).is_err());
+  assert!(s.set_spring_force(id, [f64::NAN, 0.0, 0.0]).is_err());
   assert!(s.set_spring_force(id + 1, [0.0; 3]).is_err());
 }
 

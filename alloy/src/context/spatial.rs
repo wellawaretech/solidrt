@@ -1,7 +1,7 @@
 use crate::gpu::{validate_params, DrawUpdate, ParamValue, TextureFormat};
 use crate::raster::RasterCmd;
 use crate::spatial::{
-  DrawSink, InstanceRecordSink, Mat4, NodeId, SharedSlotSink, SinkWriter, Spatial, TextureSlotSink, WeightsSlotSink,
+  DrawSink, InstanceRecordSink, Mat4f, NodeId, SharedSlotSink, SinkWriter, Spatial, TextureSlotSink, WeightsSlotSink,
 };
 
 use super::mirror::entry_mirror;
@@ -36,7 +36,7 @@ impl Writer<'_> {
 }
 
 impl SinkWriter for Writer<'_> {
-  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4, normal: Option<&Mat4>) -> bool {
+  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4f, normal: Option<&Mat4f>) -> bool {
     let mut params = vec![("uModel".to_string(), ParamValue::Array(model.to_vec()))];
     if let Some(n) = normal {
       params.push(("uNormal".to_string(), ParamValue::Array(n.to_vec())));
@@ -60,6 +60,20 @@ impl SinkWriter for Writer<'_> {
       self.ctx.send(RasterCmd::UpdateDrawParams { target, draw, params });
       self.ctx.note_target_content(target);
     }))
+  }
+
+  // A render-origin shift of a target's core-bound entries: one command,
+  // the raster adds the delta to each listed entry's uModel translation.
+  // Dropping one releases nothing: a target that is gone has no entries.
+  fn shift_params(&mut self, target: u64, draws: &[u64], delta: [f32; 3]) -> bool {
+    let known = self.ctx.targets.borrow().contains_key(&target);
+    self.landed(if known {
+      self.ctx.send(RasterCmd::ShiftDrawParams { target, draws: draws.to_vec(), name: "uModel".to_string(), delta });
+      self.ctx.note_target_content(target);
+      Ok(())
+    } else {
+      Err(format!("shader texture {target} not found"))
+    })
   }
 
   // A sorted target's draw order, composed into the target's full
@@ -168,7 +182,7 @@ impl Context {
     {
       let targets = self.targets.borrow();
       let entry = entry_mirror(&targets, sink.target, sink.draw)?;
-      let identity = ParamValue::Array(crate::spatial::IDENTITY.to_vec());
+      let identity = ParamValue::Array(crate::spatial::narrow(&crate::spatial::IDENTITY).to_vec());
       let mut probe = Vec::new();
       if sink.params {
         probe.push(("uModel".to_string(), identity.clone()));

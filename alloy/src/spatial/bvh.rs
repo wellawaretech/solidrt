@@ -9,9 +9,9 @@
 
 /// Fat-margin fraction of a leaf's largest extent. Bigger = fewer
 /// re-inserts while moving, worse query pruning; 5% is the usual trade.
-const MARGIN: f32 = 0.05;
+const MARGIN: f64 = 0.05;
 
-pub type Box3 = [f32; 6];
+pub type Box3 = [f64; 6];
 
 pub struct Bvh {
   bounds: Vec<Box3>,
@@ -29,9 +29,9 @@ pub struct Bvh {
 /// inside), or None for a miss. The direction need not be normalized - t
 /// is in units of its length, which is what keeps a ray transformed into
 /// a mesh's local space reporting world distances.
-pub fn ray_box_distance(o: [f32; 3], d: [f32; 3], b: &Box3) -> Option<f32> {
-  let mut t_near = 0.0f32;
-  let mut t_far = f32::INFINITY;
+pub fn ray_box_distance(o: [f64; 3], d: [f64; 3], b: &Box3) -> Option<f64> {
+  let mut t_near = 0.0f64;
+  let mut t_far = f64::INFINITY;
   for axis in 0..3 {
     // A zero direction component never crosses the slab, so the origin
     // must already be inside it (the inverse shortcut would yield NaN).
@@ -57,7 +57,7 @@ pub fn ray_box_distance(o: [f32; 3], d: [f32; 3], b: &Box3) -> Option<f32> {
   }
 }
 
-fn half_area(b: &Box3) -> f32 {
+fn half_area(b: &Box3) -> f64 {
   let w = b[3] - b[0];
   let h = b[4] - b[1];
   let d = b[5] - b[2];
@@ -161,7 +161,7 @@ impl Bvh {
       return;
     }
     // (gain, rotated child, its kept grandchild slot, the swapped-in node)
-    let mut best: Option<(f32, i32, bool, i32)> = None;
+    let mut best: Option<(f64, i32, bool, i32)> = None;
     let mut consider = |rotated: i32, swapped_in: i32, bvh: &Bvh| {
       if bvh.child1[rotated as usize] == -1 {
         return;
@@ -304,7 +304,7 @@ impl Bvh {
 
   /// Visit every item whose FAT box the ray hits. Broadphase only: the
   /// caller narrowphases against its own tight volumes.
-  pub fn raycast(&mut self, o: [f32; 3], d: [f32; 3], visit: &mut dyn FnMut(u32)) {
+  pub fn raycast(&mut self, o: [f64; 3], d: [f64; 3], visit: &mut dyn FnMut(u32)) {
     if self.root == -1 {
       return;
     }

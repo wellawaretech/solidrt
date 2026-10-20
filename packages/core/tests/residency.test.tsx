@@ -18,12 +18,12 @@ import type { NodeId, ViewKey } from "flux:spatial"
 /** The viewer: an orthographic camera over `w` x `h` world units with its
  * top-left at (x, y), looking down -z (the plane z in -1..1). */
 function look(key: ViewKey, x: number, y: number, w: number, h: number): void {
-  let proj = new Float32Array(16)
+  let proj = new Float64Array(16)
   proj[0] = 2 / w
   proj[5] = -2 / h
   proj[10] = -1
   proj[15] = 1
-  let view = new Float32Array(16)
+  let view = new Float64Array(16)
   view[0] = view[5] = view[10] = view[15] = 1
   view[12] = -(x + w / 2)
   view[13] = -(y + h / 2)
@@ -35,7 +35,7 @@ function look(key: ViewKey, x: number, y: number, w: number, h: number): void {
 
 /** A unit-box node at x. */
 function boxAt(x: number): NodeId {
-  let node = spatial.createNode(new Float32Array([x, 0, 0, 0, 0, 0, 1, 1, 1, 1]), true)
+  let node = spatial.createNode(new Float64Array([x, 0, 0, 0, 0, 0, 1, 1, 1, 1]), true)
   spatial.setBounds(node, new Float32Array([-0.5, -0.5, -0.5, 0.5, 0.5, 0.5]))
   return node
 }

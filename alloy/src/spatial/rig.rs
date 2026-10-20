@@ -52,23 +52,23 @@ pub type MaskId = u64;
 pub type GroupId = u64;
 
 /// A weight within this of its target lands on it (layer fades).
-const WEIGHT_SETTLE: f32 = 1e-6;
+const WEIGHT_SETTLE: f64 = 1e-6;
 /// An inertial offset below this (world units, radians, a weight) is not
 /// worth a transition: the switch is taken as continuous.
-const INERTIAL_MIN_OFFSET: f32 = 1e-5;
+const INERTIAL_MIN_OFFSET: f64 = 1e-5;
 /// The overshoot cap of the inertialization quintic: with the offset
 /// velocity pointing at zero the duration is cut to this multiple of
 /// offset over speed, past which the curve would cross zero and come
 /// back (the Gears of War rule).
-const INERTIAL_OVERSHOOT_FACTOR: f32 = 5.0;
+const INERTIAL_OVERSHOOT_FACTOR: f64 = 5.0;
 /// A frame shorter than this (seconds) yields no usable velocity: the
 /// history keeps the previous frame's.
-const MIN_HISTORY_DT: f32 = 1e-6;
+const MIN_HISTORY_DT: f64 = 1e-6;
 /// A normalized layer total at or above this counts as full: nothing
 /// under the layer shows through.
-const FULL_WEIGHT: f32 = 1.0;
+const FULL_WEIGHT: f64 = 1.0;
 
-const IDENTITY_QUAT: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+const IDENTITY_QUAT: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerMode {
@@ -80,7 +80,7 @@ pub enum LayerMode {
 /// per-joint shares scale it (None = every joint).
 #[derive(Clone, Copy, Debug)]
 pub struct LayerSpec {
-  pub weight: f32,
+  pub weight: f64,
   pub mode: LayerMode,
   pub mask: Option<MaskId>,
 }
@@ -89,17 +89,17 @@ pub struct LayerSpec {
 /// time (0 snaps); `mask` Some(None) clears the mask.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LayerUpdate {
-  pub weight: Option<f32>,
-  pub fade_ms: f32,
+  pub weight: Option<f64>,
+  pub fade_ms: f64,
   pub mask: Option<Option<MaskId>>,
 }
 
 /// A joint's rest TRS: what the layers compose over.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RestPose {
-  pub position: [f32; 3],
-  pub rotation: [f32; 4],
-  pub scale: [f32; 3],
+  pub position: [f64; 3],
+  pub rotation: [f64; 4],
+  pub scale: [f64; 3],
 }
 
 /// A player's declaration. `fade` is the weight change per second
@@ -111,13 +111,13 @@ pub struct RestPose {
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerSpec {
   pub layer: usize,
-  pub speed: f32,
+  pub speed: f64,
   pub looped: bool,
-  pub weight: f32,
-  pub fade: f32,
+  pub weight: f64,
+  pub fade: f64,
   pub mask: Option<MaskId>,
   pub window: Option<(f64, f64)>,
-  pub fade_out: f32,
+  pub fade_out: f64,
   pub time: f64,
 }
 
@@ -143,9 +143,9 @@ impl Default for PlayerSpec {
 /// window; `mask` Some(None) clears the mask.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlayerUpdate {
-  pub weight: Option<f32>,
-  pub fade: Option<f32>,
-  pub speed: Option<f32>,
+  pub weight: Option<f64>,
+  pub fade: Option<f64>,
+  pub speed: Option<f64>,
   pub time: Option<f64>,
   pub window: Option<Option<(f64, f64)>>,
   pub mask: Option<Option<MaskId>>,
@@ -167,7 +167,7 @@ pub enum SyncMode {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AdditiveReference {
   FirstFrame,
-  Clip { clip: ClipId, time: f32 },
+  Clip { clip: ClipId, time: f64 },
   Rest { rig: RigId },
 }
 
@@ -195,23 +195,23 @@ pub struct RootMotion {
   pub rotation: Option<u32>,
   pub anchor: Option<NodeId>,
   /// Unit up axis of the root's parent space; the turn axis.
-  pub up: [f32; 3],
+  pub up: [f64; 3],
   pub vertical: bool,
 }
 
 struct RootState {
   binding: RootMotion,
   /// Last key value minus first: what a loop wrap adds.
-  drift: [f32; 3],
-  last: [f32; 3],
+  drift: [f64; 3],
+  last: [f64; 3],
   cursor: u32,
   /// Net yaw over the clip (unwrapped key by key), the wrap's yaw step.
-  yaw_drift: f32,
-  last_yaw: f32,
+  yaw_drift: f64,
+  last_yaw: f64,
   yaw_cursor: u32,
   /// The clip's own yaw since the bind, unwrapped and unweighted: how far
   /// the clip's frame has turned against the anchor's.
-  clip_yaw: f32,
+  clip_yaw: f64,
 }
 
 /// What an advance reports (drained by the embedder after each advance
@@ -229,7 +229,7 @@ pub enum ClipEvent {
   Finished(PlayerId),
   Dropped(PlayerId),
   Loop(PlayerId),
-  Marker { player: PlayerId, marker: usize, phase: MarkerPhase, weight: f32, layer: usize },
+  Marker { player: PlayerId, marker: usize, phase: MarkerPhase, weight: f64, layer: usize },
   RigDropped(RigId),
 }
 
@@ -248,13 +248,13 @@ pub struct PlayersTick {
 /// number of layers and players; a change bumps the version the
 /// bindings' share caches are keyed on.
 struct Mask {
-  default: f32,
-  shares: HashMap<NodeId, f32>,
+  default: f64,
+  shares: HashMap<NodeId, f64>,
   version: u64,
 }
 
 impl Mask {
-  fn share(&self, node: NodeId) -> f32 {
+  fn share(&self, node: NodeId) -> f64 {
     self.shares.get(&node).copied().unwrap_or(self.default)
   }
 }
@@ -263,14 +263,14 @@ impl Mask {
 type MaskSeen = Option<(MaskId, u64)>;
 
 struct Layer {
-  weight: f32,
-  weight_target: f32,
+  weight: f64,
+  weight_target: f64,
   /// Per second of the rig's time; 0 when at the target.
-  weight_rate: f32,
+  weight_rate: f64,
   mode: LayerMode,
   mask: Option<MaskId>,
   /// The mask's share per joint (empty = 1 everywhere).
-  shares: Vec<f32>,
+  shares: Vec<f64>,
   seen: MaskSeen,
 }
 
@@ -287,7 +287,7 @@ impl Layer {
     }
   }
 
-  fn share(&self, joint: usize) -> f32 {
+  fn share(&self, joint: usize) -> f64 {
     self.shares.get(joint).copied().unwrap_or(1.0)
   }
 }
@@ -297,13 +297,13 @@ struct Player {
   layer: usize,
   clip: ClipId,
   time: f64,
-  speed: f32,
-  weight: f32,
-  fade: f32,
+  speed: f64,
+  weight: f64,
+  fade: f64,
   looped: bool,
   finished: bool,
   window: Option<(f64, f64)>,
-  fade_out: f32,
+  fade_out: f64,
   /// The end fade has started: reaching weight 0 finishes AND drops.
   end_fading: bool,
   /// Faded out this advance: blends once more at weight 0, so the slots
@@ -311,7 +311,7 @@ struct Player {
   dying: bool,
   mask: Option<MaskId>,
   /// The player's own mask's share per joint (empty = 1 everywhere).
-  shares: Vec<f32>,
+  shares: Vec<f64>,
   seen: MaskSeen,
   /// Last key-pair lo index per channel (the sequential-playback cache).
   cursors: Vec<u32>,
@@ -329,7 +329,7 @@ struct Player {
 }
 
 impl Player {
-  fn share(&self, joint: usize) -> f32 {
+  fn share(&self, joint: usize) -> f64 {
     self.shares.get(joint).copied().unwrap_or(1.0)
   }
 
@@ -353,22 +353,22 @@ struct Group {
 /// velocity and acceleration at t1.
 #[derive(Clone, Copy, Debug)]
 struct Inertial {
-  dir: [f32; 4],
-  x0: f32,
-  v0: f32,
-  a0: f32,
-  aa: f32,
-  bb: f32,
-  cc: f32,
-  t1: f32,
-  t: f32,
+  dir: [f64; 4],
+  x0: f64,
+  v0: f64,
+  a0: f64,
+  aa: f64,
+  bb: f64,
+  cc: f64,
+  t1: f64,
+  t: f64,
 }
 
 impl Inertial {
   /// Fit the quintic to an offset `x0` with velocity `v0` over `t1`
   /// seconds, the duration cut so the curve never crosses zero. None for
   /// an offset not worth a transition.
-  fn fit(dir: [f32; 4], x0: f32, v0: f32, t1: f32) -> Option<Self> {
+  fn fit(dir: [f64; 4], x0: f64, v0: f64, t1: f64) -> Option<Self> {
     if !(x0 > INERTIAL_MIN_OFFSET) || !(t1 > 0.0) {
       return None;
     }
@@ -388,7 +388,7 @@ impl Inertial {
   }
 
   /// The offset at the current time.
-  fn offset(&self) -> f32 {
+  fn offset(&self) -> f64 {
     let t = self.t;
     ((((self.aa * t + self.bb) * t + self.cc) * t + self.a0 * 0.5) * t + self.v0) * t + self.x0
   }
@@ -396,7 +396,7 @@ impl Inertial {
 
 /// The inertialization quintic, for tests: the offset at `t` of a fit.
 #[cfg(test)]
-pub(crate) fn inertial_offset_for_test(x0: f32, v0: f32, t1: f32, t: f32) -> Option<(f32, f32)> {
+pub(crate) fn inertial_offset_for_test(x0: f64, v0: f64, t1: f64, t: f64) -> Option<(f64, f64)> {
   let mut fit = Inertial::fit([1.0, 0.0, 0.0, 0.0], x0, v0, t1)?;
   fit.t = t;
   Some((fit.offset(), fit.t1))
@@ -407,13 +407,13 @@ pub(crate) fn inertial_offset_for_test(x0: f32, v0: f32, t1: f32, t: f32) -> Opt
 /// history is what the inertial transition decays from.
 #[derive(Clone, Copy)]
 struct Slot {
-  value: [f32; 4],
+  value: [f64; 4],
   fed: u64,
   /// Valid history entries, 0..2.
   hist: u8,
-  prev: [f32; 4],
-  prev2: [f32; 4],
-  prev_dt: f32,
+  prev: [f64; 4],
+  prev2: [f64; 4],
+  prev_dt: f64,
   inertial: Option<Inertial>,
 }
 
@@ -428,8 +428,8 @@ impl Slot {
 /// multiply). `fed` stamps the layer pass.
 #[derive(Clone, Copy)]
 struct Acc {
-  value: [f32; 4],
-  covered: f32,
+  value: [f64; 4],
+  covered: f64,
   fed: u64,
 }
 
@@ -445,7 +445,7 @@ struct CurveSink {
   draw: Option<u64>,
   name: String,
   /// The value last written; a repeat writes nothing.
-  last: Option<f32>,
+  last: Option<f64>,
 }
 
 struct Rig {
@@ -453,7 +453,7 @@ struct Rig {
   clock: NodeId,
   joints: Vec<NodeId>,
   rest: Vec<RestPose>,
-  rest_weights: Vec<Vec<f32>>,
+  rest_weights: Vec<Vec<f64>>,
   layers: Vec<Layer>,
   players: Vec<Player>,
   curves: Vec<String>,
@@ -470,14 +470,14 @@ struct Rig {
   acc_curves: Vec<Acc>,
   /// Per joint, the layer pass's total player weight (the normalization
   /// base of the override fill).
-  total: Vec<f32>,
+  total: Vec<f64>,
   /// Advances since creation: the `fed` stamp.
   frame: u64,
   /// Layer passes since creation: the accumulators' stamp.
   pass: u64,
   /// An inertial transition requested for the next advance: its
   /// duration in seconds.
-  pending_inertial: Option<f32>,
+  pending_inertial: Option<f64>,
   sinks: Vec<CurveSink>,
 }
 
@@ -500,44 +500,44 @@ pub(super) struct RigSet {
   events: Vec<ClipEvent>,
   /// Root-motion deltas of the last advance, per bound player:
   /// translation and yaw (radians).
-  root_deltas: Vec<(PlayerId, [f32; 3], f32)>,
+  root_deltas: Vec<(PlayerId, [f64; 3], f64)>,
   /// Sampling scratch (as many floats as the widest channel).
-  scratch: Vec<f32>,
+  scratch: Vec<f64>,
   /// Marker crossing scratch.
   crossed: Vec<(usize, MarkerPhase)>,
   /// Anchor moves of the advance: (anchor, delta, yaw, up).
-  anchor_moves: Vec<(NodeId, [f32; 3], f32, [f32; 3])>,
+  anchor_moves: Vec<(NodeId, [f64; 3], f64, [f64; 3])>,
 }
 
 /// The twist of a unit quaternion ([x, y, z, w]) about the unit axis
 /// `up`, in radians, -pi..pi: the swing-twist split, exact under any
 /// lean (an Euler yaw is not).
-fn twist_of(q: [f32; 4], up: [f32; 3]) -> f32 {
+fn twist_of(q: [f64; 4], up: [f64; 3]) -> f64 {
   let along = q[0] * up[0] + q[1] * up[1] + q[2] * up[2];
   wrap_angle(2.0 * along.atan2(q[3]))
 }
 
 /// The rotation of `angle` radians about the unit axis `up`.
-fn axis_quat(up: [f32; 3], angle: f32) -> [f32; 4] {
+fn axis_quat(up: [f64; 3], angle: f64) -> [f64; 4] {
   let half = angle * 0.5;
   let s = half.sin();
   [up[0] * s, up[1] * s, up[2] * s, half.cos()]
 }
 
 /// An angle folded into -pi..pi.
-fn wrap_angle(a: f32) -> f32 {
-  let mut r = a % std::f32::consts::TAU;
-  if r > std::f32::consts::PI {
-    r -= std::f32::consts::TAU;
-  } else if r < -std::f32::consts::PI {
-    r += std::f32::consts::TAU;
+fn wrap_angle(a: f64) -> f64 {
+  let mut r = a % std::f64::consts::TAU;
+  if r > std::f64::consts::PI {
+    r -= std::f64::consts::TAU;
+  } else if r < -std::f64::consts::PI {
+    r += std::f64::consts::TAU;
   }
   r
 }
 
 /// A unit quaternion as (axis, angle), the angle in 0..pi (the sign
 /// folded into the axis). An identity has angle 0 and no axis.
-fn axis_angle(q: [f32; 4]) -> ([f32; 3], f32) {
+fn axis_angle(q: [f64; 4]) -> ([f64; 3], f64) {
   let q = if q[3] < 0.0 { [-q[0], -q[1], -q[2], -q[3]] } else { q };
   let q = quat_normalize(q);
   let s = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2]).sqrt();
@@ -559,7 +559,7 @@ fn path_index(path: ChannelPath) -> usize {
 }
 
 /// A rest pose's value along a path, widened to four floats.
-fn rest_value(rest: &RestPose, path: usize) -> [f32; 4] {
+fn rest_value(rest: &RestPose, path: usize) -> [f64; 4] {
   match path {
     0 => [rest.position[0], rest.position[1], rest.position[2], 0.0],
     1 => rest.rotation,
@@ -568,7 +568,7 @@ fn rest_value(rest: &RestPose, path: usize) -> [f32; 4] {
 }
 
 /// `a` toward `b` by `t`: a slerp for a rotation, a lerp otherwise.
-fn mix(a: [f32; 4], b: [f32; 4], t: f32, rotation: bool) -> [f32; 4] {
+fn mix(a: [f64; 4], b: [f64; 4], t: f64, rotation: bool) -> [f64; 4] {
   if rotation {
     slerp(a, b, t)
   } else {
@@ -583,7 +583,7 @@ fn mix(a: [f32; 4], b: [f32; 4], t: f32, rotation: bool) -> [f32; 4] {
 /// Where a player's time sits in a looping window after a step of `dt`
 /// seconds: the new time, whether it wrapped, and whether it reached the
 /// window's end (a non-looping player holds there).
-fn step_time(time: f64, dt: f64, speed: f32, looped: bool, window: (f64, f64)) -> (f64, bool, bool) {
+fn step_time(time: f64, dt: f64, speed: f64, looped: bool, window: (f64, f64)) -> (f64, bool, bool) {
   let (start, end) = window;
   let len = end - start;
   let mut t = time + dt * speed as f64;
@@ -607,11 +607,11 @@ fn step_time(time: f64, dt: f64, speed: f32, looped: bool, window: (f64, f64)) -
 /// The marker times of a clip that `common` names, in time order and
 /// within `window` (what a marker-synced group aligns on), with their
 /// names.
-fn sync_sequence(clip: &Clip, common: &[String], window: (f64, f64)) -> Vec<(f32, usize)> {
+fn sync_sequence(clip: &Clip, common: &[String], window: (f64, f64)) -> Vec<(f64, usize)> {
   clip
     .markers
     .iter()
-    .filter(|m| (m.time as f64) >= window.0 && (m.time as f64) <= window.1)
+    .filter(|m| m.time >= window.0 && m.time <= window.1)
     .filter_map(|m| common.iter().position(|n| n == &m.name).map(|k| (m.time, k)))
     .collect()
 }
@@ -621,7 +621,7 @@ fn sync_sequence(clip: &Clip, common: &[String], window: (f64, f64)) -> Vec<(f32
 /// looping window the last marker wraps to the first, in a non-looping
 /// one the window edges bound the first and last segments (segment
 /// index = marker count means "after the last").
-fn sequence_position(times: &[f32], t: f64, looped: bool, window: (f64, f64)) -> (usize, f64) {
+fn sequence_position(times: &[f64], t: f64, looped: bool, window: (f64, f64)) -> (usize, f64) {
   let n = times.len();
   let last_at_or_before = times.iter().rposition(|&m| (m as f64) <= t);
   let len = window.1 - window.0;
@@ -657,7 +657,7 @@ fn sequence_position(times: &[f32], t: f64, looped: bool, window: (f64, f64)) ->
 
 /// The time at a sequence position (the inverse of `sequence_position`
 /// for a follower's own markers).
-fn sequence_time(times: &[f32], segment: usize, fraction: f64, looped: bool, window: (f64, f64)) -> f64 {
+fn sequence_time(times: &[f64], segment: usize, fraction: f64, looped: bool, window: (f64, f64)) -> f64 {
   let n = times.len();
   let len = window.1 - window.0;
   let (from, to) = if segment == usize::MAX {
@@ -754,7 +754,7 @@ impl Spatial {
   pub fn derive_additive(&mut self, clip: ClipId, reference: AdditiveReference) -> Result<ClipId, String> {
     let source = self.clips.clips.get(&clip).ok_or_else(|| format!("clip {clip} not found"))?;
     let mut channels = Vec::with_capacity(source.channels.len());
-    let mut value = vec![0.0f32; source.channels.iter().map(|c| c.elements).max().unwrap_or(1)];
+    let mut value = vec![0.0f64; source.channels.iter().map(|c| c.elements).max().unwrap_or(1)];
     for c in &source.channels {
       let elements = c.elements;
       let mut from_first = true;
@@ -800,7 +800,9 @@ impl Spatial {
       }
       if from_first {
         let (_, mid) = key_layout(c);
-        value[..elements].copy_from_slice(&c.values[mid..mid + elements]);
+        for (v, x) in value[..elements].iter_mut().zip(&c.values[mid..mid + elements]) {
+          *v = *x as f64;
+        }
       }
       channels.push(additive_channel(c, &value));
     }
@@ -816,7 +818,7 @@ impl Spatial {
 
   /// Register a mask: `default` for every node not listed, the listed
   /// shares otherwise (0..1 each).
-  pub fn create_mask(&mut self, default: f32, shares: Vec<(NodeId, f32)>) -> Result<MaskId, String> {
+  pub fn create_mask(&mut self, default: f64, shares: Vec<(NodeId, f64)>) -> Result<MaskId, String> {
     Self::check_mask(default, &shares)?;
     let id = self.rigs.next_mask;
     self.rigs.next_mask += 1;
@@ -826,7 +828,7 @@ impl Spatial {
 
   /// Replace a mask's shares; every layer and player on it re-resolves at
   /// the next advance.
-  pub fn set_mask(&mut self, id: MaskId, default: f32, shares: Vec<(NodeId, f32)>) -> Result<(), String> {
+  pub fn set_mask(&mut self, id: MaskId, default: f64, shares: Vec<(NodeId, f64)>) -> Result<(), String> {
     Self::check_mask(default, &shares)?;
     let mask = self.rigs.masks.get_mut(&id).ok_or_else(|| format!("mask {id} not found"))?;
     mask.default = default;
@@ -841,7 +843,7 @@ impl Spatial {
     self.rigs.masks.remove(&id).map(|_| ()).ok_or_else(|| format!("mask {id} not found"))
   }
 
-  fn check_mask(default: f32, shares: &[(NodeId, f32)]) -> Result<(), String> {
+  fn check_mask(default: f64, shares: &[(NodeId, f64)]) -> Result<(), String> {
     if !(0.0..=1.0).contains(&default) {
       return Err(format!("mask default must be within 0..1, got {default}"));
     }
@@ -1014,7 +1016,7 @@ impl Spatial {
 
   /// A layer's current weight (its ramp included), for tests and
   /// bookkeeping.
-  pub fn layer_weight(&self, rig: RigId, index: usize) -> Result<f32, String> {
+  pub fn layer_weight(&self, rig: RigId, index: usize) -> Result<f64, String> {
     let r = &self.rigs.rigs[self.rig_index(rig)?];
     r.layers.get(index).map(|l| l.weight).ok_or_else(|| format!("rig {rig} has no layer {index}"))
   }
@@ -1161,12 +1163,12 @@ impl Spatial {
     if seek {
       let p = &self.rigs.rigs[at].players[pi];
       let Some(clip) = self.clips.clips.get(&p.clip) else { return Ok(changes) };
-      let time = p.time as f32;
+      let time = p.time as f64;
       for (m, marker) in clip.markers.iter().enumerate() {
         if marker.duration <= 0.0 || (marker.time as f64) < start || (marker.time as f64) > end {
           continue;
         }
-        let close = (marker.time + marker.duration).min(end as f32);
+        let close = (marker.time + marker.duration).min(end as f64);
         let now_inside = time >= marker.time && time <= close;
         if now_inside != p.inside[m] {
           changes.push((m, if now_inside { MarkerPhase::Begin } else { MarkerPhase::End }));
@@ -1201,7 +1203,7 @@ impl Spatial {
   }
 
   /// A player's current weight (its fade included).
-  pub fn player_weight(&self, id: PlayerId) -> Result<f32, String> {
+  pub fn player_weight(&self, id: PlayerId) -> Result<f64, String> {
     let (at, pi) = self.locate(id)?;
     Ok(self.rigs.rigs[at].players[pi].weight)
   }
@@ -1237,7 +1239,7 @@ impl Spatial {
     let v = &channel.values;
     let first = mid;
     let last = v.len() - stride + mid;
-    let drift = [v[last] - v[first], v[last + 1] - v[first + 1], v[last + 2] - v[first + 2]];
+    let drift = [(v[last] - v[first]) as f64, (v[last + 1] - v[first + 1]) as f64, (v[last + 2] - v[first + 2]) as f64];
     let mut yaw_drift = 0.0;
     if let Some(ri) = binding.rotation {
       let rc = clip.channels.get(ri as usize).ok_or_else(|| format!("clip {} has no channel {}", binding.clip, ri))?;
@@ -1246,7 +1248,14 @@ impl Spatial {
       }
       // Unwrapped key by key, so a full turn counts as one, not zero.
       let (stride, mid) = key_layout(rc);
-      let key = |k: usize| [rc.values[k + mid], rc.values[k + mid + 1], rc.values[k + mid + 2], rc.values[k + mid + 3]];
+      let key = |k: usize| {
+        [
+          rc.values[k + mid] as f64,
+          rc.values[k + mid + 1] as f64,
+          rc.values[k + mid + 2] as f64,
+          rc.values[k + mid + 3] as f64,
+        ]
+      };
       let mut prev = twist_of(key(0), up);
       let mut k = stride;
       while k + mid + 3 < rc.values.len() {
@@ -1268,13 +1277,13 @@ impl Spatial {
     // Primed at the player's current time, so the very next advance
     // already delivers travel (a play() loses no frame).
     let mut cursor = 0;
-    let mut now = [0.0f32; 4];
-    sample(&clip.channels[binding.channel as usize], p.time as f32, &mut cursor, &mut now);
+    let mut now = [0.0f64; 4];
+    sample(&clip.channels[binding.channel as usize], p.time as f64, &mut cursor, &mut now);
     let mut yaw_cursor = 0;
     let last_yaw = match binding.rotation {
       Some(ri) => {
-        let mut q = [0.0f32; 4];
-        sample(&clip.channels[ri as usize], p.time as f32, &mut yaw_cursor, &mut q);
+        let mut q = [0.0f64; 4];
+        sample(&clip.channels[ri as usize], p.time as f64, &mut yaw_cursor, &mut q);
         twist_of(q, up)
       }
       None => 0.0,
@@ -1361,7 +1370,7 @@ impl Spatial {
   /// player change it smooths (a play, a stop, a layer switched on, a
   /// seek); a request during a running transition re-captures from the
   /// pose as it stands.
-  pub fn inertialize(&mut self, rig: RigId, ms: f32) -> Result<(), String> {
+  pub fn inertialize(&mut self, rig: RigId, ms: f64) -> Result<(), String> {
     if !(ms > 0.0) || !ms.is_finite() {
       return Err("the duration must be a positive number of milliseconds".to_string());
     }
@@ -1372,7 +1381,7 @@ impl Spatial {
 
   /// A curve's value as of the last advance (None for a name no clip on
   /// the rig has, or one nothing fed this frame).
-  pub fn curve_value(&self, rig: RigId, name: &str) -> Result<Option<f32>, String> {
+  pub fn curve_value(&self, rig: RigId, name: &str) -> Result<Option<f64>, String> {
     let r = &self.rigs.rigs[self.rig_index(rig)?];
     Ok(r.curve_index.get(name).and_then(|&k| {
       let slot = &r.curve_slots[k];
@@ -1421,7 +1430,7 @@ impl Spatial {
         if frame == 0 || slot.fed != frame || sink.last == Some(slot.value[0]) {
           return true;
         }
-        let landed = out.write_param(sink.target, sink.draw, &sink.name, slot.value[0]);
+        let landed = out.write_param(sink.target, sink.draw, &sink.name, slot.value[0] as f32);
         sink.last = Some(slot.value[0]);
         landed
       });
@@ -1431,7 +1440,7 @@ impl Spatial {
   /// The node's current local TRS (what the rigs last wrote, or any
   /// later snap): position, quaternion, scale. The pose read for
   /// root-motion strips and skeleton copies.
-  pub fn transform_of(&self, id: NodeId) -> Result<([f32; 3], [f32; 4], [f32; 3]), String> {
+  pub fn transform_of(&self, id: NodeId) -> Result<([f64; 3], [f64; 4], [f64; 3]), String> {
     let n = &self.nodes[self.resolve(id)? as usize];
     Ok((n.position, n.rotation, n.scale))
   }
@@ -1443,7 +1452,7 @@ impl Spatial {
 
   /// The root-motion deltas of the last advance, one per bound player
   /// (zero while a player is primed or frozen).
-  pub fn take_root_motion(&mut self) -> Vec<(PlayerId, [f32; 3], f32)> {
+  pub fn take_root_motion(&mut self) -> Vec<(PlayerId, [f64; 3], f64)> {
     std::mem::take(&mut self.rigs.root_deltas)
   }
 
@@ -1549,7 +1558,7 @@ impl Spatial {
     // Layer fades.
     for layer in &mut rig.layers {
       if layer.weight_rate != 0.0 {
-        layer.weight += layer.weight_rate * dt as f32;
+        layer.weight += layer.weight_rate * dt as f64;
         let overshot = (layer.weight_rate > 0.0 && layer.weight >= layer.weight_target)
           || (layer.weight_rate < 0.0 && layer.weight <= layer.weight_target)
           || (layer.weight - layer.weight_target).abs() <= WEIGHT_SETTLE;
@@ -1588,7 +1597,7 @@ impl Spatial {
         }
       }
       if p.fade != 0.0 {
-        p.weight += p.fade * dt as f32;
+        p.weight += p.fade * dt as f64;
         if p.weight >= 1.0 {
           p.weight = 1.0;
           p.fade = 0.0;
@@ -1610,7 +1619,7 @@ impl Spatial {
     for gid in &groups {
       let Some(g) = self.rigs.groups.get_mut(gid) else { continue };
       g.members.retain(|m| rig.players.iter().any(|p| p.id == *m));
-      let mut best: Option<(PlayerId, f32)> = None;
+      let mut best: Option<(PlayerId, f64)> = None;
       for &m in &g.members {
         let w = rig.players.iter().find(|p| p.id == m).map(|p| p.weight).unwrap_or(0.0);
         let keep_current = g.leader == Some(m);
@@ -1671,7 +1680,7 @@ impl Spatial {
         Vec::new()
       };
       let leader_seq = sync_sequence(lclip, &common, lwindow);
-      let leader_times: Vec<f32> = leader_seq.iter().map(|&(t, _)| t).collect();
+      let leader_times: Vec<f64> = leader_seq.iter().map(|&(t, _)| t).collect();
       let leader_pos = (!leader_seq.is_empty()).then(|| sequence_position(&leader_times, leader.time, looped, lwindow));
       for &m in &g.members {
         if m == leader_id {
@@ -1686,7 +1695,7 @@ impl Spatial {
           let seq = sync_sequence(clip, &common, window);
           let same = seq.len() == leader_seq.len() && seq.iter().zip(&leader_seq).all(|(a, b)| a.1 == b.1);
           if same {
-            let times: Vec<f32> = seq.iter().map(|&(t, _)| t).collect();
+            let times: Vec<f64> = seq.iter().map(|&(t, _)| t).collect();
             t = Some(sequence_time(&times, segment, frac, looped, window));
           }
         }
@@ -1721,26 +1730,26 @@ impl Spatial {
         // A player starting inside a window (created at a time, or
         // seeked there by a write that already reported it) is in it.
         if p.inclusive {
-          let at = prev as f32;
+          let at = prev as f64;
           for (m, marker) in clip.markers.iter().enumerate() {
-            if marker.duration <= 0.0 || (marker.time as f64) < window.0 || (marker.time as f64) > window.1 {
+            if marker.duration <= 0.0 || marker.time < window.0 || marker.time > window.1 {
               continue;
             }
-            let close = (marker.time + marker.duration).min(window.1 as f32);
+            let close = (marker.time + marker.duration).min(window.1 as f64);
             if at > marker.time && at < close && !p.inside[m] {
               p.inside[m] = true;
               crossed.push((m, MarkerPhase::Begin));
             }
           }
         }
-        let wrap = wrapped.then_some((window.0 as f32, window.1 as f32));
+        let wrap = wrapped.then_some((window.0 as f64, window.1 as f64));
         crossings(
           &clip.markers,
-          prev as f32,
-          p.time as f32,
+          prev as f64,
+          p.time as f64,
           forward,
           wrap,
-          (window.0 as f32, window.1 as f32),
+          (window.0 as f64, window.1 as f64),
           p.inclusive,
           &mut p.inside,
           &mut crossed,
@@ -1777,12 +1786,12 @@ impl Spatial {
         let effective = weight * share;
         let Some(root) = p.root.as_mut() else { continue };
         let up = binding.up;
-        let mut now = [0.0f32; 4];
-        sample(channel, p.time as f32, &mut root.cursor, &mut now);
+        let mut now = [0.0f64; 4];
+        sample(channel, p.time as f64, &mut root.cursor, &mut now);
         let yaw_now = match root.binding.rotation.and_then(|ri| rclip.channels.get(ri as usize)) {
           Some(rc) => {
-            let mut q = [0.0f32; 4];
-            sample(rc, p.time as f32, &mut root.yaw_cursor, &mut q);
+            let mut q = [0.0f64; 4];
+            sample(rc, p.time as f64, &mut root.yaw_cursor, &mut q);
             twist_of(q, up)
           }
           None => 0.0,
@@ -1859,7 +1868,7 @@ impl Spatial {
       let additive = rig.layers[li].mode == LayerMode::Additive;
       // The layer's total weight per joint: the normalization base.
       rig.total.fill(0.0);
-      let mut total_curves = 0.0f32;
+      let mut total_curves = 0.0f64;
       for &pi in &on_layer {
         let p = &rig.players[pi];
         total_curves += p.weight;
@@ -1877,7 +1886,7 @@ impl Spatial {
       for &pi in &on_layer {
         let p = &mut rig.players[pi];
         let Some(clip) = self.clips.clips.get(&p.clip) else { continue };
-        let time = p.time as f32;
+        let time = p.time as f64;
         let pw = p.weight;
         for (ci, channel) in clip.channels.iter().enumerate() {
           let elements = channel.elements;
@@ -1921,7 +1930,7 @@ impl Spatial {
               (&mut rig.acc_trs[j][path], w_eff, Kind::of_path(path))
             }
           };
-          let mut v = [0.0f32; 4];
+          let mut v = [0.0f64; 4];
           v[..elements].copy_from_slice(&scratch[..elements]);
           accumulate(acc, v, w_eff, rotation, additive, pass, elements);
         }
@@ -1978,7 +1987,7 @@ impl Spatial {
     // slot with a history, step the running ones.
     let frame = rig.frame;
     let pending = rig.pending_inertial.take();
-    let dt32 = dt as f32;
+    let dt32 = dt as f64;
     for slots in rig.trs.iter_mut() {
       for (path, slot) in slots.iter_mut().enumerate() {
         if slot.fed == frame {
@@ -2156,7 +2165,7 @@ impl Kind {
 /// incremental weighted average (the first contributor sets the value),
 /// an additive layer's weighted delta sum (positions and weights add,
 /// rotations compose, a scale accumulates its weighted excess over one).
-fn accumulate(acc: &mut Acc, v: [f32; 4], w: f32, kind: Kind, additive: bool, pass: u64, elements: usize) {
+fn accumulate(acc: &mut Acc, v: [f64; 4], w: f64, kind: Kind, additive: bool, pass: u64, elements: usize) {
   let rotation = kind == Kind::Rotation;
   if acc.fed != pass {
     acc.fed = pass;
@@ -2195,7 +2204,7 @@ fn accumulate(acc: &mut Acc, v: [f32; 4], w: f32, kind: Kind, additive: bool, pa
 /// layer weight times its mask share); `total` is the layer's player
 /// weight at the joint, whose shortfall under one lets the pose under
 /// the layer through (rest, for the base).
-fn apply_layer(slot: &mut Slot, acc: &Acc, k: f32, total: f32, kind: Kind, additive: bool, frame: u64) {
+fn apply_layer(slot: &mut Slot, acc: &Acc, k: f64, total: f64, kind: Kind, additive: bool, frame: u64) {
   let under = slot.value;
   let rotation = kind == Kind::Rotation;
   if additive {
@@ -2233,8 +2242,8 @@ fn inertial_step(
   slot: &mut Slot,
   rotation: bool,
   elements: usize,
-  pending: Option<f32>,
-  dt: f32,
+  pending: Option<f64>,
+  dt: f64,
   running: bool,
 ) -> bool {
   if let Some(t1) = pending {
@@ -2251,7 +2260,7 @@ fn inertial_step(
         }
         slot.inertial = Inertial::fit([axis[0], axis[1], axis[2], 0.0], angle, v0, t1);
       } else {
-        let mut diff = [0.0f32; 4];
+        let mut diff = [0.0f64; 4];
         let mut len2 = 0.0;
         for e in 0..elements {
           diff[e] = slot.prev[e] - slot.value[e];
@@ -2294,7 +2303,7 @@ fn inertial_step(
 
 /// Push a slot's output into its two-deep history; a slot not fed this
 /// frame forgets (its next feed starts a fresh history).
-fn record_history(slot: &mut Slot, frame: u64, dt: f32) {
+fn record_history(slot: &mut Slot, frame: u64, dt: f64) {
   if slot.fed != frame {
     slot.hist = 0;
     return;
@@ -2309,7 +2318,7 @@ fn record_history(slot: &mut Slot, frame: u64, dt: f32) {
 pub(crate) fn step_time_for_test(
   time: f64,
   dt: f64,
-  speed: f32,
+  speed: f64,
   looped: bool,
   window: (f64, f64),
 ) -> (f64, bool, bool) {
@@ -2317,7 +2326,7 @@ pub(crate) fn step_time_for_test(
 }
 
 #[cfg(test)]
-pub(crate) fn sequence_for_test(times: &[f32], t: f64, looped: bool, window: (f64, f64), follower: &[f32]) -> f64 {
+pub(crate) fn sequence_for_test(times: &[f64], t: f64, looped: bool, window: (f64, f64), follower: &[f64]) -> f64 {
   let (segment, frac) = sequence_position(times, t, looped, window);
   sequence_time(follower, segment, frac, looped, window)
 }

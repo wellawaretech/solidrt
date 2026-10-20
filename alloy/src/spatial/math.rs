@@ -2,12 +2,12 @@
 // (compose / multiply / normalMatrix), so a matrix computed here equals
 // one computed in JS bit for bit.
 
-use super::Mat4;
+use super::{Mat4, Mat4f};
 
 pub const IDENTITY: Mat4 = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
 
 /// Translation * rotation (unit quaternion, xyzw) * scale.
-pub fn compose(position: [f32; 3], rotation: [f32; 4], scale: [f32; 3]) -> Mat4 {
+pub fn compose(position: [f64; 3], rotation: [f64; 4], scale: [f64; 3]) -> Mat4 {
   let [x, y, z, w] = rotation;
   let (x2, y2, z2) = (x + x, y + y, z + z);
   let (xx, xy, xz) = (x * x2, x * y2, x * z2);
@@ -118,7 +118,7 @@ pub fn invert_affine(m: &Mat4) -> Mat4 {
 /// node transforms; this is for a view-projection, whose inverse carries
 /// clip corners back to world points.
 pub fn invert(m: &Mat4) -> Option<Mat4> {
-  let mut inv = [0.0f32; 16];
+  let mut inv = [0.0f64; 16];
   inv[0] =
     m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] + m[9] * m[7] * m[14] + m[13] * m[6] * m[11]
       - m[13] * m[7] * m[10];
@@ -170,8 +170,50 @@ pub fn invert(m: &Mat4) -> Option<Mat4> {
   Some(inv)
 }
 
+/// The arena's f64 matrix narrowed to the GPU's f32: what a sink uploads.
+/// A translation is relative to a reference by the time it gets here (a
+/// target's origin, a buffer's anchor), so the narrowing drops nothing a
+/// vertex stage could keep.
+pub fn narrow(m: &Mat4) -> Mat4f {
+  let mut out = [0.0f32; 16];
+  for (o, v) in out.iter_mut().zip(m.iter()) {
+    *o = *v as f32;
+  }
+  out
+}
+
+/// `m` with its translation taken relative to `origin`, still f64: the
+/// matrix of the same placement over a world whose zero is `origin`.
+pub fn shifted(m: &Mat4, origin: [f64; 3]) -> Mat4 {
+  let mut out = *m;
+  out[12] -= origin[0];
+  out[13] -= origin[1];
+  out[14] -= origin[2];
+  out
+}
+
+/// `m` relative to `origin` and narrowed: what a draw sink uploads for a
+/// target whose render origin is `origin`. The subtraction happens in f64,
+/// so the f32 the GPU gets is exact to its own precision however far out
+/// the placement lies.
+pub fn relative(m: &Mat4, origin: [f64; 3]) -> Mat4f {
+  narrow(&shifted(m, origin))
+}
+
+/// A world-to-camera view re-based on `origin`: the same camera's view of
+/// points given relative to `origin` (`view * T(origin)`, so a relative
+/// point maps where its absolute one did).
+pub fn relative_view(view: &Mat4, origin: [f64; 3]) -> Mat4 {
+  let t = transform_vector(view, origin);
+  let mut out = *view;
+  out[12] += t[0];
+  out[13] += t[1];
+  out[14] += t[2];
+  out
+}
+
 /// m * [v, 1].
-pub fn transform_point(m: &Mat4, v: [f32; 3]) -> [f32; 3] {
+pub fn transform_point(m: &Mat4, v: [f64; 3]) -> [f64; 3] {
   [
     m[0] * v[0] + m[4] * v[1] + m[8] * v[2] + m[12],
     m[1] * v[0] + m[5] * v[1] + m[9] * v[2] + m[13],
@@ -180,7 +222,7 @@ pub fn transform_point(m: &Mat4, v: [f32; 3]) -> [f32; 3] {
 }
 
 /// m * [v, 0] (the upper 3x3 only).
-pub fn transform_vector(m: &Mat4, v: [f32; 3]) -> [f32; 3] {
+pub fn transform_vector(m: &Mat4, v: [f64; 3]) -> [f64; 3] {
   [
     m[0] * v[0] + m[4] * v[1] + m[8] * v[2],
     m[1] * v[0] + m[5] * v[1] + m[9] * v[2],
@@ -189,7 +231,7 @@ pub fn transform_vector(m: &Mat4, v: [f32; 3]) -> [f32; 3] {
 }
 
 /// Rotate `v` by the unit quaternion `q` ([x, y, z, w]).
-pub fn rotate_vector(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
+pub fn rotate_vector(q: [f64; 4], v: [f64; 3]) -> [f64; 3] {
   // v' = v + 2 * cross(q.xyz, cross(q.xyz, v) + q.w * v)
   let (qx, qy, qz, qw) = (q[0], q[1], q[2], q[3]);
   let tx = 2.0 * (qy * v[2] - qz * v[1]);

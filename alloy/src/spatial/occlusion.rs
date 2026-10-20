@@ -47,14 +47,14 @@ pub const OCCLUDER_TRIANGLE_BUDGET: usize = 4096;
 /// Depth slack, NDC units: an occludee nearer than the buffer by less
 /// than this counts as touching the occluder surface and stays drawn.
 /// Covers the float error of a projection and of the raster's
-/// interpolation, orders above f32 epsilon over the -1..1 range.
-const DEPTH_EPS: f32 = 1e-5;
+/// interpolation, orders above f64 epsilon over the -1..1 range.
+const DEPTH_EPS: f64 = 1e-5;
 /// Clip w at or below which a vertex sits on the eye plane: the division
 /// is skipped and the polygon dropped (it degenerates at the eye).
-const CLIP_W_EPS: f32 = 1e-9;
+const CLIP_W_EPS: f64 = 1e-9;
 /// A triangle whose doubled screen area is below this covers no whole
 /// texel and is skipped.
-const DEGENERATE_AREA: f32 = 1e-6;
+const DEGENERATE_AREA: f64 = 1e-6;
 /// The icosphere a sphere occluder is inscribed as: one subdivision of
 /// the icosahedron, 80 faces, every vertex on the sphere so every face
 /// lies inside it.
@@ -63,7 +63,7 @@ const SPHERE_SUBDIVISIONS: u32 = 1;
 /// An occluder's triangles in node space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Occluder {
-  positions: Vec<[f32; 3]>,
+  positions: Vec<[f64; 3]>,
   indices: Vec<[u32; 3]>,
 }
 
@@ -91,7 +91,7 @@ impl Occluder {
 
   /// A quad of `width` by `height` in the node's XY plane, centered at its
   /// origin (Godot's QuadOccluder3D); two-sided.
-  pub fn quad(width: f32, height: f32) -> Occluder {
+  pub fn quad(width: f64, height: f64) -> Occluder {
     let (hw, hh) = (width / 2.0, height / 2.0);
     Occluder {
       positions: vec![[-hw, -hh, 0.0], [hw, -hh, 0.0], [hw, hh, 0.0], [-hw, hh, 0.0]],
@@ -102,9 +102,9 @@ impl Occluder {
   /// A solid sphere (Godot's SphereOccluder3D) as an inscribed icosphere:
   /// its faces lie inside the sphere, so they are never nearer than the
   /// surface they stand for.
-  pub fn sphere(center: [f32; 3], radius: f32) -> Occluder {
-    let t = (1.0 + 5.0f32.sqrt()) / 2.0;
-    let mut positions: Vec<[f32; 3]> = vec![
+  pub fn sphere(center: [f64; 3], radius: f64) -> Occluder {
+    let t = (1.0 + 5.0f64.sqrt()) / 2.0;
+    let mut positions: Vec<[f64; 3]> = vec![
       [-1.0, t, 0.0],
       [1.0, t, 0.0],
       [-1.0, -t, 0.0],
@@ -143,7 +143,7 @@ impl Occluder {
     for _ in 0..SPHERE_SUBDIVISIONS {
       let mut next = Vec::with_capacity(indices.len() * 4);
       let mut midpoints: Vec<((u32, u32), u32)> = Vec::new();
-      let mut mid = |a: u32, b: u32, positions: &mut Vec<[f32; 3]>| -> u32 {
+      let mut mid = |a: u32, b: u32, positions: &mut Vec<[f64; 3]>| -> u32 {
         let key = (a.min(b), a.max(b));
         if let Some((_, m)) = midpoints.iter().find(|(k, _)| *k == key) {
           return *m;
@@ -172,7 +172,7 @@ impl Occluder {
   /// Any triangle list in node space (Godot's ArrayOccluder3D): a mesh's
   /// own geometry or a simpler proxy. A triangle occludes exactly what
   /// lies behind it, so this is the one shape exact for a non-solid.
-  pub fn mesh(positions: Vec<[f32; 3]>, indices: Vec<[u32; 3]>) -> Result<Occluder, String> {
+  pub fn mesh(positions: Vec<[f64; 3]>, indices: Vec<[u32; 3]>) -> Result<Occluder, String> {
     if indices.is_empty() {
       return Err("an occluder mesh needs at least one triangle".to_string());
     }
@@ -198,7 +198,7 @@ impl Occluder {
 pub struct DepthBuffer {
   width: usize,
   height: usize,
-  levels: Vec<Vec<f32>>,
+  levels: Vec<Vec<f64>>,
   /// Each level's texel counts.
   dims: Vec<(usize, usize)>,
   vp: Mat4,
@@ -219,7 +219,7 @@ impl DepthBuffer {
   pub fn begin(&mut self, vp: Mat4, proj: &Mat4) {
     let aspect = if proj[0] != 0.0 { (proj[5] / proj[0]).abs() } else { 1.0 };
     let height = if aspect.is_finite() && aspect > 0.0 {
-      (OCCLUSION_BUFFER_WIDTH as f32 * aspect).round() as usize
+      (OCCLUSION_BUFFER_WIDTH as f64 * aspect).round() as usize
     } else {
       OCCLUSION_BUFFER_WIDTH
     };
@@ -230,7 +230,7 @@ impl DepthBuffer {
     self.drawn = 0;
     self.covered = [usize::MAX, usize::MAX, 0, 0];
     self.levels.clear();
-    self.levels.push(vec![f32::INFINITY; self.width * self.height]);
+    self.levels.push(vec![f64::INFINITY; self.width * self.height]);
     self.dims.clear();
     self.dims.push((self.width, self.height));
   }
@@ -240,7 +240,7 @@ impl DepthBuffer {
   /// were drawn.
   pub fn rasterize(&mut self, world: &Mat4, occluder: &Occluder, budget: &mut usize) -> usize {
     let m = super::math::multiply(self.vp, *world);
-    let clip: Vec<[f32; 4]> = occluder.positions.iter().map(|p| to_clip(&m, *p)).collect();
+    let clip: Vec<[f64; 4]> = occluder.positions.iter().map(|p| to_clip(&m, *p)).collect();
     let mut drawn = 0;
     for tri in &occluder.indices {
       if *budget == 0 {
@@ -260,10 +260,10 @@ impl DepthBuffer {
     while w > 1 || h > 1 {
       let (nw, nh) = (w.div_ceil(2), h.div_ceil(2));
       let prev = self.levels.last().expect("level 0 exists after begin");
-      let mut next = vec![f32::NEG_INFINITY; nw * nh];
+      let mut next = vec![f64::NEG_INFINITY; nw * nh];
       for y in 0..nh {
         for x in 0..nw {
-          let mut m = f32::NEG_INFINITY;
+          let mut m = f64::NEG_INFINITY;
           for dy in 0..2 {
             for dx in 0..2 {
               let (sx, sy) = ((x * 2 + dx).min(w - 1), (y * 2 + dy).min(h - 1));
@@ -297,14 +297,14 @@ impl DepthBuffer {
 
   /// Whether the world box, grown by `margin` on every side, lies wholly
   /// behind the buffer's contents over its screen rectangle.
-  pub fn hidden(&self, b: &Box3, margin: f32) -> bool {
+  pub fn hidden(&self, b: &Box3, margin: f64) -> bool {
     if self.levels.is_empty() || self.is_empty() {
       return false;
     }
     let g = [b[0] - margin, b[1] - margin, b[2] - margin, b[3] + margin, b[4] + margin, b[5] + margin];
-    let (w, h) = (self.width as f32, self.height as f32);
-    let mut rect = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
-    let mut near = f32::INFINITY;
+    let (w, h) = (self.width as f64, self.height as f64);
+    let mut rect = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    let mut near = f64::INFINITY;
     for k in 0..8 {
       let p = [
         if k & 1 == 0 { g[0] } else { g[3] },
@@ -348,23 +348,23 @@ impl DepthBuffer {
   /// The farthest depth over the texel rectangle [x0, x1) x [y0, y1),
   /// exactly: the quadtree walked from the top, a block wholly inside
   /// the rectangle read at its level, one crossing its edge split.
-  fn max_depth(&self, x0: usize, y0: usize, x1: usize, y1: usize) -> f32 {
+  fn max_depth(&self, x0: usize, y0: usize, x1: usize, y1: usize) -> f64 {
     self.block_max(self.levels.len() - 1, 0, 0, [x0, y0, x1, y1])
   }
 
-  fn block_max(&self, level: usize, bx: usize, by: usize, rect: [usize; 4]) -> f32 {
+  fn block_max(&self, level: usize, bx: usize, by: usize, rect: [usize; 4]) -> f64 {
     let size = 1usize << level;
     let (px0, py0) = (bx * size, by * size);
     let (px1, py1) = (((bx + 1) * size).min(self.width), ((by + 1) * size).min(self.height));
     if px0 >= rect[2] || px1 <= rect[0] || py0 >= rect[3] || py1 <= rect[1] {
-      return f32::NEG_INFINITY;
+      return f64::NEG_INFINITY;
     }
     let (lw, _) = self.dims[level];
     if level == 0 || (px0 >= rect[0] && px1 <= rect[2] && py0 >= rect[1] && py1 <= rect[3]) {
       return self.levels[level][by * lw + bx];
     }
     let (cw, ch) = self.dims[level - 1];
-    let mut m = f32::NEG_INFINITY;
+    let mut m = f64::NEG_INFINITY;
     for dy in 0..2 {
       for dx in 0..2 {
         let (cx, cy) = (bx * 2 + dx, by * 2 + dy);
@@ -378,13 +378,13 @@ impl DepthBuffer {
 
   /// One clip-space triangle: clipped to the view volume, divided, fanned
   /// and filled.
-  fn draw_triangle(&mut self, clip: [[f32; 4]; 3]) {
+  fn draw_triangle(&mut self, clip: [[f64; 4]; 3]) {
     let poly = clip_polygon(&clip);
     if poly.len() < 3 {
       return;
     }
-    let (w, h) = (self.width as f32, self.height as f32);
-    let mut pts: Vec<[f32; 3]> = Vec::with_capacity(poly.len());
+    let (w, h) = (self.width as f64, self.height as f64);
+    let mut pts: Vec<[f64; 3]> = Vec::with_capacity(poly.len());
     for c in &poly {
       if c[3] <= CLIP_W_EPS {
         return;
@@ -401,7 +401,7 @@ impl DepthBuffer {
   /// A screen-space triangle into level 0: the texels whose center it
   /// covers, the farthest depth inside each, the nearer of the texel's
   /// value and it.
-  fn fill(&mut self, a: [f32; 3], b: [f32; 3], c: [f32; 3]) {
+  fn fill(&mut self, a: [f64; 3], b: [f64; 3], c: [f64; 3]) {
     let area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
     if area.abs() < DEGENERATE_AREA {
       return;
@@ -409,7 +409,7 @@ impl DepthBuffer {
     // Counter-clockwise, so every edge function is positive inside.
     let (b, c, area) = if area < 0.0 { (c, b, -area) } else { (b, c, area) };
     // Edge p -> q as E(x, y) = A x + B y + C, positive inside.
-    let edge = |p: [f32; 3], q: [f32; 3]| {
+    let edge = |p: [f64; 3], q: [f64; 3]| {
       let aa = -(q[1] - p[1]);
       let bb = q[0] - p[0];
       [aa, bb, -(aa * p[0] + bb * p[1])]
@@ -425,9 +425,9 @@ impl DepthBuffer {
     let width = self.width;
     let texels = &mut self.levels[0];
     for py in y0..y1 {
-      let cy = py as f32 + 0.5;
+      let cy = py as f64 + 0.5;
       for px in x0..x1 {
-        let cx = px as f32 + 0.5;
+        let cx = px as f64 + 0.5;
         let inside = edges.iter().all(|e| e[0] * cx + e[1] * cy + e[2] >= 0.0);
         if !inside {
           continue;
@@ -446,7 +446,7 @@ impl DepthBuffer {
   }
 }
 
-fn to_clip(m: &Mat4, p: [f32; 3]) -> [f32; 4] {
+fn to_clip(m: &Mat4, p: [f64; 3]) -> [f64; 4] {
   [
     m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12],
     m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13],
@@ -459,16 +459,16 @@ fn to_clip(m: &Mat4, p: [f32; 3]) -> [f32; 4] {
 /// a triangle in, a convex polygon of up to nine vertices out, every
 /// vertex with w > 0 so the division is safe and the screen coordinates
 /// stay inside the buffer's range (no guard band needed).
-fn clip_polygon(tri: &[[f32; 4]; 3]) -> Vec<[f32; 4]> {
-  let mut poly: Vec<[f32; 4]> = tri.to_vec();
-  let mut next: Vec<[f32; 4]> = Vec::with_capacity(9);
+fn clip_polygon(tri: &[[f64; 4]; 3]) -> Vec<[f64; 4]> {
+  let mut poly: Vec<[f64; 4]> = tri.to_vec();
+  let mut next: Vec<[f64; 4]> = Vec::with_capacity(9);
   for axis in 0..3 {
-    for sign in [1.0f32, -1.0] {
+    for sign in [1.0f64, -1.0] {
       if poly.is_empty() {
         return poly;
       }
       next.clear();
-      let dist = |v: &[f32; 4]| v[3] + sign * v[axis];
+      let dist = |v: &[f64; 4]| v[3] + sign * v[axis];
       for k in 0..poly.len() {
         let cur = poly[k];
         let prev = poly[(k + poly.len() - 1) % poly.len()];

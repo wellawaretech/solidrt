@@ -1,20 +1,20 @@
 use crate::spatial::{
   transform_point, transform_vector, ChainMethod, ChainSpec, FeetSpec, IkLimit, IkPoint, IkSolverSpec, IkTarget,
-  IkTick, LegSpec, LookAtBone, LookAtLimit, LookAtSpec, Mat4, QueryFilter, SinkWriter, Spatial, SpringJoint,
+  IkTick, LegSpec, LookAtBone, LookAtLimit, LookAtSpec, Mat4f, QueryFilter, SinkWriter, Spatial, SpringJoint,
   TwoBoneSpec,
 };
 
-const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-const ONE: [f32; 3] = [1.0, 1.0, 1.0];
+const Q: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+const ONE: [f64; 3] = [1.0, 1.0, 1.0];
 /// The arm: two bones of this length, straight up at rest.
-const BONE: f32 = 0.3;
+const BONE: f64 = 0.3;
 /// A frame at 60 Hz, ms.
 const FRAME: f64 = 1000.0 / 60.0;
 
 struct Sink;
 
 impl SinkWriter for Sink {
-  fn write_params(&mut self, _: u64, _: u64, _: &Mat4, _: Option<&Mat4>) -> bool {
+  fn write_params(&mut self, _: u64, _: u64, _: &Mat4f, _: Option<&Mat4f>) -> bool {
     true
   }
   fn write_count(&mut self, _: u64, _: u64, _: u32) -> bool {
@@ -24,6 +24,9 @@ impl SinkWriter for Sink {
     true
   }
   fn write_order(&mut self, _: u64, _: &[u64]) -> bool {
+    true
+  }
+  fn shift_params(&mut self, _: u64, _: &[u64], _: [f32; 3]) -> bool {
     true
   }
   fn write_order_direction(&mut self, _: u64, _: u64, _: [f32; 3]) -> bool {
@@ -44,7 +47,7 @@ impl SinkWriter for Sink {
   }
 }
 
-fn node(s: &mut Spatial, parent: Option<u64>, position: [f32; 3]) -> u64 {
+fn node(s: &mut Spatial, parent: Option<u64>, position: [f64; 3]) -> u64 {
   let n = s.create(position, Q, ONE, true);
   if let Some(p) = parent {
     s.set_parent(n, Some(p)).expect("parent");
@@ -52,33 +55,33 @@ fn node(s: &mut Spatial, parent: Option<u64>, position: [f32; 3]) -> u64 {
   n
 }
 
-fn world_pos(s: &Spatial, n: u64) -> [f32; 3] {
+fn world_pos(s: &Spatial, n: u64) -> [f64; 3] {
   let m = s.world(n).expect("world");
   [m[12], m[13], m[14]]
 }
 
-fn forward_of(s: &Spatial, n: u64) -> [f32; 3] {
+fn forward_of(s: &Spatial, n: u64) -> [f64; 3] {
   norm(transform_vector(&s.world(n).expect("world"), [0.0, 0.0, 1.0]))
 }
 
-fn rotation_of(s: &Spatial, n: u64) -> [f32; 4] {
+fn rotation_of(s: &Spatial, n: u64) -> [f64; 4] {
   s.transform_of(n).expect("read").1
 }
 
-fn dist(a: [f32; 3], b: [f32; 3]) -> f32 {
+fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
   ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
 
-fn norm(v: [f32; 3]) -> [f32; 3] {
+fn norm(v: [f64; 3]) -> [f64; 3] {
   let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
   [v[0] / l, v[1] / l, v[2] / l]
 }
 
-fn close(a: [f32; 3], b: [f32; 3], tol: f32) -> bool {
+fn close(a: [f64; 3], b: [f64; 3], tol: f64) -> bool {
   (0..3).all(|i| (a[i] - b[i]).abs() <= tol)
 }
 
-fn point(p: [f32; 3]) -> IkTarget {
+fn point(p: [f64; 3]) -> IkTarget {
   IkTarget::Point { position: p, rotation: None, space: None }
 }
 
@@ -97,7 +100,7 @@ fn arm(s: &mut Spatial) -> (u64, u64, u64, u64) {
   (anchor, shoulder, elbow, wrist)
 }
 
-fn two_bone(root: u64, mid: u64, tip: u64, target: [f32; 3], pole: Option<[f32; 3]>) -> TwoBoneSpec {
+fn two_bone(root: u64, mid: u64, tip: u64, target: [f64; 3], pole: Option<[f64; 3]>) -> TwoBoneSpec {
   TwoBoneSpec {
     root,
     mid,
@@ -112,7 +115,7 @@ fn two_bone(root: u64, mid: u64, tip: u64, target: [f32; 3], pole: Option<[f32; 
   }
 }
 
-fn look_at(bones: Vec<(u64, f32)>, target: Option<[f32; 3]>, limit: Option<LookAtLimit>, ease_ms: f32) -> LookAtSpec {
+fn look_at(bones: Vec<(u64, f64)>, target: Option<[f64; 3]>, limit: Option<LookAtLimit>, ease_ms: f64) -> LookAtSpec {
   LookAtSpec {
     bones: bones.into_iter().map(|(node, share)| LookAtBone { node, share }).collect(),
     target: target.map(point),
@@ -125,7 +128,7 @@ fn look_at(bones: Vec<(u64, f32)>, target: Option<[f32; 3]>, limit: Option<LookA
 }
 
 /// The interior angle at `b` of triangle a-b-c.
-fn interior_angle(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> f32 {
+fn interior_angle(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
   let ba = norm([a[0] - b[0], a[1] - b[1], a[2] - b[2]]);
   let bc = norm([c[0] - b[0], c[1] - b[1], c[2] - b[2]]);
   (ba[0] * bc[0] + ba[1] * bc[1] + ba[2] * bc[2]).clamp(-1.0, 1.0).acos()
@@ -201,7 +204,7 @@ fn chain(s: &mut Spatial, n: usize) -> Vec<u64> {
   nodes
 }
 
-fn chain_spec(nodes: &[u64], method: ChainMethod, target: [f32; 3], limits: Vec<(u64, IkLimit)>) -> ChainSpec {
+fn chain_spec(nodes: &[u64], method: ChainMethod, target: [f64; 3], limits: Vec<(u64, IkLimit)>) -> ChainSpec {
   ChainSpec {
     root: nodes[0],
     tip: *nodes.last().expect("tip"),
@@ -305,7 +308,7 @@ fn look_at_turns_the_forward_axis_and_distributes_by_shares() {
   // Equal shares: the spine took half the quarter turn (yaw +45 deg about y).
   let q = rotation_of(&s, spine);
   assert!(
-    (q[1] - (std::f32::consts::FRAC_PI_8).sin()).abs() < 1e-3 && q[0].abs() < 1e-4 && q[2].abs() < 1e-4,
+    (q[1] - (std::f64::consts::FRAC_PI_8).sin()).abs() < 1e-3 && q[0].abs() < 1e-4 && q[2].abs() < 1e-4,
     "spine {q:?}"
   );
 }
@@ -329,7 +332,7 @@ fn look_at_solves_from_the_primary_pose_every_frame() {
   }
   let later = rotation_of(&s, head);
   assert!((0..4).all(|i| (first[i] - later[i]).abs() < 1e-5), "stable at weight 0.5: {first:?} vs {later:?}");
-  assert!((later[1] - (std::f32::consts::FRAC_PI_8).sin()).abs() < 1e-3, "half the quarter turn: {later:?}");
+  assert!((later[1] - (std::f64::consts::FRAC_PI_8).sin()).abs() < 1e-3, "half the quarter turn: {later:?}");
   // A player writes the head every frame (the rest pose here): the same
   // result, the write being the input.
   for i in 11..=20 {
@@ -339,7 +342,7 @@ fn look_at_solves_from_the_primary_pose_every_frame() {
   let written = rotation_of(&s, head);
   assert!((0..4).all(|i| (first[i] - written[i]).abs() < 1e-5), "a primary write is the input: {written:?}");
   // A different primary pose is solved over, not replaced.
-  let tilt = [0.3f32.sin(), 0.0, 0.0, 0.3f32.cos()];
+  let tilt = [0.3f64.sin(), 0.0, 0.0, 0.3f64.cos()];
   s.set_transform(head, [0.0, 0.2, 0.0], tilt, ONE).expect("write");
   advance_at(&mut s, FRAME * 21.0);
   let tilted = rotation_of(&s, head);
@@ -350,7 +353,7 @@ fn look_at_solves_from_the_primary_pose_every_frame() {
 fn look_at_limit_clamps_and_a_flip_eases_through_rest() {
   let mut s = Spatial::new();
   let head = node(&mut s, None, [0.0; 3]);
-  let at_yaw = |yaw: f32| [1000.0 * yaw.sin(), 0.0, 1000.0 * yaw.cos()];
+  let at_yaw = |yaw: f64| [1000.0 * yaw.sin(), 0.0, 1000.0 * yaw.cos()];
   let limit = LookAtLimit { yaw: [-1.0, 1.0], pitch: [-1.0, 1.0], damp: 1.0 };
   let ik = s
     .create_ik(
@@ -419,7 +422,7 @@ fn biped(s: &mut Spatial) -> (u64, u64, [(u64, u64, u64); 2]) {
   let root = node(s, None, [0.0; 3]);
   let hips = node(s, Some(root), [0.0, 1.0, 0.0]);
   let mut legs = [(0, 0, 0); 2];
-  for (i, x) in [-0.1f32, 0.1].iter().enumerate() {
+  for (i, x) in [-0.1f64, 0.1].iter().enumerate() {
     let hip = node(s, Some(hips), [*x, 0.0, 0.0]);
     let knee = node(s, Some(hip), [0.0, -0.5, 0.0]);
     let ankle = node(s, Some(knee), [0.0, -0.5, 0.0]);
@@ -434,7 +437,7 @@ fn biped(s: &mut Spatial) -> (u64, u64, [(u64, u64, u64); 2]) {
   (root, hips, legs)
 }
 
-fn feet(hips: u64, legs: &[(u64, u64, u64); 2], ease_ms: f32) -> FeetSpec {
+fn feet(hips: u64, legs: &[(u64, u64, u64); 2], ease_ms: f64) -> FeetSpec {
   FeetSpec {
     hips,
     legs: legs.iter().map(|&(root, mid, tip)| LegSpec { root, mid, tip, height: None }).collect(),
@@ -611,20 +614,20 @@ fn a_chain_follows_an_orbiting_target_continuously() {
       spec.tolerance = 1e-3;
       spec.magnet = magnet;
       let ik = s.create_ik(nodes[0], vec![(IkSolverSpec::Chain(spec), 1.0)]).expect("ik");
-      let mut prev: Option<Vec<[f32; 3]>> = None;
-      let mut worst = 0.0f32;
+      let mut prev: Option<Vec<[f64; 3]>> = None;
+      let mut worst = 0.0f64;
       let mut worst_frame = 0;
       for frame in 0..480 {
-        let c = frame as f32 / 240.0 * 2.0 * std::f32::consts::PI;
+        let c = frame as f64 / 240.0 * 2.0 * std::f64::consts::PI;
         // The first orbit as the probe's tail sees it under dropped hips,
         // the second under undropped ones.
         let lift = if frame < 240 { -0.083 } else { -0.15 };
         let target = [c.sin() * 0.35, lift + c.cos() * 0.25, -0.45];
         s.set_ik_target(ik, 0, Some(point(target))).expect("target");
         advance_at(&mut s, frame as f64 * FRAME);
-        let now: Vec<[f32; 3]> = nodes.iter().map(|&n| world_pos(&s, n)).collect();
+        let now: Vec<[f64; 3]> = nodes.iter().map(|&n| world_pos(&s, n)).collect();
         if let (Some(p), true) = (&prev, frame != 240) {
-          let jump = now.iter().zip(p).map(|(a, b)| dist(*a, *b)).fold(0.0, f32::max);
+          let jump = now.iter().zip(p).map(|(a, b)| dist(*a, *b)).fold(0.0, f64::max);
           if jump > worst {
             worst = jump;
             worst_frame = frame;
@@ -648,7 +651,7 @@ fn a_mirrored_rig_solves_like_its_reflection() {
   let mut s = Spatial::new();
   let plain = s.create([0.0; 3], Q, ONE, true);
   let mirror = s.create([0.0; 3], Q, [-1.0, 1.0, 1.0], true);
-  let flip = |p: [f32; 3]| [-p[0], p[1], p[2]];
+  let flip = |p: [f64; 3]| [-p[0], p[1], p[2]];
   let build = |s: &mut Spatial, anchor: u64| {
     let shoulder = node(s, Some(anchor), [0.3, 1.0, 0.0]);
     let elbow = node(s, Some(shoulder), [0.0, -BONE, 0.0]);
@@ -667,7 +670,7 @@ fn a_mirrored_rig_solves_like_its_reflection() {
   let gaze = [5.0, 1.5, 2.0];
   let tail = [-0.1, 0.7, -0.4];
   let stack = |s: &mut Spatial, r: (u64, u64, u64, u64, [u64; 4]), m: bool| {
-    let f = |p: [f32; 3]| if m { flip(p) } else { p };
+    let f = |p: [f64; 3]| if m { flip(p) } else { p };
     let mut arm = two_bone(r.0, r.1, r.2, f(hand), Some(f(pole)));
     arm.rotation_weight = 1.0;
     arm.target = Some(IkTarget::Point { position: f(hand), rotation: Some(Q), space: None });
@@ -692,7 +695,7 @@ fn a_mirrored_rig_solves_like_its_reflection() {
   assert!(close(world_pos(&s, b.2), flip(hand), 1e-4), "mirrored wrist {:?}", world_pos(&s, b.2));
   assert!(s.ik_reach(ia, 2).expect("reach") < 1e-3 && s.ik_reach(ib, 2).expect("reach") < 1e-3, "chains reach");
   for (p, m) in [(a.3, b.3)] {
-    let want = |head: [f32; 3], at: [f32; 3]| norm([at[0] - head[0], at[1] - head[1], at[2] - head[2]]);
+    let want = |head: [f64; 3], at: [f64; 3]| norm([at[0] - head[0], at[1] - head[1], at[2] - head[2]]);
     assert!(close(forward_of(&s, p), want(world_pos(&s, p), gaze), 1e-3), "plain gaze {:?}", forward_of(&s, p));
     assert!(
       close(forward_of(&s, m), want(world_pos(&s, m), flip(gaze)), 1e-3),

@@ -36,7 +36,7 @@
 import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawBuffers, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
 import type { BufferId, DrawId, InstanceOrder, RenderPipelineId, ShaderParams, TextureBindings, TextureId } from "@solidrt/core/gpu"
 import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera, viewMatrices } from "./camera.ts"
-import { requestFrame } from "@solidrt/core"
+import { originCell, requestFrame, snapOrigin } from "@solidrt/core"
 import * as spatial from "flux:spatial"
 import type { NodeId, ViewKey } from "flux:spatial"
 import type { CameraState, CameraUpdate } from "./camera.ts"
@@ -44,6 +44,14 @@ import { spriteDispatch } from "./dispatch.ts"
 import type { PointerFeed } from "@solidrt/core"
 import type { LayerPointerListener, Sprite, LayerHandlers } from "./layer.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
+
+// The sprite layer's render origin cell, in SCREEN pixels of the primary
+// view (world pixels = this over the zoom): how far that view's camera
+// may stray from the origin before the pose records restage and every
+// view's camera re-bases. The f32 records' error grows with that
+// distance; 2^16 keeps it under a few hundredths of a screen pixel, and
+// a camera crossing a cell (tens of thousands of pixels) is rare.
+const ORIGIN_CELL_SCREEN_PX = 65536
 
 export type ViewOptions = {
   /** View pixels: the viewport its camera maps the world onto. */
@@ -175,12 +183,17 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
   // write demands the frame whose flush tests the regions; the first
   // push, before any entry, asks for it itself.
   let viewer: ViewKey | null = deps.root === null ? null : spatial.allocViewKey()
-  let gateView = new Float32Array(16)
-  let gateProj = new Float32Array(16)
+  let gateView = new Float64Array(16)
+  let gateProj = new Float64Array(16)
+  // The viewer's render origin: the camera point itself, so the gate
+  // tests regions against a box around zero at any distance.
+  let gateOrigin = new Float64Array(3)
   let pushViewer = () => {
     if (viewer === null) return
     viewMatrices(cam, width, height, gateView, gateProj)
-    spatial.setView(viewer, gateView, gateProj, deps.root!)
+    gateOrigin[0] = cam.x
+    gateOrigin[1] = cam.y
+    spatial.setView(viewer, gateView, gateProj, deps.root!, gateOrigin)
   }
   pushViewer()
   if (viewer !== null) requestFrame()
@@ -292,6 +305,11 @@ export type ViewDeps = {
   /** The layer's root node, the world its views are viewers of (see
    * ViewShellDeps.root); null for a layer with no regions. */
   root: NodeId | null
+  /** The layer's pose buffer, whose core-written records the render
+   * origin re-bases (flux:spatial setInstanceOrigin); absent for a layer
+   * whose records are its own (the record layer, world f32 as written),
+   * which keeps the origin at zero. */
+  pose?: () => BufferId
 }
 
 /** The layer side of its views: create, and fan out what changes. */
@@ -316,6 +334,29 @@ export function createViews(deps: ViewDeps): Views {
   // The one entry declaring the key order (null until a view exists, or
   // while the layer has no order).
   let ordered: ViewRecord | null = null
+  // The layer's render origin: the point its pose records and every
+  // view's uCamera are relative to, so a population a million pixels out
+  // keeps sub-pixel records (the arena holds the world in f64; the
+  // buffer is f32). Snapped from the PRIMARY view's camera - the first
+  // live one, the key order's view - on a power-of-two cell of
+  // ORIGIN_CELL_SCREEN_PX of its pixels; the other views subtract the
+  // same point, exact while they stay within f32 reach of it (about
+  // 10^5 px at sub-pixel precision; views further apart than that over
+  // one layer want layers of their own). A re-snap restages the records
+  // (one coalesced write) and rewrites every view's camera params.
+  let origin: [number, number] = [0, 0]
+  let originArray = new Float64Array(3)
+  let primary = (): ViewRecord | null => views.values().next().value ?? null
+  let paramsFor = (record: ViewRecord, cam: CameraState): ShaderParams => {
+    let isPrimary = views.size === 0 || primary() === record
+    if (deps.pose !== undefined && isPrimary && snapOrigin(origin, [cam.x, cam.y], originCell(1 / cam.zoom, ORIGIN_CELL_SCREEN_PX))) {
+      originArray[0] = origin[0]
+      originArray[1] = origin[1]
+      spatial.setInstanceOrigin(deps.pose(), originArray)
+      for (let v of views) if (v !== record) setTargetParams(v.view.texture, cameraParams(v.view.camera(), origin))
+    }
+    return cameraParams(cam, origin)
+  }
   let entryFor = (texture: TextureId, order: InstanceOrder | undefined): DrawId =>
     addDraw(texture, deps.pipeline, null, {
       buffers: [deps.quad, ...deps.buffers()],
@@ -340,7 +381,7 @@ export function createViews(deps: ViewDeps): Views {
         label: deps.label,
         root: deps.root,
         pick: deps.pick,
-        cameraParams,
+        cameraParams: cam => paramsFor(record, cam),
         createTarget: (w, h, params, o) => createDrawTarget(w, h, { ...params, uTint: deps.tint(), ...deps.params() }, { textures: deps.textures, clearColor: o.clearColor, label: o.label, autoFree: false }),
         disposing() {
           views.delete(record)

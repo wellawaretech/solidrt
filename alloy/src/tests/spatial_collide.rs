@@ -1,33 +1,33 @@
 use super::spatial::{flush, grid_shape};
 use crate::spatial::{segment_triangle, MoveOptions, Query, QueryFilter, Shape, Spatial, Volume, BVH_MIN_TRIANGLES};
 
-const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-const ONE: [f32; 3] = [1.0, 1.0, 1.0];
-const TOLERANCE: f32 = 1e-4;
+const Q: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+const ONE: [f64; 3] = [1.0, 1.0, 1.0];
+const TOLERANCE: f64 = 1e-4;
 
-fn near(a: [f32; 3], b: [f32; 3]) -> bool {
+fn near(a: [f64; 3], b: [f64; 3]) -> bool {
   (0..3).all(|i| (a[i] - b[i]).abs() < TOLERANCE)
 }
 
-fn close(a: f32, b: f32) -> bool {
+fn close(a: f64, b: f64) -> bool {
   (a - b).abs() < TOLERANCE
 }
 
 /// A quarter turn about the axis (unit quaternion).
-fn quarter_turn(axis: [f32; 3]) -> [f32; 4] {
-  let half = std::f32::consts::FRAC_PI_4;
+fn quarter_turn(axis: [f64; 3]) -> [f64; 4] {
+  let half = std::f64::consts::FRAC_PI_4;
   [axis[0] * half.sin(), axis[1] * half.sin(), axis[2] * half.sin(), half.cos()]
 }
 
-fn sphere(center: [f32; 3], radius: f32) -> Volume {
+fn sphere(center: [f64; 3], radius: f64) -> Volume {
   Volume::Capsule { a: center, b: center, radius }
 }
 
-fn capsule(a: [f32; 3], b: [f32; 3], radius: f32) -> Volume {
+fn capsule(a: [f64; 3], b: [f64; 3], radius: f64) -> Volume {
   Volume::Capsule { a, b, radius }
 }
 
-fn obb(center: [f32; 3], half: [f32; 3], rotation: [f32; 4]) -> Volume {
+fn obb(center: [f64; 3], half: [f64; 3], rotation: [f64; 4]) -> Volume {
   Volume::Box { center, half, rotation }
 }
 
@@ -35,7 +35,7 @@ fn obb(center: [f32; 3], half: [f32; 3], rotation: [f32; 4]) -> Volume {
 fn quad_shape(axis: usize, size: f32) -> Shape {
   let mut positions = Vec::new();
   for (u, v) in [(-size, -size), (size, -size), (size, size), (-size, size)] {
-    let mut p = [0.0; 3];
+    let mut p = [0.0f32; 3];
     p[(axis + 1) % 3] = u;
     p[(axis + 2) % 3] = v;
     positions.extend_from_slice(&p);
@@ -64,10 +64,10 @@ fn cube_shape() -> Shape {
 fn add_shape(
   s: &mut Spatial,
   shape: Shape,
-  bounds: [f32; 6],
-  position: [f32; 3],
-  rotation: [f32; 4],
-  scale: [f32; 3],
+  bounds: [f64; 6],
+  position: [f64; 3],
+  rotation: [f64; 4],
+  scale: [f64; 3],
 ) -> u64 {
   let n = s.create(position, rotation, scale, true);
   let sid = s.create_shape(shape).expect("shape");
@@ -94,7 +94,7 @@ fn segment_triangle_closest_pairs() {
   let (ps, pt, d) = segment_triangle([-1.0, 0.5, 0.0], [-1.0, 0.5, 3.0], &tri);
   assert!(near(ps, [-1.0, 0.5, 0.0]) && near(pt, [0.0, 0.5, 0.0]) && close(d, 1.0), "nearest edge");
   let (_, pt, d) = segment_triangle([3.0, 3.0, 0.0], [4.0, 4.0, 0.0], &tri);
-  assert!(near(pt, [1.0, 1.0, 0.0]) && close(d, 8.0f32.sqrt()), "beyond the hypotenuse");
+  assert!(near(pt, [1.0, 1.0, 0.0]) && close(d, 8.0f64.sqrt()), "beyond the hypotenuse");
 }
 
 #[test]
@@ -275,13 +275,13 @@ fn box_overlap_and_sweep() {
   // Turned 45 degrees about z the box lands on an edge, sqrt(0.5) below its center.
   let hits = s
     .sweep(
-      &obb([0.0, 2.0, 0.0], half, [0.0, 0.0, (std::f32::consts::FRAC_PI_8).sin(), (std::f32::consts::FRAC_PI_8).cos()]),
+      &obb([0.0, 2.0, 0.0], half, [0.0, 0.0, (std::f64::consts::FRAC_PI_8).sin(), (std::f64::consts::FRAC_PI_8).cos()]),
       [0.0, -3.0, 0.0],
       &QueryFilter::default(),
     )
     .expect("sweep");
   assert_eq!(hits.len(), 1);
-  assert!(close(hits[0].time, (2.0 - 0.5f32.sqrt()) / 3.0), "time {}", hits[0].time);
+  assert!(close(hits[0].time, (2.0 - 0.5f64.sqrt()) / 3.0), "time {}", hits[0].time);
   assert!(near(hits[0].normal, [0.0, 1.0, 0.0]), "{:?}", hits[0]);
   let p = hits[0].point;
   assert!(close(p[0], 0.0) && close(p[1], 0.0) && p[2].abs() <= 0.5, "the contact lies on the landing edge: {p:?}");
@@ -313,29 +313,33 @@ fn volume_queries_match_the_linear_oracle() {
   let shape = grid_shape(side);
   assert!(shape.indices.len() / 3 >= BVH_MIN_TRIANGLES * 2);
   let offset = [10.0, 0.0, -3.0];
-  let oracle: Vec<[[f32; 3]; 3]> = shape
+  let oracle: Vec<[[f64; 3]; 3]> = shape
     .indices
     .chunks_exact(3)
     .map(|tri| {
       let at = |i: u32| {
         let k = i as usize * 3;
-        [shape.positions[k] + offset[0], shape.positions[k + 1] + offset[1], shape.positions[k + 2] + offset[2]]
+        [
+          shape.positions[k] as f64 + offset[0],
+          shape.positions[k + 1] as f64 + offset[1],
+          shape.positions[k + 2] as f64 + offset[2],
+        ]
       };
       [at(tri[0]), at(tri[1]), at(tri[2])]
     })
     .collect();
   let mut s = Spatial::new();
-  let n = add_shape(&mut s, shape, [0.0, 0.0, 0.0, side as f32, 1.0, side as f32], offset, Q, ONE);
+  let n = add_shape(&mut s, shape, [0.0, 0.0, 0.0, side as f64, 1.0, side as f64], offset, Q, ONE);
   flush(&mut s);
   let mut state: u32 = 7;
   let mut rand = move || {
     state = state.wrapping_mul(1664525).wrapping_add(1013904223);
-    (state >> 8) as f32 / (1u32 << 24) as f32
+    (state >> 8) as f64 / (1u32 << 24) as f64
   };
   let (mut overlaps, mut impacts) = (0, 0);
   for k in 0..150 {
-    let x = offset[0] + rand() * (side as f32 + 4.0) - 2.0;
-    let z = offset[2] + rand() * (side as f32 + 4.0) - 2.0;
+    let x = offset[0] + rand() * (side as f64 + 4.0) - 2.0;
+    let z = offset[2] + rand() * (side as f64 + 4.0) - 2.0;
     let radius = 0.2 + rand() * 0.8;
     let volume = match k % 3 {
       0 => sphere([x, rand() * 0.8, z], radius),
@@ -347,7 +351,7 @@ fn volume_queries_match_the_linear_oracle() {
       .iter()
       .filter_map(|tri| query.overlap_triangle(tri))
       .map(|c| c.2)
-      .fold(None, |best: Option<f32>, d| Some(best.map_or(d, |b| b.max(d))));
+      .fold(None, |best: Option<f64>, d| Some(best.map_or(d, |b| b.max(d))));
     let got = s.overlap(&volume, &QueryFilter::default()).expect("overlap");
     match expected {
       Some(depth) => {
@@ -368,7 +372,7 @@ fn volume_queries_match_the_linear_oracle() {
       .iter()
       .filter_map(|tri| query.sweep_triangle(motion, tri))
       .map(|h| h.0)
-      .fold(None, |best: Option<f32>, t| Some(best.map_or(t, |b| b.min(t))));
+      .fold(None, |best: Option<f64>, t| Some(best.map_or(t, |b| b.min(t))));
     let got = s.sweep(&start, motion, &QueryFilter::default()).expect("sweep");
     match expected {
       Some(t) => {
@@ -391,17 +395,17 @@ fn volume_queries_match_the_linear_oracle() {
 // walls, a ceiling and a slope big enough to stand in for planes.
 
 /// The mover's own skin, what the landing gaps below are measured in.
-const MOVE_SKIN: f32 = 0.01;
+const MOVE_SKIN: f64 = 0.01;
 
-fn ball(x: f32, y: f32, z: f32) -> Volume {
+fn ball(x: f64, y: f64, z: f64) -> Volume {
   sphere([x, y, z], 0.5)
 }
 
-fn wall_at(s: &mut Spatial, x: f32) -> u64 {
+fn wall_at(s: &mut Spatial, x: f64) -> u64 {
   add_shape(s, quad_shape(0, 5.0), [0.0, -5.0, -5.0, 0.0, 5.0, 5.0], [x, 0.0, 0.0], Q, ONE)
 }
 
-fn slide(s: &mut Spatial, volume: Volume, motion: [f32; 3]) -> crate::spatial::MoveResult {
+fn slide(s: &mut Spatial, volume: Volume, motion: [f64; 3]) -> crate::spatial::MoveResult {
   s.move_and_slide(&volume, motion, &MoveOptions::default(), &QueryFilter::default()).expect("move")
 }
 
@@ -459,7 +463,7 @@ fn move_and_slide_bumps_a_ceiling_without_snapping() {
 fn move_and_slide_slides_down_a_slope_too_steep_to_stand_on() {
   let mut s = Spatial::new();
   // The floor quad tipped 60 degrees about z: its normal (sin 60, cos 60, 0).
-  let tilt = -std::f32::consts::FRAC_PI_3 / 2.0;
+  let tilt = -std::f64::consts::FRAC_PI_3 / 2.0;
   add_shape(
     &mut s,
     quad_shape(1, 20.0),
@@ -520,7 +524,7 @@ fn move_and_slide_honors_the_query_filter() {
 }
 
 /// A node without a shape: its box, a solid to the volume queries.
-fn add_box(s: &mut Spatial, bounds: [f32; 6], position: [f32; 3], rotation: [f32; 4], scale: [f32; 3]) -> u64 {
+fn add_box(s: &mut Spatial, bounds: [f64; 6], position: [f64; 3], rotation: [f64; 4], scale: [f64; 3]) -> u64 {
   let n = s.create(position, rotation, scale, true);
   s.set_bounds(n, Some(bounds)).expect("bounds");
   n
@@ -577,7 +581,7 @@ fn a_volume_inside_a_plain_box_pushes_out_of_the_nearest_face() {
 }
 
 /// `v` normalized, flipped to point along `toward`.
-fn unit_toward(v: [f32; 3], toward: [f32; 3]) -> [f32; 3] {
+fn unit_toward(v: [f64; 3], toward: [f64; 3]) -> [f64; 3] {
   let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
   let sign = if v[0] * toward[0] + v[1] * toward[1] + v[2] * toward[2] < 0.0 { -1.0 } else { 1.0 };
   [v[0] * sign / l, v[1] * sign / l, v[2] * sign / l]
@@ -590,13 +594,13 @@ fn a_sheared_solid_box_pushes_out_along_its_true_face_normal() {
   // NOT the carried x axis (the shear tilts it).
   let mut s = Spatial::new();
   let parent = s.create([0.0; 3], Q, [4.0, 1.0, 1.0], true);
-  let half = std::f32::consts::FRAC_PI_8;
+  let half = std::f64::consts::FRAC_PI_8;
   let child = add_box(&mut s, [-0.5, -0.5, -10.0, 0.5, 0.5, 10.0], [0.0; 3], [0.0, 0.0, half.sin(), half.cos()], ONE);
   s.set_parent(child, Some(parent)).expect("parent");
   flush(&mut s);
   // The world edge vectors of the box: the carried local axes. The +x
   // face spans ey and z, so its outward normal is their cross, toward ex.
-  let c = std::f32::consts::FRAC_1_SQRT_2;
+  let c = std::f64::consts::FRAC_1_SQRT_2;
   let ex = [4.0 * c, c, 0.0];
   let ey = [-4.0 * c, c, 0.0];
   let n = unit_toward([-ey[1], ey[0], 0.0], ex);
@@ -626,8 +630,8 @@ fn a_thin_box_volume_inside_a_solid_box_takes_the_shortest_push() {
   // face costs 4 plus the slab's reach there (4 * sqrt(2) / 2 * 2 =
   // 6.83); out along its own thin axis costs the column's reach on that
   // axis plus the half thickness (4 * sqrt(2) + 0.1 = 5.76), the shorter.
-  let c = std::f32::consts::FRAC_1_SQRT_2;
-  let eighth = std::f32::consts::FRAC_PI_8;
+  let c = std::f64::consts::FRAC_1_SQRT_2;
+  let eighth = std::f64::consts::FRAC_PI_8;
   let hits = s
     .overlap(&obb([0.0; 3], [3.9, 0.1, 1.0], [0.0, 0.0, eighth.sin(), eighth.cos()]), &QueryFilter::default())
     .expect("overlap");

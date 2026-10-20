@@ -1753,7 +1753,16 @@ MUST declare and use `uniform mat4 uModel` (the mesh's world matrix,
 per entry) and `uniform mat4 uViewProj` (the camera, shared
 target-level params) - transform with
 `uViewProj * uModel * vec4(aPos, 1.0)`; a source missing either throws
-at shaderMaterial() creation. The rest is opt-in by declare-and-use:
+at shaderMaterial() creation. Both are RELATIVE to the target's render
+origin (`uniform vec3 uOrigin`, shared like uViewProj; Coordinates and
+rotation under Traps): uModel's translation, uCamPos, uLightPos and so
+every world position a program meets are small numbers around the
+camera however far the scene lies from zero, consistent with each
+other; `vWorldPos + uOrigin` is the absolute world for an effect that
+keys on it (world-space noise, triplanar mapping - the stock triplanar
+and the fog height add it themselves). A scene that stays within 64
+near planes of zero never sees a non-zero origin. The rest is opt-in
+by declare-and-use:
 `uniform vec3 uCamPos` (the camera's world position, shared and written
 with uViewProj - the specular/fresnel view vector is
 `normalize(uCamPos - worldPos)`), `uniform vec3 uCamRight` / `uCamUp`
@@ -2257,7 +2266,9 @@ far }` (`Fog`; fades from near to far, fully fogged past far) or exp2
 density)^2)`, no start band, never quite opaque - 0.01 is ~63% at 100
 units). Either form takes `height` + `heightFalloff` (Godot's fog
 height, Unreal's height falloff): full fog at and below `height` (world
-y, default 0), thinning by `exp(-(y - height) * heightFalloff)` above -
+y, default 0 - an ABSOLUTE height, which the shader reaches by adding
+the target's `uOrigin.y` to its origin-relative position), thinning by
+`exp(-(y - height) * heightFalloff)` above -
 a valley fills, the hilltops and the sky stay clear; per fragment
 height, not integrated along the ray, the cheap tier every engine ships
 first. A fragment fades toward `color` by its RADIAL distance from
@@ -2444,9 +2455,9 @@ order (okf/plans/materials-one-model.md).
    for a custom vertex stage (tier 1 and 2 together).
 3. A FRAGMENT OF YOUR OWN over the scene set. Compose `SCENE` (or
    `sceneSource({ lights, receiveShadow, env, fog })`, each flag leaving a
-   declaration out): it declares uCamPos, uHemiSky/uHemiGround, the
-   light list, the shadow set, the environment and fog - declare none
-   of them yourself. Build a `Surface` with `surfaceOf(base,
+   declaration out): it declares uCamPos, uOrigin, uHemiSky/uHemiGround,
+   the light list, the shadow set, the environment and fog - declare
+   none of them yourself. Build a `Surface` with `surfaceOf(base,
    normal)`, set the fields you mean, call `shadeBlinn(s, position)` or
    `shadePbr(s, position)` (premultiplied rgb back: hemisphere, every
    light with its shadow, the environment term, the emissive), add your
@@ -3774,6 +3785,26 @@ successors) as ordinary content, the model-loading split repeated:
   euler conversion), so driving every node unconditionally from `onFrame`
   costs only the compare for nodes that did not move. Compares are exact,
   like `setVisible`.
+- RANGE: positions are f64 end to end - the JS numbers, the FFI carriers
+  (Float64Array), the spatial arena - so a scene a million units from
+  zero picks, collides, streams and animates as exactly as one at zero
+  (Godot's double-precision build, on by default). The GPU takes f32, so
+  what reaches it is RELATIVE to each target's RENDER ORIGIN: a point the
+  camera snaps near its eye on a power-of-two cell 64 near planes wide
+  (camera.ts; the core's `set_origin`), the core writing every entry's
+  uModel and the light positions relative to it and `cameraParams` the
+  view, uCamPos and the shadow matrices (HDRP's camera-relative
+  rendering, re-based per cell instead of per frame so a camera move
+  stays ONE shared write). Within reach of the origin the f32 error at
+  the near plane is a few hundredths of a pixel whatever the distance
+  from zero; a camera crossing a cell re-bases the target in one core
+  shift write, never a params write per entry. Nothing in the API
+  changes shape for this; only a shader that reads `vWorldPos` as an
+  ABSOLUTE coordinate adds `uOrigin` (Shader materials below). Not
+  origin-relative, by design: instance records, splat centres and record
+  meshes are local to their mesh (or anchor) and ride ITS precision, so a
+  population spread over a million units of one mesh's local space keeps
+  f32 steps - place such populations by their nodes, or in regions.
 
 ### Visibility and instancing
 
@@ -3922,7 +3953,9 @@ successors) as ordinary content, the model-loading split repeated:
 ### Views and scene params
 
 - A camera change is ONE `setTargetParams` write (uViewProj + uCamPos are
-  target state), independent of mesh count - never reintroduce per-mesh
+  target state, both relative to the target's render origin, uOrigin,
+  so the write stays one however far out the camera is), independent of
+  mesh count - never reintroduce per-mesh
   camera writes (uEye-style per-mesh params are exactly the O(scene) cost
   the shared channel removed). Scene scale honestly: hundreds to a
   few thousand objects, bounded by the interpreter, not the GPU. A view

@@ -5,19 +5,19 @@
 use crate::spatial::RegionEvent::{Enter, Leave};
 use crate::spatial::RegionRef::{Cell, Node};
 use crate::spatial::{
-  compose, GridSpec, Mat4, RegionEvent, RegionMargins, RegionSpec, RegionState, SinkWriter, Spatial,
+  compose, GridSpec, Mat4, Mat4f, RegionEvent, RegionMargins, RegionSpec, RegionState, SinkWriter, Spatial,
   DEFAULT_RESIDENCY_BUDGET, IDENTITY, VIEW_KEY_BASE,
 };
 
-const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-const ONE: [f32; 3] = [1.0, 1.0, 1.0];
-const UNIT: [f32; 6] = [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5];
+const Q: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+const ONE: [f64; 3] = [1.0, 1.0, 1.0];
+const UNIT: [f64; 6] = [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5];
 
 /// Nothing the gate does reaches a sink; the writer only has to exist.
 struct Sink;
 
 impl SinkWriter for Sink {
-  fn write_params(&mut self, _: u64, _: u64, _: &Mat4, _: Option<&Mat4>) -> bool {
+  fn write_params(&mut self, _: u64, _: u64, _: &Mat4f, _: Option<&Mat4f>) -> bool {
     true
   }
   fn write_count(&mut self, _: u64, _: u64, _: u32) -> bool {
@@ -27,6 +27,9 @@ impl SinkWriter for Sink {
     true
   }
   fn write_order(&mut self, _: u64, _: &[u64]) -> bool {
+    true
+  }
+  fn shift_params(&mut self, _: u64, _: &[u64], _: [f32; 3]) -> bool {
     true
   }
   fn write_order_direction(&mut self, _: u64, _: u64, _: [f32; 3]) -> bool {
@@ -54,12 +57,12 @@ fn step(s: &mut Spatial) -> Vec<RegionEvent> {
   s.take_region_events()
 }
 
-fn margins(enter: f32, leave: f32) -> Option<RegionSpec> {
+fn margins(enter: f64, leave: f64) -> Option<RegionSpec> {
   Some(RegionSpec { margins: RegionMargins { enter, leave }, ..RegionSpec::default() })
 }
 
 /// A region spec with a weight and a priority beside its margins.
-fn weighted(enter: f32, leave: f32, weight: f64, priority: i32) -> Option<RegionSpec> {
+fn weighted(enter: f64, leave: f64, weight: f64, priority: i32) -> Option<RegionSpec> {
   Some(RegionSpec { margins: RegionMargins { enter, leave }, weight, priority })
 }
 
@@ -67,12 +70,12 @@ fn weighted(enter: f32, leave: f32, weight: f64, priority: i32) -> Option<Region
 /// an identity one is the unit cube in world space (x, y, z in -1..1), so
 /// `(cube_at(x), IDENTITY)` is a viewer whose volume spans x-1..x+1 with
 /// its eye at (x, 0, 0) looking down -z.
-fn cube_at(x: f32) -> Option<(Mat4, Mat4)> {
+fn cube_at(x: f64) -> Option<(Mat4, Mat4)> {
   Some((compose([-x, 0.0, 0.0], Q, ONE), IDENTITY))
 }
 
 /// A unit-box region at `x` with the given margins.
-fn region_at(s: &mut Spatial, x: f32, enter: f32, leave: f32) -> u64 {
+fn region_at(s: &mut Spatial, x: f64, enter: f64, leave: f64) -> u64 {
   let n = s.create([x, 0.0, 0.0], Q, ONE, true);
   s.set_bounds(n, Some(UNIT)).expect("bounds");
   s.set_region(n, margins(enter, leave)).expect("region");
@@ -82,8 +85,8 @@ fn region_at(s: &mut Spatial, x: f32, enter: f32, leave: f32) -> u64 {
 /// An orthographic 2d camera over `w` x `h` world units with its top-left
 /// at (`x`, `y`), looking down -z from z = 0 (the plane z in -1..1): the
 /// view a tile layer's composite pushes.
-fn camera_2d(x: f32, y: f32, w: f32, h: f32) -> Option<(Mat4, Mat4)> {
-  let mut proj = [0.0f32; 16];
+fn camera_2d(x: f64, y: f64, w: f64, h: f64) -> Option<(Mat4, Mat4)> {
+  let mut proj = [0.0f64; 16];
   proj[0] = 2.0 / w;
   proj[5] = -2.0 / h;
   proj[10] = -1.0;
@@ -96,9 +99,9 @@ fn camera_2d(x: f32, y: f32, w: f32, h: f32) -> Option<(Mat4, Mat4)> {
 
 /// A perspective viewer at `eye` looking down -z with a 90 degree fov,
 /// near 0.1 and far `far`.
-fn perspective_at(eye: [f32; 3], far: f32) -> Option<(Mat4, Mat4)> {
+fn perspective_at(eye: [f64; 3], far: f64) -> Option<(Mat4, Mat4)> {
   let near = 0.1;
-  let mut proj = [0.0f32; 16];
+  let mut proj = [0.0f64; 16];
   proj[0] = 1.0;
   proj[5] = 1.0;
   proj[10] = -(far + near) / (far - near);
@@ -110,7 +113,7 @@ fn perspective_at(eye: [f32; 3], far: f32) -> Option<(Mat4, Mat4)> {
 
 /// The grid a 2d tile layer declares: 10 x 10 chunks in its plane, z
 /// unbounded, origin at the world's top-left.
-fn plane_grid(enter: f32, leave: f32) -> GridSpec {
+fn plane_grid(enter: f64, leave: f64) -> GridSpec {
   GridSpec {
     origin: [0.0, 0.0, 0.0],
     cell: [10.0, 10.0, 0.0],
@@ -237,7 +240,7 @@ fn set_region_validates() {
   s.set_bounds(n, Some(UNIT)).expect("bounds");
   assert!(s.set_region(n, margins(2.0, 1.0)).is_err(), "leave below enter");
   assert!(s.set_region(n, margins(-1.0, 1.0)).is_err(), "negative enter");
-  assert!(s.set_region(n, margins(f32::NAN, 1.0)).is_err(), "nan");
+  assert!(s.set_region(n, margins(f64::NAN, 1.0)).is_err(), "nan");
   assert!(s.set_region(n, margins(1.0, 1.0)).is_ok(), "leave == enter is a hard edge, allowed");
   assert!(s.set_region(n, None).is_ok());
   assert!(s.set_region(n, None).is_ok(), "ending twice is a no-op");
@@ -415,7 +418,7 @@ fn the_budget_spans_every_flush_between_two_deliveries() {
   let mut s = Spatial::new();
   s.set_residency_budget(2);
   for x in 0..5 {
-    region_at(&mut s, x as f32, 10.0, 10.0);
+    region_at(&mut s, x as f64, 10.0, 10.0);
   }
   s.set_view(1, cube_at(0.0));
   // Three flushes (a JS-side flush, the frame's, another) before one take.
@@ -457,7 +460,8 @@ fn pending_grid_cells_sort_by_their_center_distance() {
   assert!(next == vec![[1, 0, 0]] || next == vec![[3, 0, 0]], "{next:?}");
   let next = cells(&step(&mut s), g, true);
   assert_eq!(next.len(), 1);
-  assert!(step(&mut s).is_empty());
+  let rest = step(&mut s);
+  assert!(rest.is_empty(), "{rest:?}");
 }
 
 #[test]
@@ -566,15 +570,15 @@ fn a_zoomed_orthographic_viewer_far_from_the_origin_enumerates_only_the_cells_un
   let key = s.alloc_view_key();
   // Zoom 0.5 over a 20 x 20 viewport at (10^6, 0): 40 x 40 world units,
   // cells 100000..100003 x 0..3, sixteen of them.
-  let zoom = 0.5f32;
-  let mut view = [0.0f32; 16];
+  let zoom = 0.5f64;
+  let mut view = [0.0f64; 16];
   view[0] = zoom;
   view[5] = zoom;
   view[10] = 1.0;
   view[12] = -zoom * 1_000_000.0 - 10.0;
   view[13] = -10.0;
   view[15] = 1.0;
-  let mut proj = [0.0f32; 16];
+  let mut proj = [0.0f64; 16];
   proj[0] = 2.0 / 20.0;
   proj[5] = -2.0 / 20.0;
   proj[10] = -1.0;

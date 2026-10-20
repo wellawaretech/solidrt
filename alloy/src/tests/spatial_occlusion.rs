@@ -12,12 +12,12 @@
 use super::spatial::{flush, Write};
 use crate::spatial::{compose, multiply, CullState, DrawOrder, DrawSink, Mat4, Occluder, Spatial, IDENTITY};
 
-const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-const ONE: [f32; 3] = [1.0, 1.0, 1.0];
+const Q: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+const ONE: [f64; 3] = [1.0, 1.0, 1.0];
 /// A box of 0.2 on a side around the origin.
-const SMALL: [f32; 6] = [-0.1, -0.1, -0.1, 0.1, 0.1, 0.1];
+const SMALL: [f64; 6] = [-0.1, -0.1, -0.1, 0.1, 0.1, 0.1];
 /// A wall across most of the view at z = 0: 1.8 wide and tall.
-const WALL_SIZE: f32 = 1.8;
+const WALL_SIZE: f64 = 1.8;
 
 fn sink(target: u64, draw: u64) -> DrawSink {
   DrawSink {
@@ -33,7 +33,7 @@ fn sink(target: u64, draw: u64) -> DrawSink {
 }
 
 /// A shown node with a small box and a draw sink on target 1.
-fn occludee(s: &mut Spatial, position: [f32; 3], draw: u64) -> u64 {
+fn occludee(s: &mut Spatial, position: [f64; 3], draw: u64) -> u64 {
   let n = s.create(position, Q, ONE, true);
   s.set_bounds(n, Some(SMALL)).expect("bounds");
   s.bind_sink(n, sink(1, draw)).expect("sink");
@@ -61,7 +61,7 @@ fn count_of(writes: &[Write], draw: u64) -> Option<u32> {
 }
 
 /// A GL perspective projection.
-fn perspective(fov_y: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
+fn perspective(fov_y: f64, aspect: f64, near: f64, far: f64) -> Mat4 {
   let f = 1.0 / (fov_y / 2.0).tan();
   let mut m = [0.0; 16];
   m[0] = f / aspect;

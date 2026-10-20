@@ -39,22 +39,22 @@ pub type IkId = u64;
 /// A solved rotation within this of the node's (per quaternion component)
 /// is not written: the float noise of a settled stack stays out of the
 /// flush.
-const ROTATION_EPSILON: f32 = 1e-6;
+const ROTATION_EPSILON: f64 = 1e-6;
 /// Same, for a solved position (world units).
-const POSITION_EPSILON: f32 = 1e-6;
+const POSITION_EPSILON: f64 = 1e-6;
 /// Two unit vectors closer than this to antiparallel turn about a
 /// perpendicular instead of the degenerate cross product.
-const ANTIPARALLEL_EPSILON: f32 = 1e-6;
+const ANTIPARALLEL_EPSILON: f64 = 1e-6;
 /// A direction shorter than this has no direction: the solve keeps the
 /// pose it has for that joint.
-const DIRECTION_EPSILON: f32 = 1e-9;
+const DIRECTION_EPSILON: f64 = 1e-9;
 /// A look-at direction within this of the up axis (|sin pitch| above it)
 /// has no yaw: the previous yaw holds, Godot's parallel-axis guard.
-const POLE_SIN_LIMIT: f32 = 0.9999;
+const POLE_SIN_LIMIT: f64 = 0.9999;
 /// Past this fraction of a half turn the target is "behind" the bone:
 /// a yaw sign change there is a flip through the back, which starts the
 /// look-at transition instead of snapping across.
-const FLIP_ANGLE: f32 = std::f32::consts::FRAC_PI_2;
+const FLIP_ANGLE: f64 = std::f64::consts::FRAC_PI_2;
 /// Most iterations a chain solve may take whatever the spec asks: a
 /// runaway setting cannot stall a frame.
 const MAX_CHAIN_ITERATIONS: u32 = 256;
@@ -62,13 +62,13 @@ const MAX_CHAIN_ITERATIONS: u32 = 256;
 /// is below this fraction of its length lies on that axis: FABRIK then
 /// nudges its middle joint by `DEGENERATE_NUDGE` of the length to break
 /// the symmetry.
-const DEGENERATE_RADIAL: f32 = 1e-3;
-const DEGENERATE_NUDGE: f32 = 0.05;
+const DEGENERATE_RADIAL: f64 = 1e-3;
+const DEGENERATE_NUDGE: f64 = 0.05;
 /// The hips offset is settled when within this (world units) of its
 /// target: the stack asks for no frames past it.
-const HIPS_SETTLE: f32 = 1e-5;
+const HIPS_SETTLE: f64 = 1e-5;
 /// A weight within this of its target lands on it.
-const WEIGHT_SETTLE: f32 = 1e-6;
+const WEIGHT_SETTLE: f64 = 1e-6;
 
 /// Where a solver aims: a live node (read from the arena at solve time,
 /// pending writes included, so a moving target costs nothing) or a point,
@@ -76,7 +76,7 @@ const WEIGHT_SETTLE: f32 = 1e-6;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum IkPoint {
   Node(NodeId),
-  Point { position: [f32; 3], space: Option<NodeId> },
+  Point { position: [f64; 3], space: Option<NodeId> },
 }
 
 /// A target: a node (position and rotation), or a point with an
@@ -84,14 +84,14 @@ pub enum IkPoint {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum IkTarget {
   Node(NodeId),
-  Point { position: [f32; 3], rotation: Option<[f32; 4]>, space: Option<NodeId> },
+  Point { position: [f64; 3], rotation: Option<[f64; 4]>, space: Option<NodeId> },
 }
 
 /// A roll reference for a look-at: a direction in world space or in a
 /// node's frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IkUp {
-  pub vector: [f32; 3],
+  pub vector: [f64; 3],
   pub space: Option<NodeId>,
 }
 
@@ -101,8 +101,8 @@ pub struct IkUp {
 /// axis (the direction to the next joint) and the twist about it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum IkLimit {
-  Hinge { axis: [f32; 3], min: f32, max: f32 },
-  Cone { swing: f32, twist: f32 },
+  Hinge { axis: [f64; 3], min: f64, max: f64 },
+  Cone { swing: f64, twist: f64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -111,7 +111,7 @@ pub struct LookAtBone {
   /// The bone's share of the aim (any positive scale; the shares are
   /// taken as fractions of what remains, the last bone taking all of it,
   /// so the chain reaches the target exactly).
-  pub share: f32,
+  pub share: f64,
 }
 
 /// Yaw and pitch limits about the last bone's rest forward, radians,
@@ -120,9 +120,9 @@ pub struct LookAtBone {
 /// clamping (1 = a hard clamp at the limit, Godot's damp threshold).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LookAtLimit {
-  pub yaw: [f32; 2],
-  pub pitch: [f32; 2],
-  pub damp: f32,
+  pub yaw: [f64; 2],
+  pub pitch: [f64; 2],
+  pub damp: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -132,17 +132,17 @@ pub struct LookAtSpec {
   pub bones: Vec<LookAtBone>,
   pub target: Option<IkTarget>,
   /// The bones' forward axis, in their own space.
-  pub forward: [f32; 3],
+  pub forward: [f64; 3],
   /// The bones' up axis, in their own space: the yaw axis, and what the
   /// roll reference aligns.
-  pub up_axis: [f32; 3],
+  pub up_axis: [f64; 3],
   /// Roll reference; None keeps the shortest arc (no roll beyond what
   /// yaw and pitch give).
   pub up: Option<IkUp>,
   pub limit: Option<LookAtLimit>,
   /// The time-based transition on a target change, a target lost or
   /// found, or a flip through the back, milliseconds; 0 snaps.
-  pub ease_ms: f32,
+  pub ease_ms: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -157,17 +157,17 @@ pub struct TwoBoneSpec {
   pub pole: Option<IkPoint>,
   /// A twist about the root-to-target axis applied after the pole,
   /// radians.
-  pub pole_angle: f32,
-  pub position_weight: f32,
+  pub pole_angle: f64,
+  pub position_weight: f64,
   /// How much the tip takes the target's rotation (a node's, or the
   /// point's when given).
-  pub rotation_weight: f32,
+  pub rotation_weight: f64,
   /// The soft reach band as a fraction of the limb length: within it the
   /// tip eases toward full extension instead of popping straight; 0 off.
-  pub soft: f32,
+  pub soft: f64,
   /// The most the limb may lengthen past full reach, as a fraction (0
   /// off): the mid and tip positions scale along their offsets.
-  pub stretch: f32,
+  pub stretch: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,12 +184,12 @@ pub struct ChainSpec {
   pub method: ChainMethod,
   pub iterations: u32,
   /// World units: the solve stops once the tip is within it.
-  pub tolerance: f32,
+  pub tolerance: f64,
   /// FABRIK's pole: the chain's interior joints turn about the root-tip
   /// axis toward it.
   pub magnet: Option<IkPoint>,
   pub limits: Vec<(NodeId, IkLimit)>,
-  pub rotation_weight: f32,
+  pub rotation_weight: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -199,7 +199,7 @@ pub struct LegSpec {
   pub tip: NodeId,
   /// The sole's distance below the tip joint along up; None measures the
   /// tip's height above the clock node's plane at creation.
-  pub height: Option<f32>,
+  pub height: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -208,20 +208,20 @@ pub struct FeetSpec {
   pub hips: NodeId,
   pub legs: Vec<LegSpec>,
   /// World-space up: the rays run against it, the hips move along it.
-  pub up: [f32; 3],
+  pub up: [f64; 3],
   /// What the ground rays see (a collider layer, the scene's root).
   pub filter: QueryFilter,
   /// How far above and below the animated foot the ray reaches.
-  pub rise: f32,
-  pub drop: f32,
+  pub rise: f64,
+  pub drop: f64,
   /// A foot within this height of the model's ground plane (above its
   /// rest height) is planted; over the next `plant_band` it lifts.
-  pub plant_height: f32,
-  pub plant_band: f32,
+  pub plant_height: f64,
+  pub plant_band: f64,
   /// The hips offset's time constant, milliseconds.
-  pub hips_ease_ms: f32,
+  pub hips_ease_ms: f64,
   /// How much each planted foot aligns to the ground normal.
-  pub rotation_weight: f32,
+  pub rotation_weight: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -256,46 +256,46 @@ pub struct IkTick {
 /// the working pose the solvers edit, and what the stack last wrote.
 struct JointState {
   node: NodeId,
-  input_rot: [f32; 4],
-  input_pos: [f32; 3],
-  work_rot: [f32; 4],
-  work_pos: [f32; 3],
-  written_rot: [f32; 4],
-  written_pos: [f32; 3],
+  input_rot: [f64; 4],
+  input_pos: [f64; 3],
+  work_rot: [f64; 4],
+  work_pos: [f64; 3],
+  written_rot: [f64; 4],
+  written_pos: [f64; 3],
 }
 
 /// The look-at's transition (Godot's time-based interpolation): from the
 /// pose it had when triggered toward the fresh solve, over `ease_ms`.
 struct LookAtState {
   /// Per bone, the local rotation the last frame's solve produced.
-  last: Vec<[f32; 4]>,
-  from: Vec<[f32; 4]>,
+  last: Vec<[f64; 4]>,
+  from: Vec<[f64; 4]>,
   /// 1 at the trigger, 0 when done.
-  remaining: f32,
+  remaining: f64,
   /// The yaw of the previous frame, for the flip test; None before the
   /// first solve with a target.
-  prev_yaw: Option<f32>,
+  prev_yaw: Option<f64>,
   had_target: bool,
 }
 
 struct TwoBoneState {
   /// The bend direction at creation, in the root's parent space: the
   /// fallback when the limb is straight.
-  rest_bend: [f32; 3],
+  rest_bend: [f64; 3],
 }
 
 struct LegState {
-  height: f32,
-  rest_bend: [f32; 3],
+  height: f64,
+  rest_bend: [f64; 3],
   /// The model's up in the tip's own frame at creation: what aligns to
   /// the ground normal.
-  up_local: [f32; 3],
+  up_local: [f64; 3],
 }
 
 struct FeetState {
   legs: Vec<LegState>,
-  offset: f32,
-  offset_target: f32,
+  offset: f64,
+  offset_target: f64,
 }
 
 enum SolverState {
@@ -308,12 +308,12 @@ enum SolverState {
 struct Solver {
   spec: IkSolverSpec,
   state: SolverState,
-  weight: f32,
-  weight_target: f32,
+  weight: f64,
+  weight_target: f64,
   /// Per second; 0 when at the target.
-  weight_rate: f32,
+  weight_rate: f64,
   /// The last solve's residual.
-  reach: f32,
+  reach: f64,
   /// A joint or target node died: skipped from then on.
   dead: bool,
   /// The weight follows a rig's curve (an authored foot-plant track)
@@ -344,9 +344,9 @@ pub(super) struct IkSet {
 #[derive(Clone, Copy)]
 struct PathNode {
   idx: u32,
-  pos: [f32; 3],
-  rot: [f32; 4],
-  scale: [f32; 3],
+  pos: [f64; 3],
+  rot: [f64; 4],
+  scale: [f64; 3],
   world: Mat4,
 }
 
@@ -364,7 +364,7 @@ impl Spatial {
   /// (`set_time_scale`; for `Feet` also the model whose ground plane the
   /// plant test reads). Every node must be live and every chain a
   /// descendant path. The joints start from the pose as the tree stands.
-  pub fn create_ik(&mut self, clock: NodeId, solvers: Vec<(IkSolverSpec, f32)>) -> Result<IkId, String> {
+  pub fn create_ik(&mut self, clock: NodeId, solvers: Vec<(IkSolverSpec, f64)>) -> Result<IkId, String> {
     self.resolve(clock).map_err(|e| format!("clock: {e}"))?;
     let mut stack = Stack {
       id: self.ik.next,
@@ -457,7 +457,7 @@ impl Spatial {
   /// time (linear, the players' fade shape); 0 snaps. A weight at 0
   /// costs no solve. Errors: a dropped id, an index out of range, a
   /// weight outside 0..1.
-  pub fn set_ik_weight(&mut self, id: IkId, index: usize, weight: f32, fade_ms: f32) -> Result<(), String> {
+  pub fn set_ik_weight(&mut self, id: IkId, index: usize, weight: f64, fade_ms: f64) -> Result<(), String> {
     if !(0.0..=1.0).contains(&weight) {
       return Err(format!("weight must be within 0..1, got {weight}"));
     }
@@ -499,7 +499,7 @@ impl Spatial {
   /// units; a look-at's angle left, radians; a feet solver's largest
   /// over its planted feet). 0 before any solve or for a solver without
   /// a target.
-  pub fn ik_reach(&self, id: IkId, index: usize) -> Result<f32, String> {
+  pub fn ik_reach(&self, id: IkId, index: usize) -> Result<f64, String> {
     let stack = self.ik.stacks.iter().find(|s| s.id == id).ok_or_else(|| format!("ik {id} not found"))?;
     let count = stack.solvers.len();
     let solver =
@@ -509,7 +509,7 @@ impl Spatial {
 
   /// The solver's current weight (its ramp included), for tests and
   /// probes.
-  pub fn ik_weight(&self, id: IkId, index: usize) -> Result<f32, String> {
+  pub fn ik_weight(&self, id: IkId, index: usize) -> Result<f64, String> {
     let stack = self.ik.stacks.iter().find(|s| s.id == id).ok_or_else(|| format!("ik {id} not found"))?;
     let count = stack.solvers.len();
     let solver =
@@ -544,7 +544,7 @@ impl Spatial {
           }
         }
       }
-      self.step_stack(stack, (frame_dt * rate as f64) as f32, &mut tick);
+      self.step_stack(stack, (frame_dt * rate as f64) as f64, &mut tick);
       true
     });
     self.ik = set;
@@ -624,7 +624,7 @@ impl Spatial {
     j
   }
 
-  fn build_solver(&self, stack: &mut Stack, spec: IkSolverSpec, weight: f32) -> Result<Solver, String> {
+  fn build_solver(&self, stack: &mut Stack, spec: IkSolverSpec, weight: f64) -> Result<Solver, String> {
     if !(0.0..=1.0).contains(&weight) {
       return Err(format!("weight must be within 0..1, got {weight}"));
     }
@@ -827,7 +827,7 @@ impl Spatial {
   /// The limb's bend direction as the tree stands, in the root's parent
   /// space: the mid's offset from the root-tip line, or a perpendicular
   /// of the limb when it is straight.
-  fn rest_bend(&self, stack: &Stack, path: &[u32], mid_at: usize) -> [f32; 3] {
+  fn rest_bend(&self, stack: &Stack, path: &[u32], mid_at: usize) -> [f64; 3] {
     let frame = self.parent_frame(stack, path[0]);
     let nodes = self.compose_path(stack, path, &frame);
     let (a, b, c) =
@@ -839,7 +839,7 @@ impl Spatial {
 
   /// The local pose of a node: the stack's working pose when it owns the
   /// node, else the arena's.
-  fn local_of(&self, stack: &Stack, idx: u32) -> ([f32; 3], [f32; 4], [f32; 3]) {
+  fn local_of(&self, stack: &Stack, idx: u32) -> ([f64; 3], [f64; 4], [f64; 3]) {
     let n = &self.nodes[idx as usize];
     match stack.by_node.get(&idx) {
       Some(&j) => (stack.joints[j].work_pos, stack.joints[j].work_rot, n.scale),
@@ -876,7 +876,7 @@ impl Spatial {
 
   /// A point in world space: a node's origin, or a point in world or a
   /// node's frame. None when a node died.
-  fn point_world(&self, p: &IkPoint) -> Option<[f32; 3]> {
+  fn point_world(&self, p: &IkPoint) -> Option<[f64; 3]> {
     match p {
       IkPoint::Node(n) => self.world(*n).ok().map(|m| position_of(&m)),
       IkPoint::Point { position, space: None } => Some(*position),
@@ -885,7 +885,7 @@ impl Spatial {
   }
 
   /// A target in world space: position and rotation (when it has one).
-  fn target_world(&self, t: &IkTarget) -> Option<([f32; 3], Option<[f32; 4]>)> {
+  fn target_world(&self, t: &IkTarget) -> Option<([f64; 3], Option<[f64; 4]>)> {
     match t {
       IkTarget::Node(n) => self.world(*n).ok().map(|m| (position_of(&m), Some(proper_rotation_of(&m)))),
       IkTarget::Point { position, rotation, space: None } => Some((*position, rotation.map(quat_normalize))),
@@ -896,7 +896,7 @@ impl Spatial {
     }
   }
 
-  fn up_world(&self, u: &IkUp) -> Option<[f32; 3]> {
+  fn up_world(&self, u: &IkUp) -> Option<[f64; 3]> {
     match u.space {
       None => Some(u.vector),
       Some(s) => self.world(s).ok().map(|m| transform_vector(&m, u.vector)),
@@ -904,7 +904,7 @@ impl Spatial {
   }
 
   /// One frame of one stack.
-  fn step_stack(&mut self, stack: &mut Stack, dt: f32, tick: &mut IkTick) {
+  fn step_stack(&mut self, stack: &mut Stack, dt: f64, tick: &mut IkTick) {
     // The primary pose: a joint written over since the stack's last write
     // carries that write as its input.
     let mut dead_joint = false;
@@ -1015,7 +1015,7 @@ impl Spatial {
 
   /// Write a position through the snap path when it differs from the
   /// node's; whether it did.
-  fn write_position(&mut self, idx: u32, p: [f32; 3]) -> bool {
+  fn write_position(&mut self, idx: u32, p: [f64; 3]) -> bool {
     let n = &mut self.nodes[idx as usize];
     if !differs3(p, n.position) {
       return false;
@@ -1034,10 +1034,10 @@ impl Spatial {
     stack: &mut Stack,
     s: &LookAtSpec,
     state: &mut LookAtState,
-    weight: f32,
-    dt: f32,
+    weight: f64,
+    dt: f64,
     tick: &mut IkTick,
-  ) -> Option<f32> {
+  ) -> Option<f64> {
     let n = s.bones.len();
     let f = normalize_or(s.forward, [0.0, 0.0, 1.0]);
     let u = normalize_or(s.up_axis, [0.0, 1.0, 0.0]);
@@ -1058,8 +1058,8 @@ impl Spatial {
     for b in &s.bones {
       idxs.push(self.resolve(b.node).ok()?);
     }
-    let input: Vec<[f32; 4]> = idxs.iter().map(|&i| stack.joints[stack.by_node[&i]].work_rot).collect();
-    let share_total: f32 = s.bones.iter().map(|b| b.share).sum();
+    let input: Vec<[f64; 4]> = idxs.iter().map(|&i| stack.joints[stack.by_node[&i]].work_rot).collect();
+    let share_total: f64 = s.bones.iter().map(|b| b.share).sum();
     let mut residual = 0.0;
     let mut dest = input.clone();
     if let Some(target) = target {
@@ -1157,7 +1157,7 @@ impl Spatial {
 
   // ---- two-bone ---------------------------------------------------------
 
-  fn solve_two_bone(&self, stack: &mut Stack, s: &TwoBoneSpec, state: &TwoBoneState, weight: f32) -> Option<f32> {
+  fn solve_two_bone(&self, stack: &mut Stack, s: &TwoBoneSpec, state: &TwoBoneState, weight: f64) -> Option<f64> {
     let Some(target) = &s.target else { return Some(0.0) };
     let (target_pos, target_rot) = self.target_world(target)?;
     let pole = match &s.pole {
@@ -1167,7 +1167,7 @@ impl Spatial {
     let (path, mid_at) = self.two_bone_path(s.root, s.mid, s.tip).ok()?;
     let frame = self.parent_frame(stack, path[0]);
     let mut nodes = self.compose_path(stack, &path, &frame);
-    let before: Vec<([f32; 4], [f32; 3])> = nodes.iter().map(|n| (n.rot, n.pos)).collect();
+    let before: Vec<([f64; 4], [f64; 3])> = nodes.iter().map(|n| (n.rot, n.pos)).collect();
     let rest_bend = transform_vector(&frame.world, state.rest_bend);
     let reach = two_bone(&mut nodes, mid_at, &frame, target_pos, pole, rest_bend, s.pole_angle, s.soft, s.stretch);
     if s.rotation_weight > 0.0 {
@@ -1192,7 +1192,7 @@ impl Spatial {
 
   // ---- chain ------------------------------------------------------------
 
-  fn solve_chain(&self, stack: &mut Stack, s: &ChainSpec, weight: f32) -> Option<f32> {
+  fn solve_chain(&self, stack: &mut Stack, s: &ChainSpec, weight: f64) -> Option<f64> {
     let Some(target) = &s.target else { return Some(0.0) };
     let (target_pos, target_rot) = self.target_world(target)?;
     let magnet = match &s.magnet {
@@ -1202,10 +1202,10 @@ impl Spatial {
     let path = self.path_between(s.root, s.tip, "chain").ok()?;
     let frame = self.parent_frame(stack, path[0]);
     let mut nodes = self.compose_path(stack, &path, &frame);
-    let before: Vec<[f32; 4]> = nodes.iter().map(|n| n.rot).collect();
+    let before: Vec<[f64; 4]> = nodes.iter().map(|n| n.rot).collect();
     // Limits by path position, with the bone axis (toward the next node)
     // in the joint's input frame.
-    let mut limits: Vec<Option<(IkLimit, [f32; 3])>> = vec![None; nodes.len()];
+    let mut limits: Vec<Option<(IkLimit, [f64; 3])>> = vec![None; nodes.len()];
     for (node, limit) in &s.limits {
       let idx = self.resolve(*node).ok()?;
       if let Some(k) = nodes.iter().position(|n| n.idx == idx) {
@@ -1241,10 +1241,10 @@ impl Spatial {
     stack: &mut Stack,
     s: &FeetSpec,
     state: &mut FeetState,
-    weight: f32,
-    dt: f32,
+    weight: f64,
+    dt: f64,
     tick: &mut IkTick,
-  ) -> Option<f32> {
+  ) -> Option<f64> {
     let up = normalize_or(s.up, [0.0, 1.0, 0.0]);
     let down = scale3(up, -1.0);
     let hips = self.resolve(s.hips).ok()?;
@@ -1253,9 +1253,9 @@ impl Spatial {
     struct Foot {
       path: Vec<u32>,
       mid_at: usize,
-      pos: [f32; 3],
-      ground: Option<([f32; 3], [f32; 3])>,
-      plant: f32,
+      pos: [f64; 3],
+      ground: Option<([f64; 3], [f64; 3])>,
+      plant: f64,
     }
     let mut feet = Vec::with_capacity(s.legs.len());
     for (i, leg) in s.legs.iter().enumerate() {
@@ -1274,7 +1274,7 @@ impl Spatial {
     }
     // The hips: lowered (or raised) by the planted foot that needs it
     // most, eased.
-    let mut target = 0.0f32;
+    let mut target = 0.0f64;
     let mut planted = false;
     for f in &feet {
       if let Some((g, _)) = f.ground {
@@ -1307,7 +1307,7 @@ impl Spatial {
     }
     // Pass 2: each planted leg reaches its ground target from under the
     // moved hips, the foot aligned to the normal.
-    let mut reach = 0.0f32;
+    let mut reach = 0.0f64;
     for (i, f) in feet.iter().enumerate() {
       let Some((goal, normal)) = f.ground else { continue };
       let w = weight * f.plant;
@@ -1316,7 +1316,7 @@ impl Spatial {
       }
       let frame = self.parent_frame(stack, f.path[0]);
       let mut nodes = self.compose_path(stack, &f.path, &frame);
-      let before: Vec<([f32; 4], [f32; 3])> = nodes.iter().map(|n| (n.rot, n.pos)).collect();
+      let before: Vec<([f64; 4], [f64; 3])> = nodes.iter().map(|n| (n.rot, n.pos)).collect();
       let now = position_of(&nodes[nodes.len() - 1].world);
       let target = lerp3(now, goal, f.plant);
       let rest_bend = transform_vector(&frame.world, state.legs[i].rest_bend);
@@ -1351,7 +1351,7 @@ fn target_switches(a: &Option<IkTarget>, b: &Option<IkTarget>) -> bool {
   }
 }
 
-fn start_transition(state: &mut LookAtState, ease_ms: f32) {
+fn start_transition(state: &mut LookAtState, ease_ms: f64) {
   if ease_ms <= 0.0 {
     return;
   }
@@ -1374,9 +1374,9 @@ fn recompose(nodes: &mut [PathNode], from: usize, frame: &Frame) {
 fn turn(
   nodes: &mut [PathNode],
   k: usize,
-  delta: [f32; 4],
+  delta: [f64; 4],
   frame: &Frame,
-  input: Option<([f32; 4], &Option<(IkLimit, [f32; 3])>)>,
+  input: Option<([f64; 4], &Option<(IkLimit, [f64; 3])>)>,
 ) {
   let parent = if k == 0 { frame.world } else { nodes[k - 1].world };
   let mut local = quat_normalize(quat_multiply(local_delta(&parent, delta), nodes[k].rot));
@@ -1398,13 +1398,13 @@ fn two_bone(
   nodes: &mut [PathNode],
   mid_at: usize,
   frame: &Frame,
-  target: [f32; 3],
-  pole: Option<[f32; 3]>,
-  rest_bend: [f32; 3],
-  pole_angle: f32,
-  soft: f32,
-  stretch: f32,
-) -> f32 {
+  target: [f64; 3],
+  pole: Option<[f64; 3]>,
+  rest_bend: [f64; 3],
+  pole_angle: f64,
+  soft: f64,
+  stretch: f64,
+) -> f64 {
   let last = nodes.len() - 1;
   let a = position_of(&nodes[0].world);
   let b = position_of(&nodes[mid_at].world);
@@ -1485,19 +1485,19 @@ fn two_bone(
 #[allow(clippy::too_many_arguments)]
 fn fabrik(
   nodes: &mut [PathNode],
-  input: &[[f32; 4]],
-  limits: &[Option<(IkLimit, [f32; 3])>],
+  input: &[[f64; 4]],
+  limits: &[Option<(IkLimit, [f64; 3])>],
   frame: &Frame,
-  target: [f32; 3],
-  magnet: Option<[f32; 3]>,
+  target: [f64; 3],
+  magnet: Option<[f64; 3]>,
   iterations: u32,
-  tolerance: f32,
-) -> f32 {
+  tolerance: f64,
+) -> f64 {
   let n = nodes.len();
   let root = position_of(&nodes[0].world);
-  let mut p: Vec<[f32; 3]> = nodes.iter().map(|x| position_of(&x.world)).collect();
-  let lengths: Vec<f32> = (0..n - 1).map(|k| length(sub(p[k + 1], p[k]))).collect();
-  let total: f32 = lengths.iter().sum();
+  let mut p: Vec<[f64; 3]> = nodes.iter().map(|x| position_of(&x.world)).collect();
+  let lengths: Vec<f64> = (0..n - 1).map(|k| length(sub(p[k + 1], p[k]))).collect();
+  let total: f64 = lengths.iter().sum();
   let mut residual = length(sub(target, p[n - 1]));
   let to_target = sub(target, root);
   let to_tip = sub(p[n - 1], root);
@@ -1577,7 +1577,7 @@ fn fabrik(
 /// for a straight chain is a turn away from the axis by float noise), so
 /// every length holds; a chain within the degenerate band of the axis
 /// has no side to turn and is left alone.
-fn magnet_turn(p: &mut [[f32; 3]], magnet: [f32; 3], total: f32) {
+fn magnet_turn(p: &mut [[f64; 3]], magnet: [f64; 3], total: f64) {
   let n = p.len();
   if n < 3 {
     return;
@@ -1609,13 +1609,13 @@ fn magnet_turn(p: &mut [[f32; 3]], magnet: [f32; 3], total: f32) {
 /// tip toward the target, limits applied, until within tolerance.
 fn ccd(
   nodes: &mut [PathNode],
-  input: &[[f32; 4]],
-  limits: &[Option<(IkLimit, [f32; 3])>],
+  input: &[[f64; 4]],
+  limits: &[Option<(IkLimit, [f64; 3])>],
   frame: &Frame,
-  target: [f32; 3],
+  target: [f64; 3],
   iterations: u32,
-  tolerance: f32,
-) -> f32 {
+  tolerance: f64,
+) -> f64 {
   let n = nodes.len();
   let mut residual = length(sub(target, position_of(&nodes[n - 1].world)));
   for _ in 0..iterations {
@@ -1640,7 +1640,7 @@ fn ccd(
 /// `local` held within the limit relative to `input` (both the joint's
 /// local rotation): the difference decomposed into swing and twist about
 /// the limit's axis and each part bounded.
-fn clamp_limit(local: [f32; 4], input: [f32; 4], limit: &IkLimit, bone_axis: [f32; 3]) -> [f32; 4] {
+fn clamp_limit(local: [f64; 4], input: [f64; 4], limit: &IkLimit, bone_axis: [f64; 3]) -> [f64; 4] {
   let delta = quat_normalize(quat_multiply(quat_conjugate(input), local));
   let clamped = match *limit {
     IkLimit::Hinge { axis, min, max } => {
@@ -1660,7 +1660,7 @@ fn clamp_limit(local: [f32; 4], input: [f32; 4], limit: &IkLimit, bone_axis: [f3
 }
 
 /// q = swing * twist, the twist about `axis` (unit): (swing, twist).
-fn swing_twist(q: [f32; 4], axis: [f32; 3]) -> ([f32; 4], [f32; 4]) {
+fn swing_twist(q: [f64; 4], axis: [f64; 3]) -> ([f64; 4], [f64; 4]) {
   let q = if q[3] < 0.0 { [-q[0], -q[1], -q[2], -q[3]] } else { q };
   let proj = dot([q[0], q[1], q[2]], axis);
   let twist = quat_normalize([axis[0] * proj, axis[1] * proj, axis[2] * proj, q[3]]);
@@ -1669,13 +1669,13 @@ fn swing_twist(q: [f32; 4], axis: [f32; 3]) -> ([f32; 4], [f32; 4]) {
 }
 
 /// The signed angle of a twist quaternion about its axis.
-fn twist_angle(twist: [f32; 4], axis: [f32; 3]) -> f32 {
+fn twist_angle(twist: [f64; 4], axis: [f64; 3]) -> f64 {
   let s = dot([twist[0], twist[1], twist[2]], axis);
   2.0 * s.atan2(twist[3])
 }
 
 /// A rotation's angle held to at most `max` about its own axis.
-fn clamp_angle(q: [f32; 4], max: f32) -> [f32; 4] {
+fn clamp_angle(q: [f64; 4], max: f64) -> [f64; 4] {
   let q = if q[3] < 0.0 { [-q[0], -q[1], -q[2], -q[3]] } else { q };
   let s = length([q[0], q[1], q[2]]);
   let angle = 2.0 * s.atan2(q[3]);
@@ -1688,17 +1688,17 @@ fn clamp_angle(q: [f32; 4], max: f32) -> [f32; 4] {
 /// The yaw (about `u`, positive toward right = u x f) and pitch (toward
 /// `u`) of a unit direction in a frame of forward `f` and up `u`. The
 /// yaw is NaN at the poles.
-fn yaw_pitch(d: [f32; 3], f: [f32; 3], u: [f32; 3]) -> (f32, f32) {
+fn yaw_pitch(d: [f64; 3], f: [f64; 3], u: [f64; 3]) -> (f64, f64) {
   let r = normalize_or(cross(u, f), [1.0, 0.0, 0.0]);
   let s = dot(d, u).clamp(-1.0, 1.0);
   let pitch = s.asin();
   if s.abs() > POLE_SIN_LIMIT {
-    return (f32::NAN, pitch);
+    return (f64::NAN, pitch);
   }
   (dot(d, r).atan2(dot(d, f)), pitch)
 }
 
-fn direction_of(yaw: f32, pitch: f32, f: [f32; 3], u: [f32; 3]) -> [f32; 3] {
+fn direction_of(yaw: f64, pitch: f64, f: [f64; 3], u: [f64; 3]) -> [f64; 3] {
   let r = normalize_or(cross(u, f), [1.0, 0.0, 0.0]);
   let cp = pitch.cos();
   normalize_or(add(add(scale3(f, cp * yaw.cos()), scale3(r, cp * yaw.sin())), scale3(u, pitch.sin())), f)
@@ -1707,7 +1707,7 @@ fn direction_of(yaw: f32, pitch: f32, f: [f32; 3], u: [f32; 3]) -> [f32; 3] {
 /// An angle held within `[min, max]`: a hard clamp when `damp` is 1,
 /// else past `damp` of the limit an exponential approach to it (Godot's
 /// damped remap), continuous in value and slope.
-fn clamp_damped(a: f32, limit: [f32; 2], damp: f32) -> f32 {
+fn clamp_damped(a: f64, limit: [f64; 2], damp: f64) -> f64 {
   let (sign, bound) = if a >= 0.0 { (1.0, limit[1]) } else { (-1.0, -limit[0]) };
   let m = a.abs();
   let start = bound * damp;
@@ -1724,7 +1724,7 @@ fn clamp_damped(a: f32, limit: [f32; 2], damp: f32) -> f32 {
 /// The world-space rotation taking a bone of world matrix `world`, local
 /// forward `f` and local up `u`, so that its forward is `goal`: the
 /// shortest arc, or with `up_ref` the frame whose up leans to it.
-fn aim_delta(world: &Mat4, f: [f32; 3], u: [f32; 3], goal: [f32; 3], up_ref: Option<[f32; 3]>) -> [f32; 4] {
+fn aim_delta(world: &Mat4, f: [f64; 3], u: [f64; 3], goal: [f64; 3], up_ref: Option<[f64; 3]>) -> [f64; 4] {
   let fw = normalize_or(transform_vector(world, f), f);
   let arc = quat_from_to(fw, goal);
   let Some(up_ref) = up_ref else { return arc };
@@ -1744,7 +1744,7 @@ fn aim_delta(world: &Mat4, f: [f32; 3], u: [f32; 3], goal: [f32; 3], up_ref: Opt
 /// decompose convention (a mirrored frame is a proper rotation with its
 /// x axis negated), so a target orientation under a mirrored arm means
 /// what it means there.
-fn orientation_delta(world: &Mat4, target: [f32; 4], weight: f32) -> [f32; 4] {
+fn orientation_delta(world: &Mat4, target: [f64; 4], weight: f64) -> [f64; 4] {
   let now = proper_rotation_of(world);
   let goal = slerp(now, target, weight);
   quat_normalize(quat_multiply(goal, quat_conjugate(now)))
@@ -1755,7 +1755,7 @@ fn orientation_delta(world: &Mat4, target: [f32; 4], weight: f32) -> [f32; 4] {
 /// parent's orthonormal part, a proper rotation even when that part is
 /// a mirror (a conjugation of a rotation by a reflection is a rotation),
 /// which is what a quaternion inverse of the parent cannot give.
-fn local_delta(parent: &Mat4, delta: [f32; 4]) -> [f32; 4] {
+fn local_delta(parent: &Mat4, delta: [f64; 4]) -> [f64; 4] {
   let pn = orthonormal(parent);
   let m = multiply(multiply(transpose(&pn), compose([0.0; 3], delta, [1.0; 3])), pn);
   rotation_of(&m)
@@ -1778,7 +1778,7 @@ fn transpose(m: &Mat4) -> Mat4 {
 
 /// `transpose(upper 3x3 of m) * v`: a world vector into the frame of an
 /// orthonormal `m`.
-fn transform_vector_transposed(m: &Mat4, v: [f32; 3]) -> [f32; 3] {
+fn transform_vector_transposed(m: &Mat4, v: [f64; 3]) -> [f64; 3] {
   [
     m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
     m[4] * v[0] + m[5] * v[1] + m[6] * v[2],
@@ -1789,7 +1789,7 @@ fn transform_vector_transposed(m: &Mat4, v: [f32; 3]) -> [f32; 3] {
 /// The proper rotation of a possibly mirrored frame, Three's decompose
 /// convention: the orthonormal part with its x axis negated when the
 /// determinant is negative.
-fn proper_rotation_of(m: &Mat4) -> [f32; 4] {
+fn proper_rotation_of(m: &Mat4) -> [f64; 4] {
   let mut n = orthonormal(m);
   let det =
     n[0] * (n[5] * n[10] - n[6] * n[9]) - n[4] * (n[1] * n[10] - n[2] * n[9]) + n[8] * (n[1] * n[6] - n[2] * n[5]);
@@ -1803,7 +1803,7 @@ fn proper_rotation_of(m: &Mat4) -> [f32; 4] {
 
 /// The interior angle opposite side `a` in a triangle of sides a, b, c
 /// (the angle between b and c).
-fn triangle_angle(a: f32, b: f32, c: f32) -> f32 {
+fn triangle_angle(a: f64, b: f64, c: f64) -> f64 {
   let denom = 2.0 * b * c;
   if denom <= 0.0 {
     return 0.0;
@@ -1812,7 +1812,7 @@ fn triangle_angle(a: f32, b: f32, c: f32) -> f32 {
 }
 
 /// The mid's offset from the root-tip line (zero when straight).
-fn bend_direction(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [f32; 3] {
+fn bend_direction(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> [f64; 3] {
   let axis = sub(c, a);
   if length(axis) <= DIRECTION_EPSILON {
     return sub(b, a);
@@ -1821,17 +1821,17 @@ fn bend_direction(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [f32; 3] {
 }
 
 /// Some unit vector perpendicular to unit `axis`.
-fn perpendicular(axis: [f32; 3]) -> [f32; 3] {
+fn perpendicular(axis: [f64; 3]) -> [f64; 3] {
   let pick = if axis[0].abs() > axis[2].abs() { [-axis[1], axis[0], 0.0] } else { [0.0, -axis[2], axis[1]] };
   normalize_or(pick, [1.0, 0.0, 0.0])
 }
 
 /// `v` without its component along unit `axis`.
-fn reject(v: [f32; 3], axis: [f32; 3]) -> [f32; 3] {
+fn reject(v: [f64; 3], axis: [f64; 3]) -> [f64; 3] {
   sub(v, scale3(axis, dot(v, axis)))
 }
 
-fn angle_between(a: [f32; 3], b: [f32; 3]) -> f32 {
+fn angle_between(a: [f64; 3], b: [f64; 3]) -> f64 {
   let la = length(a);
   let lb = length(b);
   if la <= 0.0 || lb <= 0.0 {
@@ -1840,14 +1840,14 @@ fn angle_between(a: [f32; 3], b: [f32; 3]) -> f32 {
   (dot(a, b) / (la * lb)).clamp(-1.0, 1.0).acos()
 }
 
-fn position_of(m: &Mat4) -> [f32; 3] {
+fn position_of(m: &Mat4) -> [f64; 3] {
   [m[12], m[13], m[14]]
 }
 
 /// The rotation of an affine matrix with a proper orthonormal part (its
 /// columns normalized, so a uniform or per-axis scale drops out; a mirror
 /// goes through `proper_rotation_of`).
-fn rotation_of(m: &Mat4) -> [f32; 4] {
+fn rotation_of(m: &Mat4) -> [f64; 4] {
   let x = normalize_or([m[0], m[1], m[2]], [1.0, 0.0, 0.0]);
   let y = normalize_or([m[4], m[5], m[6]], [0.0, 1.0, 0.0]);
   let z = normalize_or([m[8], m[9], m[10]], [0.0, 0.0, 1.0]);
@@ -1868,7 +1868,7 @@ fn rotation_of(m: &Mat4) -> [f32; 4] {
   quat_normalize(q)
 }
 
-fn quat_axis_angle(axis: [f32; 3], angle: f32) -> [f32; 4] {
+fn quat_axis_angle(axis: [f64; 3], angle: f64) -> [f64; 4] {
   let axis = normalize_or(axis, [0.0, 0.0, 1.0]);
   let h = angle * 0.5;
   let s = h.sin();
@@ -1876,7 +1876,7 @@ fn quat_axis_angle(axis: [f32; 3], angle: f32) -> [f32; 4] {
 }
 
 /// The shortest arc taking unit `a` onto unit `b`.
-fn quat_from_to(a: [f32; 3], b: [f32; 3]) -> [f32; 4] {
+fn quat_from_to(a: [f64; 3], b: [f64; 3]) -> [f64; 4] {
   let a = normalize_or(a, [0.0, 0.0, 1.0]);
   let b = normalize_or(b, a);
   let r = dot(a, b) + 1.0;
@@ -1889,51 +1889,51 @@ fn quat_from_to(a: [f32; 3], b: [f32; 3]) -> [f32; 4] {
   quat_normalize([c[0], c[1], c[2], r])
 }
 
-fn quat_conjugate(q: [f32; 4]) -> [f32; 4] {
+fn quat_conjugate(q: [f64; 4]) -> [f64; 4] {
   [-q[0], -q[1], -q[2], q[3]]
 }
 
-fn differs4(a: [f32; 4], b: [f32; 4]) -> bool {
+fn differs4(a: [f64; 4], b: [f64; 4]) -> bool {
   (0..4).any(|i| (a[i] - b[i]).abs() > ROTATION_EPSILON)
 }
 
-fn differs3(a: [f32; 3], b: [f32; 3]) -> bool {
+fn differs3(a: [f64; 3], b: [f64; 3]) -> bool {
   (0..3).any(|i| (a[i] - b[i]).abs() > POSITION_EPSILON)
 }
 
-fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+fn lerp3(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
   [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
 }
 
-fn add(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
   [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
-fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
   [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
-fn scale3(v: [f32; 3], s: f32) -> [f32; 3] {
+fn scale3(v: [f64; 3], s: f64) -> [f64; 3] {
   [v[0] * s, v[1] * s, v[2] * s]
 }
 
-fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
   a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
   [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 
-fn length(v: [f32; 3]) -> f32 {
+fn length(v: [f64; 3]) -> f64 {
   dot(v, v).sqrt()
 }
 
-fn length4(q: [f32; 4]) -> f32 {
+fn length4(q: [f64; 4]) -> f64 {
   (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt()
 }
 
-fn normalize_or(v: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
+fn normalize_or(v: [f64; 3], fallback: [f64; 3]) -> [f64; 3] {
   let l = length(v);
   if l > 0.0 {
     scale3(v, 1.0 / l)
@@ -1944,6 +1944,6 @@ fn normalize_or(v: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
 
 /// The damped clamp, for the tests.
 #[cfg(test)]
-pub(crate) fn clamp_damped_for_test(a: f32, limit: [f32; 2], damp: f32) -> f32 {
+pub(crate) fn clamp_damped_for_test(a: f64, limit: [f64; 2], damp: f64) -> f64 {
   clamp_damped(a, limit, damp)
 }

@@ -316,8 +316,8 @@ pub fn decode_stagger(value: &PropValue) -> Result<f32, String> {
 #[derive(Debug)]
 pub struct NodeEntryDecoded {
   pub motion: NodeMotion,
-  pub from: Option<(Vec<f32>, NodeMotion)>,
-  pub exit: Option<(Vec<f32>, NodeMotion)>,
+  pub from: Option<(Vec<f64>, NodeMotion)>,
+  pub exit: Option<(Vec<f64>, NodeMotion)>,
 }
 
 /// What lane count a node entry's endpoints take: a component's fixed
@@ -348,7 +348,7 @@ pub fn decode_node_entry(at: &str, value: &PropValue, rule: LaneRule) -> Result<
   if let Some(s) = value.as_str() {
     let entry = parse_shorthand(at, s)?;
     return Ok(NodeEntryDecoded {
-      motion: NodeMotion { spec: entry.spec, delay_ms: entry.delay_ms },
+      motion: NodeMotion { spec: entry.spec, delay_ms: entry.delay_ms as f64 },
       from: None,
       exit: None,
     });
@@ -362,7 +362,7 @@ pub fn decode_node_entry(at: &str, value: &PropValue, rule: LaneRule) -> Result<
   }
   let spec = decode_duration_spec(at, value.get("duration"), value.get("curve"), value.get("bounce"))?;
   let delay_ms = decode_delay(at, value.get("delay"))?;
-  let endpoint = |key: &str| -> Result<Option<(Vec<f32>, NodeMotion)>, String> {
+  let endpoint = |key: &str| -> Result<Option<(Vec<f64>, NodeMotion)>, String> {
     match value.get(key) {
       None => Ok(None),
       Some(v) => {
@@ -371,17 +371,17 @@ pub fn decode_node_entry(at: &str, value: &PropValue, rule: LaneRule) -> Result<
         }
         let (lanes, spec, delay_ms) =
           decode_endpoint_with(at, key, v, value, spec, delay_ms, |at, key, v| decode_lanes(at, key, v, rule))?;
-        Ok(Some((lanes, NodeMotion { spec, delay_ms })))
+        Ok(Some((lanes, NodeMotion { spec, delay_ms: delay_ms as f64 })))
       }
     }
   };
   let from = endpoint("from")?;
   let exit = endpoint("exit")?;
-  Ok(NodeEntryDecoded { motion: NodeMotion { spec, delay_ms }, from, exit })
+  Ok(NodeEntryDecoded { motion: NodeMotion { spec, delay_ms: delay_ms as f64 }, from, exit })
 }
 
 /// A node endpoint's value: the component's lanes, finite numbers.
-fn decode_lanes(at: &str, key: &str, value: &PropValue, rule: LaneRule) -> Result<Vec<f32>, String> {
+fn decode_lanes(at: &str, key: &str, value: &PropValue, rule: LaneRule) -> Result<Vec<f64>, String> {
   let list = match rule {
     LaneRule::Exactly(lanes) => value
       .as_list()
@@ -394,7 +394,7 @@ fn decode_lanes(at: &str, key: &str, value: &PropValue, rule: LaneRule) -> Resul
   };
   let mut out = Vec::with_capacity(list.len());
   for x in list {
-    let n = x.as_f64().ok_or_else(|| format!("{at}: {key} must be an array of numbers, got {}", describe(x)))? as f32;
+    let n = x.as_f64().ok_or_else(|| format!("{at}: {key} must be an array of numbers, got {}", describe(x)))?;
     if !n.is_finite() {
       return Err(format!("{at}: {key} must be finite, got {n}"));
     }

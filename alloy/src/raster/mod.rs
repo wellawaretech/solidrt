@@ -1051,6 +1051,9 @@ impl RasterState {
           RasterCmd::UpdateDrawParams { target, draw, params } => {
             self.entry_write(target, "draw params update", |_, shader| shader.merge_entry_params(draw, &params));
           }
+          RasterCmd::ShiftDrawParams { target, draws, name, delta } => {
+            self.entry_write(target, "draw origin shift", |_, shader| shader.shift_entry_params(&draws, &name, delta));
+          }
           RasterCmd::UpdateTargetParams { target, params } => {
             self.entry_write(target, "target params update", |_, shader| shader.merge_shared_params(&params));
           }

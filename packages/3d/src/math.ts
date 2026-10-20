@@ -148,6 +148,23 @@ export function invert(out: Mat4, m: Mat4): Mat4 {
 }
 
 /** out = a * b (column vectors: b applies first). out may alias a or b. */
+/**
+ * `out` = `view` re-based on `origin`: the same camera's view of points
+ * given relative to `origin` (`view * T(origin)`), the matrix the GPU
+ * gets so its f32 never meets a large translation (the render origin,
+ * camera.ts). out may alias view.
+ */
+export function relativeView(out: Mat4, view: Mat4, origin: Vec3): Mat4 {
+  let tx = view[0] * origin[0] + view[4] * origin[1] + view[8] * origin[2] + view[12]
+  let ty = view[1] * origin[0] + view[5] * origin[1] + view[9] * origin[2] + view[13]
+  let tz = view[2] * origin[0] + view[6] * origin[1] + view[10] * origin[2] + view[14]
+  copy(out, view)
+  out[12] = tx
+  out[13] = ty
+  out[14] = tz
+  return out
+}
+
 export function multiply(out: Mat4, a: Mat4, b: Mat4): Mat4 {
   let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3]
   let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7]

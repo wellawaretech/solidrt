@@ -189,6 +189,13 @@ Shaped, not started.
   though the core machinery - arena bones, the TextureSlot palette sink, the
   coming native clip evaluator - already exists or is planned with zero
   2d-specific core work.
+- **[Views of one sprite layer far apart from each other see f32 steps in the pose records](backlog/2d-sprite-layer-chunked-records.md)** [2026-10-20]
+  A sprite layer's pose buffer is one f32 record per sprite relative to ONE
+  render origin, snapped near the primary view's camera; a second view more
+  than about 10^5 px from it (a split screen across a continent) reads records
+  quantized to whole pixels, since no single origin serves both; the fix is
+  records local to region cells, each cell its own buffer and draw, the tile
+  layer's chunking applied to populations.
 - **[Record compaction for the live sprite layer, a view mask on the ordered gather](backlog/2d-sprite-record-compaction.md)** [2026-10-14]
   A sprite layer draws every record whether or not any view sees it (an
   off-screen record is one degenerate quad in the vertex stage), which stops
@@ -226,14 +233,6 @@ Shaped, not started.
   per-instance frame/atlas value for the stock materials (Godot's custom data,
   Unity's property block) - plus per-instance frustum gating; none changes a
   shipped contract.
-- **[3d transforms are float32 from the FFI boundary on, so content far from the origin jitters and steps](backlog/3d-large-world-precision.md)** [2026-10-10]
-  A node position is an f64 JS number until setTransform copies it into a
-  Float32Array; the spatial arena composes world matrices in f32 and the
-  vertex stage multiplies that uModel by a uViewProj carrying the camera
-  translation, so past roughly 10^4 to 10^5 units from the origin vertices
-  jitter and slow motion steps; a snapped per-target render origin plus f64
-  stored translations would fix it with no API change and keep the one-write
-  camera move.
 - **[Specular highlights from a light's size](backlog/3d-light-size-specular.md)** [2026-10-15]
   A light's angularSize / sourceRadius softens its shadows but not its
   highlight, so a sized sun still draws the pinpoint highlight of a point
@@ -1261,6 +1260,14 @@ Finished, kept for the reasoning.
   placement included), from which the class builds one shared depth material
   the shadow views draw its casters with. `castShadow` on an InstancedMesh now
   works like on any mesh.
+- **[3d transforms are float32 from the FFI boundary on, so content far from the origin jitters and steps](done/3d-large-world-precision.md)** [2026-10-20]
+  A node position is an f64 JS number until setTransform copies it into a
+  Float32Array; the spatial arena composes world matrices in f32 and the
+  vertex stage multiplies that uModel by a uViewProj carrying the camera
+  translation, so past roughly 10^4 to 10^5 units from the origin vertices
+  jitter and slow motion steps; a snapped per-target render origin plus f64
+  stored translations would fix it with no API change and keep the one-write
+  camera move.
 - **[Light layers](done/3d-light-layers.md)** [2026-09-26]
   Meshes and targets have layer masks but lights are scene-wide, so an outside
   light lights an enclosed interior straight through its shell and an interior

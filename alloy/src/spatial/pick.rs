@@ -20,13 +20,16 @@ const LEAF_TRIANGLES: usize = 8;
 
 /// Determinant magnitude below which a triangle is edge-on to the ray
 /// and skipped (Moller-Trumbore's division would blow up).
-const RAY_DET_EPSILON: f32 = 1e-12;
+const RAY_DET_EPSILON: f64 = 1e-12;
 
 /// Generation-tagged like NodeId; a destroyed shape's id never resolves.
 pub type ShapeId = u64;
 
 /// A geometry's positions as the core keeps them: the source of a node's
 /// local box, and the narrowphase's triangles when `indices` name any.
+/// Stored f32 like the GPU copy they mirror (geometry is local to its
+/// node, where f32 is exact enough); the tests against them run in the
+/// arena's f64 on the way in.
 pub struct Shape {
   /// xyz per vertex.
   pub positions: Vec<f32>,
@@ -42,15 +45,15 @@ pub struct Shape {
 pub struct Hit {
   pub node: NodeId,
   /// World units along the (normalized) ray.
-  pub distance: f32,
-  pub point: [f32; 3],
+  pub distance: f64,
+  pub point: [f64; 3],
   /// World-space geometric normal facing the ray: the triangle's, or
   /// the struck face's for a node tested by its box.
-  pub normal: [f32; 3],
+  pub normal: [f64; 3],
   /// Triangle index into the shape's index list; None for a box hit.
   pub face: Option<u32>,
   /// Interpolated texture UV; None without a shape or shape UVs.
-  pub uv: Option<[f32; 2]>,
+  pub uv: Option<[f64; 2]>,
 }
 
 struct Slot {
@@ -78,11 +81,11 @@ pub(crate) struct Shapes {
 /// The tight box over xyz triples; None when there are none.
 fn positions_box(positions: &[f32]) -> Option<Box3> {
   let mut b: Box3 =
-    [f32::INFINITY, f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+    [f64::INFINITY, f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
   for p in positions.chunks_exact(3) {
     for k in 0..3 {
-      b[k] = b[k].min(p[k]);
-      b[k + 3] = b[k + 3].max(p[k]);
+      b[k] = b[k].min(p[k] as f64);
+      b[k + 3] = b[k + 3].max(p[k] as f64);
     }
   }
   (b[0] <= b[3]).then_some(b)
@@ -233,7 +236,7 @@ impl Shapes {
   /// The narrowphase for one shape: its nearest triangle along the
   /// local-space ray, through the shape's BVH when it has one. Same
   /// result as `ray_shape`, or None for a miss or an unresolvable id.
-  pub fn ray(&mut self, id: ShapeId, o: [f32; 3], d: [f32; 3]) -> Option<(f32, u32, Option<[f32; 2]>, [f32; 3])> {
+  pub fn ray(&mut self, id: ShapeId, o: [f64; 3], d: [f64; 3]) -> Option<(f64, u32, Option<[f64; 2]>, [f64; 3])> {
     let (shape, index) = self.indexed(id)?;
     let raw = match index {
       Some(bvh) => bvh.ray(shape, o, d),
@@ -245,7 +248,7 @@ impl Shapes {
   /// Hand `visit` every triangle (local-space vertices) whose bounds
   /// touch the local box `b`, through the shape's BVH when it has one;
   /// a flat shape hands over all of them. Nothing for an unresolvable id.
-  pub fn visit_box(&mut self, id: ShapeId, b: &Box3, visit: &mut dyn FnMut([[f32; 3]; 3])) {
+  pub fn visit_box(&mut self, id: ShapeId, b: &Box3, visit: &mut dyn FnMut([[f64; 3]; 3])) {
     let Some((shape, index)) = self.indexed(id) else {
       return;
     };
@@ -261,24 +264,24 @@ impl Shapes {
 }
 
 /// A triangle's three vertices.
-fn vertices(shape: &Shape, tri: &[u32]) -> [[f32; 3]; 3] {
-  let at = |i: u32| -> [f32; 3] {
+fn vertices(shape: &Shape, tri: &[u32]) -> [[f64; 3]; 3] {
+  let at = |i: u32| -> [f64; 3] {
     let k = i as usize * 3;
-    [shape.positions[k], shape.positions[k + 1], shape.positions[k + 2]]
+    [shape.positions[k] as f64, shape.positions[k + 1] as f64, shape.positions[k + 2] as f64]
   };
   [at(tri[0]), at(tri[1]), at(tri[2])]
 }
 
 /// t, face, barycentric u/v, unnormalized local normal - the narrowphase
 /// result before UV interpolation.
-type RawHit = (f32, u32, f32, f32, [f32; 3]);
+type RawHit = (f64, u32, f64, f64, [f64; 3]);
 
 /// One triangle of a shape against the local-space ray: (t, u, v,
 /// unnormalized local normal), or None.
-fn ray_triangle(positions: &[f32], tri: &[u32], o: [f32; 3], d: [f32; 3]) -> Option<(f32, f32, f32, [f32; 3])> {
-  let at = |i: u32| -> [f32; 3] {
+fn ray_triangle(positions: &[f32], tri: &[u32], o: [f64; 3], d: [f64; 3]) -> Option<(f64, f64, f64, [f64; 3])> {
+  let at = |i: u32| -> [f64; 3] {
     let k = i as usize * 3;
-    [positions[k], positions[k + 1], positions[k + 2]]
+    [positions[k] as f64, positions[k + 1] as f64, positions[k + 2] as f64]
   };
   ray_points(at(tri[0]), at(tri[1]), at(tri[2]), o, d)
 }
@@ -286,12 +289,12 @@ fn ray_triangle(positions: &[f32], tri: &[u32], o: [f32; 3], d: [f32; 3]) -> Opt
 /// Three points against the ray (Moller-Trumbore, both sides): (t, u, v,
 /// unnormalized normal), or None.
 pub(super) fn ray_points(
-  a: [f32; 3],
-  b: [f32; 3],
-  c: [f32; 3],
-  o: [f32; 3],
-  d: [f32; 3],
-) -> Option<(f32, f32, f32, [f32; 3])> {
+  a: [f64; 3],
+  b: [f64; 3],
+  c: [f64; 3],
+  o: [f64; 3],
+  d: [f64; 3],
+) -> Option<(f64, f64, f64, [f64; 3])> {
   let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
   let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
   let h = cross(d, e2);
@@ -318,7 +321,7 @@ pub(super) fn ray_points(
 }
 
 /// Every triangle tested flat, nearest kept.
-fn ray_all(shape: &Shape, o: [f32; 3], d: [f32; 3]) -> Option<RawHit> {
+fn ray_all(shape: &Shape, o: [f64; 3], d: [f64; 3]) -> Option<RawHit> {
   let mut best: Option<RawHit> = None;
   for (face, tri) in shape.indices.chunks_exact(3).enumerate() {
     if let Some((t, u, v, n)) = ray_triangle(&shape.positions, tri, o, d) {
@@ -331,12 +334,12 @@ fn ray_all(shape: &Shape, o: [f32; 3], d: [f32; 3]) -> Option<RawHit> {
 }
 
 /// Interpolate the hit's UV from its barycentrics, when the shape has UVs.
-fn finish(shape: &Shape, (t, face, u, v, normal): RawHit) -> (f32, u32, Option<[f32; 2]>, [f32; 3]) {
+fn finish(shape: &Shape, (t, face, u, v, normal): RawHit) -> (f64, u32, Option<[f64; 2]>, [f64; 3]) {
   let uv = shape.uvs.as_ref().map(|uvs| {
     let tri = &shape.indices[face as usize * 3..face as usize * 3 + 3];
-    let at = |i: u32| -> [f32; 2] {
+    let at = |i: u32| -> [f64; 2] {
       let k = i as usize * 2;
-      [uvs[k], uvs[k + 1]]
+      [uvs[k] as f64, uvs[k + 1] as f64]
     };
     let (a, b, c) = (at(tri[0]), at(tri[1]), at(tri[2]));
     let w = 1.0 - u - v;
@@ -350,7 +353,7 @@ fn finish(shape: &Shape, (t, face, u, v, normal): RawHit) -> (f32, u32, Option<[
 /// the indexed path is tested against (production small-shape rays go
 /// through `Shapes::ray`, which calls `ray_all` directly).
 #[cfg(test)]
-pub fn ray_shape(shape: &Shape, o: [f32; 3], d: [f32; 3]) -> Option<(f32, u32, Option<[f32; 2]>, [f32; 3])> {
+pub fn ray_shape(shape: &Shape, o: [f64; 3], d: [f64; 3]) -> Option<(f64, u32, Option<[f64; 2]>, [f64; 3])> {
   ray_all(shape, o, d).map(|raw| finish(shape, raw))
 }
 
@@ -385,15 +388,15 @@ impl TriBvh {
     let count = shape.indices.len() / 3;
     // Per-face bounds and centroids, temporaries for the build.
     let mut boxes: Vec<Box3> = Vec::with_capacity(count);
-    let mut centers: Vec<[f32; 3]> = Vec::with_capacity(count);
+    let mut centers: Vec<[f64; 3]> = Vec::with_capacity(count);
     for tri in shape.indices.chunks_exact(3) {
       let mut b =
-        [f32::INFINITY, f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+        [f64::INFINITY, f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
       for &i in tri {
         let k = i as usize * 3;
         for a in 0..3 {
-          b[a] = b[a].min(shape.positions[k + a]);
-          b[a + 3] = b[a + 3].max(shape.positions[k + a]);
+          b[a] = b[a].min(shape.positions[k + a] as f64);
+          b[a + 3] = b[a + 3].max(shape.positions[k + a] as f64);
         }
       }
       centers.push([(b[0] + b[3]) / 2.0, (b[1] + b[4]) / 2.0, (b[2] + b[5]) / 2.0]);
@@ -408,7 +411,7 @@ impl TriBvh {
   /// Nearest triangle along the local ray: nearest child walked first,
   /// the far one deferred; a subtree the ray misses, or whose box starts
   /// past the best hit so far, is pruned whole.
-  fn ray(&self, shape: &Shape, o: [f32; 3], d: [f32; 3]) -> Option<RawHit> {
+  fn ray(&self, shape: &Shape, o: [f64; 3], d: [f64; 3]) -> Option<RawHit> {
     ray_box_distance(o, d, &self.nodes[0].bounds)?;
     let mut best: Option<RawHit> = None;
     let mut stack = [0u32; TRAVERSAL_STACK];
@@ -428,7 +431,7 @@ impl TriBvh {
         }
         continue;
       }
-      let cut = best.map(|(t, ..)| t).unwrap_or(f32::INFINITY);
+      let cut = best.map(|(t, ..)| t).unwrap_or(f64::INFINITY);
       let l = node.link as usize;
       let mut near = (ray_box_distance(o, d, &self.nodes[l].bounds), l as u32);
       let mut far = (ray_box_distance(o, d, &self.nodes[l + 1].bounds), (l + 1) as u32);
@@ -451,7 +454,7 @@ impl TriBvh {
   }
 
   /// Every triangle in a leaf whose box touches `b` (touching counts).
-  fn visit_box(&self, shape: &Shape, b: &Box3, visit: &mut dyn FnMut([[f32; 3]; 3])) {
+  fn visit_box(&self, shape: &Shape, b: &Box3, visit: &mut dyn FnMut([[f64; 3]; 3])) {
     let mut stack = [0u32; TRAVERSAL_STACK];
     stack[0] = 0;
     let mut top = 1;
@@ -483,13 +486,13 @@ fn fill(
   nodes: &mut Vec<TriNode>,
   faces: &mut [u32],
   boxes: &[Box3],
-  centers: &[[f32; 3]],
+  centers: &[[f64; 3]],
   node: usize,
   lo: usize,
   hi: usize,
 ) {
   let mut bounds =
-    [f32::INFINITY, f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+    [f64::INFINITY, f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
   for &f in &faces[lo..hi] {
     let b = &boxes[f as usize];
     for a in 0..3 {
@@ -503,8 +506,8 @@ fn fill(
     nodes[node].count = (hi - lo) as u32;
     return;
   }
-  let mut cmin = [f32::INFINITY; 3];
-  let mut cmax = [f32::NEG_INFINITY; 3];
+  let mut cmin = [f64::INFINITY; 3];
+  let mut cmax = [f64::NEG_INFINITY; 3];
   for &f in &faces[lo..hi] {
     let c = &centers[f as usize];
     for a in 0..3 {
@@ -535,10 +538,10 @@ fn fill(
   fill(nodes, faces, boxes, centers, left + 1, lo + mid, hi);
 }
 
-pub(super) fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+pub(super) fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
   [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 
-pub(super) fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+pub(super) fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
   a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }

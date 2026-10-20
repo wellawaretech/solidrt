@@ -499,7 +499,10 @@ export const NORMAL_MAP = glsl`
  * every rate 0, so the factor is 0 with no branch and no enable flag -
  * plus `vec3 fog(vec3 rgb, float alpha, vec3 worldPos, vec3 camPos)`: the
  * factor by the RADIAL distance from the camera (the larger of the two
- * forms), thinned by `exp(-(y - height) * falloff)` above the fog height,
+ * forms), thinned by `exp(-(y - height) * falloff)` above the fog height
+ * (an absolute height: `worldPos` is origin-relative, so the function
+ * adds `uOrigin.y` back, which the program must declare - sceneSource
+ * does),
  * mixing toward the fog color at the fragment's written alpha
  * (premultiplied output stays premultiplied). Compose it last, after the
  * alphaTest discard, with the alpha you are about to write:
@@ -530,7 +533,7 @@ export const FOG = glsl`
     float linear = clamp((d - uFogNear) * uFogInv, 0.0, 1.0);
     float dd = d * uFogDensity;
     float exp2 = 1.0 - exp(-dd * dd);
-    float h = exp(-max(worldPos.y - uFogHeight, 0.0) * uFogHeightFalloff);
+    float h = exp(-max(worldPos.y + uOrigin.y - uFogHeight, 0.0) * uFogHeightFalloff);
     return mix(rgb, uFogColor * alpha, max(linear, exp2) * h);
   }
   vec3 fogAdditive(vec3 rgb, vec3 worldPos, vec3 camPos) {
@@ -1328,7 +1331,10 @@ export type SceneSourceOptions = {
  * needs to be a citizen of the scene - lit by its lights, shadowed by its
  * casters, reflecting its environment and fogged like the stock
  * materials, because the stock materials are built from this very
- * source. It declares `uCamPos`, `uHemiSky` / `uHemiGround`, LIGHT_SLOTS
+ * source. It declares `uCamPos` and `uOrigin` (the target's render
+ * origin: every position a program meets - vWorldPos, uCamPos, uLightPos
+ * - is relative to it, and `vWorldPos + uOrigin` is the absolute world
+ * for an effect that needs one), `uHemiSky` / `uHemiGround`, LIGHT_SLOTS
  * + LIGHT_LOOKUP, the SHADOW trio, the pure light functions (HEMISPHERE,
  * LAMBERT, BLINN_SPECULAR, PBR), ENVIRONMENT and FOG (per the flags),
  * SURFACE, and exports:
@@ -1387,6 +1393,7 @@ export function sceneSource(o: SceneSourceOptions = {}): string {
   let fog = o.fog ?? true
   return glsl`
     ${SURFACE}
+    uniform vec3 uOrigin;
     ${lights || fog ? "uniform vec3 uCamPos;" : ""}
     ${
       lights
@@ -1742,7 +1749,7 @@ function litBase(c: LitSource, flip: boolean): string {
         ? c.triplanar
           ? `vec3 w = pow(abs(n), vec3(4.0));
     w /= w.x + w.y + w.z;
-    vec3 p = vWorldPos * uTriplanar;
+    vec3 p = (vWorldPos + uOrigin) * uTriplanar;
     base *= texture(uMap, p.yz) * w.x + texture(uMap, p.xz) * w.y + texture(uMap, p.xy) * w.z;`
           : "base *= texture(uMap, uv);"
         : ""
@@ -1877,7 +1884,7 @@ export function litShadowFragment(o: LitSourceOptions = {}): string | undefined 
     ${litVaryings(c)}
     uniform vec4 uColor;
     ${c.map ? "uniform sampler2D uMap;" : ""}
-    ${c.triplanar ? "uniform float uTriplanar;" : ""}
+    ${c.triplanar ? "uniform float uTriplanar;\n    uniform vec3 uOrigin;" : ""}
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
     ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
     ${SURFACE}

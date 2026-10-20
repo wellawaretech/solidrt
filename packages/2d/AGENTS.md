@@ -430,7 +430,21 @@ the view's target (`uCamera` + `uCameraRot`, the rotation in-shader),
 one call however many sprites exist; `projectCamera`/`unprojectCamera`
 export the world <-> screen mapping as pure functions, and pointer
 dispatch undoes the view's camera with the latter, so events arrive in
-world (layer) pixels. Picking itself works in world space and never
+world (layer) pixels. The camera point is written RELATIVE to the
+layer's RENDER ORIGIN, and the pose records are relative to the same
+point (flux:spatial setInstanceOrigin): the arena keeps sprite
+positions in f64, the pose buffer is f32, so a world ten million
+pixels across would step in whole pixels without it. The origin snaps
+near the PRIMARY view's camera (the first live view, the one that
+declares the key order) on a power-of-two cell of 65536 of its screen
+pixels (views.ts); a camera crossing a cell restages the records in one
+coalesced write and rewrites every view's camera. One buffer, one
+origin: the other views subtract the same point, exact while they stay
+within about 10^5 px of it - two views further apart than that over one
+layer (a split screen across a continent) want a layer each. The
+records layer keeps its origin at zero: its records are the app's,
+written as world f32, so it steps past a few million pixels.
+Picking itself works in world space, in f64, and never
 sees a camera. `view.camera()` reads the camera back (every field
 present - the `CameraState` snapshot, @solidrt/3d's scene.camera())
 and `view.project(x, y)` / `view.unproject(x, y)` are the two pure
@@ -1457,6 +1471,10 @@ hover, wheel and tap rules headless.
   stage included) on purpose: rotating a view's OUTPUT leaf instead is
   wrong - the output is viewport-sized with the camera already applied,
   so a leaf transform spins the cropped viewport and the corners cut.
+- Views of one sprite layer share its render origin, the primary view's
+  (The camera): a second view more than ~10^5 px from the primary sees
+  f32 steps in the records. Give it a layer of its own; the tile layer
+  has no such limit (its records are chunk-local).
 
 ### Text runs
 

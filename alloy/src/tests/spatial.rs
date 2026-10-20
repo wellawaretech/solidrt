@@ -1,20 +1,21 @@
 use crate::spatial::DrawQueue::{Background, Cutout, Opaque, Transparent};
 use crate::spatial::{
-  compose, multiply, DrawOrder, DrawQueue, DrawSink, Mat4, QueryFilter, SinkWriter, Spatial, TextureSlotSink, Volume,
-  WeightsSlotSink, IDENTITY,
+  compose, multiply, narrow, DrawOrder, DrawQueue, DrawSink, Mat4, Mat4f, QueryFilter, SinkWriter, Spatial,
+  TextureSlotSink, Volume, WeightsSlotSink, IDENTITY,
 };
 
-const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-const ONE: [f32; 3] = [1.0, 1.0, 1.0];
+const Q: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+const ONE: [f64; 3] = [1.0, 1.0, 1.0];
 
 // The recording SinkWriter: one owned variant per trait method, so the
 // tests assert on flush output by equality.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Write {
-  Params { target: u64, draw: u64, model: Mat4, normal: Option<Mat4> },
+  Params { target: u64, draw: u64, model: Mat4f, normal: Option<Mat4f> },
   Count { target: u64, draw: u64, count: u32 },
   Fade { target: u64, draw: u64, fade: [f32; 2] },
   Order { target: u64, order: Vec<u64> },
+  Shift { target: u64, draws: Vec<u64>, delta: [f32; 3] },
   OrderDirection { target: u64, draw: u64, direction: [f32; 3] },
   Shared { target: u64, name: String, values: Vec<f32> },
   Instances { buffer: u64, first: u32, values: Vec<f32> },
@@ -41,7 +42,7 @@ impl Recorder {
 }
 
 impl SinkWriter for Recorder {
-  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4, normal: Option<&Mat4>) -> bool {
+  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4f, normal: Option<&Mat4f>) -> bool {
     self.writes.push(Write::Params { target, draw, model: *model, normal: normal.copied() });
     self.landed(target)
   }
@@ -55,6 +56,10 @@ impl SinkWriter for Recorder {
   }
   fn write_order(&mut self, target: u64, order: &[u64]) -> bool {
     self.writes.push(Write::Order { target, order: order.to_vec() });
+    self.landed(target)
+  }
+  fn shift_params(&mut self, target: u64, draws: &[u64], delta: [f32; 3]) -> bool {
+    self.writes.push(Write::Shift { target, draws: draws.to_vec(), delta });
     self.landed(target)
   }
   fn write_order_direction(&mut self, target: u64, draw: u64, direction: [f32; 3]) -> bool {
@@ -107,9 +112,11 @@ fn flush_dead(s: &mut Spatial, dead: &[u64]) -> Vec<Write> {
   out.writes
 }
 
-fn model(w: &Write) -> [f32; 16] {
+/// A recorded uModel widened back to the arena's f64, for assertions
+/// against `compose`/`multiply` of representable values.
+fn model(w: &Write) -> [f64; 16] {
   match w {
-    Write::Params { model, .. } => *model,
+    Write::Params { model, .. } => model.map(|v| v as f64),
     other => panic!("expected params, got {other:?}"),
   }
 }
@@ -245,7 +252,7 @@ fn sinks_are_per_target_and_one_move_feeds_them_all() {
   .expect("rebind");
   let writes = flush(&mut s);
   assert!(writes.contains(&Write::Count { target: 1, draw: 9, count: 1 }));
-  assert!(writes.contains(&Write::Params { target: 1, draw: 9, model: IDENTITY, normal: None }));
+  assert!(writes.contains(&Write::Params { target: 1, draw: 9, model: narrow(&IDENTITY), normal: None }));
   assert!(!writes.iter().any(|w| matches!(w, Write::Count { target: 2, .. })));
   // One move, one params write per sink; uNormal only where asked.
   s.set_transform(m, [2.0, 0.0, 0.0], Q, ONE).expect("move");
@@ -425,7 +432,7 @@ fn box_hits_sorted_and_hidden_skipped() {
 #[test]
 fn box_overlap_is_exact_for_rotated_rects_and_skips_hidden() {
   let mut s = Spatial::new();
-  let half = std::f32::consts::FRAC_PI_4 / 2.0;
+  let half = std::f64::consts::FRAC_PI_4 / 2.0;
   let q45 = [0.0, 0.0, half.sin(), half.cos()];
   let flat = [-0.5, -0.5, 0.0, 0.5, 0.5, 0.0];
   let spun = s.create([0.0; 3], q45, ONE, true);
@@ -436,7 +443,7 @@ fn box_overlap_is_exact_for_rotated_rects_and_skips_hidden() {
   }
   flush(&mut s);
   // A world-axis box query, the 2d marquee's form.
-  let query = |b: [f32; 6]| Volume::Box {
+  let query = |b: [f64; 6]| Volume::Box {
     center: [(b[0] + b[3]) / 2.0, (b[1] + b[4]) / 2.0, (b[2] + b[5]) / 2.0],
     half: [(b[3] - b[0]) / 2.0, (b[4] - b[1]) / 2.0, (b[5] - b[2]) / 2.0],
     rotation: Q,
@@ -545,17 +552,17 @@ fn shape_bvh_matches_the_linear_oracle() {
   let mut s = Spatial::new();
   let n = s.create([0.0; 3], Q, ONE, true);
   let sid = s.create_shape(shape).expect("shape");
-  s.set_bounds(n, Some([0.0, 0.0, 0.0, side as f32, 1.0, side as f32])).expect("bounds");
+  s.set_bounds(n, Some([0.0, 0.0, 0.0, side as f64, 1.0, side as f64])).expect("bounds");
   s.set_shape(n, Some(sid)).expect("set shape");
   flush(&mut s);
   let mut state: u32 = 99;
   let mut rand = move || {
     state = state.wrapping_mul(1664525).wrapping_add(1013904223);
-    (state >> 8) as f32 / (1u32 << 24) as f32
+    (state >> 8) as f64 / (1u32 << 24) as f64
   };
   let mut hit_count = 0;
   for _ in 0..200 {
-    let o = [rand() * (side as f32 + 4.0) - 2.0, 5.0, rand() * (side as f32 + 4.0) - 2.0];
+    let o = [rand() * (side as f64 + 4.0) - 2.0, 5.0, rand() * (side as f64 + 4.0) - 2.0];
     // Near-vertical rays land in triangle interiors (an exact edge is
     // measure-zero), so face ids compare exactly.
     let d = [rand() * 0.2 - 0.1, -1.0, rand() * 0.2 - 0.1];
@@ -645,10 +652,10 @@ fn index_matches_linear_oracle() {
   let mut state: u32 = 12345;
   let mut rand = move || {
     state = state.wrapping_mul(1664525).wrapping_add(1013904223);
-    (state >> 8) as f32 / (1u32 << 24) as f32
+    (state >> 8) as f64 / (1u32 << 24) as f64
   };
   let mut s = Spatial::new();
-  let mut nodes: Vec<(NodeId, [f32; 3], [f32; 3])> = Vec::new();
+  let mut nodes: Vec<(NodeId, [f64; 3], [f64; 3])> = Vec::new();
   for _ in 0..200 {
     let p = [rand() * 40.0 - 20.0, rand() * 40.0 - 20.0, rand() * 40.0 - 20.0];
     let n = s.create(p, Q, ONE, true);
@@ -674,7 +681,7 @@ fn index_matches_linear_oracle() {
       s.raycast(o, d, &QueryFilter::default()).expect("raycast").into_iter().map(|h| h.node).collect();
     let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
     let dn = [d[0] / len, d[1] / len, d[2] / len];
-    let mut want: Vec<(f32, NodeId)> = nodes
+    let mut want: Vec<(f64, NodeId)> = nodes
       .iter()
       .filter(|(_, _, e)| e[0] > 0.0)
       .filter_map(|(n, p, e)| {
@@ -696,8 +703,8 @@ fn ordered_insertion_stays_shallow() {
   let mut s = Spatial::new();
   let side = 55;
   for i in 0..side * side {
-    let x = (i % side) as f32;
-    let z = (i / side) as f32;
+    let x = (i % side) as f64;
+    let z = (i / side) as f64;
     let n = s.create([x, 0.0, z], Q, ONE, true);
     s.set_bounds(n, Some([-0.3, -0.3, -0.3, 0.3, 0.3, 0.3])).expect("bounds");
   }
@@ -716,7 +723,7 @@ fn shared_slots_follow_rotation_zero_on_unbind_and_drop_their_group() {
   let b = s.create([0.0; 3], Q, ONE, true);
   s.set_parent(a, Some(root)).expect("parent");
   s.set_parent(b, Some(root)).expect("parent");
-  let sink = |index: u32, v: [f32; 3]| SharedSlotSink {
+  let sink = |index: u32, v: [f64; 3]| SharedSlotSink {
     target: 9,
     name: "uLightDir".to_string(),
     len: 6,
@@ -732,7 +739,7 @@ fn shared_slots_follow_rotation_zero_on_unbind_and_drop_their_group() {
   );
   // Rotating an ANCESTOR re-emits with the rotated direction: 90 degrees
   // about z carries -y to +x. An unrelated move re-emits nothing.
-  let half = (0.5f32).sqrt();
+  let half = (0.5f64).sqrt();
   s.set_transform(root, [0.0; 3], [0.0, 0.0, half, half], ONE).expect("rotate");
   let writes = flush(&mut s);
   let Write::Shared { values, .. } = &writes[0] else { panic!("expected shared write") };
@@ -765,7 +772,7 @@ fn record(buffer: u64, index: u32) -> Option<InstanceRecordSink> {
 fn pose_records_decompose_world_and_preserve_mirroring() {
   let mut s = Spatial::new();
   let root = s.create([10.0, 20.0, 0.0], Q, ONE, true);
-  let child = s.create([0.0; 3], [0.0, 0.0, (0.5f32).sqrt(), (0.5f32).sqrt()], [2.0, 3.0, 1.0], true);
+  let child = s.create([0.0; 3], [0.0, 0.0, (0.5f64).sqrt(), (0.5f64).sqrt()], [2.0, 3.0, 1.0], true);
   s.set_parent(child, Some(root)).expect("parent");
   s.set_instance_record(child, record(4, 0), None).expect("bind");
   let writes = flush(&mut s);
@@ -952,14 +959,15 @@ fn destroying_a_bound_node_zeroes_its_slot() {
 
 // --- Texture slots (matrix palettes) ---
 
-fn palette(w: &Write) -> (u64, Vec<f32>) {
+/// A recorded palette widened back to f64, like `model`.
+fn palette(w: &Write) -> (u64, Vec<f64>) {
   match w {
-    Write::Texture { texture, values } => (*texture, values.clone()),
+    Write::Texture { texture, values } => (*texture, values.iter().map(|&v| v as f64).collect()),
     other => panic!("expected a texture write, got {other:?}"),
   }
 }
 
-fn assert_rows_eq(got: &[f32], want: &[f32]) {
+fn assert_rows_eq(got: &[f64], want: &[f64]) {
   assert_eq!(got.len(), want.len(), "palette length");
   for (i, (g, w)) in got.iter().zip(want).enumerate() {
     assert!((g - w).abs() < 1e-5, "palette float {i}: {g} vs {w}");
@@ -967,7 +975,7 @@ fn assert_rows_eq(got: &[f32], want: &[f32]) {
 }
 
 /// A translation as a post matrix (column-major, translation in 12..15).
-fn post(x: f32, y: f32, z: f32) -> Mat4 {
+fn post(x: f64, y: f64, z: f64) -> Mat4 {
   compose([x, y, z], [0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0])
 }
 
@@ -1020,13 +1028,10 @@ fn anchored_rows_are_anchor_local() {
   let want = multiply(compose([0.0, 3.0, 0.0], Q, ONE), bind);
   assert_rows_eq(&values, &want);
   // Moving the ANCHOR restages the subtree; the anchor-local rows come
-  // out unchanged (the palette is relative), but they do republish.
+  // out unchanged (the palette is relative), so nothing publishes.
   s.set_transform(root, [0.0, 5.0, 0.0], Q, ONE).expect("move root");
   let writes = flush(&mut s);
-  assert_eq!(writes.len(), 1, "anchor move republishes: {writes:?}");
-  let (_, values) = palette(&writes[0]);
-  let want = multiply(compose([0.0, 3.0, 0.0], Q, ONE), bind);
-  assert_rows_eq(&values, &want);
+  assert!(writes.is_empty(), "anchor move leaves the relative palette alone: {writes:?}");
   // Moving the joint changes the model-local row.
   s.set_transform(joint, [0.0, 4.0, 0.0], Q, ONE).expect("move joint");
   let (_, values) = palette(&flush(&mut s)[0]);
@@ -1128,11 +1133,11 @@ fn a_palette_whose_write_does_not_land_is_dropped() {
 // view-projection, an identity one is the unit cube in world space, and a
 // translation moves that cube, so `(cube_at(x), IDENTITY)` is a view whose
 // frustum spans x-1..x+1.
-fn cube_at(x: f32) -> Mat4 {
+fn cube_at(x: f64) -> Mat4 {
   compose([-x, 0.0, 0.0], Q, ONE)
 }
 
-const UNIT: [f32; 6] = [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5];
+const UNIT: [f64; 6] = [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5];
 
 #[test]
 fn a_frustum_switches_entries_off_and_back_on_with_params() {
@@ -1337,15 +1342,15 @@ fn box_only_shape_picks_by_its_box() {
 
 use crate::spatial::{derive_lod_view, LodLevel};
 
-fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
   a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
   [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 
-fn unit(v: [f32; 3]) -> [f32; 3] {
+fn unit(v: [f64; 3]) -> [f64; 3] {
   let len = dot(v, v).sqrt();
   [v[0] / len, v[1] / len, v[2] / len]
 }
@@ -1353,7 +1358,7 @@ fn unit(v: [f32; 3]) -> [f32; 3] {
 /// A view matrix (world to camera, column-major) at `eye` looking along
 /// `forward`: the camera's x, y, -z rows, then the translation that
 /// brings the eye to the origin.
-fn view_at(eye: [f32; 3], forward: [f32; 3]) -> Mat4 {
+fn view_at(eye: [f64; 3], forward: [f64; 3]) -> Mat4 {
   let f = unit(forward);
   let hint = if f[1].abs() > 0.9 { [0.0, 0.0, 1.0] } else { [0.0, 1.0, 0.0] };
   let r = unit(cross(f, hint));
@@ -1377,7 +1382,7 @@ fn view_at(eye: [f32; 3], forward: [f32; 3]) -> Mat4 {
 /// A projection of vertical focal factor `focal` with the scene's y-down
 /// clip flip (`proj[5]` negative): perspective (w = -z) or orthographic
 /// (w = 1).
-fn proj(focal: f32, ortho: bool) -> Mat4 {
+fn proj(focal: f64, ortho: bool) -> Mat4 {
   let mut m = [0.0; 16];
   m[0] = focal;
   m[5] = -focal;
@@ -1393,11 +1398,11 @@ fn proj(focal: f32, ortho: bool) -> Mat4 {
 
 /// A perspective view at `d` along +z looking at the origin, focal 1: a
 /// unit box there (radius sqrt(3)/2) measures 0.866 / d.
-fn lod_view(d: f32) -> Option<(Mat4, Mat4)> {
+fn lod_view(d: f64) -> Option<(Mat4, Mat4)> {
   Some((view_at([0.0, 0.0, d], [0.0, 0.0, -1.0]), proj(1.0, false)))
 }
 
-fn level(node: u64, size: f32) -> LodLevel {
+fn level(node: u64, size: f64) -> LodLevel {
   LodLevel { node: Some(node), size }
 }
 
@@ -1597,27 +1602,27 @@ fn levels_are_picked_per_target_and_shadow_targets_follow_the_view_they_are_give
 
 #[test]
 fn a_view_derives_its_lod_view_from_the_matrices() {
-  let close = |a: [f32; 3], b: [f32; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-5);
-  let v = derive_lod_view(&view_at([1.0, 2.0, 3.0], [0.0, 0.0, -1.0]), &proj(2.5, false), 0.5);
+  let close = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-5);
+  let v = derive_lod_view(&view_at([1.0, 2.0, 3.0], [0.0, 0.0, -1.0]), &proj(2.5, false), 0.5, [0.0; 3]);
   assert!(close(v.eye, [1.0, 2.0, 3.0]), "{:?}", v.eye);
   assert!(close(v.forward, [0.0, 0.0, -1.0]), "{:?}", v.forward);
   assert_eq!((v.focal, v.ortho, v.bias), (2.5, false, 0.5));
   // A turned view: the eye comes back through the rotation.
-  let v = derive_lod_view(&view_at([4.0, -1.0, 10.0], [1.0, 0.0, 0.0]), &proj(1.0, true), 1.0);
+  let v = derive_lod_view(&view_at([4.0, -1.0, 10.0], [1.0, 0.0, 0.0]), &proj(1.0, true), 1.0, [0.0; 3]);
   assert!(close(v.eye, [4.0, -1.0, 10.0]), "{:?}", v.eye);
   assert!(close(v.forward, [1.0, 0.0, 0.0]), "{:?}", v.forward);
   assert!(v.ortho);
   // A view carrying a zoom as a scale (a 2d camera's): the eye is still
   // the camera's position and forward a unit vector. With the rigid
   // transpose reading the eye came out a zoom's worth short.
-  let zoom = 0.5f32;
+  let zoom = 0.5f64;
   // S(zoom, zoom, 1) after the rigid view: rows 0 and 1 scale.
   let mut scaled = view_at([200.0, 300.0, 0.0], [0.0, 0.0, -1.0]);
   for col in 0..4 {
     scaled[col * 4] *= zoom;
     scaled[col * 4 + 1] *= zoom;
   }
-  let v = derive_lod_view(&scaled, &proj(1.0, true), 1.0);
+  let v = derive_lod_view(&scaled, &proj(1.0, true), 1.0, [0.0; 3]);
   assert!(close(v.eye, [200.0, 300.0, 0.0]), "{:?}", v.eye);
   assert!(close(v.forward, [0.0, 0.0, -1.0]), "{:?}", v.forward);
 }
@@ -1830,7 +1835,7 @@ fn weights_rows_publish_the_register_padded_and_only_on_change() {
 // --- Draw sort ---
 
 /// A perspective view at `eye` looking along `forward` (unit), focal 1.
-fn sort_view(eye: [f32; 3], forward: [f32; 3]) -> Option<(Mat4, Mat4)> {
+fn sort_view(eye: [f64; 3], forward: [f64; 3]) -> Option<(Mat4, Mat4)> {
   Some((view_at(eye, forward), proj(1.0, false)))
 }
 
@@ -1848,7 +1853,7 @@ fn keyed(draw: u64, queue: DrawQueue, render_order: i32) -> DrawSink {
 }
 
 /// A unit box at `position` bound to draw `draw` on target 1.
-fn boxed(s: &mut Spatial, position: [f32; 3], sink: DrawSink) -> u64 {
+fn boxed(s: &mut Spatial, position: [f64; 3], sink: DrawSink) -> u64 {
   let n = s.create(position, Q, ONE, true);
   s.set_bounds(n, Some(UNIT)).expect("bounds");
   s.bind_sink(n, sink).expect("sink");
@@ -1990,7 +1995,7 @@ fn draw_sort_transparents_rekey_on_a_look_around() {
   boxed(&mut s, [2.0, 0.0, 0.0], keyed(1, Transparent, 0));
   boxed(&mut s, [-2.0, 0.0, 0.0], keyed(2, Transparent, 0));
   assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2]]);
-  let len = (0.1f32 * 0.1 + 1.0).sqrt();
+  let len = (0.1f64 * 0.1 + 1.0).sqrt();
   s.set_view(1, sort_view([0.0, 0.0, 10.0], [-0.1 / len, 0.0, -1.0 / len]));
   assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1]]);
 }
@@ -2002,12 +2007,12 @@ fn draw_sort_ortho_rekeys_on_a_turn() {
   // tie by bind order until the view turns toward the second box.
   let mut s = Spatial::new();
   s.set_draw_sort(1, true);
-  let ortho = |forward: [f32; 3]| Some((view_at([0.0, 0.0, 10.0], forward), proj(1.0, true)));
+  let ortho = |forward: [f64; 3]| Some((view_at([0.0, 0.0, 10.0], forward), proj(1.0, true)));
   s.set_view(1, ortho([0.0, 0.0, -1.0]));
   boxed(&mut s, [-4.0, 0.0, 5.0], keyed(1, Opaque, 0));
   boxed(&mut s, [4.0, 0.0, 5.0], keyed(2, Opaque, 0));
   assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2]]);
-  let len = (0.3f32 * 0.3 + 1.0).sqrt();
+  let len = (0.3f64 * 0.3 + 1.0).sqrt();
   s.set_view(1, ortho([-0.3 / len, 0.0, -1.0 / len]));
   assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1]]);
 }
@@ -2064,10 +2069,10 @@ fn draw_sort_matches_a_linear_oracle() {
     let mut t = state;
     t = (t ^ (t >> 15)).wrapping_mul(1 | t);
     t = (t.wrapping_add((t ^ (t >> 7)).wrapping_mul(61 | t))) ^ t;
-    (t ^ (t >> 14)) as f32 / 4_294_967_296.0
+    (t ^ (t >> 14)) as f64 / 4_294_967_296.0
   };
-  let mut range = |lo: f32, hi: f32| lo + rand() * (hi - lo);
-  let bucket = |d: f32| (d.max(1e-3).log2() * 4.0).floor() as i32;
+  let mut range = |lo: f64, hi: f64| lo + rand() * (hi - lo);
+  let bucket = |d: f64| (d.max(1e-3).log2() * 4.0).floor() as i32;
   for _ in 0..200 {
     let mut s = Spatial::new();
     s.set_draw_sort(1, true);
@@ -2077,7 +2082,7 @@ fn draw_sort_matches_a_linear_oracle() {
     let forward = [f[0] / len, f[1] / len, f[2] / len];
     s.set_view(1, sort_view(eye, forward));
     let n = 1 + (range(0.0, 12.0) as usize);
-    let mut items: Vec<(u64, DrawQueue, i32, [f32; 3])> = Vec::new();
+    let mut items: Vec<(u64, DrawQueue, i32, [f64; 3])> = Vec::new();
     for k in 0..n {
       let queue = [Opaque, Cutout, Transparent][range(0.0, 3.0) as usize];
       let item = (k as u64 + 1, queue, range(0.0, 3.0) as i32, [range(-5.0, 5.0), range(-5.0, 5.0), range(-5.0, 5.0)]);
@@ -2088,9 +2093,9 @@ fn draw_sort_matches_a_linear_oracle() {
     let mut seen: Vec<u64> = order.clone();
     seen.sort_unstable();
     assert_eq!(seen, (1..=n as u64).collect::<Vec<u64>>(), "a permutation of every entry");
-    let dist = |c: [f32; 3]| ((c[0] - eye[0]).powi(2) + (c[1] - eye[1]).powi(2) + (c[2] - eye[2]).powi(2)).sqrt();
+    let dist = |c: [f64; 3]| ((c[0] - eye[0]).powi(2) + (c[1] - eye[1]).powi(2) + (c[2] - eye[2]).powi(2)).sqrt();
     let depth =
-      |c: [f32; 3]| (c[0] - eye[0]) * forward[0] + (c[1] - eye[1]) * forward[1] + (c[2] - eye[2]) * forward[2];
+      |c: [f64; 3]| (c[0] - eye[0]) * forward[0] + (c[1] - eye[1]) * forward[1] + (c[2] - eye[2]) * forward[2];
     for pair in order.windows(2) {
       let p = items[pair[0] as usize - 1];
       let m = items[pair[1] as usize - 1];
@@ -2196,4 +2201,128 @@ fn a_dropped_direction_write_stops_the_feed_but_keeps_the_sink() {
   let writes = flush(&mut s);
   assert!(directions(&writes).is_empty());
   assert!(writes.iter().any(|w| matches!(w, Write::Params { target: 1, draw: 7, .. })));
+}
+
+// --- Render origin ---
+
+/// The translation column of a recorded uModel, as the GPU got it.
+fn translation(w: &Write) -> [f32; 3] {
+  match w {
+    Write::Params { model, .. } => [model[12], model[13], model[14]],
+    other => panic!("expected params, got {other:?}"),
+  }
+}
+
+#[test]
+fn a_render_origin_makes_the_params_and_position_slots_relative() {
+  let mut s = Spatial::new();
+  let far = 1_000_000.0;
+  let n = s.create([far + 1.0, 2.0, 3.0], Q, ONE, true);
+  s.bind_sink(n, sink(7)).expect("sink");
+  let slot =
+    SharedSlotSink { target: 1, name: "uLightPos".to_string(), len: 3, index: 0, projection: Projection::Position };
+  s.bind_shared_slot(n, slot).expect("slot");
+  s.set_origin(1, [far, 0.0, 0.0]);
+  let writes = flush(&mut s);
+  // Exact in f32 where the absolute value (a million and one) is not.
+  let m = writes.iter().find(|w| matches!(w, Write::Params { .. })).expect("params");
+  assert_eq!(translation(m), [1.0, 2.0, 3.0]);
+  assert!(writes.contains(&Write::Shared { target: 1, name: "uLightPos".to_string(), values: vec![1.0, 2.0, 3.0] }));
+  // Another target without an origin gets the plain world upload.
+  s.bind_sink(n, DrawSink { target: 2, ..sink(8) }).expect("sink");
+  let writes = flush(&mut s);
+  let m = writes.iter().find(|w| matches!(w, Write::Params { target: 2, .. })).expect("params");
+  assert_eq!(translation(m), [(far + 1.0) as f32, 2.0, 3.0]);
+}
+
+#[test]
+fn an_origin_change_shifts_the_written_entries_in_one_write() {
+  let mut s = Spatial::new();
+  let a = s.create([1.0, 0.0, 0.0], Q, ONE, true);
+  let b = s.create([2.0, 0.0, 0.0], Q, ONE, true);
+  s.bind_sink(a, sink(7)).expect("sink");
+  s.bind_sink(b, sink(8)).expect("sink");
+  let slot =
+    SharedSlotSink { target: 1, name: "uLightPos".to_string(), len: 3, index: 0, projection: Projection::Position };
+  s.bind_shared_slot(a, slot).expect("slot");
+  flush(&mut s);
+  s.set_origin(1, [10.0, 0.0, 0.0]);
+  // One shift for the entries, the slot restaged, no params rewrite.
+  let writes = flush(&mut s);
+  assert_eq!(
+    writes,
+    vec![
+      Write::Shift { target: 1, draws: vec![7, 8], delta: [-10.0, 0.0, 0.0] },
+      Write::Shared { target: 1, name: "uLightPos".to_string(), values: vec![-9.0, 0.0, 0.0] },
+    ]
+  );
+  // Two changes between flushes sum into one shift.
+  s.set_origin(1, [12.0, 0.0, 0.0]);
+  s.set_origin(1, [15.0, 0.0, 0.0]);
+  let writes = flush(&mut s);
+  assert_eq!(writes[0], Write::Shift { target: 1, draws: vec![7, 8], delta: [-5.0, 0.0, 0.0] });
+  // A move after the change writes relative to the new origin.
+  s.set_transform(b, [17.0, 0.0, 0.0], Q, ONE).expect("move");
+  let writes = flush(&mut s);
+  assert_eq!(writes.len(), 1, "{writes:?}");
+  assert_eq!(translation(&writes[0]), [2.0, 0.0, 0.0]);
+  // A sink bound after the change, not yet written, is left out of the
+  // shift and written relative to the new origin directly.
+  let c = s.create([20.0, 0.0, 0.0], Q, ONE, true);
+  s.bind_sink(c, sink(9)).expect("sink");
+  s.set_origin(1, [20.0, 0.0, 0.0]);
+  let writes = flush(&mut s);
+  assert_eq!(writes[0], Write::Shift { target: 1, draws: vec![7, 8], delta: [-5.0, 0.0, 0.0] });
+  let m = writes.iter().find(|w| matches!(w, Write::Params { draw: 9, .. })).expect("params");
+  assert_eq!(translation(m), [0.0, 0.0, 0.0]);
+  // Forgetting the view sends the origin back to zero: one more shift.
+  s.set_view(1, None);
+  let writes = flush(&mut s);
+  assert_eq!(writes[0], Write::Shift { target: 1, draws: vec![7, 8, 9], delta: [20.0, 0.0, 0.0] });
+}
+
+#[test]
+fn the_frustum_follows_the_origin() {
+  // A view a million units out, its origin there: the same cube test as
+  // at zero, with the boxes shifted into origin space in f64.
+  let mut s = Spatial::new();
+  let far = 1_000_000.0;
+  let inside = s.create([far + 0.4, 0.0, 0.0], Q, ONE, true);
+  s.set_bounds(inside, Some(UNIT)).expect("bounds");
+  s.bind_sink(inside, sink(1)).expect("sink");
+  let outside = s.create([far + 3.0, 0.0, 0.0], Q, ONE, true);
+  s.set_bounds(outside, Some(UNIT)).expect("bounds");
+  s.bind_sink(outside, sink(2)).expect("sink");
+  s.set_origin(1, [far, 0.0, 0.0]);
+  s.set_view(1, Some((cube_at(far), IDENTITY)));
+  let writes = flush(&mut s);
+  assert!(writes.contains(&Write::Count { target: 1, draw: 1, count: 1 }), "{writes:?}");
+  // The outside entry stays at its created count of 0: nothing to write.
+  assert!(!writes.iter().any(|w| matches!(w, Write::Count { draw: 2, .. })), "{writes:?}");
+  // The LOD view's eye is where the camera is in the world.
+  assert_eq!(s.lod_view_for_test(1).map(|v| v.eye), Some([far, 0.0, 0.0]));
+}
+
+#[test]
+fn queries_hold_their_precision_far_from_the_origin() {
+  // Translation invariance: the scene at zero and a million units out
+  // answer the same ray, within f64.
+  let far = [1_000_000.0, 2_000_000.0, -3_000_000.0];
+  let mut at_zero = Spatial::new();
+  let mut at_far = Spatial::new();
+  for (s, off) in [(&mut at_zero, [0.0; 3]), (&mut at_far, far)] {
+    let shape = s.create_shape(grid_shape(4)).expect("shape");
+    let n = s.create([off[0] + 0.25, off[1], off[2] + 0.25], Q, ONE, true);
+    s.set_shape(n, Some(shape)).expect("shape");
+    flush(s);
+  }
+  let filter = QueryFilter::default();
+  let hit0 = at_zero.raycast([1.3, 10.0, 2.7], [0.0, -1.0, 0.0], &filter).expect("ray")[0].clone();
+  let hit1 =
+    at_far.raycast([far[0] + 1.3, far[1] + 10.0, far[2] + 2.7], [0.0, -1.0, 0.0], &filter).expect("ray")[0].clone();
+  for k in 0..3 {
+    assert!((hit1.point[k] - far[k] - hit0.point[k]).abs() < 1e-6, "point {:?} vs {:?}", hit1.point, hit0.point);
+  }
+  assert!((hit1.distance - hit0.distance).abs() < 1e-6, "distance {} vs {}", hit1.distance, hit0.distance);
+  assert_eq!(hit1.face, hit0.face);
 }

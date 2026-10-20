@@ -46,14 +46,14 @@ pub const VIEW_KEY_BASE: u64 = 1 << 48;
 
 /// Below this the unprojected far corner's w is taken as 0: an infinite
 /// projection, whose far corners are directions, not points.
-const INFINITE_FAR_W: f32 = 1e-9;
+const INFINITE_FAR_W: f64 = 1e-9;
 
 /// The hysteresis band of a region: wanted within `enter` of the view
 /// volume, kept until beyond `leave` (`leave >= enter`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RegionMargins {
-  pub enter: f32,
-  pub leave: f32,
+  pub enter: f64,
+  pub leave: f64,
 }
 
 impl RegionMargins {
@@ -72,7 +72,7 @@ impl RegionMargins {
 
   /// The margin a viewer tests with: `leave` while it already wants the
   /// region, `enter` otherwise.
-  fn margin(&self, wanted: bool) -> f32 {
+  fn margin(&self, wanted: bool) -> f64 {
     if wanted {
       self.leave
     } else {
@@ -83,7 +83,7 @@ impl RegionMargins {
   /// How needed a region at `distance` from its nearest wanting eye is,
   /// as a number comparable across regions of different units: the
   /// distance in `leave`s (a region with no band compares raw distance).
-  fn urgency(&self, distance: f32) -> f32 {
+  fn urgency(&self, distance: f64) -> f64 {
     if self.leave > 0.0 {
       distance / self.leave
     } else {
@@ -129,8 +129,8 @@ impl RegionSpec {
 /// the name the stats group the grid's footprint under.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GridSpec {
-  pub origin: [f32; 3],
-  pub cell: [f32; 3],
+  pub origin: [f64; 3],
+  pub cell: [f64; 3],
   pub margins: RegionMargins,
   pub bounds: Option<[i32; 6]>,
   pub wrap: Option<[i32; 3]>,
@@ -225,10 +225,10 @@ impl GridSpec {
   /// The world box of the raw cell `raw`; an unbounded axis takes the
   /// enumeration box's extent `reach` there.
   fn cell_box(&self, raw: [i64; 3], reach: &Box3) -> Box3 {
-    let mut b = [0.0f32; 6];
+    let mut b = [0.0f64; 6];
     for a in 0..3 {
       if self.cell[a] > 0.0 {
-        b[a] = self.origin[a] + raw[a] as f32 * self.cell[a];
+        b[a] = self.origin[a] + raw[a] as f64 * self.cell[a];
         b[a + 3] = b[a] + self.cell[a];
       } else {
         b[a] = reach[a];
@@ -240,11 +240,11 @@ impl GridSpec {
 
   /// The world center of a canonical cell, with the unbounded axes taken
   /// at `at` (the eye: distance 0 along an axis the cell spans whole).
-  fn cell_center(&self, cell: [i32; 3], at: [f32; 3]) -> [f32; 3] {
+  fn cell_center(&self, cell: [i32; 3], at: [f64; 3]) -> [f64; 3] {
     let mut c = at;
     for a in 0..3 {
       if self.cell[a] > 0.0 {
-        c[a] = self.origin[a] + (cell[a] as f32 + 0.5) * self.cell[a];
+        c[a] = self.origin[a] + (cell[a] as f64 + 0.5) * self.cell[a];
       }
     }
     c
@@ -376,12 +376,16 @@ pub struct ResidencyStats {
   pub weight: f64,
 }
 
-/// A viewer as the gate sees it (`Spatial::set_view`).
+/// A viewer as the gate sees it (`Spatial::set_view`): its frustum and
+/// view-projection in the target's origin space, `origin` what brings an
+/// unprojected corner back to the world the regions live in, the eye and
+/// forward in that world.
 struct Viewer {
   frustum: Frustum,
   view_proj: Mat4,
-  eye: [f32; 3],
-  forward: [f32; 3],
+  origin: [f64; 3],
+  eye: [f64; 3],
+  forward: [f64; 3],
 }
 
 pub(super) struct Residency {
@@ -447,7 +451,7 @@ enum Which {
 #[derive(Clone, Copy)]
 struct Need {
   priority: i32,
-  urgency: f32,
+  urgency: f64,
 }
 
 impl Need {
@@ -481,10 +485,10 @@ impl Residency {
 
   /// A viewer's view changed (Some) or went (None): the next pass re-tests
   /// every region against it.
-  pub(super) fn set_view(&mut self, target: u64, view: Option<(Mat4, Frustum, LodView)>) {
+  pub(super) fn set_view(&mut self, target: u64, view: Option<(Mat4, Frustum, LodView, [f64; 3])>) {
     match view {
-      Some((view_proj, frustum, lod)) => {
-        self.viewers.insert(target, Viewer { frustum, view_proj, eye: lod.eye, forward: lod.forward });
+      Some((view_proj, frustum, lod, origin)) => {
+        self.viewers.insert(target, Viewer { frustum, view_proj, origin, eye: lod.eye, forward: lod.forward });
       }
       None => {
         self.viewers.remove(&target);
@@ -1094,8 +1098,8 @@ impl Residency {
 
 /// The distance from the nearest of these viewers' eyes to the point
 /// `at` gives for that eye.
-fn nearest(viewers: &HashMap<u64, Viewer>, wanted_by: &[u64], at: impl Fn([f32; 3]) -> [f32; 3]) -> f32 {
-  let mut best = f32::INFINITY;
+fn nearest(viewers: &HashMap<u64, Viewer>, wanted_by: &[u64], at: impl Fn([f64; 3]) -> [f64; 3]) -> f64 {
+  let mut best = f64::INFINITY;
   for v in wanted_by {
     if let Some(viewer) = viewers.get(v) {
       let p = at(viewer.eye);
@@ -1108,7 +1112,7 @@ fn nearest(viewers: &HashMap<u64, Viewer>, wanted_by: &[u64], at: impl Fn([f32; 
 
 impl Viewer {
   /// The forward depth, from the eye, of the box's nearest point.
-  fn depth_of(&self, b: &Box3) -> f32 {
+  fn depth_of(&self, b: &Box3) -> f64 {
     let f = self.forward;
     let c = center_of(*b);
     let e = [(b[3] - b[0]) / 2.0, (b[4] - b[1]) / 2.0, (b[5] - b[2]) / 2.0];
@@ -1120,22 +1124,22 @@ impl Viewer {
   /// view direction and grown by `depth` on every side: what a grid
   /// enumerates cells under (every cell within `depth` of the volume lies
   /// inside it). None for a view-projection with no inverse.
-  fn reach(&self, depth: f32) -> Option<Box3> {
+  fn reach(&self, depth: f64) -> Option<Box3> {
     let inv = invert(&self.view_proj)?;
     let f = self.forward;
     let depth_of =
-      |p: [f32; 3]| (p[0] - self.eye[0]) * f[0] + (p[1] - self.eye[1]) * f[1] + (p[2] - self.eye[2]) * f[2];
+      |p: [f64; 3]| (p[0] - self.eye[0]) * f[0] + (p[1] - self.eye[1]) * f[1] + (p[2] - self.eye[2]) * f[2];
     let mut lo = self.eye;
     let mut hi = self.eye;
-    let mut grow = |p: [f32; 3]| {
+    let mut grow = |p: [f64; 3]| {
       for a in 0..3 {
         lo[a] = lo[a].min(p[a]);
         hi[a] = hi[a].max(p[a]);
       }
     };
-    for &x in &[-1.0f32, 1.0] {
-      for &y in &[-1.0f32, 1.0] {
-        let near = unproject(&inv, [x, y, -1.0]);
+    for &x in &[-1.0f64, 1.0] {
+      for &y in &[-1.0f64, 1.0] {
+        let near = unproject(&inv, [x, y, -1.0], self.origin);
         let Unprojected::Point(n) = near else {
           return None;
         };
@@ -1144,7 +1148,7 @@ impl Viewer {
         // The far corner, pulled in to `depth` when beyond it: the cut is
         // linear along the near-to-far edge (and along the ray of an
         // infinite projection's direction).
-        let far = match unproject(&inv, [x, y, 1.0]) {
+        let far = match unproject(&inv, [x, y, 1.0], self.origin) {
           Unprojected::Point(p) => {
             let df = depth_of(p);
             if df <= depth || df <= dn {
@@ -1180,13 +1184,15 @@ impl Viewer {
 }
 
 enum Unprojected {
-  Point([f32; 3]),
+  Point([f64; 3]),
   /// A clip corner at infinity (an infinite far plane): the ray direction.
-  Direction([f32; 3]),
+  Direction([f64; 3]),
 }
 
-/// A clip-space point back through the inverse view-projection.
-fn unproject(inv: &Mat4, c: [f32; 3]) -> Unprojected {
+/// A clip-space point back through the inverse view-projection (in the
+/// viewer's origin space) into the world: a point gets the origin added,
+/// a direction is the same in both.
+fn unproject(inv: &Mat4, c: [f64; 3], origin: [f64; 3]) -> Unprojected {
   let x = inv[0] * c[0] + inv[4] * c[1] + inv[8] * c[2] + inv[12];
   let y = inv[1] * c[0] + inv[5] * c[1] + inv[9] * c[2] + inv[13];
   let z = inv[2] * c[0] + inv[6] * c[1] + inv[10] * c[2] + inv[14];
@@ -1194,11 +1200,11 @@ fn unproject(inv: &Mat4, c: [f32; 3]) -> Unprojected {
   if w.abs() < INFINITE_FAR_W {
     Unprojected::Direction([x, y, z])
   } else {
-    Unprojected::Point([x / w, y / w, z / w])
+    Unprojected::Point([x / w + origin[0], y / w + origin[1], z / w + origin[2]])
   }
 }
 
-fn center_of(b: Box3) -> [f32; 3] {
+fn center_of(b: Box3) -> [f64; 3] {
   [(b[0] + b[3]) / 2.0, (b[1] + b[4]) / 2.0, (b[2] + b[5]) / 2.0]
 }
 

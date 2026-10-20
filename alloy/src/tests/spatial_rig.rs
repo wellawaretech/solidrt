@@ -5,43 +5,50 @@ use crate::spatial::{
   MarkerPhase, PlayerSpec, PlayerUpdate, RestPose, RootMotion, Spatial, SyncMode,
 };
 
-const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-const ONE: [f32; 3] = [1.0, 1.0, 1.0];
-const EPS: f32 = 1e-4;
+const Q: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+const ONE: [f64; 3] = [1.0, 1.0, 1.0];
+const EPS: f64 = 1e-4;
 
 /// A channel whose element count is read off the data (the JS baker's
 /// rule): values per key over the cubic triple.
-fn channel(path: ChannelPath, interpolation: ChannelInterpolation, times: &[f32], values: &[f32]) -> ClipChannel {
+fn channel(path: ChannelPath, interpolation: ChannelInterpolation, times: &[f64], values: &[f64]) -> ClipChannel {
   let per_key = if interpolation == ChannelInterpolation::Cubic { 3 } else { 1 };
   let elements = values.len() / (times.len() * per_key);
-  ClipChannel { target_slot: 0, path, interpolation, elements, times: times.to_vec(), values: values.to_vec() }
+  ClipChannel {
+    target_slot: 0,
+    path,
+    interpolation,
+    elements,
+    times: times.iter().map(|&t| t as f32).collect(),
+    values: values.iter().map(|&v| v as f32).collect(),
+  }
 }
 
 fn on(slot: u32, c: ClipChannel) -> ClipChannel {
   ClipChannel { target_slot: slot, ..c }
 }
 
-fn sampled(c: &ClipChannel, time: f32, cursor: &mut u32) -> [f32; 4] {
-  let mut out = [0.0f32; 4];
+fn sampled(c: &ClipChannel, time: f64, cursor: &mut u32) -> [f64; 4] {
+  let mut out = [0.0f64; 4];
   sample_channel(c, time, cursor, &mut out);
   out
 }
 
 /// A linear position channel from `from` to `to` on x over `seconds`.
-fn slide(from: f32, to: f32, seconds: f32) -> ClipChannel {
+fn slide(from: f64, to: f64, seconds: f64) -> ClipChannel {
   channel(ChannelPath::Position, ChannelInterpolation::Linear, &[0.0, seconds], &[from, 0.0, 0.0, to, 0.0, 0.0])
 }
 
 /// A constant position at x.
-fn at_x(x: f32) -> ClipChannel {
+fn at_x(x: f64) -> ClipChannel {
   channel(ChannelPath::Position, ChannelInterpolation::Linear, &[0.0], &[x, 0.0, 0.0])
 }
 
-fn z_rotation(angle: f32) -> [f32; 4] {
+fn z_rotation(angle: f64) -> [f64; 4] {
   [0.0, 0.0, (angle / 2.0).sin(), (angle / 2.0).cos()]
 }
 
-fn z_angle(q: [f32; 4]) -> f32 {
+fn z_angle(q: [f64; 4]) -> f64 {
   2.0 * q[2].atan2(q[3])
 }
 
@@ -61,7 +68,7 @@ fn advance_at(s: &mut Spatial, ms: f64) -> crate::spatial::PlayersTick {
   s.advance_players()
 }
 
-fn x_of(s: &Spatial, n: u64) -> f32 {
+fn x_of(s: &Spatial, n: u64) -> f64 {
   s.transform_of(n).expect("read").0[0]
 }
 
@@ -100,7 +107,7 @@ fn sampling_matches_the_gltf_contract() {
   );
   let mut cur = 0;
   let q = sampled(&rot, 0.5, &mut cur);
-  let h = (0.5f32).sqrt();
+  let h = (0.5f64).sqrt();
   for (got, want) in q.iter().zip([0.0, 0.0, h, h]) {
     assert!((got - want).abs() < 1e-5, "{q:?}");
   }
@@ -241,13 +248,13 @@ fn an_override_layer_replaces_masked_joints_only() {
 fn an_additive_layer_adds_the_authored_clip_minus_its_reference() {
   let mut s = Spatial::new();
   let (rig, n) = rig_of(&mut s, 1);
-  let h = z_rotation(30f32.to_radians());
+  let h = z_rotation(30f64.to_radians());
   let base = s
     .create_clip(1.0, vec![at_x(5.0), channel(ChannelPath::Rotation, ChannelInterpolation::Linear, &[0.0], &h)], vec![])
     .expect("base");
   // The flinch as authored: x 1 -> 3, 90 -> 180 degrees about z over 1 s.
-  let q90 = z_rotation(90f32.to_radians());
-  let q180 = z_rotation(180f32.to_radians());
+  let q90 = z_rotation(90f64.to_radians());
+  let q180 = z_rotation(180f64.to_radians());
   let flinch = s
     .create_clip(
       1.0,
@@ -274,13 +281,13 @@ fn an_additive_layer_adds_the_authored_clip_minus_its_reference() {
   advance_at(&mut s, 500.0);
   let (p, q, _) = s.transform_of(n[0]).expect("read");
   assert!((p[0] - 6.0).abs() < EPS, "{p:?}");
-  assert!((z_angle(q) - 75f32.to_radians()).abs() < 1e-4, "30 + 45 degrees, got {}", z_angle(q).to_degrees());
+  assert!((z_angle(q) - 75f64.to_radians()).abs() < 1e-4, "30 + 45 degrees, got {}", z_angle(q).to_degrees());
   // Half weight halves the delta: slerped from identity.
   s.set_player(pf, PlayerUpdate { weight: Some(0.5), ..Default::default() }).expect("weight");
   advance_at(&mut s, 1000.0);
   let (p, q, _) = s.transform_of(n[0]).expect("read");
   assert!((p[0] - 6.0).abs() < EPS, "{p:?}");
-  assert!((z_angle(q) - 75f32.to_radians()).abs() < 1e-4, "30 + 90 / 2 degrees, got {}", z_angle(q).to_degrees());
+  assert!((z_angle(q) - 75f64.to_radians()).abs() < 1e-4, "30 + 90 / 2 degrees, got {}", z_angle(q).to_degrees());
   // Against the rig's rest: a constant x = 3 is a delta of 3.
   let three = s.create_clip(1.0, vec![at_x(3.0)], vec![]).expect("three");
   let delta_rest = s.derive_additive(three, AdditiveReference::Rest { rig }).expect("additive");
@@ -308,9 +315,9 @@ fn the_inertial_quintic_lands_at_zero_and_never_overshoots() {
   let (x, _) = inertial_offset_for_test(1.0, 0.0, 1.0, 0.5).expect("fit");
   assert!((x - 0.1875).abs() < 1e-6, "{x}");
   // Monotone: x'(t) = 20 t (t - 1)^3 on 0..1 never rises.
-  let mut last = 1.0f32;
+  let mut last = 1.0f64;
   for k in 1..=100 {
-    let (x, _) = inertial_offset_for_test(1.0, 0.0, 1.0, k as f32 / 100.0).expect("fit");
+    let (x, _) = inertial_offset_for_test(1.0, 0.0, 1.0, k as f64 / 100.0).expect("fit");
     assert!(x <= last + 1e-6, "{k}: {x} after {last}");
     last = x;
   }
@@ -318,7 +325,7 @@ fn the_inertial_quintic_lands_at_zero_and_never_overshoots() {
   assert!(x.abs() < 1e-6, "{x}");
   // Monotone: never below zero on the way.
   for k in 0..=100 {
-    let (x, _) = inertial_offset_for_test(1.0, 0.0, 1.0, k as f32 / 100.0).expect("fit");
+    let (x, _) = inertial_offset_for_test(1.0, 0.0, 1.0, k as f64 / 100.0).expect("fit");
     assert!(x >= -1e-6, "{k}: {x}");
   }
   // A velocity toward zero caps the duration at 5 x0 / |v0|.
@@ -700,13 +707,13 @@ fn dead_joints_and_dead_clips_drop() {
 /// A root that walks +x 10 units while turning 90 degrees about +y over
 /// 1 s: channel 0 its position, channel 1 its rotation.
 fn walk_and_turn_clip(s: &mut Spatial) -> u64 {
-  let h = (0.5f32).sqrt();
+  let h = (0.5f64).sqrt();
   let rot =
     channel(ChannelPath::Rotation, ChannelInterpolation::Linear, &[0.0, 1.0], &[0.0, 0.0, 0.0, 1.0, 0.0, h, 0.0, h]);
   s.create_clip(1.0, vec![slide(0.0, 10.0, 1.0), rot], vec![]).expect("clip")
 }
 
-fn yaw_about_y(q: [f32; 4]) -> f32 {
+fn yaw_about_y(q: [f64; 4]) -> f64 {
   2.0 * q[1].atan2(q[3])
 }
 
@@ -730,10 +737,10 @@ fn root_motion_moves_and_turns_the_anchor_continuously() {
   advance_at(&mut s, 500.0);
   let (p, q, _) = s.transform_of(anchor).expect("read");
   assert!((p[0] - 5.0).abs() < 0.05 && p[2].abs() < 0.2, "{p:?}");
-  assert!((yaw_about_y(q) - std::f32::consts::FRAC_PI_4).abs() < 1e-3, "{q:?}");
+  assert!((yaw_about_y(q) - std::f64::consts::FRAC_PI_4).abs() < 1e-3, "{q:?}");
   let reports = s.take_root_motion();
   assert_eq!(reports.len(), 1);
-  assert!((reports[0].2 - std::f32::consts::FRAC_PI_4).abs() < 1e-3, "{reports:?}");
+  assert!((reports[0].2 - std::f64::consts::FRAC_PI_4).abs() < 1e-3, "{reports:?}");
 
   // Across the loop wrap the walk and the turn both continue: 1.5 s in,
   // 15 units along the clip's +x and 135 degrees.
@@ -742,7 +749,7 @@ fn root_motion_moves_and_turns_the_anchor_continuously() {
   }
   let (p, q, _) = s.transform_of(anchor).expect("read");
   assert!((p[0] - 15.0).abs() < 0.3 && p[2].abs() < 0.5, "{p:?}");
-  assert!((yaw_about_y(q) - 3.0 * std::f32::consts::FRAC_PI_4).abs() < 1e-2, "{q:?}");
+  assert!((yaw_about_y(q) - 3.0 * std::f64::consts::FRAC_PI_4).abs() < 1e-2, "{q:?}");
   let _ = n;
 }
 
@@ -865,13 +872,13 @@ fn weights_channels_blend_into_the_register_over_the_rest_weights() {
 fn curves_feed_the_register_and_add_on_additive_layers() {
   let mut s = Spatial::new();
   let (rig, _) = rig_of(&mut s, 1);
-  let curve = |t: &[f32], v: &[f32]| ClipChannel {
+  let curve = |t: &[f64], v: &[f64]| ClipChannel {
     target_slot: 0,
     path: ChannelPath::Curve,
     interpolation: ChannelInterpolation::Linear,
     elements: 1,
-    times: t.to_vec(),
-    values: v.to_vec(),
+    times: t.iter().map(|&t| t as f32).collect(),
+    values: v.iter().map(|&v| v as f32).collect(),
   };
   let a = s.create_clip(1.0, vec![curve(&[0.0, 1.0], &[0.0, 1.0])], vec!["ikWeight".into()]).expect("clip");
   assert!(s.create_clip(1.0, vec![curve(&[0.0], &[0.0])], vec![]).is_err(), "a curve needs its name");
@@ -996,12 +1003,12 @@ fn the_layers_compose_over_the_nodes_declared_rest() {
 /// Records curve param writes; a target in `dead` does not land.
 #[derive(Default)]
 struct ParamRecorder {
-  writes: Vec<(u64, Option<u64>, String, f32)>,
+  writes: Vec<(u64, Option<u64>, String, f64)>,
   dead: Vec<u64>,
 }
 
 impl SinkWriter for ParamRecorder {
-  fn write_params(&mut self, _: u64, _: u64, _: &crate::spatial::Mat4, _: Option<&crate::spatial::Mat4>) -> bool {
+  fn write_params(&mut self, _: u64, _: u64, _: &crate::spatial::Mat4f, _: Option<&crate::spatial::Mat4f>) -> bool {
     true
   }
   fn write_count(&mut self, _: u64, _: u64, _: u32) -> bool {
@@ -1013,6 +1020,9 @@ impl SinkWriter for ParamRecorder {
   fn write_order(&mut self, _: u64, _: &[u64]) -> bool {
     true
   }
+  fn shift_params(&mut self, _: u64, _: &[u64], _: [f32; 3]) -> bool {
+    true
+  }
   fn write_order_direction(&mut self, _: u64, _: u64, _: [f32; 3]) -> bool {
     true
   }
@@ -1020,7 +1030,7 @@ impl SinkWriter for ParamRecorder {
     true
   }
   fn write_param(&mut self, target: u64, draw: Option<u64>, name: &str, value: f32) -> bool {
-    self.writes.push((target, draw, name.to_string(), value));
+    self.writes.push((target, draw, name.to_string(), value as f64));
     !self.dead.contains(&target)
   }
   fn write_instances(&mut self, _: u64, _: u32, _: u32, _: &[f32]) -> bool {

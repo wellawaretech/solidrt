@@ -1,6 +1,6 @@
 use crate::motion::{Curve, TransitionSpec};
 use crate::spatial::{
-  Component, Mat4, MotionState, NodeEndpoint, NodeMotion, NodeTransitionConfig, NodeTransitionEntry, QueryFilter,
+  Component, Mat4f, MotionState, NodeEndpoint, NodeMotion, NodeTransitionConfig, NodeTransitionEntry, QueryFilter,
   SinkWriter, Spatial,
 };
 
@@ -24,8 +24,8 @@ impl Tick for Spatial {
   }
 }
 
-const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-const ONE: [f32; 3] = [1.0, 1.0, 1.0];
+const Q: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+const ONE: [f64; 3] = [1.0, 1.0, 1.0];
 const LINEAR_100: TransitionSpec = TransitionSpec::Tween { duration_ms: 100.0, curve: Curve::Linear };
 
 fn all(spec: TransitionSpec) -> Option<NodeTransitionConfig> {
@@ -37,9 +37,9 @@ fn all(spec: TransitionSpec) -> Option<NodeTransitionConfig> {
 /// no motion of its own).
 fn position_entry(
   spec: TransitionSpec,
-  from: Option<[f32; 3]>,
-  exit: Option<[f32; 3]>,
-) -> NodeTransitionEntry<[f32; 3]> {
+  from: Option<[f64; 3]>,
+  exit: Option<[f64; 3]>,
+) -> NodeTransitionEntry<[f64; 3]> {
   NodeTransitionEntry {
     motion: spec.into(),
     from: from.map(|value| NodeEndpoint { value, motion: spec.into() }),
@@ -47,7 +47,7 @@ fn position_entry(
   }
 }
 
-fn exit_to_x(spec: TransitionSpec, x: f32) -> Option<NodeTransitionConfig> {
+fn exit_to_x(spec: TransitionSpec, x: f64) -> Option<NodeTransitionConfig> {
   Some(NodeTransitionConfig { position: Some(position_entry(spec, None, Some([x, 0.0, 0.0]))), ..Default::default() })
 }
 
@@ -56,7 +56,7 @@ fn exit_to_x(spec: TransitionSpec, x: f32) -> Option<NodeTransitionConfig> {
 struct Sink;
 
 impl SinkWriter for Sink {
-  fn write_params(&mut self, _: u64, _: u64, _: &Mat4, _: Option<&Mat4>) -> bool {
+  fn write_params(&mut self, _: u64, _: u64, _: &Mat4f, _: Option<&Mat4f>) -> bool {
     true
   }
   fn write_count(&mut self, _: u64, _: u64, _: u32) -> bool {
@@ -66,6 +66,9 @@ impl SinkWriter for Sink {
     true
   }
   fn write_order(&mut self, _: u64, _: &[u64]) -> bool {
+    true
+  }
+  fn shift_params(&mut self, _: u64, _: &[u64], _: [f32; 3]) -> bool {
     true
   }
   fn write_order_direction(&mut self, _: u64, _: u64, _: [f32; 3]) -> bool {
@@ -100,17 +103,17 @@ fn run_to(s: &mut Spatial, from_ms: f64, ms: f64) -> bool {
 }
 
 /// Quaternion for a rotation of `rad` about z (xyzw).
-fn qz(rad: f32) -> [f32; 4] {
+fn qz(rad: f64) -> [f64; 4] {
   [0.0, 0.0, (rad / 2.0).sin(), (rad / 2.0).cos()]
 }
 
 /// The node's world rotation about z, from the matrix: atan2(m[1], m[0]).
-fn angle_z(s: &Spatial, id: u64) -> f32 {
+fn angle_z(s: &Spatial, id: u64) -> f64 {
   let m = s.world(id).expect("world");
   m[1].atan2(m[0])
 }
 
-fn pos_x(s: &Spatial, id: u64) -> f32 {
+fn pos_x(s: &Spatial, id: u64) -> f64 {
   s.world(id).expect("world")[12]
 }
 
@@ -177,7 +180,7 @@ fn undeclared_components_snap() {
   let config = NodeTransitionConfig { position: Some(LINEAR_100.into()), ..Default::default() };
   s.set_node_transition(id, Some(config)).expect("config");
   s.set_transition_now(0.0);
-  let quarter = qz(std::f32::consts::FRAC_PI_2);
+  let quarter = qz(std::f64::consts::FRAC_PI_2);
   assert!(s.write_transform(id, [10.0, 0.0, 0.0], quarter, ONE).expect("write"));
   // Rotation snapped with the write; position has not moved yet.
   let m = s.world(id).expect("world");
@@ -191,11 +194,11 @@ fn rotation_tween_follows_geodesic() {
   let id = s.create([0.0; 3], Q, ONE, true);
   s.set_node_transition(id, all(LINEAR_100)).expect("config");
   s.set_transition_now(0.0);
-  s.write_transform(id, [0.0; 3], qz(std::f32::consts::FRAC_PI_2), ONE).expect("write");
+  s.write_transform(id, [0.0; 3], qz(std::f64::consts::FRAC_PI_2), ONE).expect("write");
 
   s.set_transition_now(50.0);
   s.tick();
-  assert!((angle_z(&s, id) - std::f32::consts::FRAC_PI_4).abs() < 1e-3, "slerp midpoint is half the angle");
+  assert!((angle_z(&s, id) - std::f64::consts::FRAC_PI_4).abs() < 1e-3, "slerp midpoint is half the angle");
 
   s.set_transition_now(100.0);
   assert!(!s.tick());
@@ -210,13 +213,13 @@ fn rotation_spring_retarget_keeps_momentum() {
   let id = s.create([0.0; 3], Q, ONE, true);
   s.set_node_transition(id, all(TransitionSpec::spring(300.0, 0.0))).expect("config");
   s.set_transition_now(0.0);
-  s.write_transform(id, [0.0; 3], qz(std::f32::consts::FRAC_PI_2), ONE).expect("write");
+  s.write_transform(id, [0.0; 3], qz(std::f64::consts::FRAC_PI_2), ONE).expect("write");
   for k in 1..=5 {
     s.set_transition_now(k as f64 * 16.0);
     s.tick();
   }
   let before = angle_z(&s, id);
-  assert!(before > 0.1 && before < std::f32::consts::FRAC_PI_2, "mid-flight");
+  assert!(before > 0.1 && before < std::f64::consts::FRAC_PI_2, "mid-flight");
   // Retarget back to identity: the angular velocity carries the node PAST
   // the retarget point before the spring pulls it back.
   s.write_transform(id, [0.0; 3], Q, ONE).expect("write");
@@ -244,7 +247,7 @@ fn near_antipodal_target_takes_the_short_arc() {
   s.set_transition_now(0.0);
   // 181 degrees about z: the quaternion's w is negative, so the short arc
   // from identity runs BACKWARD (through -179), not forward through +90.
-  let rad = 181.0f32.to_radians();
+  let rad = 181.0f64.to_radians();
   s.write_transform(id, [0.0; 3], qz(rad), ONE).expect("write");
 
   s.set_transition_now(50.0);
@@ -344,7 +347,7 @@ fn hidden_nodes_still_animate() {
 // node starts, played at the first advance after `create` toward the
 // transform it holds then. See spatial/mod.rs start_enter_transitions.
 
-fn enter_from_x(x: f32) -> Option<NodeTransitionConfig> {
+fn enter_from_x(x: f64) -> Option<NodeTransitionConfig> {
   Some(NodeTransitionConfig {
     position: Some(position_entry(LINEAR_100, Some([x, 0.0, 0.0]), None)),
     ..Default::default()
@@ -737,7 +740,7 @@ fn exit_in_the_creating_tick_skips_the_enter() {
 // animation clock, and a held write starting late runs as if started on
 // time (the element tracks' catch-up rule).
 
-fn delayed_position(delay_ms: f32) -> Option<NodeTransitionConfig> {
+fn delayed_position(delay_ms: f64) -> Option<NodeTransitionConfig> {
   let motion = NodeMotion { spec: LINEAR_100, delay_ms };
   Some(NodeTransitionConfig {
     position: Some(NodeTransitionEntry { motion, from: None, exit: None }),
@@ -883,7 +886,7 @@ fn held_exit_to_the_current_value_frees_when_due() {
 // begin under it in one frame by `index * stagger_ms`, nearest declaring
 // ancestor, occurrence order, counts per frame (mod.rs stagger_delay_for).
 
-fn stagger_group(ms: f32) -> Option<NodeTransitionConfig> {
+fn stagger_group(ms: f64) -> Option<NodeTransitionConfig> {
   Some(NodeTransitionConfig { stagger_ms: Some(ms), ..Default::default() })
 }
 
@@ -1061,7 +1064,7 @@ fn a_deferred_exit_gates_its_node_until_it_runs() {
   assert_eq!(s.take_freed(), vec![child, parent]);
 }
 
-fn weights_entry(from: Option<&[f32]>, exit: Option<&[f32]>) -> Option<NodeTransitionConfig> {
+fn weights_entry(from: Option<&[f64]>, exit: Option<&[f64]>) -> Option<NodeTransitionConfig> {
   Some(NodeTransitionConfig {
     weights: Some(NodeTransitionEntry {
       motion: LINEAR_100.into(),
@@ -1072,7 +1075,7 @@ fn weights_entry(from: Option<&[f32]>, exit: Option<&[f32]>) -> Option<NodeTrans
   })
 }
 
-fn weights(s: &Spatial, id: u64) -> Vec<f32> {
+fn weights(s: &Spatial, id: u64) -> Vec<f64> {
   s.weights_of(id).expect("weights").to_vec()
 }
 
@@ -1247,8 +1250,8 @@ fn a_rate_scales_every_step_and_is_refused_when_not_a_rate() {
   assert!(!run_to(&mut s, 100.0, 200.0));
   assert_eq!(pos_x(&s, id), 10.0);
   assert!(s.set_time_scale(id, Some(-1.0)).is_err(), "reverse is a player's speed");
-  assert!(s.set_time_scale(id, Some(f32::NAN)).is_err());
-  assert!(s.set_time_scale(id, Some(f32::INFINITY)).is_err());
+  assert!(s.set_time_scale(id, Some(f64::NAN)).is_err());
+  assert!(s.set_time_scale(id, Some(f64::INFINITY)).is_err());
   assert_eq!(s.time_rate(id).expect("rate"), 0.5, "a refused write changes nothing");
   assert!(!s.set_time_scale(id, Some(0.5)).expect("scale"), "an unchanged rate reports no change");
 }

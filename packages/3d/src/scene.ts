@@ -78,14 +78,14 @@ const RESOLVED = Promise.resolve()
 
 // raycast()'s FFI carriers; values are copied at the boundary, so one of
 // each serves every call.
-let rayOriginScratch = new Float32Array(3)
-let rayDirScratch = new Float32Array(3)
+let rayOriginScratch = new Float64Array(3)
+let rayDirScratch = new Float64Array(3)
 // overlap()/sweep()'s carriers: the volume in flux:spatial's packed
 // layout, one array per kind (capsule: a, b, radius; box: center, half
 // extents, rotation), and the sweep's motion.
-let capsuleScratch = new Float32Array(7)
-let boxScratch = new Float32Array(10)
-let motionScratch = new Float32Array(3)
+let capsuleScratch = new Float64Array(7)
+let boxScratch = new Float64Array(10)
+let motionScratch = new Float64Array(3)
 const IDENTITY_QUAT: Quat = [0, 0, 0, 1]
 
 /** Pack a volume into its kind's scratch array and name the kind; a
@@ -1883,6 +1883,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       ensureCamera(cam, size, size)
       cam.pending = false
       setTargetParams(target, cameraParams(cam, size, size))
+      // The probe's origin follows its position, not the sync's fan-out:
+      // its shadow matrices re-base here when it moved.
+      if (cam.originMoved) {
+        cam.originMoved = false
+        setTargetParams(target, shadowSys.receiverMatrices(cam.origin))
+      }
       perFace?.(face)
       if (chain && face < last) renderTarget(target, face, 0)
       else renderTarget(target, face)
@@ -2031,16 +2037,27 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // set at its creation, so a caster draws the level the camera sees and
   // its shadow matches. Cube face renders (probes) set it per face: six
   // cameras share one target, so each face sets its view and flushes
-  // before it renders.
-  let viewScratch = new Float32Array(16)
-  let projScratch = new Float32Array(16)
+  // before it renders. The camera's render origin goes with it: the
+  // point the core writes the target's uModel and uLightPos relative to,
+  // the same one cameraParams built uViewProj and uCamPos against.
+  let viewScratch = new Float64Array(16)
+  let projScratch = new Float64Array(16)
+  let originScratch = new Float64Array(3)
   // Scoped to this scene's world (its root node), so the residency
   // gate never has a scene's camera want another scene's or a 2d
   // layer's regions.
   let setView = (target: TextureId, cam: Camera) => {
     viewScratch.set(cam.view)
     projScratch.set(cam.proj)
-    spatial.setView(target, viewScratch, projScratch, root._node!)
+    originScratch.set(cam.origin)
+    spatial.setView(target, viewScratch, projScratch, root._node!, originScratch)
+  }
+  // Every receiving target with its render origin: the shadow matrices
+  // are composed per receiver against it (a target reads vWorldPos
+  // relative to its own origin).
+  let receivingOrigins = (fn: (target: TextureId, origin: Vec3) => void) => {
+    fn(texture, camera.origin)
+    for (let v of views) if (v.shadowFilter === null) fn(v.texture, v.camera.origin)
   }
   let lodBiasExplicit: number | null = opts?.lodBias ?? null
   if (lodBiasExplicit !== null && !(lodBiasExplicit > 0 && Number.isFinite(lodBiasExplicit))) {
@@ -2132,6 +2149,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       camera.pending = false
       setTargetParams(texture, cameraParams(camera, width, height))
       setView(texture, camera)
+      // A moved origin re-bases every origin-relative upload to the
+      // target: the shadow matrices are the scene's own.
+      if (camera.originMoved) {
+        camera.originMoved = false
+        shadowSys.markMatricesDirty()
+      }
     }
     shadowSys.placeCameras(cameraMoved)
     for (let v of views) {
@@ -2140,7 +2163,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         v.camera.pending = false
         setTargetParams(v.texture, cameraParams(v.camera, v.width, v.height))
         setView(v.texture, v.camera)
-        if (v.shadowFilter !== null) shadowSys.markMatricesDirty()
+        if (v.shadowFilter !== null || v.camera.originMoved) shadowSys.markMatricesDirty()
+        v.camera.originMoved = false
       }
     }
     // Light bookkeeping first, so a fresh direction-slot bind is seeded
@@ -2160,8 +2184,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       groupDirty.clear()
     }
     // The matrices that render the maps are the ones receivers look up
-    // with: one array to every receiving target per shadow-camera move.
-    shadowSys.flushMatrices(params => receivingTargets(t => setTargetParams(t, params)))
+    // with: one array per receiving target per shadow-camera or origin
+    // move, each composed against the receiver's origin.
+    shadowSys.flushMatrices(receivingOrigins)
     // The core recomputes the moved subtrees and writes every entry's
     // uModel/uNormal, visibility switch and direction slots.
     spatial.flush()
@@ -2541,9 +2566,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       v.camera.pending = false
       setTargetParams(v.texture, cameraParams(v.camera, v.width, v.height))
       setView(v.texture, v.camera)
-      if (v.shadowFilter !== null) shadowSys.markMatricesDirty()
+      if (v.shadowFilter !== null || v.camera.originMoved) shadowSys.markMatricesDirty()
+      v.camera.originMoved = false
     }
-    shadowSys.flushMatrices(params => receivingTargets(t => setTargetParams(t, params)))
+    shadowSys.flushMatrices(receivingOrigins)
   }
   // The publish pass of every frame runs the pending sync ahead of the
   // paint, so a write made anywhere in the frame's JS is in that frame's

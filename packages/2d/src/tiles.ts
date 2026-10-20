@@ -132,7 +132,7 @@ const MIP_CHAIN_FACTOR = 4 / 3
 const CHUNK_TEXEL_BYTES = 4
 // The identity node transform [x, y, z, qx, qy, qz, qw, sx, sy, sz] the
 // layer's world root is created with.
-const WORLD_TRANSFORM = new Float32Array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1])
+const WORLD_TRANSFORM = new Float64Array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1])
 
 export type Tint = [number, number, number, number]
 

@@ -35,7 +35,10 @@ pub use ik::{
   ChainMethod, ChainSpec, FeetSpec, IkId, IkLimit, IkPoint, IkSolverSpec, IkTarget, IkTick, IkUp, LegSpec, LookAtBone,
   LookAtLimit, LookAtSpec, TwoBoneSpec,
 };
-pub use math::{compose, invert_affine, multiply, normal_matrix, transform_point, transform_vector, IDENTITY};
+pub use math::{
+  compose, invert_affine, multiply, narrow, normal_matrix, relative, relative_view, shifted, transform_point,
+  transform_vector, IDENTITY,
+};
 pub use mover::{MoveOptions, MoveResult};
 pub use normals::{vertex_normals, write_channel};
 pub use occlusion::{Occluder, OCCLUDER_TRIANGLE_BUDGET, OCCLUSION_BUFFER_WIDTH};
@@ -79,10 +82,12 @@ pub use transitions::{
 
 use crate::motion::TrackStart;
 use bvh::Bvh;
-use cull::{union, world_box, Frustum};
+use cull::{shift_box, union, world_box, Frustum};
 use transitions::{lanes3, targets_match, NodeTransitions, PendingWeights, PendingWrite, COMPONENTS};
 
-pub type Mat4 = [f32; 16];
+pub type Mat4 = [f64; 16];
+/// The GPU's matrix: what a sink uploads (see `math::narrow`).
+pub type Mat4f = [f32; 16];
 
 /// A stable node handle: arena index in the low 32 bits, generation in the
 /// high 32 - a destroyed node's id never resolves again.
@@ -177,10 +182,10 @@ struct BoundSink {
   fresh: bool,
   /// The `uLodFade` value last written (the solid `[1, 1]` until a band
   /// is entered; entries are created solid).
-  fade: [f32; 2],
+  fade: [f64; 2],
   /// The unit direction the order feed last wrote (`DrawSink::order_feed`);
   /// zeros before the first write, so the first pass always feeds.
-  fed: [f32; 3],
+  fed: [f64; 3],
   /// Why the entry is off, or that it is on, as of the last cull pass
   /// that decided it (`cull_state`).
   gate: CullState,
@@ -231,8 +236,8 @@ pub struct OcclusionStats {
   /// Buffer builds so far.
   pub builds: u64,
   /// The latest build's time, and the slowest, in milliseconds.
-  pub build_ms: f32,
-  pub build_max_ms: f32,
+  pub build_ms: f64,
+  pub build_max_ms: f64,
   /// Draw sinks off because occluded, as of the last cull pass.
   pub occluded: usize,
 }
@@ -247,8 +252,8 @@ struct OcclusionTarget {
   buffer: occlusion::DepthBuffer,
   skipped: usize,
   builds: u64,
-  build_ms: f32,
-  build_max_ms: f32,
+  build_ms: f64,
+  build_max_ms: f64,
 }
 
 /// The consumer of sink writes, one method per write kind, called in flush
@@ -266,7 +271,7 @@ struct OcclusionTarget {
 pub trait SinkWriter {
   /// A shown entry's fresh world transform: `uModel`, plus `uNormal` when
   /// the sink asked for it.
-  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4, normal: Option<&Mat4>) -> bool;
+  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4f, normal: Option<&Mat4f>) -> bool;
   /// An entry's instance count - the visibility switch (0 = hidden, the
   /// sink's count = shown).
   fn write_count(&mut self, target: u64, draw: u64, count: u32) -> bool;
@@ -275,6 +280,15 @@ pub trait SinkWriter {
   /// the threshold (side 1) and the farther level the rest (side -1);
   /// `[1, 1]` is solid. Written only for sinks bound with `fade`.
   fn write_fade(&mut self, target: u64, draw: u64, fade: [f32; 2]) -> bool;
+  /// A target's render origin moved (`set_origin`): add `delta` to the
+  /// `uModel` translation of every listed entry, the entries the core
+  /// wrote under the old origin. One write per target per change, however
+  /// many entries it holds, in place of a params write each: what keeps a
+  /// camera crossing an origin cell from costing a frame. Entries still
+  /// owing their first write are not listed; the flush writes those under
+  /// the new origin. False releases nothing: a target that is gone has
+  /// no entries to shift.
+  fn shift_params(&mut self, target: u64, draws: &[u64], delta: [f32; 3]) -> bool;
   /// A sorted target's bound entries in draw order (`set_draw_sort`).
   /// Entries the core does not bind keep their places, so the writer
   /// composes the target's full permutation around these. False means
@@ -315,7 +329,7 @@ pub trait SinkWriter {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Projection {
   /// The world direction of this LOCAL vector.
-  Direction([f32; 3]),
+  Direction([f64; 3]),
   /// The node's world position.
   Position,
 }
@@ -342,6 +356,7 @@ pub struct SharedSlotSink {
 
 /// One shared-param array and the sinks feeding it.
 struct SharedGroup {
+  /// The array as the GPU takes it (f32); staged from the f64 walk.
   values: Vec<f32>,
   refs: u32,
   dirty: bool,
@@ -358,7 +373,7 @@ struct SharedGroup {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LodLevel {
   pub node: Option<NodeId>,
-  pub size: f32,
+  pub size: f64,
 }
 
 /// What a target measures projected size with, derived from its view and
@@ -369,40 +384,40 @@ pub struct LodLevel {
 /// knob: below 1 switches sooner).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LodView {
-  pub eye: [f32; 3],
+  pub eye: [f64; 3],
   /// The unit view direction: what the draw sort measures transparent
   /// depth along (`set_draw_sort`).
-  pub forward: [f32; 3],
-  pub focal: f32,
+  pub forward: [f64; 3],
+  pub focal: f64,
   pub ortho: bool,
-  pub bias: f32,
+  pub bias: f64,
 }
 
 /// The one-sided hysteresis band of a hard LOD switch, as a fraction of
 /// the level size: a level is left when the size falls below its
 /// threshold and re-entered only once the size climbs above the threshold
 /// times (1 + this), so a boundary never flickers frame to frame.
-pub const LOD_HYSTERESIS: f32 = 0.1;
+pub const LOD_HYSTERESIS: f64 = 0.1;
 
 /// Below this eye distance the measured size is capped (a group at the
 /// eye would otherwise divide by zero).
-const LOD_MIN_DISTANCE: f32 = 1e-6;
+const LOD_MIN_DISTANCE: f64 = 1e-6;
 
 /// Opaque entries sort by a logarithmic bucket of their center's distance
 /// to the eye, this many buckets per doubling: early-z only needs near
 /// layers drawn before far ones, and a coarse key keeps the order (and the
 /// bind-order grouping within a bucket) stable while the camera moves.
-const ORDER_BUCKETS_PER_DOUBLING: f32 = 4.0;
+const ORDER_BUCKETS_PER_DOUBLING: f64 = 4.0;
 /// Distances at or below this share the nearest bucket (a center at the
 /// eye); also keeps the log finite.
-const ORDER_DISTANCE_FLOOR: f32 = 1e-3;
+const ORDER_DISTANCE_FLOOR: f64 = 1e-3;
 /// The bucket of ORDER_DISTANCE_FLOOR, so bucket terms start at 0.
 const ORDER_BUCKET_BASE: i32 = -40;
 /// The fraction of the nearest bucketed distance a camera may move without
 /// any bucketed center leaving its bucket (1 - 2^(-1 / buckets per
 /// doubling)): the bucket edge below a center is at most this close, so a
 /// shorter move skips the keying.
-const ORDER_BUCKET_MARGIN: f32 = 0.1591;
+const ORDER_BUCKET_MARGIN: f64 = 0.1591;
 /// The render_order magnitude the packed key holds; beyond it values
 /// clamp and tie.
 const ORDER_RENDER_LIMIT: i32 = 1 << 20;
@@ -413,7 +428,7 @@ const ORDER_RENDER_LIMIT: i32 = 1 << 20;
 /// bounded mis-order in motion against sort time and upload bandwidth.
 /// Set by feel; revisit against the splat-scale measurements
 /// (okf/plans/gaussian-splats.md).
-const ORDER_DIRECTION_EPS_COS: f32 = 0.99939;
+const ORDER_DIRECTION_EPS_COS: f64 = 0.99939;
 
 /// A sorted target's state between flushes (`Spatial::set_draw_sort`).
 #[derive(Default)]
@@ -422,9 +437,9 @@ struct DrawSort {
   last: Vec<u64>,
   /// The eye and forward the last keying measured from, and the nearest
   /// bucketed (opaque or cutout) center's distance to the eye then.
-  eye: [f32; 3],
-  forward: [f32; 3],
-  nearest: f32,
+  eye: [f64; 3],
+  forward: [f64; 3],
+  nearest: f64,
   /// A transparent entry was among the keyed: exact depth, so every view
   /// move re-keys.
   transparent: bool,
@@ -436,7 +451,8 @@ struct DrawSort {
 }
 
 /// The total order of an f32 as unsigned bits (negative values below
-/// positive, ascending both ways).
+/// positive, ascending both ways): the key's 32-bit depth term, which a
+/// sort needs no more precision for.
 fn ordered_bits(f: f32) -> u32 {
   let b = f.to_bits();
   if b & 0x8000_0000 != 0 {
@@ -452,14 +468,14 @@ fn ordered_bits(f: f32) -> u32 {
 /// under an orthographic view, where distance to the eye means nothing),
 /// or the transparent forward depth descending (back-to-front). Bind
 /// order breaks the ties.
-fn draw_key(order: DrawOrder, center: [f32; 3], view: &LodView) -> (u64, f32) {
+fn draw_key(order: DrawOrder, center: [f64; 3], view: &LodView) -> (u64, f64) {
   let dx = center[0] - view.eye[0];
   let dy = center[1] - view.eye[1];
   let dz = center[2] - view.eye[2];
   let depth = dx * view.forward[0] + dy * view.forward[1] + dz * view.forward[2];
   let distance = if view.ortho { depth.abs() } else { (dx * dx + dy * dy + dz * dz).sqrt() };
   let term = if order.queue == DrawQueue::Transparent {
-    !ordered_bits(depth)
+    !ordered_bits(depth as f32)
   } else {
     let bucket = (distance.max(ORDER_DISTANCE_FLOOR).log2() * ORDER_BUCKETS_PER_DOUBLING).floor() as i32;
     (bucket - ORDER_BUCKET_BASE).max(0) as u32
@@ -472,14 +488,14 @@ fn draw_key(order: DrawOrder, center: [f32; 3], view: &LodView) -> (u64, f32) {
 /// hash is continuous, so 64 levels read as a smooth dissolve, and an
 /// entry inside a band is rewritten only when its step changes instead
 /// of every frame the camera moves.
-const LOD_FADE_STEPS: f32 = 64.0;
+const LOD_FADE_STEPS: f64 = 64.0;
 
 /// A LOD group's configuration and its per-target choice.
 struct LodGroup {
   levels: Vec<LodLevel>,
   /// The cross-fade band as a fraction of each threshold (0 = a hard
   /// switch with hysteresis).
-  fade: f32,
+  fade: f64,
   /// The target whose view population levels (record sinks) pick by;
   /// node levels pick per target and ignore it.
   reference: Option<u64>,
@@ -494,7 +510,7 @@ struct LodGroup {
 struct LodState {
   target: u64,
   level: u32,
-  weight: f32,
+  weight: f64,
 }
 
 /// The state a group holds on a target before its first evaluation:
@@ -506,9 +522,9 @@ const LOD_UNSET: LodState = LodState { target: 0, level: u32::MAX, weight: 1.0 }
 /// current level inside its hysteresis band; a fade instead widens each
 /// threshold `s` into the band `[s, s * (1 + fade))`, over which the
 /// weight runs from 0 (all of the next level) to 1 (all of this one).
-fn select_level(levels: &[LodLevel], fade: f32, current: u32, c: f32) -> (u32, f32) {
+fn select_level(levels: &[LodLevel], fade: f64, current: u32, c: f64) -> (u32, f64) {
   let n = levels.len() as u32;
-  let plain = |c: f32| levels.iter().position(|l| c >= l.size).map(|p| p as u32).unwrap_or(n);
+  let plain = |c: f64| levels.iter().position(|l| c >= l.size).map(|p| p as u32).unwrap_or(n);
   if fade > 0.0 {
     let level = plain(c);
     if level < n {
@@ -535,7 +551,7 @@ fn select_level(levels: &[LodLevel], fade: f32, current: u32, c: f32) -> (u32, f
 
 /// The projected size of a sphere: its diameter as a fraction of the
 /// viewport height under `view`.
-fn projected_size(view: &LodView, center: [f32; 3], radius: f32) -> f32 {
+fn projected_size(view: &LodView, center: [f64; 3], radius: f64) -> f64 {
   let d = if view.ortho {
     1.0
   } else {
@@ -553,7 +569,7 @@ fn projected_size(view: &LodView, center: [f32; 3], radius: f32) -> f32 {
 /// (the camera looks down -z), the focal factor the magnitude of
 /// `proj[5]` (positive whatever clip flip the projection bakes in), and
 /// an orthographic projection is told by its constant w (`proj[15]`).
-pub(crate) fn derive_lod_view(view: &Mat4, proj: &Mat4, bias: f32) -> LodView {
+pub(crate) fn derive_lod_view(view: &Mat4, proj: &Mat4, bias: f64, origin: [f64; 3]) -> LodView {
   // The eye is the camera's world position, the inverse view's
   // translation, and forward its -z axis there: exact for any invertible
   // view, a 2d camera whose view matrix carries its zoom as a scale
@@ -578,6 +594,9 @@ pub(crate) fn derive_lod_view(view: &Mat4, proj: &Mat4, bias: f32) -> LodView {
       [-v[2], -v[6], -v[10]],
     ),
   };
+  // The view is in the target's origin space; the eye is wanted in the
+  // world the nodes live in.
+  let eye = [eye[0] + origin[0], eye[1] + origin[1], eye[2] + origin[2]];
   LodView { eye, forward, focal: proj[5].abs(), ortho: proj[15] != 0.0, bias }
 }
 
@@ -585,7 +604,7 @@ pub(crate) fn derive_lod_view(view: &Mat4, proj: &Mat4, bias: f32) -> LodView {
 /// majority side.
 fn dominant_level(state: &LodState) -> u32 {
   // The band midpoint: below it the next level holds most of the pixels.
-  const HALF: f32 = 0.5;
+  const HALF: f64 = 0.5;
   if state.weight >= HALF {
     state.level
   } else {
@@ -693,11 +712,17 @@ pub struct WeightsSlotSink {
 }
 
 /// One palette texture's staging mirror and the sinks feeding it. For
-/// matrix rows `values` holds `nodeWorld * post` per row (16 floats) and
-/// the anchor inverse applies at publish; for weights rows it holds the
-/// registers, `row_floats` per row, published as they are.
+/// matrix rows `values` holds `inverse(anchorWorld) * nodeWorld * post`
+/// per row (16 floats), relativized in f64 as the row stages (the anchor
+/// is an ancestor, so its world is fresh by then; `anchor_inv` caches the
+/// inverse per flush like an instance group's); for weights rows it holds
+/// the registers, `row_floats` per row. Both publish as they are, in the
+/// GPU's f32.
 struct PaletteGroup {
   anchor: Option<NodeId>,
+  /// `inverse(anchorWorld)` as of flush `inv_flush`.
+  anchor_inv: Mat4,
+  inv_flush: u64,
   values: Vec<f32>,
   refs: u32,
   dirty: bool,
@@ -711,9 +736,16 @@ struct InstanceGroup {
   projection: InstanceProjection,
   /// The node whose frame the records are relative to; None = world.
   anchor: Option<NodeId>,
+  /// Without an anchor, the point the records are relative to
+  /// (`set_instance_origin`; zero = plain world records): a consumer
+  /// whose one buffer serves views far from the world's zero keeps the
+  /// f32 records exact around here.
+  origin: [f64; 3],
   /// `inverse(anchorWorld)` as of flush `inv_flush` (see `anchored`).
   anchor_inv: Mat4,
   inv_flush: u64,
+  /// The records as the GPU takes them (f32); staged from the f64 walk,
+  /// relative to the anchor.
   values: Vec<f32>,
   refs: u32,
   /// Dirty float range [lo, hi) into `values`; None = clean.
@@ -743,7 +775,7 @@ impl InstanceGroup {
 }
 
 /// The `Pose2D` decomposition of a world matrix (see `InstanceProjection`).
-fn pose2d(m: &Mat4) -> [f32; 5] {
+fn pose2d(m: &Mat4) -> [f64; 5] {
   let sx = (m[0] * m[0] + m[1] * m[1]).sqrt();
   let sy = (m[4] * m[4] + m[5] * m[5]).sqrt();
   let mirrored = m[0] * m[5] - m[1] * m[4] < 0.0;
@@ -759,9 +791,9 @@ fn node_triangles(
   bounds: &Box3,
   world: &Mat4,
   aabb: &Box3,
-  visit: &mut dyn FnMut([[f32; 3]; 3]),
+  visit: &mut dyn FnMut([[f64; 3]; 3]),
 ) {
-  let carry = |tri: [[f32; 3]; 3]| {
+  let carry = |tri: [[f64; 3]; 3]| {
     [transform_point(world, tri[0]), transform_point(world, tri[1]), transform_point(world, tri[2])]
   };
   match shape {
@@ -787,9 +819,9 @@ fn top_of(nodes: &[Node], mut i: u32) -> u32 {
 
 /// The twelve triangles of a local box, two per face; every test they
 /// feed is two-sided, so the winding is immaterial.
-fn box_triangles(bounds: &Box3) -> [[[f32; 3]; 3]; 12] {
+fn box_triangles(bounds: &Box3) -> [[[f64; 3]; 3]; 12] {
   // Corner i has bit 0 = max x, bit 1 = max y, bit 2 = max z.
-  let corner = |i: usize| -> [f32; 3] {
+  let corner = |i: usize| -> [f64; 3] {
     [
       if i & 1 != 0 { bounds[3] } else { bounds[0] },
       if i & 2 != 0 { bounds[4] } else { bounds[1] },
@@ -807,8 +839,8 @@ fn box_triangles(bounds: &Box3) -> [[[f32; 3]; 3]; 12] {
 
 /// The nearest of a local box's twelve triangles along the local ray:
 /// (t, unnormalized local normal), or None.
-fn ray_box(bounds: &Box3, o: [f32; 3], d: [f32; 3]) -> Option<(f32, [f32; 3])> {
-  let mut best: Option<(f32, [f32; 3])> = None;
+fn ray_box(bounds: &Box3, o: [f64; 3], d: [f64; 3]) -> Option<(f64, [f64; 3])> {
+  let mut best: Option<(f64, [f64; 3])> = None;
   for [a, b, c] in box_triangles(bounds) {
     if let Some((t, _, _, n)) = pick::ray_points(a, b, c, o, d) {
       if best.is_none_or(|(bt, _)| t < bt) {
@@ -821,7 +853,7 @@ fn ray_box(bounds: &Box3, o: [f32; 3], d: [f32; 3]) -> Option<(f32, [f32; 3])> {
 
 /// A world box's bounding sphere (center, half diagonal); without a box
 /// the matrix's translation at radius 0.
-fn sphere_of(b: Option<Box3>, world: &Mat4) -> ([f32; 3], f32) {
+fn sphere_of(b: Option<Box3>, world: &Mat4) -> ([f64; 3], f64) {
   match b {
     Some(b) => {
       let c = [(b[0] + b[3]) / 2.0, (b[1] + b[4]) / 2.0, (b[2] + b[5]) / 2.0];
@@ -837,9 +869,9 @@ struct Node {
   alive: bool,
   parent: Option<u32>,
   children: Vec<u32>,
-  position: [f32; 3],
-  rotation: [f32; 4],
-  scale: [f32; 3],
+  position: [f64; 3],
+  rotation: [f64; 4],
+  scale: [f64; 3],
   local: Mat4,
   world: Mat4,
   /// The local matrix needs recomposing from position/rotation/scale.
@@ -857,11 +889,11 @@ struct Node {
   leaving: bool,
   /// The node's own time scale, when it declares one (`set_time_scale`):
   /// the rate of its subtree down to the next declaring node.
-  time_scale: Option<f32>,
+  time_scale: Option<f64>,
   /// The rate the node's motion runs at: its own declaration, else the
   /// nearest declaring ancestor's, else 1. Kept current by
   /// `inherit_rate` on every declaration and parent change.
-  rate: f32,
+  rate: f64,
   /// One per target.
   sinks: Vec<BoundSink>,
   /// Local-space tight box; with one the node has a leaf in the index.
@@ -883,7 +915,7 @@ struct Node {
   /// instances a ray can name but a body should not be walled by.
   collide: bool,
   /// World units the frustum test widens the box by on every side.
-  cull_margin: f32,
+  cull_margin: f64,
   /// Nodes whose world boxes, united, stand in for this node's own in the
   /// frustum test (a skinned part culled by its joints' boxes, so the box
   /// follows the pose). Empty = the node's own box.
@@ -903,7 +935,7 @@ struct Node {
   texture_slots: Vec<TextureSlotSink>,
   /// The node's weights register (morph target weights): written by
   /// `set_weights`, published through `weights_slots`.
-  weights: Vec<f32>,
+  weights: Vec<f64>,
   /// One per texture.
   weights_slots: Vec<WeightsSlotSink>,
   /// In `weights_dirty` already.
@@ -950,12 +982,26 @@ pub struct Spatial {
   /// Nodes whose weights register changed since the last flush.
   weights_dirty: Vec<u32>,
   /// The weights tracks' advance buffer, reused across frames.
-  weights_scratch: Vec<f32>,
+  weights_scratch: Vec<f64>,
   transitions: NodeTransitions,
   clips: clips::ClipSet,
   rigs: rig::RigSet,
   springs: springs::SpringSet,
   ik: ik::IkSet,
+  /// Per target, its view and projection as set (`set_view`), what the
+  /// frustum, LOD view and occlusion raster derive from together with
+  /// the origin.
+  views: HashMap<u64, (Mat4, Mat4)>,
+  /// Per target, its render origin (`set_origin`; absent = zero): what
+  /// every f32 the target receives is relative to.
+  origins: HashMap<u64, [f64; 3]>,
+  /// Targets whose origin moved since the last flush, with the summed
+  /// difference (old minus new) their written entries shift by.
+  origin_shifts: Vec<(u64, [f64; 3])>,
+  /// Per buffer, the record origin declared for it (`set_instance_origin`),
+  /// kept apart from the group so a declaration before the first bind
+  /// holds.
+  instance_origins: HashMap<u64, [f64; 3]>,
   /// Per target, the clip volume its draw sinks are gated by, derived
   /// from its view (`set_view`; a target without one never culls).
   frustums: HashMap<u64, Frustum>,
@@ -974,7 +1020,7 @@ pub struct Spatial {
   lod_views: HashMap<u64, LodView>,
   /// Per target, the bias its LOD view carries (`set_lod_bias`; absent =
   /// 1), kept apart so it survives the next view write.
-  lod_bias: HashMap<u64, f32>,
+  lod_bias: HashMap<u64, f64>,
   /// Per target, the target whose view its LOD measurement follows
   /// instead of its own (`set_lod_reference`).
   lod_references: HashMap<u64, u64>,
@@ -1031,6 +1077,12 @@ fn index(id: NodeId) -> usize {
   (id & 0xffff_ffff) as usize
 }
 
+/// `resolve` as a free function over the node table, for the walk's split
+/// borrows: the live node `id` names, if it is still that node.
+fn node_at(nodes: &[Node], id: NodeId) -> Option<&Node> {
+  nodes.get(index(id)).filter(|n| n.alive && n.generation == generation(id))
+}
+
 fn generation(id: NodeId) -> u32 {
   (id >> 32) as u32
 }
@@ -1038,7 +1090,7 @@ fn generation(id: NodeId) -> u32 {
 /// The rate of a live node, None for a dead id (`resolve` over a borrowed
 /// node list, for the transition pass, which holds the arena's
 /// transitions mutably at the same time).
-fn rate_in(nodes: &[Node], id: NodeId) -> Option<f32> {
+fn rate_in(nodes: &[Node], id: NodeId) -> Option<f64> {
   let n = nodes.get(index(id))?;
   (n.alive && n.generation == generation(id)).then_some(n.rate)
 }
@@ -1066,7 +1118,7 @@ impl Spatial {
 
   /// A new root node with the given local transform; `visible` false hides
   /// its whole subtree. Starts queued, so the first flush computes it.
-  pub fn create(&mut self, position: [f32; 3], rotation: [f32; 4], scale: [f32; 3], visible: bool) -> NodeId {
+  pub fn create(&mut self, position: [f64; 3], rotation: [f64; 4], scale: [f64; 3], visible: bool) -> NodeId {
     let fresh = Node {
       generation: 0,
       alive: true,
@@ -1267,7 +1319,7 @@ impl Spatial {
   /// component's current value (or a held write, with the exit's delay plus
   /// `stagger_ms`) as of `at_ms`. Returns whether anything started or
   /// waits.
-  fn start_exit_tracks(&mut self, i: u32, at_ms: f64, stagger_ms: f32) -> bool {
+  fn start_exit_tracks(&mut self, i: u32, at_ms: f64, stagger_ms: f64) -> bool {
     let id = self.id_of(i);
     let Some(config) = self.transitions.configs.get(&id).cloned() else {
       return false;
@@ -1356,7 +1408,7 @@ impl Spatial {
         let Ok(i) = self.resolve(id) else {
           continue;
         };
-        let stagger = self.transitions.stagger_index(gid, true) as f32 * stagger_ms;
+        let stagger = self.transitions.stagger_index(gid, true) as f64 * stagger_ms;
         if !self.start_exit_tracks(i, at_ms, stagger) {
           exit_checks.push(id);
         }
@@ -1462,22 +1514,82 @@ impl Spatial {
   /// without a box, or with culling off, are never gated), its LOD view
   /// (see `LodView`) and the view its draw sort measures depth against.
   /// Read at flush: set it before the flush that should see it. None
-  /// forgets the target: its view, its LOD bias, its LOD reference and
-  /// its occlusion.
+  /// forgets the target: its view, its render origin (`set_origin`), its
+  /// LOD bias, its LOD reference and its occlusion.
   pub fn set_view(&mut self, target: u64, view: Option<(Mat4, Mat4)>) {
-    let (frustum, lod, view_proj) = match view {
-      Some((v, p)) => {
-        let bias = self.lod_bias.get(&target).copied().unwrap_or(1.0);
-        let vp = multiply(p, v);
-        (Some(Frustum::from_view_proj(&vp)), Some(derive_lod_view(&v, &p, bias)), Some(vp))
+    match view {
+      Some(v) => {
+        self.views.insert(target, v);
+        self.apply_view(target);
       }
       None => {
+        self.views.remove(&target);
         self.lod_bias.remove(&target);
         self.lod_references.remove(&target);
         self.lod_hard.remove(&target);
         self.set_occlusion(target, false);
-        (None, None, None)
+        self.set_origin(target, [0.0; 3]);
+        self.origins.remove(&target);
+        self.apply_view(target);
       }
+    }
+  }
+
+  /// The target's RENDER ORIGIN: the world point every f32 the target
+  /// receives is relative to - its entries' `uModel` translations, its
+  /// Position slots, the occlusion raster - while the arena keeps the
+  /// world in f64. The consumer picks it near the target's eye and keeps
+  /// it still while the eye stays within reach (a power-of-two cell, so a
+  /// camera move stays one shared view write), and the GPU sees small
+  /// numbers wherever the scene lies. A change shifts the entries written
+  /// under the old origin in one write (`SinkWriter::shift_params`) at
+  /// the next flush, and re-derives the frustum, LOD view and occlusion
+  /// of the target's view. Zero (the default, and what forgetting the
+  /// view restores) is a plain world upload.
+  pub fn set_origin(&mut self, target: u64, origin: [f64; 3]) {
+    let previous = self.origin_of(target);
+    if previous == origin {
+      return;
+    }
+    self.origins.insert(target, origin);
+    let delta = [previous[0] - origin[0], previous[1] - origin[1], previous[2] - origin[2]];
+    match self.origin_shifts.iter_mut().find(|(t, _)| *t == target) {
+      Some((_, sum)) => {
+        for (s, d) in sum.iter_mut().zip(delta) {
+          *s += d;
+        }
+      }
+      None => self.origin_shifts.push((target, delta)),
+    }
+    if self.views.contains_key(&target) {
+      self.apply_view(target);
+    }
+  }
+
+  /// The LOD view a target measures with, for the tests.
+  #[cfg(test)]
+  pub(crate) fn lod_view_for_test(&self, target: u64) -> Option<LodView> {
+    self.lod_views.get(&target).copied()
+  }
+
+  /// The target's render origin (`set_origin`; zero without one).
+  pub fn origin_of(&self, target: u64) -> [f64; 3] {
+    self.origins.get(&target).copied().unwrap_or([0.0; 3])
+  }
+
+  /// Derive what the target measures with from its view and origin: the
+  /// frustum, LOD view and occlusion view-projection in origin space, and
+  /// the gate's viewer. Without a view (forgotten) everything clears.
+  fn apply_view(&mut self, target: u64) {
+    let origin = self.origin_of(target);
+    let (frustum, lod, view_proj) = match self.views.get(&target).copied() {
+      Some((v, p)) => {
+        let bias = self.lod_bias.get(&target).copied().unwrap_or(1.0);
+        let vr = relative_view(&v, origin);
+        let vp = multiply(p, vr);
+        (Some(Frustum::from_view_proj(&vp, origin)), Some(derive_lod_view(&vr, &p, bias, origin)), Some((vp, p)))
+      }
+      None => (None, None, None),
     };
     let frustum_changed = match frustum {
       Some(f) => self.frustums.insert(target, f) != Some(f),
@@ -1486,11 +1598,11 @@ impl Spatial {
     if frustum_changed && !self.frustum_dirty.contains(&target) {
       self.frustum_dirty.push(target);
     }
-    match (view_proj, view) {
-      (Some(vp), Some((_, p))) => {
-        self.view_projs.insert(target, (vp, p));
+    match view_proj {
+      Some(vp) => {
+        self.view_projs.insert(target, vp);
       }
-      _ => {
+      None => {
         self.view_projs.remove(&target);
       }
     }
@@ -1498,12 +1610,10 @@ impl Spatial {
       if let Some(occ) = self.occlusion.get_mut(&target) {
         occ.dirty = true;
       }
-    }
-    if frustum_changed {
       // The gate's viewer: the same volume, plus the eye the enters are
       // paced by and the matrix a grid enumerates under.
       let viewer = match (view_proj, frustum, lod) {
-        (Some(vp), Some(f), Some(l)) => Some((vp, f, l)),
+        (Some((vp, _)), Some(f), Some(l)) => Some((vp, f, l, origin)),
         _ => None,
       };
       self.residency.set_view(target, viewer);
@@ -1514,6 +1624,44 @@ impl Spatial {
     };
     if lod_changed {
       self.view_moved(target);
+    }
+  }
+
+  /// The render-origin shifts owed since the last flush (`set_origin`):
+  /// every entry written under a target's old origin moves by the
+  /// difference, one write per target, and the Position slots on it
+  /// restage. Runs before the walk, which then writes whatever moved
+  /// under the new origin; a sink still owing its first params (`fresh`)
+  /// is left out, since the walk writes it relative to the new origin.
+  fn origin_pass(&mut self, out: &mut dyn SinkWriter) {
+    for (target, delta) in std::mem::take(&mut self.origin_shifts) {
+      let origin = self.origin_of(target);
+      let mut draws = Vec::new();
+      let mut slots: Vec<(String, usize, [f32; 3])> = Vec::new();
+      for n in self.nodes.iter().filter(|n| n.alive) {
+        for b in &n.sinks {
+          if b.sink.target == target && b.sink.params && !b.fresh {
+            draws.push(b.sink.draw);
+          }
+        }
+        for slot in &n.slots {
+          if slot.target == target && slot.projection == Projection::Position {
+            let v = [n.world[12] - origin[0], n.world[13] - origin[1], n.world[14] - origin[2]];
+            slots.push((slot.name.clone(), slot.index as usize * 3, v.map(|x| x as f32)));
+          }
+        }
+      }
+      for (name, at, v) in slots {
+        if let Some(group) = self.shared.get_mut(&(target, name)) {
+          if group.values[at..at + 3] != v {
+            group.values[at..at + 3].copy_from_slice(&v);
+            group.dirty = true;
+          }
+        }
+      }
+      if !draws.is_empty() {
+        out.shift_params(target, &draws, [delta[0] as f32, delta[1] as f32, delta[2] as f32]);
+      }
     }
   }
 
@@ -1530,7 +1678,7 @@ impl Spatial {
     Ok(level.filter(|&l| l != u32::MAX).map(|l| l as usize))
   }
 
-  pub fn set_lod_bias(&mut self, target: u64, bias: f32) {
+  pub fn set_lod_bias(&mut self, target: u64, bias: f64) {
     self.lod_bias.insert(target, bias);
     if let Some(v) = self.lod_views.get_mut(&target) {
       if v.bias != bias {
@@ -1740,7 +1888,7 @@ impl Spatial {
     self.residency.set_view_root(target, root);
   }
 
-  pub fn set_cull(&mut self, id: NodeId, enabled: bool, margin: f32) -> Result<(), String> {
+  pub fn set_cull(&mut self, id: NodeId, enabled: bool, margin: f64) -> Result<(), String> {
     let i = self.resolve(id)?;
     let n = &mut self.nodes[i as usize];
     n.cull = enabled;
@@ -1876,10 +2024,12 @@ impl Spatial {
       self.occluders.retain(|&i| nodes[i as usize].alive && nodes[i as usize].occluder.is_some());
     }
     let any_shown = self.occluders.iter().any(|&i| self.nodes[i as usize].shown);
+    let origins = &self.origins;
     for (&target, occ) in self.occlusion.iter_mut() {
       if !occ.dirty && !moved {
         continue;
       }
+      let origin = origins.get(&target).copied().unwrap_or([0.0; 3]);
       occ.dirty = false;
       let view = if any_shown { self.view_projs.get(&target) } else { None };
       let Some((vp, proj)) = view else {
@@ -1904,14 +2054,14 @@ impl Spatial {
           continue;
         }
         if let Some(o) = &n.occluder {
-          let drawn = occ.buffer.rasterize(&n.world, o, &mut budget);
+          let drawn = occ.buffer.rasterize(&shifted(&n.world, origin), o, &mut budget);
           skipped += o.triangles() - drawn;
         }
       }
       occ.buffer.finish();
       occ.skipped = skipped;
       occ.builds += 1;
-      occ.build_ms = start.elapsed().as_secs_f32() * 1000.0;
+      occ.build_ms = start.elapsed().as_secs_f64() * 1000.0;
       occ.build_max_ms = occ.build_max_ms.max(occ.build_ms);
       if !self.occlusion_retest.contains(&target) {
         self.occlusion_retest.push(target);
@@ -1934,7 +2084,7 @@ impl Spatial {
       return false;
     }
     match self.cull_box(i) {
-      Some(b) => occ.buffer.hidden(&b, n.cull_margin),
+      Some(b) => occ.buffer.hidden(&shift_box(&b, self.origin_of(target)), n.cull_margin),
       None => false,
     }
   }
@@ -2026,7 +2176,7 @@ impl Spatial {
           }
         }
       }
-      let mut normal: Option<Mat4> = None;
+      let mut normal: Option<Mat4f> = None;
       sinks.retain_mut(|b| {
         let sink = b.sink;
         if !every && !dirty.contains(&sink.target) {
@@ -2050,10 +2200,11 @@ impl Spatial {
           }
           if want && b.fresh && sink.params {
             if sink.normal && normal.is_none() {
-              normal = Some(normal_matrix(&world));
+              normal = Some(narrow(&normal_matrix(&world)));
             }
             b.fresh = false;
-            if !out.write_params(sink.target, sink.draw, &world, if sink.normal { normal.as_ref() } else { None }) {
+            let model = relative(&world, self.origin_of(sink.target));
+            if !out.write_params(sink.target, sink.draw, &model, if sink.normal { normal.as_ref() } else { None }) {
               return false;
             }
           }
@@ -2064,7 +2215,7 @@ impl Spatial {
           let fade = if want { self.lod_fade(i, sink.target) } else { [1.0, 1.0] };
           if fade != b.fade {
             b.fade = fade;
-            return out.write_fade(sink.target, sink.draw, fade);
+            return out.write_fade(sink.target, sink.draw, [fade[0] as f32, fade[1] as f32]);
           }
         }
         true
@@ -2118,7 +2269,7 @@ impl Spatial {
         if d[0] * b.fed[0] + d[1] * b.fed[1] + d[2] * b.fed[2] > ORDER_DIRECTION_EPS_COS {
           continue;
         }
-        if out.write_order_direction(b.sink.target, b.sink.draw, d) {
+        if out.write_order_direction(b.sink.target, b.sink.draw, [d[0] as f32, d[1] as f32, d[2] as f32]) {
           b.fed = d;
         } else {
           b.sink.order_feed = false;
@@ -2161,7 +2312,7 @@ impl Spatial {
         }
       }
       keyed.clear();
-      let mut nearest = f32::INFINITY;
+      let mut nearest = f64::INFINITY;
       let mut transparent = false;
       for (i, n) in self.nodes.iter().enumerate() {
         if !n.alive || n.sinks.is_empty() {
@@ -2229,7 +2380,7 @@ impl Spatial {
   /// switch with hysteresis. `reference` is the target population levels
   /// measure by (node levels measure per target). The group measures the
   /// sphere around its own box, else around every level's world boxes.
-  pub fn set_lod(&mut self, id: NodeId, levels: &[LodLevel], fade: f32, reference: Option<u64>) -> Result<(), String> {
+  pub fn set_lod(&mut self, id: NodeId, levels: &[LodLevel], fade: f64, reference: Option<u64>) -> Result<(), String> {
     let i = self.resolve(id)?;
     if !(fade >= 0.0 && fade.is_finite()) {
       return Err(format!("lod fade must be a finite fraction >= 0, got {fade}"));
@@ -2323,7 +2474,7 @@ impl Spatial {
 
   /// The sphere a LOD group is measured by: its own world box, else the
   /// union of its levels' subtrees' boxes, else its position at radius 0.
-  fn lod_sphere(&self, g: u32) -> ([f32; 3], f32) {
+  fn lod_sphere(&self, g: u32) -> ([f64; 3], f64) {
     let n = &self.nodes[g as usize];
     let mut b = n.world_box;
     if b.is_none() {
@@ -2472,8 +2623,8 @@ impl Spatial {
       if shown {
         let m = self.anchored(new.buffer, &world);
         match new.projection {
-          InstanceProjection::Pose2D => self.stage_record(&new, &pose2d(&m)),
-          InstanceProjection::Matrix => self.stage_record(&new, &m),
+          InstanceProjection::Pose2D => self.stage_record(&new, &pose2d(&m).map(|v| v as f32)),
+          InstanceProjection::Matrix => self.stage_record(&new, &narrow(&m)),
         }
         self.nodes[r as usize].record_on = true;
       }
@@ -2512,7 +2663,7 @@ impl Spatial {
 
   /// The `uLodFade` value node `i` draws with on `target`: the innermost
   /// open band's position and which side of it this level keeps.
-  fn lod_fade(&self, i: u32, target: u64) -> [f32; 2] {
+  fn lod_fade(&self, i: u32, target: u64) -> [f64; 2] {
     let Some((g, level)) = self.nodes[i as usize].lod_scope else {
       return [1.0, 1.0];
     };
@@ -2641,6 +2792,8 @@ impl Spatial {
     }
     let group = self.palettes.entry(sink.texture).or_insert_with(|| PaletteGroup {
       anchor,
+      anchor_inv: IDENTITY,
+      inv_flush: 0,
       values: Vec::new(),
       refs: 0,
       dirty: false,
@@ -2721,7 +2874,7 @@ impl Spatial {
     let i = self.resolve(id)?;
     if let Some(r) = &rest {
       let finite = r.position.iter().chain(r.rotation.iter()).chain(r.scale.iter()).all(|v| v.is_finite());
-      if !finite || r.rotation.iter().map(|v| v * v).sum::<f32>() == 0.0 {
+      if !finite || r.rotation.iter().map(|v| v * v).sum::<f64>() == 0.0 {
         return Err("the rest pose must be finite with a non-zero rotation".to_string());
       }
     }
@@ -2742,7 +2895,7 @@ impl Spatial {
   /// Write the node's weights register (see `WeightsSlotSink`): staged to
   /// its weights rows at the next flush, and what `weights_of` reads back.
   /// An equal write is free.
-  pub fn set_weights(&mut self, id: NodeId, weights: &[f32]) -> Result<(), String> {
+  pub fn set_weights(&mut self, id: NodeId, weights: &[f64]) -> Result<(), String> {
     let i = self.resolve(id)?;
     let n = &mut self.nodes[i as usize];
     if n.weights.as_slice() == weights {
@@ -2763,7 +2916,7 @@ impl Spatial {
   /// anything changed - the caller's frame-demand signal. A raw
   /// `set_weights` never consults or cancels the track: it overwrites at
   /// the next advance (last write wins).
-  pub fn write_weights(&mut self, id: NodeId, weights: &[f32], motion: Option<NodeMotion>) -> Result<bool, String> {
+  pub fn write_weights(&mut self, id: NodeId, weights: &[f64], motion: Option<NodeMotion>) -> Result<bool, String> {
     let i = self.resolve(id)?;
     let motion = match motion {
       Some(m) => Some(m),
@@ -2782,7 +2935,7 @@ impl Spatial {
   }
 
   /// The node's weights register as the arena holds it.
-  pub fn weights_of(&self, id: NodeId) -> Result<&[f32], String> {
+  pub fn weights_of(&self, id: NodeId) -> Result<&[f64], String> {
     let i = self.resolve(id)?;
     Ok(&self.nodes[i as usize].weights)
   }
@@ -2808,6 +2961,8 @@ impl Spatial {
     }
     let group = self.palettes.entry(sink.texture).or_insert_with(|| PaletteGroup {
       anchor: None,
+      anchor_inv: IDENTITY,
+      inv_flush: 0,
       values: Vec::new(),
       refs: 0,
       dirty: false,
@@ -2893,7 +3048,7 @@ impl Spatial {
         let width = group.row_floats;
         let at = slot.row as usize * width;
         for k in 0..width {
-          let v = n.weights.get(k).copied().unwrap_or(0.0);
+          let v = n.weights.get(k).copied().unwrap_or(0.0) as f32;
           if group.values[at + k] != v {
             group.values[at + k] = v;
             group.dirty = true;
@@ -2952,9 +3107,11 @@ impl Spatial {
       }
     }
     for sink in &sinks {
+      let origins = &self.instance_origins;
       let group = self.instances.entry(sink.buffer).or_insert_with(|| InstanceGroup {
         projection: sink.projection,
         anchor,
+        origin: origins.get(&sink.buffer).copied().unwrap_or([0.0; 3]),
         anchor_inv: IDENTITY,
         inv_flush: 0,
         values: Vec::new(),
@@ -3020,6 +3177,9 @@ impl Spatial {
       group.dirty = Some((0, group.values.len()));
     }
     self.instances.insert(new, group);
+    if let Some(origin) = self.instance_origins.remove(&old) {
+      self.instance_origins.insert(new, origin);
+    }
     for n in self.nodes.iter_mut() {
       for record in n.records.iter_mut() {
         if record.buffer == old {
@@ -3028,6 +3188,42 @@ impl Spatial {
       }
     }
     Ok(())
+  }
+
+  /// The point the records on `buffer` are relative to, for a buffer
+  /// without an anchor node (an anchored buffer ignores it): the 2d
+  /// sprite layer's render origin, one dimension down from a target's
+  /// (`set_origin`). A change restages every shown record on the buffer
+  /// into the staging mirror, which the next flush publishes as one
+  /// coalesced write. Declared before the first bind it holds for the
+  /// group that bind creates; a retarget carries it to the new buffer.
+  pub fn set_instance_origin(&mut self, buffer: u64, origin: [f64; 3]) {
+    let previous = self.instance_origins.insert(buffer, origin).unwrap_or([0.0; 3]);
+    if previous == origin {
+      return;
+    }
+    let Some(group) = self.instances.get_mut(&buffer) else {
+      return;
+    };
+    group.origin = origin;
+    for i in 0..self.nodes.len() {
+      let n = &self.nodes[i];
+      if !n.alive || !n.record_on {
+        continue;
+      }
+      let Some(rec) = n.records.get(n.record_level as usize).copied() else {
+        continue;
+      };
+      if rec.buffer != buffer {
+        continue;
+      }
+      let world = n.world;
+      let m = self.anchored(buffer, &world);
+      match rec.projection {
+        InstanceProjection::Pose2D => self.stage_record(&rec, &pose2d(&m).map(|v| v as f32)),
+        InstanceProjection::Matrix => self.stage_record(&rec, &narrow(&m)),
+      }
+    }
   }
 
   /// Drop one record sink's claim on its group: the slot hides at the
@@ -3057,17 +3253,19 @@ impl Spatial {
     }
   }
 
-  /// `world` in the buffer's anchor frame (`inverse(anchorWorld) * world`;
-  /// `world` itself without an anchor). The inverse is taken once per
-  /// flush per buffer: the walk visits an anchor before its descendants,
-  /// so it is fresh by the time a bound node stages. A dead anchor reads
-  /// as identity (a consumer tears instances down before their mesh).
+  /// `world` in the buffer's record frame: `inverse(anchorWorld) * world`
+  /// under an anchor, else `world` relative to the buffer's origin
+  /// (`set_instance_origin`; `world` itself at the default zero). The
+  /// inverse is taken once per flush per buffer: the walk visits an
+  /// anchor before its descendants, so it is fresh by the time a bound
+  /// node stages. A dead anchor reads as identity (a consumer tears
+  /// instances down before their mesh).
   fn anchored(&mut self, buffer: u64, world: &Mat4) -> Mat4 {
-    let (anchor, stale) = match self.instances.get(&buffer) {
-      Some(group) => (group.anchor, group.inv_flush != self.flush_id),
+    let (anchor, origin, stale) = match self.instances.get(&buffer) {
+      Some(group) => (group.anchor, group.origin, group.inv_flush != self.flush_id),
       None => return *world,
     };
-    let Some(anchor) = anchor else { return *world };
+    let Some(anchor) = anchor else { return shifted(world, origin) };
     if stale {
       let inv = match self.resolve(anchor) {
         Ok(a) => invert_affine(&self.nodes[a as usize].world),
@@ -3163,7 +3361,7 @@ impl Spatial {
   /// builds its triangle BVH (see pick.rs), so repeated rays against a
   /// merged scene stay log-cost. `direction` need not be normalized;
   /// distances are world units.
-  pub fn raycast(&mut self, origin: [f32; 3], direction: [f32; 3], filter: &QueryFilter) -> Result<Vec<Hit>, String> {
+  pub fn raycast(&mut self, origin: [f64; 3], direction: [f64; 3], filter: &QueryFilter) -> Result<Vec<Hit>, String> {
     let len = (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]).sqrt();
     if len == 0.0 {
       return Ok(Vec::new());
@@ -3263,7 +3461,7 @@ impl Spatial {
   /// so a motion deeper in is a touch at 0 and one toward that face is
   /// the leave. Same testing and index contract as `overlap`; a zero
   /// motion touches nothing.
-  pub fn sweep(&mut self, volume: &Volume, motion: [f32; 3], filter: &QueryFilter) -> Result<Vec<Impact>, String> {
+  pub fn sweep(&mut self, volume: &Volume, motion: [f64; 3], filter: &QueryFilter) -> Result<Vec<Impact>, String> {
     let root = self.filter_root(filter)?;
     let query = collide::Query::new(volume);
     let aabb = query.bounds(Some(motion));
@@ -3274,7 +3472,7 @@ impl Spatial {
       let Some((bounds, world, shape)) = self.collider(i, filter, root, true) else {
         continue;
       };
-      let mut first: Option<(f32, [f32; 3], [f32; 3])> = None;
+      let mut first: Option<(f64, [f64; 3], [f64; 3])> = None;
       let mut inside = false;
       if shape.is_none() {
         if let Some((point, normal, _)) = query.solid_box_contact(&bounds, &world) {
@@ -3408,7 +3606,7 @@ impl Spatial {
   /// it. Returns whether the node's effective rate changed. Negative and
   /// non-finite scales are refused (reverse playback is a player's
   /// `speed`).
-  pub fn set_time_scale(&mut self, id: NodeId, scale: Option<f32>) -> Result<bool, String> {
+  pub fn set_time_scale(&mut self, id: NodeId, scale: Option<f64>) -> Result<bool, String> {
     let i = self.resolve(id)?;
     if let Some(s) = scale {
       if !s.is_finite() || s < 0.0 {
@@ -3421,7 +3619,7 @@ impl Spatial {
 
   /// The rate the node's motion runs at (see `set_time_scale`): its own
   /// scale, else the nearest declaring ancestor's, else 1.
-  pub fn time_rate(&self, id: NodeId) -> Result<f32, String> {
+  pub fn time_rate(&self, id: NodeId) -> Result<f64, String> {
     Ok(self.nodes[self.resolve(id)? as usize].rate)
   }
 
@@ -3457,9 +3655,9 @@ impl Spatial {
   pub fn set_transform(
     &mut self,
     id: NodeId,
-    position: [f32; 3],
-    rotation: [f32; 4],
-    scale: [f32; 3],
+    position: [f64; 3],
+    rotation: [f64; 4],
+    scale: [f64; 3],
   ) -> Result<(), String> {
     let i = self.resolve(id)?;
     let n = &mut self.nodes[i as usize];
@@ -3512,9 +3710,9 @@ impl Spatial {
   pub fn write_transform(
     &mut self,
     id: NodeId,
-    position: [f32; 3],
-    rotation: [f32; 4],
-    scale: [f32; 3],
+    position: [f64; 3],
+    rotation: [f64; 4],
+    scale: [f64; 3],
   ) -> Result<bool, String> {
     let i = self.resolve(id)?;
     let Some(config) = self.transitions.configs.get(&id).cloned() else {
@@ -3580,7 +3778,7 @@ impl Spatial {
 
   /// The nearest ancestor declaring `stagger_ms` (its arena index and
   /// spacing), None without one.
-  fn stagger_group_of(&self, i: u32) -> Option<(u32, f32)> {
+  fn stagger_group_of(&self, i: u32) -> Option<(u32, f64)> {
     let mut cursor = self.nodes[i as usize].parent;
     while let Some(p) = cursor {
       let pid = self.id_of(p);
@@ -3598,9 +3796,9 @@ impl Spatial {
   /// without one. Counting is per group per frame in occurrence order:
   /// creation order for enters (JSX order for template children), tree
   /// order for exits (`start_staggered_exits` assigns those).
-  fn stagger_delay_for(&mut self, i: u32, exit: bool) -> f32 {
+  fn stagger_delay_for(&mut self, i: u32, exit: bool) -> f64 {
     match self.stagger_group_of(i) {
-      Some((g, stagger_ms)) => self.transitions.stagger_index(self.id_of(g), exit) as f32 * stagger_ms,
+      Some((g, stagger_ms)) => self.transitions.stagger_index(self.id_of(g), exit) as f64 * stagger_ms,
       None => 0.0,
     }
   }
@@ -3834,7 +4032,7 @@ impl Spatial {
       let mut snapped = false;
       // One stagger index per node, shared by all its entering components,
       // so a multi-component enter moves as one item of the cascade.
-      let mut stagger: Option<f32> = None;
+      let mut stagger: Option<f64> = None;
       for (component, held, enter) in enters {
         let Some((from, motion)) = enter else { continue };
         if stagger.is_none() {
@@ -4061,6 +4259,9 @@ impl Spatial {
   /// the slots still naming it stage nothing, so it never writes again.
   pub fn flush(&mut self, out: &mut dyn SinkWriter) {
     self.flush_id += 1;
+    if !self.origin_shifts.is_empty() {
+      self.origin_pass(out);
+    }
     self.refit_shaped();
     if !self.queue.is_empty() {
       let queue = std::mem::take(&mut self.queue);
@@ -4117,48 +4318,31 @@ impl Spatial {
     self.flush_curve_sinks(out);
     // Instance staging publishes the same way: one coalesced dirty range
     // per buffer per flush, a group dropping with its last write.
+    let instance_origins = &mut self.instance_origins;
     self.instances.retain(|buffer, group| {
       let mut landed = true;
       if let Some((lo, hi)) = group.dirty.take() {
         landed = out.write_instances(*buffer, lo as u32, hi as u32, &group.values);
       }
-      landed && group.refs > 0
+      let keep = landed && group.refs > 0;
+      if !keep {
+        instance_origins.remove(buffer);
+      }
+      keep
     });
-    // Palette staging publishes whole per texture. Anchored rows relativize
-    // here, at the flush's end: the anchor's world is fresh (an anchor move
-    // restaged every row, since it is an ancestor of every bound node), and
-    // one inverse covers the palette. A dead anchor falls back to identity
-    // (the consumer tears joints down before their model root, so live
-    // sinks never see it).
-    // Weights rows stage from the registers, beside the matrix rows the
-    // walk staged.
+    // Palette staging publishes whole per texture: the matrix rows the
+    // walk staged (anchor-relative already, see `PaletteGroup`) and the
+    // weights rows from the registers.
     self.stage_weights();
     if self.palettes.values().any(|g| g.dirty || g.refs == 0) {
-      let mut palettes = std::mem::take(&mut self.palettes);
-      let mut scratch: Vec<f32> = Vec::new();
-      palettes.retain(|texture, group| {
+      self.palettes.retain(|texture, group| {
         let mut landed = true;
         if group.dirty {
           group.dirty = false;
-          landed = match group.anchor {
-            None => out.write_texture(*texture, &group.values),
-            Some(a) => {
-              let inv = match self.resolve(a) {
-                Ok(i) => invert_affine(&self.nodes[i as usize].world),
-                Err(_) => IDENTITY,
-              };
-              scratch.clear();
-              for row in group.values.chunks(16) {
-                let m: Mat4 = row.try_into().expect("palette rows are 16 floats");
-                scratch.extend_from_slice(&multiply(inv, m));
-              }
-              out.write_texture(*texture, &scratch)
-            }
-          };
+          landed = out.write_texture(*texture, &group.values);
         }
         landed && group.refs > 0
       });
-      self.palettes = palettes;
     }
   }
 
@@ -4220,7 +4404,11 @@ impl Spatial {
     }
 
     if changed {
-      // Disjoint borrows: the node's slots read, the shared groups written.
+      // Disjoint borrows: the node's slots read (an immutable re-borrow, so
+      // a palette anchor's world is readable too), the groups written.
+      let n = &self.nodes[i as usize];
+      let nodes = &self.nodes;
+      let origins = &self.origins;
       let shared = &mut self.shared;
       for slot in &n.slots {
         let v = match slot.projection {
@@ -4233,8 +4421,12 @@ impl Spatial {
               [0.0; 3]
             }
           }
-          Projection::Position => [n.world[12], n.world[13], n.world[14]],
+          Projection::Position => {
+            let o = origins.get(&slot.target).copied().unwrap_or([0.0; 3]);
+            [n.world[12] - o[0], n.world[13] - o[1], n.world[14] - o[2]]
+          }
         };
+        let v = v.map(|x| x as f32);
         let at = slot.index as usize * 3;
         if let Some(group) = shared.get_mut(&(slot.target, slot.name.clone())) {
           if group.values[at..at + 3] != v {
@@ -4244,9 +4436,21 @@ impl Spatial {
         }
       }
       let palettes = &mut self.palettes;
+      let flush_id = self.flush_id;
       for slot in &n.texture_slots {
         if let Some(group) = palettes.get_mut(&slot.texture) {
-          let m = multiply(n.world, slot.post);
+          // The anchor's inverse, once per flush per texture: the anchor
+          // is an ancestor, so the walk has its world fresh by now. A dead
+          // anchor reads as identity (the consumer tears joints down
+          // before their model root, so live sinks never see it).
+          if group.inv_flush != flush_id {
+            group.inv_flush = flush_id;
+            group.anchor_inv = match group.anchor.and_then(|a| node_at(nodes, a)) {
+              Some(anchor) => invert_affine(&anchor.world),
+              None => IDENTITY,
+            };
+          }
+          let m = narrow(&multiply(group.anchor_inv, multiply(n.world, slot.post)));
           let at = slot.row as usize * 16;
           if group.values[at..at + 16] != m {
             group.values[at..at + 16].copy_from_slice(&m);
@@ -4270,7 +4474,7 @@ impl Spatial {
       self.touched.push(i);
     }
     // The inverse-transpose is one matrix however many sinks ask for it.
-    let mut normal: Option<Mat4> = None;
+    let mut normal: Option<Mat4f> = None;
     // Entries that are on AND staying on get their fresh matrix here; the
     // switch itself (visibility and the frustum) is the cull pass's, after
     // the walk, so a group's boxes are all current when it is decided. An
@@ -4287,13 +4491,15 @@ impl Spatial {
         && b.entry_on
         && self.view_gate(i, b.sink.target).is_none()
         && self.lod_allows(i, b.sink.target, b.sink.fade);
+      let origin = self.origin_of(b.sink.target);
       let sinks = &mut self.nodes[i as usize].sinks;
       if staying_on && (changed || b.fresh) {
         if b.sink.normal && normal.is_none() {
-          normal = Some(normal_matrix(&world));
+          normal = Some(narrow(&normal_matrix(&world)));
         }
         sinks[k].fresh = false;
-        if !out.write_params(b.sink.target, b.sink.draw, &world, if b.sink.normal { normal.as_ref() } else { None }) {
+        let model = relative(&world, origin);
+        if !out.write_params(b.sink.target, b.sink.draw, &model, if b.sink.normal { normal.as_ref() } else { None }) {
           sinks.remove(k);
           continue;
         }
@@ -4309,8 +4515,8 @@ impl Spatial {
       if shown && (changed || !record_on) {
         let m = self.anchored(rec.buffer, &world);
         match rec.projection {
-          InstanceProjection::Pose2D => self.stage_record(&rec, &pose2d(&m)),
-          InstanceProjection::Matrix => self.stage_record(&rec, &m),
+          InstanceProjection::Pose2D => self.stage_record(&rec, &pose2d(&m).map(|v| v as f32)),
+          InstanceProjection::Matrix => self.stage_record(&rec, &narrow(&m)),
         }
         self.nodes[i as usize].record_on = true;
       } else if !shown && record_on {

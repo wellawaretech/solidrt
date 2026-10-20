@@ -7,7 +7,7 @@
 // targets) stays in scene.ts with the light fan-out; it reads the slots
 // through forEachShadowSlot and the atlas through atlas().
 
-import { createDrawTarget, depthTexture, destroyTexture, limits, setTargetRect, setTargetSize } from "@solidrt/core/gpu"
+import { createDrawTarget, depthTexture, destroyTexture, limits, setTargetParams, setTargetRect, setTargetSize } from "@solidrt/core/gpu"
 import type { ShaderParams, TextureId } from "@solidrt/core/gpu"
 import { cascadeBoundary, copy, frustumSliceSphere, lookAt as lookAtMatrix, mat4, shadowMetric, snapToGrid, transformVector } from "./math.ts"
 import type { Mat4, Vec3 } from "./math.ts"
@@ -165,11 +165,21 @@ export type ShadowSystem = {
   /** The slot deal changed (writeLights) or a map camera wrote
    * (a shadow view's pending camera): the uShadowMatrix array is owed. */
   markMatricesDirty(): void
-  /** Write the uShadowMatrix and uShadowMetric arrays through `write` if
-   * owed - the matrices that render the maps are the ones receivers look
-   * up with, and each map's metric (near, far, texel, range) is read off
-   * the same camera at the same time. */
-  flushMatrices(write: (params: ShaderParams) => void): void
+  /** Write the uShadowMatrix and uShadowMetric arrays to every receiving
+   * target when owed (a map camera moved, the slot deal changed, or a
+   * receiver's render origin moved): `receivers` hands over each target
+   * with its origin and each gets the matrices composed against it
+   * (`receiverMatrices`). The matrices that render the maps are the ones
+   * receivers look up with, and each map's metric (near, far, texel,
+   * range) is read off the same camera at the same time. */
+  flushMatrices(receivers: (fn: (target: TextureId, origin: Vec3) => void) => void): void
+  /** The uShadowMatrix and uShadowMetric arrays for a receiver whose
+   * render origin is `origin`: each map's light view-projection relative
+   * to the MAP's own origin, applied to a point relative to the
+   * receiver's - the two origins' difference folded into the matrix in
+   * f64, so a receiver and a caster a million units out agree to the
+   * texel. Shared scratch arrays: write them before the next call. */
+  receiverMatrices(origin: Vec3): ShaderParams
   /** The uShadowAtlas binding while nothing casts: the depth texture of a
    * one-texel target that renders nothing (its clear leaves depth 1, never
    * shadowed). A real depth texture, because uShadowAtlas is a
@@ -467,6 +477,29 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
   // Each map's uShadowMetric beside its matrix; zeros in an undealt slot.
   let shadowMetrics: number[] = new Array(MAX_SHADOW_MAPS * 4).fill(0)
   let shadowMatricesDirty = false
+  let receiverMatrices = (origin: Vec3): ShaderParams => {
+    let dealt = 0
+    eachSlot((slot, _i, shadow, c) => {
+      let view = shadow.views[c]!
+      let cam = view.camera
+      // The map's view-projection over its own origin space, translated
+      // by the receiver's origin minus the map's: M = VP * T(d).
+      let m = cam.viewProjRel
+      let d = [origin[0] - cam.origin[0], origin[1] - cam.origin[1], origin[2] - cam.origin[2]]
+      let at = slot * 16
+      for (let k = 0; k < 12; k++) shadowMatrices[at + k] = m[k]!
+      for (let r = 0; r < 4; r++) {
+        shadowMatrices[at + 12 + r] = m[r]! * d[0]! + m[4 + r]! * d[1]! + m[8 + r]! * d[2]! + m[12 + r]!
+      }
+      shadowMetric(shadowMetrics, slot * 4, cam.near, cam.far, cam.fov, cam.ortho, view.width)
+      dealt = slot + 1
+    })
+    for (let slot = dealt; slot < MAX_SHADOW_MAPS; slot++) {
+      for (let k = 0; k < 16; k++) shadowMatrices[slot * 16 + k] = IDENTITY[k]!
+      for (let k = 0; k < 4; k++) shadowMetrics[slot * 4 + k] = 0
+    }
+    return { uShadowMatrix: shadowMatrices, uShadowMetric: shadowMetrics }
+  }
   return {
     atlas: () => shadowAtlas,
     forEachShadowSlot,
@@ -478,23 +511,12 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
     markMatricesDirty() {
       shadowMatricesDirty = true
     },
-    flushMatrices(write) {
+    flushMatrices(receivers) {
       if (!shadowMatricesDirty) return
       shadowMatricesDirty = false
-      let dealt = 0
-      eachSlot((slot, _i, shadow, c) => {
-        let view = shadow.views[c]!
-        let m = view.camera.viewProj
-        for (let k = 0; k < 16; k++) shadowMatrices[slot * 16 + k] = m[k]!
-        shadowMetric(shadowMetrics, slot * 4, view.camera.near, view.camera.far, view.camera.fov, view.camera.ortho, view.width)
-        dealt = slot + 1
-      })
-      for (let slot = dealt; slot < MAX_SHADOW_MAPS; slot++) {
-        for (let k = 0; k < 16; k++) shadowMatrices[slot * 16 + k] = IDENTITY[k]!
-        for (let k = 0; k < 4; k++) shadowMetrics[slot * 4 + k] = 0
-      }
-      write({ uShadowMatrix: shadowMatrices, uShadowMetric: shadowMetrics })
+      receivers((target, origin) => setTargetParams(target, receiverMatrices(origin)))
     },
+    receiverMatrices,
     placeholder() {
       if (placeholderTarget === null) {
         placeholderTarget = createDrawTarget(1, 1, null, { depth: "texture", autoFree: false, label: deps.label + "-shadow-none" })

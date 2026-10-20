@@ -691,8 +691,11 @@ export function createStreamingSource(opts: { position: [number, number, number]
   // The view: a translation to the point; the projection: the symmetric
   // orthographic box of the radius about it (both column-major, the
   // core's layout). Only the translation and the three scales change.
-  let view = new Float32Array(16)
-  let proj = new Float32Array(16)
+  // The point is the viewer's render origin too: the core then tests
+  // regions against a box around zero, exact at any distance.
+  let view = new Float64Array(16)
+  let proj = new Float64Array(16)
+  let origin = new Float64Array(3)
   view[0] = view[5] = view[10] = view[15] = 1
   proj[15] = 1
   let push = () => {
@@ -700,11 +703,12 @@ export function createStreamingSource(opts: { position: [number, number, number]
     view[12] = -position[0]
     view[13] = -position[1]
     view[14] = -position[2]
+    origin.set(position)
     let scale = 1 / radius
     proj[0] = scale
     proj[5] = scale
     proj[10] = -scale
-    spatial.setView(key, view, proj, opts.root)
+    spatial.setView(key, view, proj, opts.root, origin)
     // A viewer push alone demands no frame (a camera's params write
     // does): ask for the flush that tests the regions against it.
     requestFrame()

@@ -317,6 +317,12 @@ pub(crate) enum RasterCmd {
   /// Fold new params into one draw entry's record and mark the target dirty;
   /// values apply at the next render (flush, or explicit for manual).
   UpdateDrawParams { target: u64, draw: u64, params: Vec<(String, ParamValue)> },
+  /// Add `delta` to the translation column (components 12..15) of the
+  /// mat4 param `name` on each listed entry of a draw target: the spatial
+  /// core's render-origin shift, one command for every entry it wrote
+  /// under the old origin (see `spatial::SinkWriter::shift_params`).
+  /// Fire-and-forget; marks dirty.
+  ShiftDrawParams { target: u64, draws: Vec<u64>, name: String, delta: [f32; 3] },
   /// Fold new params into a draw target's shared (target-level) record and
   /// mark the target dirty. Shared params apply per entry before the entry's
   /// own params, so an entry naming the same uniform overrides them.

@@ -1,6 +1,6 @@
 //! JS bindings for the spatial core (`alloy::spatial`): node create/move/
 //! destroy, draw-sink binding and the flush. A thin marshalling layer - the
-//! transform is one Float32Array of 10 (position xyz, quaternion xyzw,
+//! transform is one Float64Array of 10 (position xyz, quaternion xyzw,
 //! scale xyz) so a hot-path write is one argument, and node ids are plain
 //! numbers (generation-tagged, never reused).
 
@@ -37,12 +37,12 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
 // the arena in the shared alloy context (`super::gui`).
 
 /// The 10 floats of a transform argument: position, quaternion, scale.
-fn transform(ctx: &Ctx<'_>, data: &TypedArray<'_, f32>, api: &str) -> rquickjs::Result<([f32; 3], [f32; 4], [f32; 3])> {
+fn transform(ctx: &Ctx<'_>, data: &TypedArray<'_, f64>, api: &str) -> rquickjs::Result<([f64; 3], [f64; 4], [f64; 3])> {
   let f = elements_of(ctx, data, api)?;
   if f.len() != 10 {
     return Err(throw_str(
       ctx,
-      &format!("{api}: transform must be a Float32Array of 10 (position, quaternion, scale)"),
+      &format!("{api}: transform must be a Float64Array of 10 (position, quaternion, scale)"),
     ));
   }
   Ok(([f[0], f[1], f[2]], [f[3], f[4], f[5], f[6]], [f[7], f[8], f[9]]))
@@ -191,6 +191,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("bindMatrixRecord")?;
     decl.declare("unbindRecord")?;
     decl.declare("retargetRecords")?;
+    decl.declare("setInstanceOrigin")?;
     Ok(())
   }
 
@@ -305,11 +306,12 @@ impl ModuleDef for SpatialModule {
     exports.export("bindMatrixRecord", Function::new(ctx.clone(), bind_matrix_record)?)?;
     exports.export("unbindRecord", Function::new(ctx.clone(), unbind_record)?)?;
     exports.export("retargetRecords", Function::new(ctx.clone(), retarget_records)?)?;
+    exports.export("setInstanceOrigin", Function::new(ctx.clone(), set_instance_origin)?)?;
     Ok(())
   }
 }
 
-fn create_node(ctx: Ctx<'_>, data: TypedArray<'_, f32>, visible: bool) -> rquickjs::Result<u64> {
+fn create_node(ctx: Ctx<'_>, data: TypedArray<'_, f64>, visible: bool) -> rquickjs::Result<u64> {
   let (p, q, s) = transform(&ctx, &data, "createNode")?;
   Ok(super::gui(&ctx).alloy.spatial().create(p, q, s, visible))
 }
@@ -367,7 +369,7 @@ fn set_parent(ctx: Ctx<'_>, id: u64, parent: OptArg<u64>) -> rquickjs::Result<()
   super::gui(&ctx).alloy.spatial().set_parent(id, parent.0).map_err(|e| throw_str(&ctx, &format!("setParent: {e}")))
 }
 
-fn set_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f32>) -> rquickjs::Result<()> {
+fn set_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f64>) -> rquickjs::Result<()> {
   let (p, q, s) = transform(&ctx, &data, "setTransform")?;
   super::gui(&ctx)
     .alloy
@@ -401,7 +403,7 @@ fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, Str
       "rotation" => config.rotation = Some(node_entry(decode_node_entry(&at, entry, LaneRule::Exactly(4))?, fixed::<4>)),
       "weights" => config.weights = Some(node_entry(decode_node_entry(&at, entry, LaneRule::Any)?, |lanes| lanes)),
       "all" => config.all = Some(decode_node_motion(&at, entry)?),
-      "stagger" => config.stagger_ms = Some(decode_stagger(entry)?),
+      "stagger" => config.stagger_ms = Some(decode_stagger(entry)? as f64),
       other => {
         return Err(format!(
           "transition.{other}: '{other}' is not a node component (expected position, rotation, scale, weights, all or stagger)"
@@ -414,15 +416,15 @@ fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, Str
 
 /// A decoded entry in the arena's per-component shape, `carrier` turning
 /// each endpoint's lanes into the component's value type.
-fn node_entry<V>(d: NodeEntryDecoded, carrier: impl Fn(Vec<f32>) -> V) -> NodeTransitionEntry<V> {
-  let endpoint = |(lanes, motion): (Vec<f32>, NodeMotion)| NodeEndpoint { value: carrier(lanes), motion };
+fn node_entry<V>(d: NodeEntryDecoded, carrier: impl Fn(Vec<f64>) -> V) -> NodeTransitionEntry<V> {
+  let endpoint = |(lanes, motion): (Vec<f64>, NodeMotion)| NodeEndpoint { value: carrier(lanes), motion };
   NodeTransitionEntry { motion: d.motion, from: d.from.map(endpoint), exit: d.exit.map(endpoint) }
 }
 
 /// A fixed-lane component's value; the decoder checked the count, so the
 /// array fills exactly.
-fn fixed<const N: usize>(lanes: Vec<f32>) -> [f32; N] {
-  let mut value = [0.0f32; N];
+fn fixed<const N: usize>(lanes: Vec<f64>) -> [f64; N] {
+  let mut value = [0.0f64; N];
   value.copy_from_slice(&lanes);
   value
 }
@@ -448,7 +450,7 @@ fn set_transition<'js>(ctx: Ctx<'js>, id: u64, value: Value<'js>) -> rquickjs::R
 /// components animate toward the written value, undeclared ones snap;
 /// without a declaration this is setTransform. A started or retargeted
 /// track (or a snap that moved the node) requests a frame.
-fn write_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f32>) -> rquickjs::Result<()> {
+fn write_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f64>) -> rquickjs::Result<()> {
   let (p, q, s) = transform(&ctx, &data, "writeTransform")?;
   let st = super::gui(&ctx);
   let changed =
@@ -467,7 +469,7 @@ fn set_time_scale<'js>(ctx: Ctx<'js>, id: u64, scale: Value<'js>) -> rquickjs::R
     None
   } else {
     match scale.as_number() {
-      Some(s) => Some(s as f32),
+      Some(s) => Some(s),
       None => return Err(throw_str(&ctx, "setTimeScale: scale must be a number or null")),
     }
   };
@@ -585,11 +587,11 @@ fn set_draw_count(ctx: Ctx<'_>, id: u64, count: u32) -> rquickjs::Result<()> {
 }
 
 /// Fill `out` (a Float32Array of 16) with the node's current world matrix.
-fn world_matrix(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::Result<()> {
+fn world_matrix(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f64>) -> rquickjs::Result<()> {
   let world = super::gui(&ctx).alloy.spatial().world(id).map_err(|e| throw_str(&ctx, &format!("worldMatrix: {e}")))?;
   let dst = elements_mut_of(&ctx, &out, "worldMatrix")?;
   if dst.len() != 16 {
-    return Err(throw_str(&ctx, "worldMatrix: out must be a Float32Array of 16"));
+    return Err(throw_str(&ctx, "worldMatrix: out must be a Float64Array of 16"));
   }
   dst.copy_from_slice(&world);
   Ok(())
@@ -641,7 +643,7 @@ fn set_bounds(ctx: Ctx<'_>, id: u64, bounds: OptArg<TypedArray<'_, f32>>) -> rqu
       if f.len() != 6 {
         return Err(throw_str(&ctx, "setBounds: bounds must be a Float32Array of 6 (min xyz, max xyz)"));
       }
-      Some([f[0], f[1], f[2], f[3], f[4], f[5]])
+      Some([f[0] as f64, f[1] as f64, f[2] as f64, f[3] as f64, f[4] as f64, f[5] as f64])
     }
     None => None,
   };
@@ -649,39 +651,41 @@ fn set_bounds(ctx: Ctx<'_>, id: u64, bounds: OptArg<TypedArray<'_, f32>>) -> rqu
 }
 
 /// A six-float box argument (min xyz, max xyz), or None.
-fn box_arg(ctx: &Ctx<'_>, bounds: &OptArg<TypedArray<'_, f32>>, api: &str) -> rquickjs::Result<Option<[f32; 6]>> {
+fn box_arg(ctx: &Ctx<'_>, bounds: &OptArg<TypedArray<'_, f32>>, api: &str) -> rquickjs::Result<Option<[f64; 6]>> {
   match &bounds.0 {
     Some(data) => {
       let f = elements_of(ctx, data, api)?;
       if f.len() != 6 {
         return Err(throw_str(ctx, &format!("{api}: bounds must be a Float32Array of 6 (min xyz, max xyz)")));
       }
-      Ok(Some([f[0], f[1], f[2], f[3], f[4], f[5]]))
+      Ok(Some([f[0] as f64, f[1] as f64, f[2] as f64, f[3] as f64, f[4] as f64, f[5] as f64]))
     }
     None => Ok(None),
   }
 }
 
-/// What a target sees: its view and projection as two Float32Arrays of
+/// What a target sees: its view and projection as two Float64Arrays of
 /// 16 (column-major), or null to forget the target; `root` the world the
 /// residency gate scopes the viewer to (a root node id), absent for every
-/// world.
+/// world; `origin` the target's render origin (a Float64Array of 3,
+/// absent = zero), set before the view so the view derives from it.
 fn set_view(
   ctx: Ctx<'_>,
   target: u64,
-  view: OptArg<TypedArray<'_, f32>>,
-  proj: OptArg<TypedArray<'_, f32>>,
+  view: OptArg<TypedArray<'_, f64>>,
+  proj: OptArg<TypedArray<'_, f64>>,
   root: OptArg<u64>,
+  origin: OptArg<TypedArray<'_, f64>>,
 ) -> rquickjs::Result<()> {
   let matrices = match (&view.0, &proj.0) {
     (Some(v), Some(p)) => {
       let v = elements_of(&ctx, v, "setView")?;
       let p = elements_of(&ctx, p, "setView")?;
       if v.len() != 16 || p.len() != 16 {
-        return Err(throw_str(&ctx, "setView: view and proj must be Float32Arrays of 16"));
+        return Err(throw_str(&ctx, "setView: view and proj must be Float64Arrays of 16"));
       }
-      let mut vm = [0.0f32; 16];
-      let mut pm = [0.0f32; 16];
+      let mut vm = [0.0f64; 16];
+      let mut pm = [0.0f64; 16];
       vm.copy_from_slice(v);
       pm.copy_from_slice(p);
       Some((vm, pm))
@@ -689,9 +693,22 @@ fn set_view(
     (None, None) => None,
     _ => return Err(throw_str(&ctx, "setView: view and proj come together, or null to forget the target")),
   };
+  let origin = match &origin.0 {
+    Some(o) if matrices.is_some() => {
+      let o = elements_of(&ctx, o, "setView")?;
+      if o.len() != 3 {
+        return Err(throw_str(&ctx, "setView: origin must be a Float64Array of 3"));
+      }
+      [o[0], o[1], o[2]]
+    }
+    _ => [0.0; 3],
+  };
   let gui = super::gui(&ctx);
   let mut spatial = gui.alloy.spatial();
   spatial.set_view_root(target, if matrices.is_some() { root.0 } else { None });
+  if matrices.is_some() {
+    spatial.set_origin(target, origin);
+  }
   spatial.set_view(target, matrices);
   Ok(())
 }
@@ -708,7 +725,7 @@ fn lod_level(ctx: Ctx<'_>, id: u64, target: u64) -> rquickjs::Result<Option<u32>
 
 /// The bias every projected size measured on a target is multiplied by.
 fn set_lod_bias(ctx: Ctx<'_>, target: u64, bias: f64) -> rquickjs::Result<()> {
-  super::gui(&ctx).alloy.spatial().set_lod_bias(target, bias as f32);
+  super::gui(&ctx).alloy.spatial().set_lod_bias(target, bias as f64);
   Ok(())
 }
 
@@ -730,7 +747,7 @@ fn set_cull(ctx: Ctx<'_>, id: u64, enabled: bool, margin: f64) -> rquickjs::Resu
   super::gui(&ctx)
     .alloy
     .spatial()
-    .set_cull(id, enabled, margin as f32)
+    .set_cull(id, enabled, margin as f64)
     .map_err(|e| throw_str(&ctx, &format!("setCull: {e}")))
 }
 
@@ -770,13 +787,13 @@ fn occluder_arg<'js>(ctx: &Ctx<'js>, o: &Object<'js>, api: &str) -> rquickjs::Re
     if f.len() != 6 {
       return Err(throw_str(ctx, &format!("{api}: box must be a Float32Array of 6 (min xyz, max xyz)")));
     }
-    return Ok(Occluder::box3([f[0], f[1], f[2], f[3], f[4], f[5]]));
+    return Ok(Occluder::box3([f[0] as f64, f[1] as f64, f[2] as f64, f[3] as f64, f[4] as f64, f[5] as f64]));
   }
   if let Some(q) = o.get::<_, Option<Vec<f64>>>("quad")? {
     if q.len() != 2 || !(q[0] > 0.0 && q[1] > 0.0) {
       return Err(throw_str(ctx, &format!("{api}: quad must be [width, height], both > 0")));
     }
-    return Ok(Occluder::quad(q[0] as f32, q[1] as f32));
+    return Ok(Occluder::quad(q[0], q[1]));
   }
   if let Some(s) = o.get::<_, Option<Object<'js>>>("sphere")? {
     let center: Vec<f64> = s.get("center")?;
@@ -784,7 +801,7 @@ fn occluder_arg<'js>(ctx: &Ctx<'js>, o: &Object<'js>, api: &str) -> rquickjs::Re
     if center.len() != 3 || !(radius > 0.0) {
       return Err(throw_str(ctx, &format!("{api}: sphere needs center [x, y, z] and radius > 0")));
     }
-    return Ok(Occluder::sphere([center[0] as f32, center[1] as f32, center[2] as f32], radius as f32));
+    return Ok(Occluder::sphere([center[0], center[1], center[2]], radius));
   }
   if let Some(m) = o.get::<_, Option<Object<'js>>>("mesh")? {
     let positions: TypedArray<'js, f32> = m.get("positions")?;
@@ -792,7 +809,7 @@ fn occluder_arg<'js>(ctx: &Ctx<'js>, o: &Object<'js>, api: &str) -> rquickjs::Re
     if p.len() % 3 != 0 || p.is_empty() {
       return Err(throw_str(ctx, &format!("{api}: mesh positions must be a non-empty Float32Array of xyz triples")));
     }
-    let positions: Vec<[f32; 3]> = p.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let positions: Vec<[f64; 3]> = p.chunks_exact(3).map(|c| [c[0] as f64, c[1] as f64, c[2] as f64]).collect();
     let indices: Value<'js> = m.get("indices")?;
     let flat: Vec<u32> = if indices.is_undefined() || indices.is_null() {
       (0..positions.len() as u32).collect()
@@ -856,7 +873,7 @@ fn margins_arg(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Result<R
   let enter: Option<f64> = obj.get("enter")?;
   let leave: Option<f64> = obj.get("leave")?;
   match (enter, leave) {
-    (Some(enter), Some(leave)) => Ok(RegionMargins { enter: enter as f32, leave: leave as f32 }),
+    (Some(enter), Some(leave)) => Ok(RegionMargins { enter: enter as f64, leave: leave as f64 }),
     _ => Err(throw_str(ctx, &format!("{api}: enter and leave are required numbers"))),
   }
 }
@@ -968,9 +985,9 @@ fn array_field<T: for<'a> FromJs<'a> + Copy + Default, const N: usize>(
 /// A grid of regions from `{ origin, cell, enter, leave, bounds?, wrap?,
 /// weight?, limit?, priority?, label?, root? }`; returns its id.
 fn create_grid<'js>(ctx: Ctx<'js>, spec: Object<'js>) -> rquickjs::Result<u64> {
-  let origin = array_field::<f32, 3>(&ctx, &spec, "origin", "createGrid")?
+  let origin = array_field::<f64, 3>(&ctx, &spec, "origin", "createGrid")?
     .ok_or_else(|| throw_str(&ctx, "createGrid: origin is required"))?;
-  let cell = array_field::<f32, 3>(&ctx, &spec, "cell", "createGrid")?
+  let cell = array_field::<f64, 3>(&ctx, &spec, "cell", "createGrid")?
     .ok_or_else(|| throw_str(&ctx, "createGrid: cell is required"))?;
   let margins = margins_arg(&ctx, &spec, "createGrid")?;
   let bounds = array_field::<i32, 6>(&ctx, &spec, "bounds", "createGrid")?;
@@ -1032,12 +1049,12 @@ fn set_lod<'js>(ctx: Ctx<'js>, id: u64, levels: Array<'js>, fade: f64, reference
     let entry = entry?;
     let node = entry.get::<_, Option<u64>>("node")?;
     let size = entry.get::<_, f64>("size")?;
-    out.push(LodLevel { node, size: size as f32 });
+    out.push(LodLevel { node, size: size as f64 });
   }
   super::gui(&ctx)
     .alloy
     .spatial()
-    .set_lod(id, &out, fade as f32, reference.0)
+    .set_lod(id, &out, fade as f64, reference.0)
     .map_err(|e| throw_str(&ctx, &format!("setLod: {e}")))
 }
 
@@ -1185,14 +1202,14 @@ fn filter_arg(filter: OptArg<Object<'_>>) -> rquickjs::Result<QueryFilter> {
 /// `{ node, distance, point, normal, face?, uv? }` objects.
 fn raycast<'js>(
   ctx: Ctx<'js>,
-  origin: TypedArray<'js, f32>,
-  direction: TypedArray<'js, f32>,
+  origin: TypedArray<'js, f64>,
+  direction: TypedArray<'js, f64>,
   filter: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Array<'js>> {
   let o = elements_of(&ctx, &origin, "raycast")?;
   let d = elements_of(&ctx, &direction, "raycast")?;
   if o.len() != 3 || d.len() != 3 {
-    return Err(throw_str(&ctx, "raycast: origin and direction must be Float32Arrays of 3"));
+    return Err(throw_str(&ctx, "raycast: origin and direction must be Float64Arrays of 3"));
   }
   let filter = filter_arg(filter)?;
   let hits = super::gui(&ctx)
@@ -1221,7 +1238,7 @@ fn raycast<'js>(
 /// A query volume from its kind and packed floats: "capsule" is a, b,
 /// radius (7 floats; a sphere when a == b), "box" is center, half
 /// extents, rotation quaternion (10).
-fn volume_arg(ctx: &Ctx<'_>, kind: &str, data: &TypedArray<'_, f32>, api: &str) -> rquickjs::Result<Volume> {
+fn volume_arg(ctx: &Ctx<'_>, kind: &str, data: &TypedArray<'_, f64>, api: &str) -> rquickjs::Result<Volume> {
   let v = elements_of(ctx, data, api)?;
   match (kind, v.len()) {
     ("capsule", 7) => Ok(Volume::Capsule { a: [v[0], v[1], v[2]], b: [v[3], v[4], v[5]], radius: v[6] }),
@@ -1237,8 +1254,8 @@ fn volume_arg(ctx: &Ctx<'_>, kind: &str, data: &TypedArray<'_, f32>, api: &str) 
   }
 }
 
-fn vec3(v: [f32; 3]) -> Vec<f64> {
-  vec![v[0] as f64, v[1] as f64, v[2] as f64]
+fn vec3(v: [f64; 3]) -> Vec<f64> {
+  vec![v[0], v[1], v[2]]
 }
 
 /// Every shown node with bounds the volume touches, each with its deepest
@@ -1246,7 +1263,7 @@ fn vec3(v: [f32; 3]) -> Vec<f64> {
 fn overlap<'js>(
   ctx: Ctx<'js>,
   kind: String,
-  data: TypedArray<'js, f32>,
+  data: TypedArray<'js, f64>,
   filter: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Array<'js>> {
   let volume = volume_arg(&ctx, &kind, &data, "overlap")?;
@@ -1274,14 +1291,14 @@ fn overlap<'js>(
 fn sweep<'js>(
   ctx: Ctx<'js>,
   kind: String,
-  data: TypedArray<'js, f32>,
-  motion: TypedArray<'js, f32>,
+  data: TypedArray<'js, f64>,
+  motion: TypedArray<'js, f64>,
   filter: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Array<'js>> {
   let volume = volume_arg(&ctx, &kind, &data, "sweep")?;
   let m = elements_of(&ctx, &motion, "sweep")?;
   if m.len() != 3 {
-    return Err(throw_str(&ctx, "sweep: motion must be a Float32Array of 3"));
+    return Err(throw_str(&ctx, "sweep: motion must be a Float64Array of 3"));
   }
   let filter = filter_arg(filter)?;
   let hits = super::gui(&ctx)
@@ -1314,22 +1331,22 @@ fn move_options(ctx: &Ctx<'_>, opts: OptArg<Object<'_>>) -> rquickjs::Result<Mov
   let Some(opts) = opts.0 else {
     return Ok(out);
   };
-  if let Some(up) = opts.get::<_, Option<Vec<f32>>>("up")? {
+  if let Some(up) = opts.get::<_, Option<Vec<f64>>>("up")? {
     if up.len() != 3 {
       return Err(throw_str(ctx, "moveAndSlide: up must be an array of 3"));
     }
     out.up = [up[0], up[1], up[2]];
   }
-  if let Some(v) = opts.get::<_, Option<f32>>("floorMaxAngle")? {
+  if let Some(v) = opts.get::<_, Option<f64>>("floorMaxAngle")? {
     out.floor_max_angle = v;
   }
   if let Some(v) = opts.get::<_, Option<u32>>("maxSlides")? {
     out.max_slides = v;
   }
-  if let Some(v) = opts.get::<_, Option<f32>>("skin")? {
+  if let Some(v) = opts.get::<_, Option<f64>>("skin")? {
     out.skin = v;
   }
-  if let Some(v) = opts.get::<_, Option<f32>>("floorSnap")? {
+  if let Some(v) = opts.get::<_, Option<f64>>("floorSnap")? {
     out.floor_snap = v;
   }
   Ok(out)
@@ -1342,15 +1359,15 @@ fn move_options(ctx: &Ctx<'_>, opts: OptArg<Object<'_>>) -> rquickjs::Result<Mov
 fn move_and_slide<'js>(
   ctx: Ctx<'js>,
   kind: String,
-  data: TypedArray<'js, f32>,
-  motion: TypedArray<'js, f32>,
+  data: TypedArray<'js, f64>,
+  motion: TypedArray<'js, f64>,
   opts: OptArg<Object<'js>>,
   filter: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Object<'js>> {
   let volume = volume_arg(&ctx, &kind, &data, "moveAndSlide")?;
   let m = elements_of(&ctx, &motion, "moveAndSlide")?;
   if m.len() != 3 {
-    return Err(throw_str(&ctx, "moveAndSlide: motion must be a Float32Array of 3"));
+    return Err(throw_str(&ctx, "moveAndSlide: motion must be a Float64Array of 3"));
   }
   let options = move_options(&ctx, opts)?;
   let filter = filter_arg(filter)?;
@@ -1377,7 +1394,7 @@ fn move_and_slide<'js>(
 
 /// Bind the node's shared-slot sink with the direction projection: slot
 /// `index` of the `len`-float shared array param `name` on `target`
-/// follows the world direction of the LOCAL vector (a Float32Array of 3).
+/// follows the world direction of the LOCAL vector (a Float64Array of 3).
 fn bind_direction_slot(
   ctx: Ctx<'_>,
   id: u64,
@@ -1391,7 +1408,13 @@ fn bind_direction_slot(
   if v.len() != 3 {
     return Err(throw_str(&ctx, "bindDirectionSlot: vector must be a Float32Array of 3"));
   }
-  let sink = SharedSlotSink { target, name, len, index, projection: Projection::Direction([v[0], v[1], v[2]]) };
+  let sink = SharedSlotSink {
+    target,
+    name,
+    len,
+    index,
+    projection: Projection::Direction([v[0] as f64, v[1] as f64, v[2] as f64]),
+  };
   super::gui(&ctx).alloy.spatial_bind_slot(id, sink).map_err(|e| throw_str(&ctx, &format!("bindDirectionSlot: {e}")))
 }
 
@@ -1426,8 +1449,10 @@ fn bind_texture_slot(
   if p.len() != 16 {
     return Err(throw_str(&ctx, "bindTextureSlot: post must be a Float32Array of 16 (a column-major mat4)"));
   }
-  let mut m = [0.0f32; 16];
-  m.copy_from_slice(p);
+  let mut m = [0.0f64; 16];
+  for (o, v) in m.iter_mut().zip(p) {
+    *o = *v as f64;
+  }
   super::gui(&ctx)
     .alloy
     .spatial_bind_texture_slot(id, TextureSlotSink { texture, row, post: m }, anchor.0)
@@ -1464,8 +1489,8 @@ fn unbind_weights_slot(ctx: Ctx<'_>, id: u64, texture: OptArg<u64>) -> rquickjs:
 
 /// Write the node's weights register (a Float32Array of any length).
 fn set_weights(ctx: Ctx<'_>, id: u64, weights: TypedArray<'_, f32>) -> rquickjs::Result<()> {
-  let w = elements_of(&ctx, &weights, "setWeights")?;
-  super::gui(&ctx).alloy.spatial().set_weights(id, w).map_err(|e| throw_str(&ctx, &format!("setWeights: {e}")))
+  let w: Vec<f64> = elements_of(&ctx, &weights, "setWeights")?.iter().map(|&v| v as f64).collect();
+  super::gui(&ctx).alloy.spatial().set_weights(id, &w).map_err(|e| throw_str(&ctx, &format!("setWeights: {e}")))
 }
 
 /// Write the weights register THROUGH a motion: `transition` given (a
@@ -1479,7 +1504,7 @@ fn write_weights<'js>(
   weights: TypedArray<'js, f32>,
   transition: OptArg<Value<'js>>,
 ) -> rquickjs::Result<()> {
-  let w = elements_of(&ctx, &weights, "writeWeights")?;
+  let w: Vec<f64> = elements_of(&ctx, &weights, "writeWeights")?.iter().map(|&v| v as f64).collect();
   let motion = match &transition.0 {
     Some(v) if !v.is_null() && !v.is_undefined() => {
       let pv = super::tree::to_prop_value(v)?;
@@ -1489,7 +1514,7 @@ fn write_weights<'js>(
   };
   let st = super::gui(&ctx);
   let changed =
-    st.alloy.spatial().write_weights(id, w, motion).map_err(|e| throw_str(&ctx, &format!("writeWeights: {e}")))?;
+    st.alloy.spatial().write_weights(id, &w, motion).map_err(|e| throw_str(&ctx, &format!("writeWeights: {e}")))?;
   if changed {
     st.platform.request_frame();
   }
@@ -1504,7 +1529,7 @@ fn read_weights(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::Re
   let weights = spatial.weights_of(id).map_err(|e| throw_str(&ctx, &format!("readWeights: {e}")))?;
   let dst = elements_mut_of(&ctx, &out, "readWeights")?;
   for (k, slot) in dst.iter_mut().enumerate() {
-    *slot = weights.get(k).copied().unwrap_or(0.0);
+    *slot = weights.get(k).copied().unwrap_or(0.0) as f32;
   }
   Ok(weights.len() as u32)
 }
@@ -1604,7 +1629,7 @@ fn set_clip_markers<'js>(
     .iter()
     .zip(durations.iter())
     .zip(names)
-    .map(|((&time, &duration), name)| ClipMarker { time, duration, name })
+    .map(|((&time, &duration), name)| ClipMarker { time: time as f64, duration: duration as f64, name })
     .collect();
   super::gui(&ctx)
     .alloy
@@ -1621,7 +1646,7 @@ fn derive_additive_clip<'js>(ctx: Ctx<'js>, clip: u64, reference: Object<'js>) -
   let reference = match kind.as_str() {
     "first" => AdditiveReference::FirstFrame,
     "clip" => {
-      AdditiveReference::Clip { clip: reference.get::<_, u64>("clip")?, time: reference.get::<_, f64>("time")? as f32 }
+      AdditiveReference::Clip { clip: reference.get::<_, u64>("clip")?, time: reference.get::<_, f64>("time")? as f64 }
     }
     "rest" => AdditiveReference::Rest { rig: reference.get::<_, u64>("rig")? },
     other => {
@@ -1646,7 +1671,7 @@ fn create_rig(ctx: Ctx<'_>, clock: u64, joints: Vec<u64>) -> rquickjs::Result<u6
 
 /// Declare a node's rest pose: ten floats (position xyz, quaternion
 /// xyzw, scale xyz), or null to clear it.
-fn set_rest<'js>(ctx: Ctx<'js>, id: u64, rest: OptArg<TypedArray<'js, f32>>) -> rquickjs::Result<()> {
+fn set_rest<'js>(ctx: Ctx<'js>, id: u64, rest: OptArg<TypedArray<'js, f64>>) -> rquickjs::Result<()> {
   let pose = match rest.0 {
     None => None,
     Some(array) => {
@@ -1719,7 +1744,7 @@ fn create_layer<'js>(ctx: Ctx<'js>, rig: u64, opts: OptArg<Object<'js>>) -> rqui
   let mut spec = LayerSpec { weight: 1.0, mode: LayerMode::Override, mask: None };
   if let Some(o) = opts.0 {
     if let Some(v) = o.get::<_, Option<f64>>("weight")? {
-      spec.weight = v as f32;
+      spec.weight = v as f64;
     }
     spec.mode = layer_mode(&ctx, o.get::<_, Option<String>>("mode")?, "createLayer")?;
     spec.mask = mask_field(&ctx, &o, "createLayer")?.flatten();
@@ -1738,8 +1763,8 @@ fn create_layer<'js>(ctx: Ctx<'js>, rig: u64, opts: OptArg<Object<'js>>) -> rqui
 /// Write a layer's `{ weight?, fadeMs?, mask? }` (mask null clears).
 fn set_layer<'js>(ctx: Ctx<'js>, rig: u64, index: u32, update: Object<'js>) -> rquickjs::Result<()> {
   let update = LayerUpdate {
-    weight: update.get::<_, Option<f64>>("weight")?.map(|v| v as f32),
-    fade_ms: update.get::<_, Option<f64>>("fadeMs")?.unwrap_or(0.0) as f32,
+    weight: update.get::<_, Option<f64>>("weight")?.map(|v| v as f64),
+    fade_ms: update.get::<_, Option<f64>>("fadeMs")?.unwrap_or(0.0) as f64,
     mask: mask_field(&ctx, &update, "setLayer")?,
   };
   let st = super::gui(&ctx);
@@ -1764,12 +1789,12 @@ fn mask_shares<'js>(
   nodes: Vec<u64>,
   shares: &TypedArray<'js, f32>,
   api: &str,
-) -> rquickjs::Result<Vec<(u64, f32)>> {
+) -> rquickjs::Result<Vec<(u64, f64)>> {
   let shares = elements_of(ctx, shares, api)?;
   if shares.len() != nodes.len() {
     return Err(throw_str(ctx, &format!("{api}: one share per node")));
   }
-  Ok(nodes.into_iter().zip(shares.iter().copied()).collect())
+  Ok(nodes.into_iter().zip(shares.iter().map(|&share| share as f64)).collect())
 }
 
 /// Register a mask: `default` for every node not listed, `shares[i]` for
@@ -1784,7 +1809,7 @@ fn create_mask<'js>(
   super::gui(&ctx)
     .alloy
     .spatial()
-    .create_mask(default as f32, shares)
+    .create_mask(default, shares)
     .map_err(|e| throw_str(&ctx, &format!("createMask: {e}")))
 }
 
@@ -1797,7 +1822,7 @@ fn set_mask<'js>(
 ) -> rquickjs::Result<()> {
   let shares = mask_shares(&ctx, nodes, &shares, "setMask")?;
   let st = super::gui(&ctx);
-  st.alloy.spatial().set_mask(id, default as f32, shares).map_err(|e| throw_str(&ctx, &format!("setMask: {e}")))?;
+  st.alloy.spatial().set_mask(id, default, shares).map_err(|e| throw_str(&ctx, &format!("setMask: {e}")))?;
   st.platform.request_frame();
   Ok(())
 }
@@ -1834,19 +1859,19 @@ fn create_player<'js>(ctx: Ctx<'js>, rig: u64, clip: u64, opts: OptArg<Object<'j
       spec.layer = v as usize;
     }
     if let Some(v) = o.get::<_, Option<f64>>("speed")? {
-      spec.speed = v as f32;
+      spec.speed = v as f64;
     }
     if let Some(v) = o.get::<_, Option<bool>>("loop")? {
       spec.looped = v;
     }
     if let Some(v) = o.get::<_, Option<f64>>("weight")? {
-      spec.weight = v as f32;
+      spec.weight = v as f64;
     }
     if let Some(v) = o.get::<_, Option<f64>>("fade")? {
-      spec.fade = v as f32;
+      spec.fade = v as f64;
     }
     if let Some(v) = o.get::<_, Option<f64>>("fadeOut")? {
-      spec.fade_out = v as f32;
+      spec.fade_out = v as f64;
     }
     if let Some(v) = o.get::<_, Option<f64>>("time")? {
       spec.time = v;
@@ -1867,9 +1892,9 @@ fn create_player<'js>(ctx: Ctx<'js>, rig: u64, clip: u64, opts: OptArg<Object<'j
 /// pairs (phase 1 begin, 2 end).
 fn set_player<'js>(ctx: Ctx<'js>, id: u64, value: Object<'js>) -> rquickjs::Result<Vec<u32>> {
   let update = PlayerUpdate {
-    weight: value.get::<_, Option<f64>>("weight")?.map(|v| v as f32),
-    fade: value.get::<_, Option<f64>>("fade")?.map(|v| v as f32),
-    speed: value.get::<_, Option<f64>>("speed")?.map(|v| v as f32),
+    weight: value.get::<_, Option<f64>>("weight")?.map(|v| v as f64),
+    fade: value.get::<_, Option<f64>>("fade")?.map(|v| v as f64),
+    speed: value.get::<_, Option<f64>>("speed")?.map(|v| v as f64),
     time: value.get::<_, Option<f64>>("time")?,
     window: window_field(&ctx, &value, "setPlayer")?,
     mask: mask_field(&ctx, &value, "setPlayer")?,
@@ -1922,14 +1947,14 @@ fn bind_root_motion<'js>(
   anchor: OptArg<u64>,
   opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<()> {
-  let mut up = [0.0f32, 1.0, 0.0];
+  let mut up = [0.0f64, 1.0, 0.0];
   let mut vertical = true;
   if let Some(o) = opts.0 {
     if let Some(v) = o.get::<_, Option<Vec<f64>>>("up")? {
       if v.len() != 3 {
         return Err(throw_str(&ctx, "bindRootMotion: up must be [x, y, z]"));
       }
-      up = [v[0] as f32, v[1] as f32, v[2] as f32];
+      up = [v[0] as f64, v[1] as f64, v[2] as f64];
     }
     if let Some(v) = o.get::<_, Option<bool>>("vertical")? {
       vertical = v;
@@ -1987,7 +2012,7 @@ fn destroy_group(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
 /// Request an inertial transition on a rig over `ms`.
 fn inertialize(ctx: Ctx<'_>, rig: u64, ms: f64) -> rquickjs::Result<()> {
   let st = super::gui(&ctx);
-  st.alloy.spatial().inertialize(rig, ms as f32).map_err(|e| throw_str(&ctx, &format!("inertialize: {e}")))?;
+  st.alloy.spatial().inertialize(rig, ms as f64).map_err(|e| throw_str(&ctx, &format!("inertialize: {e}")))?;
   st.platform.request_frame();
   Ok(())
 }
@@ -2006,12 +2031,12 @@ fn read_curve(ctx: Ctx<'_>, rig: u64, name: String) -> rquickjs::Result<Option<f
 /// Fill `out` (a Float32Array of 10) with the node's current local TRS
 /// (position, quaternion, scale) - what the players last wrote, or any
 /// later snap. The pose read for root-motion strips and skeleton copies.
-fn read_transform(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::Result<()> {
+fn read_transform(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f64>) -> rquickjs::Result<()> {
   let (p, q, s) =
     super::gui(&ctx).alloy.spatial().transform_of(id).map_err(|e| throw_str(&ctx, &format!("readTransform: {e}")))?;
   let dst = elements_mut_of(&ctx, &out, "readTransform")?;
   if dst.len() != 10 {
-    return Err(throw_str(&ctx, "readTransform: out must be a Float32Array of 10"));
+    return Err(throw_str(&ctx, "readTransform: out must be a Float64Array of 10"));
   }
   dst[0..3].copy_from_slice(&p);
   dst[3..7].copy_from_slice(&q);
@@ -2035,7 +2060,7 @@ fn create_spring<'js>(
   colliders: TypedArray<'js, f32>,
   center: OptArg<u64>,
 ) -> rquickjs::Result<u64> {
-  let jf = elements_of(&ctx, &joints, "createSpring")?;
+  let jf: Vec<f64> = elements_of(&ctx, &joints, "createSpring")?.iter().map(|&v| v as f64).collect();
   if jf.len() != joint_nodes.len() * SPRING_JOINT_FLOATS {
     return Err(throw_str(
       &ctx,
@@ -2059,7 +2084,7 @@ fn create_spring<'js>(
       hit_radius: f[9],
     })
     .collect();
-  let cf = elements_of(&ctx, &colliders, "createSpring")?;
+  let cf: Vec<f64> = elements_of(&ctx, &colliders, "createSpring")?.iter().map(|&v| v as f64).collect();
   if cf.len() != collider_nodes.len() * SPRING_COLLIDER_FLOATS {
     return Err(throw_str(
       &ctx,
@@ -2114,11 +2139,10 @@ fn reset_spring(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
 /// (`stiffness`, `drag`, `gravityPower`, `gravityDir` [x, y, z],
 /// `hitRadius`) replace the joint's.
 fn set_spring_joint<'js>(ctx: Ctx<'js>, id: u64, joint: u32, update: Object<'js>) -> rquickjs::Result<()> {
-  let number =
-    |key: &str| -> rquickjs::Result<Option<f32>> { Ok(update.get::<_, Option<f64>>(key)?.map(|v| v as f32)) };
+  let number = |key: &str| -> rquickjs::Result<Option<f64>> { update.get::<_, Option<f64>>(key) };
   let gravity_dir = match update.get::<_, Option<Vec<f64>>>("gravityDir")? {
     None => None,
-    Some(v) if v.len() == 3 => Some([v[0] as f32, v[1] as f32, v[2] as f32]),
+    Some(v) if v.len() == 3 => Some([v[0], v[1], v[2]]),
     Some(_) => return Err(throw_str(&ctx, "setSpringJoint: gravityDir must be [x, y, z]")),
   };
   let update = SpringJointUpdate {
@@ -2139,8 +2163,8 @@ fn set_spring_joint<'js>(ctx: Ctx<'js>, id: u64, joint: u32, update: Object<'js>
 }
 
 /// A required number of a spec object.
-fn num_of(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<f32> {
-  obj.get::<_, Option<f64>>(key)?.map(|v| v as f32).ok_or_else(|| throw_str(ctx, &format!("{api}: {key} is required")))
+fn num_of(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<f64> {
+  obj.get::<_, Option<f64>>(key)?.ok_or_else(|| throw_str(ctx, &format!("{api}: {key} is required")))
 }
 
 /// A required node id of a spec object.
@@ -2149,23 +2173,23 @@ fn node_of(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::R
 }
 
 /// An optional `[x, y, z]` of a spec object.
-fn vec3_of(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<Option<[f32; 3]>> {
+fn vec3_of(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<Option<[f64; 3]>> {
   match obj.get::<_, Option<Vec<f64>>>(key)? {
     None => Ok(None),
-    Some(v) if v.len() == 3 => Ok(Some([v[0] as f32, v[1] as f32, v[2] as f32])),
+    Some(v) if v.len() == 3 => Ok(Some([v[0], v[1], v[2]])),
     Some(_) => Err(throw_str(ctx, &format!("{api}: {key} must be [x, y, z]"))),
   }
 }
 
-fn vec3_req(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<[f32; 3]> {
+fn vec3_req(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<[f64; 3]> {
   vec3_of(ctx, obj, key, api)?.ok_or_else(|| throw_str(ctx, &format!("{api}: {key} is required")))
 }
 
 /// An optional `[x, y, z, w]` of a spec object.
-fn quat_of(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<Option<[f32; 4]>> {
+fn quat_of(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<Option<[f64; 4]>> {
   match obj.get::<_, Option<Vec<f64>>>(key)? {
     None => Ok(None),
-    Some(v) if v.len() == 4 => Ok(Some([v[0] as f32, v[1] as f32, v[2] as f32, v[3] as f32])),
+    Some(v) if v.len() == 4 => Ok(Some([v[0], v[1], v[2], v[3]])),
     Some(_) => Err(throw_str(ctx, &format!("{api}: {key} must be [x, y, z, w]"))),
   }
 }
@@ -2223,9 +2247,9 @@ fn limit_of<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, api: &str) -> rquickjs::Resu
 
 /// One solver spec object (see `createIk` in spatial.d.ts) and its
 /// weight.
-fn solver_of<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, api: &str) -> rquickjs::Result<(IkSolverSpec, f32)> {
+fn solver_of<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, api: &str) -> rquickjs::Result<(IkSolverSpec, f64)> {
   let kind: String = obj.get("kind")?;
-  let weight = obj.get::<_, Option<f64>>("weight")?.unwrap_or(1.0) as f32;
+  let weight = obj.get::<_, Option<f64>>("weight")?.unwrap_or(1.0) as f64;
   let spec = match kind.as_str() {
     "lookAt" => {
       let mut bones = Vec::new();
@@ -2240,9 +2264,9 @@ fn solver_of<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, api: &str) -> rquickjs::Res
       let limit = match obj.get::<_, Option<Object<'js>>>("limit")? {
         None => None,
         Some(l) => {
-          let pair = |key: &str| -> rquickjs::Result<[f32; 2]> {
+          let pair = |key: &str| -> rquickjs::Result<[f64; 2]> {
             match l.get::<_, Option<Vec<f64>>>(key)? {
-              Some(v) if v.len() == 2 => Ok([v[0] as f32, v[1] as f32]),
+              Some(v) if v.len() == 2 => Ok([v[0] as f64, v[1] as f64]),
               _ => Err(throw_str(ctx, &format!("{api}: limit.{key} must be [min, max]"))),
             }
           };
@@ -2306,7 +2330,7 @@ fn solver_of<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, api: &str) -> rquickjs::Res
           root: node_of(ctx, &l, "root", api)?,
           mid: node_of(ctx, &l, "mid", api)?,
           tip: node_of(ctx, &l, "tip", api)?,
-          height: l.get::<_, Option<f64>>("height")?.map(|v| v as f32),
+          height: l.get::<_, Option<f64>>("height")?.map(|v| v as f64),
         });
       }
       IkSolverSpec::Feet(FeetSpec {
@@ -2380,7 +2404,7 @@ fn set_ik_weight(ctx: Ctx<'_>, id: u64, index: u32, weight: f64, fade_ms: OptArg
   let st = super::gui(&ctx);
   st.alloy
     .spatial()
-    .set_ik_weight(id, index as usize, weight as f32, fade_ms.0.unwrap_or(0.0) as f32)
+    .set_ik_weight(id, index as usize, weight as f64, fade_ms.0.unwrap_or(0.0) as f64)
     .map_err(|e| throw_str(&ctx, &format!("setIkWeight: {e}")))?;
   st.platform.request_frame();
   Ok(())
@@ -2415,7 +2439,7 @@ fn set_spring_force(ctx: Ctx<'_>, id: u64, force: TypedArray<'_, f32>) -> rquick
   let st = super::gui(&ctx);
   st.alloy
     .spatial()
-    .set_spring_force(id, [f[0], f[1], f[2]])
+    .set_spring_force(id, [f[0] as f64, f[1] as f64, f[2] as f64])
     .map_err(|e| throw_str(&ctx, &format!("setSpringForce: {e}")))?;
   st.platform.request_frame();
   Ok(())
@@ -2469,6 +2493,17 @@ fn retarget_records(ctx: Ctx<'_>, old: u64, new: u64) -> rquickjs::Result<()> {
     .alloy
     .spatial_retarget_records(old, new)
     .map_err(|e| throw_str(&ctx, &format!("retargetRecords: {e}")))
+}
+
+/// The point the records on an unanchored buffer are relative to (a
+/// Float64Array of 3): the sprite layer's render origin.
+fn set_instance_origin(ctx: Ctx<'_>, buffer: u64, origin: TypedArray<'_, f64>) -> rquickjs::Result<()> {
+  let o = elements_of(&ctx, &origin, "setInstanceOrigin")?;
+  if o.len() != 3 {
+    return Err(throw_str(&ctx, "setInstanceOrigin: origin must be a Float64Array of 3"));
+  }
+  super::gui(&ctx).alloy.spatial().set_instance_origin(buffer, [o[0], o[1], o[2]]);
+  Ok(())
 }
 
 /// Stamp the node-transition animation clock (the frame module, once per

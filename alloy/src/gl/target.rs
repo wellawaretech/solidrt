@@ -6,7 +6,7 @@
 
 use glow::HasContext;
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use super::buffer::GpuBuffer;
@@ -761,6 +761,29 @@ impl ShaderTexture {
   /// against the entry's program).
   pub fn merge_entry_params(&mut self, id: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
     merge_record(&mut self.entry_mut(id)?.params, params);
+    Ok(())
+  }
+
+  /// Add `delta` to the translation column of the mat4 param `name` on
+  /// each listed entry (the spatial core's render-origin shift, see
+  /// `RasterCmd::ShiftDrawParams`): one pass over the entry list, so a
+  /// target of thousands shifts in the time one params update takes. An
+  /// entry no longer in the list, or without that mat4, is skipped: the
+  /// core learns of a gone entry at its next real write.
+  pub fn shift_entry_params(&mut self, draws: &[u64], name: &str, delta: [f32; 3]) -> Result<(), String> {
+    let TargetKind::Mesh(mesh) = &mut self.kind else {
+      return Err("not a draw target".to_string());
+    };
+    let listed: HashSet<u64> = draws.iter().copied().collect();
+    for entry in mesh.entries.iter_mut().filter(|e| listed.contains(&e.id)) {
+      if let Some((_, ParamValue::Array(m))) = entry.params.iter_mut().find(|(n, _)| n == name) {
+        if m.len() == 16 {
+          m[12] += delta[0];
+          m[13] += delta[1];
+          m[14] += delta[2];
+        }
+      }
+    }
     Ok(())
   }
 

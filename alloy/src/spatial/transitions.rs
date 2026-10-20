@@ -51,7 +51,7 @@ pub enum Component {
 #[derive(Clone, Copy, Debug)]
 pub struct NodeMotion {
   pub spec: TransitionSpec,
-  pub delay_ms: f32,
+  pub delay_ms: f64,
 }
 
 impl From<TransitionSpec> for NodeMotion {
@@ -64,9 +64,9 @@ impl From<TransitionSpec> for NodeMotion {
 /// removal): the lanes the component animates from or to, with the motion
 /// that direction plays - resolved by the decoder, so an endpoint without
 /// its own curve, duration, bounce or delay carries its entry's and the
-/// runtime never falls back. `V` is the component's lane carrier: `[f32;
-/// 3]` for position and scale, `[f32; 4]` for a rotation quaternion,
-/// `Vec<f32>` for weights (one lane per morph target).
+/// runtime never falls back. `V` is the component's lane carrier: `[f64;
+/// 3]` for position and scale, `[f64; 4]` for a rotation quaternion,
+/// `Vec<f64>` for weights (one lane per morph target).
 #[derive(Clone, Debug)]
 pub struct NodeEndpoint<V> {
   pub value: V,
@@ -98,13 +98,13 @@ impl<V> From<TransitionSpec> for NodeTransitionEntry<V> {
 /// `exit` (mod.rs), whenever that comes.
 #[derive(Clone, Debug, Default)]
 pub struct NodeTransitionConfig {
-  pub position: Option<NodeTransitionEntry<[f32; 3]>>,
-  pub rotation: Option<NodeTransitionEntry<[f32; 4]>>,
-  pub scale: Option<NodeTransitionEntry<[f32; 3]>>,
+  pub position: Option<NodeTransitionEntry<[f64; 3]>>,
+  pub rotation: Option<NodeTransitionEntry<[f64; 4]>>,
+  pub scale: Option<NodeTransitionEntry<[f64; 3]>>,
   /// The weights register's entry: its endpoints carry one lane per
   /// morph target (an endpoint shorter than the register pads with
   /// zeros, like a write).
-  pub weights: Option<NodeTransitionEntry<Vec<f32>>>,
+  pub weights: Option<NodeTransitionEntry<Vec<f64>>>,
   pub all: Option<NodeMotion>,
   /// Makes the node a stagger group: every descendant enter (`from`) or
   /// exit that begins in the same frame under it gets `index * stagger_ms`
@@ -112,7 +112,7 @@ pub struct NodeTransitionConfig {
   /// separately). The nearest declaring ancestor wins; nested groups never
   /// compound. It orchestrates descendants only - the node's own lifecycle
   /// is staggered by ITS ancestors, and ordinary writes never stagger.
-  pub stagger_ms: Option<f32>,
+  pub stagger_ms: Option<f64>,
 }
 
 impl NodeTransitionConfig {
@@ -145,9 +145,9 @@ pub const COMPONENTS: [Component; 4] = [Component::Position, Component::Rotation
 
 /// A track's or a held write's target as lanes: a position or scale uses
 /// the first three, a rotation all four (its quaternion).
-pub type Lanes = [f32; 4];
+pub type Lanes = [f64; 4];
 
-pub(super) fn lanes3(v: [f32; 3]) -> Lanes {
+pub(super) fn lanes3(v: [f64; 3]) -> Lanes {
   [v[0], v[1], v[2], 0.0]
 }
 
@@ -172,7 +172,7 @@ pub(super) struct PendingWrite {
 #[derive(Clone, Debug)]
 pub(super) struct PendingWeights {
   pub node: NodeId,
-  pub to: Vec<f32>,
+  pub to: Vec<f64>,
   pub spec: TransitionSpec,
   pub remaining_ms: f64,
   pub since_ms: f64,
@@ -185,17 +185,26 @@ pub(super) struct PendingWeights {
 #[derive(Clone, Debug, PartialEq)]
 pub struct MotionState {
   pub component: Component,
-  pub to: Vec<f32>,
+  pub to: Vec<f64>,
   pub held_for_ms: Option<f64>,
 }
 
 /// The rate a node's time runs at, for the advance: None for a node that
 /// is gone since, which drops its tracks and holds.
-pub(super) type RateOf<'a> = &'a dyn Fn(NodeId) -> Option<f32>;
+pub(super) type RateOf<'a> = &'a dyn Fn(NodeId) -> Option<f64>;
+
+/// The shared spring step over the arena's f64 lanes: the motion module
+/// (shared with the element lanes) integrates in f32, which the DISPLACEMENT
+/// from the target is small enough for at any distance from the origin;
+/// the target itself stays f64 (the lanes add it back).
+fn spring_step_wide(x: f64, v: f64, omega: f32, zeta: f32, dt: f64) -> (f64, f64) {
+  let (x, v) = spring_step(x as f32, v as f32, omega, zeta, dt as f32);
+  (x as f64, v as f64)
+}
 
 // Settle threshold, scaled to the animated distance so world units and
 // radians both settle promptly (the element transitions' rule).
-fn eps_for(d: f32) -> f32 {
+fn eps_for(d: f64) -> f64 {
   d.abs().max(1.0) * 1e-3
 }
 
@@ -203,12 +212,12 @@ fn eps_for(d: f32) -> f32 {
 #[derive(Clone, Copy, Debug)]
 pub(super) enum LinearState {
   Tween {
-    from: [f32; 3],
+    from: [f64; 3],
     /// How far into the tween the track is, on the node's own time.
     elapsed_ms: f64,
   },
   /// Position and velocity (units/s), integrated each frame.
-  Spring { pos: [f32; 3], vel: [f32; 3] },
+  Spring { pos: [f64; 3], vel: [f64; 3] },
 }
 
 pub(super) struct LinearTrack {
@@ -219,28 +228,28 @@ pub(super) struct LinearTrack {
   // The stamp the track is advanced to: the step it takes at an advance is
   // the app time since, at its node's rate.
   since_ms: f64,
-  to: [f32; 3],
-  eps: f32,
+  to: [f64; 3],
+  eps: f64,
 }
 
 impl LinearTrack {
   /// The track's step for an advance at `now_ms` (see `scaled_step`).
-  pub(super) fn elapse(&mut self, now_ms: f64, rate: f32) -> f64 {
-    scaled_step(&mut self.since_ms, now_ms, rate)
+  pub(super) fn elapse(&mut self, now_ms: f64, rate: f64) -> f64 {
+    scaled_step(&mut self.since_ms, now_ms, rate as f32)
   }
 
   /// Step the motion by `dt_ms` of the node's own time. Returns the value
   /// to write and whether the track settled; a settled track reports the
   /// target exactly.
-  pub(super) fn step(&mut self, dt_ms: f64) -> ([f32; 3], bool) {
+  pub(super) fn step(&mut self, dt_ms: f64) -> ([f64; 3], bool) {
     match (&mut self.state, self.spec) {
       (LinearState::Tween { from, elapsed_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
         *elapsed_ms += dt_ms;
-        let p = (*elapsed_ms / duration_ms as f64).clamp(0.0, 1.0) as f32;
+        let p = (*elapsed_ms / duration_ms as f64).clamp(0.0, 1.0) as f64;
         if p >= 1.0 {
           return (self.to, true);
         }
-        let e = curve.eval(p);
+        let e = curve.eval(p as f32) as f64;
         let mut out = *from;
         for i in 0..3 {
           out[i] += (self.to[i] - out[i]) * e;
@@ -248,13 +257,13 @@ impl LinearTrack {
         (out, false)
       }
       (LinearState::Spring { pos, vel }, TransitionSpec::Spring { omega, zeta }) => {
-        let dt = (dt_ms / 1000.0) as f32;
+        let dt = (dt_ms / 1000.0) as f64;
         let mut settled = true;
         for i in 0..3 {
-          let (x, v) = spring_step(pos[i] - self.to[i], vel[i], omega, zeta, dt);
+          let (x, v) = spring_step_wide(pos[i] - self.to[i], vel[i], omega, zeta, dt);
           pos[i] = self.to[i] + x;
           vel[i] = v;
-          if x.abs() >= self.eps || v.abs() >= self.eps * omega {
+          if x.abs() >= self.eps || v.abs() >= self.eps * omega as f64 {
             settled = false;
           }
         }
@@ -279,8 +288,8 @@ impl LinearTrack {
 /// velocity vector - momentum survives, like the linear spring.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum RotationState {
-  Tween { from: [f32; 4], elapsed_ms: f64 },
-  Spring { q: [f32; 4], vel: [f32; 3] },
+  Tween { from: [f64; 4], elapsed_ms: f64 },
+  Spring { q: [f64; 4], vel: [f64; 3] },
 }
 
 pub(super) struct RotationTrack {
@@ -290,34 +299,34 @@ pub(super) struct RotationTrack {
   since_ms: f64,
   /// Kept on the hemisphere of the track's current orientation, so the
   /// path is the short arc.
-  to: [f32; 4],
-  eps: f32,
+  to: [f64; 4],
+  eps: f64,
 }
 
 impl RotationTrack {
-  pub(super) fn elapse(&mut self, now_ms: f64, rate: f32) -> f64 {
-    scaled_step(&mut self.since_ms, now_ms, rate)
+  pub(super) fn elapse(&mut self, now_ms: f64, rate: f64) -> f64 {
+    scaled_step(&mut self.since_ms, now_ms, rate as f32)
   }
 
-  pub(super) fn step(&mut self, dt_ms: f64) -> ([f32; 4], bool) {
+  pub(super) fn step(&mut self, dt_ms: f64) -> ([f64; 4], bool) {
     match (&mut self.state, self.spec) {
       (RotationState::Tween { from, elapsed_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
         *elapsed_ms += dt_ms;
-        let p = (*elapsed_ms / duration_ms as f64).clamp(0.0, 1.0) as f32;
+        let p = (*elapsed_ms / duration_ms as f64).clamp(0.0, 1.0) as f64;
         if p >= 1.0 {
           return (self.to, true);
         }
-        (slerp(*from, self.to, curve.eval(p)), false)
+        (slerp(*from, self.to, curve.eval(p as f32) as f64), false)
       }
       (RotationState::Spring { q, vel }, TransitionSpec::Spring { omega, zeta }) => {
-        let dt = (dt_ms / 1000.0) as f32;
+        let dt = (dt_ms / 1000.0) as f64;
         let mut x = quat_log(quat_mul(quat_conjugate(self.to), *q));
         let mut settled = true;
         for i in 0..3 {
-          let (nx, nv) = spring_step(x[i], vel[i], omega, zeta, dt);
+          let (nx, nv) = spring_step_wide(x[i], vel[i], omega, zeta, dt);
           x[i] = nx;
           vel[i] = nv;
-          if nx.abs() >= self.eps || nv.abs() >= self.eps * omega {
+          if nx.abs() >= self.eps || nv.abs() >= self.eps * omega as f64 {
             settled = false;
           }
         }
@@ -336,8 +345,8 @@ impl RotationTrack {
 /// morph target, the linear track's math over a register-sized vector.
 #[derive(Clone, Debug)]
 pub(super) enum WeightsState {
-  Tween { from: Vec<f32>, elapsed_ms: f64 },
-  Spring { pos: Vec<f32>, vel: Vec<f32> },
+  Tween { from: Vec<f64>, elapsed_ms: f64 },
+  Spring { pos: Vec<f64>, vel: Vec<f64> },
 }
 
 pub(super) struct WeightsTrack {
@@ -345,40 +354,40 @@ pub(super) struct WeightsTrack {
   spec: TransitionSpec,
   state: WeightsState,
   since_ms: f64,
-  to: Vec<f32>,
-  eps: f32,
+  to: Vec<f64>,
+  eps: f64,
 }
 
 impl WeightsTrack {
-  pub(super) fn elapse(&mut self, now_ms: f64, rate: f32) -> f64 {
-    scaled_step(&mut self.since_ms, now_ms, rate)
+  pub(super) fn elapse(&mut self, now_ms: f64, rate: f64) -> f64 {
+    scaled_step(&mut self.since_ms, now_ms, rate as f32)
   }
 
   /// Step the motion by `dt_ms` of the node's own time, writing the value
   /// into `out` (resized to the track's lanes). Returns whether the track
   /// settled; a settled track reports the target exactly.
-  pub(super) fn step(&mut self, dt_ms: f64, out: &mut Vec<f32>) -> bool {
+  pub(super) fn step(&mut self, dt_ms: f64, out: &mut Vec<f64>) -> bool {
     out.clear();
     match (&mut self.state, self.spec) {
       (WeightsState::Tween { from, elapsed_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
         *elapsed_ms += dt_ms;
-        let p = (*elapsed_ms / duration_ms as f64).clamp(0.0, 1.0) as f32;
+        let p = (*elapsed_ms / duration_ms as f64).clamp(0.0, 1.0) as f64;
         if p >= 1.0 {
           out.extend_from_slice(&self.to);
           return true;
         }
-        let e = curve.eval(p);
+        let e = curve.eval(p as f32) as f64;
         out.extend(from.iter().zip(&self.to).map(|(&a, &b)| a + (b - a) * e));
         false
       }
       (WeightsState::Spring { pos, vel }, TransitionSpec::Spring { omega, zeta }) => {
-        let dt = (dt_ms / 1000.0) as f32;
+        let dt = (dt_ms / 1000.0) as f64;
         let mut settled = true;
         for i in 0..self.to.len() {
-          let (x, v) = spring_step(pos[i] - self.to[i], vel[i], omega, zeta, dt);
+          let (x, v) = spring_step_wide(pos[i] - self.to[i], vel[i], omega, zeta, dt);
           pos[i] = self.to[i] + x;
           vel[i] = v;
-          if x.abs() >= self.eps || v.abs() >= self.eps * omega {
+          if x.abs() >= self.eps || v.abs() >= self.eps * omega as f64 {
             settled = false;
           }
         }
@@ -400,7 +409,7 @@ impl WeightsTrack {
 /// `v` brought to `len` lanes: cut, or padded with zeros (a weights
 /// endpoint or write shorter than the register weighs the rest at zero,
 /// exactly as the register's rows publish).
-fn fit_lanes(v: &[f32], len: usize) -> Vec<f32> {
+fn fit_lanes(v: &[f64], len: usize) -> Vec<f64> {
   let mut out = v[..v.len().min(len)].to_vec();
   out.resize(len, 0.0);
   out
@@ -538,12 +547,12 @@ impl NodeTransitions {
     &mut self,
     node: NodeId,
     component: Component,
-    current: [f32; 3],
-    to: [f32; 3],
+    current: [f64; 3],
+    to: [f64; 3],
     spec: TransitionSpec,
     start: TrackStart,
   ) -> bool {
-    let mut d = 0.0f32;
+    let mut d = 0.0f64;
     for i in 0..3 {
       d = d.max((to[i] - current[i]).abs());
     }
@@ -594,8 +603,8 @@ impl NodeTransitions {
   pub fn retarget_rotation(
     &mut self,
     node: NodeId,
-    current: [f32; 4],
-    to: [f32; 4],
+    current: [f64; 4],
+    to: [f64; 4],
     spec: TransitionSpec,
     start: TrackStart,
   ) -> bool {
@@ -649,15 +658,15 @@ impl NodeTransitions {
   pub fn retarget_weights(
     &mut self,
     node: NodeId,
-    current: &[f32],
-    to: &[f32],
+    current: &[f64],
+    to: &[f64],
     spec: TransitionSpec,
     start: TrackStart,
   ) -> bool {
     let len = current.len().max(to.len());
     let current = fit_lanes(current, len);
     let to = fit_lanes(to, len);
-    let mut d = 0.0f32;
+    let mut d = 0.0f64;
     for i in 0..len {
       d = d.max((to[i] - current[i]).abs());
     }
@@ -712,8 +721,8 @@ impl NodeTransitions {
   pub fn write_weights(
     &mut self,
     node: NodeId,
-    current: &[f32],
-    to: &[f32],
+    current: &[f64],
+    to: &[f64],
     motion: NodeMotion,
     unchanged: bool,
   ) -> bool {
@@ -742,7 +751,7 @@ impl NodeTransitions {
   }
 
   /// The target a running weights track for the node heads for.
-  fn weights_target_of(&self, node: NodeId) -> Option<&[f32]> {
+  fn weights_target_of(&self, node: NodeId) -> Option<&[f64]> {
     self.weights.iter().find(|t| t.node == node).map(|t| t.to.as_slice())
   }
 
@@ -767,7 +776,7 @@ impl NodeTransitions {
       let Some(rate) = rate_of(w.node) else {
         return false;
       };
-      w.remaining_ms -= scaled_step(&mut w.since_ms, now_ms, rate);
+      w.remaining_ms -= scaled_step(&mut w.since_ms, now_ms, rate as f32);
       if w.remaining_ms <= 0.0 {
         due.push((w.clone(), -w.remaining_ms));
         false
@@ -780,7 +789,7 @@ impl NodeTransitions {
 
   /// Drop the node's weights track or held write and hand back its
   /// target, if one was in force (the enter animation's retarget).
-  pub fn take_weights_target(&mut self, node: NodeId) -> Option<Vec<f32>> {
+  pub fn take_weights_target(&mut self, node: NodeId) -> Option<Vec<f64>> {
     if let Some(i) = self.pending_weights.iter().position(|w| w.node == node) {
       return Some(self.pending_weights.swap_remove(i).to);
     }
@@ -877,7 +886,7 @@ impl NodeTransitions {
       let Some(rate) = rate_of(w.node) else {
         return false;
       };
-      w.remaining_ms -= scaled_step(&mut w.since_ms, now_ms, rate);
+      w.remaining_ms -= scaled_step(&mut w.since_ms, now_ms, rate as f32);
       if w.remaining_ms <= 0.0 {
         due.push((*w, -w.remaining_ms));
         false
@@ -966,7 +975,7 @@ pub(super) fn targets_match(component: Component, a: Lanes, b: Lanes) -> bool {
 // track math on purpose: math.rs consumes quaternions whole (compose);
 // only the geodesic tracks decompose them.
 
-fn quat_mul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+fn quat_mul(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
   [
     a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
     a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
@@ -975,15 +984,15 @@ fn quat_mul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
   ]
 }
 
-fn quat_conjugate(q: [f32; 4]) -> [f32; 4] {
+fn quat_conjugate(q: [f64; 4]) -> [f64; 4] {
   [-q[0], -q[1], -q[2], q[3]]
 }
 
-fn quat_dot(a: [f32; 4], b: [f32; 4]) -> f32 {
+fn quat_dot(a: [f64; 4], b: [f64; 4]) -> f64 {
   a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]
 }
 
-pub(super) fn quat_normalize(q: [f32; 4]) -> [f32; 4] {
+pub(super) fn quat_normalize(q: [f64; 4]) -> [f64; 4] {
   let l = quat_dot(q, q).sqrt();
   if l > 0.0 {
     [q[0] / l, q[1] / l, q[2] / l, q[3] / l]
@@ -995,7 +1004,7 @@ pub(super) fn quat_normalize(q: [f32; 4]) -> [f32; 4] {
 /// The rotation vector (axis * angle, radians) of the SHORT arc from
 /// identity to `q`: the sign of q is normalized first, so the result's
 /// angle is at most pi.
-fn quat_log(q: [f32; 4]) -> [f32; 3] {
+fn quat_log(q: [f64; 4]) -> [f64; 3] {
   let q = if q[3] < 0.0 { [-q[0], -q[1], -q[2], -q[3]] } else { q };
   let sin_half = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2]).sqrt();
   if sin_half < 1e-6 {
@@ -1007,7 +1016,7 @@ fn quat_log(q: [f32; 4]) -> [f32; 3] {
   [q[0] * s, q[1] * s, q[2] * s]
 }
 
-fn quat_exp(r: [f32; 3]) -> [f32; 4] {
+fn quat_exp(r: [f64; 3]) -> [f64; 4] {
   let angle = (r[0] * r[0] + r[1] * r[1] + r[2] * r[2]).sqrt();
   if angle < 1e-6 {
     return quat_normalize([r[0] / 2.0, r[1] / 2.0, r[2] / 2.0, 1.0]);
@@ -1019,7 +1028,7 @@ fn quat_exp(r: [f32; 3]) -> [f32; 4] {
 
 /// `b` (or its negation) on the hemisphere of `a`, so interpolation takes
 /// the short arc.
-fn near_hemisphere(b: [f32; 4], a: [f32; 4]) -> [f32; 4] {
+fn near_hemisphere(b: [f64; 4], a: [f64; 4]) -> [f64; 4] {
   if quat_dot(a, b) < 0.0 {
     [-b[0], -b[1], -b[2], -b[3]]
   } else {
@@ -1029,21 +1038,21 @@ fn near_hemisphere(b: [f32; 4], a: [f32; 4]) -> [f32; 4] {
 
 /// The same rotation, either sign (the target-unchanged check; writes
 /// re-send the same floats, so exact comparison is the contract).
-fn same_quat(a: [f32; 4], b: [f32; 4]) -> bool {
+fn same_quat(a: [f64; 4], b: [f64; 4]) -> bool {
   a == b || a == [-b[0], -b[1], -b[2], -b[3]]
 }
 
 /// Angle (radians) between two unit quaternions, short arc.
-fn angle_between(a: [f32; 4], b: [f32; 4]) -> f32 {
+fn angle_between(a: [f64; 4], b: [f64; 4]) -> f64 {
   2.0 * quat_dot(a, b).abs().clamp(0.0, 1.0).acos()
 }
 
-pub(super) fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+pub(super) fn slerp(a: [f64; 4], b: [f64; 4], t: f64) -> [f64; 4] {
   let b = near_hemisphere(b, a);
   let dot = quat_dot(a, b).clamp(-1.0, 1.0);
   if dot > 0.9995 {
     // Nearly parallel: lerp and renormalize.
-    let mut out = [0.0f32; 4];
+    let mut out = [0.0f64; 4];
     for i in 0..4 {
       out[i] = a[i] + (b[i] - a[i]) * t;
     }

@@ -7,9 +7,23 @@
 // shape. Node ids are plain numbers, generation-tagged and never reused, so
 // a destroyed node's id throws everywhere.
 //
-// A transform argument is one Float32Array of 10: position xyz, unit
+// A transform argument is one Float64Array of 10: position xyz, unit
 // quaternion xyzw, scale xyz. Writes queue the node; nothing reaches the
 // GPU until flush(). worldMatrix() reads through pending writes.
+//
+// Precision: the arena keeps positions and matrices in f64, so a world a
+// million units across is exact to a fraction of a millimetre, and
+// everything that reads world positions - picking, collision, residency,
+// the motion producers - works at that precision. The GPU takes f32, so
+// what the flush uploads is RELATIVE: an entry's uModel and a target's
+// Position slots to the target's render origin (setView's `origin`, a
+// point the consumer keeps near the eye), a buffer's records to its
+// anchor node or its origin point (setInstanceOrigin). The carriers
+// follow: a position or matrix argument is a Float64Array (transform,
+// worldMatrix, readTransform, setRest, the query rays and volumes, the
+// view and its origin); geometry stays Float32Array (bounds, shapes,
+// vertex channels, weights, clip data, spring data), being local to its
+// node, where f32 is exact enough.
 
 declare module "flux:spatial" {
   import type { BufferId, DrawId, TextureId } from "flux:gpu"
@@ -23,7 +37,7 @@ declare module "flux:spatial" {
   export type GridId = number & { readonly __spatialGrid: unique symbol }
 
   /** A new root node. `visible: false` hides the node's whole subtree. */
-  export function createNode(transform: Float32Array, visible: boolean): NodeId
+  export function createNode(transform: Float64Array, visible: boolean): NodeId
   /** Free a node NOW, exit or no exit; its children become roots, except
    * leaving ones (exitNode), which go with it. A bound sink is dropped
    * without a write (removing the entry is the caller's job). On a leaving
@@ -68,7 +82,7 @@ declare module "flux:spatial" {
    * write still queues the node). Never consults or cancels transition
    * tracks: a running track overwrites a raw write at the next frame
    * (last write wins - the producer rule). */
-  export function setTransform(node: NodeId, transform: Float32Array): void
+  export function setTransform(node: NodeId, transform: Float64Array): void
   /**
    * One node-transition spec, the element `transition` vocabulary whole
    * minus stagger: `{ duration }` / `{ duration, bounce }` is a spring
@@ -169,7 +183,7 @@ declare module "flux:spatial" {
    * NodeComponent }`, ahead of the frame's JS - on a live node; a
    * leaving node's settles feed its free instead (exitNode).
    */
-  export function writeTransform(node: NodeId, transform: Float32Array): void
+  export function writeTransform(node: NodeId, transform: Float64Array): void
   /**
    * Declare (null clears) the rate the native motion in the node's
    * subtree runs at: node transitions with their delays, enters, exits
@@ -268,9 +282,9 @@ declare module "flux:spatial" {
   /** Change every bound entry's "on" count (an instanced mesh's record
    * count); written at once to the entries currently on. */
   export function setDrawCount(node: NodeId, count: number): void
-  /** Fill `out` (a Float32Array of 16, column-major) with the node's world
+  /** Fill `out` (a Float64Array of 16, column-major) with the node's world
    * matrix as the tree stands now, pending writes included. */
-  export function worldMatrix(node: NodeId, out: Float32Array): void
+  export function worldMatrix(node: NodeId, out: Float64Array): void
   /** Effective visibility (every ancestor visible too) as of the last flush. */
   export function shown(node: NodeId): boolean
   /** Recompute every changed subtree and write the sinks; requests a frame
@@ -309,8 +323,9 @@ declare module "flux:spatial" {
   export function setBounds(node: NodeId, bounds: Float32Array | null): void
   /**
    * What `target` sees: its view (world to camera) and projection
-   * (camera to clip), two Float32Arrays of 16, column-major - or null to
-   * forget the target (its view, LOD bias and LOD reference). The core
+   * (camera to clip), two Float64Arrays of 16, column-major - or null to
+   * forget the target (its view, render origin, LOD bias and LOD
+   * reference). The core
    * derives everything a target measures with from them: the clip volume
    * gating every draw sink on it (an entry whose node box, grown by its
    * cull margin, falls wholly outside reads instanceCount 0 like a hidden
@@ -328,8 +343,22 @@ declare module "flux:spatial" {
    * scene's), so it wants only the grids declared with that `root`
    * (GridSpec) and the explicit regions under that node; absent, it
    * wants every world's. The arena is one; worlds are its roots.
+   *
+   * `origin` (a Float64Array of 3, absent = zero) is the target's RENDER
+   * ORIGIN: the world point every f32 the target receives is relative to
+   * - its entries' uModel translations, its Position slots (uLightPos),
+   * the occlusion raster - while the arena keeps the world in f64. Pick
+   * it near the camera and keep it still while the camera stays within
+   * reach (a power-of-two cell sized to the camera's near plane, so a
+   * camera move stays one shared uViewProj write); the view, uCamPos
+   * and every other world position the consumer uploads to the target
+   * must be relative to the same point. A change shifts the entries
+   * written under the old origin in ONE write at the next flush (the
+   * raster adds the difference to their uModel translations) and
+   * re-derives the frustum, LOD view and occlusion raster, so an origin
+   * move costs no params write per entry. Zero is a plain world upload.
    */
-  export function setView(target: TextureId | ViewKey, view: Float32Array, proj: Float32Array, root?: NodeId): void
+  export function setView(target: TextureId | ViewKey, view: Float64Array, proj: Float64Array, root?: NodeId, origin?: Float64Array): void
   export function setView(target: TextureId | ViewKey, view: null): void
   /** A viewer key for setView, for a view with no target of its own. */
   export function allocViewKey(): ViewKey
@@ -656,7 +685,7 @@ declare module "flux:spatial" {
   /** Every shown node with bounds the ray strikes, nearest first. The
    * direction need not be normalized; distances are world units. Reads
    * the index as of the last flush. */
-  export function raycast(origin: Float32Array, direction: Float32Array, filter?: QueryFilter): Hit[]
+  export function raycast(origin: Float64Array, direction: Float64Array, filter?: QueryFilter): Hit[]
   /** A query volume's layout for overlap/sweep: "capsule" is
    * 7 floats (a, b, radius; a sphere when a == b), "box" is 10 (center,
    * half extents, unit quaternion xyzw). */
@@ -691,16 +720,16 @@ declare module "flux:spatial" {
    * face, the push that carries it clear (never a push deeper in).
    * Unordered; reads the index as of the last flush, like raycast.
    */
-  export function overlap(kind: VolumeKind, volume: Float32Array, filter?: QueryFilter): Overlap[]
+  export function overlap(kind: VolumeKind, volume: Float64Array, filter?: QueryFilter): Overlap[]
   /**
-   * The volume moved by `motion` (a Float32Array of 3): every shown node
+   * The volume moved by `motion` (a Float64Array of 3): every shown node
    * with bounds it touches on the way, at its first touch, earliest
    * first. A node already in contact reports time 0 while the motion
    * closes in, and nothing while it leaves or slides along the contact;
    * a zero motion touches nothing. Same testing and index contract as
    * overlap.
    */
-  export function sweep(kind: VolumeKind, volume: Float32Array, motion: Float32Array, filter?: QueryFilter): Impact[]
+  export function sweep(kind: VolumeKind, volume: Float64Array, motion: Float64Array, filter?: QueryFilter): Impact[]
   /** The mover's tuning, every field optional over the core's defaults:
    * `up` (the direction floors face, [0, 1, 0]), `floorMaxAngle` (radians
    * from `up` a contact still counts as floor, 45 degrees), `maxSlides`
@@ -733,7 +762,7 @@ declare module "flux:spatial" {
    * `maxSlides` times, then unless the motion rises a snap down onto a
    * floor within `floorSnap`. Same index and filter contract as sweep.
    */
-  export function moveAndSlide(kind: VolumeKind, volume: Float32Array, motion: Float32Array, opts?: MoveOptions, filter?: QueryFilter): MoveResult
+  export function moveAndSlide(kind: VolumeKind, volume: Float64Array, motion: Float64Array, opts?: MoveOptions, filter?: QueryFilter): MoveResult
 
   /**
    * Route the world DIRECTION of the node's local `vector` (a
@@ -871,6 +900,22 @@ declare module "flux:spatial" {
    * when `new` already carries record sinks.
    */
   export function retargetRecords(old: BufferId, next: BufferId): void
+  /**
+   * The point the records on `buffer` are relative to, for a buffer
+   * WITHOUT an anchor node (an anchored buffer ignores it): the sprite
+   * layer's render origin, one dimension down from a target's (setView's
+   * `origin`). The buffer's records are f32, so a population a million
+   * pixels out steps in whole pixels unless they are relative to a point
+   * near the camera; the layer picks one near its primary view and keeps
+   * it still while the camera stays within reach, and that view's camera
+   * uniforms subtract the same point. A change restages every shown
+   * record on the buffer into one coalesced write at the next flush.
+   * Declared before the first bind it holds for that bind; a retarget
+   * carries it to the new buffer. One buffer, one origin: views of a
+   * layer far apart from each other share it, so they must stay within
+   * f32 reach of one another (about 10^5 px at sub-pixel precision).
+   */
+  export function setInstanceOrigin(buffer: BufferId, origin: Float64Array): void
 
   /** A registered clip's handle (createClip). */
   export type ClipId = number
@@ -935,7 +980,7 @@ declare module "flux:spatial" {
    * pose as it stood). A model declares its file's node transforms at
    * every scene enter. Throws on a dead node or a zero rotation.
    */
-  export function setRest(node: NodeId, rest: Float32Array | null): void
+  export function setRest(node: NodeId, rest: Float64Array | null): void
   /**
    * Create a rig - one model's animation state, Unity's Animator,
    * Godot's AnimationMixer, Unreal's AnimInstance: `joints` the nodes
@@ -1112,13 +1157,13 @@ declare module "flux:spatial" {
   /** Remove a curve's binding on (target, draw); a missing one is fine. */
   export function unbindCurveParam(rig: RigId, curve: string, target: TextureId, draw?: DrawId): void
   /**
-   * Fill `out` (a Float32Array of 10) with the node's CURRENT local
+   * Fill `out` (a Float64Array of 10) with the node's CURRENT local
    * transform - position xyz, quaternion xyzw, scale xyz - as the arena
    * holds it, players' writes included. The pose read for root-motion
    * strips and skeleton copies: JS-side mirrors of a node animated by a
    * player go stale, this does not.
    */
-  export function readTransform(node: NodeId, out: Float32Array): void
+  export function readTransform(node: NodeId, out: Float64Array): void
 
   /** A spring-bone chain's handle (createSpring). */
   export type SpringId = number

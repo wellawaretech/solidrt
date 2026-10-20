@@ -610,7 +610,7 @@ function subjectOf(target: Model | RigSpec): Subject {
     spec.nodes.forEach((n, i) => {
       let r = spec.rest?.[i]
       if (r === undefined) return
-      n._rest = Float32Array.from([...r.position, ...r.quaternion, ...r.scale])
+      n._rest = Float64Array.from([...r.position, ...r.quaternion, ...r.scale])
       if (n._node !== null) spatial.setRest(n._node, n._rest)
     })
     return {
