@@ -194,11 +194,7 @@ impl State {
   /// at the front of the queue.
   fn catch_up(&mut self, live: Live) {
     let target_us = self.newest_us - live.latency_us;
-    let Some(at) = self
-      .video
-      .iter()
-      .position(|au| au.pts_us >= target_us)
-      .or_else(|| (!self.video.is_empty()).then_some(self.video.len() - 1))
+    let Some(at) = self.video.iter().position(|au| au.pts_us >= target_us).or_else(|| self.video.len().checked_sub(1))
     else {
       return;
     };
