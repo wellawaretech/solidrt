@@ -100,6 +100,10 @@ export type SceneProps = ScenePointerProps &
   /** The LOD size multiplier (scene.setLodBias as a prop): below 1 hands
    * over to far levels sooner. Default the quality row's. Reactive. */
   lodBias?: number
+  /** Occlusion culling in the scene's own render (scene.setOcclusion as a
+   * prop; default true): meshes wholly behind the shown occluders are not
+   * drawn. Reactive. */
+  occlusion?: boolean
   /** Scene-wide shadow settings: `quality` (scene.setShadowQuality) is
    * the soft shadow kernel's tier, "hard" | "low" | "medium" | "high" -
    * the tap count every light with a `radius` above 1 or a size spends,
@@ -216,6 +220,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
       shadows: props.shadows,
       quality: props.quality,
       lodBias: props.lodBias,
+      occlusion: props.occlusion,
       blendSpace: props.blendSpace,
       resolve: props.resolve,
       bloom: props.bloom,
@@ -297,6 +302,11 @@ export let Scene: ParentComponent<SceneProps> = props => {
   createEffect(
     () => props.lodBias,
     b => scene.setLodBias(b ?? null),
+    { defer: true },
+  )
+  createEffect(
+    () => props.occlusion,
+    o => scene.setOcclusion(o ?? true),
     { defer: true },
   )
   createEffect(

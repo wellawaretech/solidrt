@@ -35,6 +35,11 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   planted on a sloped floor from ground rays the core casts on the
   floor's collider layer, the hips dropping for the lower foot; the only
   per-frame JS moves the targets.
+- `occlusion.tsx` - occlusion culling in core (`occluder` on the walls of
+  a courtyard, exact by their geometry): from outside, the solids the
+  walls cover are not drawn, through the gate they come back, and the
+  gate's door is an occluder that stops occluding when hidden; the HUD
+  counts what the render leaves out through `scene.cullState`.
 - `animation-layers.tsx` - the mixer's layered model, composed in core
   (`createMixer` layers, `createBlendSpace`): a walk-run blend space in
   a marker-synced group on the base (the plants land together at any

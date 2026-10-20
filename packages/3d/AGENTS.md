@@ -175,8 +175,12 @@ invisible ones - unless the query passes its own `{ layers }`, which is
 how a low-poly collision mesh lives undrawn in the scene yet answers
 ground and collision queries (the physics-collider pattern).
 SEALED INTERIORS are the other manual use: from outside, a closed shell
-hides its whole interior, but frustum culling cannot know that and
-there is no occlusion or portal culling. Put the interior, the shell
+hides its whole interior, but frustum culling cannot know that.
+OCCLUSION culling knows (see Culling: `occluder="geometry"` on the
+shell's walls, and what they cover is not drawn, from any camera
+position, a street of shells included); the layer switch remains for
+the deliberate sealed interior and for the LIGHTS, which occlusion does
+not mask. Put the interior, the shell
 and an opening "plug" on their own layers and switch the scene mask by
 the camera's zone (inside, outside, in the doorway) - the reactive
 `<Scene layers>` makes it one signal - and mask each light (and the
@@ -231,6 +235,46 @@ Unity's bone bounds, Godot's per-bone AABBs; no `updateWhenOffscreen`
 knob is needed. Probe faces set no frustum (six cameras, one target).
 Shadow tiles cull casters against their light frustum, which is what
 makes `shadow.distance` and cascades cheaper.
+
+OCCLUSION culling is the second gate, after the frustum: what the
+nearest walls cover is not drawn either (Godot's OccluderInstance3D,
+Unity's occludees). Occluders are AUTHORED, on a Mesh or a Group:
+`occluder` (`setOccluder`) takes `"geometry"` (the mesh's own
+triangles - exact, since a triangle occludes exactly what lies behind
+it, holes included; the shape for walls, floors and buildings),
+`"bounds"` (the mesh's box as a solid, twelve triangles, for a crate
+that fills its box), or an explicit shape in node space - `{ box }`,
+`{ quad: [width, height] }` (a two-sided wall in the node's XY plane,
+Godot's QuadOccluder3D), `{ sphere: { center, radius } }`, `{ geometry }`
+(a low-poly proxy). Box and sphere stand for SOLIDS; a mesh whose
+triangles move in the vertex stage (skinned, morphing, a sprite, an
+instanced population) refuses `"geometry"` and takes a proxy instead.
+`occludersFromMeshes(scene, { minSize })` marks every plain mesh whose
+box's longest edge reaches `minSize` by its geometry (Unity's static
+flag by size) and returns them. The core rasterizes the SHOWN occluders
+into a small CPU depth buffer per target (128 texels wide, the target's
+aspect) only when the camera or an occluder moved, and switches off
+every mesh whose cull box - the frustum test's, `cullMargin` included -
+lies wholly behind it; a still scene costs nothing and a scene with no
+occluder costs nothing. Conservative to the buffer's texel: a mesh at an
+occluder's edge, or straddling the near plane, stays drawn; a crack
+narrower than a texel between two occluders occludes as if closed; a
+node never occludes itself; an occluder can itself be occluded. A hidden
+occluder occludes nothing (an open door). Per target: `occlusion` on
+createScene and createView (default true; `setOcclusion` live), never
+on shadow tiles (a caster behind a wall still casts) nor probe faces;
+the quality row has no say, since the fill-bound low row gains most.
+The budget is a constant: past 4096 occluder triangles per target per
+build the rest are skipped that build (less culling, never a wrong
+cull), and `/stats` carries `occludedDraws`, `occluders`,
+`occluderTriangles`, `occluderTrianglesDrawn` (the ones that reached
+the raster: zero with every occluder behind the camera),
+`occluderTrianglesSkipped`, `occlusionBuilds` and `occlusionBuildMs`. WHY a mesh is not drawn is `scene.cullState(mesh)`
+(`view.cullState` through a view's camera): "on", or the first of
+"hidden", "frustum", "occluded", "lod" that applies, as the core last
+decided it (after a settle, what the next frame draws); null while the
+mesh has no entry on that target. `examples/occlusion.tsx` is the
+shape; `probes/3d-occlusion-probe.tsx` the cost.
 
 ### Quality
 
@@ -794,12 +838,12 @@ through its debug commands, and `camera-components.test.tsx` drives
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `renderScale?`, `maxPixels?` (fill-mode density: a scale over the tracked device pixels and a cap on their count, below; the cap defaults to the quality row's), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (FogOptions: linear `{ color, near, far }` or exp2 `{ color, density }`, either plus `height`/`heightFalloff` - see Fog), `toneMapping?` (`"none"` default, `"aces"`, `"agx"` or `"neutral"`), `exposure?` (default 1), `quality?` (a tier name or a row object over the app tier, every knob's default - see Quality; reactive, the app tier too), `lodBias?` (reactive; default the row's), `shadows?` (`{ quality? }`: "hard" | "low" | "medium" | "high", the soft shadow kernel's tap tier, default the row's, reactive), `bloom?` (`{ threshold?, intensity?, radius? }`, the stock bloom on the resolve, reactive), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA; default the row's, live - the storage is reallocated in place), `label?`, `ref?(scene)`, `output?(texture, leaf)` (compose the leaf yourself; `leaf.ref`, `leaf.handlers`, `leaf.size()`, `leaf.deviceSize()` - see Output composition; `events` then throws), `resolve?` (the source, `{ source, textures }`, or a function of the buffer id returning either; fixed at creation - see Color), `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
-| `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width?`, `height?` (target pixels, live - both, or neither = FILL exactly as Scene's: the leaf fills its sized parent and the view follows it; a tile of `into` gives both), `renderScale?`, `maxPixels?` (fill-mode density, as Scene's), `x?`, `y?` (the tile's top-left in `into`, live; throw without `into`), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `filter?`, `wrap?` (createView's, fixed), `samples?` (default the scene's quality row's; live), `ref?(view)`, `output?(texture, leaf)` (as Scene's; else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `resolve?` (as Scene's; not with `into`), `bloom?` (BloomOptions overrides the scene's, null turns it off in this view, absent follows the scene; not with `into`), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
-| `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, the bubbling pointer events (below: down/move/up/wheel/tap from a hit descendant; a group is never the struck node, so it takes no `onPointerEnter`/`onPointerLeave` - `Lod` likewise), `ref?(node)` |
+| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `renderScale?`, `maxPixels?` (fill-mode density: a scale over the tracked device pixels and a cap on their count, below; the cap defaults to the quality row's), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (FogOptions: linear `{ color, near, far }` or exp2 `{ color, density }`, either plus `height`/`heightFalloff` - see Fog), `toneMapping?` (`"none"` default, `"aces"`, `"agx"` or `"neutral"`), `exposure?` (default 1), `quality?` (a tier name or a row object over the app tier, every knob's default - see Quality; reactive, the app tier too), `lodBias?` (reactive; default the row's), `occlusion?` (reactive; default true, see Culling), `shadows?` (`{ quality? }`: "hard" | "low" | "medium" | "high", the soft shadow kernel's tap tier, default the row's, reactive), `bloom?` (`{ threshold?, intensity?, radius? }`, the stock bloom on the resolve, reactive), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA; default the row's, live - the storage is reallocated in place), `label?`, `ref?(scene)`, `output?(texture, leaf)` (compose the leaf yourself; `leaf.ref`, `leaf.handlers`, `leaf.size()`, `leaf.deviceSize()` - see Output composition; `events` then throws), `resolve?` (the source, `{ source, textures }`, or a function of the buffer id returning either; fixed at creation - see Color), `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
+| `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width?`, `height?` (target pixels, live - both, or neither = FILL exactly as Scene's: the leaf fills its sized parent and the view follows it; a tile of `into` gives both), `renderScale?`, `maxPixels?` (fill-mode density, as Scene's), `x?`, `y?` (the tile's top-left in `into`, live; throw without `into`), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `occlusion?` (live; default true, see Culling), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `filter?`, `wrap?` (createView's, fixed), `samples?` (default the scene's quality row's; live), `ref?(view)`, `output?(texture, leaf)` (as Scene's; else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `resolve?` (as Scene's; not with `into`), `bloom?` (BloomOptions overrides the scene's, null turns it off in this view, absent follows the scene; not with `into`), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
+| `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, `occluder?` (an explicit occluder shape at the node: `{ quad }`, `{ box }`, `{ sphere }` or `{ geometry }`, see Culling), the bubbling pointer events (below: down/move/up/wheel/tap from a hit descendant; a group is never the struck node, so it takes no `onPointerEnter`/`onPointerLeave` - `Lod` likewise), `ref?(node)` |
 | `Lod` | a Group whose direct children carrying `lodSize` (a prop every node component takes: the projected size below which that child hands over, see Level of detail) are its levels, sorted by size, never by JSX position; plus `fade?` (the cross-fade band fraction, default 0); a child without `lodSize` is drawn always |
 | `InstancedLod` | as InstancedMesh minus `material`, plus `levels` (`[{ geometry, material, size }]` nearest first, fixed at creation; instanced materials as InstancedMesh's), `castShadow?` (every level); `<Instance>` children populate it as under `InstancedMesh`, each drawing the level its own projected size picks |
-| `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), `frustumCulled?` (default true; false for geometry a vertex stage moves beyond the node's box - a billboard, a fullscreen quad; see Culling), `cullMargin?` (world units of slack around the box for bounded displacement), pointer events (below), `ref?(mesh)` |
+| `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), `frustumCulled?` (default true; false for geometry a vertex stage moves beyond the node's box - a billboard, a fullscreen quad; see Culling), `cullMargin?` (world units of slack around the box for bounded displacement), `occluder?` (`"geometry"`, `"bounds"` or a shape; what the mesh hides, see Culling), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
 | `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (an optional cull box, never a hit: instances pick by themselves, and without it the mesh culls by their union), `instanceOrder?` (draw the records in key order, fixed at creation - see "Instance order"), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount, and `anchor?` (a SceneNode, fixed at creation: the ancestor the records are relative to, so `<Instance mesh>` children may sit anywhere under it - see createInstancedMesh) |
 | `Instance` | one instance of the enclosing `InstancedMesh`: transforms, `transition`, pointer events as Group, plus `style?` (the material's style record, one value per component - `[r, g, b, a]` under `instanceColors`), `ref?(instance)`; a parent too (a `<Mesh>` under an instance rides with it), and `mesh?` (the population, fixed at creation, when the instance is placed outside its `<InstancedMesh>` - inside that mesh's `anchor` subtree) |

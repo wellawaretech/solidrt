@@ -168,7 +168,7 @@ geometry has no fix and decals are blocked on it.
 | Views: multiple cameras, render to texture | yes | yes | yes: SubViewport | yes | |
 | Frustum culling | yes | yes | yes | yes | core-side |
 | Level of detail | yes | yes | yes | yes | core-side |
-| Occlusion culling | no | yes | yes: occluders | no | [3d-occlusion-culling](../plans/3d-occlusion-culling.md) |
+| Occlusion culling | no | yes | yes: occluders | yes: occluders | core-side, [3d-occlusion-culling](../done/3d-occlusion-culling.md) |
 | XR | yes: WebXR | yes | yes | no | [vr-openxr](../backlog/vr-openxr.md) |
 | Decals | addon: DecalGeometry | yes: Decal Projector (v) | yes: Decal node | no | untracked; blocked on polygon offset |
 | Planar reflection / water | addon | HDRP only | no: SSR only | no | Three-only at runtime; cheap for us (a view with a mirrored camera) |
@@ -327,5 +327,5 @@ Three/Godot/Unity comparison in the proposal, per `packages/3d/CLAUDE.md`.
 6. Graph traversal helpers, a `Color` type and `MathUtils`.
 7. Clearcoat first among the physical extras; toon; shadow catcher.
 8. SSAO, then the rest of the post effects over the scene buffer.
-9. Occlusion culling, navigation, MRT, compute: each wants an explicit
-   yes or no before it is a backlog file.
+9. Navigation, MRT, compute: each wants an explicit yes or no before it
+   is a backlog file.

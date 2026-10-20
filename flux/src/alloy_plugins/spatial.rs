@@ -19,7 +19,7 @@ use alloy::spatial::{
   ClipChannel, ClipEvent, ClipMarker, Component, DrawOrder, DrawQueue, DrawSink, FeetSpec, GridSpec, IkLimit, IkPoint,
   IkSolverSpec, IkTarget, IkUp, InstanceProjection, InstanceRecordSink, LayerMode, LayerSpec, LayerUpdate, LegSpec,
   LodLevel, LookAtBone, LookAtLimit, LookAtSpec, MarkerPhase, MoveOptions, NodeEndpoint, NodeMotion,
-  NodeTransitionConfig, NodeTransitionEntry, PlayerSpec, PlayerUpdate, Projection, QueryFilter, RegionEvent,
+  NodeTransitionConfig, NodeTransitionEntry, Occluder, PlayerSpec, PlayerUpdate, Projection, QueryFilter, RegionEvent,
   RegionMargins, RegionRef, RestPose, RootMotion, Shape, SharedSlotSink, SpringCollider, SpringJoint,
   SpringJointUpdate, SpringShape, SyncMode, TextureSlotSink, TwoBoneSpec, Volume,
 };
@@ -110,6 +110,10 @@ impl ModuleDef for SpatialModule {
     decl.declare("setCull")?;
     decl.declare("setCullBounds")?;
     decl.declare("setCullGroup")?;
+    decl.declare("setOccluder")?;
+    decl.declare("setOcclusion")?;
+    decl.declare("cullState")?;
+    decl.declare("occlusionStats")?;
     decl.declare("allocViewKey")?;
     decl.declare("setRegion")?;
     decl.declare("createGrid")?;
@@ -214,6 +218,10 @@ impl ModuleDef for SpatialModule {
     exports.export("setCull", Function::new(ctx.clone(), set_cull)?)?;
     exports.export("setCullBounds", Function::new(ctx.clone(), set_cull_bounds)?)?;
     exports.export("setCullGroup", Function::new(ctx.clone(), set_cull_group)?)?;
+    exports.export("setOccluder", Function::new(ctx.clone(), set_occluder)?)?;
+    exports.export("setOcclusion", Function::new(ctx.clone(), set_occlusion)?)?;
+    exports.export("cullState", Function::new(ctx.clone(), cull_state)?)?;
+    exports.export("occlusionStats", Function::new(ctx.clone(), occlusion_stats)?)?;
     exports.export("allocViewKey", Function::new(ctx.clone(), alloc_view_key)?)?;
     exports.export("setRegion", Function::new(ctx.clone(), set_region)?)?;
     exports.export("createGrid", Function::new(ctx.clone(), create_grid)?)?;
@@ -719,6 +727,95 @@ fn set_cull_group(ctx: Ctx<'_>, id: u64, members: Vec<u64>) -> rquickjs::Result<
     .spatial()
     .set_cull_group(id, &members)
     .map_err(|e| throw_str(&ctx, &format!("setCullGroup: {e}")))
+}
+
+/// The node's occluder (null clears it): `{ box }` a Float32Array of 6,
+/// `{ quad: [width, height] }`, `{ sphere: { center, radius } }` or
+/// `{ mesh: { positions, indices? } }`, in node space.
+fn set_occluder<'js>(ctx: Ctx<'js>, id: u64, shape: OptArg<Object<'js>>) -> rquickjs::Result<()> {
+  let occluder = match &shape.0 {
+    Some(o) => Some(occluder_arg(&ctx, o, "setOccluder")?),
+    None => None,
+  };
+  super::gui(&ctx).alloy.spatial().set_occluder(id, occluder).map_err(|e| throw_str(&ctx, &format!("setOccluder: {e}")))
+}
+
+fn occluder_arg<'js>(ctx: &Ctx<'js>, o: &Object<'js>, api: &str) -> rquickjs::Result<Occluder> {
+  if let Some(b) = o.get::<_, Option<TypedArray<'js, f32>>>("box")? {
+    let f = elements_of(ctx, &b, api)?;
+    if f.len() != 6 {
+      return Err(throw_str(ctx, &format!("{api}: box must be a Float32Array of 6 (min xyz, max xyz)")));
+    }
+    return Ok(Occluder::box3([f[0], f[1], f[2], f[3], f[4], f[5]]));
+  }
+  if let Some(q) = o.get::<_, Option<Vec<f64>>>("quad")? {
+    if q.len() != 2 || !(q[0] > 0.0 && q[1] > 0.0) {
+      return Err(throw_str(ctx, &format!("{api}: quad must be [width, height], both > 0")));
+    }
+    return Ok(Occluder::quad(q[0] as f32, q[1] as f32));
+  }
+  if let Some(s) = o.get::<_, Option<Object<'js>>>("sphere")? {
+    let center: Vec<f64> = s.get("center")?;
+    let radius: f64 = s.get("radius")?;
+    if center.len() != 3 || !(radius > 0.0) {
+      return Err(throw_str(ctx, &format!("{api}: sphere needs center [x, y, z] and radius > 0")));
+    }
+    return Ok(Occluder::sphere([center[0] as f32, center[1] as f32, center[2] as f32], radius as f32));
+  }
+  if let Some(m) = o.get::<_, Option<Object<'js>>>("mesh")? {
+    let positions: TypedArray<'js, f32> = m.get("positions")?;
+    let p = elements_of(ctx, &positions, api)?;
+    if p.len() % 3 != 0 || p.is_empty() {
+      return Err(throw_str(ctx, &format!("{api}: mesh positions must be a non-empty Float32Array of xyz triples")));
+    }
+    let positions: Vec<[f32; 3]> = p.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let indices: Value<'js> = m.get("indices")?;
+    let flat: Vec<u32> = if indices.is_undefined() || indices.is_null() {
+      (0..positions.len() as u32).collect()
+    } else {
+      index_list(ctx, &indices, api)?
+    };
+    if flat.len() % 3 != 0 {
+      return Err(throw_str(ctx, &format!("{api}: mesh indices must come in triples")));
+    }
+    let indices: Vec<[u32; 3]> = flat.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    return Occluder::mesh(positions, indices).map_err(|e| throw_str(ctx, &format!("{api}: {e}")));
+  }
+  Err(throw_str(ctx, &format!("{api}: a shape is {{ box }}, {{ quad }}, {{ sphere }} or {{ mesh }}")))
+}
+
+/// Whether a target tests its draw sinks against its occluders' depth
+/// buffer (default off).
+fn set_occlusion(ctx: Ctx<'_>, target: u64, enabled: bool) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().set_occlusion(target, enabled);
+  Ok(())
+}
+
+/// Why the node's draw sink on a target is off, or "on"; null without a
+/// sink there.
+fn cull_state(ctx: Ctx<'_>, id: u64, target: u64) -> rquickjs::Result<Option<String>> {
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .cull_state(id, target)
+    .map(|s| s.map(|s| s.name().to_string()))
+    .map_err(|e| throw_str(&ctx, &format!("cullState: {e}")))
+}
+
+/// Occlusion culling's figures over every target.
+fn occlusion_stats(ctx: Ctx<'_>) -> rquickjs::Result<Object<'_>> {
+  let s = super::gui(&ctx).alloy.spatial().occlusion_stats();
+  let obj = Object::new(ctx.clone())?;
+  obj.set("targets", s.targets as u32)?;
+  obj.set("occluders", s.occluders as u32)?;
+  obj.set("triangles", s.triangles as u32)?;
+  obj.set("drawn", s.drawn as u32)?;
+  obj.set("skipped", s.skipped as u32)?;
+  obj.set("builds", s.builds as f64)?;
+  obj.set("buildMs", s.build_ms as f64)?;
+  obj.set("buildMaxMs", s.build_max_ms as f64)?;
+  obj.set("occluded", s.occluded as u32)?;
+  Ok(obj)
 }
 
 /// Make the node a LOD group: `levels` is an array of `{ node?, size }`

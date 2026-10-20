@@ -130,6 +130,8 @@ export type { ClipBlendSample, ClipBlendSpace, ClipBlendSpaceOptions } from "./b
 export { createSpringBones } from "./springs.ts"
 export type { SpringBones, SpringBonesOptions, SpringChainSpec, SpringColliderSpec, SpringJointSpec, SpringJointUpdate } from "./springs.ts"
 export { createIk } from "./ik.ts"
+export { occludersFromMeshes, setOccluder } from "./occluder.ts"
+export type { CullState, OccluderSpec } from "./occluder.ts"
 export type { Ik, IkChainSpec, IkCurveWeight, IkFeetSpec, IkLimitSpec, IkLookAtSpec, IkOptions, IkPointSpec, IkSolverSpec, IkSolverUpdate, IkTargetSpec, IkTwoBoneSpec, IkUpSpec } from "./ik.ts"
 export { channelElements, sampleChannel } from "./clip.ts"
 export { createOrbitCamera } from "./orbit.ts"

@@ -7,7 +7,7 @@
 // types only).
 
 import * as spatial from "flux:spatial"
-import type { NodeId, NodeMotionSpec, NodeTransition } from "flux:spatial"
+import type { NodeId, NodeMotionSpec, NodeTransition, OccluderShape } from "flux:spatial"
 import { on } from "sol:events"
 import { createMutableTexture, destroyTexture } from "@solidrt/core/gpu"
 import type { ShaderParams, TextureId } from "@solidrt/core/gpu"
@@ -265,6 +265,9 @@ export type SceneNode = {
    * space): bound at every scene enter so the joint's world box follows
    * the pose without joining the picking index. null for the common case. */
   _cullBounds: Float32Array | null
+  /** The occluder shape the node declared (setOccluder), resolved to the
+   * core's form; bound at every scene enter. null for the common case. */
+  _occluder: OccluderShape | null
   /** The LOD group this node heads (see LodConfig); null for the common
    * case. */
   _lod: LodConfig | null
@@ -441,6 +444,7 @@ export function makeNode(kind: SceneNode["kind"]): SceneNode {
     _palettes: null,
     _morph: null,
     _cullBounds: null,
+    _occluder: null,
     _lod: null,
     _bindings: null,
     _rest: null,
@@ -602,6 +606,7 @@ export function enterScene(node: SceneNode, scene: SceneHooks): void {
   // gets its state when a morphing entry first needs it (activateMorph).
   if (node._morph !== null) activateMorph(node)
   if (node._cullBounds !== null) spatial.setCullBounds(node._node, node._cullBounds)
+  if (node._occluder !== null) spatial.setOccluder(node._node, node._occluder)
   if (node._rest !== null) spatial.setRest(node._node, node._rest)
   if (node.kind === "mesh") {
     spatial.setLayers(node._node, (node as Mesh).layers)

@@ -56,12 +56,6 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
-- **[Occlusion culling in the spatial core's cull pass](plans/3d-occlusion-culling.md)** [2026-10-20]
-  Authored occluders rasterized to a small CPU depth buffer per target on the
-  sort thread, every node's world box tested against it in the flush's cull
-  pass as a second gate beside the frustum test (Godot's OccluderInstance3D
-  model, Unity's occludee semantics), so a dense scene on a phone stops
-  drawing what its nearest walls cover with zero per-frame JS.
 - **[Spring bones - secondary motion solved in the spatial core](plans/3d-spring-bones.md)** [2026-10-19]
   A native chain solver for hair, skirts, tails and cables (Unity's
   SpringBone, Godot's SpringBoneSimulator3D, three-vrm's VRMSpringBoneJoint),
@@ -812,6 +806,12 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
+- **[The cull pass costs microseconds per sink on a phone core](backlog/spatial-cull-pass-per-sink-cost.md)** [2026-10-20]
+  A camera move re-tests every draw sink on the target, and on the tablet that
+  is 5.6 to 6.6 ms for 1600 sinks, about 3.5 us each, for a frustum test and a
+  LOD check; the per-sink hash lookups and box walks are the suspects, and a
+  profile with a per-target index or a faster hasher should cut it well below
+  the occlusion work that now sits beside it.
 - **[The splat order block and chunk table carry less than they could - the count dial drops the subject, sparse leaves lose precision, and nothing culls a chunk](backlog/splat-order-and-chunks.md)** [2026-10-18]
   The order block ranks by volume times opacity, so a capture whose subject is
   micro-splats loses the subject before the background at 100k; a k-d leaf
@@ -1278,6 +1278,13 @@ Finished, kept for the reasoning.
   lit/standard pair mixes two engine vocabularies with URP's meaning of Lit
   inverted, and "standard" names both a vertex layout and the PBR material on
   axes that never correlate; each is a rename with no compat constraint.
+- **[Occlusion culling in the spatial core's cull pass](done/3d-occlusion-culling.md)** [2026-10-20]
+  Authored occluders rasterized to a small CPU depth buffer per target inside
+  the flush, every node's cull box tested against it in the cull pass as a
+  second gate beside the frustum test (Godot's OccluderInstance3D model,
+  Unity's occludee semantics), so a dense scene on a phone stops drawing what
+  its nearest walls cover with zero per-frame JS; landed 2026-10-20 with the
+  package's occluder shapes, cullState introspection and /stats figures.
 - **[A geometry updated in place keeps picking against its old positions](done/3d-picking-shape-after-update.md)** [2026-09-11]
   updateVertices re-uploads a stream and drops the cached bounds, but the
   picking shape the spatial core built at first draw keeps the positions it

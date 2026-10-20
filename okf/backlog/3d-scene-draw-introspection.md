@@ -20,6 +20,12 @@ an entry without a word:
 - the shadow view's caster filter, plus the lines-and-points rule that
   makes non-triangle topology cast nothing.
 
+Since occlusion culling (2026-10-20) the spatial gates do answer:
+`scene.cullState(mesh)` and `view.cullState(mesh)` report "on" or the
+first of "hidden", "frustum", "occluded", "lod" that applies, as the
+core last decided it. The layer mask, the override skip and the caster
+filter still answer nothing, and neither does the disagreement below.
+
 `get_render_tree` answers the same question for the UI tree. The scene
 graph has no equivalent: `ScenePublic` carries no introspection call, so
 "is it there, and did it draw" is unanswerable from inside the app or over

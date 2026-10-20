@@ -70,6 +70,7 @@ import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTim
 import type { SceneHooks, SceneNode, ScenePointerListener, CurveBinding } from "./node.ts"
 import { checkInstancePairing, checkMask, checkOrderPairing, drawCount, instanceBinding, localBounds, markLiveRecords, publishRecords, spriteScreenPx } from "./mesh.ts"
 import type { InstancedMesh, InstanceNode, Mesh, MeshInstances, ResolvedInstanceOrder } from "./mesh.ts"
+import type { CullState } from "./occluder.ts"
 import type { CastingLight, Light } from "./light.ts"
 
 const IDENTITY = mat4()
@@ -467,6 +468,13 @@ export type SceneOptions = {
    * (0.7 / 1 / 1.5). Live via scene.setLodBias; views and shadow tiles
    * follow it. */
   lodBias?: number
+  /** Occlusion culling in the scene's own render (default true): a mesh
+   * whose box lies wholly behind the shown occluders (setOccluder, the
+   * `occluder` prop) is not drawn, tested in the core per camera or
+   * occluder move. Costs nothing while the scene has no occluder. Live
+   * via scene.setOcclusion; views decide for themselves (ViewOptions),
+   * shadow tiles and probe faces never occlusion-cull. */
+  occlusion?: boolean
   /** Scene-wide shadow settings. `quality` is the soft shadow kernel's
    * tier (see ShadowQuality): the taps every casting light spends per
    * receiving fragment and the filter width of a light that sets no
@@ -535,6 +543,10 @@ export type ViewOptions = {
    * meshes whose `layers` intersect it - a minimap admitting marker
    * meshes only. Live via view.setLayers. */
   layers?: number
+  /** Occlusion culling in this view (default true; see
+   * SceneOptions.occlusion), from the view's own camera. Live via
+   * view.setOcclusion. */
+  occlusion?: boolean
   /**
    * The view's own fog: FogOptions overrides the scene's, null turns fog
    * off in this view (an unfogged minimap over a fogged scene). Absent
@@ -620,6 +632,12 @@ export type ViewHandle = {
   /** The level a LOD group draws in this view (scene.lodLevel through
    * the view's camera). */
   lodLevel(group: SceneNode): number | null
+  /** Occlusion culling in this view from now on (ViewOptions.occlusion
+   * live). */
+  setOcclusion(enabled: boolean): void
+  /** Why the mesh is not drawn in this view, or "on" (scene.cullState
+   * through the view's camera). */
+  cullState(mesh: Mesh): CullState | null
   /** The camera ray through one of the VIEW's pixels, hits nearest first:
    * scene.pick through this view's camera and size, so a mesh under a
    * minimap is picked where the minimap shows it (the scene's query
@@ -912,6 +930,15 @@ export type Scene = {
    * an InstancedLod picks per instance, so this is its group's own
    * pick, not any instance's. Throws for a node with no levels. */
   lodLevel(group: SceneNode): number | null
+  /** Occlusion culling in the scene's own render from now on
+   * (SceneOptions.occlusion live). */
+  setOcclusion(enabled: boolean): void
+  /** Why the mesh is not drawn in the scene's own render, or "on": the
+   * first of "hidden", "frustum", "occluded", "lod" that applies, as the
+   * core last decided it (after a settle, the state the next frame draws
+   * with); null while the mesh has no entry there (not added, masked
+   * out). Views read their own through view.cullState. */
+  cullState(mesh: Mesh): CullState | null
   /**
    * Project a world point to scene pixels: origin top-left, y down - the
    * output texture's own coordinate space, ready for overlay layout (HUD
@@ -1923,6 +1950,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       spatial.setLodBias(buffer, lodBias)
       spatial.setLodFade(buffer, row.lodFade)
     }
+    // Occlusion from the view's own camera. Never a shadow tile (a caster
+    // behind a wall still casts a shadow the camera sees) nor a probe
+    // face (six cameras share one target).
+    if (shadowFilter === null && cube === null) spatial.setOcclusion(buffer, vopts.occlusion ?? true)
     let v: ViewRecord = {
       texture: buffer,
       // A shadow view is depth only, a probe's faces are read as a cube,
@@ -2013,6 +2044,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let lodBias = lodBiasExplicit ?? row.lodBias
   spatial.setLodBias(texture, lodBias)
   spatial.setLodFade(texture, row.lodFade)
+  spatial.setOcclusion(texture, opts?.occlusion ?? true)
   // Push a bias to the scene and every view measuring by its own camera
   // (a shadow tile measures by the scene's, through its LOD reference).
   let applyLodBias = (bias: number) => {
@@ -2741,6 +2773,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (disposed || group._node === null) return null
       return spatial.lodLevel(group._node, texture)
     },
+    setOcclusion(enabled) {
+      if (disposed) return
+      spatial.setOcclusion(texture, enabled)
+      hooks._schedule()
+    },
+    cullState(mesh) {
+      if (disposed || mesh._node === null) return null
+      return spatial.cullState(mesh._node, texture)
+    },
     setLayers(mask) {
       checkMask(mask, "scene.setLayers")
       if (disposed || sceneMask === mask) return
@@ -2996,6 +3037,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
             else detachView(v, mesh)
           }
           hooks._schedule()
+        },
+        setOcclusion(enabled) {
+          if (v.disposed) return
+          spatial.setOcclusion(v.texture, enabled)
+          hooks._schedule()
+        },
+        cullState(mesh) {
+          if (v.disposed || mesh._node === null) return null
+          return spatial.cullState(mesh._node, v.texture)
         },
         lodLevel(group) {
           if (v.disposed || group._node === null) return null

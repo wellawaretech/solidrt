@@ -881,6 +881,7 @@ async fn try_serve(
                       let order = atx.as_ref().map(|atx| atx.order_counters());
                       let submitted_frames = atx.as_ref().map(|atx| atx.submitted_frames());
                       let residency = atx.as_ref().map(|atx| atx.spatial().residency_stats());
+                      let occlusion = atx.as_ref().map(|atx| atx.spatial().occlusion_stats());
                       let audio = atx.as_ref().and_then(|atx| atx.audio_stats());
                       let app = Some(crate::plugins::dev::read_stats(&ctx));
                       let reply = StatsQuery {
@@ -894,6 +895,7 @@ async fn try_serve(
                         order,
                         submitted_frames,
                         residency,
+                        occlusion,
                         audio,
                         app,
                       };
@@ -912,6 +914,7 @@ async fn try_serve(
                       order: None,
                       submitted_frames: None,
                       residency: None,
+                      occlusion: None,
                       audio: None,
                       app: None,
                     };

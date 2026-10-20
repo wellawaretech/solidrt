@@ -20,6 +20,7 @@ mod ik;
 mod math;
 mod mover;
 mod normals;
+mod occlusion;
 mod pick;
 mod residency;
 mod rig;
@@ -37,6 +38,7 @@ pub use ik::{
 pub use math::{compose, invert_affine, multiply, normal_matrix, transform_point, transform_vector, IDENTITY};
 pub use mover::{MoveOptions, MoveResult};
 pub use normals::{vertex_normals, write_channel};
+pub use occlusion::{Occluder, OCCLUDER_TRIANGLE_BUDGET, OCCLUSION_BUFFER_WIDTH};
 pub use pick::{Hit, Shape, ShapeId};
 // The per-triangle narrowphase, for tests: the brute-force oracle the
 // indexed volume queries are checked against.
@@ -178,6 +180,74 @@ struct BoundSink {
   /// The unit direction the order feed last wrote (`DrawSink::order_feed`);
   /// zeros before the first write, so the first pass always feeds.
   fed: [f32; 3],
+  /// Why the entry is off, or that it is on, as of the last cull pass
+  /// that decided it (`cull_state`).
+  gate: CullState,
+}
+
+/// What the cull pass decided for a draw sink: on, or the first gate
+/// that switched it off, in the order the gates are tested.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CullState {
+  On,
+  /// The node or an ancestor is invisible (before the first flush too).
+  Hidden,
+  /// Its box lies wholly outside the target's frustum.
+  Frustum,
+  /// Its box lies wholly behind the target's occluders.
+  Occluded,
+  /// Its LOD level is not the one the target draws.
+  Lod,
+}
+
+impl CullState {
+  pub fn name(self) -> &'static str {
+    match self {
+      CullState::On => "on",
+      CullState::Hidden => "hidden",
+      CullState::Frustum => "frustum",
+      CullState::Occluded => "occluded",
+      CullState::Lod => "lod",
+    }
+  }
+}
+
+/// Occlusion culling's figures over every target (`occlusion_stats`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct OcclusionStats {
+  /// Targets with occlusion on.
+  pub targets: usize,
+  /// Live nodes carrying an occluder.
+  pub occluders: usize,
+  /// Occluder triangles the latest build of every target took (the
+  /// shown occluders' triangles within the budget, clipped or not).
+  pub triangles: usize,
+  /// Of those, the triangles that reached the raster: inside the view
+  /// volume at least in part. Zero with every occluder behind the camera.
+  pub drawn: usize,
+  /// Occluder triangles the latest builds skipped past the budget.
+  pub skipped: usize,
+  /// Buffer builds so far.
+  pub builds: u64,
+  /// The latest build's time, and the slowest, in milliseconds.
+  pub build_ms: f32,
+  pub build_max_ms: f32,
+  /// Draw sinks off because occluded, as of the last cull pass.
+  pub occluded: usize,
+}
+
+/// A target's occlusion state (`set_occlusion`): its buffer and the
+/// builds' figures.
+#[derive(Default)]
+struct OcclusionTarget {
+  /// The buffer needs a build: the view moved, or occlusion was just
+  /// turned on.
+  dirty: bool,
+  buffer: occlusion::DepthBuffer,
+  skipped: usize,
+  builds: u64,
+  build_ms: f32,
+  build_max_ms: f32,
 }
 
 /// The consumer of sink writes, one method per write kind, called in flush
@@ -848,6 +918,9 @@ struct Node {
   /// The residency region this node is (`set_region`): wanted while
   /// within its margins of a viewer's view volume.
   region: Option<Box<residency::Region>>,
+  /// The occluder this node carries (`set_occluder`): its triangles in
+  /// node space, rasterized under the node's world matrix while shown.
+  occluder: Option<Box<Occluder>>,
 }
 
 #[derive(Default)]
@@ -921,6 +994,20 @@ pub struct Spatial {
   /// A region moved or was declared this flush: the pass re-tests it
   /// against every viewer.
   regions_moved: bool,
+  /// Per target with occlusion on (`set_occlusion`): its depth buffer.
+  occlusion: HashMap<u64, OcclusionTarget>,
+  /// Per target with a view: its view-projection and projection, what an
+  /// occlusion build rasterizes under.
+  view_projs: HashMap<u64, (Mat4, Mat4)>,
+  /// The nodes carrying an occluder (dead or cleared ones drop at the
+  /// next build).
+  occluders: Vec<u32>,
+  /// An occluder moved, changed, or was shown or hidden this flush: every
+  /// occlusion buffer rebuilds.
+  occluders_moved: bool,
+  /// Targets whose occlusion buffer was rebuilt or dropped this flush:
+  /// every sink on them is re-tested by the cull pass.
+  occlusion_retest: Vec<u64>,
 }
 
 /// The layer mask a node starts with: layer 0 alone, Three's default.
@@ -1009,6 +1096,7 @@ impl Spatial {
       lod_scope: None,
       lod_check: false,
       region: None,
+      occluder: None,
     };
     let i = match self.free.pop() {
       Some(i) => {
@@ -1104,6 +1192,9 @@ impl Spatial {
     n.cull_group.clear();
     n.cull_owners.clear();
     n.shape = None;
+    if n.occluder.take().is_some() {
+      self.occluders_moved = true;
+    }
     n.lod_level = None;
     n.lod_scope = None;
     n.lod_check = false;
@@ -1356,7 +1447,8 @@ impl Spatial {
   /// without a box, or with culling off, are never gated), its LOD view
   /// (see `LodView`) and the view its draw sort measures depth against.
   /// Read at flush: set it before the flush that should see it. None
-  /// forgets the target: its view, its LOD bias and its LOD reference.
+  /// forgets the target: its view, its LOD bias, its LOD reference and
+  /// its occlusion.
   pub fn set_view(&mut self, target: u64, view: Option<(Mat4, Mat4)>) {
     let (frustum, lod, view_proj) = match view {
       Some((v, p)) => {
@@ -1368,6 +1460,7 @@ impl Spatial {
         self.lod_bias.remove(&target);
         self.lod_references.remove(&target);
         self.lod_hard.remove(&target);
+        self.set_occlusion(target, false);
         (None, None, None)
       }
     };
@@ -1377,6 +1470,19 @@ impl Spatial {
     };
     if frustum_changed && !self.frustum_dirty.contains(&target) {
       self.frustum_dirty.push(target);
+    }
+    match (view_proj, view) {
+      (Some(vp), Some((_, p))) => {
+        self.view_projs.insert(target, (vp, p));
+      }
+      _ => {
+        self.view_projs.remove(&target);
+      }
+    }
+    if frustum_changed {
+      if let Some(occ) = self.occlusion.get_mut(&target) {
+        occ.dirty = true;
+      }
     }
     if frustum_changed {
       // The gate's viewer: the same volume, plus the eye the enters are
@@ -1620,6 +1726,167 @@ impl Spatial {
     Ok(())
   }
 
+  /// The node's occluder (None clears it): its triangles in node space,
+  /// rasterized into every occlusion buffer under the node's world matrix
+  /// while the node is shown. The node may carry draw sinks too (a wall
+  /// hidden by a nearer wall): a node never occludes itself, since its
+  /// box is never behind its own surface.
+  pub fn set_occluder(&mut self, id: NodeId, occluder: Option<Occluder>) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    let n = &mut self.nodes[i as usize];
+    let had = n.occluder.is_some();
+    n.occluder = occluder.map(Box::new);
+    if n.occluder.is_some() && !had {
+      self.occluders.push(i);
+    }
+    self.occluders_moved = true;
+    Ok(())
+  }
+
+  /// Whether `target` tests its draw sinks against its occluders' depth
+  /// buffer (default off; the frustum test alone). On, the buffer builds
+  /// at the next flush and whenever the target's view or an occluder
+  /// moves, from the shown occluders, and a sink whose box lies wholly
+  /// behind it switches off like a frustum-culled one. Off again drops
+  /// the buffer and re-tests the target's sinks. Nothing is built while
+  /// no occluder is shown.
+  pub fn set_occlusion(&mut self, target: u64, enabled: bool) {
+    let changed = if enabled {
+      let fresh = !self.occlusion.contains_key(&target);
+      self.occlusion.entry(target).or_default().dirty = true;
+      fresh
+    } else {
+      self.occlusion.remove(&target).is_some()
+    };
+    if changed && !self.occlusion_retest.contains(&target) {
+      self.occlusion_retest.push(target);
+    }
+  }
+
+  pub fn occlusion_enabled(&self, target: u64) -> bool {
+    self.occlusion.contains_key(&target)
+  }
+
+  /// Why the node's draw sink on `target` is off, or that it is on, as the
+  /// last cull pass left it; None without a sink there.
+  pub fn cull_state(&self, id: NodeId, target: u64) -> Result<Option<CullState>, String> {
+    let i = self.resolve(id)?;
+    Ok(self.nodes[i as usize].sinks.iter().find(|b| b.sink.target == target).map(|b| b.gate))
+  }
+
+  /// Occlusion culling's figures over every target, read live: the
+  /// occluded count walks every sink.
+  pub fn occlusion_stats(&self) -> OcclusionStats {
+    let mut stats = OcclusionStats { targets: self.occlusion.len(), ..OcclusionStats::default() };
+    for occ in self.occlusion.values() {
+      stats.triangles += occ.buffer.triangles();
+      stats.drawn += occ.buffer.drawn();
+      stats.skipped += occ.skipped;
+      stats.builds += occ.builds;
+      stats.build_ms = stats.build_ms.max(occ.build_ms);
+      stats.build_max_ms = stats.build_max_ms.max(occ.build_max_ms);
+    }
+    for n in &self.nodes {
+      if !n.alive {
+        continue;
+      }
+      if n.occluder.is_some() {
+        stats.occluders += 1;
+      }
+      stats.occluded += n.sinks.iter().filter(|b| b.gate == CullState::Occluded).count();
+    }
+    stats
+  }
+
+  /// Rebuild the occlusion buffers that need it, after the walk (the
+  /// occluders' world matrices fresh): a target whose view moved or was
+  /// just turned on, or every target when an occluder moved. A target
+  /// without a view, or while no occluder is shown, holds an empty
+  /// buffer that hides nothing, at no cost: nothing is cleared, built or
+  /// re-tested for it. A rebuilt target's sinks re-test in the cull pass
+  /// that follows.
+  fn occlusion_pass(&mut self) {
+    let moved = std::mem::take(&mut self.occluders_moved);
+    if moved {
+      let nodes = &self.nodes;
+      self.occluders.retain(|&i| nodes[i as usize].alive && nodes[i as usize].occluder.is_some());
+    }
+    let any_shown = self.occluders.iter().any(|&i| self.nodes[i as usize].shown);
+    for (&target, occ) in self.occlusion.iter_mut() {
+      if !occ.dirty && !moved {
+        continue;
+      }
+      occ.dirty = false;
+      let view = if any_shown { self.view_projs.get(&target) } else { None };
+      let Some((vp, proj)) = view else {
+        // Nothing to hide with: an empty buffer, and a re-test only if
+        // the last one could have hidden something.
+        if !occ.buffer.is_empty() {
+          occ.buffer = occlusion::DepthBuffer::default();
+          occ.skipped = 0;
+          if !self.occlusion_retest.contains(&target) {
+            self.occlusion_retest.push(target);
+          }
+        }
+        continue;
+      };
+      let start = std::time::Instant::now();
+      let mut budget = OCCLUDER_TRIANGLE_BUDGET;
+      let mut skipped = 0;
+      occ.buffer.begin(*vp, proj);
+      for &i in &self.occluders {
+        let n = &self.nodes[i as usize];
+        if !n.shown {
+          continue;
+        }
+        if let Some(o) = &n.occluder {
+          let drawn = occ.buffer.rasterize(&n.world, o, &mut budget);
+          skipped += o.triangles() - drawn;
+        }
+      }
+      occ.buffer.finish();
+      occ.skipped = skipped;
+      occ.builds += 1;
+      occ.build_ms = start.elapsed().as_secs_f32() * 1000.0;
+      occ.build_max_ms = occ.build_max_ms.max(occ.build_ms);
+      if !self.occlusion_retest.contains(&target) {
+        self.occlusion_retest.push(target);
+      }
+    }
+  }
+
+  /// Whether `target`'s occluders hide node `i`: its cull box wholly
+  /// behind the target's buffer. Never for a node with culling off, a
+  /// target without occlusion, or an empty buffer.
+  fn occluded(&self, i: u32, target: u64) -> bool {
+    let n = &self.nodes[i as usize];
+    if !n.cull {
+      return false;
+    }
+    let Some(occ) = self.occlusion.get(&target) else {
+      return false;
+    };
+    if occ.buffer.is_empty() {
+      return false;
+    }
+    match self.cull_box(i) {
+      Some(b) => occ.buffer.hidden(&b, n.cull_margin),
+      None => false,
+    }
+  }
+
+  /// The gates a target's view holds over node `i`, in test order: the
+  /// frustum, then the occluders. None = the view lets it draw.
+  fn view_gate(&self, i: u32, target: u64) -> Option<CullState> {
+    if !self.frustum_allows(i, target) {
+      Some(CullState::Frustum)
+    } else if self.occluded(i, target) {
+      Some(CullState::Occluded)
+    } else {
+      None
+    }
+  }
+
   /// The box the frustum test reads for node `i`: its group's union, else
   /// its own world box. None = nothing to test, never culled.
   fn cull_box(&self, i: u32) -> Option<Box3> {
@@ -1666,7 +1933,12 @@ impl Spatial {
   /// outgoing level before the incoming one), then the rest of the sinks
   /// on the targets whose frustum moved.
   fn cull_pass(&mut self, out: &mut dyn SinkWriter) {
-    let dirty = std::mem::take(&mut self.frustum_dirty);
+    let mut dirty = std::mem::take(&mut self.frustum_dirty);
+    for t in std::mem::take(&mut self.occlusion_retest) {
+      if !dirty.contains(&t) {
+        dirty.push(t);
+      }
+    }
     let mut candidates = std::mem::take(&mut self.touched);
     if !dirty.is_empty() {
       candidates.extend((0..self.nodes.len() as u32).filter(|&i| {
@@ -1696,7 +1968,17 @@ impl Spatial {
         if !every && !dirty.contains(&sink.target) {
           return true;
         }
-        let want = shown && self.frustum_allows(i, sink.target) && self.lod_allows(i, sink.target, sink.fade);
+        let gate = if !shown {
+          Some(CullState::Hidden)
+        } else if let Some(g) = self.view_gate(i, sink.target) {
+          Some(g)
+        } else if !self.lod_allows(i, sink.target, sink.fade) {
+          Some(CullState::Lod)
+        } else {
+          None
+        };
+        b.gate = gate.unwrap_or(CullState::On);
+        let want = gate.is_none();
         if want != b.entry_on {
           b.entry_on = want;
           if !out.write_count(sink.target, sink.draw, if want { sink.count } else { 0 }) {
@@ -3567,7 +3849,15 @@ impl Spatial {
         rekeyed.push(b.sink.target);
       }
     }
-    sinks.push(BoundSink { sink, seq, entry_on: false, fresh: true, fade: [1.0, 1.0], fed: [0.0; 3] });
+    sinks.push(BoundSink {
+      sink,
+      seq,
+      entry_on: false,
+      fresh: true,
+      fade: [1.0, 1.0],
+      fed: [0.0; 3],
+      gate: CullState::Hidden,
+    });
     for target in rekeyed {
       if let Some(sort) = self.draw_sorts.get_mut(&target) {
         sort.dirty = true;
@@ -3701,7 +3991,10 @@ impl Spatial {
     if !self.lod_dirty.is_empty() || !self.lod_moved.is_empty() {
       self.lod_pass();
     }
-    if !self.touched.is_empty() || !self.frustum_dirty.is_empty() {
+    if !self.occlusion.is_empty() || self.occluders_moved {
+      self.occlusion_pass();
+    }
+    if !self.touched.is_empty() || !self.frustum_dirty.is_empty() || !self.occlusion_retest.is_empty() {
       self.cull_pass(out);
     }
     if self.residency.needs_pass(self.regions_moved) {
@@ -3812,6 +4105,9 @@ impl Spatial {
     let shown = parent_shown && n.visible;
     let scope = n.lod_level.or(parent_scope);
     let touched = changed || shown != n.shown || n.queued || scope != n.lod_scope;
+    if n.occluder.is_some() && (changed || shown != n.shown) {
+      self.occluders_moved = true;
+    }
     n.shown = shown;
     n.lod_scope = scope;
     if changed {
@@ -3893,8 +4189,10 @@ impl Spatial {
     let mut k = 0;
     while k < self.nodes[i as usize].sinks.len() {
       let b = self.nodes[i as usize].sinks[k];
-      let staying_on =
-        shown && b.entry_on && self.frustum_allows(i, b.sink.target) && self.lod_allows(i, b.sink.target, b.sink.fade);
+      let staying_on = shown
+        && b.entry_on
+        && self.view_gate(i, b.sink.target).is_none()
+        && self.lod_allows(i, b.sink.target, b.sink.fade);
       let sinks = &mut self.nodes[i as usize].sinks;
       if staying_on && (changed || b.fresh) {
         if b.sink.normal && normal.is_none() {

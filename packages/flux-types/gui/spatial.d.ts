@@ -442,6 +442,55 @@ declare module "flux:spatial" {
    * own. Members without a box contribute nothing; with none at all the
    * node is not culled. */
   export function setCullGroup(node: NodeId, members: NodeId[]): void
+  /** An occluder's shape in node space: a solid box (min xyz, max xyz), a
+   * `[width, height]` quad in the XY plane centered at the origin (two
+   * sided), a solid sphere, or any triangle list (`indices` absent: the
+   * positions in triples). Box and sphere assume a solid; a triangle
+   * occludes exactly what lies behind it. */
+  export type OccluderShape =
+    | { box: Float32Array }
+    | { quad: [number, number] }
+    | { sphere: { center: [number, number, number]; radius: number } }
+    | { mesh: { positions: Float32Array; indices?: Uint16Array | Uint32Array } }
+  /** The node's occluder (null clears it): rasterized into every
+   * occluding target's depth buffer under the node's world matrix while
+   * the node is shown. A node never occludes itself. */
+  export function setOccluder(node: NodeId, shape: OccluderShape | null): void
+  /** Whether `target` tests its draw sinks against its occluders' depth
+   * buffer (default off): a small CPU buffer of the shown occluders,
+   * rebuilt when the target's view or an occluder moves, and a sink whose
+   * box (grown by its cull margin) lies wholly behind it switches off like
+   * a frustum-culled one. Conservative to the buffer's texel: a box at an
+   * occluder's edge, or with a corner before the near plane, stays drawn;
+   * a crack narrower than a texel occludes as if closed. */
+  export function setOcclusion(target: TextureId | ViewKey, enabled: boolean): void
+  /** Why a draw sink is off, or "on": the first gate that switched it off,
+   * in test order (hidden, frustum, occluded, lod); "hidden" before the
+   * first flush. */
+  export type CullState = "on" | "hidden" | "frustum" | "occluded" | "lod"
+  /** The node's draw sink on `target` as the last cull pass left it, null
+   * without a sink there. */
+  export function cullState(node: NodeId, target: TextureId | ViewKey): CullState | null
+  export type OcclusionStats = {
+    /** Targets with occlusion on. */
+    targets: number
+    /** Live nodes carrying an occluder. */
+    occluders: number
+    /** Occluder triangles the latest build of every target took (the
+     * shown occluders' within the budget), how many of those reached the
+     * raster (not clipped away whole; zero with every occluder behind the
+     * camera), and the triangles the builds skipped past the budget. */
+    triangles: number
+    drawn: number
+    skipped: number
+    /** Buffer builds so far; the latest build's time and the slowest, ms. */
+    builds: number
+    buildMs: number
+    buildMaxMs: number
+    /** Draw sinks off because occluded, as of the last cull pass. */
+    occluded: number
+  }
+  export function occlusionStats(): OcclusionStats
   /** One level of a LOD group (setLod): the node drawn at this level (a
    * direct child of the group), absent for a population level (the
    * instance nodes under the group carry one record buffer per level,

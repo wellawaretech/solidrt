@@ -28,6 +28,9 @@ export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMa
   y?: number
   /** The view's layer mask (view.setLayers as a prop; default 1). Live. */
   layers?: number
+  /** Occlusion culling in this view (view.setOcclusion as a prop; default
+   * true). Live. */
+  occlusion?: boolean
   /** Partial camera update on the view's own camera (view.setCamera):
    * absent keys keep their values. Live. The `<PerspectiveCamera>` child
    * writes the same state - use one form, not both. */
@@ -102,6 +105,7 @@ export let View3d: ParentComponent<View3dProps> = props => {
       x: props.x,
       y: props.y,
       layers: props.layers,
+      occlusion: props.occlusion,
       clearColor: props.clearColor,
       label: props.label,
       overrideMaterial: props.overrideMaterial,
@@ -147,6 +151,11 @@ export let View3d: ParentComponent<View3dProps> = props => {
   createEffect(
     () => props.layers,
     l => view.setLayers(l ?? 1),
+    { defer: true },
+  )
+  createEffect(
+    () => props.occlusion,
+    o => view.setOcclusion(o ?? true),
     { defer: true },
   )
   // A bloom prop that changes claims the view's own (undefined = off);

@@ -43,6 +43,8 @@ pub(crate) struct StatsQuery<'a> {
   /// Frames submitted to the raster thread so far (alloy `Context::submitted_frames`).
   pub(crate) submitted_frames: Option<u64>,
   pub(crate) residency: Option<alloy::spatial::ResidencyStats>,
+  /// Occlusion culling's figures, read live (alloy `Spatial::occlusion_stats`).
+  pub(crate) occlusion: Option<alloy::spatial::OcclusionStats>,
   /// The mixer's counters; None until the audio device has been opened.
   pub(crate) audio: Option<alloy::audio::AudioStats>,
   pub(crate) app: Option<serde_json::Map<String, serde_json::Value>>,
@@ -147,6 +149,18 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
     put("regionEnters", g.enters.into());
     put("regionLeaves", g.leaves.into());
     put("residentWeight", g.weight.into());
+  }
+  // Occlusion culling, read live: what is hidden now, the occluder set,
+  // and the buffer builds' cost.
+  if let Some(o) = r.occlusion {
+    put("occludedDraws", o.occluded.into());
+    put("occluders", o.occluders.into());
+    put("occluderTriangles", o.triangles.into());
+    put("occluderTrianglesDrawn", o.drawn.into());
+    put("occluderTrianglesSkipped", o.skipped.into());
+    put("occlusionBuilds", o.builds.into());
+    put("occlusionBuildMs", round2(o.build_ms).into());
+    put("occlusionBuildMaxMs", round2(o.build_max_ms).into());
   }
   // The mixer, read live: voices in the mix, rings outrun since the device
   // opened, and the longest callback render pass since the last query (the

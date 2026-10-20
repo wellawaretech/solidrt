@@ -7,6 +7,8 @@ import { add, destroy, setMorphWeights } from "../node.ts"
 import type { MorphWeights } from "../node.ts"
 import { createMesh, setCastShadow, setCulling, setEnvironment, setGeometry, setLayers, setMaterial, setMeshParams, setRenderOrder } from "../mesh.ts"
 import type { Mesh as MeshNode } from "../mesh.ts"
+import { setOccluder } from "../occluder.ts"
+import type { OccluderSpec } from "../occluder.ts"
 import type { EnvironmentOptions } from "../environment.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
 import type { Geometry } from "../geometry.ts"
@@ -40,6 +42,10 @@ export type MeshProps = TransformProps & NodePointerProps & {
   frustumCulled?: boolean
   /** World units the culled box grows by (setCulling as a prop; default 0). */
   cullMargin?: number
+  /** What the mesh occludes with (setOccluder as a prop): "geometry" for
+   * its own triangles, "bounds" for its box as a solid, or an explicit
+   * shape; absent or null, nothing. See Culling. */
+  occluder?: OccluderSpec | null
   /** Morph target weights (setMorphWeights as a prop) for geometry that
    * carries `morphs` under a `morph: true` material: by name (keys merge,
    * a key that disappears keeps its weight) or every weight in target
@@ -85,6 +91,10 @@ export function syncMesh(mesh: MeshNode, props: Omit<MeshProps, "geometry" | "ma
   createEffect(
     () => [props.frustumCulled, props.cullMargin] as const,
     ([culled, margin]) => setCulling(mesh, { frustumCulled: culled !== false, cullMargin: margin ?? 0 }),
+  )
+  createEffect(
+    () => props.occluder,
+    o => setOccluder(mesh, o ?? null),
   )
   syncNode(mesh, props)
 }

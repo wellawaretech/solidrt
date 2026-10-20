@@ -40,6 +40,7 @@ mod spatial;
 mod spatial_collide;
 mod spatial_ik;
 mod spatial_normals;
+mod spatial_occlusion;
 mod spatial_residency;
 mod spatial_rig;
 mod spatial_springs;
