@@ -11,17 +11,19 @@
 // block starts 4-aligned so Float32Array/Uint32Array views sit on it
 // directly. Images travel as their encoded files (PNG/JPEG bytes), app
 // data as the header's `extras` (JSON) and named `blobs` (aligned blocks).
-// Geometry is a table the parts index, and a buffer view is written once
-// however many geometries read it: parts sharing a Geometry object (a
-// skinned or morphed mesh several nodes place) share one entry, and two
-// geometries over one vertex buffer (a mirrored copy: same vertices, the
-// flipped index order) share the vertex block - decodeModel restores the
-// same identities, so the runtime uploads shared bytes once.
+// Geometry is a table the parts index, and an array is written once
+// however many readers it has: parts sharing a Geometry object (a skinned
+// or morphed mesh several nodes place) share one entry; geometries over
+// one vertex array (a mesh's primitives over one accessor set, a mirrored
+// copy with the flipped index order) share the vertex block and their
+// morph texels; skins over one inverse-bind array and clip channels over
+// one time track share theirs. decodeModel restores the same identities
+// (one view per block), so the runtime uploads shared bytes once.
 
 import type { ModelChannel, ModelData, ModelExtras, ModelImage, ModelMaterial, ModelNode, ModelSkin } from "./gltf.ts"
 import { layoutStride, vertexView, VERTEX_FORMATS } from "./geometry.ts"
 import type { VertexAttribute } from "@solidrt/core/gpu"
-import type { Geometry, VertexLayout } from "./geometry.ts"
+import type { Geometry, MorphTargets, VertexLayout } from "./geometry.ts"
 
 /** "SOLM" read as a little-endian u32. */
 const MAGIC = 0x4d4c4f53
@@ -154,8 +156,10 @@ export function encodeModel(data: ModelData): Uint8Array {
     return block
   }
 
-  // A buffer view is written once however many geometries read it, and a
-  // Geometry object gets one table entry however many parts draw it.
+  // An array is written once however many readers it has (geometries over
+  // one vertex array, skins over one inverse bind, channels over one time
+  // track), and a Geometry object gets one table entry however many parts
+  // draw it.
   let views = new Map<ArrayBufferView, Block>()
   let pushOnce = (view: ArrayBufferView): Block => {
     let have = views.get(view)
@@ -200,7 +204,7 @@ export function encodeModel(data: ModelData): Uint8Array {
     return header
   })
   let images: ImageHeader[] = data.images.map((image) => ({ ...push(image.bytes), name: image.name }))
-  let floats = (f: Float32Array): Block => push(new Uint8Array(f.buffer, f.byteOffset, f.byteLength))
+  let floats = (f: Float32Array): Block => pushOnce(f)
   let skins: SkinHeader[] = data.skins.map((skin) => ({ joints: skin.joints, inverseBind: floats(skin.inverseBind), jointBounds: floats(skin.jointBounds) }))
   let clips: ClipHeader[] = data.clips.map((clip) => ({
     name: clip.name,
@@ -254,6 +258,20 @@ export function decodeModel(bytes: Uint8Array): ModelData {
   let header: Header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, base + 12, jsonLength)))
   let payload = base + 12 + jsonLength + ((4 - (jsonLength % 4)) % 4)
 
+  // One view per block, however many entries name it: what encodeModel
+  // wrote once (one vertex array under several geometries, one morph
+  // texel array, one time track) comes back as one array, so the runtime
+  // uploads it once (geometry-gpu.ts keys its uploads by the array) - and
+  // one MorphTargets per texel block, for the same reason.
+  let viewsAt = new Map<number, ArrayBufferView>()
+  let viewAt = <T extends ArrayBufferView>(block: Block, make: () => T): T => {
+    let have = viewsAt.get(block.offset)
+    if (have !== undefined) return have as T
+    let view = make()
+    viewsAt.set(block.offset, view)
+    return view
+  }
+  let morphsAt = new Map<number, MorphTargets>()
   // The geometry table first: one Geometry object per entry, so parts
   // naming the same entry share it (and the runtime shares its buffers).
   let geometries: Geometry[] = header.geometries.map((g, i) => {
@@ -261,14 +279,19 @@ export function decodeModel(bytes: Uint8Array): ModelData {
     let layout = decodeLayout(g.layout, name)
     let indexCount = g.index.bytes / (g.indexBits / 8)
     let geometry: Geometry = {
-      vertices: vertexView(layout, buffer, payload + g.vertices.offset, g.vertexCount * layoutStride(layout)),
-      indices: g.indexBits === 32 ? new Uint32Array(buffer, payload + g.index.offset, indexCount) : new Uint16Array(buffer, payload + g.index.offset, indexCount),
+      vertices: viewAt(g.vertices, () => vertexView(layout, buffer, payload + g.vertices.offset, g.vertexCount * layoutStride(layout))),
+      indices: viewAt(g.index, () => (g.indexBits === 32 ? new Uint32Array(buffer, payload + g.index.offset, indexCount) : new Uint16Array(buffer, payload + g.index.offset, indexCount))),
     }
     if (g.label !== undefined) geometry.label = g.label
     if (g.layout !== "base") geometry.layout = layout
     if (g.morphs !== undefined) {
       let m = g.morphs
-      geometry.morphs = { names: m.names, texels: new Float32Array(buffer, payload + m.texels.offset, m.texels.bytes / 4), extent: Float32Array.from(m.extent) }
+      let morphs = morphsAt.get(m.texels.offset)
+      if (morphs === undefined) {
+        morphs = { names: m.names, texels: viewAt(m.texels, () => new Float32Array(buffer, payload + m.texels.offset, m.texels.bytes / 4)), extent: Float32Array.from(m.extent) }
+        morphsAt.set(m.texels.offset, morphs)
+      }
+      geometry.morphs = morphs
     }
     return geometry
   })
@@ -287,7 +310,7 @@ export function decodeModel(bytes: Uint8Array): ModelData {
     return out
   })
   let images: ModelImage[] = header.images.map((image) => ({ bytes: new Uint8Array(buffer, payload + image.offset, image.bytes), name: image.name }))
-  let floats = (block: Block): Float32Array => new Float32Array(buffer, payload + block.offset, block.bytes / 4)
+  let floats = (block: Block): Float32Array => viewAt(block, () => new Float32Array(buffer, payload + block.offset, block.bytes / 4))
   let skins: ModelSkin[] = header.skins.map((skin) => ({ joints: skin.joints, inverseBind: floats(skin.inverseBind), jointBounds: floats(skin.jointBounds) }))
   let clips = header.clips.map((clip) => ({
     name: clip.name,

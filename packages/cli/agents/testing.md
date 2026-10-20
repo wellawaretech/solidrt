@@ -99,6 +99,10 @@ test("a tap increments", async app => {
   `await app.advance(ms)` runs as many as cover the time, `await
   app.settle()` runs the app until it is at rest. After an action that
   loads or animates, `settle()` is the wait, not a guessed `frame(10)`.
+  Behind an app that never rests (a spinner, an idle clip, a game loop),
+  `settle({ frames: false })` waits for its work alone and `app.until(()
+  => ...)` for the state the test is after - never a `frame(1)` loop
+  under a guessed cap.
 - Assert with `expect`: its messages print expected and received, which
   `if (!ok) throw` does not.
 
@@ -134,7 +138,18 @@ socket, a timer due later (`advance` reaches it). An app that never rests
 (an `onFrame` loop, a looping animation, a playing video) fails the settle
 after 5000 ms of app time, naming what still wanted frames; `settle({
 maxMs })` sets another cap. Do not settle an app that animates by itself;
-step it with `frame`.
+step it with `frame`, or wait for what you are after:
+
+- `settle({ frames: false })` waits for the app's work alone, whatever
+  animates: it ends when nothing is in flight and a frame has run after
+  the last landing in which nothing more started, so what the landing
+  woke (a mount, the loads it starts) has run. A model loading under a
+  spinner, a fetch in a game loop. The cap then names the work left.
+- `app.until(() => condition)` runs frames, and waits out work in flight
+  with no app time passing, until the condition holds: the node that
+  appears, the count reached, the stat that moved. Testing Library's
+  `waitFor`, Unity's `WaitUntil`. The cap says what the app was doing;
+  a condition that throws fails the test with its own error.
 
 The network is real: a backend is faked with `serve` from `flux:http` plus
 `fetch` over loopback, and `settle()` waits for the fetch. Such a backend

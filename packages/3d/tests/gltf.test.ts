@@ -1046,6 +1046,97 @@ test("part order and shared geometry", () => {
   if (riggedBack.parts[0]!.geometry !== riggedBack.parts[1]!.geometry) fail("container: shared geometry identity lost")
 })
 
+// A mesh split into a primitive per material over ONE accessor set (a VRM
+// face: four primitives over the same POSITION/NORMAL/TEXCOORD_0 and the
+// same 57 morph targets) is one vertex array and one morph pack, the
+// indices apart - in the parse, in the container (written once) and back
+// out of it (one view, one MorphTargets).
+test("primitives over one accessor set share the vertices and the morph targets, indices apart", () => {
+  let over = { attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2 }, targets: [{ POSITION: 16 }, { POSITION: 17, NORMAL: 18 }] }
+  let split = {
+    ...document,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ name: "face", mesh: 0 }],
+    meshes: [
+      {
+        extras: { targetNames: ["puff", "lift"] },
+        // The whole cube under one material, its first six triangles under another.
+        primitives: [{ ...over, indices: 3, material: 0 }, { ...over, indices: 20, material: 1 }],
+      },
+    ],
+    accessors: [...document.accessors, { bufferView: idxView, componentType: 5123, count: 18, type: "SCALAR" }],
+    skins: [],
+    animations: [],
+  }
+  let face = parseGltf(glb(split, binBlocks, binLength))
+  if (face.parts.map((p) => p.name).join() !== "face#0,face#1") fail(`split parts: ${face.parts.map((p) => p.name).join()}`)
+  let [whole, half] = [face.parts[0]!.geometry, face.parts[1]!.geometry]
+  validateGeometry(whole)
+  validateGeometry(half)
+  if (whole === half) fail("split: each primitive is a geometry of its own")
+  if (whole.vertices !== half.vertices) fail("split: the vertex array is not shared")
+  if (whole.morphs === undefined || whole.morphs !== half.morphs) fail("split: the morph pack is not shared")
+  if (whole.indices.length !== 36 || half.indices.length !== 18) fail(`split: index counts ${whole.indices.length}, ${half.indices.length}`)
+  if (face.parts[0]!.material === face.parts[1]!.material) fail("split: each primitive keeps its material")
+
+  // The container writes the shared arrays once: the file is smaller than
+  // one over copies by exactly what is shared, and decodes to one view.
+  let encoded = encodeModel(face)
+  let copies: ModelData = {
+    ...face,
+    parts: face.parts.map((p, i) =>
+      i === 0 ? p : { ...p, geometry: { ...p.geometry, vertices: vertexBytes(p.geometry.vertices).slice(), morphs: { ...p.geometry.morphs!, texels: p.geometry.morphs!.texels.slice() } } },
+    ),
+  }
+  let shared = whole.vertices.byteLength + whole.morphs!.texels.byteLength
+  if (encodeModel(copies).byteLength - encoded.byteLength < shared) fail("container: the shared arrays were not written once")
+  let back = decodeModel(encoded)
+  sameModel(face, back, "split round trip")
+  let [wholeBack, halfBack] = [back.parts[0]!.geometry, back.parts[1]!.geometry]
+  if (wholeBack.vertices !== halfBack.vertices) fail("container: the shared vertex view is not one view")
+  if (wholeBack.morphs === undefined || wholeBack.morphs !== halfBack.morphs) fail("container: the shared morph pack is not one object")
+  if (wholeBack.indices === halfBack.indices) fail("container: the index views must be each primitive's own")
+
+  // The flat-shaded build (no normals) is one vertex per corner of ITS
+  // triangles, so two such primitives over the same positions with other
+  // indices share nothing.
+  let flatSplit = {
+    ...split,
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 3, material: 0 }, { attributes: { POSITION: 0 }, indices: 20, material: 1 }] }],
+  }
+  let flat = parseGltf(glb(flatSplit, binBlocks, binLength))
+  if (flat.parts[0]!.geometry.vertices === flat.parts[1]!.geometry.vertices) fail("flat split: an un-indexed build follows its own indices")
+  if (flat.parts[1]!.geometry.indices.length !== 18) fail("flat split: the half keeps its own corners")
+})
+
+// Skins over one inverseBindMatrices accessor and channels over one time
+// track read one array each, and the container writes it once.
+test("skins and clip channels over one accessor share its array, written once", () => {
+  let twoSkins = {
+    ...document,
+    scenes: [{ nodes: [0, 1, 2, 3] }],
+    nodes: [{ name: "skinA", mesh: 2, skin: 0 }, { name: "skinB", mesh: 2, skin: 1 }, { name: "j0" }, { name: "j1" }],
+    skins: [{ joints: [2, 3], inverseBindMatrices: 12 }, { joints: [2, 3], inverseBindMatrices: 12 }],
+    animations: [
+      {
+        name: "move",
+        channels: [{ sampler: 0, target: { node: 2, path: "translation" } }, { sampler: 1, target: { node: 3, path: "rotation" } }],
+        samplers: [{ input: 4, output: 5 }, { input: 4, output: 6 }],
+      },
+    ],
+  }
+  let rigged = parseGltf(glb(twoSkins, binBlocks, binLength))
+  if (rigged.skins.length !== 2) fail(`two skins: ${rigged.skins.length}`)
+  if (rigged.skins[0]!.inverseBind !== rigged.skins[1]!.inverseBind) fail("skins: the inverse binds are one array")
+  let [a, b] = rigged.clips[0]!.channels
+  if (a!.times !== b!.times || a!.values === b!.values) fail("channels: one time track, their own values")
+  let back = decodeModel(encodeModel(rigged))
+  sameModel(rigged, back, "shared skin and track round trip")
+  if (back.skins[0]!.inverseBind.byteOffset !== back.skins[1]!.inverseBind.byteOffset) fail("container: the inverse binds were written twice")
+  if (back.skins[0]!.inverseBind !== back.skins[1]!.inverseBind) fail("container: the inverse binds are not one view")
+  if (back.clips[0]!.channels[0]!.times !== back.clips[0]!.channels[1]!.times) fail("container: the time track is not one view")
+})
+
 // A document with neither `scene` nor `scenes` draws everything from its
 // TRUE roots (a nested node is not a second root against the identity),
 // and a hierarchy that reaches a node twice (a cycle) throws instead of

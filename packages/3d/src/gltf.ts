@@ -53,7 +53,7 @@ import { compose, decompose, det3, mat4, multiply, quatNormalize } from "./math.
 import { linearToSrgb } from "./color.ts"
 import type { Mat4, Quat, Vec3 } from "./math.ts"
 import { attributeAccess, layoutKey, layoutStride, packIndices, packMorphTargets, vertexView } from "./geometry.ts"
-import type { AttributeAccess, MorphTarget, VertexLayout } from "./geometry.ts"
+import type { AttributeAccess, MorphTarget, MorphTargets, VertexLayout } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Topology, VertexAttribute, VertexFormat } from "@solidrt/core/gpu"
 
@@ -601,7 +601,8 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   // only when something uses it.
   let defaultMaterial = -1
 
-  let accessorFloats = (index: number, what: string): { data: Float32Array; elements: number; count: number; format: VertexFormat | null } => {
+  type Accessor = { data: Float32Array; elements: number; count: number; format: VertexFormat | null }
+  let readAccessor = (index: number, what: string): Accessor => {
     let acc = gltf.accessors[index]
     if (acc === undefined) throw new Error("parseGltf: " + what + " names a missing accessor " + index)
     let elements = TYPE_ELEMENTS[acc.type]
@@ -646,6 +647,19 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       }
     }
     return { data: out, elements, count: acc.count, format }
+  }
+  // Read once per accessor, and never written after: the primitives over
+  // one accessor set (a mesh split into one per material), the skins over
+  // one inverseBindMatrices and the samplers over one input get the same
+  // array, which the container then writes once (encodeModel keys its
+  // blocks by the array).
+  let accessors = new Map<number, Accessor>()
+  let accessorFloats = (index: number, what: string): Accessor => {
+    let have = accessors.get(index)
+    if (have !== undefined) return have
+    let read = readAccessor(index, what)
+    accessors.set(index, read)
+    return read
   }
 
   // The node table is built lazily: a glTF node gets a slot only when a
@@ -719,11 +733,25 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
    * skinned mesh two nodes place, a morphed one, a mirrored copy - each
    * its own part, one set of bytes. `box` is the local rest box (morph
    * extent included) for the bounds, null for a skinned build (its box
-   * comes from the joints); `indexed` says the vertices are the authored
-   * ones (not the flat-shading un-index), so a twin under the other
-   * winding sign can share them and differ in index order alone. */
-  type Built = { geometry: Geometry; box: number[] | null; indexed: boolean }
+   * comes from the joints). The vertices themselves come from the vertex
+   * set cache below, so two variants of one primitive, and two primitives
+   * over one accessor set, differ in index order alone. */
+  type Built = { geometry: Geometry; box: number[] | null }
   type PrimitiveCache = Map<string, Built>
+
+  // The vertices, the morph targets packed over them and the rest box,
+  // built once per ACCESSOR SET in the file, whatever primitive reads it:
+  // a mesh split into a primitive per material over one set of attributes
+  // (a face with a part per material, a body in two) is one vertex buffer
+  // and one morph texture, the indices apart - as the other winding sign's
+  // build of one primitive already was. The container writes a shared
+  // array once and the runtime uploads it once (encodeModel and
+  // geometry-gpu.ts key by the array). Three merges nothing here (a glTF
+  // primitive is a BufferGeometry of its own, four copies of the face in
+  // GPU memory); Unity's importer shares a Mesh's vertex buffer across its
+  // sub-meshes, which is the shape taken.
+  type VertexSet = { vertices: ArrayBufferView; morphs: MorphTargets | undefined; box: number[] | null; count: number }
+  let vertexCache = new Map<string, VertexSet>()
 
   // One part from one primitive under its placements: the first names and
   // owns it (`node`), the rest are `placements`. Every placement shares
@@ -866,35 +894,141 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       finish(built)
       return
     }
-    // The other winding sign's build, when it exists: an indexed one holds
-    // the very vertices this variant needs.
-    let twin = shared.get(variant + (flip ? "" : "|flipped"))
-    if (twin !== undefined && !twin.indexed) twin = undefined
 
-    // The channels of the part's buffer, written through the accessors:
-    // whatever a channel's format, the writer takes floats.
-    let source: VertexSource = { pos: pos.data, nrm, uv: uv?.data ?? null, color: color === null ? null : { data: color.data, elements: color.elements }, joints: joints?.data ?? null, weights: weights?.data ?? null }
-    let vertices: ArrayBufferView
-    let writer: VertexWriter
-    let packedIndices: number[]
-    // Output slot -> source vertex, for the channels written after the
-    // interleave (the morph targets): null while the slots are the
-    // source order, the un-index's corner table otherwise.
-    let remap: number[] | null = null
+    // The vertex set this primitive reads (vertexCache): the attributes,
+    // the morph targets and their names. Indexed as authored, the set is
+    // the accessors' alone, so any index order and either winding sign
+    // reads it; an un-indexed build (no normals on triangles: one vertex
+    // per corner, flat normals of the displayed winding) follows its index
+    // order and its winding, so it keys by those too.
     let indexed = nrm !== null || !triangles
-    if (indexed) {
-      // Indexed as authored. Lines and points without normals get zero
-      // ones (there is no face to take one from; nothing lights them). A
-      // twin under the other winding sign already holds these vertices:
-      // share its buffer, only the index order differs.
-      if (twin !== undefined) {
-        vertices = twin.geometry.vertices
-        writer = vertexWriter(vertices, layout)
-      } else {
+    let targets: any[] = prim.targets ?? []
+    let attributes = prim.attributes
+    let vertexKey = JSON.stringify([
+      skinned,
+      attributes.POSITION,
+      attributes.NORMAL ?? null,
+      attributes.TEXCOORD_0 ?? null,
+      attributes.COLOR_0 ?? null,
+      skinned ? [attributes.JOINTS_0, attributes.WEIGHTS_0] : null,
+      targets.map((target: any) => [target?.POSITION ?? null, target?.NORMAL ?? null]),
+      targetNames,
+      indexed ? null : [prim.indices ?? null, mode, flip],
+    ])
+    let vertexSet = vertexCache.get(vertexKey)
+    if (vertexSet === undefined) {
+      // The channels of the part's buffer, written through the accessors:
+      // whatever a channel's format, the writer takes floats.
+      let source: VertexSource = { pos: pos.data, nrm, uv: uv?.data ?? null, color: color === null ? null : { data: color.data, elements: color.elements }, joints: joints?.data ?? null, weights: weights?.data ?? null }
+      let vertices: ArrayBufferView
+      let writer: VertexWriter
+      // Output slot -> source vertex, for the channels written after the
+      // interleave (the morph targets): null while the slots are the
+      // source order, the un-index's corner table otherwise.
+      let remap: number[] | null = null
+      let made = count
+      if (indexed) {
+        // Indexed as authored. Lines and points without normals get zero
+        // ones (there is no face to take one from; nothing lights them).
         vertices = vertexView(layout, new ArrayBuffer(count * layoutStride(layout)))
         writer = vertexWriter(vertices, layout)
         for (let i = 0; i < count; i++) writeVertex(writer, i, source, i)
+      } else {
+        // No normals: the spec asks for flat shading, which needs one vertex
+        // per triangle corner, so the primitive is un-indexed here and each
+        // corner takes its face normal - of the AUTHORED winding (negated
+        // after a flip), the direction authored normals would have, so the
+        // runtime maps both the same way.
+        let faces = indices.length / 3
+        made = faces * 3
+        vertices = vertexView(layout, new ArrayBuffer(made * layoutStride(layout)))
+        writer = vertexWriter(vertices, layout)
+        remap = new Array(made)
+        let face: Vec3 = [0, 0, 0]
+        for (let t = 0; t < faces; t++) {
+          let a = indices[t * 3]!, b = indices[t * 3 + 1]!, c = indices[t * 3 + 2]!
+          if (flip) [b, c] = [c, b]
+          let out = t * 3
+          writeVertex(writer, out, source, a)
+          writeVertex(writer, out + 1, source, b)
+          writeVertex(writer, out + 2, source, c)
+          remap[out] = a
+          remap[out + 1] = b
+          remap[out + 2] = c
+          faceNormal(face, writer.pos, out)
+          if (flip) {
+            face[0] = -face[0]
+            face[1] = -face[1]
+            face[2] = -face[2]
+          }
+          for (let k = 0; k < 3; k++) {
+            for (let c = 0; c < 3; c++) writer.nrm.set(out + k, c, face[c]!)
+          }
+        }
       }
+
+      // Morph targets: each target's POSITION and NORMAL deltas (a target
+      // may carry either; TANGENT is dropped with the base tangents), read
+      // dense through the accessors (sparse ones expand there), remapped
+      // through the un-index when the primitive was flattened - normal
+      // deltas are dropped then, as flat normals are generated - and packed
+      // sparse by vertex onto the geometry. Names come from the mesh's
+      // extras.targetNames (what Blender writes), else "target<t>".
+      let morphs = targets.length === 0 ? undefined : packMorphTargets(made, targets.map((target: any, t: number): MorphTarget => {
+        let what = name + " target " + t
+        let deltas = (attribute: string): Float32Array | null => {
+          if (target?.[attribute] === undefined) return null
+          let acc = accessorFloats(target[attribute], what + " " + attribute)
+          if (acc.elements !== 3 || acc.count !== pos.count) throw new Error("parseGltf: " + what + " " + attribute + " is not VEC3 over the primitive's vertices")
+          if (remap === null) return acc.data
+          let out = new Float32Array(made * 3)
+          for (let slot = 0; slot < made; slot++) {
+            let from = remap[slot]! * 3
+            out[slot * 3] = acc.data[from]!
+            out[slot * 3 + 1] = acc.data[from + 1]!
+            out[slot * 3 + 2] = acc.data[from + 2]!
+          }
+          return out
+        }
+        return { name: targetNames?.[t] ?? "target" + t, position: deltas("POSITION") ?? new Float32Array(made * 3), normal: remap === null ? deltas("NORMAL") : null }
+      }))
+
+      // The local rest box (8 corners through each placement's world in
+      // finish - conservative under rotation, exact under translation and
+      // axis-aligned scale), grown by the morph extent first so a morphed
+      // shape stays inside. A skinned build's vertices are placed by its
+      // joints, not its node, so it has none here: its box is folded in
+      // after the skins exist (growBounds over the joint boxes).
+      let box: number[] | null = null
+      if (!skinned) {
+        let lo: Vec3 = [Infinity, Infinity, Infinity]
+        let hi: Vec3 = [-Infinity, -Infinity, -Infinity]
+        for (let i = 0; i < made; i++) {
+          for (let k = 0; k < 3; k++) {
+            let v = writer.pos.get(i, k)
+            if (v < lo[k]!) lo[k] = v
+            if (v > hi[k]!) hi[k] = v
+          }
+        }
+        if (morphs !== undefined) {
+          for (let k = 0; k < 3; k++) {
+            lo[k] = lo[k]! + morphs.extent[k]!
+            hi[k] = hi[k]! + morphs.extent[3 + k]!
+          }
+        }
+        box = [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]]
+      }
+      vertexSet = { vertices, morphs, box, count: made }
+      vertexCache.set(vertexKey, vertexSet)
+    }
+    let { vertices, morphs, box } = vertexSet
+    count = vertexSet.count
+
+    // The indices are this primitive's own: as authored (the flip swaps a
+    // triangle's second and third corners), or the corner order of the
+    // un-indexed build.
+    let packedIndices: number[]
+    if (indexed) {
       packedIndices = Array.from(indices)
       if (flip) {
         for (let i = 0; i < packedIndices.length; i += 3) {
@@ -904,100 +1038,14 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
         }
       }
     } else {
-      // No normals: the spec asks for flat shading, which needs one vertex
-      // per triangle corner, so the primitive is un-indexed here and each
-      // corner takes its face normal - of the AUTHORED winding (negated
-      // after a flip), the direction authored normals would have, so the
-      // runtime maps both the same way.
-      let triangles = indices.length / 3
-      vertices = vertexView(layout, new ArrayBuffer(triangles * 3 * layoutStride(layout)))
-      writer = vertexWriter(vertices, layout)
-      packedIndices = new Array(triangles * 3)
-      remap = new Array(triangles * 3)
-      let face: Vec3 = [0, 0, 0]
-      for (let t = 0; t < triangles; t++) {
-        let a = indices[t * 3]!, b = indices[t * 3 + 1]!, c = indices[t * 3 + 2]!
-        if (flip) [b, c] = [c, b]
-        let out = t * 3
-        writeVertex(writer, out, source, a)
-        writeVertex(writer, out + 1, source, b)
-        writeVertex(writer, out + 2, source, c)
-        remap[out] = a
-        remap[out + 1] = b
-        remap[out + 2] = c
-        faceNormal(face, writer.pos, out)
-        if (flip) {
-          face[0] = -face[0]
-          face[1] = -face[1]
-          face[2] = -face[2]
-        }
-        for (let k = 0; k < 3; k++) {
-          for (let c = 0; c < 3; c++) writer.nrm.set(out + k, c, face[c]!)
-          packedIndices[out + k] = out + k
-        }
-      }
-      count = triangles * 3
-    }
-
-    // Morph targets: each target's POSITION and NORMAL deltas (a target
-    // may carry either; TANGENT is dropped with the base tangents), read
-    // dense through the accessors (sparse ones expand there), remapped
-    // through the un-index when the primitive was flattened - normal
-    // deltas are dropped then, as flat normals are generated - and packed
-    // sparse by vertex onto the geometry. Names come from the mesh's
-    // extras.targetNames (what Blender writes), else "target<t>".
-    let targets: any[] = prim.targets ?? []
-    // A twin's packed targets are these exactly (both indexed, no remap).
-    let morphs = twin !== undefined ? twin.geometry.morphs : targets.length === 0 ? undefined : packMorphTargets(count, targets.map((target: any, t: number): MorphTarget => {
-      let what = name + " target " + t
-      let deltas = (attribute: string): Float32Array | null => {
-        if (target?.[attribute] === undefined) return null
-        let acc = accessorFloats(target[attribute], what + " " + attribute)
-        if (acc.elements !== 3 || acc.count !== pos.count) throw new Error("parseGltf: " + what + " " + attribute + " is not VEC3 over the primitive's vertices")
-        if (remap === null) return acc.data
-        let out = new Float32Array(count * 3)
-        for (let slot = 0; slot < count; slot++) {
-          let from = remap[slot]! * 3
-          out[slot * 3] = acc.data[from]!
-          out[slot * 3 + 1] = acc.data[from + 1]!
-          out[slot * 3 + 2] = acc.data[from + 2]!
-        }
-        return out
-      }
-      return { name: targetNames?.[t] ?? "target" + t, position: deltas("POSITION") ?? new Float32Array(count * 3), normal: remap === null ? deltas("NORMAL") : null }
-    }))
-
-    // The local rest box (8 corners through each placement's world in
-    // finish - conservative under rotation, exact under translation and
-    // axis-aligned scale), grown by the morph extent first so a morphed
-    // shape stays inside. A skinned build's vertices are placed by its
-    // joints, not its node, so it has none here: its box is folded in
-    // after the skins exist (growBounds over the joint boxes).
-    let box: number[] | null = null
-    if (!skinned) {
-      let lo: Vec3 = [Infinity, Infinity, Infinity]
-      let hi: Vec3 = [-Infinity, -Infinity, -Infinity]
-      for (let i = 0; i < count; i++) {
-        for (let k = 0; k < 3; k++) {
-          let v = writer.pos.get(i, k)
-          if (v < lo[k]!) lo[k] = v
-          if (v > hi[k]!) hi[k] = v
-        }
-      }
-      if (morphs !== undefined) {
-        for (let k = 0; k < 3; k++) {
-          lo[k] = lo[k]! + morphs.extent[k]!
-          hi[k] = hi[k]! + morphs.extent[3 + k]!
-        }
-      }
-      box = [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]]
+      packedIndices = Array.from({ length: count }, (_, i) => i)
     }
 
     let geometry: Geometry = { vertices, indices: packIndices(packedIndices, count), label: name }
     if (layout !== undefined) geometry.layout = layout
     if (morphs !== undefined) geometry.morphs = morphs
     if (!triangles) geometry.topology = topology
-    built = { geometry, box, indexed }
+    built = { geometry, box }
     shared.set(key, built)
     finish(built)
   }

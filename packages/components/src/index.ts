@@ -32,7 +32,6 @@ export { SegmentedControl, type SegmentedControlProps } from "./segmented-contro
 export { ContextMenu, type ContextMenuProps, type ContextMenuItem } from "./context-menu"
 export { NavShell, type NavShellProps, type NavItem } from "./nav-shell"
 export { SplitView, type SplitViewProps } from "./split-view"
-export { QrCode, type QrCodeProps } from "./qrcode"
 export { Icon, type IconProps } from "./icon"
 export { Surface, facePaint, roleFill, roleMaterial, surfaceSinks, type SurfaceProps, type FacePaint } from "./surface"
 export { lightFrom, lightSource, lightAxis, type LightAxis } from "./light"

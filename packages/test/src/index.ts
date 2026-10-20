@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { camera as installCamera, capture, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, microphone as installMicrophone, painted as paintFrame, setFrameRate, setWindow, settle, stats as queryStats, time, windowReady } from "sol:test"
+import { camera as installCamera, capture, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, microphone as installMicrophone, painted as paintFrame, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
@@ -349,12 +349,38 @@ export interface TestApp {
    * rest, naming what is left: a frame callback that never stops, a looping
    * animation, a playing video.
    *
+   * With `frames: false` the wait is for the app's work alone, whatever
+   * animates: it ends when nothing is in flight and a frame has run after
+   * the last of it in which nothing more started (so what the landing
+   * woke - a mount, the loads it starts - has run). For something that
+   * loads behind an app that never rests: a model under a spinner, a
+   * fetch in a game loop. Frames demanded and timers due are not waited
+   * for; the cap then names the work left. An app at rest returns at once.
+   *
    * @example
    * await app.tap(app.find({ text: "Load" }))
    * await app.settle()
    * expect(app.find({ label: "rows" }).findAll({ kind: "text" }).length).toBe(20)
+   *
+   * @example
+   * await app.settle({ frames: false }) // the model loads under a spinner
+   * expect(app.find({ label: "character" }).exists).toBe(true)
    */
-  settle(options?: { maxMs?: number }): Promise<void>
+  settle(options?: { maxMs?: number; frames?: boolean }): Promise<void>
+  /**
+   * Runs the app until `holds()` returns true: read after every frame and
+   * after work in flight lands (the wait on work passes no app time, as
+   * `settle` waits). The wait for a specific state of an app that never
+   * rests, where `settle` would not end and `settle({ frames: false })`
+   * names no state: a node that appears, a count that is reached, a stat
+   * that moves. Throws once `maxMs` of app time (default 5000) have passed
+   * without it, saying what the app was doing (frames demanded, work in
+   * flight), or rethrows what `holds` threw.
+   *
+   * @example
+   * await app.until(() => app.find({ label: "character" }).exists)
+   */
+  until(holds: () => boolean, options?: { maxMs?: number }): Promise<void>
   /**
    * A tap at the node's painted center, or at a point: down, a frame (and
    * `holdMs`, if given), up, and one frame more, so the tree is current
@@ -663,7 +689,15 @@ let app: TestApp = {
   settle(options = {}) {
     let maxMs = options.maxMs ?? SETTLE_MAX_MS
     if (typeof maxMs !== "number" || !(maxMs >= 0) || !Number.isFinite(maxMs)) throw new TypeError(`settle: maxMs must be a non-negative number of milliseconds, got ${maxMs}`)
-    return settle(maxMs)
+    let frames = options.frames ?? true
+    if (typeof frames !== "boolean") throw new TypeError(`settle: frames must be a boolean, got ${frames}`)
+    return settle(maxMs, frames)
+  },
+  until(holds, options = {}) {
+    if (typeof holds !== "function") throw new TypeError(`until: holds must be a function, got ${typeof holds}`)
+    let maxMs = options.maxMs ?? SETTLE_MAX_MS
+    if (typeof maxMs !== "number" || !(maxMs >= 0) || !Number.isFinite(maxMs)) throw new TypeError(`until: maxMs must be a non-negative number of milliseconds, got ${maxMs}`)
+    return untilHolds(holds, maxMs)
   },
   tap(target, options = {}) {
     let at = pointOf(target, "tap")

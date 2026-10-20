@@ -419,8 +419,12 @@ when exactly one client is connected.
   "a playing video", "requestAnimationFrame", "a write to the tree or to a
   texture"), `inFlight` counts the work per kind (`{ "fetch": 1 }`). An
   app that animates by itself never settles; freeze it with `/clock`
-  instead. `?max=0` reads the state without waiting. What stands (a
-  server, an open socket, a timer not yet due) is not waited for.
+  instead, or, when something loads behind the animation (a spinner over
+  a model load), `?frames=0` waits for the app's work alone: nothing in
+  flight, and a frame after the last of it in which nothing more
+  started; `settled` then says whether the work finished. `?max=0` reads
+  the state without waiting. What stands (a server, an open socket, a
+  timer not yet due) is not waited for.
 - POST `/clock?scale=<x>` (0 pauses) / `?step=<n>` frames while paused;
   `{ scale, pendingSteps }` back. Steps apply one per frame at the client's
   frame rate, and the reply waits for them: `pendingSteps` is 0 once they

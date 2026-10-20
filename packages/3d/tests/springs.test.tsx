@@ -3,8 +3,9 @@
 // no frames, a turned bone drags it and it settles along the new rest
 // direction, a frame's own write to the bone reaches the chain in the
 // same frame (the pose post-pass), the declaration survives a scene
-// re-enter, and reset puts it back at rest. The chains are core state over
-// live scene nodes, so this is an app test.
+// re-enter, reset puts it back at rest, and dispose leaves the bones at
+// rest. The chains are core state over live scene nodes, so this is an
+// app test.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
@@ -114,6 +115,31 @@ test("the declaration survives a scene re-enter, and reset puts the chain back a
   springs.reset()
   await app.advance(20)
   expect(Math.abs(w(b1))).toBeCloseTo(1, 6)
+  springs.dispose()
+})
+
+test("dispose puts the joints back at rest, and a new declaration takes over from there", async app => {
+  let scene = await mounted(app)
+  let { model, anchor, b1, b2 } = rig(scene)
+  let springs = createSpringBones(model, { springs: [{ joints: [{ node: b1 }, { node: b2 }] }] })
+  setTransform(anchor, { quaternion: QUARTER_Z })
+  await app.advance(50)
+  expect(Math.abs(w(b1))).toBeLessThan(0.9999)
+  expect(Math.abs(w(b2))).toBeLessThan(0.9999)
+
+  // Hair physics off mid-swing: the bones hang as authored, and stay.
+  springs.dispose()
+  await app.settle({ maxMs: 500 })
+  expect(Math.abs(w(b1))).toBeCloseTo(1, 6)
+  expect(Math.abs(w(b2))).toBeCloseTo(1, 6)
+  await app.advance(50)
+  expect(Math.abs(w(b1))).toBeCloseTo(1, 6)
+
+  // On again: a new declaration starts at rest and swings from there.
+  springs = createSpringBones(model, { springs: [{ joints: [{ node: b1 }, { node: b2 }] }] })
+  setTransform(anchor, { quaternion: [0, 0, 0, 1] })
+  await app.advance(50)
+  expect(Math.abs(w(b1))).toBeLessThan(0.9999)
   springs.dispose()
 })
 

@@ -12,9 +12,10 @@ let rawArgs = process.argv.slice(2)
 let appArgsSep = rawArgs.indexOf("--")
 export let appArgs = appArgsSep === -1 ? [] : rawArgs.slice(appArgsSep + 1)
 
-// `sol tool <package>/<name> ...`: everything after the tool name belongs to
-// the tool (its own flags, its own usage), so only the command and the tool
-// name go through parseArgs and the rest is forwarded verbatim (tool/main.ts).
+// `sol tool <package>/<name> ...` (or `sol tool <path>.ts ...`): everything
+// after the tool name belongs to the tool (its own flags, its own usage), so
+// only the command and the tool name go through parseArgs and the rest is
+// forwarded verbatim (tool/main.ts).
 let isTool = rawArgs[0] === "tool"
 export let toolArgs = isTool ? rawArgs.slice(2) : []
 

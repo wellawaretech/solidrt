@@ -684,8 +684,9 @@ export async function handleControl(req: Request, path: string, query: Map<strin
     case "/__control__/settle": {
       // Wait for the app to come to rest: nothing in flight, no timer due,
       // no frame demanded. ?max=<ms> bounds the wait (wall time); the reply
-      // says whether it settled and, if not, what is left. The client does
-      // the waiting, so the query timeout stretches by the cap.
+      // says whether it settled and, if not, what is left. ?frames=0 waits
+      // for the app's work alone, whatever animates. The client does the
+      // waiting, so the query timeout stretches by the cap.
       let maxMs = SETTLE_MAX_MS
       let maxParam = query.get("max")
       if (maxParam !== undefined) {
@@ -693,7 +694,14 @@ export async function handleControl(req: Request, path: string, query: Map<strin
         if (!Number.isFinite(maxMs) || maxMs < 0 || maxMs > MAX_WAIT_MS)
           return Response.json({ error: `Settle max must be an integer between 0 and ${MAX_WAIT_MS}` }, { status: 400 })
       }
-      return handleQuery(query, "settle", { maxMs }, QUERY_TIMEOUT_MS + maxMs)
+      let frames = true
+      let framesParam = query.get("frames")
+      if (framesParam !== undefined) {
+        if (framesParam === "0" || framesParam === "false") frames = false
+        else if (framesParam !== "1" && framesParam !== "true")
+          return Response.json({ error: "Settle frames must be 0 or 1" }, { status: 400 })
+      }
+      return handleQuery(query, "settle", { maxMs, frames }, QUERY_TIMEOUT_MS + maxMs)
     }
     case "/__control__/buffer": {
       let bufferId = parseInt(query.get("id") ?? "", 10)

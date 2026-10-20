@@ -25,7 +25,6 @@ import {
   RadioGroup,
   Radio,
   Slider,
-  QrCode,
   Card,
   Divider,
   Badge,
@@ -51,6 +50,7 @@ import {
   lightTheme,
   SafeArea,
 } from "@solidrt/components"
+import { QrCode } from "@solidrt/components/qrcode"
 
 import icon from "../assets/icon.png" with { type: "binary" }
 // The puzzle mark, the demos project's app icon: a multi-color SVG keeps its

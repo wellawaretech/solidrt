@@ -51,7 +51,12 @@ the work before starting it:
   whose file is `<name>.flux.ts` runs under the flux runtime instead, for
   what only the runtime has, and is named and called the same way. What a tool does
   is the package's business (e.g. `3d/model` bakes a glTF into a model
-  file); sol only finds and runs them.
+  file); sol only finds and runs them. A project's own script runs by its
+  path, under the same suffix rule: `bun run sol tool ./scripts/bake.flux.ts
+  [arguments]` bundles it with the `flux:*` modules external and runs it
+  under flux (a bake that needs the runtime's decoders or texture encoder);
+  `./scripts/<name>.ts` runs under bun. No runner script of your own is
+  needed for either.
 - `bun run sol check [file|dir]` - build in memory and typecheck, no output
   and no reload. With a folder it covers every entry under it (src/index.tsx
   and examples/*), so `bun run sol check .` answers "did I break any example"

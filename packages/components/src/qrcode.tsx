@@ -1,3 +1,9 @@
+// Its own entry (`@solidrt/components/qrcode`, package.json exports), not
+// a re-export of the index: the encoder it imports assigns properties at
+// its top level and declares no `sideEffects: false`, so a bundler keeps
+// it wherever the index is imported, QR code or not (45 KB of JS, 7% of
+// an app's bytecode). As its own entry it reaches only the apps that
+// show one - three's addons, MUI's per-component paths: the same split.
 import { createMemo } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import qrcode from "qrcode-generator"

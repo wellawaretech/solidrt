@@ -8,7 +8,8 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./theme": "./src/theme.ts"
+    "./theme": "./src/theme.ts",
+    "./qrcode": "./src/qrcode.tsx"
   },
   "files": [
     "src/",

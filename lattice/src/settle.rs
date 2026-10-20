@@ -17,9 +17,19 @@
 //
 // The loop waits for the first and the last and runs a frame for the other
 // two, until all four hold at once: settling work can start more, and a
-// frame can start work. It owns no frame source: a stepped host passes the step that asks
-// for one, a client on a display passes nothing and the display's frames
-// come by themselves.
+// frame can start work. It owns no frame source: a stepped host passes the
+// step that asks for one, a client on a display passes nothing and the
+// display's frames come by themselves.
+//
+// The same loop serves two other ends (`Until`), for an app that never
+// rests - a frame loop, a looping clip, a spinner - behind which something
+// loads: its work done (nothing in flight, and a frame after the last of
+// it in which nothing more started, so what the landing woke has run), and
+// a condition of the caller's holding (Testing Library's waitFor, Unity's
+// WaitUntil, Godot's wait_until). Both wait for work with no app time
+// passing and step frames between, as the rest wait does; only the exit
+// differs. Rest stays the default: it needs no condition and fails loudly
+// on an app that never stops, which is a finding.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -42,6 +52,28 @@ const RASTER_POLL: Duration = Duration::from_millis(1);
 /// drain, on the wall: app time does not pass while nothing runs a frame,
 /// so this bounds a raster thread that never answers (a lost GPU).
 const RASTER_DRAIN_MAX: Duration = Duration::from_secs(5);
+
+/// What ends a settle (the top of this file).
+pub(crate) enum Until<'a> {
+  /// The app at rest: all four conditions.
+  Rest,
+  /// Its work done, whatever animates: nothing in flight, the raster thread
+  /// drained, and one frame run after the last landing in which nothing
+  /// more started. An app at rest is done at once.
+  Work,
+  /// The caller's condition holds, read after every landing and every
+  /// frame. Err: the read itself failed (a predicate that threw); the
+  /// caller keeps what was thrown.
+  Holds(&'a dyn Fn() -> Result<bool, ()>),
+}
+
+/// Why a settle ended without its `Until`.
+pub(crate) enum Stopped {
+  /// The cap passed; what was left.
+  Cap(Unsettled),
+  /// The `Holds` read failed.
+  Read,
+}
 
 /// What bounds a settle.
 pub(crate) enum Cap<'a> {
@@ -87,10 +119,24 @@ impl Unsettled {
     self.quiet() && self.raster_queue == 0
   }
 
+  /// The work is done, whatever animates: nothing in flight, the raster
+  /// and sort threads drained.
+  fn work_done(&self) -> bool {
+    self.in_flight.is_empty() && self.raster_queue == 0 && self.sort_queue == 0
+  }
+
   /// Only the raster thread is still busy: nothing to run a frame for,
   /// just a drain to wait out.
   fn raster_only(&self) -> bool {
     self.quiet() && self.raster_queue > 0
+  }
+
+  /// The raster thread is still busy with the last frame while no work
+  /// is in flight: what a work wait and a condition wait drain before
+  /// they read, whatever frames the app still demands - the frame is not
+  /// over until it is drawn, and a read of what it drew comes after.
+  fn raster_busy(&self) -> bool {
+    self.in_flight.is_empty() && self.raster_queue > 0
   }
 
   /// What is left, as a sentence part: "frames are still demanded by
@@ -114,6 +160,26 @@ impl Unsettled {
     }
     if self.sort_queue > 0 {
       parts.push(format!("{} instance order re-sort(s) still run on the sort thread", self.sort_queue));
+    }
+    parts.join("; ")
+  }
+
+  /// What is left of the work alone (`Until::Work`): the frames an app
+  /// demands are not what that wait is for, so they are not what failed
+  /// it.
+  pub(crate) fn describe_work(&self) -> String {
+    let mut parts = Vec::new();
+    if !self.in_flight.is_empty() {
+      parts.push(format!("still in flight: {}", flux::describe_in_flight(&self.in_flight)));
+    }
+    if self.raster_queue > 0 {
+      parts.push(format!("the raster thread still has {} command(s) to run", self.raster_queue));
+    }
+    if self.sort_queue > 0 {
+      parts.push(format!("{} instance order re-sort(s) still run on the sort thread", self.sort_queue));
+    }
+    if parts.is_empty() {
+      parts.push("work kept starting, a frame after the other".to_string());
     }
     parts.join("; ")
   }
@@ -146,11 +212,17 @@ pub(crate) fn next_frame(ctx: &Ctx<'_>) -> oneshot::Receiver<()> {
   rx
 }
 
-/// Wait until the app of `ctx` is at rest (see the top of this file), or
-/// until `cap` has passed: then what is left is the error. `step` asks for
-/// the next frame on a host that steps; a host whose frames come by
-/// themselves passes None. Runs in a task of the engine (`ctx.spawn`).
-pub(crate) async fn settle(ctx: &Ctx<'_>, cap: Cap<'_>, step: Option<&dyn Fn()>) -> Result<(), Unsettled> {
+/// Wait until `until` holds for the app of `ctx` (see the top of this
+/// file), or until `cap` has passed: then what is left is the error.
+/// `step` asks for the next frame on a host that steps; a host whose
+/// frames come by themselves passes None. Runs in a task of the engine
+/// (`ctx.spawn`).
+pub(crate) async fn settle(
+  ctx: &Ctx<'_>,
+  until: Until<'_>,
+  cap: Cap<'_>,
+  step: Option<&dyn Fn()>,
+) -> Result<(), Stopped> {
   let started = Instant::now();
   let app_start = match &cap {
     Cap::AppTime { now_ms, .. } => now_ms(),
@@ -162,31 +234,50 @@ pub(crate) async fn settle(ctx: &Ctx<'_>, cap: Cap<'_>, step: Option<&dyn Fn()>)
     Cap::Wall(max) => Some(max.saturating_sub(started.elapsed())),
     Cap::AppTime { .. } => None,
   };
+  // Frames run since work last landed (`Until::Work`): the frame after a
+  // landing runs what the landing woke, and one in which nothing started
+  // ends the wait.
+  let mut idle_frames = 0u32;
   loop {
+    // Read before the landing: this task is polled with the job queue dry,
+    // so what the last frame started is in flight by now.
+    if !flux::in_flight(ctx).is_empty() {
+      idle_frames = 0;
+    }
     let landed = flux::settled(ctx);
     match wall_left(&cap) {
       Some(left) => {
         if tokio::time::timeout(left, landed).await.is_err() {
-          return Err(Unsettled::read(ctx));
+          return Err(Stopped::Cap(Unsettled::read(ctx)));
         }
       }
       None => landed.await,
     }
     let mut state = Unsettled::read(ctx);
-    // Only the GPU side left: wait it out rather than spend frames on it.
+    // Only the GPU side left (or, past rest, the frame still drawing):
+    // wait it out rather than spend frames on it.
+    let draining = |state: &Unsettled| match until {
+      Until::Rest => state.raster_only(),
+      Until::Work | Until::Holds(_) => state.raster_busy(),
+    };
     let drain_started = Instant::now();
-    while state.raster_only() {
+    while draining(&state) {
       let left = match wall_left(&cap) {
         Some(left) => left.min(RASTER_DRAIN_MAX.saturating_sub(drain_started.elapsed())),
         None => RASTER_DRAIN_MAX.saturating_sub(drain_started.elapsed()),
       };
       if left.is_zero() {
-        return Err(state);
+        return Err(Stopped::Cap(state));
       }
       tokio::time::sleep(RASTER_POLL.min(left)).await;
       state = Unsettled::read(ctx);
     }
-    if state.at_rest() {
+    let done = match &until {
+      Until::Rest => state.at_rest(),
+      Until::Work => state.at_rest() || (idle_frames >= 1 && state.work_done()),
+      Until::Holds(holds) => holds().map_err(|()| Stopped::Read)?,
+    };
+    if done {
       return Ok(());
     }
     let passed = match &cap {
@@ -194,7 +285,7 @@ pub(crate) async fn settle(ctx: &Ctx<'_>, cap: Cap<'_>, step: Option<&dyn Fn()>)
       Cap::Wall(max) => started.elapsed() >= *max,
     };
     if passed {
-      return Err(state);
+      return Err(Stopped::Cap(state));
     }
     // A frame: it fires the due timers, runs the frame callbacks and the
     // flush, and draws what was demanded. Registered ahead of the step, so
@@ -206,12 +297,13 @@ pub(crate) async fn settle(ctx: &Ctx<'_>, cap: Cap<'_>, step: Option<&dyn Fn()>)
     match wall_left(&cap) {
       Some(left) => {
         if tokio::time::timeout(left, ran).await.is_err() {
-          return Err(Unsettled::read(ctx));
+          return Err(Stopped::Cap(Unsettled::read(ctx)));
         }
       }
       None => {
         let _ = ran.await;
       }
     }
+    idle_frames += 1;
   }
 }

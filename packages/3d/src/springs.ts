@@ -105,7 +105,10 @@ export type SpringBones = {
    * ExternalForce). On every chain, or on `chain` alone. Write it per
    * frame for gusts; a constant force settles like gravity does. */
   setForce(force: Vec3, chain?: number): void
-  /** Drop the chains; the joints hold their last rotation. */
+  /** Drop the chains, the joints put back at rest (the rest rotations
+   * written, as `reset` writes them): hair switched off hangs as
+   * authored, not frozen mid-swing. To switch it back on, declare the
+   * chains again - they start at rest, which is where dispose left them. */
   dispose(): void
 }
 

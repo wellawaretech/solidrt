@@ -548,7 +548,7 @@ let TOOLS: {
     name: "settle",
     annotations: READ_ONLY,
     description:
-      "Wait until a running app client is at rest, in place of a sleep: nothing the app started is still in flight (a fetch, a file or body read, a query, an isolate call), no timer is due, and no frame is demanded (no running transition, no pending tree write). Call it after send_input, call_debug, open_link or reload and before reading the tree or taking a snapshot, so the read sees the finished state. Returns `settled` (true when the app came to rest within max_ms) and `waitedMs`; when false, what is left: `demand` (why frames are still wanted: \"onFrame\", \"a transition on view labelled ...\", \"a playing video\", \"requestAnimationFrame\", ...), `inFlight` (a count per kind of work, e.g. {fetch: 1}), `timerDue` and `idleDue`. An app that animates on its own (a game loop, a looping animation, a video) never settles: that is the answer, not an error - freeze it with set_time_scale 0 and step_frames instead. What stands is not waited for: servers, open sockets, timers not yet due. With max_ms 0 it reads the state without waiting.",
+      "Wait until a running app client is at rest, in place of a sleep: nothing the app started is still in flight (a fetch, a file or body read, a query, an isolate call), no timer is due, and no frame is demanded (no running transition, no pending tree write). Call it after send_input, call_debug, open_link or reload and before reading the tree or taking a snapshot, so the read sees the finished state. Returns `settled` (true when the app came to rest within max_ms) and `waitedMs`; when false, what is left: `demand` (why frames are still wanted: \"onFrame\", \"a transition on view labelled ...\", \"a playing video\", \"requestAnimationFrame\", ...), `inFlight` (a count per kind of work, e.g. {fetch: 1}), `timerDue` and `idleDue`. An app that animates on its own (a game loop, a looping animation, a video) never settles: that is the answer, not an error - freeze it with set_time_scale 0 and step_frames instead, or, when something loads behind the animation (a spinner over a model load), pass frames: false to wait for the app's work alone: nothing in flight, and a frame after the last of it in which nothing more started. What stands is not waited for: servers, open sockets, timers not yet due. With max_ms 0 it reads the state without waiting.",
     inputSchema: {
       max_ms: z
         .number()
@@ -556,6 +556,10 @@ let TOOLS: {
         .min(0)
         .max(30000)
         .describe("How long to wait for rest, in milliseconds of wall time (default 5000, max 30000)")
+        .optional(),
+      frames: z
+        .boolean()
+        .describe("false: wait for the app's work alone (loads, fetches, decodes), not for its frames to stop; for an app that animates while something loads (default true)")
         .optional(),
       client: CLIENT_ARG,
     },
@@ -682,6 +686,7 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
     case "settle": {
       let params = new URLSearchParams()
       if (typeof args?.max_ms === "number") params.set("max", String(args.max_ms))
+      if (args?.frames === false) params.set("frames", "0")
       if (typeof args?.client === "number") params.set("client", String(args.client))
       let qs = params.toString()
       return control(`/settle${qs ? `?${qs}` : ""}`)

@@ -1500,7 +1500,11 @@ fn create_spring<'js>(
 }
 
 fn destroy_spring(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
-  super::gui(&ctx).alloy.spatial().destroy_spring(id);
+  let st = super::gui(&ctx);
+  // The joints go back to rest on the spot: a frame must publish it.
+  if st.alloy.spatial().destroy_spring(id) {
+    st.platform.request_frame();
+  }
   Ok(())
 }
 

@@ -72,11 +72,20 @@ declare module "sol:test" {
   export function inputStep(index: number): void
   /**
    * Runs frames until the app is at rest: nothing in flight, no timer due,
-   * no frame demanded. Work in flight is waited for with no app time
-   * passing. Rejects once `maxMs` of app time have passed without rest,
-   * with what is left in the message.
+   * no frame demanded. With `frames` false, until its work is done
+   * whatever animates: nothing in flight, and a frame after the last
+   * landing in which nothing more started. Work in flight is waited for
+   * with no app time passing. Rejects once `maxMs` of app time have
+   * passed without that, with what is left in the message.
    */
-  export function settle(maxMs: number): Promise<void>
+  export function settle(maxMs: number, frames: boolean): Promise<void>
+  /**
+   * Runs frames until `holds()` is truthy, read after every frame and
+   * after work in flight lands (with no app time passing for that wait).
+   * Rejects once `maxMs` of app time have passed without it, saying what
+   * the app was doing, or with what `holds` threw.
+   */
+  export function until(holds: () => unknown, maxMs: number): Promise<void>
   /**
    * Delivers a link the way an OS-routed one arrives (the raw string, on
    * the `link` event, ahead of the next frame). Returns whether anything

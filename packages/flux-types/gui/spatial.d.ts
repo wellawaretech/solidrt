@@ -895,8 +895,9 @@ declare module "flux:spatial" {
    * be live (throws otherwise).
    */
   export function createSpring(clock: NodeId, jointNodes: NodeId[], joints: Float32Array, colliderNodes: NodeId[], colliders: Float32Array, center?: NodeId): SpringId
-  /** Drop a chain at once; its joints hold their last rotation. A
-   * dropped id is fine. */
+  /** Drop a chain, its joints put back at rest: the rest rotations
+   * written (as resetSpring writes them), so the bones draw as authored
+   * again. A dropped id is fine. */
   export function destroySpring(spring: SpringId): void
   /** Put the chain back at rest now: every tail along its rest direction
    * under the current pose, the rest rotations written, no motion carried

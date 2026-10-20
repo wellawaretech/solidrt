@@ -39,7 +39,7 @@ export type GeometryBuffers = {
   morphs: { texture: TextureId; width: number } | null
 }
 
-type GpuEntry = GeometryBuffers & { geometry: Geometry; streams: ArrayBufferView[]; refs: number }
+type GpuEntry = GeometryBuffers & { geometry: Geometry; streams: ArrayBufferView[]; morphTargets: MorphTargets | null; refs: number }
 
 // The packed texels laid into a texture: as square as the count allows
 // (the least padding), never wider than the device permits; the shader
@@ -58,6 +58,31 @@ function uploadMorphs(morphs: MorphTargets, label: string | undefined): { textur
   }
   let texture = createTexture(data, width, height, { format: "rgba32f", filter: "nearest", autoFree: false, label: label ? label + "-morphs" : undefined })
   return { texture, width }
+}
+
+/** Morph uploads keyed by the packed targets: geometries sharing one
+ * MorphTargets (a mesh's primitives over one accessor set, as the glTF
+ * reader and the container deliver them) share one texture, each entry
+ * holding a reference to it. */
+let morphUploads = new WeakMap<MorphTargets, { texture: TextureId; width: number; refs: number }>()
+
+function acquireMorphs(morphs: MorphTargets, label: string | undefined): { texture: TextureId; width: number } {
+  let upload = morphUploads.get(morphs)
+  if (upload === undefined) {
+    upload = { ...uploadMorphs(morphs, label), refs: 0 }
+    morphUploads.set(morphs, upload)
+  }
+  upload.refs++
+  return { texture: upload.texture, width: upload.width }
+}
+
+function releaseMorphs(morphs: MorphTargets): void {
+  let upload = morphUploads.get(morphs)
+  if (upload === undefined) return
+  upload.refs--
+  if (upload.refs > 0) return
+  morphUploads.delete(morphs)
+  destroyTexture(upload.texture)
 }
 
 let entries = new WeakMap<Geometry, GpuEntry>()
@@ -129,7 +154,8 @@ export function acquireGeometryBuffers(geometry: Geometry): GeometryBuffers {
       }),
       indexFormat: geometry.indices instanceof Uint32Array ? "uint32" : "uint16",
       shape: createGeometryShape(geometry),
-      morphs: geometry.morphs === undefined ? null : uploadMorphs(geometry.morphs, geometry.label),
+      morphs: geometry.morphs === undefined ? null : acquireMorphs(geometry.morphs, geometry.label),
+      morphTargets: geometry.morphs ?? null,
       refs: 0,
     }
     entries.set(geometry, entry)
@@ -159,7 +185,7 @@ function freeEntry(entry: GpuEntry): void {
   for (let vertices of entry.streams) releaseVertices(vertices)
   destroyBuffer(entry.index)
   destroyShape(entry.shape)
-  if (entry.morphs !== null) destroyTexture(entry.morphs.texture)
+  if (entry.morphTargets !== null) releaseMorphs(entry.morphTargets)
 }
 
 /**

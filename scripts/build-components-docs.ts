@@ -4,8 +4,11 @@
 // from docs/*.md, and enforce doc coverage of the public surface.
 //
 // One file per public module lives in packages/components/docs/, named after
-// the module src/index.ts re-exports from (docs/button.md for "./button").
-// Prose lives there and nowhere else; the props are the typed, commented
+// the module src/index.ts re-exports from (docs/button.md for "./button") or
+// the package.json entry that serves it on its own (docs/qrcode.md for
+// "./qrcode": a module an app imports by its own path, so that what it
+// brings along reaches only the apps that use it). Prose lives there and
+// nowhere else; the props are the typed, commented
 // interfaces in src/ (the package ships its source). This script only
 // assembles:
 //
@@ -39,9 +42,12 @@ function fail(message: string): void {
   failed = true;
 }
 
-// -- The public surface: src/index.ts re-export blocks, in order ------------
+// -- The public surface: src/index.ts re-export blocks, in order, then the
+// package's own entries (package.json exports beyond ".") that the index
+// does not re-export, their names read off the module's own declarations.
+// SYNC: website/src/reference.ts (componentsPages enumerates the same way).
 
-type Module = { stem: string; names: string[] };
+type Module = { stem: string; names: string[]; entry?: string };
 
 let index = readFileSync(join(PKG, "src", "index.ts"), "utf8");
 let modules: Module[] = [];
@@ -55,6 +61,17 @@ for (let m of index.matchAll(/^export (?:type )?\{([^}]*)\} from "\.\/([a-z0-9-]
   else modules.push({ stem: m[2]!, names });
 }
 
+// A top-level exported declaration's name.
+const DECLARATION = /^export (?:async )?(?:function|const|let|class|interface|type|enum) ([A-Za-z0-9_]+)/gm;
+
+let pkg = JSON.parse(readFileSync(join(PKG, "package.json"), "utf8"));
+for (let [sub, target] of Object.entries(pkg.exports as Record<string, string>)) {
+  let m = sub === "." ? null : target.match(/^\.\/src\/([a-z0-9-]+)\.tsx?$/);
+  if (!m || modules.some((mod) => mod.stem === m![1])) continue;
+  let names = [...readFileSync(join(PKG, target), "utf8").matchAll(DECLARATION)].map((d) => d[1]!);
+  modules.push({ stem: m[1]!, names, entry: pkg.name + sub.slice(1) });
+}
+
 function srcFile(stem: string): string {
   return existsSync(join(PKG, "src", stem + ".tsx")) ? `src/${stem}.tsx` : `src/${stem}.ts`;
 }
@@ -64,10 +81,12 @@ function srcFile(stem: string): string {
 let docFiles = readdirSync(DOCS)
   .filter((f) => f.endsWith(".md") && f !== "index.md")
   .map((f) => f.slice(0, -3));
-for (let { stem } of modules)
-  if (!docFiles.includes(stem)) fail(`No doc: src/index.ts exports from "./${stem}" but docs/${stem}.md is missing`);
+for (let { stem, entry } of modules)
+  if (!docFiles.includes(stem))
+    fail(`No doc: ${entry ? `package.json serves "./${stem}" as ${entry}` : `src/index.ts exports from "./${stem}"`} but docs/${stem}.md is missing`);
 for (let stem of docFiles)
-  if (!modules.some((m) => m.stem === stem)) fail(`Orphan doc: docs/${stem}.md matches no export in src/index.ts`);
+  if (!modules.some((m) => m.stem === stem))
+    fail(`Orphan doc: docs/${stem}.md matches no export in src/index.ts and no entry in package.json`);
 for (let stem of CONCEPTS)
   if (!modules.some((m) => m.stem === stem)) fail(`CONCEPTS names "${stem}", which src/index.ts does not export from`);
 if (failed) process.exit(1);
@@ -103,7 +122,8 @@ function demoteHeadings(body: string, by: number): string {
 function apiLine(module: Module): string {
   let names = module.names.map((n) => `\`${n}\``).join(", ");
   let file = srcFile(module.stem);
-  return `API: ${names} - typed and commented in [${file}](./${file}).`;
+  let from = module.entry ? ` Its own entry: import from \`${module.entry}\`.` : "";
+  return `API: ${names} - typed and commented in [${file}](./${file}).${from}`;
 }
 
 // -- README.md ---------------------------------------------------------------
@@ -145,7 +165,8 @@ if (begin < 0 || end < 0 || end < begin) {
 
 let bullets = modules.map((m) => {
   let doc = docOf(m.stem);
-  return `- \`${doc.title}\` - ${doc.firstParagraph}`;
+  let from = m.entry ? ` (its own entry: import from \`${m.entry}\`)` : "";
+  return `- \`${doc.title}\`${from} - ${doc.firstParagraph}`;
 });
 agents = agents.slice(0, begin + BEGIN.length) + "\n" + bullets.join("\n") + "\n" + agents.slice(end);
 

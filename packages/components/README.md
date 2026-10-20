@@ -833,19 +833,6 @@ import { SplitView } from "@solidrt/components"
 
 API: `SplitView`, `SplitViewProps` - typed and commented in [src/split-view.tsx](./src/split-view.tsx).
 
-### QrCode
-
-Renders a QR code for `data` out of primitives: same-color modules in a row collapse into one box, drawn on a light quiet-zone panel; the grid recomputes only when `data` or `level` changes. It paints black on white by default (not the theme) so it stays scannable through a theme switch; override `color`/`background` only if the contrast still holds. `moduleSize` (default 6) is pixels per module, `margin` (default 16) the quiet zone (keep it non-zero), `level` the error correction (`L`/`M`/`Q`/`H`, default `M`: higher tolerates more damage but caps data length sooner), `radius` the panel's corner radius.
-
-```jsx
-import { QrCode } from "@solidrt/components"
-
-<QrCode data="https://solidjs.com" />
-<QrCode data={ticket()} moduleSize={8} level="L" />
-```
-
-API: `QrCode`, `QrCodeProps` - typed and commented in [src/qrcode.tsx](./src/qrcode.tsx).
-
 ### Icon
 
 A thin themed wrapper over the core `parseSvg` primitive. `src` is a whole SVG document as a string; the component parses it once (memoized), maps the draws to `<d-path>` in a square `designSize`-fitted box (`size`, default 24) and, for monochrome icons that stroke/fill with `currentColor`, recolors it via `color` (default the theme text color). It carries no icon set and no name registry, so any `currentColor` SVG works (Lucide, Feather, Heroicons, ...) and only the icons you import are bundled. Multi-color documents keep their own fills. For a non-square box, use `parseSvg` directly.
@@ -930,6 +917,21 @@ import { Density, Item } from "@solidrt/components"
 `densityScale()` is the reactive multiplier behind it (1 / 0.85 / 0.7 for comfortable/compact/dense): the nearest `<Density>` above the calling scope, falling back to `policy.density`. Call it during component setup or inside JSX/thunks when building custom density-aware components.
 
 API: `Density`, `DensityProps`, `densityScale` - typed and commented in [src/density.tsx](./src/density.tsx).
+
+### QrCode
+
+Renders a QR code for `data` out of primitives: same-color modules in a row collapse into one box, drawn on a light quiet-zone panel; the grid recomputes only when `data` or `level` changes. It paints black on white by default (not the theme) so it stays scannable through a theme switch; override `color`/`background` only if the contrast still holds. `moduleSize` (default 6) is pixels per module, `margin` (default 16) the quiet zone (keep it non-zero), `level` the error correction (`L`/`M`/`Q`/`H`, default `M`: higher tolerates more damage but caps data length sooner), `radius` the panel's corner radius.
+
+Its own entry, not the package root: the encoder it brings along cannot be shaken out of a bundle (it assigns at its top level), so as part of the index it would ride along in every app that imports anything from the package. Imported from `@solidrt/components/qrcode`, it reaches only the apps that show a QR code.
+
+```jsx
+import { QrCode } from "@solidrt/components/qrcode"
+
+<QrCode data="https://solidjs.com" />
+<QrCode data={ticket()} moduleSize={8} level="L" />
+```
+
+API: `QrCodeProps`, `QrCode` - typed and commented in [src/qrcode.tsx](./src/qrcode.tsx). Its own entry: import from `@solidrt/components/qrcode`.
 
 ## License
 

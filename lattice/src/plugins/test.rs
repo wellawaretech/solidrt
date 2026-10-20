@@ -2,11 +2,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
-use flux::rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Persistent, Promise, TypedArray};
+use flux::rquickjs::{Coerced, Ctx, Exception, Function, JsLifetime, Object, Persistent, Promise, TypedArray, Value};
 use flux::CopyBytes;
 
 use crate::input_plan::{self, Injected};
-use crate::settle::Cap;
+use crate::settle::{Cap, Stopped, Until};
 use crate::stepped::{Stepper, WindowReady};
 
 // The `sol:test` module: the engine verbs of an app test, which
@@ -320,10 +320,12 @@ fn capture<'js>(ctx: Ctx<'js>, node: u64) -> flux::rquickjs::Result<Object<'js>>
   pixels_object(&ctx, info)
 }
 
-/// `settle(maxMs)`: run frames until the app is at rest (settle.rs):
-/// nothing in flight, no timer due, no frame demanded. Rejects once `maxMs`
-/// of app time have passed without that, saying what is left.
-fn settle<'js>(ctx: Ctx<'js>, max_ms: f64) -> flux::rquickjs::Result<Promise<'js>> {
+/// `settle(maxMs, frames)`: run frames until the app is at rest
+/// (settle.rs): nothing in flight, no timer due, no frame demanded. With
+/// `frames` false, until its work is done whatever animates: nothing in
+/// flight and a frame after the last landing that started nothing. Rejects
+/// once `maxMs` of app time have passed without that, saying what is left.
+fn settle<'js>(ctx: Ctx<'js>, max_ms: f64, frames: bool) -> flux::rquickjs::Result<Promise<'js>> {
   let stepper = stepper(&ctx, "settle()")?;
   if !max_ms.is_finite() || max_ms < 0.0 {
     return Err(Exception::throw_message(
@@ -336,17 +338,75 @@ fn settle<'js>(ctx: Ctx<'js>, max_ms: f64) -> flux::rquickjs::Result<Promise<'js
   ctx.spawn(async move {
     let now_ms = || stepper.time_ms();
     let step = || stepper.step();
-    let outcome = crate::settle::settle(&task_ctx, Cap::AppTime { max_ms, now_ms: &now_ms }, Some(&step)).await;
+    let until = if frames { Until::Rest } else { Until::Work };
+    let outcome = crate::settle::settle(&task_ctx, until, Cap::AppTime { max_ms, now_ms: &now_ms }, Some(&step)).await;
     let settled = match outcome {
       Ok(()) => resolve.call::<_, ()>(()),
-      Err(left) => {
-        let message =
-          format!("settle: the app did not come to rest within {max_ms} ms of app time: {}", left.describe());
+      Err(Stopped::Cap(left)) => {
+        let message = if frames {
+          format!("settle: the app did not come to rest within {max_ms} ms of app time: {}", left.describe())
+        } else {
+          format!("settle: the app's work did not finish within {max_ms} ms of app time: {}", left.describe_work())
+        };
         Exception::from_message(task_ctx.clone(), &message).and_then(|error| reject.call::<_, ()>((error,)))
       }
+      // Neither wait reads a condition of its own.
+      Err(Stopped::Read) => Exception::from_message(task_ctx.clone(), "settle: the wait failed its read")
+        .and_then(|error| reject.call::<_, ()>((error,))),
     };
     if let Err(e) = settled {
       flux::report_uncaught(&task_ctx, e, "sol:test settle()");
+    }
+  });
+  Ok(promise)
+}
+
+/// `until(holds, maxMs)`: run frames until `holds()` is truthy, read after
+/// every frame and after work in flight lands (settle.rs). Rejects once
+/// `maxMs` of app time have passed without that, saying what the app was
+/// doing, or with what `holds` threw.
+fn until<'js>(ctx: Ctx<'js>, holds: Function<'js>, max_ms: f64) -> flux::rquickjs::Result<Promise<'js>> {
+  let stepper = stepper(&ctx, "until()")?;
+  if !max_ms.is_finite() || max_ms < 0.0 {
+    return Err(Exception::throw_message(
+      &ctx,
+      "sol:test until(holds, maxMs): the cap must be a non-negative number of milliseconds",
+    ));
+  }
+  let (promise, resolve, reject) = ctx.promise()?;
+  let task_ctx = ctx.clone();
+  ctx.spawn(async move {
+    let now_ms = || stepper.time_ms();
+    let step = || stepper.step();
+    // What the predicate threw, kept as thrown: the rejection is that value.
+    let thrown: RefCell<Option<Value<'js>>> = RefCell::new(None);
+    let read = || match holds.call::<_, Coerced<bool>>(()) {
+      Ok(Coerced(held)) => Ok(held),
+      Err(_) => {
+        *thrown.borrow_mut() = Some(task_ctx.catch());
+        Err(())
+      }
+    };
+    let outcome =
+      crate::settle::settle(&task_ctx, Until::Holds(&read), Cap::AppTime { max_ms, now_ms: &now_ms }, Some(&step))
+        .await;
+    let settled = match outcome {
+      Ok(()) => resolve.call::<_, ()>(()),
+      Err(Stopped::Cap(left)) => {
+        let doing = left.describe();
+        let message = format!(
+          "until: the condition did not hold within {max_ms} ms of app time ({})",
+          if doing.is_empty() { "the app is at rest".to_string() } else { doing }
+        );
+        Exception::from_message(task_ctx.clone(), &message).and_then(|error| reject.call::<_, ()>((error,)))
+      }
+      Err(Stopped::Read) => {
+        let error = thrown.borrow_mut().take().unwrap_or_else(|| Value::new_undefined(task_ctx.clone()));
+        reject.call::<_, ()>((error,))
+      }
+    };
+    if let Err(e) = settled {
+      flux::report_uncaught(&task_ctx, e, "sol:test until()");
     }
   });
   Ok(promise)
@@ -477,6 +537,7 @@ impl ModuleDef for SolTestModule {
     decl.declare("inputPlan")?;
     decl.declare("inputStep")?;
     decl.declare("settle")?;
+    decl.declare("until")?;
     decl.declare("link")?;
     decl.declare("debug")?;
     decl.declare("stats")?;
@@ -504,6 +565,7 @@ impl ModuleDef for SolTestModule {
     exports.export("inputPlan", Function::new(ctx.clone(), plan_input)?)?;
     exports.export("inputStep", Function::new(ctx.clone(), step_input)?)?;
     exports.export("settle", Function::new(ctx.clone(), settle)?)?;
+    exports.export("until", Function::new(ctx.clone(), until)?)?;
     if ctx.userdata::<Pads>().is_none() {
       ctx.store_userdata(Pads(Rc::new(RefCell::new(alloy::Gamepads::synthetic())))).expect("store pads");
     }

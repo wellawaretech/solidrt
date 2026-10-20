@@ -328,6 +328,30 @@ fn reset_places_the_tails_back_at_rest() {
 }
 
 #[test]
+fn destroy_puts_the_joints_back_at_rest() {
+  let mut s = Spatial::new();
+  let (anchor, b1, b2) = rig(&mut s);
+  let id = chain(&mut s, b1, b2, 0.0, vec![]);
+  advance_at(&mut s, 0.0);
+  s.set_transform(anchor, [0.0, 1.0, 0.0], axis_quat([0.0, 0.0, 1.0], 1.0), ONE).expect("turn");
+  for i in 1..=5 {
+    advance_at(&mut s, i as f64 * S * 1000.0);
+  }
+  assert!(!is_identity(rotation_of(&s, b1)) && !is_identity(rotation_of(&s, b2)));
+  // Mid-swing, the chain goes: the bones hang as authored, not frozen
+  // where the last step put them, and nothing steps them any more.
+  assert!(s.destroy_spring(id), "the rest rotations were written");
+  assert!(is_identity(rotation_of(&s, b1)) && is_identity(rotation_of(&s, b2)));
+  let tick = advance_at(&mut s, 6.0 * S * 1000.0);
+  assert!(!tick.wrote && !tick.active, "{tick:?}");
+  assert!(s.reset_spring(id).is_err(), "the chain is gone");
+  // A chain already at rest writes nothing; a dropped id is fine.
+  let id = chain(&mut s, b1, b2, 0.0, vec![]);
+  assert!(!s.destroy_spring(id));
+  assert!(!s.destroy_spring(id));
+}
+
+#[test]
 fn a_center_keeps_its_own_motion_out_of_the_chain() {
   // The anchor slides along x every frame. In world space the chain
   // trails; in the anchor's space it rests.

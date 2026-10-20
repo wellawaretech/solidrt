@@ -498,8 +498,8 @@ active? blend?>` children, each providing the view with its camera
 redirected to the shot, so a `<Camera2d>` inside a `<Shot>` drives that
 shot while its size and handlers stay the view's; `active` (default
 true, live) withdraws and restores a shot, an unmount removes it, the
-container runs the blend on frames while one is in flight.
-probes/shots-2d-probe.tsx is the live guard.
+container runs the blend on frames while one is in flight. Pinned in
+tests/camera2d.test.ts.
 
 #### Input and bindings
 
@@ -766,7 +766,7 @@ cells by `fontSize / font.size`.
 
 frames.ts, extrude.ts (the mip-gutter repack, tests/extrude.test.ts),
 pack.ts (the shelf packer, tests/pack.test.ts), pick.ts, camera.ts,
-camera-motion.ts, dispatch.ts, oversample-math.ts, tiles-math.ts (the
+dispatch.ts, oversample-math.ts, tiles-math.ts (the
 tile grid's chunk and slot math, tests/tiles.test.ts) and text-layout.ts
 (glyph placement over prepared units, tests/text-layout.test.ts) are pure
 (no GPU imports) BY DESIGN so they can be checked headless; keep them

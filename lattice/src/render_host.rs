@@ -284,14 +284,16 @@ async fn settle_first(ctx: &Ctx<'_>, stepper: &Stepper) -> Result<(), String> {
   let now_ms = || stepper.time_ms();
   let step = || stepper.step();
   let cap = Cap::AppTime { max_ms: settle::DEFAULT_MAX_MS, now_ms: &now_ms };
-  match tokio::time::timeout(SETTLE_WALL_CAP, settle::settle(ctx, cap, Some(&step))).await {
+  match tokio::time::timeout(SETTLE_WALL_CAP, settle::settle(ctx, settle::Until::Rest, cap, Some(&step))).await {
     Ok(Ok(())) => {
       log::info!("[sol] the app came to rest after {} ms of app time", stepper.time_ms());
       Ok(())
     }
-    Ok(Err(left)) => {
+    Ok(Err(settle::Stopped::Cap(left))) => {
       Err(format!("the app did not come to rest within {} ms of app time: {}", settle::DEFAULT_MAX_MS, left.describe()))
     }
+    // A rest wait reads no condition of its own.
+    Ok(Err(settle::Stopped::Read)) => Err("the rest wait failed its read".to_string()),
     Err(_) => Err(format!(
       "the app did not come to rest within {} s: {}",
       SETTLE_WALL_CAP.as_secs(),

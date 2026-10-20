@@ -776,10 +776,13 @@ async fn try_serve(
               Some("settle") => {
                 // Wait for the app to come to rest (settle.rs) and say
                 // whether it did: the condition an agent waits on in place
-                // of a sleep. The wait runs as a task of the engine, on the
-                // display's own frames, bounded by `maxMs` of wall time;
-                // what is left when the cap passes comes back in the reply.
+                // of a sleep. With `frames` false, for its work alone
+                // (whatever animates). The wait runs as a task of the
+                // engine, on the display's own frames, bounded by `maxMs`
+                // of wall time; what is left when the cap passes comes back
+                // in the reply.
                 let max_ms = json.get("maxMs").and_then(|m| m.as_f64()).unwrap_or(crate::settle::DEFAULT_MAX_MS);
+                let frames = json.get("frames").and_then(|f| f.as_bool()).unwrap_or(true);
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) if max_ms.is_finite() && max_ms >= 0.0 => {
@@ -789,7 +792,13 @@ async fn try_serve(
                       ctx.spawn(async move {
                         let started = std::time::Instant::now();
                         let cap = crate::settle::Cap::Wall(Duration::from_secs_f64(max_ms / 1000.0));
-                        let left = crate::settle::settle(&task_ctx, cap, None).await.err();
+                        let until = if frames { crate::settle::Until::Rest } else { crate::settle::Until::Work };
+                        let left = match crate::settle::settle(&task_ctx, until, cap, None).await {
+                          Ok(()) => None,
+                          Err(crate::settle::Stopped::Cap(left)) => Some(left),
+                          // Neither wait reads a condition of its own.
+                          Err(crate::settle::Stopped::Read) => Some(crate::settle::Unsettled::read(&task_ctx)),
+                        };
                         let in_flight: serde_json::Map<String, serde_json::Value> = left
                           .iter()
                           .flat_map(|left| left.in_flight.iter())

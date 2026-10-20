@@ -346,7 +346,7 @@ what works is folding them into a dim emissive floor under the coarse
 blocks, brightness proportional to the local light density squared,
 visible only through the gaps - and tiny lights kept in the MIDDLE
 level bring the speckle back one level closer. `examples/lod.tsx` is
-the shape; `probes/3d-lod-bench.tsx` the cost.
+the shape.
 
 ### Residency
 
@@ -1152,8 +1152,7 @@ the shot's recording target, so an `<OrbitCamera>` or
 it, the container runs the blend on frames while one is in flight. A
 shot's picks and raycasts (`anchor`, `occlusion`) go through the
 owner's actual camera, which is the shot's own only while it is live
-and at rest. Pinned in tests/orbit.test.ts; probes/shots-3d-probe.tsx
-is the live guard.
+and at rest. Pinned in tests/orbit.test.ts.
 
 ### First-person camera
 
@@ -3003,7 +3002,9 @@ force on every tail, world space, the units of gravityPower along a
 direction, added to each joint's authored gravity: the wind - Godot's
 external_force, UniVRM's ExternalForce - on the whole model or one
 chain; write it per frame for gusts, a constant one settles) and
-`dispose()`. Zero per-frame JS: the core steps every chain once per
+`dispose()` (the chains dropped and the joints put back at rest, so a
+"hair physics off" switch is dispose, and on is a new declaration). Zero
+per-frame JS: the core steps every chain once per
 frame AFTER your onFrame and its flush - the POSE POST-PASS, where
 Unity's LateUpdate and Godot's skeleton modifiers run - so the chains
 react to the final primary pose: the players, the transitions and the

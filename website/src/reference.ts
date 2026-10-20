@@ -175,12 +175,24 @@ const COMPONENT_CONCEPTS = ["theme", "policy", "types", "typography", "spacing"]
 
 async function componentsPages(): Promise<ReferencePage[]> {
   const BASE = "/extensions/components";
-  // Modules in src/index.ts order, with the names it re-exports from each.
+  // Modules in src/index.ts order, with the names it re-exports from each,
+  // then the package's own entries (package.json exports beyond ".") the
+  // index does not re-export, with the names the module itself exports.
+  // SYNC: scripts/build-components-docs.ts enumerates the same way.
   let index = await file(COMPONENTS + "/src/index.ts").text();
   let modules = new Map<string, string[]>();
   for (let m of index.matchAll(/^export (?:type )?\{([^}]*)\} from "\.\/([a-z0-9-]+)"/gm)) {
     let names = m[1]!.split(",").map((n) => n.trim().replace(/^type /, "")).filter(Boolean);
     modules.set(m[2]!, [...(modules.get(m[2]!) ?? []), ...names]);
+  }
+  let pkg = await file(COMPONENTS + "/package.json").json();
+  let entries = new Map<string, string>();
+  for (let [sub, target] of Object.entries(pkg.exports as Record<string, string>)) {
+    let m = sub === "." ? null : target.match(/^\.\/src\/([a-z0-9-]+)\.tsx?$/);
+    if (!m || modules.has(m[1]!)) continue;
+    let decls = splitDeclarations(await file(`${COMPONENTS}/${target}`).text());
+    modules.set(m[1]!, [...decls.values()].filter((d) => d.exported).map((d) => d.name));
+    entries.set(m[1]!, pkg.name + sub.slice(1));
   }
   let pages: ReferencePage[] = [];
   for (let [stem, names] of modules) {
@@ -216,6 +228,7 @@ async function componentsPages(): Promise<ReferencePage[]> {
         (await renderMarkdown(body!.trim())) +
         `<h2>API</h2>\n` +
         declaredIn(rel) +
+        (entries.has(stem) ? `<p><small>Its own entry: import from <code>${escapeHtml(entries.get(stem)!)}</code>.</small></p>\n` : "") +
         blocks,
     });
   }

@@ -22,7 +22,8 @@ would otherwise write yourself for every app.
 - **Structure:** `Window`, `View`, `Card`, `Divider`, `ScrollView`,
   `SplitView`, `NavShell`, `SafeArea`, `Portal`.
 - **Content and feedback:** `Text`, `Image`, `Icon`, `Badge`, `Spinner`,
-  `ProgressBar`, `Modal`, `Tooltip`, `ContextMenu`, `QrCode`.
+  `ProgressBar`, `Modal`, `Tooltip`, `ContextMenu`, `QrCode` (its own
+  entry, `@solidrt/components/qrcode`).
 
 Start a project on it by picking `@solidrt/components` in the scaffolder,
 or add it to an existing one:

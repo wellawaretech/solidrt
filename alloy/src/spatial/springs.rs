@@ -373,10 +373,27 @@ impl Spatial {
     Ok(id)
   }
 
-  /// Drop a chain at once; its joints hold whatever rotation they last
-  /// took. A dropped id is fine.
-  pub fn destroy_spring(&mut self, id: SpringId) {
-    self.springs.chains.retain(|c| c.id != id);
+  /// Drop a chain, its joints put back at rest: the rest rotations
+  /// written, as `reset_spring` writes them, so the bones draw as
+  /// authored again (hair switched off hangs, not frozen mid-swing; a
+  /// joint whose node died is skipped). Three-vrm's deleteJoint leaves the
+  /// bones where the last step put them and every app restores them
+  /// itself; Godot's modifiers never own the pose, so an inactive one
+  /// shows the animated pose at once - the same outcome, which the
+  /// solver here must write because it does own the rotations. A dropped
+  /// id is fine. Whether a rotation was written.
+  pub fn destroy_spring(&mut self, id: SpringId) -> bool {
+    let Some(i) = self.springs.chains.iter().position(|c| c.id == id) else {
+      return false;
+    };
+    let chain = self.springs.chains.remove(i);
+    let mut wrote = false;
+    for j in &chain.joints {
+      if let Ok(idx) = self.resolve(j.spec.node) {
+        wrote |= self.write_rotation(idx, quat_normalize(j.spec.rest_rotation));
+      }
+    }
+    wrote
   }
 
   /// Put the chain back at rest now: every tail along its rest direction

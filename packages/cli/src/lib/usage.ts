@@ -30,7 +30,8 @@ Commands:
   client                 Start solidrt-go client only
   demo [<number>]        List the demos the CLI ships, or run one
   tool [<pkg>/<name>]    List the tools the installed packages ship, or run one
-                         (everything after the tool name is the tool's own arguments)
+                         (everything after the tool name is the tool's own arguments;
+                         a path ending in .ts runs the project's own script the same way)
   console                Start the dev console: the dev servers on this machine and their clients
   android [file.apk]     Launch the client on a connected Android device, installing it where missing
                          (--apk: pack the app and install that instead; a packed APK: install and launch it)

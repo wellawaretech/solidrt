@@ -24,9 +24,12 @@ it compose by hand.
   per-joint settings in the VRM 1.0 / three-vrm / Godot vocabulary
   (stiffness, drag, gravity power and direction, hit radius, tail), an
   optional center node, colliders shared by index. `reset()`,
-  `setJoint()`, `setForce()` and `dispose()`. The declaration lives on
-  the model node and re-applies on every scene enter, like
-  `setTransition`.
+  `setJoint()`, `setForce()` and `dispose()`, which puts the joints back
+  at rest as it drops the chains (added 2026-10-20 from the port's
+  feedback: hair switched off was frozen mid-swing, and the app had to
+  keep the rest rotations itself; three-vrm leaves them, Godot's
+  modifiers never own the pose). The declaration lives on the model node
+  and re-applies on every scene enter, like `setTransition`.
 - The core steps every chain once per frame AFTER the frame's JS and its
   flush, in the draw tick ahead of the spatial flush: secondary motion is
   a function of the final primary pose, and the frame's JS is a primary
