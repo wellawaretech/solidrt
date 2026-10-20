@@ -78,7 +78,8 @@ export type ShadowOptions = {
 /** A directional light node: parallel rays travelling along `direction`
  * in the node's LOCAL space, so a parent's rotation turns the light with
  * it (the default `[0, -1, 0]` is a sun straight overhead; the length is
- * ignored). Scale does not affect it, and neither does position UNLESS
+ * ignored) and lookAt turns the node so `direction` points at a world
+ * point. Scale does not affect it, and neither does position UNLESS
  * it casts: a casting light's shadow camera sits at its WORLD position
  * looking along its world direction (Three's rule), so place a casting
  * sun above the scene. Write through setLight. */
@@ -123,9 +124,10 @@ export type DirectionalLight = SceneNode & {
 
 /** A spot light node: a cone of light from the node's WORLD position
  * along `direction` in its LOCAL space (default [0, -1, 0], a lamp
- * aimed straight down), so a parent's rotation turns it and setTransform
- * places it - deliberately a direction, not Three's target object, the
- * DirectionalLight rule. The cone fades across `penumbra` of `angle`
+ * aimed straight down), so a parent's rotation turns it, lookAt aims it
+ * and setTransform places it - deliberately a direction, not Three's
+ * target object, the DirectionalLight rule. The cone fades across
+ * `penumbra` of `angle`
  * and the strength falls off as `1 / d^decay`, windowed to zero at
  * `distance` (Three's punctual-light falloff). Write through setLight. */
 export type SpotLight = SceneNode & {

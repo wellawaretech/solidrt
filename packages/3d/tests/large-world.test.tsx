@@ -23,6 +23,9 @@ const SUN: Vec3 = [3, 5, 2]
 const CLEAR: [number, number, number, number] = [0.1, 0.1, 0.12, 1]
 /** A micron: what the f64 arena holds a hit to, a million units out. */
 const HIT_EPS = 1e-6
+/** The red channel a sunlit side of the cube clears; unlit it is 0 (the
+ * scene has no ambient term). */
+const LIT_RED_MIN = 64
 
 let at = (o: Vec3, p: Vec3): Vec3 => [o[0] + p[0], o[1] + p[1], o[2] + p[2]]
 
@@ -72,6 +75,12 @@ test("a scene a million units out renders byte for byte like the one at zero, sh
     if (pa.data[i] !== pa.data[0] || pa.data[i + 1] !== pa.data[1] || pa.data[i + 2] !== pa.data[2]) painted++
   }
   expect(painted).toBeGreaterThan((pa.width * pa.height) / 8)
+  // And the sun lights what the camera sees: the centre pixel is the
+  // cube's camera-facing side (the pick below lands there), which a
+  // lookAt that aimed the light's +z instead of its direction left black
+  // - and black differs from the clear color, so the count above passes it.
+  let centre = ((pa.height >> 1) * pa.width + (pa.width >> 1)) * 4
+  expect(pa.data[centre]!).toBeGreaterThan(LIT_RED_MIN)
   // The rays agree to a micron: the index holds the world in f64.
   let h0 = near.raycast([0.2, 5, 0.1], [0, -1, 0])[0]
   let h1 = far.raycast([FAR + 0.2, 5, 0.1], [0, -1, 0])[0]

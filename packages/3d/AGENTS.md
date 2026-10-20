@@ -2496,13 +2496,14 @@ instance or every caster move warns about the skipped write.
 Lights and `phong`: lights are graph NODES, like Three. `createDirectionalLight({
 direction?, color?, intensity?, angularSize?, layers? })` / `<DirectionalLight>` is parallel light
 travelling along `direction` in the node's LOCAL space (default `[0, -1,
-0]`, a sun overhead; length ignored), so a parent Group's rotation turns it
-and position/scale do not matter - deliberately a direction, not Three's
+0]`, a sun overhead; length ignored), so a parent Group's rotation turns it,
+`lookAt(light, target)` points it at a world point, and position/scale do
+not matter - deliberately a direction, not Three's
 position-minus-target; `angularSize` (degrees, default 0) is its disc,
 the soft shadows' source (see Shadows). `createSpotLight({ direction?, color?, intensity?,
 distance?, angle?, penumbra?, decay?, sourceRadius? })` / `<SpotLight>` is a cone from
 the node's WORLD position along that same LOCAL `direction` (aim by
-`direction` or a parent's rotation; place by setTransform): `angle` is
+`direction`, a parent's rotation or `lookAt`; place by setTransform): `angle` is
 the cone half-angle in DEGREES ((0, 90], default 60 - degrees like
 camera fov and like Unity/Godot; Three's radians convert as
 `angle * 180 / PI`), `penumbra` the
@@ -3789,6 +3790,10 @@ successors) as ordinary content, the model-loading split repeated:
   +z is the library's own sweep axis, so `extrude`/`sweep`/`tube` output
   needs no correction. For a y-axis solid (`cylinder`, `cone`) use
   `quatFromTo(q, [0, 1, 0], dir)` instead of correcting lookAt's +z.
+  A directional or spot light aims its `direction` instead of +z, so the
+  beam points at the target, the way Unity, Godot and Three all aim a
+  light; `up` still chooses the roll. The aim holds the `direction` of
+  the call: a later setLight `direction` turns the beam off the target.
   Divergences from Three, both deliberate: `up` is an argument, NOT a
   per-node field (Three's `object.up` is hidden state that costs a vector
   on every node), and degenerate frames pick a stable perpendicular

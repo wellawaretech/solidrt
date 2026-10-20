@@ -15,7 +15,7 @@ import type { ShaderParams, TextureId } from "@solidrt/core/gpu"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
-import { compose, eulerFromQuat, identity, mat4, multiply, quat, quatFromFrame, transformPoint, updateRotation, updateScale } from "./math.ts"
+import { compose, eulerFromQuat, identity, mat4, multiply, quat, quatFromFrame, quatFromTo, quatMultiply, transformPoint, updateRotation, updateScale } from "./math.ts"
 import type { Mat4, Quat, TransformUpdate, Vec3, Vec4 } from "./math.ts"
 import type { CastingLight, Light } from "./light.ts"
 import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
@@ -24,6 +24,9 @@ import type { Scene, ViewHandle } from "./scene.ts"
 // lookAt()'s default roll reference. Read-only: quatFromFrame never
 // writes its inputs, so one shared vector is safe.
 const WORLD_UP: Vec3 = [0, 1, 0]
+// The axis lookAt() aims, onto which a light's `direction` is brought
+// first. Read-only like WORLD_UP.
+const LOCAL_FORWARD: Vec3 = [0, 0, 1]
 // The FFI carriers: one transform write (position, quaternion, scale) and
 // one world-matrix read. Values are copied at the boundary, so one of each
 // serves every call.
@@ -35,6 +38,7 @@ let localScratch = mat4()
 let pointScratch: Vec4 = [0, 0, 0, 0]
 let aimScratch: Vec3 = [0, 0, 0]
 let upScratch: Vec3 = [0, 0, 0]
+let beamScratch = quat()
 // setTransform's rotation compare happens AFTER conversion, so an euler and
 // the quaternion it produces are the same write. Nothing outlives the call.
 let rotScratch = quat()
@@ -944,6 +948,13 @@ export function setTransform(node: SceneNode, update: TransformUpdate): void {
  * y-axis solid (`cylinder`, `cone`) reach for `quatFromTo` instead, which
  * takes the axis to aim as an argument.
  *
+ * A directional or spot light aims its `direction` instead, so its beam
+ * points at `target` - the way Unity, Godot and Three all aim a light.
+ * The shortest arc from `direction` onto +z comes first, so `up` still
+ * chooses the roll, and a light whose direction is +z aims like any other
+ * node. The aim holds the direction of the call: a later setLight
+ * `direction` turns the beam off the target.
+ *
  * Writes `node.quaternion` - an ordinary rotation afterwards, readable and
  * overwritable by setTransform. To aim along a DIRECTION rather than at a
  * point, add it to the node's world position (`worldPosition`), the same
@@ -976,6 +987,13 @@ export function lookAt(node: SceneNode, target: Vec3, up: Vec3 = WORLD_UP): void
     unrotate(aimScratch, world, aimScratch)
     unrotate(upScratch, world, up)
     quatFromFrame(node.quaternion, aimScratch, upScratch)
+  }
+  if (node.kind === "light") {
+    let light = node as Light
+    if (light.type === "directional" || light.type === "spot") {
+      quatFromTo(beamScratch, light.direction, LOCAL_FORWARD)
+      quatMultiply(node.quaternion, node.quaternion, beamScratch)
+    }
   }
   pushTransform(node)
 }
