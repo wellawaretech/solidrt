@@ -38,10 +38,8 @@ created: 2026-10-18
   key (shape errors by name, a valid hand-off accepted) and bun tests in
   `packages/3d/tests` for the three `resolveInstanceOrder` throws and
   `createSplatMesh`'s order and color block checks.
-- Decide the 16 bits: a use (the splat's importance rank in 16 bits
-  for a shader-side LOD, or the opacity so the color texture becomes
-  rgb data) or drop them by moving to a layout without them. If they
-  stay reserved, say what they are reserved for.
+- The 16 bits: decided in okf/plans/splat-order-and-chunks.md - they
+  carry the record's chunk index once chunks are variable runs.
 - Derive the log-scale range from the cloud at bake (its own min and
   max, clamped only against non-finite), and store nothing new: the
   chunk boxes already carry the range.

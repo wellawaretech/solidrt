@@ -139,6 +139,15 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   world matrices with zero per-frame JS; the Web Audio PannerNode vocabulary,
   a per-voice low-pass in the mixer, occlusion over the same occluders culling
   uses, one law for 3d scenes and 2d layers.
+- **[The chunk is the unit of precision, culling and level of detail - variable runs ordered by importance inside, cut per run by screen contribution in the sort, and no order block](plans/splat-order-and-chunks.md)** [2026-10-18]
+  The count dial drops a capture's subject first because the order block ranks
+  the whole cloud by one view-independent number, a fixed 256-splat leaf is
+  wide in sparse space, and nothing skips an off-screen chunk; one change of
+  unit answers all three - the chunk becomes a variable-length run stored by
+  importance inside, the sort's key pass tests each run against the view and
+  cuts it where its splats fall below a screen contribution, the count is a
+  budget over what passed, and the order block is deleted rather than
+  re-ranked.
 - **[A splat cloud's SH3 texture is 48 bytes per splat where a palette holds it in 3](plans/splat-palette-sh.md)** [2026-10-18]
   The .sol3s SH block stores a byte per coefficient (16/32/48 bytes per splat
   at degree 1/2/3, 48 MB at 1M splats with SH3) while sogs and Unity's
@@ -824,14 +833,6 @@ Shaped, not started.
   LOD check; the per-sink hash lookups and box walks are the suspects, and a
   profile with a per-target index or a faster hasher should cut it well below
   the occlusion work that now sits beside it.
-- **[The splat order block and chunk table carry less than they could - the count dial drops the subject, sparse leaves lose precision, and nothing culls a chunk](backlog/splat-order-and-chunks.md)** [2026-10-18]
-  The order block ranks by volume times opacity, so a capture whose subject is
-  micro-splats loses the subject before the background at 100k; a k-d leaf
-  holds 256 splats whatever their spread, so 0.9% of the lizard's splats in
-  near-empty space move more than a tenth of their size; and the chunk table
-  the core now holds is never used to skip off-screen chunks in the sort, the
-  one lever left on the phone's ~44 ms fill at 1M. Three jobs on the same two
-  structures, decided together.
 - **[A million splats at phone full resolution spend the frame in fill](backlog/splat-overdraw-fill.md)** [2026-09-27]
   With the instancing frontend gone the Pixel 7 draws 1M splats in ~36 ms at
   1079x2399, of which ~24 ms is fragment work - the gaussian falloff, the
