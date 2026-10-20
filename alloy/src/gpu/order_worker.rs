@@ -21,6 +21,7 @@ use super::{
   materialize_indices, materialize_indices_mapped, order_permutation, order_permutation_packed, InstanceOrder,
   OrderScratch, PackedKey,
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -77,6 +78,9 @@ pub struct SortDone {
 pub struct OrderCounters {
   /// Jobs submitted and not yet drained.
   pub pending: usize,
+  /// Jobs the thread has not finished sorting: the part of `pending` no
+  /// frame can land yet (the settle gate waits these out on the wall).
+  pub running: usize,
   /// Results drained so far.
   pub sorts: u64,
   /// The last drained job's work in milliseconds.
@@ -88,6 +92,9 @@ pub struct OrderCounters {
 pub struct OrderWorker {
   jobs: Option<Sender<SortJob>>,
   done: Receiver<SortDone>,
+  /// Jobs submitted and not yet sorted; the thread counts one down once
+  /// its result is queued, before it latches the frame.
+  running: Arc<AtomicUsize>,
   thread: Option<JoinHandle<()>>,
 }
 
@@ -97,6 +104,8 @@ impl OrderWorker {
   pub fn spawn() -> std::io::Result<Self> {
     let (job_tx, job_rx) = channel::<SortJob>();
     let (done_tx, done_rx) = channel::<SortDone>();
+    let running = Arc::new(AtomicUsize::new(0));
+    let counting = running.clone();
     let thread = std::thread::Builder::new().name("sol-order".into()).spawn(move || {
       // The sort's duration is the order's lag behind the camera, so the
       // thread takes a latency worker's placement: a performance core,
@@ -130,17 +139,31 @@ impl OrderWorker {
         if done_tx.send(result).is_err() {
           break;
         }
+        counting.fetch_sub(1, Ordering::Release);
         if let Some(done) = done {
           done();
         }
       }
     })?;
-    Ok(Self { jobs: Some(job_tx), done: done_rx, thread: Some(thread) })
+    Ok(Self { jobs: Some(job_tx), done: done_rx, running, thread: Some(thread) })
   }
 
   /// Queue a job; false once the thread is gone.
   pub fn submit(&self, job: SortJob) -> bool {
-    self.jobs.as_ref().is_some_and(|jobs| jobs.send(job).is_ok())
+    let Some(jobs) = self.jobs.as_ref() else {
+      return false;
+    };
+    self.running.fetch_add(1, Ordering::Relaxed);
+    if jobs.send(job).is_err() {
+      self.running.fetch_sub(1, Ordering::Relaxed);
+      return false;
+    }
+    true
+  }
+
+  /// Jobs submitted and not yet sorted.
+  pub fn running(&self) -> usize {
+    self.running.load(Ordering::Acquire)
   }
 
   /// Everything finished so far, oldest first.

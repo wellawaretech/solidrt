@@ -505,10 +505,12 @@ impl Context {
     self.orders.borrow_mut().latch = Some(latch);
   }
 
-  /// The sort worker's counters: jobs pending (what the settle gate waits
-  /// for) and the drained jobs' timing.
+  /// The sort worker's counters: jobs pending, of them the jobs still
+  /// sorting (what the settle gate waits out on the wall; the rest land in
+  /// the next frame), and the drained jobs' timing.
   pub fn order_counters(&self) -> OrderCounters {
-    self.orders.borrow().counters
+    let orders = self.orders.borrow();
+    OrderCounters { running: orders.worker.as_ref().map_or(0, |worker| worker.running()), ..orders.counters }
   }
 
   /// Land the sort thread's finished jobs: a changed permutation becomes

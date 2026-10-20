@@ -32,6 +32,9 @@ const BLUE = [0, 0, 255, 255]
 // invisible, so the two at the center decide the pixel.
 const LARGE_CLOUD = 20000
 const FILLER_X = 1000
+// Frames a settle over a camera crossing may run: the one whose flush
+// submits the re-sort and the one that lands its ids.
+const SORT_LANDING_FRAMES = 2
 
 // A .splat record: position, linear scale, color bytes, quaternion
 // (w, x, y, z) quantized v * 128 + 128; the identity rotation at the
@@ -104,6 +107,11 @@ async function mounted<T extends { scene: SceneHandle }>(app: TestApp, build: ()
     return <texture ref={leaf} src={w.scene.texture} width={SIZE} height={SIZE} />
   })
   return { ...w, leaf }
+}
+
+/** The present index of the latest frame drawn. */
+function frame(app: TestApp): number {
+  return (app.stats() as { frame: number }).frame
 }
 
 function center(pixels: Pixels): number[] {
@@ -203,7 +211,12 @@ test("a large cloud sorts on the sort thread: the camera crossing lands after a 
   await app.settle()
   expectColor(center(await app.painted(leaf)), BLUE)
   s.setCamera({ position: [0, 0, -DISTANCE], target: [0, 0, 0] })
+  let before = frame(app)
   await app.settle()
+  // The sort is waited out on the wall, not with frames: the settle runs
+  // the frame that submits it and the one that lands it, no more, however
+  // long the sort thread takes.
+  expect(frame(app) - before).toBeLessThanOrEqual(SORT_LANDING_FRAMES)
   expectColor(center(await app.painted(leaf)), RED)
   disposeInstances(mesh)
 })
