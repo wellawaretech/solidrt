@@ -639,7 +639,11 @@ moves core's peerDependencies and the scaffold's pins
   `onFrame(fn, { demand: false })` is the same hook without the standing
   frame request: it runs on every frame the runtime delivers and the app
   presents only when the body writes, for a loop that follows time but
-  seldom changes the picture. `onBeforeRender(fn)` is the frame's late
+  seldom changes the picture. `requestFrame()` asks for one more frame
+  without registering anything, for work deferred to the next frame that
+  no write of this one stands for (a bake budget spent with chunks still
+  waiting); a write or a frame callback never needs it, they ask already.
+  `onBeforeRender(fn)` is the frame's late
   update: it runs after every onFrame callback and the reactive flush,
   when the frame's state is final, for what must see everything the frame
   wrote and write once more (a camera follow, a fit to a measured box;

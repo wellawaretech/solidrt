@@ -11,7 +11,7 @@ import { feedPointer } from "../views.ts"
 import type { ViewHandle } from "../views.ts"
 import { PointerContext, ViewportContext, ViewportSizeContext } from "./context.ts"
 import { createViewFill, FILL_INITIAL_SIZE } from "./fill.ts"
-import type { OutputLeaf } from "./fill.ts"
+import type { DensityProps, OutputLeaf } from "./fill.ts"
 import type { LayerPointerProps } from "./sprite-layer.tsx"
 
 /**
@@ -25,7 +25,8 @@ import type { LayerPointerProps } from "./sprite-layer.tsx"
  */
 export type TileCamera = CameraUpdate
 
-export type TileLayerProps = LayerPointerProps & {
+export type TileLayerProps = LayerPointerProps &
+  DensityProps & {
   /** Cell pixel size - creation-fixed. Required unless `layer` is given. */
   tileW?: number
   tileH?: number
@@ -124,17 +125,6 @@ export type TileLayerProps = LayerPointerProps & {
   /** The view's clear color: the ground every chunk draws over, so a
    * full-bleed backdrop belongs here. */
   clearColor?: [number, number, number, number]
-  /**
-   * Target texels per view pixel. Absent, the component picks it every
-   * layout from the built-in leaf's on-screen size (display scale, any
-   * designSize fit, layout scaling), as `<SpriteLayer>` does; with a
-   * function `output` there is no built-in leaf, so set it yourself.
-   * `maxOversample` caps the pick, `maxPixels` is the budget form (the
-   * same knobs as `<SpriteLayer>`'s and `<View2d>`'s).
-   */
-  oversample?: number
-  maxOversample?: number
-  maxPixels?: number
   /** The component's view (texture, camera, handlers) for imperative use
    * outside the tree; inside, `useSpriteLayer().viewport` is the same. */
   viewRef?: (view: ViewHandle) => void

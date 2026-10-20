@@ -6,9 +6,10 @@ import type { ViewHandle, ViewOptions } from "../views.ts"
 import { LayerContext, PointerContext, ViewportContext, ViewportSizeContext } from "./context.ts"
 import type { LayerPointerProps } from "./sprite-layer.tsx"
 import { createViewFill, FILL_INITIAL_SIZE } from "./fill.ts"
-import type { OutputLeaf } from "./fill.ts"
+import type { DensityProps, OutputLeaf } from "./fill.ts"
 
 export type View2dProps = LayerPointerProps &
+  DensityProps &
   Pick<ViewOptions, "clearColor" | "label"> & {
     /** View pixels, live (view.setSize) - give both, or neither. Omitted,
      * the view FILLS exactly as a `<SpriteLayer>` does: the leaf lays out
@@ -21,17 +22,6 @@ export type View2dProps = LayerPointerProps &
      * absent keys keep their values. Live. A `<Camera2d>` child writes the
      * same state - use one form, not both. */
     camera?: CameraUpdate
-    /**
-     * Target texels per view pixel. Absent, the component picks it every
-     * layout from the built-in leaf's on-screen size, as `<SpriteLayer>`
-     * does; with `output` there is no built-in leaf, so set it yourself.
-     */
-    oversample?: number
-    /** Cap on the auto-picked oversample (see SpriteLayerProps). */
-    maxOversample?: number
-    /** Cap on the target's texel count under the auto pick (see
-     * SpriteLayerProps). */
-    maxPixels?: number
     ref?: (view: ViewHandle) => void
     /**
      * Compose the leaf yourself: called once (untracked) with view.texture

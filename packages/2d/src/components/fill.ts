@@ -11,12 +11,34 @@ import { createSignal, followBox, getLayoutBox } from "@solidrt/core"
 import type { LayerHandlers } from "../layer.ts"
 import { applyOversample } from "./auto-oversample.ts"
 
-/** The density knobs a view leaf takes (see SpriteLayerProps): texels per
- * view pixel, as an integer oversample, a cap on it and a budget. The 3d
- * packages' DensityProps are the same knobs with a fractional scale. */
+/** The density knobs a `<SpriteLayer>`, a `<View2d>` and a `<TileLayer>`
+ * take: texels per view pixel, as an integer oversample, a cap on it and a
+ * budget. The 3d packages' DensityProps are the same knobs with a
+ * fractional scale (Godot's integer-2d, fractional-3d split). */
 export type DensityProps = {
+  /**
+   * Target texels per view pixel. Absent, the component picks it every
+   * layout from the built-in leaf's on-screen size (display scale, any
+   * designSize fit, layout scaling), so the view resamples properly at any
+   * scale; with a function `output` there is no built-in leaf, so set it
+   * yourself. Reactive.
+   */
   oversample?: number
+  /**
+   * Cap on the auto-picked oversample (integer >= 1): the view stays
+   * adaptive up to it, never above - the lever that bounds target memory on
+   * high-scale displays without giving up adaptivity. Ignored when
+   * `oversample` is set (explicit already opts out of the pick).
+   */
   maxOversample?: number
+  /**
+   * Cap on the view's target texel count under the auto pick, the budget
+   * form of `maxOversample`: one cost across devices, where an integer cap
+   * means a different cost on every panel (the window's own pixel count
+   * caps the pick always). Ignored when `oversample` is set. The same name
+   * and meaning as the 3d `<Scene>`'s `maxPixels`, which caps a fractional
+   * render scale where 2d keeps the integer oversample.
+   */
   maxPixels?: number
 }
 

@@ -256,6 +256,14 @@ test("the damped wheel notch: a glide, anchor pinned, compounding", () => {
   orbit.set({ distance: 3 })
   orbit.update(DT)
   if (orbit.update(DT) || orbit.pose().distance !== 3) fail("set({ distance }) snaps and drops the glide")
+  // interrupt() stops the damped tail where it is and rests the control.
+  orbit.axes.nudge("zoom", 1)
+  orbit.update(DT)
+  held = orbit.pose().distance
+  orbit.interrupt()
+  flush()
+  if (orbit.active()) fail("interrupt() rests a damped tail")
+  if (orbit.update(DT) || orbit.pose().distance !== held) fail("interrupt() holds a damped tail where it is")
   // A damped rotate step likewise glides; a rate drops it and applies at once.
   orbit.axes.nudge("rotate", [0.25, 0])
   if (orbit.pose().azimuth !== 0) fail("an unbracketed rotate delta glides too")
@@ -289,6 +297,24 @@ test("glideTo: eased pose, clamps on the goal, exact landing, rest", () => {
   orbit.rotateBy(0.25, 0)
   orbit.update(DT)
   if (orbit.update(DT) || !near(orbit.pose().azimuth, 1.25)) fail("a verb drops a glide and applies at once")
+  // interrupt() holds a glide where it is; the follow runs on under it.
+  orbit.glideTo({ azimuth: 0 })
+  orbit.update(DT)
+  let held = orbit.pose().azimuth
+  if (held === 1.25) fail("the glide moved before the interrupt")
+  orbit.interrupt()
+  flush()
+  if (orbit.active()) fail("interrupt() rests a glide")
+  if (orbit.update(DT) || orbit.pose().azimuth !== held) fail("interrupt() holds a glide where it is")
+  let distanceBefore = orbit.pose().distance
+  let targetBefore = orbit.pose().target[0]
+  orbit.follow([50, 2, 3])
+  orbit.glideTo({ distance: 2 })
+  orbit.interrupt()
+  flush()
+  if (!orbit.active()) fail("interrupt() leaves the follow running")
+  if (settle(orbit) > SETTLE_TICKS) fail("the follow settles after an interrupt")
+  if (orbit.pose().distance !== distanceBefore || !(orbit.pose().target[0] > targetBefore + 1)) fail(`the follow chases its point after an interrupt and the dropped glide stays dropped, distance ${orbit.pose().distance} target ${orbit.pose().target}`)
   // The auto-orbit carries the goal with it.
   let spinning = make({ distance: 4, orbitSpeed: 1, azimuth: 0 })
   spinning.orbit.glideTo({ distance: 2 })

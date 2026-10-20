@@ -17,6 +17,21 @@ engineering leftovers.
   Three getIBLIrradiance / Godot max LOD), which is a texture fetch per
   fragment; nine coefficients are a uniform. Cheaper on the TV and the
   Pi, and the bake tool already has the cube to integrate.
+- **Light probe blending in the spatial core**, the stage above SH9: a
+  grid or set of SH9 probes placed in the world (Unity's
+  `LightProbeGroup`, Godot's `LightmapGI` probes; Three's single
+  `LightProbe` is the degenerate case), and a MOVING mesh re-weighted
+  among its nearest probes every frame. That re-weighting is a per-node
+  per-frame computation over world positions, the class the core owns:
+  a probe sink on the node, like the uModel sink, that the flush feeds
+  with the interpolated nine coefficients (tetrahedral interpolation
+  over the probe set, Unity's method, or the nearest-k blend Godot
+  uses) whenever the node moved - zero JS per frame however many
+  characters walk through a lit interior. A static mesh is assigned
+  once at placement and never re-tested. This stage has nothing to feed
+  until the SH9 term exists in `standard` and the bake, so it follows
+  SH9 and is filed here rather than as its own plan (decided
+  2026-10-20 with the IK and animation-layers plans).
 - **`aoMap`** on `standard` and `lit`: a baked occlusion map scaling the
   ambient and environment terms, glTF's occlusion texture (red channel;
   a third use of the packed metal-rough-occlusion image). Three's

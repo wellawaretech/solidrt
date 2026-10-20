@@ -274,6 +274,10 @@ export type OrbitCamera = {
    * writes a pose field; a new glideTo retargets. A target ends the
    * follow and setOrbitPoint's offset. */
   glideTo(pose: OrbitPose): void
+  /** Stop a glide or a damped tail in flight where it is (a press landing,
+   * a shot taking over): the pose stays; the follow, the lanes and the
+   * auto-orbit run on. The same verb on every camera control. */
+  interrupt(): void
   /** Frame a box, `[minX, minY, minZ, maxX, maxY, maxZ]` (geometryBounds'
    * shape, a model's `bounds`): the target moves to its centre and the
    * distance to where its bounding sphere fills the view at the target's
@@ -448,7 +452,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
   // The frame-loop gate (core's createActivity), built once the axes exist.
   let activity!: ReturnType<typeof createActivity>
   let notify = () => activity.notify()
-  let interrupt = () => {
+  let dropMotion = () => {
     motion = null
   }
   // A verb that writes the target owns it: the follow and the orbit
@@ -820,7 +824,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
     {
       onBegin: name => {
         // A finger landing holds a glide where it is.
-        interrupt()
+        dropMotion()
         if (name === "rotate") {
           rotateIdle = 0
           let anchor = options.rotateAnchor?.(view())
@@ -863,7 +867,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
           let mutate = (p: OrbitPoseState) => rotate(p, -d[0] * rel, d[1] * rel)
           if (eased) writeDamped(mutate)
           else {
-            interrupt()
+            dropMotion()
             write(mutate)
           }
         } else if (name === "zoom") {
@@ -879,7 +883,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
             let anchor = anchorAt(focal)
             if (eased) dampedZoom(ratio, anchor)
             else {
-              interrupt()
+              dropMotion()
               write(p => zoomAbout(p, ratio, anchor))
             }
           }
@@ -897,7 +901,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
               m.anchor = null
             })
           } else {
-            interrupt()
+            dropMotion()
             write(mutate)
           }
         }
@@ -926,7 +930,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
       // options change), so they are checked here as at creation.
       checkFollowOptions("createOrbitCamera", options.follow)
       checkOffset("createOrbitCamera", options.offset)
-      if (p.azimuth !== undefined || p.elevation !== undefined || p.distance !== undefined || p.target) interrupt()
+      if (p.azimuth !== undefined || p.elevation !== undefined || p.distance !== undefined || p.target) dropMotion()
       if (p.target) retarget()
       if (p.azimuth !== undefined) pose.azimuth = p.azimuth
       if (p.elevation !== undefined) pose.elevation = p.elevation
@@ -962,7 +966,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
         glideTo(goal)
         return
       }
-      interrupt()
+      dropMotion()
       retarget()
       pose.target = center
       pose.distance = distance
@@ -1007,21 +1011,21 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
       let [rx, ry] = untrack(() => axes.rate("rotate"))
       if (rx !== 0 || ry !== 0) {
         let s = ROTATE_RATE * 2 * Math.PI * rotateSpeed() * dt
-        interrupt()
+        dropMotion()
         rotateIdle = 0
         mutateLive(p => rotate(p, -rx * s, ry * s))
         moved = true
       } else rotateIdle += dt
       let z = untrack(() => axes.rate("zoom"))
       if (z !== 0) {
-        interrupt()
+        dropMotion()
         mutateLive(p => zoomAbout(p, Math.pow(2, -z * ZOOM_RATE * zoomSpeed() * dt), null))
         moved = true
       }
       let [px, py] = untrack(() => axes.rate("pan"))
       if (px !== 0 || py !== 0) {
         let w = worldPerHeight() * PAN_RATE * panSpeed() * dt
-        interrupt()
+        dropMotion()
         mutateLive(p => slide(p, -px * w, py * w))
         moved = true
       }
@@ -1058,21 +1062,21 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
     rotateBy(dAzimuth, dElevation) {
       finite("rotateBy azimuth", dAzimuth)
       finite("rotateBy elevation", dElevation)
-      interrupt()
+      dropMotion()
       write(p => rotate(p, dAzimuth, dElevation))
       notify()
     },
     zoomBy(factor, anchor) {
       if (!(Number.isFinite(factor) && factor > 0)) throw new Error(`createOrbitCamera: zoomBy factor must be positive, got ${factor}`)
       if (anchor) checkVec3("zoomBy anchor", anchor)
-      interrupt()
+      dropMotion()
       write(p => zoomAbout(p, 1 / factor, anchor))
       notify()
     },
     panBy(right, up) {
       finite("panBy right", right)
       finite("panBy up", up)
-      interrupt()
+      dropMotion()
       write(p => slide(p, right, up))
       notify()
     },
@@ -1089,6 +1093,10 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
     shake(strength, duration, opts) {
       checkShake("createOrbitCamera", strength, duration, opts)
       lanes.shake(strength, duration, opts)
+      notify()
+    },
+    interrupt() {
+      dropMotion()
       notify()
     },
   }

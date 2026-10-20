@@ -1,5 +1,5 @@
 import { createSignal, getOwner, onCleanup, onSettled, runWithOwner, flush } from "@solidjs/signals"
-import { requestFrame, setPointerLock } from "flux:rendertree"
+import { requestFrame as nativeRequestFrame, setPointerLock } from "flux:rendertree"
 import { startTransitions } from "flux:spatial"
 import { renderFrame } from "sol:render"
 import { on, once } from "sol:events"
@@ -284,7 +284,7 @@ export function onFrame(fn: (tick: number, frame: number, rate: number) => void,
     // pending onFrame callback is a standing request for the next frame.
     frameId = nextFrameId++
     animationFrames.set(frameId, extendedFn)
-    if (demand) requestFrame()
+    if (demand) nativeRequestFrame()
     try {
       fn(tick, frame, rate)
     } catch (err) {
@@ -294,7 +294,7 @@ export function onFrame(fn: (tick: number, frame: number, rate: number) => void,
 
   frameId = nextFrameId++
   animationFrames.set(frameId, extendedFn)
-  if (demand) requestFrame()
+  if (demand) nativeRequestFrame()
 
   let cleanup = () => {
     cancelled = true
@@ -316,6 +316,20 @@ export function onFrame(fn: (tick: number, frame: number, rate: number) => void,
  */
 export function frameTime(): number {
   return latestTick
+}
+
+/**
+ * Ask for one more frame. The loop is demand-driven: a write requests the
+ * frame that shows it and a registered onFrame callback requests every
+ * frame; this requests one, for work deferred to the next frame that no
+ * write of this frame stands for - a bake budget spent with chunks still
+ * waiting, a publish pass that left records for the next frame. Coalesced:
+ * any number of calls in a frame ask for the same next one. Nothing to
+ * call from a frame callback (its registration already asks) or after a
+ * write (the write already asks).
+ */
+export function requestFrame(): void {
+  nativeRequestFrame()
 }
 
 // ------ Resize ----------------

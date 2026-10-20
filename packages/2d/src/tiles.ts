@@ -61,7 +61,7 @@
 // their last bake), because a tiled GPU pays each bake beside the frame
 // and a batch of them past a handful overruns it. A layer nobody edits
 // and nobody moves over costs nothing per frame.
-import { displayScale, getOwner, onBeforeRender, onCleanup, runWithOwner, untrack, windowSize } from "@solidrt/core"
+import { displayScale, getOwner, onBeforeRender, onCleanup, requestFrame, runWithOwner, untrack, windowSize } from "@solidrt/core"
 import {
   addDraw,
   beginBufferWrite,
@@ -87,7 +87,6 @@ import {
   writeRecord,
 } from "@solidrt/core/gpu"
 import type { AttributeAccess, BufferId, DrawId, ResourcePool, ShaderParams, TextureId, VertexAttribute } from "@solidrt/core/gpu"
-import { requestFrame } from "flux:rendertree"
 import * as spatial from "flux:spatial"
 import type { GridId, ViewKey } from "flux:spatial"
 import { registerStat } from "sol:dev"

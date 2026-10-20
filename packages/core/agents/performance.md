@@ -103,7 +103,9 @@ Rules, in order of leverage:
    at 8 fps, a clock face) registers with `onFrame(fn, { demand: false })`:
    it is called on every frame the runtime runs, requests none itself, and
    the app presents only when the body writes something. `frameTime()`
-   reads the current frame's tick with no callback at all.
+   reads the current frame's tick with no callback at all, and
+   `requestFrame()` asks for one more frame with no callback either, for
+   work deferred to the next frame that no write of this one stands for.
 5. repaintBoundary works like Flutter's: transforms and opacity on the
    boundary node itself (or any ancestor) are hoisted out of the cache and
    applied at composite time, so animating x/y/scale/rotate/opacity of a

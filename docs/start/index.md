@@ -17,9 +17,14 @@ A picker asks which packages the app takes. [Core](/core/) is always in:
 it is the runtime, the element vocabulary, reactivity, layout, and input that
 every SolidRT app has. On top of it you can tick extensions:
 
+- **@solidrt/router** - declarative routing between screens: a typed route
+  tree, a stack, links in and the location out. Selecting it scaffolds the
+  starter app with routes.
 - **@solidrt/components** - the [Components extension](/extensions/):
   widgets, theming, navigation. Selecting it scaffolds the starter app built
   with the component set.
+- **@solidrt/2d** - a general purpose 2D library: instanced sprite layers,
+  atlases, tile worlds, cameras and picking on top of Core's GPU primitives.
 - **@solidrt/3d** - a general purpose 3D library: scenes, meshes, materials,
   cameras and lighting on top of Core's GPU primitives.
 

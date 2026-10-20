@@ -52,9 +52,21 @@ draw order is slot order unless the layer names a key (`orderBy`: world y
 for a perspective crowd, or a per-sprite `renderOrder`); pointer events
 hit-test exact rotated rects, topmost first, with pointer capture.
 
+A layer shows only through its views, each a target with a camera of its
+own: by default `<SpriteLayer>` composites one as a plain `<texture>` leaf
+that fills its parent's box, rendered at the leaf's on-screen size times an
+integer `oversample` the layer picks from the display density (give
+`width`/`height` for a fixed view instead, `maxPixels` for a budget); the
+`output` prop receives the texture id and replaces that leaf, and `<View2d>`
+children add more views (a minimap, a split screen). Camera control is
+`<Camera2d>` (or `createCamera2d`): pan, zoom and roll from an input map
+the app binds to the view's pointer feed, a gamepad or the keyboard
+(`camera2dBindings`), with follow, framing, bounds, inertia and shake; and
+`<Shots>` blends between `<Shot>` children, Cinemachine's virtual cameras.
+
 In the package: atlas creation, slicing and extrusion (`createAtlas`,
 `grid`, `namedFrames`, `fullFrame`, `extrudeGrid`, `extrudeRects`), the
-sprite layer with its views and cameras, materials (the stock `unlit`
+sprite layer with its views, cameras and shots, materials (the stock `unlit`
 with its blend and a `surface` slot over the sprite, `shaderMaterial`
 over the layer's GLSL set, per-sprite style records in any vertex format
 - the same three tiers and the same words as `@solidrt/3d`, the material

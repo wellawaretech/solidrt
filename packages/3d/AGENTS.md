@@ -996,7 +996,10 @@ verbs: `rotateBy(azimuth, elevation)` radians, `zoomBy(factor, anchor?)`
 (factor > 1 in, as the 2d camera's zoomAt), `panBy(right, up)` world
 units, `setPivot(point)`, `setOrbitPoint(point)`, `set(pose)`,
 `shake(strength, duration, { frequency?, direction? })`; every one
-pushes the pose at once. Two commanded moves ease instead, inside
+pushes the pose at once. `interrupt()` stops a glide or a damped tail
+where it is (a press landing, a shot taking over) and leaves the
+follow, the lanes and the auto-orbit running - the same verb on every
+camera control. Two commanded moves ease instead, inside
 update(dt): `glideTo({ azimuth?, elevation?, distance?, target? })`, and
 `fit(bounds, { glide? })`, which frames a `[minX, minY, minZ, maxX,
 maxY, maxZ]` box (geometryBounds, a model's `bounds`) - target to its
@@ -1181,7 +1184,8 @@ which eases there inside update(dt) (yaw to the number given, not the
 shortest turn), dropped by any input and by a set() of a pose field -
 the orbit camera's glide, without its damping: this control's unbracketed
 delta is mouse motion under pointer lock, and that is never eased.
-`shake(strength, duration, { frequency?, direction? })` is the lane
+`interrupt()` stops a glide where it is, the same verb as the other
+controls'. `shake(strength, duration, { frequency?, direction? })` is the lane
 every control has (okf/design/camera-controls.md), here a view KICK in
 TURNS of yaw and pitch (the look axis's unit; 0.01 is 3.6 degrees), the
 first-person convention: a hit, a recoil, a footstep; the pose and the

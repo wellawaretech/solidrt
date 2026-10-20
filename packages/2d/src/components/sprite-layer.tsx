@@ -10,7 +10,7 @@ import type { CameraUpdate } from "../camera.ts"
 import type { ViewHandle } from "../views.ts"
 import { LayerContext, PointerContext, ViewportContext, ViewportSizeContext } from "./context.ts"
 import { createViewFill, FILL_INITIAL_SIZE } from "./fill.ts"
-import type { OutputLeaf } from "./fill.ts"
+import type { DensityProps, OutputLeaf } from "./fill.ts"
 
 /**
  * A view's own pointer events, the root of the walk: every event arrives
@@ -28,7 +28,8 @@ export type LayerPointerProps = {
   onTap?: (event: LayerTapEvent) => void
 }
 
-export type SpriteLayerProps = LayerPointerProps & {
+export type SpriteLayerProps = LayerPointerProps &
+  DensityProps & {
   /**
    * View pixels of the layer's own view - give both, or neither. Omitted,
    * the view FILLS: the built-in leaf is laid out at 100% of its parent's
@@ -83,30 +84,6 @@ export type SpriteLayerProps = LayerPointerProps & {
    * TileLayer's, which re-bakes.
    */
   tint?: [number, number, number, number]
-  /**
-   * Target texels per view pixel. Absent, the component picks it every
-   * layout from the built-in leaf's on-screen size (display scale, any
-   * designSize fit, layout scaling), so the view resamples properly at any
-   * scale; with a function `output` there is no built-in leaf, so set it
-   * yourself.
-   */
-  oversample?: number
-  /**
-   * Cap on the auto-picked oversample (integer >= 1): the view stays
-   * adaptive up to it, never above - the lever that bounds target memory on
-   * high-scale displays without giving up adaptivity. Ignored when
-   * `oversample` is set (explicit already opts out of the pick).
-   */
-  maxOversample?: number
-  /**
-   * Cap on the own view's target texel count under the auto pick, the
-   * budget form of `maxOversample`: one cost across devices, where an
-   * integer cap means a different cost on every panel (the window's own
-   * pixel count caps the pick always). Ignored when `oversample` is set.
-   * The same name and meaning as the 3d `<Scene>`'s `maxPixels`, which
-   * caps a fractional render scale where 2d keeps the integer oversample.
-   */
-  maxPixels?: number
   /**
    * Draw sprites in key order instead of slot order, produced by core at
    * every publish: `"y"` orders by world y (back-to-front for a

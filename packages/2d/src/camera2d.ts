@@ -200,7 +200,9 @@ export type Camera2d = {
    * decay; the pose is untouched, and at a world edge the shake is
    * clipped by the bounds (it never shows the outside). */
   shake(strength: number, duration: number, opts?: { frequency?: number; direction?: Vec2 }): void
-  /** Stop a glide or fling in flight (a press landing). */
+  /** Stop a glide or fling in flight where it is (a press landing, a
+   * shot taking over): the pose stays; the follow and the lanes run on.
+   * The same verb on every camera control. */
   interrupt(): void
   /** The world-space bounding box of what the viewport shows. */
   viewRect(): Rect2d

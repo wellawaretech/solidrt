@@ -63,7 +63,8 @@ The survey of what each ships, verified against current sources, is in
   at the view centre and the offset lane moves it.
 - **Source.** Where a pose change comes from: an input nudge (a drag, a
   pinch, a wheel notch, a stick rate), a verb (`set`, `glideTo`, `fit`,
-  `zoomBy`), or the **follow**, a world point the control chases.
+  `zoomBy`; `interrupt` drops an eased one where it is), or the
+  **follow**, a world point the control chases.
 - **Framing.** How the follow chases its point, in viewport fractions
   around the pivot: the **dead zone** (the point moves freely, the camera
   does not respond), the **hard limits** (the point is clamped inside at

@@ -1,6 +1,6 @@
 ---
 title: A scene always owns a draw target, so a split-screen app pays for one it never shows
-description: createScene allocates its buffer, depth and resolve chain unconditionally, and there is no output={false}, so an app that renders only through <View3d>s carries a full unused scene target; @solidrt/2d took the opposite structure on 09-07 and layers render only through views.
+description: createScene allocates its buffer, depth and resolve chain unconditionally, and there is no output={false}, so an app that renders only through <View3d>s carries a full unused scene target; @solidrt/2d took the opposite structure on 09-07 and layers render only through views. The component half of the same ownership question is adoption, <Scene scene={handle}>, which 2d has as <SpriteLayer layer={handle}> and 3d lacks.
 created: 2026-09-11
 ---
 
@@ -80,6 +80,44 @@ scene target exists:
 
 Additive: the default stays a scene with its own target, so nothing
 that exists today changes shape.
+
+## Adopting a scene: the component half (added 2026-10-20)
+
+The 2026-10-20 alignment audit found the one API 2d has that 3d lacks
+with nothing tracking it: `<SpriteLayer layer={handle}>` adopts a
+`createSpriteLayer` handle. The component makes a view of its own over
+a layer that outlives it, frees only that view on unmount, and the
+layer's own props (atlases, capacity, material, the view-less ones) have
+nothing to apply to and throw (`packages/2d/src/components/sprite-layer.tsx`,
+pinned by `packages/2d/tests/adopted-view.test.tsx`). `<Scene>` has no
+`scene={handle}`, so an imperative scene - built in a module, shared by
+two screens, kept alive across a route change - cannot be shown by the
+component at all; the app composes `scene.texture` by hand and loses the
+leaf's fill follow, handler wiring and pointer feed.
+
+Three, Unity and Godot all let a display adopt a world it did not
+create: Three's renderer renders any scene, Godot's `SubViewport` takes
+a `world_3d`, Unity's camera renders whatever scene it is in. It is the
+same ownership question as the rest of this item, which is why it is
+here and not its own file:
+
+- With a scene that owns no target (the item above), the adopting
+  component's leaf IS a view it makes over the scene (`scene.createView`),
+  freed by the component, with the view props (camera, clearColor, fog,
+  samples, the density knobs) applying to that view - exactly 2d's
+  shape, and the shape to build.
+- With today's target-owning scene, an adopting component shows
+  `scene.texture`, wires the scene's handlers and pointer feed, disposes
+  nothing of the scene's, and every scene-configuring prop throws under
+  `scene=`, as 2d's layer props throw under `layer=`. Correct, but every
+  adopting `<Scene>` then shows the one target, so two of them cannot be
+  a split screen; the first shape has no such limit.
+
+Done looks like: `<Scene scene={handle}>` in the first shape, the throw
+list for the props that are the handle owner's, a test mirroring
+`packages/2d/tests/adopted-view.test.tsx` (the adopted scene outlives
+the component; the component frees only what it made), and a row in the
+AGENTS.md Components table beside `<SpriteLayer layer>`'s.
 
 ## Involves
 

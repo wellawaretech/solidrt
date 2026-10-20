@@ -56,6 +56,19 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
+- **[Animation layers - masks, additive blending, subclips and markers in the core players](plans/3d-animation-layers.md)** [2026-10-20]
+  The clip players grow Unity's layer model (ordered layers with a weight, an
+  override or additive mode and a bone mask; Godot's Blend2/Add2 with filters,
+  Three's additive actions), subclip windows and time markers fired as events,
+  all evaluated in the spatial core so "aim while running", a flinch over a
+  walk, a trimmed clip and a footstep on frame 12 cost zero per-frame JS.
+- **[Inverse kinematics - a solver stack in the spatial core's pose post-pass](plans/3d-ik.md)** [2026-10-20]
+  Look-at, two-bone, chain (FABRIK and CCD) and foot-placement solvers
+  declared once per model and stepped natively after the frame's JS, before
+  the spring bones (Unity's Animator IK and Animation Rigging, Godot's
+  SkeletonModifier3D stack, Unreal's Control Rig nodes), targets read from
+  arena nodes or ground queries, weights ramped in core, so a character that
+  aims, reaches, looks and plants its feet costs zero per-frame JS.
 - **[Spring bones - secondary motion solved in the spatial core](plans/3d-spring-bones.md)** [2026-10-19]
   A native chain solver for hair, skirts, tails and cables (Unity's
   SpringBone, Godot's SpringBoneSimulator3D, three-vrm's VRMSpringBoneJoint),
@@ -254,6 +267,12 @@ Shaped, not started.
   real-world meshes (Draco/meshopt), tangents and the second UV set,
   per-material samplers, merge-by-material and runtime decoding of fetched
   content (morph targets have their own item).
+- **[Occlusion culling in the spatial core's cull pass](backlog/3d-occlusion-culling.md)** [2026-10-20]
+  Frustum culling cannot know that a closed shell hides its interior, so a
+  dense scene draws everything behind its walls; the candidate is Godot's
+  software occlusion (authored occluders rasterized to a small CPU depth
+  buffer per target, every node's world box tested against it in the flush's
+  cull pass), which needs an explicit yes or no before it is built.
 - **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
   Four independent mechanisms silently drop a mesh from a target - frustum
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the
@@ -265,7 +284,9 @@ Shaped, not started.
   createScene allocates its buffer, depth and resolve chain unconditionally,
   and there is no output={false}, so an app that renders only through
   <View3d>s carries a full unused scene target; @solidrt/2d took the opposite
-  structure on 09-07 and layers render only through views.
+  structure on 09-07 and layers render only through views. The component half
+  of the same ownership question is adoption, <Scene scene={handle}>, which 2d
+  has as <SpriteLayer layer={handle}> and 3d lacks.
 - **[A uniform shadow filter leaks light at a contact on a coarse map](backlog/3d-shadow-contact-leak.md)** [2026-10-16]
   A light without a size filters at the tier's width (2.5 texels at medium),
   and on a map whose texel is centimetres that kernel reaches past the

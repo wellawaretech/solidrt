@@ -6,7 +6,7 @@ created: 2026-09-08
 
 # 3D feature parity
 
-**Measure, 2026-09-22: 44 of 114 rows that at least two engines ship, we ship.** Per area: Geometry and helpers 5/8; Materials 7/24; Lights and shadows 7/13; Renderer and post 8/27; Objects, scene graph, spatial 5/13; Animation 5/9; Loaders and assets 3/11; Controls and camera 3/5; Math 1/4.
+**Measure, 2026-10-20: 47 of 117 rows that at least two engines ship, we ship.** Per area: Geometry and helpers 5/8; Materials 7/24; Lights and shadows 8/13; Renderer and post 9/27; Objects, scene graph, spatial 5/13; Animation 6/12; Loaders and assets 3/11; Controls and camera 3/5; Math 1/4.
 
 The measure of `@solidrt/3d` against the three engines it is built from the
 practice of. [3d-roadmap](3d-roadmap.md) still owns the destination and the
@@ -134,7 +134,7 @@ geometry has no fix and decals are blocked on it.
 | Light cull mask / layers per light | no | yes: cullingMask | yes: light_cull_mask, shadow_caster_mask (v) | no | [3d-light-layers](../backlog/3d-light-layers.md) |
 | Light count | unbounded (recompiles) | 8 per object Forward, 256 per camera Forward+ (v) | clustered, hundreds | 8, fixed | [app-runtime-config](../backlog/app-runtime-config.md) |
 | Area / rect lights | yes: RectAreaLight | partial: baked only in URP, realtime in HDRP | no | no | Three-only at runtime |
-| Light probes / SH ambient | yes: LightProbe | yes | yes: LightmapGI probes, sky SH | no | [3d-environment-additive](../backlog/3d-environment-additive.md) |
+| Light probes / SH ambient | yes: LightProbe | yes | yes: LightmapGI probes, sky SH | no | [3d-environment-additive](../backlog/3d-environment-additive.md), probe blending as a core stage after SH9 |
 | Reflection probes | partial: CubeCamera by hand | yes | yes | yes | |
 | HDR environment, prefiltered specular | yes | yes | yes | yes | |
 | Baked light map input | yes | yes, with a baker | yes, with a baker (LightmapGI) | yes: input only, no baker (Three has none either) | |
@@ -168,7 +168,7 @@ geometry has no fix and decals are blocked on it.
 | Views: multiple cameras, render to texture | yes | yes | yes: SubViewport | yes | |
 | Frustum culling | yes | yes | yes | yes | core-side |
 | Level of detail | yes | yes | yes | yes | core-side |
-| Occlusion culling | no | yes | yes: occluders | no | untracked |
+| Occlusion culling | no | yes | yes: occluders | no | [3d-occlusion-culling](../backlog/3d-occlusion-culling.md), awaiting a yes or no |
 | XR | yes: WebXR | yes | yes | no | [vr-openxr](../backlog/vr-openxr.md) |
 | Decals | addon: DecalGeometry | yes: Decal Projector (v) | yes: Decal node | no | untracked; blocked on polygon offset |
 | Planar reflection / water | addon | HDRP only | no: SSR only | no | Three-only at runtime; cheap for us (a view with a mirrored camera) |
@@ -209,9 +209,12 @@ the engine is in the way any more.
 | --- | --- | --- | --- | --- | --- |
 | Clip playback, crossfade, blending | yes | yes | yes | yes: in core | |
 | Author keyframe tracks in code; animate any property | yes | yes: AnimationClip.SetCurve | yes: Animation.add_track | no: clips are glTF-only, model-bound | untracked |
-| Additive blending | yes | yes: layers | yes: AnimationNodeAdd2 (v) | no | untracked |
-| Subclip / trim | yes | yes: at import | partial | no | untracked |
-| Inverse kinematics | addon: CCDIKSolver | yes: Animator IK, Rigging package | yes: SkeletonIK3D (deprecated) (v), modifiers | no | untracked |
+| Additive blending | yes | yes: layers | yes: AnimationNodeAdd2 (v) | no | [3d-animation-layers](../plans/3d-animation-layers.md) |
+| Bone masks / layers | partial: per-action weight only | yes: AvatarMask, layers | yes: blend filters | no | [3d-animation-layers](../plans/3d-animation-layers.md) |
+| Subclip / trim | yes | yes: at import | partial | no | [3d-animation-layers](../plans/3d-animation-layers.md) |
+| Animation events / markers | partial: finished, loop | yes: AnimationEvent | yes: method tracks, markers | partial: finished only | [3d-animation-layers](../plans/3d-animation-layers.md) |
+| Inverse kinematics | addon: CCDIKSolver | yes: Animator IK, Rigging package | yes: SkeletonIK3D (deprecated) (v), modifiers | no | [3d-ik](../plans/3d-ik.md) |
+| Spring bones / secondary motion | addon: three-vrm | no: asset store (Dynamic Bone, Magica) | yes: SpringBoneSimulator3D | yes: in core | [3d-spring-bones](../plans/3d-spring-bones.md) |
 | Root motion | no | yes | yes | yes | |
 | Skeleton sharing / wardrobe | yes: SkeletonUtils | yes: humanoid retarget | yes: retarget at import | yes: bindSkeleton (sharing; no retarget) | |
 | Morph targets | yes | yes | yes | yes | |

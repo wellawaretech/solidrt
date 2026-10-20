@@ -169,6 +169,23 @@ test("glideTo: eased pose, exact landing, clampPosition per frame, rest", () => 
   cam.set({ pitch: 0.1 })
   cam.update(DT)
   if (cam.update(DT) || cam.pose().yaw !== yaw) fail("set() of a pose field drops a glide")
+  // interrupt() holds a glide where it is and rests the control; a shake
+  // in flight runs on under it.
+  cam.glideTo({ yaw: 2 })
+  cam.update(DT)
+  let held = cam.pose().yaw
+  if (held === yaw) fail("the glide moved before the interrupt")
+  cam.interrupt()
+  flush()
+  if (cam.active()) fail("interrupt() rests a glide")
+  if (cam.update(DT) || cam.pose().yaw !== held) fail("interrupt() holds a glide where it is")
+  cam.shake(0.02, 0.5)
+  cam.glideTo({ yaw: 3 })
+  cam.interrupt()
+  flush()
+  if (!cam.active()) fail("interrupt() leaves a shake running")
+  for (let i = 0; i < SETTLE_TICKS; i++) if (!cam.update(DT)) break
+  if (cam.pose().yaw !== held) fail("the dropped glide stays dropped through the shake")
 })
 
 test("the shake lane: a view kick in turns, the pose and the eye untouched", () => {

@@ -112,9 +112,10 @@ test("a node created with from starts after the frame's callbacks: the late pass
   expect(inLatePass).toBe(-TARGET_X)
   expect(x(node)).toBe(-TARGET_X)
   await app.frame()
-  // The next frame's step moved it one frame along, from from.
-  expect(x(node)).toBeGreaterThan(-TARGET_X)
-  expect(x(node)).toBeLessThan(-TARGET_X + expected(2 * (1000 / 60), 0))
+  // The next frame's step moved it exactly one frame along, from from:
+  // the enter travels twice TARGET_X, so one frame is twice a mover's.
+  let frameMs = 1000 / 60
+  expect(Math.abs(x(node) - (-TARGET_X + 2 * expected(frameMs, 0)))).toBeLessThan(EPSILON)
 })
 
 test("a settle handler runs in the frame's turn, ahead of its onFrame callbacks", async app => {

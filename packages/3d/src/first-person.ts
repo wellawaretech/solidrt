@@ -127,6 +127,10 @@ export type FirstPersonCamera = {
    * glideTo retargets. Yaw eases to the number given, not the shortest
    * turn: pass the turn you mean. */
   glideTo(pose: FirstPersonPose): void
+  /** Stop a glide in flight where it is (a press landing, a shot taking
+   * over): the pose stays, the shake lane runs on. The same verb on every
+   * camera control. */
+  interrupt(): void
   /** Whether update(dt) has work: any axis rate non-zero, or a glide in
    * flight. The frame-loop gate, reactive. */
   active(): boolean
@@ -207,7 +211,7 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
   // The frame-loop gate (core's createActivity), built once the axes exist.
   let activity!: ReturnType<typeof createActivity>
   let notify = () => activity.notify()
-  let interrupt = () => {
+  let dropMotion = () => {
     motion = null
   }
 
@@ -266,11 +270,11 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
     { look: "vec2", move: "vec2", rise: "axis", boost: "axis" },
     {
       onBegin: () => {
-        interrupt()
+        dropMotion()
         notify()
       },
       onNudge: (name, delta) => {
-        interrupt()
+        dropMotion()
         if (name === "look") {
           let d = delta as Vec2
           let rel = DRAG_TURNS * 2 * Math.PI * lookSpeed()
@@ -301,7 +305,7 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
     axes,
     set(pose) {
       checkPose("set", pose)
-      if (pose.position || pose.yaw !== undefined || pose.pitch !== undefined) interrupt()
+      if (pose.position || pose.yaw !== undefined || pose.pitch !== undefined) dropMotion()
       if (pose.position) position = copy(pose.position)
       if (pose.yaw !== undefined) yaw = pose.yaw
       if (pose.pitch !== undefined) pitch = pose.pitch
@@ -325,7 +329,7 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
       let [lx, ly] = untrack(() => axes.rate("look"))
       if (lx !== 0 || ly !== 0) {
         let rate = LOOK_RATE * 2 * Math.PI * lookSpeed() * dt
-        interrupt()
+        dropMotion()
         look(-lx * rate, -ly * rate)
         moved = true
       }
@@ -335,7 +339,7 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
         // A held boost (any non-zero read) scales the rates, not a nudge.
         let boost = untrack(() => axes.rate("boost")) !== 0 ? boostSpeed() : 1
         let speed = moveSpeed() * boost * dt
-        interrupt()
+        dropMotion()
         step(mx * speed, -my * speed, rise * speed)
         moved = true
       }
@@ -356,7 +360,7 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
     lookBy(dYaw, dPitch) {
       finite("lookBy yaw", dYaw)
       finite("lookBy pitch", dPitch)
-      interrupt()
+      dropMotion()
       look(dYaw, dPitch)
       push()
       notify()
@@ -365,7 +369,7 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
       finite("moveBy right", right)
       finite("moveBy forward", ahead)
       finite("moveBy up", up)
-      interrupt()
+      dropMotion()
       step(right, ahead, up)
       push()
       notify()
@@ -373,6 +377,10 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
     shake(strength, duration, opts) {
       checkShake("createFirstPersonCamera", strength, duration, opts)
       lanes.shake(strength, duration, opts)
+      notify()
+    },
+    interrupt() {
+      dropMotion()
       notify()
     },
   }
