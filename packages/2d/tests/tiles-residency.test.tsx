@@ -433,10 +433,11 @@ test("maxTexels caps the resident chunks: the gate evicts the chunk furthest fro
   expect(group.buffers).toBe(1)
   expect(group.bytes > 0).toBe(true)
   // The gate as /stats reports it: one resident, two wanted but stalled
-  // behind the budget, the resident weight one chunk's texels.
+  // behind the budget, the resident weight one chunk's bytes (rgba8
+  // texels: the gate weighs in bytes, the layer's budget is in texels).
   let stats = app.stats() as { regionsResident: number; regionsStalled: number; regionsWanted: number; residentWeight: number; app: { poolMisses: number; poolHits: number } }
   expect([stats.regionsResident, stats.regionsStalled, stats.regionsWanted]).toEqual([1, 2, 3])
-  expect(stats.residentWeight).toBe(CHUNK * CHUNK)
+  expect(stats.residentWeight).toBe(CHUNK * CHUNK * 4)
   let misses = stats.app.poolMisses
   // At rest the GPU is done with every frame submitted (settle waits for
   // the raster thread), which is what lets the pool hand a freed set

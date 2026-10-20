@@ -5,8 +5,8 @@
 use crate::spatial::RegionEvent::{Enter, Leave};
 use crate::spatial::RegionRef::{Cell, Node};
 use crate::spatial::{
-  compose, GridSpec, Mat4, RegionEvent, RegionMargins, SinkWriter, Spatial, DEFAULT_RESIDENCY_BUDGET, IDENTITY,
-  VIEW_KEY_BASE,
+  compose, GridSpec, Mat4, RegionEvent, RegionMargins, RegionSpec, RegionState, SinkWriter, Spatial,
+  DEFAULT_RESIDENCY_BUDGET, IDENTITY, VIEW_KEY_BASE,
 };
 
 const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -54,8 +54,13 @@ fn step(s: &mut Spatial) -> Vec<RegionEvent> {
   s.take_region_events()
 }
 
-fn margins(enter: f32, leave: f32) -> Option<RegionMargins> {
-  Some(RegionMargins { enter, leave })
+fn margins(enter: f32, leave: f32) -> Option<RegionSpec> {
+  Some(RegionSpec { margins: RegionMargins { enter, leave }, ..RegionSpec::default() })
+}
+
+/// A region spec with a weight and a priority beside its margins.
+fn weighted(enter: f32, leave: f32, weight: f64, priority: i32) -> Option<RegionSpec> {
+  Some(RegionSpec { margins: RegionMargins { enter, leave }, weight, priority })
 }
 
 /// Under an identity projection the view alone is the view-projection and
@@ -114,6 +119,7 @@ fn plane_grid(enter: f32, leave: f32) -> GridSpec {
     wrap: None,
     weight: 1.0,
     limit: None,
+    priority: 0,
     label: None,
   }
 }
@@ -303,6 +309,7 @@ fn grid_cells_beyond_the_depth_reach_stay_out_under_a_perspective_view() {
       wrap: None,
       weight: 1.0,
       limit: None,
+      priority: 0,
       label: None,
     })
     .expect("grid");
@@ -574,4 +581,133 @@ fn a_zoomed_orthographic_viewer_far_from_the_origin_enumerates_only_the_cells_un
   let entered = cells(&step(&mut s), g, true);
   assert_eq!(entered.len(), 16, "{entered:?}");
   assert!(entered.iter().all(|c| (100_000..100_004).contains(&c[0]) && (0..4).contains(&c[1])), "{entered:?}");
+}
+
+#[test]
+fn explicit_regions_weigh_under_the_scene_limit_and_are_evicted_least_needed_first() {
+  let mut s = Spatial::new();
+  s.set_residency_limit(Some(25.0)).expect("limit");
+  // Three unit-box regions along x, 10 each, under a cube viewer at the
+  // origin reaching x in -1..1 pushed out by a 20 enter: all three wanted.
+  let near = s.create([1.5, 0.0, 0.0], Q, ONE, true);
+  let mid = s.create([5.0, 0.0, 0.0], Q, ONE, true);
+  let far = s.create([15.0, 0.0, 0.0], Q, ONE, true);
+  for n in [near, mid, far] {
+    s.set_bounds(n, Some(UNIT)).expect("bounds");
+    s.set_region(n, weighted(20.0, 20.0, 10.0, 0)).expect("region");
+  }
+  s.set_view(1, cube_at(0.0));
+  let events = step(&mut s);
+  // Nearest first; the third does not fit: stalled.
+  assert_eq!(events, vec![Enter(Node(near)), Enter(Node(mid))]);
+  let stats = s.residency_stats();
+  assert_eq!((stats.resident, stats.stalled, stats.weight), (2, 1, 20.0));
+  assert_eq!(s.region_state(far).expect("node"), Some(RegionState::Stalled));
+  assert_eq!(s.region_state(near).expect("node"), Some(RegionState::Resident));
+  assert!(!s.residency_demand());
+  // The near region measures 2 once built (its estimate was 10): the
+  // resident weight drops to 12 and the far one (10) fits at the next
+  // pass without an eviction.
+  s.set_region_weight(near, 2.0).expect("weight");
+  let events = step(&mut s);
+  assert_eq!(events, vec![Enter(Node(far))]);
+  assert_eq!(s.residency_stats().weight, 22.0);
+  // A fourth region, nearer than `far` and heavier than the slack: the
+  // least needed resident (far, 10) is evicted for it.
+  let fourth = s.create([3.0, 0.0, 0.0], Q, ONE, true);
+  s.set_bounds(fourth, Some(UNIT)).expect("bounds");
+  s.set_region(fourth, weighted(20.0, 20.0, 8.0, 0)).expect("region");
+  let events = step(&mut s);
+  assert_eq!(events, vec![Leave(Node(far)), Enter(Node(fourth))]);
+  assert_eq!(s.region_state(far).expect("node"), Some(RegionState::Pending));
+  assert_eq!(s.residency_stats().weight, 20.0);
+}
+
+#[test]
+fn priority_orders_enters_before_distance_and_protects_from_eviction() {
+  let mut s = Spatial::new();
+  s.set_residency_budget(1);
+  // A near low-priority region and a far high-priority one: the far one
+  // enters first.
+  let near = s.create([1.0, 0.0, 0.0], Q, ONE, true);
+  let far = s.create([10.0, 0.0, 0.0], Q, ONE, true);
+  s.set_bounds(near, Some(UNIT)).expect("bounds");
+  s.set_bounds(far, Some(UNIT)).expect("bounds");
+  s.set_region(near, weighted(20.0, 20.0, 1.0, 0)).expect("region");
+  s.set_region(far, weighted(20.0, 20.0, 1.0, 1)).expect("region");
+  s.set_view(1, cube_at(0.0));
+  assert_eq!(step(&mut s), vec![Enter(Node(far))]);
+  assert_eq!(step(&mut s), vec![Enter(Node(near))]);
+  // A scene limit of 2 and a third region at priority 0 nearer than
+  // `near`: it may evict `near` (same priority, further) but never `far`
+  // (higher priority), and `near` alone covers the need.
+  s.set_residency_limit(Some(2.0)).expect("limit");
+  let third = s.create([0.5, 0.0, 0.0], Q, ONE, true);
+  s.set_bounds(third, Some(UNIT)).expect("bounds");
+  s.set_region(third, weighted(20.0, 20.0, 1.0, 0)).expect("region");
+  assert_eq!(step(&mut s), vec![Leave(Node(near)), Enter(Node(third))]);
+  // A fourth at priority 0, further than `third`: nothing less needed
+  // than it is resident but `near`, which is pending; stalled.
+  let fourth = s.create([0.7, 0.0, 0.0], Q, ONE, true);
+  s.set_bounds(fourth, Some(UNIT)).expect("bounds");
+  s.set_region(fourth, weighted(20.0, 20.0, 1.0, 0)).expect("region");
+  assert!(step(&mut s).is_empty());
+  assert_eq!(s.region_state(fourth).expect("node"), Some(RegionState::Stalled));
+  assert_eq!(s.region_state(far).expect("node"), Some(RegionState::Resident));
+}
+
+#[test]
+fn a_measured_cell_weight_replaces_the_estimate_and_a_grid_priority_orders_grids() {
+  let mut s = Spatial::new();
+  s.set_residency_budget(1);
+  // Two grids over the same plane, the second at a higher priority: its
+  // cell enters first though both are at the same distance.
+  let low = s.create_grid(plane_grid(0.0, 10.0)).expect("grid");
+  let high = s.create_grid(GridSpec { priority: 1, ..plane_grid(0.0, 10.0) }).expect("grid");
+  let key = s.alloc_view_key();
+  s.set_view(key, camera_2d(0.0, 0.0, 10.0, 10.0));
+  assert_eq!(step(&mut s), vec![Enter(Cell { grid: high, cell: [0, 0, 0] })]);
+  assert_eq!(s.cell_state(low, [0, 0, 0]).expect("grid"), Some(RegionState::Pending));
+  assert_eq!(step(&mut s), vec![Enter(Cell { grid: low, cell: [0, 0, 0] })]);
+  assert_eq!(s.cell_state(low, [0, 0, 0]).expect("grid"), Some(RegionState::Resident));
+  assert_eq!(s.cell_state(low, [5, 5, 0]).expect("grid"), None);
+  assert!(s.cell_state(low + 7, [0, 0, 0]).is_err());
+  // The handler measured the low cell at 40 (the estimate was 1): the
+  // resident weight follows, and a scene limit of 30 evicts it for the
+  // next wanted cell.
+  s.set_cell_weight(low, [0, 0, 0], 40.0).expect("weight");
+  assert!(s.set_cell_weight(low, [5, 5, 0], 1.0).is_err(), "a cell nobody wants holds no weight");
+  assert!(s.set_cell_weight(low, [0, 0, 0], -1.0).is_err());
+  assert_eq!(s.residency_stats().weight, 41.0);
+  s.set_residency_limit(Some(30.0)).expect("limit");
+  s.set_view(key, camera_2d(5.0, 0.0, 10.0, 10.0));
+  let events = step(&mut s);
+  assert_eq!(cells(&events, low, false), vec![[0, 0, 0]]);
+  assert_eq!(events.iter().filter(|e| matches!(e, Enter(_))).count(), 1);
+}
+
+#[test]
+fn an_enter_and_its_leave_within_one_delivery_collapse_to_nothing() {
+  let mut s = Spatial::new();
+  let near = region_at(&mut s, 0.0, 0.5, 1.0);
+  let far = region_at(&mut s, 10.0, 0.5, 1.0);
+  // A viewer over `near` for one flush, then over `far` before the
+  // frame takes the events: `near` entered and left in between, which
+  // is no change; `far` enters.
+  s.set_view(1, cube_at(0.0));
+  s.flush(&mut Sink);
+  s.set_view(1, cube_at(10.0));
+  s.flush(&mut Sink);
+  assert_eq!(s.take_region_events(), vec![Enter(Node(far))]);
+  let stats = s.residency_stats();
+  assert_eq!((stats.enters, stats.leaves, stats.resident), (1, 0, 1));
+  // Enter, leave, enter within one window: one enter.
+  s.set_view(1, cube_at(0.0));
+  s.flush(&mut Sink);
+  s.set_view(1, cube_at(10.0));
+  s.flush(&mut Sink);
+  s.set_view(1, cube_at(0.0));
+  s.flush(&mut Sink);
+  assert_eq!(s.take_region_events(), vec![Leave(Node(far)), Enter(Node(near))]);
+  assert_eq!(s.residency_stats().enters, 2);
 }

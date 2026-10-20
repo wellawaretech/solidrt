@@ -8,6 +8,8 @@ import { platform } from "flux:process"
 import type { BufferId, TextureId } from "flux:gpu"
 import { getEventHandler, focusedNode, setFocus, activateTextInput, setInterestRoot } from "./core"
 import { scanForOrphans, getNodePath } from "./renderer"
+import { drainSlices, installSliceDriver, sliceStats } from "./slice"
+import { registerStat } from "sol:dev"
 
 // ------ Lifecycle hooks ----------------
 
@@ -734,6 +736,11 @@ export function attachWindow(nodeId: number) {
   // and of the engine's motion events (a clip's end, a settle), so a
   // handler of those reads the frame's clock, not the last frame's.
   function runFrame(t: number, frame: number, bootstrap = false) {
+    // The frame's sliced work first (a region's creates, a build spread
+    // over frames): its writes are in this frame's callbacks, flush and
+    // paint, and the region events delivered ahead of this frame queued
+    // what it runs.
+    if (!bootstrap) drainSlices()
     if (!bootstrap && animationFrames.size > 0) {
       let frames = animationFrames
       animationFrames = new Map()
@@ -756,6 +763,13 @@ export function attachWindow(nodeId: number) {
     scanForOrphans(t)
     renderFrame()
   }
+
+  // The slice queue runs on the real clock and the native frame request;
+  // its figures reach /stats under `app`.
+  installSliceDriver({ now: () => performance.now(), requestFrame: nativeRequestFrame })
+  registerStat("sliceMs", () => sliceStats().ms)
+  registerStat("sliceQueued", () => sliceStats().queued)
+  registerStat("sliceSteps", () => sliceStats().steps)
 
   onSettled(() => {
     // Sticky event: a late subscriber still receives the current rate.

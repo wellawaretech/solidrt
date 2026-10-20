@@ -14,6 +14,7 @@
 
 import { createBuffer, createTexture, destroyBuffer, destroyTexture, limits, writeBuffer } from "@solidrt/core/gpu"
 import type { BufferId, IndexFormat, TextureId } from "@solidrt/core/gpu"
+import { bufferClass, resourcePool } from "./resource-pool.ts"
 import { computeNormals, createShape, destroyShape, updateShape } from "flux:spatial"
 import type { ShapeId } from "flux:spatial"
 import { geometrySlot, geometryStreams, geometryTopology, geometryVertexCount, layoutSlot, layoutStride, vertexBytes, MORPH_TEXEL_FLOATS } from "./geometry.ts"
@@ -94,10 +95,31 @@ let entries = new WeakMap<Geometry, GpuEntry>()
  * update (updateVertices) reach every sharer. */
 let vertexUploads = new WeakMap<ArrayBufferView, { buffer: BufferId; refs: number }>()
 
+// A vertex or index buffer: from the package's pool when one is
+// installed and holds a buffer of the byte class (a write into a retired
+// id, no create), else created. Freed back to the pool, else destroyed.
+function takeBuffer(data: ArrayBufferView, label: string | undefined): BufferId {
+  let pool = resourcePool()
+  if (pool !== null) {
+    let id = pool.take(bufferClass(data.byteLength)) as BufferId | undefined
+    if (id !== undefined) {
+      writeBuffer(id, data)
+      return id
+    }
+  }
+  return createBuffer(data, { autoFree: false, label })
+}
+
+function freeBuffer(id: BufferId, bytes: number): void {
+  let pool = resourcePool()
+  if (pool !== null) pool.give(bufferClass(bytes), id)
+  else destroyBuffer(id)
+}
+
 function acquireVertices(vertices: ArrayBufferView, label: string | undefined): BufferId {
   let upload = vertexUploads.get(vertices)
   if (upload === undefined) {
-    upload = { buffer: createBuffer(vertices, { autoFree: false, label }), refs: 0 }
+    upload = { buffer: takeBuffer(vertices, label), refs: 0 }
     vertexUploads.set(vertices, upload)
   }
   upload.refs++
@@ -110,7 +132,7 @@ function releaseVertices(vertices: ArrayBufferView): void {
   upload.refs--
   if (upload.refs > 0) return
   vertexUploads.delete(vertices)
-  destroyBuffer(upload.buffer)
+  freeBuffer(upload.buffer, vertices.byteLength)
 }
 
 // The shape reads positions (and uvs, when they are plain floats in
@@ -148,10 +170,7 @@ export function acquireGeometryBuffers(geometry: Geometry): GeometryBuffers {
       geometry,
       streams,
       buffers: streams.map((vertices, i) => acquireVertices(vertices, geometry.label ? geometry.label + (i === 0 ? "-verts" : "-stream" + i) : undefined)),
-      index: createBuffer(geometry.indices, {
-        autoFree: false,
-        label: geometry.label ? geometry.label + "-indices" : undefined,
-      }),
+      index: takeBuffer(geometry.indices, geometry.label ? geometry.label + "-indices" : undefined),
       indexFormat: geometry.indices instanceof Uint32Array ? "uint32" : "uint16",
       shape: createGeometryShape(geometry),
       morphs: geometry.morphs === undefined ? null : acquireMorphs(geometry.morphs, geometry.label),
@@ -183,7 +202,7 @@ export function releaseGeometryBuffers(acquired: GeometryBuffers): void {
 
 function freeEntry(entry: GpuEntry): void {
   for (let vertices of entry.streams) releaseVertices(vertices)
-  destroyBuffer(entry.index)
+  freeBuffer(entry.index, entry.geometry.indices.byteLength)
   destroyShape(entry.shape)
   if (entry.morphTargets !== null) releaseMorphs(entry.morphTargets)
 }

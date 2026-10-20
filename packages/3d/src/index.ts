@@ -54,7 +54,7 @@ export { extrude, lathe, pathFrames, polygon, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
 export { phong, shaderMaterial, shaderMaterialClass, sprite, standard, unlit } from "./material.ts"
 export type { LitOptions, Material, PhongOptions, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, StandardOptions, UnlitOptions } from "./material.ts"
-export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedLod, InstancedMesh, Lod, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Scene, SplatMesh, SpotLight, Sprite, View3d, useScene, Shot, Shots } from "./components/index.ts"
+export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedLod, InstancedMesh, Lod, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Region, RegionGrid, Scene, SplatMesh, SpotLight, Sprite, View3d, useScene, Shot, Shots } from "./components/index.ts"
 export type {
   CameraTarget,
   DensityProps,
@@ -65,6 +65,8 @@ export type {
   InstancedMeshProps,
   InstanceProps,
   LodProps,
+  RegionGridProps,
+  RegionProps,
   MeshProps,
   OrbitCameraProps,
   PerspectiveCameraProps,
@@ -146,3 +148,9 @@ export type { CameraDevices } from "./input.ts"
 // root's lookAt is the scene verb, the same split as `add`.
 export { rayBoxDistance, compose, copy, eulerFromQuat, identity, mat4, multiply, normalMatrix, orthographic, perspective, quat, quatFromAxisAngle, quatFromEuler, quatFromFrame, quatFromTo, quatMultiply, quatNormalize, quatSlerp } from "./math.ts"
 export type { Mat4, Quat, Vec2, Vec3 } from "./math.ts"
+export { buildModel, createRegion, createRegionGrid, createStreamingSource, geometryBytes } from "./region.ts"
+export type { RegionContent, RegionGridNode, RegionGridOptions, RegionNode, RegionOptions, StreamingSource } from "./region.ts"
+export type { RegionCell, RegionState } from "./region.ts"
+export { setResourcePool, resourcePool } from "./resource-pool.ts"
+export { setResidencyBudget, setResidencyLimit } from "@solidrt/core"
+export { modelSteps } from "./model.ts"

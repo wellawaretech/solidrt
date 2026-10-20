@@ -399,71 +399,124 @@ RESIDENCY is the core's third gate beside culling and LOD, and the one
 that gates MEMORY instead of drawing: which regions of a world should
 EXIST right now, given every viewer's view volume, told only when that
 changes (`alloy/src/spatial/residency.rs`, the contract in
-okf/done/spatial-residency-gate.md). Culling and LOD leave everything
+okf/done/spatial-residency-gate.md, the 3d form in
+okf/plans/3d-world-residency.md). Culling and LOD leave everything
 resident; a world larger than memory - an open map, a long track, a
 city - streams by this gate instead of by camera distances recomputed
-in `onFrame`. The 3d package has NO region API of its own yet
-(okf/backlog/3d-world-residency.md is that item: a region as a scene
-node kind, pooled creates, the hitch-free load path); today an app
-reaches the gate through `flux:spatial` directly. Two region forms.
-EXPLICIT: `setRegion(node, { enter, leave })` marks a bounded core
-node (a mesh's `_node` with its bounds, or an undrawn node with
-`setBounds`) as a region: a level section, a building interior. GRID:
-`createGrid({ origin, cell, enter, leave, bounds?, wrap?, label? })`
-is a lattice of cells that exist only while approached, `cell` per
-axis with 0 meaning unbounded along it - `[32, 0, 32]` is a
-Minecraft-style column grid over XZ, `[32, 32, 32]` a voxel world
-(Unreal's World Partition and Minecraft's chunk columns are this
-form). Viewers are what the scene already pushes: every camera write
-(`setView`) is a viewer, so the scene, each view and each shadow tile
-want regions, and a region is wanted if ANY of them wants it (a
-minimap beside the main view, a shadow camera). The test is the cull
-test with hysteresis: a region is wanted within `enter` of the view
-volume (the frustum planes pushed out by `enter`, as `cullMargin`
-widens the cull test) and stays wanted until beyond `leave` (`leave >=
-enter`), so a camera on a border never thrashes. An explicit region
-tests the full frustum, so a far region in view is wanted; a grid
-cell tests the side and near planes plus a depth cap of the margin
-along the view direction, the far plane ignored, so for a grid
-`enter`/`leave` read as LOAD DISTANCES (a draw distance is the
-camera's far plane, a load distance the grid's). Changes arrive as the
-engine events `spatialRegionEnter` and `spatialRegionLeave`
-(`sol:events` `on`), payload `{ node }` or `{ grid, cell: [i, j, k] }`,
-in the frame's event slot ahead of the frame callbacks, so a handler's
-creates land in the same frame. Leaves are immediate; enters are PACED
-nearest-eye-first under one scene-wide `setResidencyBudget(n)` (default
-16 regions started per frame, every grid and region in the scene
-spending the same budget), and a region still pending when the camera
-turns away never enters - no event, nothing to cancel. The gate knows
-wanted or not; what a region holds (a model, procedural geometry,
-instance records) and whether it is ready are the HANDLER's, and a
-handler still loading when the leave arrives cancels its own work.
-A freed region's buffers and targets wait in a resource pool for the
-next enter instead of being destroyed and created (`createResourcePool`
-in @solidrt/core/gpu: one JS free list over GPU ids, classed by a
-consumer-built `kind:detail` string with the kind's destroyer registered
-by the consumer on the pool it uses, LRU past its cap; the 2d tile
-layer's chunks go through it, a 3d region handler's geometry will). Memory is BOUNDED by
-limits over a grid's `weight`, the handler's cost of one resident cell
-in a unit of its choosing (`createGrid({ weight, limit? })`,
-`setGridWeight` when it changes): the grid's own `limit` and the
-scene-wide `setResidencyLimit(total)`, Unreal's streaming pool size.
-Past a limit the most urgent pending cell displaces the least urgent
-resident ones, urgency being the distance to the nearest wanting eye in
-the grid's own `leave`s (dimensionless, so a 2d layer in pixels and a
-3d grid in metres share one scene limit), the eviction's leave before
-the enter it made room for; a cell nothing can make room for is wanted
-and STALLED, no event and no frame demanded until a view moves. A limit
-counts resident cells, not what a handler put in them. Explicit regions
-weigh nothing. `/stats` reports the gate (`regionsWanted`,
+in `onFrame`. Two region forms, both group nodes. EXPLICIT:
+`createRegion({ bounds, enter, leave, ...content })` / `<Region>` is a
+bounded group you place like any node (a level section, a building
+interior; Unreal's level streaming volume), its content loaded and
+built while a viewer is within `enter` of its box and kept until beyond
+`leave`. GRID: `createRegionGrid({ cell, enter, leave, origin?, bounds?,
+...content })` / `<RegionGrid>` is a root group you add once; every
+cell the gate wants becomes a child RegionNode at the cell's world
+corner for as long as it is held (Unreal's World Partition, Minecraft's
+chunk columns), so a cell's content is cell-local and float precision
+is per cell; `cell` is `[w, h, d]` with 0 meaning unbounded along that
+axis (`[64, 0, 64]` a column grid over XZ, `[32, 32, 32]` a voxel
+world), `bounds` an optional cell-index box outside which no cell
+exists. A load distance is a RADIUS around the view volume, not a view
+(Unreal's streaming sources load a sphere): the cells behind and beside
+a viewer within `enter` are wanted too, so the world is there when the
+camera turns. A world of one layer is the column grid (0 on the up
+axis); finite cells on the up axis stack, and the column above and below
+the eye is wanted like the ring around it. A 3d grid has no `wrap`: a
+3d scene has one world space. VIEWERS are what the scene already pushes:
+every camera write (`setView`) is a viewer, so the scene, each view and
+each shadow tile want regions, and a region is wanted if ANY of them
+wants it (a minimap beside the main view, a shadow camera; a region
+beyond its load distance that still casts into view does so through
+its proxy); `createStreamingSource({ position, radius })` is a viewer
+beyond the cameras, Unreal's streaming source - the world ahead of a
+fast vehicle, a teleport destination loaded before the cut - moved
+with `setPosition`. The test is the cull test with hysteresis: wanted
+within `enter` of the view volume (the frustum planes pushed out by
+`enter`, as `cullMargin` widens the cull test), kept until beyond
+`leave` (`leave >= enter`), so a camera on a border never thrashes; an
+explicit region tests the full frustum, a grid cell the side and near
+planes plus a depth cap of the margin along the view direction, the
+far plane ignored, so for a grid `enter`/`leave` read as LOAD DISTANCES.
+
+What a region HOLDS is the app's, through three callbacks and a
+proxy (`RegionContent`): `load(region, signal)` prepares the data off
+the thread - a file read, `decodeModel`, a glTF parse in a `"use
+isolate"` module - and may be async; `build(region, data)` makes the
+content under `region.content`, and when it is a GENERATOR its steps
+run one per slice of the frame budget (core's `slice`, `setSliceBudget`:
+milliseconds per frame, default 2, Unity's asyncUploadTimeSlice and
+Unreal's time-sliced actor registration in one shape, every job in the
+app spending the one budget), so `yield* buildModel(region, data)` runs
+createModel's creates one per step (an image upload, the skin palettes,
+a part each, then each part's buffers warmed) and a `yield` after each
+create of your own spreads a region over frames instead of landing its
+creates in one; `unload(region, data)` runs at leave BEFORE the content
+goes, with the data, for the app's own state (an editable world reads
+its cell back here); `proxy(region)` makes the node drawn while the
+region is NOT shown - a merged low-poly stand-in, a card, a slab at the
+terrain's mean height - hidden once the content shows, casting shadows
+meanwhile (the HLOD rule). An explicit region's proxy stands from its
+creation and comes back at every leave; a grid cell exists only from
+its enter, so its proxy covers the load and the build, never the cells
+still pending or stalled beyond the budget: a stand-in for the far ring
+is a COARSER grid with wider margins whose cell content is the finer
+cells' proxy (Unreal's HLOD layer), two grids beside each other.
+The content is HIDDEN until the build completes (its entries exist at
+instance count 0, picks skip it), then shown in the frame the last step
+ran in; a leave aborts a load in flight (the signal), cancels a build
+under way (the generator closes, its `finally` runs), runs `unload`,
+removes and disposes the content (never `destroy` with an exit: a region
+leaves off screen) and, for a grid cell, the node; `region.own(x)`
+registers anything else to dispose at leave (buildModel registers its
+model; a population's record buffers are mesh-owned, so
+`region.own({ dispose: () => disposeInstances(mesh) })`), `region.warm(geometry)`
+acquires a geometry's buffers now (one create-sized step) so the add
+that follows uploads nothing. `region.state` is the gate's "pending" or
+"stalled" until the enter, then "loading", "building", "shown" or
+"failed" (a load or build that threw: reported once, `onError` on the
+node or grid, empty until the next enter retries); `region.data` the
+loaded data while held; `onStateChange` on the node or grid. `retain`
+keeps the data of left regions (a flag on an explicit region, an LRU
+count on a grid) so a re-enter skips `load`. The component form takes
+`build` and `proxy` as RENDER PROPS returning JSX, mounted under the
+cell's content node when its data arrives: one slice step, so a build
+whose creates must spread over frames is the generator's.
+
+The gate PACES: leaves are immediate, enters are delivered under one
+scene-wide `setResidencyBudget(n)` (default 16 regions started per
+frame), the highest `priority` (an integer on a region or grid: a
+collision grid before decorative scatter) then the nearest to a
+viewer's eye first, and a region still pending when the camera turns
+away never enters. Memory is BOUNDED in BYTES: a region's `weight` (a
+grid's per cell) is the estimate the limits admit it by, and the
+package MEASURES the content as it shows - every geometry under it
+once, every population's buffers, every owned model's textures
+(`region.measure()` re-measures after content added later) - so the
+grid's own `limit` and the scene-wide `setResidencyLimit(bytes)`
+(from @solidrt/core or @solidrt/3d; Unreal's streaming pool size) count content: past a
+limit the most needed pending region displaces the least needed
+resident ones (lower priority, then further), the eviction's leave
+before the enter it made room for; a region nothing can make room for
+is wanted and STALLED, no event and no frame demanded until a view
+moves. The 2d tile layer weighs in bytes too, so a layer and a grid
+share one scene limit. Freed geometry buffers and decoded model
+textures go through the package's RESOURCE POOL (`createResourcePool`
+in @solidrt/core/gpu, installed at the first region; `setResourcePool`
+to share one with the tile layers) and the next acquire of the same
+byte or format class takes them back - a write into a retired id, no
+create; block-compressed textures are create-once by the GPU contract
+and are not pooled. `/stats` reports the gate (`regionsWanted`,
 `regionsResident`, `regionsPending`, `regionsStalled`, cumulative
-`regionEnters`/`regionLeaves` and the window's pair, `residentWeight`)
-and the pools (`app.poolHits`/`poolMisses`/`poolHeld`); `/gpu` groups
-a handler's resources by label (`groups`), so a region's footprint is a
-number before and after eviction. Spreading one region's many GPU
-creates over frames and the HLOD question (a far proxy as an LOD level
-that loads, or its own gate) are the backlog item's. A world that
-declares no region loads and draws exactly as now.
+`regionEnters`/`regionLeaves` and the window's pair, `residentWeight`
+in bytes), the lifecycle (`app.regionsLoading`, `app.regionsBuilding`,
+`app.regionsShown`, `app.regionsFailed`), the slice queue
+(`app.sliceMs`, `app.sliceQueued`, `app.sliceSteps`) and the pools
+(`app.poolHits`/`poolMisses`/`poolHeld`); `/gpu` groups a region's
+resources by its label. A world that declares no region loads and
+draws exactly as now. `examples/streaming.tsx` is the shape: a terrain
+grid whose cells are generated in an isolate, built a step at a time,
+proxied by slabs, bounded by a byte limit, wanted by the main camera
+and a minimap alike.
 
 ### Shadows
 

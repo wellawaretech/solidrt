@@ -63,6 +63,14 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   post-pass; frame-rate exact by construction, with sphere, capsule and plane
   colliders, so a rigged character costs zero per-frame JS for its secondary
   motion.
+- **[A 3d world larger than memory streams by the residency gate, with region handlers in core](plans/3d-world-residency.md)** [2026-10-10]
+  The second handler over the spatial core's residency gate - a region as a
+  scene node (explicit or a grid cell) whose content the app loads off the
+  thread and builds under a per-frame millisecond slice, pooled geometry and
+  textures, measured byte weights under the scene limit, a proxy drawn while
+  unloaded (HLOD), streaming sources beyond cameras, and the handler lifecycle
+  (load, abort, sliced build, unload, retain, state) in core so a 2d
+  population handler is the same machinery one dimension down.
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -175,6 +183,12 @@ Shaped, not started.
   minimap cannot admit marker sprites only, several views cannot share one
   atlas target, and a view cannot tint itself apart from the layer. Each is an
   additive step on the landed view contract.
+- **[The 2d package streams only tiles; sprite populations, priorities and measured chunk weights still wait on the core region lifecycle](backlog/2d-region-handlers.md)** [2026-10-20]
+  The 3d residency item put the handler lifecycle (load, sliced build, unload,
+  retain, proxy, measured bytes, streaming sources, priority) in core and a
+  node form in 3d; the tile layer predates it and reports estimates, nothing
+  streams sprite populations per region, and a 2d <RegionGrid> over sprite
+  layers is the same hundred lines 3d's is.
 - **[2d skeletal sprites - skinned deformation over the spatial palette sink](backlog/2d-skeletal-sprites.md)** [2026-09-02]
   The 2d package has flipbook animation only; Spine/DragonBones-class skeletal
   characters (bone hierarchies deforming a textured mesh) have no path, even
@@ -276,13 +290,6 @@ Shaped, not started.
   disc's noise; give the uniform width the blocker search a sized light
   already runs, so every contact hardens to the one tap, and scale the normal
   bias with the texel as Unity does.
-- **[A 3d world larger than memory has no residency, so every streaming app hand-rolls loading, freeing and pooling](backlog/3d-world-residency.md)** [2026-10-10]
-  Culling and LOD gate drawing, not memory, so an open map or a long track
-  either loads whole or streams by hand from onFrame (camera distance in JS,
-  createModel and dispose, or a pool re-pointed with setGeometry), and with
-  createModel synchronous on main and GPU creates blocking, every region that
-  streams in costs a frame; the 2d tile layer's stage B2 is the same problem
-  one dimension down.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -515,6 +522,13 @@ Shaped, not started.
   raster thread, i.e. the frame loop - and both are calls the standards
   eventually grew an async-only form for; invisible while compiles happen at
   startup, real for live-coding and any per-frame readback consumer.
+- **[A block-compressed texture cannot be rewritten in place, so a streamed world's baked textures are created anew on every enter](backlog/gpu-compressed-mutable-textures.md)** [2026-10-20]
+  createMutableTexture and uploadTexture refuse the etc2/bc7 formats
+  (create-once by contract), so the 3d residency pool reuses decoded rgba8
+  textures but not the KTX2 ones a baked world ships, which pay a blocking
+  create per region enter; GL allows compressed storage with per-level
+  glCompressedTexSubImage2D, so the lift is a GL path and a plugin contract,
+  not a design change.
 - **[Depth func option](backlog/gpu-depth-func.md)** [2026-08-11]
   The depth comparison is fixed at LESS with no override, which blocks
   equal-depth multi-pass tricks (LEQUAL) and reversed-z; Three's

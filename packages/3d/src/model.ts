@@ -21,8 +21,9 @@ import { file } from "flux:fs"
 import * as spatial from "flux:spatial"
 import { createEffect, createRoot, decodeImage, getOwner, isDisposed, isKtx2, onCleanup, quality as appQuality, runWithOwner, transcodeTexture, untrack } from "@solidrt/core"
 import type { Owner } from "@solidrt/core"
-import { createMutableTexture, createTexture, destroyTexture, setTextureSampling } from "@solidrt/core/gpu"
-import type { TextureId } from "@solidrt/core/gpu"
+import { createMutableTexture, createTexture, destroyTexture, setTextureSampling, uploadTexture } from "@solidrt/core/gpu"
+import type { TextureFormat, TextureId } from "@solidrt/core/gpu"
+import { resourcePool, textureClass } from "./resource-pool.ts"
 import { mipLevels } from "./environment-bake.ts"
 import { QUALITY_TIERS, textureSampling } from "./quality.ts"
 import { gltfExternalUris, modelImageUses, parseGltf } from "./gltf.ts"
@@ -159,6 +160,12 @@ export type Model = SceneNode & {
   /** @internal Subtrees bindSkeleton moved under the body's joints (no
    * longer under this model); detached again by dispose. */
   _grafts: SceneNode[]
+  /** @internal The textures the model owns (the images, the skin
+   * palettes), each with the pool class it is given back under. */
+  _textures: ModelTexture[]
+  /** @internal The GPU bytes of those textures: what a region weighs the
+   * model's textures by. */
+  _textureBytes: number
 }
 
 /** @internal One skin of a built model: ModelSkin with its joints
@@ -184,6 +191,55 @@ export async function transcodeModelImages(data: ModelData): Promise<ModelData> 
   return { ...data, textures }
 }
 
+/** @internal A built model's texture: its id and its pool class (null
+ * for a create-once compressed texture, which is destroyed, not given). */
+type ModelTexture = { id: TextureId; cls: string | null }
+
+// A model texture from the package's pool (a write into a retired id of
+// the class, re-sampled; no create) or created mutable so it can be
+// pooled later. Compressed storage is create-once: created immutable,
+// never pooled.
+function takeTexture(
+  data: Uint8Array | Float32Array,
+  width: number,
+  height: number,
+  format: TextureFormat,
+  mipmap: boolean,
+  sampling: { wrap?: "repeat"; anisotropy: number; baseLevel: number },
+  label: string | undefined,
+): ModelTexture {
+  if (format.startsWith("etc2") || format.startsWith("bc7")) {
+    return { id: createTexture(data, width, height, { ...sampling, format, mipmap, autoFree: false, label }), cls: null }
+  }
+  let cls = textureClass(format, width, height, mipmap)
+  let pool = resourcePool()
+  if (pool !== null) {
+    let id = pool.take(cls) as TextureId | undefined
+    if (id !== undefined) {
+      uploadTexture(id, data)
+      setTextureSampling(id, sampling)
+      return { id, cls }
+    }
+  }
+  return { id: createMutableTexture(data, width, height, { ...sampling, format, mipmap, autoFree: false, label }), cls }
+}
+
+function freeTexture(texture: ModelTexture): void {
+  liveTextures.delete(texture.id)
+  let pool = resourcePool()
+  if (texture.cls !== null && pool !== null) pool.give(texture.cls, texture.id)
+  else destroyTexture(texture.id)
+}
+
+// The GPU bytes of a texture: its texels at the format's size, the mip
+// chain a third more.
+const MIP_CHAIN_FACTOR = 4 / 3
+function textureBytes(width: number, height: number, format: TextureFormat, mipmap: boolean, data: ArrayBufferView): number {
+  if (format.startsWith("etc2") || format.startsWith("bc7")) return data.byteLength
+  let texel = format === "rgba32f" ? 16 : format === "rgba16f" ? 8 : format === "r32f" ? 4 : format === "r8" ? 1 : 4
+  return Math.ceil(width * height * texel * (mipmap ? MIP_CHAIN_FACTOR : 1))
+}
+
 /**
  * Build the scene object for parsed model data: upload its images (repeat
  * wrap, mipmapped, the app quality tier's anisotropy and mip limit - a
@@ -191,7 +247,10 @@ export async function transcodeModelImages(data: ModelData): Promise<ModelData> 
  * images as "rgba8-srgb" since glTF stores those sRGB-encoded, the data
  * maps as rgba8), make a material per glTF material, the file's node hierarchy as
  * nested Groups, and a mesh per part under its node. Synchronous - the
- * data is already in memory.
+ * data is already in memory: every step of `modelSteps` run at once. A
+ * region's build runs the same steps one per slice of the frame budget
+ * (`buildModel` in region.ts), which is why this is the drained form
+ * and not the other way round.
  *
  * A compressed image uploads as transcodeModelImages left it: at the
  * format and color space its file names, with the mip chain the file
@@ -199,268 +258,306 @@ export async function transcodeModelImages(data: ModelData): Promise<ModelData> 
  * KTX2 image that was not transcoded throws.
  */
 export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
+  let steps = modelSteps(data, opts)
+  let result = steps.next()
+  while (!result.done) result = steps.next()
+  return result.value
+}
+
+/**
+ * createModel as steps: a generator that yields after every GPU create
+ * (each image upload, the skin palettes, each part) and returns the
+ * Model - what a region's build delegates to (`yield* buildModel(...)`)
+ * so a model's creates spread over frames under the slice budget. Closed
+ * early (a cancelled build), it frees what it made so far.
+ */
+export function* modelSteps(data: ModelData, opts: ModelOptions = {}): Generator<void, Model> {
   let label = opts.label
   let uses = modelImageUses(data)
   followTier()
   let row = QUALITY_TIERS[untrack(appQuality)]
-  let textures: TextureId[] = data.images.map((image, i) => {
-    let sampling = { wrap: "repeat" as const, autoFree: false, label: label ? label + "-" + image.name : image.name }
-    // The chain the tier's mip limit is held inside: a compressed image
-    // carries its own (or none), a decoded one gets the full chain.
-    let upload = (width: number, height: number, mipmap: boolean, make: (levels: number) => TextureId): TextureId => {
-      let levels = mipmap ? mipLevels(Math.max(width, height)) : 1
-      let id = make(levels)
-      liveTextures.set(id, levels)
-      return id
+  let textures: ModelTexture[] = []
+  let bytes = 0
+  // Everything freed if the build is closed before it completes: the
+  // textures so far, the morph states and record buffers of the parts
+  // so far.
+  let complete = false
+  let built: Model | null = null
+  try {
+    for (let i = 0; i < data.images.length; i++) {
+      let image = data.images[i]!
+      let name = label ? label + "-" + image.name : image.name
+      let ready = data.textures?.[i]
+      let texture: ModelTexture
+      let levels: number
+      if (ready !== undefined) {
+        levels = ready.mipmap ? mipLevels(Math.max(ready.width, ready.height)) : 1
+        texture = takeTexture(ready.data, ready.width, ready.height, ready.format, ready.mipmap, { wrap: "repeat", ...textureSampling(row, levels) }, name)
+        bytes += textureBytes(ready.width, ready.height, ready.format, ready.mipmap, ready.data)
+      } else {
+        if (isKtx2(image.bytes)) {
+          throw new Error("createModel: image '" + image.name + "' is a KTX2 compressed texture, which is transcoded before the model is created: await transcodeModelImages(data) first (loadModel and loadGltf do)")
+        }
+        let decoded = decodeImage(image.bytes)
+        let format: TextureFormat = uses[i]!.srgb ? "rgba8-srgb" : "rgba8"
+        levels = mipLevels(Math.max(decoded.width, decoded.height))
+        texture = takeTexture(decoded.data, decoded.width, decoded.height, format, true, { wrap: "repeat", ...textureSampling(row, levels) }, name)
+        bytes += textureBytes(decoded.width, decoded.height, format, true, decoded.data)
+      }
+      liveTextures.set(texture.id, levels)
+      textures.push(texture)
+      yield
     }
-    let ready = data.textures?.[i]
-    if (ready !== undefined) {
-      return upload(ready.width, ready.height, ready.mipmap, levels =>
-        createTexture(ready.data, ready.width, ready.height, { ...sampling, ...textureSampling(row, levels), format: ready.format, mipmap: ready.mipmap }),
-      )
-    }
-    if (isKtx2(image.bytes)) {
-      throw new Error("createModel: image '" + image.name + "' is a KTX2 compressed texture, which is transcoded before the model is created: await transcodeModelImages(data) first (loadModel and loadGltf do)")
-    }
-    let decoded = decodeImage(image.bytes)
-    return upload(decoded.width, decoded.height, true, levels =>
-      createTexture(decoded.data, decoded.width, decoded.height, { ...sampling, ...textureSampling(row, levels), format: uses[i]!.srgb ? "rgba8-srgb" : "rgba8", mipmap: true }),
-    )
-  })
-  let make = opts.material ?? ((m: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean, morphed: boolean, instanced: boolean): Material => {
-    // An emissive factor of zero is emission OFF (the glTF product rule:
-    // factor times texture), so the map is skipped too - no sampler for
-    // a term that cannot show.
-    let emissive = m.emissive[0] > 0 || m.emissive[1] > 0 || m.emissive[2] > 0
-    return standard({
-      color: m.color,
-      map: maps.map ?? undefined,
-      normalMap: maps.normalMap ?? undefined,
-      normalScale: m.normalScale,
-      metalness: m.metalness,
-      roughness: m.roughness,
-      metalnessMap: maps.metalnessMap ?? undefined,
-      roughnessMap: maps.roughnessMap ?? undefined,
-      emissive: emissive ? m.emissive : undefined,
-      emissiveIntensity: emissive ? m.emissiveIntensity : undefined,
-      emissiveMap: emissive ? maps.emissiveMap ?? undefined : undefined,
-      transparent: m.transparent,
-      cull: m.doubleSided ? "none" : "back",
-      alphaTest: m.alphaMode === "MASK" ? m.alphaCutoff : undefined,
-      skinned: skinned || undefined,
-      vertexColors: vertexColors || undefined,
-      morph: morphed || undefined,
-      instanced: instanced || undefined,
-    })
-  })
-  let slot = (index: number | null): TextureId | null => (index === null ? null : textures[index]!)
-  // One instance per glTF material as today, plus a skinned variant per
-  // material the skinned parts bring, a vertex-colored one per material
-  // the COLOR_0 parts bring, a morphed and an instanced one likewise (a
-  // material shared by parts that differ in any needs two programs -
-  // different vertex stages).
-  let variants = new Map<string, Material>()
-  let materialFor = (index: number, skinned: boolean, vertexColors: boolean, morphed: boolean, instanced: boolean): Material => {
-    let m = data.materials[index]
-    if (m === undefined) throw new Error("createModel: a part names a missing material " + index)
-    let key = index + (skinned ? "|skinned" : "") + (vertexColors ? "|colored" : "") + (morphed ? "|morphed" : "") + (instanced ? "|instanced" : "")
-    let made = variants.get(key)
-    if (made === undefined) {
-      made = make(
-        m,
-        {
-          map: slot(m.map),
-          normalMap: slot(m.normalMap),
-          emissiveMap: slot(m.emissiveMap),
-          metalnessMap: slot(m.metalnessRoughnessMap),
-          roughnessMap: slot(m.metalnessRoughnessMap),
-        },
-        skinned,
-        vertexColors,
-        morphed,
-        instanced,
-      )
-      variants.set(key, made)
-    }
-    return made
-  }
-  let materials = data.materials.map((_, i) => materialFor(i, false, false, false, false))
-
-  let model = createGroup() as Model
-  model._skins = []
-  model._worn = []
-  model._body = null
-  model._grafts = []
-  // The node table is pre-order, so every parent group exists before its
-  // children reference it.
-  let groups: SceneNode[] = data.nodes.map((n) => {
-    let group = createGroup()
-    setTransform(group, { position: n.position, quaternion: n.rotation, scale: n.scale })
-    // The file's transform is the node's rest pose: what a mixer's
-    // layers compose over and a spring chain settles to.
-    group._rest = Float32Array.from([...n.position, ...n.rotation, ...n.scale])
-    return group
-  })
-  data.nodes.forEach((n, i) => add(n.parent === null ? model : groups[n.parent]!, groups[i]!))
-  model.nodes = data.nodes.map((n, i) => (n.extras === undefined ? { name: n.name, node: groups[i]! } : { name: n.name, node: groups[i]!, extras: n.extras }))
-  // A glTF node with morph targets owns its parts' weights (the file's
-  // node.weights / mesh.weights seed them): one register, one weights
-  // texture, every part of the mesh reads it - so setMorphWeights on
-  // the node (and a clip's weights track) moves the whole mesh.
-  data.nodes.forEach((n, i) => {
-    if (n.weights === undefined) return
-    let part = data.parts.find((p) => p.node === i && p.geometry.morphs !== undefined)
-    if (part === undefined) return
-    groups[i]!._morph = createMorphState(part.geometry.morphs!.names, n.weights, label ? label + "-" + n.name + "-weights" : n.name + "-weights")
-  })
-  // Each skin's palette lives in an rgba32f texture, 4 texels wide, one
-  // row per joint (the four columns of that joint's mat4), sized to the
-  // RIG: rig size is bounded by texture height (>= 2048 everywhere), not
-  // the vertex uniform budget, so there is no joint cap. The texture id
-  // is bound as uBones on every mesh drawing the skin and freed with the
-  // model's other textures. The bone matrices themselves are the spatial
-  // core's job: each joint node carries a palette-row binding (texture,
-  // row, inverse bind, the model root as anchor) that enterScene attaches,
-  // so the flush writes model-local jointWorld x inverseBind rows whenever
-  // joints move - there is no JS palette walk, and posing joints with
-  // setTransform is always enough. Identical skins (same joints, same
-  // inverse binds - the body/legs and LOD splits exporters produce) share
-  // one texture, so their palette is computed and uploaded once. A worn
-  // piece's rows move onto another model's joints (bindSkeleton).
-  data.skins.forEach((skin, i) => {
-    let joints = skin.joints.map((n) => {
-      let joint = groups[n]
-      if (joint === undefined) throw new Error("createModel: skin " + i + " names a missing node " + n)
-      return joint
-    })
-    let key = skin.joints.join(",")
-    let same = model._skins.find(
-      (other, j) =>
-        data.skins[j]!.joints.join(",") === key &&
-        other.inverseBind.length === skin.inverseBind.length &&
-        other.inverseBind.every((v, k) => v === skin.inverseBind[k]),
-    )
-    let texture =
-      same?.texture ??
-      createMutableTexture(new Float32Array(skin.joints.length * 16), 4, skin.joints.length, {
-        format: "rgba32f",
-        autoFree: false,
-        label: label ? label + "-skin" + i : "skin" + i,
+    let make = opts.material ?? ((m: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean, morphed: boolean, instanced: boolean): Material => {
+      // An emissive factor of zero is emission OFF (the glTF product rule:
+      // factor times texture), so the map is skipped too - no sampler for
+      // a term that cannot show.
+      let emissive = m.emissive[0] > 0 || m.emissive[1] > 0 || m.emissive[2] > 0
+      return standard({
+        color: m.color,
+        map: maps.map ?? undefined,
+        normalMap: maps.normalMap ?? undefined,
+        normalScale: m.normalScale,
+        metalness: m.metalness,
+        roughness: m.roughness,
+        metalnessMap: maps.metalnessMap ?? undefined,
+        roughnessMap: maps.roughnessMap ?? undefined,
+        emissive: emissive ? m.emissive : undefined,
+        emissiveIntensity: emissive ? m.emissiveIntensity : undefined,
+        emissiveMap: emissive ? maps.emissiveMap ?? undefined : undefined,
+        transparent: m.transparent,
+        cull: m.doubleSided ? "none" : "back",
+        alphaTest: m.alphaMode === "MASK" ? m.alphaCutoff : undefined,
+        skinned: skinned || undefined,
+        vertexColors: vertexColors || undefined,
+        morph: morphed || undefined,
+        instanced: instanced || undefined,
       })
-    model._skins.push({ texture, joints, inverseBind: skin.inverseBind, jointBounds: skin.jointBounds })
-    if (same !== undefined) return
-    textures.push(texture)
-    joints.forEach((joint, j) => {
-      ;(joint._palettes ??= []).push({ texture, row: j, post: skin.inverseBind.slice(j * 16, j * 16 + 16), anchor: model })
     })
-  })
-  // Each joint's influence box, in joint space: culling-only bounds the
-  // flush carries through the pose, united over every skin reaching it.
-  refreshJointBounds(model)
-  let groupOf = (part: ModelData["parts"][0], index: number): SceneNode => {
-    let node = groups[index]
-    if (node === undefined) throw new Error("createModel: part '" + part.name + "' names a missing node " + index)
-    return node
+    let slot = (index: number | null): TextureId | null => (index === null ? null : textures[index]!.id)
+    // One instance per glTF material as today, plus a skinned variant per
+    // material the skinned parts bring, a vertex-colored one per material
+    // the COLOR_0 parts bring, a morphed and an instanced one likewise (a
+    // material shared by parts that differ in any needs two programs -
+    // different vertex stages).
+    let variants = new Map<string, Material>()
+    let materialFor = (index: number, skinned: boolean, vertexColors: boolean, morphed: boolean, instanced: boolean): Material => {
+      let m = data.materials[index]
+      if (m === undefined) throw new Error("createModel: a part names a missing material " + index)
+      let key = index + (skinned ? "|skinned" : "") + (vertexColors ? "|colored" : "") + (morphed ? "|morphed" : "") + (instanced ? "|instanced" : "")
+      let made = variants.get(key)
+      if (made === undefined) {
+        made = make(
+          m,
+          {
+            map: slot(m.map),
+            normalMap: slot(m.normalMap),
+            emissiveMap: slot(m.emissiveMap),
+            metalnessMap: slot(m.metalnessRoughnessMap),
+            roughnessMap: slot(m.metalnessRoughnessMap),
+          },
+          skinned,
+          vertexColors,
+          morphed,
+          instanced,
+        )
+        variants.set(key, made)
+      }
+      return made
+    }
+    let materials = data.materials.map((_, i) => materialFor(i, false, false, false, false))
+
+    let model = createGroup() as Model
+    built = model
+    model._skins = []
+    model._worn = []
+    model._body = null
+    model._grafts = []
+    model.parts = []
+    model._textures = textures
+    // The node table is pre-order, so every parent group exists before its
+    // children reference it.
+    let groups: SceneNode[] = data.nodes.map((n) => {
+      let group = createGroup()
+      setTransform(group, { position: n.position, quaternion: n.rotation, scale: n.scale })
+      // The file's transform is the node's rest pose: what a mixer's
+      // layers compose over and a spring chain settles to.
+      group._rest = Float32Array.from([...n.position, ...n.rotation, ...n.scale])
+      return group
+    })
+    data.nodes.forEach((n, i) => add(n.parent === null ? model : groups[n.parent]!, groups[i]!))
+    model.nodes = data.nodes.map((n, i) => (n.extras === undefined ? { name: n.name, node: groups[i]! } : { name: n.name, node: groups[i]!, extras: n.extras }))
+    // A glTF node with morph targets owns its parts' weights (the file's
+    // node.weights / mesh.weights seed them): one register, one weights
+    // texture, every part of the mesh reads it - so setMorphWeights on
+    // the node (and a clip's weights track) moves the whole mesh.
+    data.nodes.forEach((n, i) => {
+      if (n.weights === undefined) return
+      let part = data.parts.find((p) => p.node === i && p.geometry.morphs !== undefined)
+      if (part === undefined) return
+      groups[i]!._morph = createMorphState(part.geometry.morphs!.names, n.weights, label ? label + "-" + n.name + "-weights" : n.name + "-weights")
+    })
+    // Each skin's palette lives in an rgba32f texture, 4 texels wide, one
+    // row per joint (the four columns of that joint's mat4), sized to the
+    // RIG: rig size is bounded by texture height (>= 2048 everywhere), not
+    // the vertex uniform budget, so there is no joint cap. The texture id
+    // is bound as uBones on every mesh drawing the skin and freed with the
+    // model's other textures. The bone matrices themselves are the spatial
+    // core's job: each joint node carries a palette-row binding (texture,
+    // row, inverse bind, the model root as anchor) that enterScene attaches,
+    // so the flush writes model-local jointWorld x inverseBind rows whenever
+    // joints move - there is no JS palette walk, and posing joints with
+    // setTransform is always enough. Identical skins (same joints, same
+    // inverse binds - the body/legs and LOD splits exporters produce) share
+    // one texture, so their palette is computed and uploaded once. A worn
+    // piece's rows move onto another model's joints (bindSkeleton).
+    data.skins.forEach((skin, i) => {
+      let joints = skin.joints.map((n) => {
+        let joint = groups[n]
+        if (joint === undefined) throw new Error("createModel: skin " + i + " names a missing node " + n)
+        return joint
+      })
+      let key = skin.joints.join(",")
+      let same = model._skins.find(
+        (other, j) =>
+          data.skins[j]!.joints.join(",") === key &&
+          other.inverseBind.length === skin.inverseBind.length &&
+          other.inverseBind.every((v, k) => v === skin.inverseBind[k]),
+      )
+      let texture: TextureId
+      if (same !== undefined) texture = same.texture
+      else {
+        let palette = takeTexture(new Float32Array(skin.joints.length * 16), 4, skin.joints.length, "rgba32f", false, { anisotropy: 1, baseLevel: 0 }, label ? label + "-skin" + i : "skin" + i)
+        bytes += textureBytes(4, skin.joints.length, "rgba32f", false, new Float32Array(0))
+        textures.push(palette)
+        texture = palette.id
+      }
+      model._skins.push({ texture, joints, inverseBind: skin.inverseBind, jointBounds: skin.jointBounds })
+      if (same !== undefined) return
+      joints.forEach((joint, j) => {
+        ;(joint._palettes ??= []).push({ texture, row: j, post: skin.inverseBind.slice(j * 16, j * 16 + 16), anchor: model })
+      })
+    })
+    if (data.skins.length > 0) yield
+    // Each joint's influence box, in joint space: culling-only bounds the
+    // flush carries through the pose, united over every skin reaching it.
+    refreshJointBounds(model)
+    let groupOf = (part: ModelData["parts"][0], index: number): SceneNode => {
+      let node = groups[index]
+      if (node === undefined) throw new Error("createModel: part '" + part.name + "' names a missing node " + index)
+      return node
+    }
+    for (let part of data.parts) {
+      let skinned = part.skin !== null
+      let morphed = part.geometry.morphs !== undefined
+      let colored = layoutSlot(part.geometry.layout, "aColor") !== null
+      let extras = part.extras
+      let placements = part.placements ?? []
+      if (placements.length > 0) {
+        // A population: the geometry once, drawn per placement. The mesh
+        // sits at identity under the model root, which anchors its records,
+        // and each placement node - the first is `part.node` - carries an
+        // instance at identity, so the record the core writes is that
+        // node's model-relative world: moving the node (setTransform, a
+        // clip, a transition) moves the copy, hiding it hides the copy,
+        // and a pick lands on the instance. Skins place by palette and
+        // morph weights are per node, so neither can share one geometry;
+        // parseGltf never folds them, and a hand-built ModelData that does
+        // is refused rather than drawn wrong.
+        if (skinned) throw new Error("createModel: part '" + part.name + "' is skinned and has placements; a skinned part cannot be shared")
+        if (morphed) throw new Error("createModel: part '" + part.name + "' has morph targets and placements; a morphed part cannot be shared")
+        let material = materialFor(part.material, false, colored, false, true)
+        let mesh = createInstancedMesh(part.geometry, material, { capacity: placements.length + 1, anchor: model, label: label ? label + "-" + part.name : part.name })
+        add(model, mesh)
+        let instances = [part.node, ...placements].map((index) => addInstance(mesh, undefined, groupOf(part, index)))
+        model.parts.push(extras === undefined ? { name: part.name, mesh, instances } : { name: part.name, mesh, instances, extras })
+        yield
+        continue
+      }
+      let material = materialFor(part.material, skinned, colored, morphed, false)
+      let mesh = createMesh(part.geometry, material)
+      // The part's weights are its glTF node's (above), not its own.
+      if (morphed) mesh._morphOwner = groups[part.node] ?? mesh
+      if (skinned) {
+        // A skinned part's vertices are model-space bind pose and the skin
+        // matrices place them, so its mesh hangs off the model root (the
+        // spec ignores the node's transform for skinned meshes) and uModel
+        // stays the model's own placement.
+        let skin = model._skins[part.skin!]
+        if (skin === undefined) throw new Error("createModel: part '" + part.name + "' names a missing skin " + part.skin)
+        mesh._textures = { uBones: skin.texture }
+        // Culled by its joints' boxes, so the box follows the animation.
+        mesh._cullJoints = skin.joints.slice()
+        add(model, mesh)
+      } else {
+        add(groupOf(part, part.node), mesh)
+      }
+      model.parts.push(extras === undefined ? { name: part.name, mesh } : { name: part.name, mesh, extras })
+      yield
+    }
+    model.materials = materials
+    model.clips = data.clips
+    model.bounds = data.bounds
+    model._textureBytes = bytes
+    if (data.extras !== undefined) model.extras = data.extras
+    if (data.blobs !== undefined) model.blobs = data.blobs
+    let disposed = false
+    model.dispose = () => {
+      if (disposed) return
+      // A worn piece comes off first (its rows sit on the body's joints);
+      // a body takes its pieces with it (their skins read joints that are
+      // about to go).
+      if (model._body !== null) unbindSkeleton(model)
+      for (let worn of model._worn.slice()) worn.piece.dispose()
+      if (model.parent !== null) remove(model)
+      // A destroyed model still animating out (its root waits for every
+      // part's exit) keeps its textures until it is gone: destroy then
+      // dispose is the unmount shape, and a corpse must not sample a
+      // destroyed texture.
+      if (afterFree(model, () => model.dispose())) return
+      disposed = true
+      freeModel(model)
+      // Core clips a mixer registered; their players drop at the next
+      // advance (the leave above already killed the target nodes).
+      for (let clip of model.clips) {
+        if (clip._core !== undefined) {
+          spatial.destroyClip(clip._core)
+          clip._core = undefined
+        }
+        if (clip._coreVariants !== undefined) {
+          for (let id of clip._coreVariants.values()) spatial.destroyClip(id)
+          clip._coreVariants = undefined
+        }
+      }
+    }
+    if (opts.autoFree !== false && getOwner()) onCleanup(() => model.dispose())
+    complete = true
+    return model
+  } finally {
+    if (!complete) {
+      if (built !== null) freeModel(built)
+      else for (let texture of textures) freeTexture(texture)
+    }
   }
-  model.parts = data.parts.map((part) => {
-    let skinned = part.skin !== null
-    let morphed = part.geometry.morphs !== undefined
-    let colored = layoutSlot(part.geometry.layout, "aColor") !== null
-    let extras = part.extras
-    let placements = part.placements ?? []
-    if (placements.length > 0) {
-      // A population: the geometry once, drawn per placement. The mesh
-      // sits at identity under the model root, which anchors its records,
-      // and each placement node - the first is `part.node` - carries an
-      // instance at identity, so the record the core writes is that
-      // node's model-relative world: moving the node (setTransform, a
-      // clip, a transition) moves the copy, hiding it hides the copy,
-      // and a pick lands on the instance. Skins place by palette and
-      // morph weights are per node, so neither can share one geometry;
-      // parseGltf never folds them, and a hand-built ModelData that does
-      // is refused rather than drawn wrong.
-      if (skinned) throw new Error("createModel: part '" + part.name + "' is skinned and has placements; a skinned part cannot be shared")
-      if (morphed) throw new Error("createModel: part '" + part.name + "' has morph targets and placements; a morphed part cannot be shared")
-      let material = materialFor(part.material, false, colored, false, true)
-      let mesh = createInstancedMesh(part.geometry, material, { capacity: placements.length + 1, anchor: model, label: label ? label + "-" + part.name : part.name })
-      add(model, mesh)
-      let instances = [part.node, ...placements].map((index) => addInstance(mesh, undefined, groupOf(part, index)))
-      return extras === undefined ? { name: part.name, mesh, instances } : { name: part.name, mesh, instances, extras }
-    }
-    let material = materialFor(part.material, skinned, colored, morphed, false)
-    let mesh = createMesh(part.geometry, material)
-    // The part's weights are its glTF node's (above), not its own.
-    if (morphed) mesh._morphOwner = groups[part.node] ?? mesh
-    if (skinned) {
-      // A skinned part's vertices are model-space bind pose and the skin
-      // matrices place them, so its mesh hangs off the model root (the
-      // spec ignores the node's transform for skinned meshes) and uModel
-      // stays the model's own placement.
-      let skin = model._skins[part.skin!]
-      if (skin === undefined) throw new Error("createModel: part '" + part.name + "' names a missing skin " + part.skin)
-      mesh._textures = { uBones: skin.texture }
-      // Culled by its joints' boxes, so the box follows the animation.
-      mesh._cullJoints = skin.joints.slice()
-      add(model, mesh)
-    } else {
-      add(groupOf(part, part.node), mesh)
-    }
-    return extras === undefined ? { name: part.name, mesh } : { name: part.name, mesh, extras }
-  })
-  model.materials = materials
-  model.clips = data.clips
-  model.bounds = data.bounds
-  if (data.extras !== undefined) model.extras = data.extras
-  if (data.blobs !== undefined) model.blobs = data.blobs
-  let disposed = false
-  model.dispose = () => {
-    if (disposed) return
-    // A worn piece comes off first (its rows sit on the body's joints);
-    // a body takes its pieces with it (their skins read joints that are
-    // about to go).
-    if (model._body !== null) unbindSkeleton(model)
-    for (let worn of model._worn.slice()) worn.piece.dispose()
-    if (model.parent !== null) remove(model)
-    // A destroyed model still animating out (its root waits for every
-    // part's exit) keeps its textures until it is gone: destroy then
-    // dispose is the unmount shape, and a corpse must not sample a
-    // destroyed texture.
-    if (afterFree(model, () => model.dispose())) return
-    disposed = true
-    for (let part of model.parts) {
-      // A population's record buffers are mesh-owned (the one explicit
-      // free); its geometry buffers are shared like any part's.
-      if (part.instances !== undefined) disposeInstances(part.mesh as InstancedMesh)
-      disposeGeometry(part.mesh.geometry)
-    }
-    for (let id of textures) {
-      liveTextures.delete(id)
-      destroyTexture(id)
-    }
-    textures.length = 0
-    // The nodes' weights textures (the parts' entries are off the scene
-    // with the remove above).
-    for (let n of model.nodes) {
-      if (n.node._morph !== null) {
-        destroyTexture(n.node._morph.texture)
-        n.node._morph = null
-      }
-    }
-    // Core clips a mixer registered; their players drop at the next
-    // advance (the leave above already killed the target nodes).
-    for (let clip of model.clips) {
-      if (clip._core !== undefined) {
-        spatial.destroyClip(clip._core)
-        clip._core = undefined
-      }
-      if (clip._coreVariants !== undefined) {
-        for (let id of clip._coreVariants.values()) spatial.destroyClip(id)
-        clip._coreVariants = undefined
-      }
+}
+
+// What a model holds on the GPU, freed: a population's record buffers
+// (mesh-owned, the one explicit free), the geometry buffers (shared like
+// any part's), the textures (to the pool where it has a class), the
+// nodes' weights textures (the parts' entries are off the scene by now).
+function freeModel(model: Model): void {
+  for (let part of model.parts) {
+    if (part.instances !== undefined) disposeInstances(part.mesh as InstancedMesh)
+    disposeGeometry(part.mesh.geometry)
+  }
+  for (let texture of model._textures) freeTexture(texture)
+  model._textures = []
+  for (let n of model.nodes ?? []) {
+    if (n.node._morph !== null) {
+      destroyTexture(n.node._morph.texture)
+      n.node._morph = null
     }
   }
-  if (opts.autoFree !== false && getOwner()) onCleanup(() => model.dispose())
-  return model
 }
 
 // Build under the reactive scope a loader was called from, captured

@@ -40,6 +40,14 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   walls cover are not drawn, through the gate they come back, and the
   gate's door is an occluder that stops occluding when hidden; the HUD
   counts what the render leaves out through `scene.cullState`.
+- `streaming.tsx` - a streaming world: a terrain grid (`createRegionGrid`
+  over the core's residency gate) whose cells are generated in a
+  `"use isolate"` module (`streaming-worker.ts`), built one create per
+  frame slice (a generator `build`), stood in for by flat slabs while
+  unloaded (the `proxy`, HLOD), bounded by a byte `limit` so the far
+  cells the minimap wants stall, wanted by the flying camera and the
+  minimap alike; the HUD counts the cells by state and the control
+  API reads the gate, the slice queue and the pool.
 - `animation-layers.tsx` - the mixer's layered model, composed in core
   (`createMixer` layers, `createBlendSpace`): a walk-run blend space in
   a marker-synced group on the base (the plants land together at any

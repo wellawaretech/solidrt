@@ -51,7 +51,8 @@ pub use clips::{ChannelInterpolation, ChannelPath, ClipChannel, ClipId, ClipMark
 #[cfg(test)]
 pub(crate) use pick::{ray_shape, BVH_MIN_TRIANGLES};
 pub use residency::{
-  GridId, GridSpec, RegionEvent, RegionMargins, RegionRef, ResidencyStats, DEFAULT_RESIDENCY_BUDGET, VIEW_KEY_BASE,
+  GridId, GridSpec, RegionEvent, RegionMargins, RegionRef, RegionSpec, RegionState, ResidencyStats,
+  DEFAULT_RESIDENCY_BUDGET, VIEW_KEY_BASE,
 };
 pub use rig::{
   AdditiveReference, ClipEvent, GroupId, LayerMode, LayerSpec, LayerUpdate, MaskId, PlayerId, PlayerSpec, PlayerUpdate,
@@ -1594,14 +1595,17 @@ impl Spatial {
   /// thrashing). Wanted overall if ANY viewer wants it. The region moves
   /// with the node; ending it, or destroying the node, reports a leave if
   /// its enter had gone out. Visibility is not consulted: the gate gates
-  /// memory, and a hidden region still exists. See `take_region_events`.
-  pub fn set_region(&mut self, id: NodeId, margins: Option<RegionMargins>) -> Result<(), String> {
+  /// memory, and a hidden region still exists. The spec's `weight` is
+  /// the estimate the limits admit it by until the handler measures
+  /// (`set_region_weight`), its `priority` the order among regions and
+  /// grids. See `take_region_events`.
+  pub fn set_region(&mut self, id: NodeId, spec: Option<RegionSpec>) -> Result<(), String> {
     let i = self.resolve(id)?;
     let node = &mut self.nodes[i as usize];
-    if margins.is_some() && node.bounds.or(node.cull_bounds).is_none() {
+    if spec.is_some() && node.bounds.or(node.cull_bounds).is_none() {
       return Err("a region needs a box (set_bounds or set_cull_bounds)".to_string());
     }
-    let declared = self.residency.set_region(i, node, margins)?;
+    let declared = self.residency.set_region(i, node, spec)?;
     if declared {
       node.region.as_mut().expect("the region was just declared").moved = true;
       self.regions_moved = true;
@@ -1653,6 +1657,38 @@ impl Spatial {
   /// its own unit), re-weighed against the limits at the next pass.
   pub fn set_grid_weight(&mut self, id: GridId, weight: f64) -> Result<(), String> {
     self.residency.set_grid_weight(id, weight)
+  }
+
+  /// A grid's own cap on resident weight (None = none), re-weighed at the
+  /// next pass.
+  pub fn set_grid_limit(&mut self, id: GridId, limit: Option<f64>) -> Result<(), String> {
+    self.residency.set_grid_limit(id, limit)
+  }
+
+  /// The weight a handler measured for a wanted grid cell once it built
+  /// the content: what the limits weigh it by in place of the grid's
+  /// estimate (`GridSpec::weight`), re-weighed at the next pass.
+  pub fn set_cell_weight(&mut self, id: GridId, cell: [i32; 3], weight: f64) -> Result<(), String> {
+    self.residency.set_cell_weight(id, cell, weight)
+  }
+
+  /// The weight a handler measured for an explicit region (see
+  /// `set_cell_weight`).
+  pub fn set_region_weight(&mut self, id: NodeId, weight: f64) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    self.residency.set_region_weight(&mut self.nodes[i as usize], weight)
+  }
+
+  /// Where a grid cell stands (`RegionState`; None when nobody wants it).
+  pub fn cell_state(&self, id: GridId, cell: [i32; 3]) -> Result<Option<RegionState>, String> {
+    self.residency.cell_state(id, cell)
+  }
+
+  /// Where an explicit region stands (None when nobody wants it, or the
+  /// node is no region).
+  pub fn region_state(&self, id: NodeId) -> Result<Option<RegionState>, String> {
+    let i = self.resolve(id)?;
+    Ok(residency::Residency::region_state(&self.nodes[i as usize]))
   }
 
   /// The gate's figures for the stats query (`ResidencyStats`).

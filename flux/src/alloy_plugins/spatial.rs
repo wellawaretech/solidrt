@@ -20,8 +20,8 @@ use alloy::spatial::{
   IkSolverSpec, IkTarget, IkUp, InstanceProjection, InstanceRecordSink, LayerMode, LayerSpec, LayerUpdate, LegSpec,
   LodLevel, LookAtBone, LookAtLimit, LookAtSpec, MarkerPhase, MoveOptions, NodeEndpoint, NodeMotion,
   NodeTransitionConfig, NodeTransitionEntry, Occluder, PlayerSpec, PlayerUpdate, Projection, QueryFilter, RegionEvent,
-  RegionMargins, RegionRef, RestPose, RootMotion, Shape, SharedSlotSink, SpringCollider, SpringJoint,
-  SpringJointUpdate, SpringShape, SyncMode, TextureSlotSink, TwoBoneSpec, Volume,
+  RegionMargins, RegionRef, RegionSpec, RegionState, RestPose, RootMotion, Shape, SharedSlotSink, SpringCollider,
+  SpringJoint, SpringJointUpdate, SpringShape, SyncMode, TextureSlotSink, TwoBoneSpec, Volume,
 };
 
 /// Floats per joint in createSpring's joint payload (see `create_spring`).
@@ -119,6 +119,11 @@ impl ModuleDef for SpatialModule {
     decl.declare("createGrid")?;
     decl.declare("destroyGrid")?;
     decl.declare("setGridWeight")?;
+    decl.declare("setGridLimit")?;
+    decl.declare("setCellWeight")?;
+    decl.declare("setRegionWeight")?;
+    decl.declare("cellState")?;
+    decl.declare("regionState")?;
     decl.declare("setResidencyBudget")?;
     decl.declare("setResidencyLimit")?;
     decl.declare("setLod")?;
@@ -227,6 +232,11 @@ impl ModuleDef for SpatialModule {
     exports.export("createGrid", Function::new(ctx.clone(), create_grid)?)?;
     exports.export("destroyGrid", Function::new(ctx.clone(), destroy_grid)?)?;
     exports.export("setGridWeight", Function::new(ctx.clone(), set_grid_weight)?)?;
+    exports.export("setGridLimit", Function::new(ctx.clone(), set_grid_limit)?)?;
+    exports.export("setCellWeight", Function::new(ctx.clone(), set_cell_weight)?)?;
+    exports.export("setRegionWeight", Function::new(ctx.clone(), set_region_weight)?)?;
+    exports.export("cellState", Function::new(ctx.clone(), cell_state)?)?;
+    exports.export("regionState", Function::new(ctx.clone(), region_state)?)?;
     exports.export("setResidencyBudget", Function::new(ctx.clone(), set_residency_budget)?)?;
     exports.export("setResidencyLimit", Function::new(ctx.clone(), set_residency_limit)?)?;
     exports.export("setLod", Function::new(ctx.clone(), set_lod)?)?;
@@ -837,17 +847,90 @@ fn margins_arg(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Result<R
   }
 }
 
-/// Make the node a residency region (`{ enter, leave }`), or with null end
-/// it.
-fn set_region<'js>(ctx: Ctx<'js>, id: u64, margins: Value<'js>) -> rquickjs::Result<()> {
-  let m = if margins.is_null() || margins.is_undefined() {
+/// The `priority` of a region or grid spec: an integer, default 0.
+fn priority_arg(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Result<i32> {
+  let priority: Option<f64> = obj.get("priority")?;
+  match priority {
+    None => Ok(0),
+    Some(p) if p.is_finite() && p.fract() == 0.0 && p.abs() <= i32::MAX as f64 => Ok(p as i32),
+    Some(_) => Err(throw_str(ctx, &format!("{api}: priority must be an integer"))),
+  }
+}
+
+/// Make the node a residency region (`{ enter, leave, weight?, priority? }`),
+/// or with null end it.
+fn set_region<'js>(ctx: Ctx<'js>, id: u64, spec: Value<'js>) -> rquickjs::Result<()> {
+  let m = if spec.is_null() || spec.is_undefined() {
     None
   } else {
-    let obj =
-      margins.as_object().ok_or_else(|| throw_str(&ctx, "setRegion: margins must be { enter, leave } or null"))?;
-    Some(margins_arg(&ctx, obj, "setRegion")?)
+    let obj = spec
+      .as_object()
+      .ok_or_else(|| throw_str(&ctx, "setRegion: spec must be { enter, leave, weight?, priority? } or null"))?;
+    let margins = margins_arg(&ctx, obj, "setRegion")?;
+    let weight: Option<f64> = obj.get("weight")?;
+    let priority = priority_arg(&ctx, obj, "setRegion")?;
+    Some(RegionSpec { margins, weight: weight.unwrap_or(0.0), priority })
   };
   super::gui(&ctx).alloy.spatial().set_region(id, m).map_err(|e| throw_str(&ctx, &format!("setRegion: {e}")))
+}
+
+/// The weight a handler measured for an explicit region once built.
+fn set_region_weight(ctx: Ctx<'_>, id: u64, weight: f64) -> rquickjs::Result<()> {
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_region_weight(id, weight)
+    .map_err(|e| throw_str(&ctx, &format!("setRegionWeight: {e}")))
+}
+
+/// A grid's own cap on resident weight (null = none).
+fn set_grid_limit(ctx: Ctx<'_>, grid: u64, limit: Option<f64>) -> rquickjs::Result<()> {
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_grid_limit(grid, limit)
+    .map_err(|e| throw_str(&ctx, &format!("setGridLimit: {e}")))
+}
+
+/// A cell index `[i, j, k]` argument.
+fn cell_arg(ctx: &Ctx<'_>, cell: Vec<i32>, api: &str) -> rquickjs::Result<[i32; 3]> {
+  if cell.len() != 3 {
+    return Err(throw_str(ctx, &format!("{api}: cell must be [i, j, k]")));
+  }
+  Ok([cell[0], cell[1], cell[2]])
+}
+
+/// The weight a handler measured for a wanted grid cell once built.
+fn set_cell_weight(ctx: Ctx<'_>, grid: u64, cell: Vec<i32>, weight: f64) -> rquickjs::Result<()> {
+  let cell = cell_arg(&ctx, cell, "setCellWeight")?;
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_cell_weight(grid, cell, weight)
+    .map_err(|e| throw_str(&ctx, &format!("setCellWeight: {e}")))
+}
+
+fn state_name(state: Option<RegionState>) -> Option<&'static str> {
+  state.map(|s| match s {
+    RegionState::Pending => "pending",
+    RegionState::Stalled => "stalled",
+    RegionState::Resident => "resident",
+  })
+}
+
+/// Where a grid cell stands: "pending", "stalled", "resident", or null.
+fn cell_state(ctx: Ctx<'_>, grid: u64, cell: Vec<i32>) -> rquickjs::Result<Option<&'static str>> {
+  let cell = cell_arg(&ctx, cell, "cellState")?;
+  let state =
+    super::gui(&ctx).alloy.spatial().cell_state(grid, cell).map_err(|e| throw_str(&ctx, &format!("cellState: {e}")))?;
+  Ok(state_name(state))
+}
+
+/// Where an explicit region stands (see `cell_state`).
+fn region_state(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<Option<&'static str>> {
+  let state =
+    super::gui(&ctx).alloy.spatial().region_state(id).map_err(|e| throw_str(&ctx, &format!("regionState: {e}")))?;
+  Ok(state_name(state))
 }
 
 /// A fixed-length numeric array field of a JS object, `None` when absent.
@@ -869,7 +952,7 @@ fn array_field<T: for<'a> FromJs<'a> + Copy + Default, const N: usize>(
 }
 
 /// A grid of regions from `{ origin, cell, enter, leave, bounds?, wrap?,
-/// weight?, limit?, label? }`; returns its id.
+/// weight?, limit?, priority?, label? }`; returns its id.
 fn create_grid<'js>(ctx: Ctx<'js>, spec: Object<'js>) -> rquickjs::Result<u64> {
   let origin = array_field::<f32, 3>(&ctx, &spec, "origin", "createGrid")?
     .ok_or_else(|| throw_str(&ctx, "createGrid: origin is required"))?;
@@ -880,11 +963,22 @@ fn create_grid<'js>(ctx: Ctx<'js>, spec: Object<'js>) -> rquickjs::Result<u64> {
   let wrap = array_field::<i32, 3>(&ctx, &spec, "wrap", "createGrid")?;
   let weight: Option<f64> = spec.get("weight")?;
   let limit: Option<f64> = spec.get("limit")?;
+  let priority = priority_arg(&ctx, &spec, "createGrid")?;
   let label: Option<String> = spec.get("label")?;
   super::gui(&ctx)
     .alloy
     .spatial()
-    .create_grid(GridSpec { origin, cell, margins, bounds, wrap, weight: weight.unwrap_or(1.0), limit, label })
+    .create_grid(GridSpec {
+      origin,
+      cell,
+      margins,
+      bounds,
+      wrap,
+      weight: weight.unwrap_or(1.0),
+      limit,
+      priority,
+      label,
+    })
     .map_err(|e| throw_str(&ctx, &format!("createGrid: {e}")))
 }
 

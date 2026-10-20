@@ -234,6 +234,20 @@ pulls one item per step (progress, ticks, a subscription), `break` ends it in
 the isolate, and streams never block plain calls. Full contract:
 node_modules/@solidrt/flux-types/modules/isolate.d.ts.
 
+## Sliced work: creates spread over frames
+
+A burst of GPU creates in one frame (a region of models, a procedural
+chunk's meshes and textures) is a hitch: each create is a blocking call to
+the raster thread. `slice(steps)` from `@solidrt/core` queues an iterator
+whose every step is one create-sized piece of work and runs as many per
+frame as `setSliceBudget(ms)` allows (default 2 ms, measured by the wall
+clock, first thing in the frame, every job in the app spending the one
+budget), so a generator that `yield`s between creates spreads them over
+frames; the handle cancels (the generator closes, its `finally` runs) and
+settles. A world streaming by the residency gate builds its regions this
+way (`createRegion`/`createRegionGrid` in `@solidrt/core` and the node
+forms in @solidrt/3d), with the data prepared in an isolate first.
+
 ## Where GPU work stops being free
 
 "GPU work is nearly free" is a property of the hardware, not of the engine, and

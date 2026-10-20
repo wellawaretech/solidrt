@@ -127,6 +127,10 @@ const POOL_CHUNKS = 16
 // of the quarter-size levels): what a chunk weighs against `maxTexels`
 // with its chain on.
 const MIP_CHAIN_FACTOR = 4 / 3
+// Bytes per chunk texel (an rgba8 target): the gate weighs every region
+// in BYTES, so a tile layer and a 3d grid share one scene limit; the
+// layer's own `maxTexels` stays in texels, its unit, and converts here.
+const CHUNK_TEXEL_BYTES = 4
 
 export type Tint = [number, number, number, number]
 
@@ -1226,8 +1230,8 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
         ? undefined
         : [floorDiv(bounds.col, chunkTiles), floorDiv(bounds.row, chunkTiles), 0, floorDiv(bounds.col + bounds.cols - 1, chunkTiles), floorDiv(bounds.row + bounds.rows - 1, chunkTiles), 0],
     wrap: wrap === null ? undefined : [wrap.cols / chunkTiles, wrap.rows / chunkTiles, 0],
-    weight: chunkTexels(density),
-    limit: maxTexels,
+    weight: chunkTexels(density) * CHUNK_TEXEL_BYTES,
+    limit: maxTexels === undefined ? undefined : maxTexels * CHUNK_TEXEL_BYTES,
     label,
   })
   handlers.set(grid, { enter: enterChunk, leave: leaveChunk })
@@ -1341,7 +1345,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
       }
       touch(chunk, false)
     }
-    spatial.setGridWeight(grid, chunkTexels(n))
+    spatial.setGridWeight(grid, chunkTexels(n) * CHUNK_TEXEL_BYTES)
   }
   // Each view's wish for the density: its target texels per world pixel
   // (oversample times zoom).

@@ -131,9 +131,9 @@ window, enters pending, pool hits and misses.
 ## Not in this item
 
 - **Budgeted creates**: spreading one region's many GPU creates over
-  frames (the 3d note's "loading that does not hitch") is the handler's,
-  over [gpu-async-compile-readback](../backlog/gpu-async-compile-readback.md); the
-  gate's budget bounds how many regions START per frame.
+  frames (the 3d note's "loading that does not hitch") is the handler's;
+  the gate's budget bounds how many regions START per frame. Built as
+  core's frame slice queue in the 3d handler item.
 - **HLOD**: whether a region whose far level is a merged proxy is an LOD
   level that loads or its own gate ([3d-world-residency](../backlog/3d-world-residency.md)).
 - **Region content**: what a handler puts in a region is its own; the
@@ -178,9 +178,13 @@ first handler, then memory legible and bounded).
   wanted and pending but demands no frame and no pass (`pending >
   stalled` is the gate's demand), or a still camera at a full budget
   would spin frames forever. Recounted by every pass.
-- **A limit counts cells, not content**: a resident chunk without cells
-  holds no texture but weighs a chunk, so a sparse world sits below its
-  budget. Documented, not fixed; a per-cell weight is additive later.
+- **A limit counts cells, not content** was the first shape: a resident
+  chunk without cells held no texture but weighed a chunk. The 3d
+  handler item (okf/plans/3d-world-residency.md) added the measured
+  weight per region (`setCellWeight`, `setRegionWeight`), explicit
+  regions under the limits with a weight of their own, and a priority
+  ahead of urgency; the tile layer still reports its estimate per
+  chunk (an empty chunk weighs a chunk), now in bytes.
 - **Memory legible**: `/gpu` `groups` by exact label (the tile layer
   labels every chunk resource with the layer's label), `/stats` reads the
   gate live (`regionsWanted/Resident/Pending/Stalled`, cumulative

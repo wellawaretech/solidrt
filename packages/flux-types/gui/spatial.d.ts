@@ -335,6 +335,22 @@ declare module "flux:spatial" {
    * thrashes. */
   export type RegionMargins = { enter: number; leave: number }
   /**
+   * An explicit region's declaration (setRegion): its margins, `weight`
+   * the handler's estimated cost of the region in a unit of its choosing
+   * (bytes, say; default 0 = free under every limit) that the limits
+   * admit it by until the handler measures (setRegionWeight), and
+   * `priority` (an integer, default 0): a higher priority enters first
+   * whatever the distance and is evicted last.
+   */
+  export type RegionSpec = RegionMargins & { weight?: number; priority?: number }
+  /**
+   * Where a wanted region stands: "pending" (its enter not yet
+   * delivered), "stalled" (held back by a limit until a view moves) or
+   * "resident" (entered and not left since); null for a region nobody
+   * wants.
+   */
+  export type RegionState = "pending" | "stalled" | "resident"
+  /**
    * Make the node a residency region, or with null end it. The gate
    * beside culling and LOD that gates MEMORY: which regions of a world
    * should exist right now, per viewer, reported only on change. The
@@ -354,9 +370,18 @@ declare module "flux:spatial" {
    * destroying the node, reports a leave if its enter went out; a region
    * still pending reports nothing. What a region holds is its handler's:
    * the gate knows wanted or not, and a handler still loading when the
-   * leave arrives cancels its own work.
+   * leave arrives cancels its own work. The region weighs its `weight`
+   * under the scene limit (setResidencyLimit) and takes part in its
+   * evictions like a grid cell.
    */
-  export function setRegion(node: NodeId, margins: RegionMargins | null): void
+  export function setRegion(node: NodeId, spec: RegionSpec | null): void
+  /** The weight a handler measured for an explicit region once it built
+   * the content: what the limits weigh it by from here on, in place of
+   * the declared estimate. Throws for a node that is no region. */
+  export function setRegionWeight(node: NodeId, weight: number): void
+  /** Where an explicit region stands (RegionState), null while nobody
+   * wants it or the node is no region. */
+  export function regionState(node: NodeId): RegionState | null
   /**
    * A grid of regions: `origin` the world corner of cell [0, 0, 0], `cell`
    * the size per axis with 0 meaning unbounded along that axis (the index
@@ -368,11 +393,15 @@ declare module "flux:spatial" {
    * `wrap` an optional period in cells per axis (0 = none; a torus:
    * indices modulo the period, the canonical cell reported once however
    * many images a viewer sees - the handler's composite places the
-   * images), `weight` the handler's cost of one resident cell in a unit of
-   * its choosing (a tile layer's chunk texels; default 1, 0 = free under
-   * every limit), `limit` the grid's own cap on resident weight (see
-   * setResidencyLimit for how a cap evicts), `label` the name the stats
-   * group the grid's footprint under.
+   * images), `weight` the handler's ESTIMATED cost of one resident cell
+   * in a unit of its choosing (bytes; default 1, 0 = free under every
+   * limit) that the limits admit a cell by until the handler measures it
+   * (setCellWeight), `limit` the grid's own cap on resident weight (see
+   * setResidencyLimit for how a cap evicts), `priority` the order among
+   * grids and regions (an integer, default 0: higher enters first
+   * whatever the distance and is evicted last - a collision grid before
+   * decorative scatter), `label` the name the stats group the grid's
+   * footprint under.
    */
   export type GridSpec = {
     origin: [number, number, number]
@@ -383,6 +412,7 @@ declare module "flux:spatial" {
     wrap?: [number, number, number]
     weight?: number
     limit?: number
+    priority?: number
     label?: string
   }
   /**
@@ -405,26 +435,39 @@ declare module "flux:spatial" {
    * against the limits at the next pass: a tile layer re-baking at a new
    * oversample reports its new chunk texel count here. */
   export function setGridWeight(grid: GridId, weight: number): void
+  /** A grid's own cap on resident weight (GridSpec.limit), null for none,
+   * re-weighed against the resident set at the next pass. */
+  export function setGridLimit(grid: GridId, limit: number | null): void
+  /** The weight a handler measured for a wanted grid cell once it built
+   * the content (its GPU bytes, say): what the limits weigh it by from
+   * here on, in place of the grid's estimate. Throws for a cell nobody
+   * wants, which holds no state. */
+  export function setCellWeight(grid: GridId, cell: [number, number, number], weight: number): void
+  /** Where a grid cell stands (RegionState), null while nobody wants
+   * it; throws for an unknown grid. */
+  export function cellState(grid: GridId, cell: [number, number, number]): RegionState | null
   /**
-   * The scene-wide cap on resident grid weight, null for none (default):
+   * The scene-wide cap on resident weight, null for none (default):
    * Unreal's streaming pool size in our costume, every grid's cells
-   * weighed by their grid's `weight`, beside each grid's own `limit`.
-   * Past a cap the most urgent pending cell displaces the least urgent
-   * resident ones until it fits, urgency being the distance to the
-   * nearest wanting eye in the grid's own `leave`s (dimensionless, so a
-   * 2d layer in pixels and a 3d grid in metres compare); the eviction's
-   * leave precedes the enter it made room for, so a handler's pool hands
-   * the freed resources straight over. A cell nothing can make room for
-   * is wanted and STALLED: no event, and no frame demanded for it until
-   * a view moves. Explicit regions (setRegion) weigh nothing. A cap
-   * counts resident cells, not what a handler put in them: a resident
-   * chunk a tile layer holds no texture for still weighs a chunk.
+   * weighed by their grid's `weight` (or the weight the handler measured)
+   * and every explicit region by its own, beside each grid's own `limit`.
+   * Past a cap the most needed pending region displaces the least needed
+   * resident ones until it fits - needed by priority first, then by
+   * urgency, the distance to the nearest wanting eye in the region's own
+   * `leave`s (dimensionless, so a 2d layer in pixels and a 3d grid in
+   * metres compare); the eviction's leave precedes the enter it made
+   * room for, so a handler's pool hands the freed resources straight
+   * over. A region nothing can make room for is wanted and STALLED: no
+   * event, and no frame demanded for it until a view moves. Until a
+   * handler measures, a cap counts estimates: a resident chunk a tile
+   * layer holds no texture for still weighs its grid's estimate.
    */
   export function setResidencyLimit(limit: number | null): void
   /**
    * The region enters delivered per frame scene-wide (default 16): every
-   * region form and consumer spends the one budget, nearest to a viewer's
-   * eye first, and the pending set re-sorts every frame, so a fast camera
+   * region form and consumer spends the one budget, the highest priority
+   * then the nearest to a viewer's eye first, and the pending set
+   * re-sorts every frame, so a fast camera
    * streams what it is heading for and a region it turned away from never
    * enters (no event, nothing to cancel). Leaves are never budgeted. A
    * handler's own readiness (a chunk baked, a model parsed) is the
