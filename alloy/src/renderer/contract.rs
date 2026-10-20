@@ -84,14 +84,17 @@ pub trait DisplayListBuilder: Sized {
   fn save(&mut self) -> &mut Self;
   /// Push state and open a layer over `bounds`: the draws until the
   /// matching restore render offscreen and composite as one with `paint`
-  /// (its alpha as group opacity, its filters over the group). With
-  /// `backdrop`, the layer starts from the pixels beneath `bounds` run
-  /// through that filter.
-  fn save_layer(
+  /// (its alpha as group opacity, its filters over the group).
+  fn save_layer(&mut self, bounds: &Rect, paint: Option<&super::Paint>) -> &mut Self;
+  /// `save_layer` whose layer starts from the pixels already beneath
+  /// `bounds` (within the clip in effect), run through `filter` when one
+  /// is given; the restore paints them back with `paint`. A backdrop
+  /// filter is this with the restore immediately after.
+  fn save_backdrop_layer(
     &mut self,
     bounds: &Rect,
     paint: Option<&super::Paint>,
-    backdrop: Option<&super::ImageFilter>,
+    filter: Option<&super::ImageFilter>,
   ) -> &mut Self;
   fn restore(&mut self) -> &mut Self;
 
@@ -203,12 +206,19 @@ pub trait MaskFilter: Sized {
 /// draws it across frames.
 pub trait Path: Clone {}
 
-/// Builds a path from a pen walk. Starts empty.
-pub trait PathBuilder: Default {
+/// Where a path walk draws: the segment vocabulary of a `PathBuilder`,
+/// and of anything else that wants to see a walk (the dash walker's
+/// output, a recording pen in a test). A curve arrives as a curve, so a
+/// stroker sees the geometry a solid stroke would.
+pub trait Pen {
   fn move_to(&mut self, p: Point) -> &mut Self;
   fn line_to(&mut self, p: Point) -> &mut Self;
   fn quadratic_to(&mut self, ctrl: Point, p: Point) -> &mut Self;
   fn cubic_to(&mut self, ctrl1: Point, ctrl2: Point, p: Point) -> &mut Self;
+}
+
+/// Builds a path from a pen walk. Starts empty.
+pub trait PathBuilder: Default + Pen {
   /// Close the current subpath back to its start.
   fn close(&mut self) -> &mut Self;
   /// The path, with `fill` deciding its inside.

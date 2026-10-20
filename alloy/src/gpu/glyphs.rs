@@ -3,6 +3,8 @@
 //! data shared by the UI thread (which builds the quads from the text
 //! atlas's placements) and the raster thread (which draws them).
 
+use crate::renderer::TileMode;
+
 /// One glyph of a text layer: where its cell lands in the layer, which
 /// atlas texels it samples, and the run's color.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -126,17 +128,6 @@ pub enum GradientKind {
   Radial = 2,
 }
 
-/// What a gradient does past its ends (Impeller's tile modes); the
-/// discriminants are the pass's `uTile` values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GradientTile {
-  Clamp = 0,
-  Repeat = 1,
-  Mirror = 2,
-  /// Transparent outside 0..1.
-  Decal = 3,
-}
-
 /// A run's gradient paint resolved to the layer (rendertree/text/
 /// gradient.rs): how a layer pixel maps to the gradient's parameter, and
 /// the colors along it.
@@ -148,7 +139,8 @@ pub struct GlyphGradient {
   /// its parameter as x', a radial one as the length of (x', y').
   pub x_row: [f32; 3],
   pub y_row: [f32; 3],
-  pub tile: GradientTile,
+  /// What the gradient does past its ends.
+  pub tile: TileMode,
   /// The stop colors sampled along the parameter: `RAMP_WIDTH` texels of
   /// straight-alpha sRGB rgba8, the ramp texture the pass samples.
   pub ramp: Vec<[u8; 4]>,

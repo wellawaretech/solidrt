@@ -89,9 +89,7 @@ pub use gpu::{
   ShaderStage, StepMode, TargetSpec, TextureBinding, Topology, UniformKind, UniformSlot, UniformTable, VertexAttr,
   WindowShader, INDEX_NONE, MAX_BUFFERS,
 };
-pub use gpu::{
-  CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, GradientTile, RAMP_WIDTH,
-};
+pub use gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use input::InputState;
 pub use keymap::w3c_code_for_key;
 pub use logging::install_logger;

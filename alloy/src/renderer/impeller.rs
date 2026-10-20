@@ -72,8 +72,30 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     self
   }
 
-  fn save_layer(&mut self, bounds: &Rect, paint: Option<&Paint>, backdrop: Option<&ImageFilter>) -> &mut Self {
-    self.0.save_layer(bounds, paint.map(|p| &p.0), backdrop.map(|b| &b.0));
+  fn save_layer(&mut self, bounds: &Rect, paint: Option<&Paint>) -> &mut Self {
+    self.0.save_layer(bounds, paint.map(|p| &p.0), None);
+    self
+  }
+
+  fn save_backdrop_layer(&mut self, bounds: &Rect, paint: Option<&Paint>, filter: Option<&ImageFilter>) -> &mut Self {
+    // The backdrop argument is what makes Impeller's save_layer capture
+    // the pixels beneath at all, and an identity image filter cannot be
+    // constructed in the prebuilt (ImpellerImageFilterCreateMatrixNew
+    // returns null, okf/upstream/impeller-image-filter-matrix-null.md),
+    // so an unfiltered capture rides a blur far below one pixel: visually
+    // the identity, but a real filter that triggers the capture. Clamp
+    // tiling, since the backdrop is a filled surface with no transparent
+    // edge for Decal to keep.
+    const BACKDROP_CAPTURE_SIGMA: f32 = 0.001;
+    let identity;
+    let backdrop = match filter {
+      Some(f) => &f.0,
+      None => {
+        identity = imp::ImageFilter::new_blur(BACKDROP_CAPTURE_SIGMA, BACKDROP_CAPTURE_SIGMA, imp::TileMode::Clamp);
+        &identity
+      }
+    };
+    self.0.save_layer(bounds, paint.map(|p| &p.0), Some(backdrop));
     self
   }
 
@@ -307,7 +329,7 @@ impl contract::Path for Path {}
 #[derive(Default)]
 pub struct PathBuilder(imp::PathBuilder);
 
-impl contract::PathBuilder for PathBuilder {
+impl contract::Pen for PathBuilder {
   fn move_to(&mut self, p: Point) -> &mut Self {
     self.0.move_to(p);
     self
@@ -327,7 +349,9 @@ impl contract::PathBuilder for PathBuilder {
     self.0.cubic_curve_to(ctrl1, ctrl2, p);
     self
   }
+}
 
+impl contract::PathBuilder for PathBuilder {
   fn close(&mut self) -> &mut Self {
     self.0.close();
     self

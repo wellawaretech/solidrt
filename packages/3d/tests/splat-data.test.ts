@@ -565,12 +565,15 @@ test("a pq bake palettes the SH bands per subspace, exactly when the codes suffi
 })
 
 test("a pq bake of more vectors than codes clusters them, deterministically, better than no palette", () => {
-  // 3000 degree-1 vectors in a ball: no exact codebook exists. (Chroma
+  // 1000 degree-1 vectors in a ball: no exact codebook exists. (Chroma
   // differences of two uniform [-0.5, 0.5] values stay inside the byte
-  // range, so nothing clamps.)
+  // range, so nothing clamps.) The count is the test host's budget: the
+  // bake is k-means in JS and runs twice here, and QuickJS does 3000
+  // vectors in over the 30 s an engine gets.
+  const VECTORS = 1000
   let rand = lcg(11)
-  let vectors = Array.from({ length: 3000 }, () => Array.from({ length: 45 }, () => (rand() * 2 - 1) * 0.5))
-  let bytes = shPly(3000, i => vectors[i]!)
+  let vectors = Array.from({ length: VECTORS }, () => Array.from({ length: 45 }, () => (rand() * 2 - 1) * 0.5))
+  let bytes = shPly(VECTORS, i => vectors[i]!)
   let a = parseSplat(bytes, { shDegree: 1, keepOrientation: true })
   let b = parseSplat(bytes, { shDegree: 1, keepOrientation: true })
   expect(a.sh).toEqual(b.sh)
@@ -591,7 +594,7 @@ test("a pq bake of more vectors than codes clusters them, deterministically, bet
   // Every splat decodes to its own nearest code: no decoded vector is
   // farther from its source than the farthest code the report saw.
   let worst = 0
-  for (let slot = 0; slot < 3000; slot++) {
+  for (let slot = 0; slot < VECTORS; slot++) {
     let decoded = decodeSh(a, slot)
     let source = Math.round(decodeRecord(a, slot).position[0])
     let v = vectors[source]!

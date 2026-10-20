@@ -20,9 +20,7 @@ pub(crate) mod spec;
 pub(crate) mod texture;
 pub(crate) mod vocab;
 
-pub use glyphs::{
-  CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, GradientTile, RAMP_WIDTH,
-};
+pub use glyphs::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use lease::WriteLeases;
 pub use limits::GpuLimits;
 pub use order::{

@@ -7,8 +7,8 @@
 // lines' height, at the text origin); an absolute one's coordinates are
 // text-local pixels from that origin, its transform mapping gradient space
 // into them as it does for every other element.
-use crate::gpu::{GlyphGradient, GradientKind, GradientTile, RAMP_WIDTH};
-use crate::renderer::{Matrix, Point, Size, TileMode};
+use crate::gpu::{GlyphGradient, GradientKind, RAMP_WIDTH};
+use crate::renderer::{Matrix, Point, Size};
 use crate::rendertree::{Gradient, GradientStop, GradientUnits};
 
 // A 2D affine map as two rows over (x, y, 1).
@@ -53,15 +53,6 @@ fn invert(a: Affine) -> Option<Affine> {
 // convention: x' = x * m11 + y * m21 + m41).
 fn affine_of(m: &Matrix) -> Affine {
   [[m.m11, m.m21, m.m41], [m.m12, m.m22, m.m42]]
-}
-
-fn tile_of(tile: TileMode) -> GradientTile {
-  match tile {
-    TileMode::Clamp => GradientTile::Clamp,
-    TileMode::Repeat => GradientTile::Repeat,
-    TileMode::Mirror => GradientTile::Mirror,
-    TileMode::Decal => GradientTile::Decal,
-  }
 }
 
 // The stops sampled across the ramp: the first color before the first
@@ -126,7 +117,7 @@ pub(crate) fn layer_gradient(
         kind: GradientKind::Linear,
         x_row: rows[0],
         y_row: [0.0; 3],
-        tile: tile_of(*tile),
+        tile: *tile,
         ramp: ramp(stops)?,
       })
     }
@@ -150,7 +141,7 @@ pub(crate) fn layer_gradient(
         kind: GradientKind::Radial,
         x_row: rows[0],
         y_row: rows[1],
-        tile: tile_of(*tile),
+        tile: *tile,
         ramp: ramp(stops)?,
       })
     }

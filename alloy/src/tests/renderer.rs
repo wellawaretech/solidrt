@@ -76,8 +76,16 @@ fn every_recording_op_builds_a_list() {
   b.draw_oval(&rect(0.0, 0.0, 10.0, 10.0), &radial_paint);
   b.draw_rounded_rect(&rect(0.0, 0.0, 10.0, 10.0), &RoundingRadii::circular([2.0; 4]), &paint);
   b.draw_path(&path, &paint);
-  b.save_layer(&rect(0.0, 0.0, 20.0, 20.0), Some(&paint), Some(&ImageFilter::gaussian_blur(0.5, 0.5, TileMode::Clamp)));
+  b.save_layer(&rect(0.0, 0.0, 20.0, 20.0), Some(&paint));
   b.draw_display_list(&inner, 0.5);
+  b.restore();
+  b.save_backdrop_layer(
+    &rect(0.0, 0.0, 20.0, 20.0),
+    Some(&paint),
+    Some(&ImageFilter::gaussian_blur(0.5, 0.5, TileMode::Clamp)),
+  );
+  b.restore();
+  b.save_backdrop_layer(&rect(0.0, 0.0, 20.0, 20.0), None, None);
   b.restore();
   b.restore();
   let list = b.build().expect("the list builds");

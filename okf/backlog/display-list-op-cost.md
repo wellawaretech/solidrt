@@ -77,6 +77,24 @@ Earlier same-day findings, still valid:
    `raster::buffer_age` either-extension widening stays - that one is
    a real fix).
 
+## Re-measured 2026-10-20, across the renderer seam
+
+Same TV, same probes, same method (`/clock?scale=5`, a 10 s `/stats`
+window, `frames` over `windowMs`), release clients: the last build before
+the renderer seam (okf/plans/renderer-seam.md) and the first one after it,
+installed back to back.
+
+| static field | client | frames / 10 s | sustained fps | missedPresents |
+|---|---|---|---|---|
+| 800 rects | before the seam | 264 | 26.4 | 0 |
+| 800 rects | after the seam | 264 | 26.4 | 0 |
+| 50 rects | before the seam | 500 | 50.0 (locked) | 0 |
+| 50 rects | after the seam | 500 | 50.0 (locked) | 0 |
+
+The seam changes nothing per op, as its design said: the record walk still
+runs on the UI thread and the raster thread hands the renderer the same
+list. The ceiling above is unchanged and still this item's.
+
 ## Constraint kept for the record: the rig detour as a DEFAULT
 
 Even before the CPU attribution, rerouting all frames through the rig

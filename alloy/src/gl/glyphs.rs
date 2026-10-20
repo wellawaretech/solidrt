@@ -19,7 +19,7 @@ use super::storage::create_layer_target;
 use super::{prev_framebuffer, prev_texture};
 use crate::gpu::{CoveragePolicy, GlyphGroup, GlyphQuad, ParamValue, RAMP_WIDTH};
 use crate::renderer::prelude::*;
-use crate::renderer::{ISize, Renderer, Texture};
+use crate::renderer::{ISize, Renderer, Texture, TileMode};
 use glow::HasContext;
 use std::rc::Rc;
 
@@ -70,8 +70,7 @@ void main() {
 ";
 
 // The policy's modes are `CoverageMode`'s discriminants, the gradient
-// kinds `GradientKind`'s (0 for none) and the tile modes `GradientTile`'s
-// (gpu/glyphs.rs). A gradient run's color comes from the ramp at the
+// kinds `GradientKind`'s (0 for none) and the tile modes `tile_uniform`'s. A gradient run's color comes from the ramp at the
 // parameter its layer pixel maps to; the quad's alpha still applies.
 const FRAGMENT_SRC: &str = r"
 uniform sampler2D uAtlas;
@@ -341,6 +340,16 @@ pub(crate) fn render_glyphs(
   }
 }
 
+// The pass's `uTile` value for a tile mode (the fragment stage's switch).
+fn tile_uniform(tile: TileMode) -> i32 {
+  match tile {
+    TileMode::Clamp => 0,
+    TileMode::Repeat => 1,
+    TileMode::Mirror => 2,
+    TileMode::Decal => 3,
+  }
+}
+
 // Every group as one draw into `fbo`, the target cleared transparent by
 // the first draw (or once, when no group has quads, so a re-render into
 // retained storage leaves no stale pixels).
@@ -363,7 +372,7 @@ fn draw_groups(
     let quads_texture = rig.upload(gl, &group.quads)?;
     let ramp = rig.ramp(gl, group.gradient.as_ref().map(|g| g.ramp.as_slice()))?;
     let (kind, tile, x_row, y_row) = match &group.gradient {
-      Some(g) => (g.kind as i32, g.tile as i32, g.x_row, g.y_row),
+      Some(g) => (g.kind as i32, tile_uniform(g.tile), g.x_row, g.y_row),
       None => (0, 0, [0.0; 3], [0.0; 3]),
     };
     let params = [

@@ -1,6 +1,7 @@
-use super::dash::{walk_dashes, walked_length, Dash, Pen, Piece, DASH_TOLERANCE};
+use super::dash::{walk_dashes, walked_length, Dash, Piece, DASH_TOLERANCE};
 use super::{PaintState, ShadowState};
-use crate::renderer::contract::{DisplayListBuilder as _, Paint as _, PathBuilder as _};
+use crate::renderer::contract::Pen;
+use crate::renderer::prelude::*;
 use crate::renderer::{DisplayListBuilder, DrawStyle, FillType, Path as DrawPath, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
@@ -154,7 +155,7 @@ impl Path {
             lyon_builder.end(false);
           }
           let pt = resolve(abs, x, y, &cursor);
-          Pen::move_to(&mut path_builder, pt);
+          path_builder.move_to(pt);
           lyon_builder.begin(point(pt.x, pt.y));
           lyon_open = true;
           cursor = (pt.x, pt.y);
@@ -165,7 +166,7 @@ impl Path {
         PathSegment::LineTo { abs, x, y } => {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let pt = resolve(abs, x, y, &cursor);
-          Pen::line_to(&mut path_builder, pt);
+          path_builder.line_to(pt);
           lyon_builder.line_to(point(pt.x, pt.y));
           cursor = (pt.x, pt.y);
           last_cubic_cp2 = None;
@@ -175,7 +176,7 @@ impl Path {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let pt = resolve(abs, x, 0.0, &cursor);
           let pt = Point::new(pt.x, cursor.1);
-          Pen::line_to(&mut path_builder, pt);
+          path_builder.line_to(pt);
           lyon_builder.line_to(point(pt.x, pt.y));
           cursor = (pt.x, pt.y);
           last_cubic_cp2 = None;
@@ -185,7 +186,7 @@ impl Path {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let pt = resolve(abs, 0.0, y, &cursor);
           let pt = Point::new(cursor.0, pt.y);
-          Pen::line_to(&mut path_builder, pt);
+          path_builder.line_to(pt);
           lyon_builder.line_to(point(pt.x, pt.y));
           cursor = (pt.x, pt.y);
           last_cubic_cp2 = None;
@@ -196,7 +197,7 @@ impl Path {
           let cp1 = resolve(abs, x1, y1, &cursor);
           let cp2 = resolve(abs, x2, y2, &cursor);
           let end = resolve(abs, x, y, &cursor);
-          Pen::cubic_to(&mut path_builder, cp1, cp2, end);
+          path_builder.cubic_to(cp1, cp2, end);
           lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_cubic_cp2 = Some(cp2);
@@ -211,7 +212,7 @@ impl Path {
           };
           let cp2 = resolve(abs, x2, y2, &cursor);
           let end = resolve(abs, x, y, &cursor);
-          Pen::cubic_to(&mut path_builder, cp1, cp2, end);
+          path_builder.cubic_to(cp1, cp2, end);
           lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_cubic_cp2 = Some(cp2);
@@ -221,7 +222,7 @@ impl Path {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let cp = resolve(abs, x1, y1, &cursor);
           let end = resolve(abs, x, y, &cursor);
-          Pen::quadratic_to(&mut path_builder, cp, end);
+          path_builder.quadratic_to(cp, end);
           lyon_builder.quadratic_bezier_to(point(cp.x, cp.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_quad_cp = Some(cp);
@@ -235,7 +236,7 @@ impl Path {
             None => Point::new(cursor.0, cursor.1),
           };
           let end = resolve(abs, x, y, &cursor);
-          Pen::quadratic_to(&mut path_builder, cp, end);
+          path_builder.quadratic_to(cp, end);
           lyon_builder.quadratic_bezier_to(point(cp.x, cp.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_quad_cp = Some(cp);
@@ -259,7 +260,7 @@ impl Path {
             let cp1 = Point::new(cb.ctrl1.x, cb.ctrl1.y);
             let cp2 = Point::new(cb.ctrl2.x, cb.ctrl2.y);
             let end_pt = Point::new(cb.to.x, cb.to.y);
-            Pen::cubic_to(&mut path_builder, cp1, cp2, end_pt);
+            path_builder.cubic_to(cp1, cp2, end_pt);
             lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end_pt.x, end_pt.y));
           }
           cursor = (end.x, end.y);
@@ -482,7 +483,7 @@ impl Buildable for Path {
         // grown by the blur's reach.
         let o = shadow.outset();
         crate::rendertree::counters::note_save_layer();
-        builder.save_layer(&shape_box.inflate(o, o), Some(&shadow.to_layer_paint()), None);
+        builder.save_layer(&shape_box.inflate(o, o), Some(&shadow.to_layer_paint()));
       }
       match self.dash().filter(|_| self.paint.strokes()) {
         Some(dash) => {

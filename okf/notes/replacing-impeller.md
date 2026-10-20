@@ -23,44 +23,54 @@ them up.
 
 ## What Impeller still does
 
-The import surface is misleading: about 60 files name `impellers::`, but
-most take only vocabulary types (Color, Rect, Point, Size, Matrix). The real
-dependence is five things.
+Since the renderer seam (okf/plans/renderer-seam.md, 2026-10-20) the call
+surface is no longer something to count: it is the contract in
+`alloy/src/renderer/contract.rs`, one trait per renderer type, and
+`alloy/src/renderer/impeller.rs` is the only file that names the
+`impellers` crate. A replacement implements those traits beside it and the
+aliases in `renderer/mod.rs` switch. What Impeller does behind the seam:
 
-1. **Executes the display list.** The whole frame is one DisplayList drawn
-   through `wrap_fbo` on FBO 0 or the MSAA rig (`alloy/src/gl/draw.rs`).
+1. **Executes the display list.** `Renderer::draw` into a target
+   framebuffer: FBO 0 or the MSAA rig (`alloy/src/gl/draw.rs`).
 2. **Rasterizes shapes.** rect, rounded rect, oval, path fill and stroke
    with caps, joins, miter and fill rules. Dashes are already ours
    (`kinds/dash.rs`). Anti-aliasing is already ours too: 4x MSAA through the
    rig, not Impeller coverage AA.
 3. **Paint and state.** solid color, linear and radial gradients with
-   transform and tile mode, blend mode, opacity, clip rect / rounded rect /
-   oval, save, restore, 2d and perspective transforms.
+   transform and tile mode, image sources, blend mode, opacity, clip rect /
+   rounded rect / oval, save, restore, 2d and perspective transforms.
 4. **Layers and effects.** `save_layer` for opacity groups and color
-   filters, backdrop capture, gaussian blur, mask blur for shadows, color
-   matrix (`rendertree/composite.rs`, `kinds/filter.rs`, `kinds/shadow.rs`).
-5. **Text.** Shaping through the typography context and glyph rasterization
-   through `draw_paragraph`, plus font discovery and fallback including
-   emoji. The owned layout already narrowed this to two calls,
-   `WordCache::get_or_shape` and `draw_paragraph`.
+   filters, backdrop capture (`save_backdrop_layer`), gaussian blur, mask
+   blur for shadows, color matrix (`rendertree/composite.rs`,
+   `kinds/filter.rs`, `kinds/shadow.rs`).
+5. **Texture adoption.** `Renderer::adopt_texture` takes a GL name into a
+   `Texture` the lists draw; RGBA8 only.
+
+Text is no longer on the list: shaping and glyph rasterization are ours
+(okf/done/text-own-rasterizer.md), and a text layer reaches Impeller as a
+`draw_texture_rect` like any other texture.
 
 Texture adoption does not need replacing, it disappears. Without Impeller a
-texture is a GL name, which retires the RGBA8888-only adoption limit, the
-`unadopted` bookkeeping in `raster/targets.rs`, the wrapped-target flip
-conventions, and the ANGLE cross-context item in the backlog.
+texture is a GL name, which retires the RGBA8-only adoption limit (the
+`Option` on `TextureEntry::handle` and the `unadopted` bookkeeping in
+`raster/targets.rs`), the wrapped-target flip conventions, and the ANGLE
+cross-context item in the backlog.
 
 ### The op vocabulary to reimplement
 
-Counted from the emit sites in `rendertree/` and `raster/`, this is the
-whole contract:
+The contract, exactly (`DisplayListBuilder`, `Paint`, `ColorSource`,
+`ImageFilter`, `ColorFilter`, `MaskFilter`, `PathBuilder` in
+`contract.rs`); `alloy/src/tests/renderer.rs` drives every op once:
 
-- draws: rect, rounded rect, oval, path, line, texture rect, paragraph,
-  nested display list
-- state: save, restore, save_layer, clip rect / rounded rect / oval,
-  translate, scale, transform
-- paint: color, color source (linear and radial gradient), draw style,
-  stroke width / cap / join / miter, blend mode, color filter, image
-  filter, mask filter
+- draws: line, rect, rounded rect, oval, path, texture rect with sampling,
+  nested display list with opacity
+- state: save, save_layer, save_backdrop_layer, restore, clip rect /
+  rounded rect / oval with intersect or difference, translate, scale,
+  transform
+- paint: color, linear and radial gradient and image sources with tile
+  mode, draw style, stroke width / cap / join / miter, blend mode (all 29),
+  color matrix filter, gaussian blur image filter, blur mask filter
+- paths: move, line, quadratic, cubic, close, fill rule
 
 That is roughly a dozen draws and a dozen paint fields. Impeller is a few
 hundred thousand lines of C++ and we need none of its generality: no
@@ -79,9 +89,10 @@ Estimates, not measurements.
 | Text engine: shaper glue, atlas, word cache rework, fallback, emoji | 2500 |
 | Pixel parity harness | 1000 |
 
-Call it 7 to 8 thousand lines of Rust and GLSL, plus mechanical edits in the
-24 non-test files that emit Impeller calls today. For scale, `alloy/src/gl/`
-is 5300 lines and the owned text layout was about 2200.
+Call it 7 to 8 thousand lines of Rust and GLSL, and no mechanical edits:
+the emit sites already go through the contract, so the replacement is a
+second module under `alloy/src/renderer/`. For scale, `alloy/src/gl/` is
+5300 lines and the owned text layout was about 2200.
 
 ### Crate map
 

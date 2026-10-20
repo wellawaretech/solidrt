@@ -286,7 +286,7 @@ fn draw_dl_with_effects(
     let paint = effect_paint(0.0, opacity, filter);
     let bounds = Rect::new(Point::new(-CLIP_INF, -CLIP_INF), Size::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
     crate::rendertree::counters::note_save_layer();
-    builder.save_layer(&bounds, Some(&paint), None);
+    builder.save_layer(&bounds, Some(&paint));
     crate::rendertree::counters::note_draw();
     builder.draw_display_list(dl, 1.0);
     builder.restore();

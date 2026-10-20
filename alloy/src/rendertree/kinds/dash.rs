@@ -1,8 +1,9 @@
 // The dash walker shared by line and path: a pattern in local units, the
 // pieces of geometry it walks, and the pen it draws every "on" run into.
 
+use crate::renderer::contract::Pen;
 use crate::renderer::prelude::*;
-use crate::renderer::{contract, FillType, Path as DrawPath, PathBuilder, Point, Rect};
+use crate::renderer::{FillType, Path as DrawPath, PathBuilder, Point, Rect};
 use lyon_path::geom::{point, CubicBezierSegment, LineSegment, QuadraticBezierSegment};
 use std::ops::Range;
 
@@ -47,31 +48,6 @@ impl Dash {
   pub fn scaled(self, factor: f32) -> Option<Dash> {
     let off = self.off * factor;
     (off > 0.0).then(|| Dash { on: self.on * factor, off, offset: self.offset * factor })
-  }
-}
-
-// Where the dash walker draws: the PathBuilder in a build, a recording pen
-// in the tests. A curve's dashes arrive as curves, so the stroker sees the
-// geometry a solid stroke would.
-pub trait Pen {
-  fn move_to(&mut self, p: Point);
-  fn line_to(&mut self, p: Point);
-  fn quadratic_to(&mut self, ctrl: Point, p: Point);
-  fn cubic_to(&mut self, ctrl1: Point, ctrl2: Point, p: Point);
-}
-
-impl Pen for PathBuilder {
-  fn move_to(&mut self, p: Point) {
-    contract::PathBuilder::move_to(self, p);
-  }
-  fn line_to(&mut self, p: Point) {
-    contract::PathBuilder::line_to(self, p);
-  }
-  fn quadratic_to(&mut self, ctrl: Point, p: Point) {
-    contract::PathBuilder::quadratic_to(self, ctrl, p);
-  }
-  fn cubic_to(&mut self, ctrl1: Point, ctrl2: Point, p: Point) {
-    contract::PathBuilder::cubic_to(self, ctrl1, ctrl2, p);
   }
 }
 
@@ -174,7 +150,9 @@ impl Piece {
   // at `from`.
   fn emit(&self, from: f32, to: f32, pen: &mut impl Pen) {
     match &self.curve {
-      Curve::Line(_) => pen.line_to(self.point_at(to)),
+      Curve::Line(_) => {
+        pen.line_to(self.point_at(to));
+      }
       Curve::Quadratic(seg) => {
         let part = seg.split_range(self.t_at(from)..self.t_at(to));
         pen.quadratic_to(pt(part.ctrl), pt(part.to));

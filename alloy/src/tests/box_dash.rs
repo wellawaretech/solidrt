@@ -2,8 +2,9 @@
 // (edges and quarter arcs), what it measures, where the pattern starts,
 // and that a dash never leaves the box.
 
+use crate::renderer::contract::Pen;
 use crate::renderer::{DrawStyle, Point, Rect, Size};
-use crate::rendertree::kinds::dash::{box_outline, oval_outline, walk_dashes, walked_length, Dash, Pen};
+use crate::rendertree::kinds::dash::{box_outline, oval_outline, walk_dashes, walked_length, Dash};
 use crate::rendertree::{Bounded, Oval, Rectangle};
 use std::f32::consts::PI;
 
@@ -24,17 +25,21 @@ fn assert_close(actual: f32, expected: f32) {
 struct Points(Vec<Point>);
 
 impl Pen for Points {
-  fn move_to(&mut self, p: Point) {
+  fn move_to(&mut self, p: Point) -> &mut Self {
     self.0.push(p);
+    self
   }
-  fn line_to(&mut self, p: Point) {
+  fn line_to(&mut self, p: Point) -> &mut Self {
     self.0.push(p);
+    self
   }
-  fn quadratic_to(&mut self, ctrl: Point, p: Point) {
+  fn quadratic_to(&mut self, ctrl: Point, p: Point) -> &mut Self {
     self.0.extend([ctrl, p]);
+    self
   }
-  fn cubic_to(&mut self, c1: Point, c2: Point, p: Point) {
+  fn cubic_to(&mut self, c1: Point, c2: Point, p: Point) -> &mut Self {
     self.0.extend([c1, c2, p]);
+    self
   }
 }
 

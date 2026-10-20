@@ -424,10 +424,9 @@ pub(super) fn effect_paint(rgb: f32, opacity: f32, filter: Option<&FilterState>)
 // save_layer whose backdrop argument captures and filters the pixels
 // already painted beneath the box, restored immediately so the filtered
 // backdrop lands back in the target and the view's own content draws over
-// it unfiltered. The blur rides the backdrop argument; color keys ride the
-// restore paint's color filter (applied to the captured layer content),
-// with an identity matrix filter forcing the capture when only color keys
-// are set - Impeller has no color-filter-as-image-filter constructor. The
+// it unfiltered. The blur rides the layer's filter; color keys ride the
+// restore paint's color filter (applied to the captured layer content), so
+// a color-only backdrop captures unfiltered. The
 // element's group opacity rides the restore paint's alpha: the layer is
 // emitted outside the opacity group at every composite path (a backdrop
 // capture inside a fresh save_layer would read that layer, not the
@@ -472,7 +471,7 @@ pub(super) fn emit_backdrop(builder: &mut DisplayListBuilder, element: &Element,
   crate::rendertree::counters::note_clip(false);
   builder.clip_rect(&bounds, ClipOperation::Intersect);
   crate::rendertree::counters::note_save_layer();
-  builder.save_layer(&bounds, paint.as_ref(), Some(&backdrop));
+  builder.save_backdrop_layer(&bounds, paint.as_ref(), backdrop.as_ref());
   builder.restore();
   builder.restore();
 }
@@ -1001,7 +1000,7 @@ pub(super) fn record_node<'a>(
     let paint = effect_paint(0.0, opacity, filter);
     let bounds = Rect::new(Point::new(-CLIP_INF, -CLIP_INF), Size::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
     crate::rendertree::counters::note_save_layer();
-    builder.save_layer(&bounds, Some(&paint), None);
+    builder.save_layer(&bounds, Some(&paint));
   }
   // A backdrops-only pass opens no layer: a fading view below the root
   // folds its opacity into the pass alpha for its subtree instead (the

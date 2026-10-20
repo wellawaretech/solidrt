@@ -84,7 +84,7 @@ impl Buildable for Rectangle {
       clip_out(builder, &rect, self.radius);
       if own_layer {
         crate::rendertree::counters::note_save_layer();
-        builder.save_layer(&shadow.extent_of(rect), Some(&shadow.to_layer_paint()), None);
+        builder.save_layer(&shadow.extent_of(rect), Some(&shadow.to_layer_paint()));
         draw(builder, &cast, radii, &shadow.to_hard_paint());
         builder.restore();
       } else {

@@ -2,9 +2,10 @@
 // segment, precedence over the endpoints. Hit testing is the observable that
 // needs no platform; build and measure walk the same segments/extent.
 
+use crate::renderer::contract::Pen;
 use crate::renderer::{DrawStyle, Point, Rect, Size, StrokeCap, StrokeJoin};
 use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::kinds::dash::{walk_dashes, Dash, Pen};
+use crate::rendertree::kinds::dash::{walk_dashes, Dash};
 use crate::rendertree::kinds::line::pieces;
 use crate::rendertree::{Bounded, Line};
 
@@ -116,17 +117,21 @@ fn fill_styles_hit_the_interior_and_stroke_styles_the_outline() {
 struct Trace(Vec<String>);
 
 impl Pen for Trace {
-  fn move_to(&mut self, p: Point) {
+  fn move_to(&mut self, p: Point) -> &mut Self {
     self.0.push(format!("M{},{}", p.x, p.y));
+    self
   }
-  fn line_to(&mut self, p: Point) {
+  fn line_to(&mut self, p: Point) -> &mut Self {
     self.0.push(format!("L{},{}", p.x, p.y));
+    self
   }
-  fn quadratic_to(&mut self, ctrl: Point, p: Point) {
+  fn quadratic_to(&mut self, ctrl: Point, p: Point) -> &mut Self {
     self.0.push(format!("Q{},{} {},{}", ctrl.x, ctrl.y, p.x, p.y));
+    self
   }
-  fn cubic_to(&mut self, c1: Point, c2: Point, p: Point) {
+  fn cubic_to(&mut self, c1: Point, c2: Point, p: Point) -> &mut Self {
     self.0.push(format!("C{},{} {},{} {},{}", c1.x, c1.y, c2.x, c2.y, p.x, p.y));
+    self
   }
 }
 

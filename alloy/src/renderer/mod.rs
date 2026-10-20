@@ -40,7 +40,7 @@ pub type PathBuilder = impeller::PathBuilder;
 pub mod prelude {
   pub use super::contract::{
     ColorFilter as _, ColorSource as _, DisplayList as _, DisplayListBuilder as _, ImageFilter as _, MaskFilter as _,
-    Paint as _, Path as _, PathBuilder as _, Renderer as _, Texture as _,
+    Paint as _, Path as _, PathBuilder as _, Pen as _, Renderer as _, Texture as _,
   };
 }
 
@@ -58,6 +58,7 @@ fn selected_renderer_implements_the_contract() {
   fn image_filter<T: contract::ImageFilter>() {}
   fn mask_filter<T: contract::MaskFilter>() {}
   fn path<T: contract::Path>() {}
+  fn pen<T: contract::Pen>() {}
   fn path_builder<T: contract::PathBuilder>() {}
   renderer::<Renderer>();
   texture::<Texture>();
@@ -69,5 +70,6 @@ fn selected_renderer_implements_the_contract() {
   image_filter::<ImageFilter>();
   mask_filter::<MaskFilter>();
   path::<Path>();
+  pen::<PathBuilder>();
   path_builder::<PathBuilder>();
 }

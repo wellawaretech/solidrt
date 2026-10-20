@@ -1,6 +1,7 @@
 // The text layer's gradient mapping (rendertree/text/gradient.rs): a run's
 // gradient paint resolved to the layer's pixels for the glyph pass.
-use crate::gpu::{GradientKind, GradientTile, RAMP_WIDTH};
+use crate::gpu::{GradientKind, RAMP_WIDTH};
+use crate::renderer::TileMode;
 use crate::renderer::{Color, Point, Size};
 use crate::rendertree::text::gradient::layer_gradient;
 use crate::rendertree::{Gradient, GradientStop};
@@ -35,7 +36,7 @@ fn a_box_linear_gradient_runs_across_the_text_box() {
   let gradient = Gradient::linear_box(Point::new(0.0, 0.0), Point::new(1.0, 0.0), stops());
   let g = layer_gradient(&gradient, BOX, Point::new(-SLACK, -SLACK), SCALE).expect("resolved");
   assert_eq!(g.kind, GradientKind::Linear);
-  assert_eq!(g.tile, GradientTile::Clamp);
+  assert_eq!(g.tile, TileMode::Clamp);
   let rows = (g.x_row, g.y_row);
   assert!((param_at(rows, g.kind, Point::new(0.0, 10.0)) - 0.0).abs() < EPSILON, "the box's left edge is t 0");
   assert!((param_at(rows, g.kind, Point::new(100.0, 3.0)) - 1.0).abs() < EPSILON, "its right edge is t 1");

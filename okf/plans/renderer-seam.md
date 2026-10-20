@@ -248,9 +248,23 @@ Verified: alloy 818 unit tests, flux 83 gui tests, `sol test` 840 of 841
 binary and is unrelated), all pixel-identical by construction (no draw
 changed, only the types it goes through).
 
-Owed: the TV re-measure of
-[display-list-op-cost](../backlog/display-list-op-cost.md) on a release
-client. Untracked alloy examples that probe Impeller's own API
-(paragraphs, `wrap_fbo`) keep their `alloy::impellers` imports and no
-longer compile without the re-export; they were probes of the thing the
-seam hides.
+TV re-measured 2026-10-20 (table in
+[display-list-op-cost](../backlog/display-list-op-cost.md)): 264 and 500
+frames per 10 s on the dense and sparse probes, before and after alike.
+
+Follow-ups landed the same day:
+
+- `save_backdrop_layer` on the contract: a backdrop capture with an
+  optional filter. The sub-pixel blur that stood in for an identity filter
+  (the prebuilt's null matrix filter) lives in the Impeller module now; the
+  rendertree asks for an unfiltered capture.
+- `Pen` is the contract's path-walk vocabulary and `PathBuilder` extends
+  it; the dash walker, `kinds/path.rs` and the test pens use the one trait.
+- The glyph pass takes the renderer's `TileMode`; its private tile enum is
+  gone.
+- `okf/notes/replacing-impeller.md` points at the contract as the call
+  surface.
+- The nine Impeller-API probes moved to `probes/impeller/` (untracked, with
+  a README); the drifted GPU examples (`draw_instanced`, `draw_ordered`,
+  `yuv_texture`, the flux `gpu_*`) were ported to the current API and run
+  green headless, so `cargo test -p alloy` builds again without `--lib`.

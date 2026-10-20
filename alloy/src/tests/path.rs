@@ -2,9 +2,9 @@
 // with caps and joins read off the parsed `d`. And its dashed stroke: the
 // shared walker over the flattened subpaths.
 
+use crate::renderer::contract::Pen;
 use crate::renderer::{DrawStyle, Point, Rect, Size, StrokeCap, StrokeJoin};
 use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::kinds::dash::Pen;
 use crate::rendertree::{Bounded, Path};
 use std::f32::consts::SQRT_2;
 
@@ -113,17 +113,21 @@ fn dashes_count_as_caps() {
 struct Trace(Vec<String>);
 
 impl Pen for Trace {
-  fn move_to(&mut self, p: Point) {
+  fn move_to(&mut self, p: Point) -> &mut Self {
     self.0.push(format!("M{},{}", p.x, p.y));
+    self
   }
-  fn line_to(&mut self, p: Point) {
+  fn line_to(&mut self, p: Point) -> &mut Self {
     self.0.push(format!("L{},{}", p.x, p.y));
+    self
   }
-  fn quadratic_to(&mut self, ctrl: Point, p: Point) {
+  fn quadratic_to(&mut self, ctrl: Point, p: Point) -> &mut Self {
     self.0.push(format!("Q{},{} {},{}", ctrl.x, ctrl.y, p.x, p.y));
+    self
   }
-  fn cubic_to(&mut self, c1: Point, c2: Point, p: Point) {
+  fn cubic_to(&mut self, c1: Point, c2: Point, p: Point) -> &mut Self {
     self.0.push(format!("C{},{} {},{} {},{}", c1.x, c1.y, c2.x, c2.y, p.x, p.y));
+    self
   }
 }
 

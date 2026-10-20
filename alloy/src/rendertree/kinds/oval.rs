@@ -45,7 +45,7 @@ impl Buildable for Oval {
       crate::rendertree::counters::note_draw();
       if own_layer {
         crate::rendertree::counters::note_save_layer();
-        builder.save_layer(&shadow.extent_of(rect), Some(&shadow.to_layer_paint()), None);
+        builder.save_layer(&shadow.extent_of(rect), Some(&shadow.to_layer_paint()));
         builder.draw_oval(&cast, &shadow.to_hard_paint());
         builder.restore();
       } else {

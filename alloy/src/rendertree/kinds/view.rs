@@ -79,7 +79,7 @@ pub struct View {
   // Corner radii [top-left, top-right, bottom-right, bottom-left] for the
   // clip applied when overflow is non-visible. None clips to a plain rect.
   pub clip_radius: Option<[f32; 4]>,
-  // Subtree filter (CSS `filter` through Impeller's built-in filters):
+  // Subtree filter (CSS `filter` through the renderer's filters):
   // children composited together, then color-transformed and blurred as a
   // whole. Like opacity it is applied at composite time - on the boundary
   // paths' quad/layer paint, via a save_layer otherwise.
