@@ -2,8 +2,9 @@
 #
 # Every Android build is single-ABI, selected by ANDROID_ABI (default
 # arm64-v8a; ANDROID_ABI=x86_64 for the emulator):
-#   - dev: android-client / android-run build and launch the client for fast
-#     iteration; android-runtime builds the production runner on its own.
+#   - dev: android-client builds the client APK and stages it into
+#     dist/android/<abi>/; android-run also installs and launches it and
+#     tails logcat; android-runtime builds the production runner on its own.
 #   - dist: android-dist builds both APKs for one ABI and stages them into
 #     packages/android-<abi>/, mirroring the desktop `dist` goal.
 #
@@ -47,32 +48,30 @@ DEV_SERVER ?= $(if $(HOST_LAN_IP),$(HOST_LAN_IP):$(DEV_PORT))
 
 .PHONY: android-client android-run android-run-armeabi-v7a android-dist android-dist-armeabi-v7a
 
-android-client: $(PLAYER_JS) $(BSOD_JS)
-	$(RUNTIME_MAKE) android-client
-
 # Bootstrap Gradle wrapper if missing.
 $(GRADLE_WRAPPER_JAR):
 	cd android && gradle wrapper
 
-# Build APK, stage it into dist/android/<abi>/ next to its .so files, install
-# that staged copy, launch, and stream logcat. Staging keeps dist/android
-# current with what the device runs, so `sol android --install` (which takes
-# the APK from there in a checkout) installs this build, not an older one.
-define apk-run
+# The dev client: the .so, then the debuggable APK built from it, staged into
+# dist/android/<abi>/ next to its .so files. The two there always come from
+# the same build, so `sol android --install` (which takes the APK from there
+# in a checkout) or an `adb install -r` of it installs this build, not an
+# older one. Installing is android-run's job.
+android-client: $(PLAYER_JS) $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
+	$(RUNTIME_MAKE) android-client
 	# gradle's jniLibs.srcDir bundles every ABI staged under dist/android, so
-	# -PsolAbi pins the APK to the one this loop just built.
+	# -PsolAbi pins the APK to the one just built.
 	cd android && ./gradlew assemblePlayerDebug -PsolAbi=$(ANDROID_ABI)
 	cp $(APK_PLAYER_DEBUG) $(ANDROID_DIST)/solidrt-go.apk
 	@echo "Staged solidrt-go.apk ($(ANDROID_ABI)) into $(ANDROID_DIST)/"
+
+# Install the staged APK, launch it, and stream logcat (which never returns).
+android-run: android-client
 	adb install -r $(ANDROID_DIST)/solidrt-go.apk
 	adb logcat -c
 	@echo "Launching with dev server: $(if $(DEV_SERVER),$(DEV_SERVER),none (manual/QR connect))"
 	adb shell am start -n com.solidrt.player.dev/com.solidrt.app.MainActivity $(if $(DEV_SERVER),--es sol_dev_server $(DEV_SERVER))
 	adb logcat -s SDL SDL/APP libmain DEBUG libc
-endef
-
-android-run: android-client $(GRADLE_WRAPPER_JAR)
-	$(call apk-run)
 
 # The same dev loop against the 32-bit ABI.
 android-run-armeabi-v7a:
@@ -96,8 +95,10 @@ endef
 # PUBLISH=1 (the release workflow) makes it the published Player,
 # com.solidrt.player signed with the Player key from the environment;
 # without it, it is the dev Player (com.solidrt.player.dev, debug key), like
-# the dev loop's debuggable build above (app/build.gradle).
-android-dist: android-client $(GRADLE_WRAPPER_JAR)
+# android-client's debuggable build above (app/build.gradle).
+android-dist: $(PLAYER_JS) $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
+	# The .so alone: android-client's debug APK would be overwritten below.
+	$(RUNTIME_MAKE) android-client
 	# dist/android may hold .so files from other ABIs, and gradle's
 	# jniLibs.srcDir would bundle all of them; -PsolAbi pins the APK to this one.
 	cd android && ./gradlew assemblePlayerRelease -PsolAbi=$(ANDROID_ABI) -PsolVersion=$(VERSION) $(if $(PUBLISH),-PsolPublish)

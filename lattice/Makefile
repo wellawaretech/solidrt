@@ -87,7 +87,7 @@ help:
 	@echo "  dist                 Build both plus the flux binaries into packages/$(HOST_PLATFORM)/"
 	@echo ""
 	@echo "Android dev (single ABI=$(ANDROID_ABI)):"
-	@echo "  android-client       Build the client .so"
+	@echo "  android-client       Build the client APK into dist/android/<abi>/"
 	@echo "  android-run          Build, install, launch, tail logcat"
 	@echo "  android-run-armeabi-v7a  Same, for the 32-bit ABI"
 	@echo "  android-runtime      Build the production runner APK (the sol pack --apk base)"
