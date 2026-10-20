@@ -1052,6 +1052,31 @@ pub struct DrawUpdate {
   pub order_direction: Option<[f32; 3]>,
 }
 
+/// One draw entry's share of a spatial flush: the fresh value of each of
+/// the fixed per-entry params the spatial core writes - `uModel` (the
+/// node's world transform relative to the target's render origin),
+/// `uNormal` (its inverse transpose, for sinks bound with `normal`) and
+/// `uLodFade` (the LOD cross-fade band, for sinks bound with `fade`) -
+/// present when this flush changed it. Fixed-size and name-free on
+/// purpose: a scene of thousands of moving entries places them all in one
+/// `RasterCmd::PlaceDraws` per target with no allocation per entry, where a
+/// params write each cost a string, two vectors and a message.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawPlacement {
+  pub draw: u64,
+  pub model: Option<[f32; 16]>,
+  pub normal: Option<[f32; 16]>,
+  pub fade: Option<[f32; 2]>,
+}
+
+impl DrawPlacement {
+  /// The uniform each field lands in: the one spelling the UI-side
+  /// binding validation and the raster-side fold share.
+  pub const MODEL: &'static str = "uModel";
+  pub const NORMAL: &'static str = "uNormal";
+  pub const FADE: &'static str = "uLodFade";
+}
+
 /// The registry ids of one draw entry's buffers: one per declared layout
 /// (0 = no buffer at that index) plus the index binding with its element
 /// format (None = the entry draws unindexed). What `BufferUpdate` merges

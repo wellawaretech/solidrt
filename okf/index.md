@@ -591,6 +591,11 @@ Shaped, not started.
   transfer() was parked on the rquickjs quickjs-ng bump, and the workspace is
   on rquickjs 0.14.0 since, so check whether the steal is now the safe
   from_source over a slot-holding source and build stages 1+2 together.
+- **[Run the live player timing tests on a virtual clock](backlog/live-player-tests-virtual-clock.md)** [2026-10-21]
+  Two live floor tests in forge/src/tests/live.rs feed and play frames on the
+  wall clock with ~15 ms of slack for thread wakeups, so the macos-14 CI
+  runner fails them and CI skips them there; a clock that owns the player's
+  waits would make them deterministic.
 - **[Content damage for live-sampled textures](backlog/live-texture-content-damage.md)** [2026-09-12]
   A texture whose pixels change behind an unchanged id produces no damage,
   because nodes displaying it hold a live reference and need none to show the
@@ -2640,6 +2645,11 @@ Finished, kept for the reasoning.
   mesh, no lights) with the 3d package as its first consumer: the walk and
   triangle-accurate picking landed 2026-08-23, and every sink and query the
   item deferred has since landed in its own item.
+- **[Batch the spatial flush's entry writes and index the raster's draw list](done/spatial-flush-placement-batching.md)** [2026-10-21]
+  A whole-tree flush sent one params message per moved node (a string and two
+  vectors each) and the raster found every entry by a linear scan of the
+  target's list, quadratic in the entry count; now one PlaceDraws command per
+  target per flush over fixed-size records, and an id index on the draw list.
 - **[A spatial node cannot animate out, and its enter cannot own its motion](done/spatial-node-exit-transitions.md)** [2026-09-10]
   The 2d and 3d node transitions carried `from` but no `exit`, no `delay` and
   no endpoint object form, so a dying enemy or a collected coin was kept

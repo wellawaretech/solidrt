@@ -1,5 +1,6 @@
-use crate::gpu::{validate_params, DrawUpdate, ParamValue, TextureFormat};
+use crate::gpu::{validate_params, DrawPlacement, DrawUpdate, ParamValue, TextureFormat};
 use crate::raster::RasterCmd;
+use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::audio::SpatialParams;
@@ -19,12 +20,23 @@ use super::Context;
 /// everything else. `wrote` reports whether anything went out, so the
 /// caller knows to request a frame; a dropped write is not a reason to
 /// draw.
+///
+/// The per-entry placements (`write_params`, `write_fade`) are the one
+/// write a flush issues per moved node, so they do not go down the channel
+/// one by one: the writer collects them per target and `finish` sends one
+/// `PlaceDraws` per target, fixed-size records and no string per entry.
+/// Writes to a target still land in call order: a write that must follow
+/// the pending placements (`shift_params`, on the same `uModel`) sends
+/// them first. Every writer ends in `finish`.
 struct Writer<'a> {
   ctx: &'a Context,
   wrote: bool,
   /// What a placed voice glides over to this flush's values: the wall
   /// interval since the previous flush, clamped (below).
   frame_ramp_ms: f64,
+  /// This pass's placements so far, per target, each validated against
+  /// the mirror when it was collected (see `finish`).
+  placements: HashMap<u64, Vec<DrawPlacement>>,
 }
 
 /// A placed voice reaches each flush's values over the interval since the
@@ -38,7 +50,11 @@ const EMITTER_RAMP_MAX_MS: f64 = 100.0;
 /// and a segment flickering at an edge hovers rather than stutters.
 const OCCLUSION_RAMP_MS: f64 = 150.0;
 
-impl Writer<'_> {
+impl<'a> Writer<'a> {
+  fn new(ctx: &'a Context, frame_ramp_ms: f64) -> Self {
+    Writer { ctx, wrote: false, frame_ramp_ms, placements: HashMap::new() }
+  }
+
   fn landed(&mut self, result: Result<(), String>) -> bool {
     match result {
       Ok(()) => {
@@ -51,19 +67,40 @@ impl Writer<'_> {
       }
     }
   }
+
+  /// Collect one entry's placement for `finish`, validated against the
+  /// mirror now so a gone entry releases its binding at this write, as
+  /// every other write does.
+  fn place(&mut self, target: u64, placement: DrawPlacement) -> bool {
+    let known = entry_mirror(&self.ctx.targets.borrow(), target, placement.draw).map(|_| ());
+    if known.is_ok() {
+      self.placements.entry(target).or_default().push(placement);
+    }
+    self.landed(known)
+  }
+
+  /// Send `target`'s pending placements now: one command, one content
+  /// note. For a write that must land after them, and for `finish`.
+  fn send_placements(&mut self, target: u64) {
+    let Some(placements) = self.placements.remove(&target) else { return };
+    self.ctx.send(RasterCmd::PlaceDraws { target, placements });
+    self.ctx.note_target_content(target);
+  }
+
+  /// The end of the writer's pass: every target's pending placements go
+  /// out, one command each. Returns whether anything was written.
+  fn finish(mut self) -> bool {
+    let targets: Vec<u64> = self.placements.keys().copied().collect();
+    for target in targets {
+      self.send_placements(target);
+    }
+    self.wrote
+  }
 }
 
 impl SinkWriter for Writer<'_> {
   fn write_params(&mut self, target: u64, draw: u64, model: &Mat4f, normal: Option<&Mat4f>) -> bool {
-    let mut params = vec![("uModel".to_string(), ParamValue::Array(model.to_vec()))];
-    if let Some(n) = normal {
-      params.push(("uNormal".to_string(), ParamValue::Array(n.to_vec())));
-    }
-    let known = entry_mirror(&self.ctx.targets.borrow(), target, draw).map(|_| ());
-    self.landed(known.map(|_| {
-      self.ctx.send(RasterCmd::UpdateDrawParams { target, draw, params });
-      self.ctx.note_target_content(target);
-    }))
+    self.place(target, DrawPlacement { draw, model: Some(*model), normal: normal.copied(), fade: None })
   }
 
   fn write_count(&mut self, target: u64, draw: u64, count: u32) -> bool {
@@ -72,26 +109,24 @@ impl SinkWriter for Writer<'_> {
   }
 
   fn write_fade(&mut self, target: u64, draw: u64, fade: [f32; 2]) -> bool {
-    let params = vec![("uLodFade".to_string(), ParamValue::Array(fade.to_vec()))];
-    let known = entry_mirror(&self.ctx.targets.borrow(), target, draw).map(|_| ());
-    self.landed(known.map(|_| {
-      self.ctx.send(RasterCmd::UpdateDrawParams { target, draw, params });
-      self.ctx.note_target_content(target);
-    }))
+    self.place(target, DrawPlacement { draw, model: None, normal: None, fade: Some(fade) })
   }
 
   // A render-origin shift of a target's core-bound entries: one command,
   // the raster adds the delta to each listed entry's uModel translation.
-  // Dropping one releases nothing: a target that is gone has no entries.
+  // Placements pending on the target go first, so the target's writes keep
+  // their call order (the core shifts before it writes; the writer does not
+  // lean on that). Dropping one releases nothing: a target that is gone has
+  // no entries.
   fn shift_params(&mut self, target: u64, draws: &[u64], delta: [f32; 3]) -> bool {
-    let known = self.ctx.targets.borrow().contains_key(&target);
-    self.landed(if known {
-      self.ctx.send(RasterCmd::ShiftDrawParams { target, draws: draws.to_vec(), name: "uModel".to_string(), delta });
-      self.ctx.note_target_content(target);
-      Ok(())
-    } else {
-      Err(format!("shader texture {target} not found"))
-    })
+    if !self.ctx.targets.borrow().contains_key(&target) {
+      return self.landed(Err(format!("shader texture {target} not found")));
+    }
+    self.send_placements(target);
+    let name = DrawPlacement::MODEL.to_string();
+    self.ctx.send(RasterCmd::ShiftDrawParams { target, draws: draws.to_vec(), name, delta });
+    self.ctx.note_target_content(target);
+    self.landed(Ok(()))
   }
 
   // A sorted target's draw order, composed into the target's full
@@ -221,13 +256,13 @@ impl Context {
       let identity = ParamValue::Array(crate::spatial::narrow(&crate::spatial::IDENTITY).to_vec());
       let mut probe = Vec::new();
       if sink.params {
-        probe.push(("uModel".to_string(), identity.clone()));
+        probe.push((DrawPlacement::MODEL.to_string(), identity.clone()));
       }
       if sink.normal {
-        probe.push(("uNormal".to_string(), identity));
+        probe.push((DrawPlacement::NORMAL.to_string(), identity));
       }
       if sink.fade {
-        probe.push(("uLodFade".to_string(), ParamValue::Array(vec![1.0, 1.0])));
+        probe.push((DrawPlacement::FADE.to_string(), ParamValue::Array(vec![1.0, 1.0])));
       }
       validate_params(&entry.uniforms, &probe)?;
     }
@@ -362,8 +397,10 @@ impl Context {
   /// Change a sink's "on" instance count; written at once if the entry is
   /// on. The caller must request a frame when this returns true.
   pub fn spatial_set_count(&self, node: NodeId, count: u32) -> Result<bool, String> {
-    let mut writer = Writer { ctx: self, wrote: false, frame_ramp_ms: EMITTER_RAMP_MIN_MS };
-    self.spatial.borrow_mut().set_sink_count(node, count, &mut writer)
+    let mut writer = Writer::new(self, EMITTER_RAMP_MIN_MS);
+    let written = self.spatial.borrow_mut().set_sink_count(node, count, &mut writer);
+    writer.finish();
+    written
   }
 
   /// Recompute every changed subtree and write the sinks. Returns whether
@@ -379,8 +416,8 @@ impl Context {
     // Voices that ended free their emitters before the pass, by the
     // registry's word (the core never learns a voice's state otherwise).
     self.spatial.borrow_mut().release_emitters(|voice| self.audio_ended(voice));
-    let mut writer = Writer { ctx: self, wrote: false, frame_ramp_ms };
+    let mut writer = Writer::new(self, frame_ramp_ms);
     self.spatial.borrow_mut().flush(&mut writer);
-    writer.wrote
+    writer.finish()
   }
 }

@@ -4010,8 +4010,9 @@ successors) as ordinary content, the model-loading split repeated:
   the shared channel removed). Scene scale honestly: hundreds to a
   few thousand objects, bounded by the interpreter, not the GPU. A view
   is one more such write per camera change and one more entry per mesh
-  at attach; a view's per-frame cost is the core's (one params write per
-  sink per moved node), never JS.
+  at attach; a view's per-frame cost is the core's (one placement record
+  per sink per moved node, sent as one command per target per flush),
+  never JS.
 - A mesh's entries are mirrored into every view at attach and dropped at
   detach; `setGeometry`/`setMaterial` rebuild them everywhere. An
   `overrideMaterial` is validated against every mesh's layout (at

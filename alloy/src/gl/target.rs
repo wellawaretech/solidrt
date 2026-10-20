@@ -6,12 +6,13 @@
 
 use glow::HasContext;
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::buffer::GpuBuffer;
 use super::entry::{
-  build_vao, check_entry_buffers, merge_record, release_entry_buffers, DrawEntry, EntryBuffers, MeshState,
+  build_vao, check_entry_buffers, merge_record, release_entry_buffers, set_record_array, DrawEntry, DrawList,
+  EntryBuffers, MeshState,
 };
 use super::pass::{run_pass, DrawGroup, PassDraw, PassInput, ResolvedDraw};
 use super::prev_framebuffer;
@@ -25,8 +26,8 @@ use crate::gpu::resources::GpuDrawInfo;
 use crate::gpu::spec::DepthStorage;
 use crate::gpu::texture::TextureFormat;
 use crate::gpu::vocab::{
-  blend_name, cull_name, merge_bindings, validate_order, BufferLayout, DrawRange, ParamValue, PipelineDesc,
-  TextureBinding,
+  blend_name, cull_name, merge_bindings, validate_order, BufferLayout, DrawPlacement, DrawRange, ParamValue,
+  PipelineDesc, TextureBinding,
 };
 
 /// A sub-target's place in its parent: a draw target created with
@@ -249,7 +250,7 @@ impl ShaderTexture {
       };
       Ok(ShaderTexture {
         kind: TargetKind::Mesh(MeshState {
-          entries: vec![entry],
+          entries: DrawList::from_entries(vec![entry]),
           shared_params: Vec::new(),
           shared_bindings: Vec::new(),
           depth,
@@ -292,7 +293,7 @@ impl ShaderTexture {
     let MeshStorage { target, fbo, depth, msaa } = create_mesh_storage(gl, width, height, depth, samples, format)?;
     Ok(ShaderTexture {
       kind: TargetKind::Mesh(MeshState {
-        entries: Vec::new(),
+        entries: DrawList::new(),
         shared_params: Vec::new(),
         shared_bindings: Vec::new(),
         depth,
@@ -335,7 +336,7 @@ impl ShaderTexture {
     let MeshStorage { target, fbo, depth, msaa } = create_cube_storage(gl, size, depth, mipmap, format)?;
     Ok(ShaderTexture {
       kind: TargetKind::Mesh(MeshState {
-        entries: Vec::new(),
+        entries: DrawList::new(),
         shared_params: Vec::new(),
         shared_bindings: Vec::new(),
         depth,
@@ -386,7 +387,7 @@ impl ShaderTexture {
     };
     Ok(ShaderTexture {
       kind: TargetKind::Mesh(MeshState {
-        entries: Vec::new(),
+        entries: DrawList::new(),
         shared_params: Vec::new(),
         shared_bindings: Vec::new(),
         depth: parent_mesh.depth,
@@ -693,13 +694,9 @@ impl ShaderTexture {
     }
     check_entry_buffers(&pipeline.desc, &buffers)?;
     let position = match before {
-      Some(before_id) => Some(
-        mesh
-          .entries
-          .iter()
-          .position(|e| e.id == before_id)
-          .ok_or_else(|| format!("draw {before_id} (before) not found"))?,
-      ),
+      Some(before_id) => {
+        Some(mesh.entries.position(before_id).ok_or_else(|| format!("draw {before_id} (before) not found"))?)
+      }
       None => None,
     };
     let vao = build_vao(gl, &pipeline.program, &pipeline.desc, &buffers)?;
@@ -722,9 +719,8 @@ impl ShaderTexture {
     if mesh.fixed {
       return Err("target's draw list is fixed (created single-draw)".to_string());
     }
-    validate_order(order, mesh.entries.iter().map(|e| e.id))?;
-    let index: std::collections::HashMap<u64, usize> = order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
-    mesh.entries.sort_by_key(|e| index[&e.id]);
+    validate_order(order, mesh.entries.ids())?;
+    mesh.entries.reorder(order);
     Ok(())
   }
 
@@ -737,8 +733,7 @@ impl ShaderTexture {
     if mesh.fixed {
       return Err("target's draw list is fixed (created single-draw)".to_string());
     }
-    let pos = mesh.entries.iter().position(|e| e.id == id).ok_or_else(|| format!("draw {id} not found"))?;
-    let entry = mesh.entries.remove(pos);
+    let entry = mesh.entries.remove(id).ok_or_else(|| format!("draw {id} not found"))?;
     unsafe {
       gl.delete_vertex_array(entry.vao);
       if let Some(bound) = entry.gauge.take_bound() {
@@ -754,7 +749,7 @@ impl ShaderTexture {
     let TargetKind::Mesh(mesh) = &mut self.kind else {
       return Err("not a draw target".to_string());
     };
-    mesh.entries.iter_mut().find(|e| e.id == id).ok_or_else(|| format!("draw {id} not found"))
+    mesh.entries.get_mut(id).ok_or_else(|| format!("draw {id} not found"))
   }
 
   /// Fold a params update into one entry's record by name (validated UI-side
@@ -766,7 +761,7 @@ impl ShaderTexture {
 
   /// Add `delta` to the translation column of the mat4 param `name` on
   /// each listed entry (the spatial core's render-origin shift, see
-  /// `RasterCmd::ShiftDrawParams`): one pass over the entry list, so a
+  /// `RasterCmd::ShiftDrawParams`): one lookup per listed entry, so a
   /// target of thousands shifts in the time one params update takes. An
   /// entry no longer in the list, or without that mat4, is skipped: the
   /// core learns of a gone entry at its next real write.
@@ -774,14 +769,42 @@ impl ShaderTexture {
     let TargetKind::Mesh(mesh) = &mut self.kind else {
       return Err("not a draw target".to_string());
     };
-    let listed: HashSet<u64> = draws.iter().copied().collect();
-    for entry in mesh.entries.iter_mut().filter(|e| listed.contains(&e.id)) {
+    for &draw in draws {
+      let Some(entry) = mesh.entries.get_mut(draw) else { continue };
       if let Some((_, ParamValue::Array(m))) = entry.params.iter_mut().find(|(n, _)| n == name) {
         if m.len() == 16 {
           m[12] += delta[0];
           m[13] += delta[1];
           m[14] += delta[2];
         }
+      }
+    }
+    Ok(())
+  }
+
+  /// Fold a spatial flush's placements into the listed entries' records
+  /// (see `RasterCmd::PlaceDraws`): each present field into its fixed
+  /// uniform, in place, one lookup per placement. An entry the list does
+  /// not hold warns and is skipped: the UI side checked each against its
+  /// mirror, so the only way here is an entry whose add failed on this
+  /// thread, which already warned.
+  pub fn place_entries(&mut self, placements: &[DrawPlacement]) -> Result<(), String> {
+    let TargetKind::Mesh(mesh) = &mut self.kind else {
+      return Err("not a draw target".to_string());
+    };
+    for p in placements {
+      let Some(entry) = mesh.entries.get_mut(p.draw) else {
+        log::warn!("[alloy] draw placement skipped: draw {} not found", p.draw);
+        continue;
+      };
+      if let Some(m) = &p.model {
+        set_record_array(&mut entry.params, DrawPlacement::MODEL, m);
+      }
+      if let Some(m) = &p.normal {
+        set_record_array(&mut entry.params, DrawPlacement::NORMAL, m);
+      }
+      if let Some(f) = &p.fade {
+        set_record_array(&mut entry.params, DrawPlacement::FADE, f);
       }
     }
     Ok(())
@@ -1011,7 +1034,7 @@ impl ShaderTexture {
     match self.kind {
       TargetKind::Fragment { program, .. } => release_program(gl, program),
       TargetKind::Mesh(mesh) => {
-        for entry in mesh.entries {
+        for entry in mesh.entries.into_entries() {
           unsafe {
             gl.delete_vertex_array(entry.vao);
             if let Some(bound) = entry.gauge.take_bound() {
@@ -1082,7 +1105,7 @@ impl ShaderTexture {
     };
     let MeshStorage { target, fbo, depth, msaa } = storage;
     let kind = TargetKind::Mesh(MeshState {
-      entries,
+      entries: DrawList::from_entries(entries),
       shared_params: mesh.shared_params.clone(),
       shared_bindings: mesh.shared_bindings.clone(),
       depth,
@@ -1120,7 +1143,7 @@ impl ShaderTexture {
     )?;
     let entries = self.rebuild_entries(gl, mesh, registries)?;
     if let TargetKind::Mesh(built) = &mut sub.kind {
-      built.entries = entries;
+      built.entries = DrawList::from_entries(entries);
       built.shared_params = mesh.shared_params.clone();
       built.shared_bindings = mesh.shared_bindings.clone();
       built.load = mesh.load;
@@ -1167,7 +1190,7 @@ impl ShaderTexture {
   ) -> Result<Vec<DrawEntry>, String> {
     let mut entries: Vec<DrawEntry> = Vec::with_capacity(mesh.entries.len());
     let lookup = |id: u64| registries.buffers.get(&id).cloned().ok_or_else(|| format!("buffer {id} not found"));
-    for entry in &mesh.entries {
+    for entry in mesh.entries.iter() {
       let built = (|| -> Result<DrawEntry, String> {
         let pipeline = match entry.pipeline_id {
           Some(id) => registries.pipelines.get(&id).cloned().ok_or_else(|| format!("pipeline {id} not found"))?,
@@ -1290,7 +1313,7 @@ impl ShaderTexture {
   /// order, so the probe that measured the seed stands for nothing.
   pub fn reset_draw_gauge(&self, gl: &glow::Context, draw: u64) {
     let Some(mesh) = self.mesh() else { return };
-    if let Some(e) = mesh.entries.iter().find(|e| e.id == draw) {
+    if let Some(e) = mesh.entries.get(draw) {
       if let Some(bound) = e.gauge.reset() {
         unsafe { gl.delete_sync(bound.fence) };
       }
@@ -1304,7 +1327,7 @@ impl ShaderTexture {
   pub fn poll_slice_bounds(&self, gl: &glow::Context) -> bool {
     let Some(mesh) = self.mesh() else { return false };
     let mut pending = false;
-    for e in &mesh.entries {
+    for e in mesh.entries.iter() {
       let Some(bound) = e.gauge.bound() else { continue };
       let signaled = unsafe { gl.get_sync_status(bound.fence) } == glow::SIGNALED;
       if signaled {

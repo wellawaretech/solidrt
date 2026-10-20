@@ -4,6 +4,7 @@
 //! declared layout, and the entry-buffer checks and releases.
 
 use glow::HasContext;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::buffer::{release_buffer, GpuBuffer};
@@ -78,6 +79,111 @@ pub(super) struct DrawEntry {
   pub(super) gauge: SliceGauge,
 }
 
+/// A mesh target's ordered draw list, indexed by entry id. List order is
+/// draw order; the index finds an entry by id in one lookup, so a flush
+/// addressing thousands of entries costs one pass over them, not one scan
+/// of the list per entry (the raster thread's share of a whole-scene move
+/// was quadratic in the entry count before the index). Every mutation
+/// goes through here, which is what keeps the index true: a change of
+/// positions re-indexes the entries it moved.
+pub(super) struct DrawList {
+  entries: Vec<DrawEntry>,
+  index: HashMap<u64, usize>,
+}
+
+impl DrawList {
+  pub(super) fn new() -> Self {
+    DrawList { entries: Vec::new(), index: HashMap::new() }
+  }
+
+  /// A list over `entries` in their order (the fixed single-entry creates,
+  /// and a rebuild's fresh entries).
+  pub(super) fn from_entries(entries: Vec<DrawEntry>) -> Self {
+    let mut list = DrawList { entries, index: HashMap::new() };
+    list.reindex_from(0);
+    list
+  }
+
+  pub(super) fn len(&self) -> usize {
+    self.entries.len()
+  }
+
+  pub(super) fn iter(&self) -> std::slice::Iter<'_, DrawEntry> {
+    self.entries.iter()
+  }
+
+  /// The entry ids in draw order.
+  pub(super) fn ids(&self) -> impl ExactSizeIterator<Item = u64> + '_ {
+    self.entries.iter().map(|e| e.id)
+  }
+
+  /// The first entry: the one entry of the fixed single-draw kinds.
+  pub(super) fn first(&self) -> Option<&DrawEntry> {
+    self.entries.first()
+  }
+
+  pub(super) fn first_mut(&mut self) -> Option<&mut DrawEntry> {
+    self.entries.first_mut()
+  }
+
+  pub(super) fn get(&self, id: u64) -> Option<&DrawEntry> {
+    self.index.get(&id).map(|&i| &self.entries[i])
+  }
+
+  pub(super) fn get_mut(&mut self, id: u64) -> Option<&mut DrawEntry> {
+    match self.index.get(&id) {
+      Some(&i) => Some(&mut self.entries[i]),
+      None => None,
+    }
+  }
+
+  /// Entry `id`'s place in draw order.
+  pub(super) fn position(&self, id: u64) -> Option<usize> {
+    self.index.get(&id).copied()
+  }
+
+  /// Append `entry`: it draws last.
+  pub(super) fn push(&mut self, entry: DrawEntry) {
+    self.index.insert(entry.id, self.entries.len());
+    self.entries.push(entry);
+  }
+
+  /// Insert `entry` at `pos` in draw order; the entries behind it move
+  /// back one place.
+  pub(super) fn insert(&mut self, pos: usize, entry: DrawEntry) {
+    self.entries.insert(pos, entry);
+    self.reindex_from(pos);
+  }
+
+  /// Take entry `id` out of the list; the entries behind it move up one
+  /// place. None when the list has no such entry.
+  pub(super) fn remove(&mut self, id: u64) -> Option<DrawEntry> {
+    let pos = self.index.remove(&id)?;
+    let entry = self.entries.remove(pos);
+    self.reindex_from(pos);
+    Some(entry)
+  }
+
+  /// Reorder to `order`, a full permutation of the list's ids (the caller
+  /// validated it, see `validate_order`).
+  pub(super) fn reorder(&mut self, order: &[u64]) {
+    let rank: HashMap<u64, usize> = order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+    self.entries.sort_by_key(|e| rank[&e.id]);
+    self.reindex_from(0);
+  }
+
+  /// The entries, in draw order, for a target's teardown.
+  pub(super) fn into_entries(self) -> Vec<DrawEntry> {
+    self.entries
+  }
+
+  fn reindex_from(&mut self, pos: usize) {
+    for (i, entry) in self.entries.iter().enumerate().skip(pos) {
+      self.index.insert(entry.id, i);
+    }
+  }
+}
+
 /// The mesh half of a target: the ordered draw list sharing this target's
 /// color (and optional depth) storage, rendered as one pass - clear once,
 /// then entries in list order.
@@ -85,7 +191,7 @@ pub(super) struct MeshState {
   /// The ordered draw list. The single-draw creates hold exactly one entry
   /// (id 0, `fixed`); draw targets start empty and mutate via
   /// `add_entry`/`remove_entry`.
-  pub(super) entries: Vec<DrawEntry>,
+  pub(super) entries: DrawList,
   /// Target-level params every entry shares (a camera's view-projection),
   /// applied at render before each entry's own params so an entry naming the
   /// same uniform overrides the shared value. Target state, not entry state:
@@ -256,12 +362,34 @@ pub(super) fn release_entry_buffers(gl: &glow::Context, buffers: EntryBuffers) {
 
 /// Fold a params update into a record by name (new names append, existing
 /// names overwrite): the merge rule shared by target-level and per-entry
-/// params writes.
+/// params writes. An existing array value of the same size is overwritten
+/// in place, so a per-frame params write allocates nothing on this thread.
 pub(super) fn merge_record(record: &mut Vec<(String, ParamValue)>, params: &[(String, ParamValue)]) {
   for (name, value) in params {
     match record.iter_mut().find(|(n, _)| n == name) {
-      Some(entry) => entry.1 = value.clone(),
+      Some((_, current)) => assign_param(current, value),
       None => record.push((name.clone(), value.clone())),
     }
+  }
+}
+
+/// `current = value`, reusing the array's allocation when the component
+/// counts agree (a uniform's count never changes, so a rewrite is a copy;
+/// a count change is a kind change and gets a fresh value).
+fn assign_param(current: &mut ParamValue, value: &ParamValue) {
+  match (current, value) {
+    (ParamValue::Array(dst), ParamValue::Array(src)) if dst.len() == src.len() => dst.copy_from_slice(src),
+    (current, value) => *current = value.clone(),
+  }
+}
+
+/// Set the array param `name` in a record to `values`: in place when the
+/// record holds it at that size (the spatial flush's fold - a fixed name,
+/// a fixed size, no allocation), appended when the record has no such name.
+pub(super) fn set_record_array(record: &mut Vec<(String, ParamValue)>, name: &str, values: &[f32]) {
+  match record.iter_mut().find(|(n, _)| n == name) {
+    Some((_, ParamValue::Array(dst))) if dst.len() == values.len() => dst.copy_from_slice(values),
+    Some((_, current)) => *current = ParamValue::Array(values.to_vec()),
+    None => record.push((name.to_string(), ParamValue::Array(values.to_vec()))),
   }
 }

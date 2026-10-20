@@ -43,6 +43,7 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 - A casting light whose `layers` share no bit with the scene's own `layers` casts nothing, silently: its shadow view draws the scene's meshes filtered by the light's mask (scene-shadows.ts makeView). Warn once per light at the sync that finds it, naming the light's and the scene's masks.
 - `shaderMaterialClass` should throw when a source declares `uLayers` as anything but `int`: a `sampler2DArray uLayers` today fails at `add()` with "param 'uLayers' is a sampler2DArray; bind it via textures", although it was bound via textures (the scene seeds its layer mask under that name). Name it in the error at the class.
+- Re-run `probes/scene-walk-whole-bench.tsx` on the desktop, the tablet and the TV with release clients after okf/done/spatial-flush-placement-batching.md, reading the raster occupancy from `/stats` beside the flush ms (the removed per-entry scan lived on the raster thread, so flush ms alone understates the change), and record the before/after under that done item's Findings.
 
 
 ## DX

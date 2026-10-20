@@ -7,8 +7,8 @@ use crate::renderer::{DisplayList, Texture};
 use std::sync::mpsc;
 
 use crate::gpu::{
-  AttributeTable, BufferIds, DepthStorage, DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader, ParamValue,
-  PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, TextureBinding, UniformTable, WindowShader,
+  AttributeTable, BufferIds, DepthStorage, DrawPlacement, DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader,
+  ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, TextureBinding, UniformTable, WindowShader,
 };
 
 /// The adopted handles a draw target create or resize replies with: the
@@ -317,6 +317,15 @@ pub(crate) enum RasterCmd {
   /// Fold new params into one draw entry's record and mark the target dirty;
   /// values apply at the next render (flush, or explicit for manual).
   UpdateDrawParams { target: u64, draw: u64, params: Vec<(String, ParamValue)> },
+  /// A spatial flush's placements on one draw target: each listed entry's
+  /// fresh `uModel`/`uNormal`/`uLodFade` (see `DrawPlacement`), folded into
+  /// the entries' records in list order, the target marked dirty. One
+  /// command per target per flush however many entries moved: the batched
+  /// form of `UpdateDrawParams` for the spatial core's fixed vocabulary,
+  /// which is what keeps a whole-scene move from costing a message, a
+  /// string and two vectors per entry. Validated UI-side like every entry
+  /// write (see `spatial::SinkWriter::write_params`). Fire-and-forget.
+  PlaceDraws { target: u64, placements: Vec<DrawPlacement> },
   /// Add `delta` to the translation column (components 12..15) of the
   /// mat4 param `name` on each listed entry of a draw target: the spatial
   /// core's render-origin shift, one command for every entry it wrote
