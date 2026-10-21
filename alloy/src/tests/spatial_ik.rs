@@ -37,7 +37,7 @@ impl SinkWriter for Sink {
   fn shift_params(&mut self, _: u64, _: &[u64], _: [f32; 3]) -> bool {
     true
   }
-  fn write_order_direction(&mut self, _: u64, _: u64, _: [f32; 3]) -> bool {
+  fn write_order_view(&mut self, _: u64, _: u64, _: [f32; 16]) -> bool {
     true
   }
   fn write_shared(&mut self, _: u64, _: &str, _: &[f32]) -> bool {

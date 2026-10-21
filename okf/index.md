@@ -38,11 +38,12 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 - **[Gaussian splats](design/splats.md)** [2026-10-18]
   The splat viewer in one place - the .sol3s bake and its chunked 16-bit
   record, the data textures and the one-texel vertex decode, the packed depth
-  key the core sorts on its own thread, the importance order block the count
-  dial reads, the blend space a capture is trained against, the decisions
-  behind each with the alternatives that were rejected and measured, and the
-  known limits with their open items. Read before touching splat-data.ts,
-  splat.ts, the order module or the splat probe.
+  key the core sorts on its own thread, the chunk as a run the core culls by
+  its box and thins by its importance ramp under the view, the blend space a
+  capture is trained against, the decisions behind each with the alternatives
+  that were rejected and measured, and the known limits with their open items.
+  Read before touching splat-data.ts, splat.ts, the order module or the splat
+  probe.
 - **[WebAssembly](design/wasm.md)** [2026-10-03]
   The route for app code that needs more than the JavaScript interpreter,
   front to back - what a module is written in and how it reaches a project,

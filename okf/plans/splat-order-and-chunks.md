@@ -248,3 +248,58 @@ or an impostor field fits the same hand-off.
 
 ## Findings
 
+- 2026-10-21, built in one pass (steps 1 to 3), all uncommitted. Format
+  version 4: `kdOrder` snaps the coarse split to whole chunks as before
+  (dense space stays full chunks, the one partial chunk last), then
+  splits each leaf while its box step on the longest axis exceeds
+  SPLAT_STEP_VISIBLE of the leaf's smallest largest-axis scale, down to
+  SPLAT_CHUNK_MIN (16), under a budget of SPLAT_CHUNK_LIMIT (65536)
+  chunks spent in record order (`report.capped`); the records of a run
+  sort by importance = the two largest scales times alpha / 255; word
+  1's high half is the chunk index; the `runs` (u32 start per chunk)
+  and `ramp` (16 f32 per chunk) blocks replace the order block; the
+  report gains `runMin` and `capped`.
+- Core: `RunTable { bounds, starts, ramp }` with `check`; `OrderView
+  { clip }` (direction from the w row, the z row when the w row is
+  zero; planes by Gribb-Hartmann; the pixel scale squared as |row0| x
+  |row1| x viewport / 4 over the box's smallest corner w, unbounded at
+  or behind the eye); `Selection { view, viewport, threshold, budget }`
+  and `select_runs` (the cut per run through the last ramp sample at or
+  above the floor, extended by the slope toward the first below; the
+  budget by geometric bisection over 24 steps between 1e-6 px and the
+  largest contribution in view, the runs at the eye cut in proportion
+  when they alone exceed the budget); `order_packed` runs the selection
+  then the key pass over the selected runs and keeps the selected ids
+  for `materialize_indices_through`. The mirror is the 8-byte words in
+  storage order. The registry keeps per entry the view, the budget
+  (instances x K, capped at the population), the selected ids and the
+  records drawn; a landed selection sends the entry's draw range as
+  ceil(selected / K) instances and every later send of the entry's
+  range applies that override (`drawn_range`), so the raster thread
+  never draws sentinel groups past the selection. A target resize or a
+  tile rect change re-selects its packed entries (the viewport is read
+  off the target). `InstanceOrder.lod_threshold` with `with_lod` /
+  `set_lod`; `DrawUpdate.order_view` and `order_lod`.
+- The spatial feed writes `write_order_view(target, draw, clip)`, the
+  target's origin-space view-projection over the node's world shifted by
+  the origin, under three gates: the direction (as before), the eye
+  moved past ORDER_VIEW_MOVE_FRACTION (0.05, by feel) of its distance to
+  the node's world box (its half diagonal when inside; the node's origin
+  without a box), or the projection's focal or kind changed. The
+  context writer re-sorts only when the core says the order's inputs
+  changed, so a gather entry fed on an eye move (same direction) does
+  nothing.
+- Kept against the plan: `orderDirection` stays as the manual direction
+  update beside `orderView` (apps and the examples drive gather entries
+  by hand; the feed is the richer form of the same setter). The
+  viewport is not fed: the core reads the target's size itself, so the
+  feed is one matrix.
+- 3d: `createSplatMesh(data, { count, lodThreshold })`, `setRecordLod`,
+  `<SplatMesh lodThreshold>`, `instanceOrder.lod` on the indexed form,
+  SPLAT_LOD_THRESHOLD 0.25 px by feel; the shader reads the chunk from
+  the record. Tests: 21 alloy order tests (selection, budget, culling,
+  the eye inside, ortho, the worker's packed job), the spatial feed's
+  gates and matrix, 20 bun bake tests (in-chunk order and ramp, the
+  precision split, the container), the app tests (the LOD flip, the
+  culled chunk read from the GPU inventory's draw range, the budget).
+

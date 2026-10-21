@@ -1,6 +1,6 @@
 ---
 title: Gaussian splats
-description: The splat viewer in one place - the .sol3s bake and its chunked 16-bit record, the data textures and the one-texel vertex decode, the packed depth key the core sorts on its own thread, the importance order block the count dial reads, the blend space a capture is trained against, the decisions behind each with the alternatives that were rejected and measured, and the known limits with their open items. Read before touching splat-data.ts, splat.ts, the order module or the splat probe.
+description: The splat viewer in one place - the .sol3s bake and its chunked 16-bit record, the data textures and the one-texel vertex decode, the packed depth key the core sorts on its own thread, the chunk as a run the core culls by its box and thins by its importance ramp under the view, the blend space a capture is trained against, the decisions behind each with the alternatives that were rejected and measured, and the known limits with their open items. Read before touching splat-data.ts, splat.ts, the order module or the splat probe.
 created: 2026-10-18
 ---
 
@@ -34,22 +34,41 @@ thread), `alloy/src/context/order.rs` (the registry and the mirrors),
   write `.sol3s`. Runtime loading is a header parse plus byte views;
   nothing per splat runs on the device.
 - **Record.** One splat's 16 bytes in the record block, one `rgba32ui`
-  texel. Records sit in SPATIAL order (a k-d partition).
-- **Chunk.** 256 consecutive records (`SPLAT_CHUNK_SIZE`); record id / 256
-  is the chunk. Each chunk has a box for positions and a box for log
-  scales; the record's position and scale words are unorms over them.
-- **Order block.** The record ids by importance (size times opacity,
-  descending): the DRAW population. A count prefix is its first n.
-- **Id stream.** The one instance buffer: the sorted record ids, 16 per
-  drawn instance (`SPLAT_GROUP`), written whole by the core on each
-  re-sort, the sentinel `0xFFFFFFFF` past the population.
+  texel. Records sit in SPATIAL order (a k-d partition into runs).
+- **Chunk.** A RUN of `SPLAT_CHUNK_MIN`..`SPLAT_CHUNK_MAX` (16..256)
+  consecutive records; the record carries its chunk's index (the high
+  half of its second word). Each chunk has a box for positions and a box
+  for log scales; the record's position and scale words are unorms over
+  them. Inside a run the records are ordered by importance descending.
+- **Importance.** A splat's projected area at unit distance times its
+  opacity: the two largest scales times alpha. The order inside a run.
+- **Ramp.** Per chunk, `SPLAT_RAMP_SAMPLES` (16) importance samples
+  along its run (sample i at rank floor(i x len / 16)): what the core
+  cuts a run by without reading a record.
+- **Selection.** What the core draws of the cloud: under the view, the
+  runs whose boxes reach into the frustum, each cut where its ramp at
+  the run's projected scale falls under the LOD threshold (pixels of
+  contribution), the threshold raised until the kept records fit the
+  budget (the entry's instance count times 16). Without a view, every
+  run whole under the budget alone: the importance prefix.
+- **Id stream.** The one instance buffer: the selected record ids
+  sorted, 16 per drawn instance (`SPLAT_GROUP`), written whole by the
+  core on each re-sort, the sentinel `0xFFFFFFFF` past the selection;
+  the draw range the raster thread holds is the selection's.
 - **Mirror.** The core's copy of what its sort reads: for a splat cloud,
-  (record id, the two position words) per splat in draw order, 12 bytes,
-  plus the chunk table. Nothing else of the record lives engine-side.
+  the two position words per splat in storage order, 8 bytes, plus the
+  run table (boxes, starts, ramps). Nothing else of the record lives
+  engine-side.
 - **Key.** The depth a record sorts by: dot(decoded position, view
   direction), decoded from the words and the chunk box in the key pass.
-- **Order gate.** The ~2 degree direction change (`ORDER_DIRECTION_EPS_COS`)
-  past which the scene re-feeds the direction and the core re-sorts.
+- **View feed.** The mesh's model-to-clip matrix the scene writes to
+  the entry (`orderView`): its w row is the depth direction, its rows
+  the frustum planes and the pixel scale the selection uses.
+- **Order gates.** The ~2 degree direction change
+  (`ORDER_DIRECTION_EPS_COS`), the eye move past
+  `ORDER_VIEW_MOVE_FRACTION` of its distance to the mesh's box, or a
+  projection change, past which the scene re-feeds the view and the
+  core re-selects and re-sorts.
 
 ## The pipeline
 
@@ -63,8 +82,13 @@ thread), `alloy/src/context/order.rs` (the registry and the mirrors),
    `.spz` is y-up already. `--keep-orientation` opts out.
 3. **Partition** (`kdOrder`): a k-d split at the median of the longest
    axis, the left size snapped to a multiple of 256, down to leaves of
-   one chunk; the remainder is the last, partial chunk. Compact boxes,
-   no Morton seams.
+   one chunk (the remainder the last, partial chunk); then each leaf
+   splits on while its box step on its longest axis exceeds
+   `SPLAT_STEP_VISIBLE` of its smallest splat and it holds two
+   `SPLAT_CHUNK_MIN` halves, within `SPLAT_CHUNK_LIMIT` (65536) chunks
+   in all (the record's 16-bit index; past it the rest stay whole and
+   the report says `capped`). Compact boxes, no Morton seams. Inside
+   each run the records are sorted by importance.
 4. **Quantize** per chunk: position as three 16-bit unorms over the
    chunk's position box (x | y << 16, then z; 16 bits reserved),
    rotation as smallest-three (largest index on top, three 10-bit
@@ -74,22 +98,24 @@ thread), `alloy/src/context/order.rs` (the registry and the mirrors),
    palette code per subspace (`pq`, the default: 2/4/8 label bytes per
    splat at degree 1/2/3 plus a 32 KB palette, D11) or as a byte per
    coefficient, spz's (byte - 128) / 128, in 1/2/3 texels (`u8`).
-5. **Rank**: importance per splat, the order block as record ids.
-6. **Report**: the chunk position step over each splat's largest axis
-   (median, 99th percentile, the share above `SPLAT_STEP_VISIBLE`), the
-   clamped SH coefficients. The tool prints it; the bake is lossy and
-   says what it lost.
-7. **Container** (`encodeSplat` / `decodeSplat`): "SOLS" | version 3 |
-   JSON header (count, chunkSize, shDegree, antialiased, bounds, block
-   ranges, the SH block's `encoding` and under pq its `palette` block) |
-   records | colors | chunks | order | SH (labels or coefficient texels)
-   | palette, every block 4-aligned. Decode views the bytes; version 2
-   is refused with the re-bake message.
+5. **Ramp**: per chunk, the importance at each sixteenth of its run,
+   and the run block (each chunk's first record).
+6. **Report**: the chunk count and the smallest run, the chunk position
+   step over each splat's largest axis (median, 99th percentile, the
+   share above `SPLAT_STEP_VISIBLE`), the clamped SH coefficients. The
+   tool prints it; the bake is lossy and says what it lost.
+7. **Container** (`encodeSplat` / `decodeSplat`): "SOLS" | version 4 |
+   JSON header (count, chunkMax, chunkMin, shDegree, antialiased,
+   bounds, block ranges, the SH block's `encoding` and under pq its
+   `palette` block) | records | colors | chunks | runs | ramp | SH
+   (labels or coefficient texels) | palette, every block 4-aligned.
+   Decode views the bytes; an older version is refused with the re-bake
+   message.
 8. **Runtime** (`createSplatMesh`): a RecordMesh in the INDEXED form
    over the stock material for (shDegree, antialiased). The record block
    is handed to the core with the packed key (`transferRecords(id,
    records, { stride: 16, position: 0, packed: { format: "unorm16x3",
-   chunk: 256, bounds }, order })`) and uploaded in row bands, in place,
+   bounds, runs, ramp } })`) and uploaded in row bands, in place,
    as `uSplatRecords`; the chunk table as `uSplatChunks` (rgba32f, 3
    texels per chunk), the colors as `uSplatColors` (rgba8), the SH labels
    as `uSplatShLabels` (an 8-bit integer texture, `rg8ui` or `rgba8ui`)
@@ -97,7 +123,8 @@ thread), `alloy/src/context/order.rs` (the registry and the mirrors),
    texels), or the u8 block as `uSplatSh`. The header bounds are the cull
    and picking box.
 9. **Vertex stage**: the id from the instance's 16 ids by quad, the
-   record texel, the chunk's three texels, the decode (`decodeRecord`
+   record texel, the chunk's three texels (the chunk index from the
+   record's second word), the decode (`decodeRecord`
    in splat-data.ts is the reference it must agree with), the covariance
    R S St Rt rebuilt, the projection through the Jacobian of
    `uViewProj * uModel` (no focal or view uniforms), the 0.3 px^2
@@ -107,10 +134,14 @@ thread), `alloy/src/context/order.rs` (the registry and the mirrors),
 10. **Fragment**: the gaussian falloff times opacity, cut at e^-4 and
     below 1/255, capped at 0.99 (the reference rasterizer's cap),
     premultiplied out.
-11. **Order**: the scene feeds the view direction mapped into the mesh's
-    frame; past the gate the registry re-sorts the mirror - in the flush
-    below `SYNC_SORT_MAX_KEYS` (16384), on the `sol-order` thread above
-    it - and writes the id stream. A parked camera uploads nothing.
+11. **Selection and order**: the scene feeds the mesh's model-to-clip
+    matrix; past a gate the registry selects (the frustum test per run
+    box, the cut per run from its ramp at the run's pixel scale against
+    `lodThreshold`, the budget bisection) and sorts what passed - in the
+    flush below `SYNC_SORT_MAX_KEYS` (16384) selected keys, on the
+    `sol-order` thread above it - writes the id stream, and sets the
+    entry's draw range to the selection. A parked camera uploads
+    nothing; a selection and order that did not change upload nothing.
 
 ## Decisions
 
@@ -170,25 +201,33 @@ color left the record for its own rgba8 texture (20 bytes per splat on
 the GPU, not 16) and the mirror is 12 bytes, not 8. sogs made the same
 move to 16-bit means. [notes/splat-record-compression.md](../notes/splat-record-compression.md).
 
-**D9. Storage order is spatial; the draw order is a separate block.**
-The first design ordered records by importance band and chunked within a
-band so a count prefix needed no order block; measured on the train it
-cost 12x in position precision (every band spreads over the whole scene,
-so a chunk of same-band splats is a slab). The order block costs 4 bytes
-per splat on disk and lets the storage order serve compression alone.
-Generic in the core: any indexed population drawn in an order other than
-its storage order hands off `order`.
+**D9. Storage order is spatial across chunks and by importance inside
+a chunk; there is no draw-order block.** The first design ordered
+records by importance band and chunked within a band so a count prefix
+needed no order block; measured on the train it cost 12x in position
+precision (every band spreads over the whole scene, so a chunk of
+same-band splats is a slab). The second kept a global importance order
+as a 4-byte-per-splat block the count dial took a prefix of; it thinned
+near and far alike and dissolved the lizard before its garden at 100k.
+The chunk box does not care about the order of the records within it,
+so a run is sorted by importance for free, and the cut is per chunk
+under the view (D13), where "the first n" was never the right question.
+Generic in the core: any packed population hands off runs
+(`transferRecords`' `packed.runs` and `ramp`), and a population drawn
+in an order other than its storage order is the gathered form.
 
-**D10. The core decodes the packed key itself.** The sort could have
-keyed on a float column decoded at load, but decoding a million
-positions in JS at load is a stall and a float column is 12 bytes per
-splat the file does not carry. The key pass precomputes dot(box min, d)
-and the per-axis step along d per chunk, then does three multiply-adds
-per record on the integers; the chunk table stays in cache. On the Pixel
-7 the packed sort reads at or under the float sort; on a laptop the
-mapped id materialization (a random gather) costs about 25%. Rejected
-for now: carrying (key, id) as one u64 through the radix passes (would
-also delete the per-pass random key read); the phone showed no need.
+**D10. The core decodes the packed key itself, sequentially, over the
+selection.** The sort could have keyed on a float column decoded at
+load, but decoding a million positions in JS at load is a stall and a
+float column is 12 bytes per splat the file does not carry. The key pass
+precomputes dot(box min, d) and the per-axis step along d per selected
+run, then does three multiply-adds per record on the integers, reading
+the 8-byte words in storage order; the materialization maps the
+permutation through the selected ids (4 bytes each). The earlier
+draw-order mirror (id plus words, 12 bytes, a random id gather the
+laptop priced at about 25% of the sort) went with the order block.
+Rejected for now: carrying (key, id) as one u64 through the radix
+passes; the phone showed no need.
 
 **D11. SH as a product-quantized palette over luma and chroma planes
 per band, 256 codes each; bytes kept as the exact encoding.** The SH3
@@ -229,6 +268,33 @@ cap, and the Mip-Splatting compensation behind a per-capture header flag
 carry, not a renderer guess.
 [done/splat-raster-fidelity.md](../done/splat-raster-fidelity.md).
 
+**D13. The chunk is the unit of precision, culling and level of
+detail, decided in the sort under the view.** Three jobs on the same
+two structures - a count dial that drops a detailed subject first, a
+256-splat leaf wide in sparse space, nothing skipping an off-screen
+chunk - are one change of unit: a chunk is a variable run (split for
+precision down to 16), the record names it, the run is stored by
+importance and carries a 16-sample ramp, and the core's selection pass
+tests each run's box against the frustum the view matrix gives and cuts
+each visible run where its ramp at the run's pixel scale (the matrix's x
+and y rows over the clip w at the box's nearest corner, the projection's
+Jacobian on axis) falls under the LOD threshold in pixels of
+contribution - mesh LOD's screen-error metric, what Hierarchical 3DGS
+cuts its tree by. The count is a budget met by raising the threshold
+(geometric bisection over the runs' ramps, under a millisecond at 4k
+runs); without a view the budget alone thins, by importance across the
+cloud, the old prefix. The feed is one matrix (`orderView`, the entry's
+model-to-clip) from which the depth direction, the planes and the pixel
+scale all derive, so the core names no camera; the spatial core gates it
+on direction, eye move and projection. Rejected: re-ranking a global
+order (bit-reversed leaves within bands, contribution at a reference
+distance - view-independent, so near and far thin alike); padding short
+leaves to 256 with never-listed records (dead texels and a budget to
+tune, where the chunk index costs bits the record carried as zeros);
+importance as volume times opacity (ranks a blob over a disc of the
+same footprint, and a capture's surfaces are discs).
+[plans/splat-order-and-chunks.md](../plans/splat-order-and-chunks.md).
+
 ## Known limits and open items
 
 - **Fill is the phone's wall.** At 1M full resolution the Pixel 7 spends
@@ -236,26 +302,26 @@ carry, not a renderer guess.
   structural answer (front-to-back tile blending) needs GLES 3.1 compute,
   which is not on the table. The levers are overdraw cuts
   ([backlog/splat-overdraw-fill.md](../backlog/splat-overdraw-fill.md))
-  and drawing less: per-chunk frustum culling in the sort, which the
-  chunk table now makes possible
-  ([backlog/splat-order-and-chunks.md](../backlog/splat-order-and-chunks.md)).
+  and drawing less: the per-chunk culling and thinning of D13 cuts what
+  is off screen and what is too small to show, not the overdraw of what
+  is on screen.
 - **The linear blend path costs twice the display path on Mali**, in
   HEAD, since some change after 2026-09-27; not the splats'
   ([done/mali-linear-scene-path-doubled.md](../done/mali-linear-scene-path-doubled.md)).
-- **The count dial drops a detailed subject first.** Importance is
-  volume times opacity; a capture whose subject is all micro-splats
-  loses the subject before the garden at 100k. The order block takes any
-  ranking ([backlog/splat-order-and-chunks.md](../backlog/splat-order-and-chunks.md)).
-- **Sparse leaves.** A leaf holds 256 splats whatever their spread; in
-  near-empty regions the box is wide and 0.9% of the lizard's splats
-  move more than a tenth of their size (same item).
+- **The LOD threshold and the feed gates are set by feel until the
+  Pixel rows and the human flip land** (`SPLAT_LOD_THRESHOLD`,
+  `ORDER_VIEW_MOVE_FRACTION`; the plan's step 4 and 5).
+- **No merged aggregates for far LOD**: a far chunk thins to its most
+  important splats, which do not grow to cover what the rest covered;
+  the run has room for merged records a bake could add (a non-goal of
+  [plans/splat-order-and-chunks.md](../plans/splat-order-and-chunks.md)).
 - **The entry's order check does not know the key is packed**: it still
   demands 12 bytes from the key offset, so a packed layout with the words
   last is refused with "does not fit"
   ([backlog/splat-record-loose-ends.md](../backlog/splat-record-loose-ends.md)).
-- **16 reserved bits per splat**, the antialiased path without a capture
-  to judge it, the constant log-scale floor, and the test gaps at the
-  flux and 3d boundaries: same item.
+- The antialiased path without a capture to judge it, the constant
+  log-scale floor, and the test gaps at the flux and 3d boundaries: same
+  item.
 - **A heavy pass is kept under the driver's hang timeout by the engine,
   not by the cloud.** On the SM-T500 (Adreno 610) the train at the
   window size ran past KGSL's 2 s submission limit and faulted the
@@ -267,8 +333,8 @@ carry, not a renderer guess.
   stage runs per bin, fifteen texel fetches per corner at pq SH3 - and
   nearly resolution-independent (276 ms at a quarter of the pixels, 493
   at all of them); the u8 SH encoding costs about 4x there.
-- **No level of detail or streaming** beyond the count prefix; a
-  city-scale capture is out of scope.
+- **No streaming**: the run is the unit a streaming cloud would load
+  by; a city-scale capture is out of scope.
 - **Floaters.** A capture is clean near the camera path it was taken
   from; elsewhere it is smears. The app keeps the camera near the path.
 

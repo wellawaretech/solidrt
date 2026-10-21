@@ -6,13 +6,16 @@
 // over the view's center: the nearer one is drawn last, so its color is
 // the pixel; the camera crossing to the other side re-sorts the engine's
 // key column and the other splat wins; a count of 0 draws nothing until
-// setRecordCount publishes the prefix. A cloud above the engine's
-// in-place sort size takes the same path through the sort thread: the
-// ids land a sort later, which `settle` waits out.
+// setRecordCount lifts the budget. A cloud above the engine's in-place
+// sort size takes the same path through the sort thread: the ids land a
+// sort later, which `settle` waits out. The engine's selection by chunk
+// shows the same way: the LOD threshold drops a small splat and the
+// pixel shows the one behind it, and a chunk behind the camera leaves
+// the draw range the GPU inventory reports.
 
 import { test, expect } from "@solidrt/test"
 import type { Pixels, RefLocator, TestApp } from "@solidrt/test"
-import { add, createScene, createSplatMesh, disposeInstances, parseSplat, setRecordCount } from "../src/index.ts"
+import { add, createScene, createSplatMesh, disposeInstances, parseSplat, setRecordCount, setRecordLod, SPLAT_CHUNK_MAX, SPLAT_GROUP } from "../src/index.ts"
 import type { SceneHandle, SplatMeshNode, SplatShEncoding } from "../src/index.ts"
 
 const SIZE = 64
@@ -32,21 +35,32 @@ const BLUE = [0, 0, 255, 255]
 // invisible, so the two at the center decide the pixel.
 const LARGE_CLOUD = 20000
 const FILLER_X = 1000
+// The near splat's scale in the LOD test: at the camera's distance it
+// projects to about two pixels of sigma (solid at the center pixel) and
+// to NEAR_CONTRIBUTION pixels of contribution (its area times its
+// opacity at the chunk's projected scale), between the thresholds below.
+const NEAR_SCALE = 0.3
+// A threshold the near splat falls under (its contribution is ~4 px)
+// while the unit splat behind it (~48 px) clears it.
+const LOD_CUT = 10
+// Fillers past this many make a second chunk, whose box lies off to the
+// side of the view and is culled whole.
+const CULLED_CHUNK = SPLAT_CHUNK_MAX
 // Frames a settle over a camera crossing may run: the one whose flush
 // submits the re-sort and the one that lands its ids.
 const SORT_LANDING_FRAMES = 2
 
-// A .splat record: position, linear scale, color bytes, quaternion
-// (w, x, y, z) quantized v * 128 + 128; the identity rotation at the
-// largest w the byte holds.
+// A .splat record: position, linear scale (1 unless given), color
+// bytes, quaternion (w, x, y, z) quantized v * 128 + 128; the identity
+// rotation at the largest w the byte holds.
 const IDENTITY = [127 / 128, 0, 0, 0]
-function dotSplat(splats: { p: number[]; c: number[] }[]): Uint8Array {
+function dotSplat(splats: { p: number[]; c: number[]; s?: number }[]): Uint8Array {
   let out = new Uint8Array(splats.length * 32)
   let dv = new DataView(out.buffer)
   splats.forEach((g, i) => {
     for (let k = 0; k < 3; k++) {
       dv.setFloat32(i * 32 + k * 4, g.p[k]!, true)
-      dv.setFloat32(i * 32 + 12 + k * 4, 1, true)
+      dv.setFloat32(i * 32 + 12 + k * 4, g.s ?? 1, true)
     }
     for (let k = 0; k < 4; k++) {
       out[i * 32 + 24 + k] = g.c[k]!
@@ -196,6 +210,59 @@ for (let encoding of ["u8", "pq"] as SplatShEncoding[]) {
     expect(front[0]! - back[0]!).toBeGreaterThan(-2 * SH_C1 * SH_RED * SOLID - 2 * SH_TOLERANCE)
     disposeInstances(mesh)
   })
+}
+
+test("the LOD threshold drops a small splat before a large one, and 0 draws both", async app => {
+  let { mesh, leaf } = await mounted(app, () => {
+    let s = scene()
+    // The small blue splat is nearer: drawn last, it wins the pixel -
+    // unless the threshold cuts it, when the red one behind shows.
+    let data = parseSplat(dotSplat([{ p: [0, 0, 0], c: RED }, { p: [0, 0, NEAR_Z], c: BLUE, s: NEAR_SCALE }]), { keepOrientation: true })
+    let mesh: SplatMeshNode = createSplatMesh(data, { lodThreshold: LOD_CUT, label: "splat-mesh-lod" })
+    add(s.root, mesh)
+    return { scene: s, mesh }
+  })
+  expectColor(center(await app.painted(leaf)), RED)
+  setRecordLod(mesh, 0)
+  expectColor(center(await app.painted(leaf)), BLUE)
+  setRecordLod(mesh, LOD_CUT)
+  expectColor(center(await app.painted(leaf)), RED)
+  disposeInstances(mesh)
+})
+
+test("a chunk behind the view is culled from the draw range; the budget caps it", async app => {
+  let { mesh, leaf } = await mounted(app, () => {
+    let s = scene()
+    // Two chunks: the first holds the two center splats and the fillers
+    // nearest them, the second the rest of the fillers, off to the side
+    // and out of view.
+    let splats = [{ p: [0, 0, 0], c: RED }, { p: [0, 0, NEAR_Z], c: BLUE }]
+    for (let i = 2; i < CULLED_CHUNK + 40; i++) splats.push({ p: [FILLER_X + i, 0, 0], c: RED })
+    let data = parseSplat(dotSplat(splats), { keepOrientation: true })
+    expect(data.runs.length).toBe(2)
+    let mesh: SplatMeshNode = createSplatMesh(data, { lodThreshold: 0, label: "splat-mesh-cull" })
+    add(s.root, mesh)
+    return { scene: s, mesh }
+  })
+  expectColor(center(await app.painted(leaf)), BLUE)
+  // The draw range is the selection's: the first chunk's records in
+  // groups of SPLAT_GROUP, not the cloud's.
+  expect(instancesDrawn(app)).toBe(Math.ceil(CULLED_CHUNK / SPLAT_GROUP))
+  // A budget under the visible chunk thins it to the budget.
+  setRecordCount(mesh, SPLAT_GROUP * 2)
+  await app.painted(leaf)
+  expect(instancesDrawn(app)).toBe(2)
+  disposeInstances(mesh)
+})
+
+// The instance count of the scene's splat entry as the raster thread
+// holds it (the GPU inventory of the scene target).
+function instancesDrawn(app: TestApp): number {
+  let targets = app.gpu({ label: "splat-mesh" }).pipelines as { kind: string; draws?: { label?: string; instanceCount?: number }[] }[]
+  let view = targets.find(t => t.kind === "draws")
+  let entry = view?.draws?.find(d => d.label === "splat-quads")
+  if (entry === undefined || entry.instanceCount === undefined) throw new Error("the splat entry is not in the inventory: " + JSON.stringify(targets))
+  return entry.instanceCount
 }
 
 test("a large cloud sorts on the sort thread: the camera crossing lands after a settle", async app => {

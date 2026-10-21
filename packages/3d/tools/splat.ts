@@ -22,10 +22,12 @@
 // per coefficient (16/32/48 bytes per splat; exact for an spz). --antialiased marks a capture trained with the
 // antialiasing compensation (Mip-Splatting, nerfstudio's antialiased
 // mode), which the renderer then applies. The bake is lossy (positions
-// and scales quantized against 256-splat chunks, SH to bytes or codes)
-// and prints what it lost: the chunk position step against each splat's
-// largest axis (median, 99th percentile, the share above a tenth), the SH
-// coefficients clamped, and under pq the palette error per subspace.
+// and scales quantized against chunks of up to 256 splats, split finer
+// where a box would move a splat visibly, SH to bytes or codes) and
+// prints what it lost: the chunk count and the smallest chunk, the chunk
+// position step against each splat's largest axis (median, 99th
+// percentile, the share above a tenth), the SH coefficients clamped, and
+// under pq the palette error per subspace.
 
 import { readFileSync, writeFileSync } from "node:fs"
 import { gunzipSync } from "node:zlib"
@@ -88,7 +90,8 @@ console.log(
 )
 let pct = (v: number) => (v * 100).toFixed(2) + "%"
 console.log(
-  `  ${report.chunks} chunks; position step over the splat's largest axis: median ${pct(report.positionStep.median)}, ` +
+  `  ${report.chunks} chunks (the smallest ${report.runMin} splats${report.capped ? "; the chunk limit stopped the precision splits" : ""}); ` +
+    `position step over the splat's largest axis: median ${pct(report.positionStep.median)}, ` +
     `99th percentile ${pct(report.positionStep.p99)}, ${pct(report.positionStep.visibleShare)} of splats above ${pct(SPLAT_STEP_VISIBLE)}; ` +
     `${report.shClamped} SH coefficients clamped`,
 )

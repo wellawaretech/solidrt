@@ -792,6 +792,8 @@ impl Context {
     // The storage is regenerated whatever the kind, manual included, so this
     // notes unconditionally (unlike the pure-mutation paths).
     self.note_content(id);
+    // A packed population on the target selects in its pixels: re-select.
+    self.reselect_target_orders(id);
     Ok(())
   }
 

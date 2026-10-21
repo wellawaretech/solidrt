@@ -980,18 +980,34 @@ declare module "flux:gpu" {
      * smaller population sorts in the flush, exact for the frame.
      */
     indices?: { stride: number }
+    /**
+     * The level of detail of a PACKED indexed population (a
+     * {@link RecordKey} with `packed`, whose records come in runs):
+     * `threshold` is the contribution in pixels - a record's importance
+     * from the run ramp times the pixel scale at the run's box under the
+     * entry's `orderView` - below which a run's tail is not drawn. 0 (the
+     * default) thins nothing and the instance count alone budgets. On an
+     * order without `indices` it throws.
+     */
+    lod?: { threshold: number }
   }
   /**
-   * The order half of a draw-entry update: `orderDirection` replaces the
-   * projected key's direction ({@link InstanceOrder}'s `position` mode) -
-   * the per-camera-move update. On a gather entry it stages sort state for
-   * the entry's NEXT publish and renders nothing by itself; on a retained
-   * entry (`retain: true`) it re-sorts core's copy right away and, when
-   * the order changed, republishes the entry's buffers - no publish from
-   * the app. On an entry without a position-keyed instance order it
-   * throws.
+   * The order half of a draw-entry update, the per-camera-move update of
+   * a position-keyed {@link InstanceOrder}. `orderDirection` replaces the
+   * projected key's direction by hand. `orderView` is the fed form: the
+   * entry's model-to-clip matrix (column-major, 16 numbers - what its
+   * vertex stage projects with), from which the engine takes the depth
+   * direction (the w row; the z row of an orthographic matrix) and, on a
+   * packed population, the frustum and pixel scale its runs are culled
+   * and thinned by; the spatial core's `orderFeed` writes it. `orderLod`
+   * replaces a packed population's LOD threshold (`lod`). On a gather
+   * entry a direction stages sort state for the entry's NEXT publish and
+   * renders nothing by itself; on a retained entry (`retain: true`, or
+   * indexed) a change re-sorts core's copy right away and, when the
+   * order changed, republishes the entry's buffers - no publish from the
+   * app. On an entry without a position-keyed instance order it throws.
    */
-  export type OrderUpdate = { orderDirection?: [number, number, number] }
+  export type OrderUpdate = { orderDirection?: [number, number, number]; orderView?: ArrayLike<number>; orderLod?: { threshold: number } }
 
   /**
    * Compile a GLSL ES vertex+fragment pipeline into an offscreen texture of
@@ -1094,41 +1110,47 @@ declare module "flux:gpu" {
   export function writeBuffer(id: BufferId, data: Uint8Array, byteOffset?: number): void
   /**
    * A position handed off packed ({@link RecordKey}'s `packed`): unorms
-   * over the box of the record's chunk - `format` names the packing
+   * over the box of the record's RUN - `format` names the packing
    * (`"unorm16x3"`: 16 bits per axis in two u32, x in the low half of the
    * first, y in its high half, z in the low half of the second, the rest
-   * the record's own), `chunk` the records per chunk (record id / chunk is
-   * the chunk), `bounds` the chunk table, six floats per chunk (min xyz,
-   * max xyz), ceil(count / chunk) of them. What a splat bake stores; the
-   * engine decodes the depth key from the words and the box, and its
-   * mirror holds the id and the words per record.
+   * the record's own) - and the runs: `runs` each run's first record
+   * (ascending from 0, the last run ending at the count), `bounds` each
+   * run's box, six floats (min xyz, max xyz), `ramp` each run's 16
+   * importance samples, sample i the importance at rank floor(i x run
+   * length / 16) of the run, non-increasing - the records of a run are
+   * stored by importance descending, so a prefix of a run is its most
+   * important records. What a splat bake stores. The engine decodes the
+   * depth key from the words and the box, keeps the words alone per
+   * record, and under the entry's `orderView` skips a run whose box is
+   * out of view and cuts a visible one where its ramp falls under the
+   * LOD threshold at the run's projected scale; the instance count is a
+   * budget the threshold rises to meet, and without a view the budget
+   * alone thins, by importance across the population.
    */
-  export type PackedPosition = { format: "unorm16x3"; chunk: number; bounds: Float32Array }
+  export type PackedPosition = { format: "unorm16x3"; bounds: Float32Array; runs: Uint32Array; ramp: Float32Array }
   /**
    * The key column of handed-off records, {@link transferRecords}' key
    * argument for the index materialization ({@link InstanceOrder}'s
    * `indices`): the record's byte stride and the key's float offset into
    * it, exactly what the entry's `instanceOrder` will declare (`position`
    * with `indices: { stride }`, or `field`). A packed position adds its
-   * {@link PackedPosition} and the draw `order`: the record ids in the
-   * order a count prefix dials (importance, say), every record once - the
-   * records themselves may sit in any order (a spatial one, for the
-   * chunks), and the entry's `instanceCount` takes the first n of
-   * `order`.
+   * {@link PackedPosition}, the runs the engine selects by.
    */
-  export type RecordKey = { stride: number } & ({ position: number; packed: PackedPosition; order: Uint32Array } | { position: number } | { field: number })
+  export type RecordKey = { stride: number } & ({ position: number; packed: PackedPosition } | { position: number } | { field: number })
   /**
    * Hand a buffer's full record set to the engine - the write-once form of
    * an ordered instance buffer ({@link InstanceOrder}): the engine's order
    * mirror takes ownership of a copy, so the app keeps none, and the
    * ordered entry sorts and republishes from the mirror on its own - the
    * first publish when the entry attaches (nothing draws before that),
-   * re-sorts on `orderDirection` changes, and prefix republishes when the
-   * entry's `instanceCount` changes (the first n records are the sorted
-   * population). With a {@link RecordKey} the mirror keeps the records'
-   * key column only - the index materialization, where the engine sorts
-   * the column and writes ids, so a 1M-record cloud is resident as 12 MB
-   * of positions (12 packed, the ids included), not its record block; without one it keeps the whole
+   * re-sorts on `orderDirection` and `orderView` changes, and prefix
+   * republishes when the entry's `instanceCount` changes (the first n
+   * records are the sorted population; on a packed hand-off the count is
+   * a budget over the runs the view keeps). With a {@link RecordKey} the
+   * mirror keeps the records' key column only - the index
+   * materialization, where the engine sorts the column and writes ids,
+   * so a 1M-record cloud is resident as 12 MB of positions (8 packed),
+   * not its record block; without one it keeps the whole
    * records a gathered order republishes. Hand off before the entry
    * attaches; a second call replaces the records wholesale. By the time
    * an entry attaches over the buffer the hand-off must match the order's

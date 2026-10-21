@@ -18,7 +18,7 @@ mod collide;
 mod cull;
 mod emitters;
 mod ik;
-mod math;
+pub(crate) mod math;
 mod mover;
 mod normals;
 mod occlusion;
@@ -143,12 +143,15 @@ pub struct DrawSink {
   /// Where the entry sorts on a target ordering its entries
   /// (`set_draw_sort`); ignored elsewhere.
   pub order: DrawOrder,
-  /// Feed the entry's instance-order projected-key direction from the
-  /// target's view, every flush the direction turned past
-  /// `ORDER_DIRECTION_EPS_COS`: the view forward mapped into the node's
-  /// model frame (`write_order_direction`). For an entry whose instance
-  /// records are depth-ordered (a projected-key `instanceOrder`); the
-  /// consumer never computes a direction itself.
+  /// Feed the entry's instance order its view from the target's: the
+  /// node's model-to-clip matrix (`write_order_view`), written when the
+  /// view direction turned past `ORDER_DIRECTION_EPS_COS` (the re-sort
+  /// gate), the eye moved past `ORDER_VIEW_MOVE_FRACTION` of its distance
+  /// to the node's box, or the projection changed (the re-selection
+  /// gates). For an entry whose instance records are depth-ordered (a
+  /// projected-key `instanceOrder`); a packed population also culls and
+  /// thins its runs under the matrix. The consumer never computes a
+  /// direction itself.
   pub order_feed: bool,
 }
 
@@ -191,9 +194,13 @@ struct BoundSink {
   /// The `uLodFade` value last written (the solid `[1, 1]` until a band
   /// is entered; entries are created solid).
   fade: [f64; 2],
-  /// The unit direction the order feed last wrote (`DrawSink::order_feed`);
-  /// zeros before the first write, so the first pass always feeds.
+  /// What the order feed last wrote (`DrawSink::order_feed`): the unit
+  /// direction (zeros before the first write, so the first pass always
+  /// feeds), the eye and the projection's focal factor and kind.
   fed: [f64; 3],
+  fed_eye: [f64; 3],
+  fed_focal: f64,
+  fed_ortho: bool,
   /// Why the entry is off, or that it is on, as of the last cull pass
   /// that decided it (`cull_state`).
   gate: CullState,
@@ -302,12 +309,13 @@ pub trait SinkWriter {
   /// composes the target's full permutation around these. False means
   /// the order did not land; nothing is released over it.
   fn write_order(&mut self, target: u64, order: &[u64]) -> bool;
-  /// A depth-ordered entry's fresh projected-key direction
-  /// (`DrawSink::order_feed`): the target's view forward in the node's
-  /// model frame, unit length. False stops that sink's feed (the entry
-  /// has no projected instance order to steer); the draw sink itself
-  /// stays bound.
-  fn write_order_direction(&mut self, target: u64, draw: u64, direction: [f32; 3]) -> bool;
+  /// A depth-ordered entry's fresh view (`DrawSink::order_feed`): the
+  /// node's model-to-clip matrix, column-major, the target's
+  /// view-projection over the node's world transform relative to the
+  /// target's render origin - what the entry's vertex stage projects
+  /// with. False stops that sink's feed (the entry has no projected
+  /// instance order to steer); the draw sink itself stays bound.
+  fn write_order_view(&mut self, target: u64, draw: u64, clip: [f32; 16]) -> bool;
   /// A shared-slot group's array param, rewritten whole (slot sinks share
   /// one array value; see `SharedSlotSink`).
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool;
@@ -443,6 +451,14 @@ const ORDER_RENDER_LIMIT: i32 = 1 << 20;
 /// Set by feel; revisit against the splat-scale measurements
 /// (okf/plans/gaussian-splats.md).
 const ORDER_DIRECTION_EPS_COS: f64 = 0.99939;
+/// The order feed's re-selection gate on the eye: the fraction of the
+/// eye's distance to the node's box (its half diagonal when inside) the
+/// eye must move before the view is fed again, so a packed population
+/// re-culls and re-thins its runs. A move under it changes which runs
+/// are in view and how big they project by less than the gate's share;
+/// set by feel, measured on the Pixel 7 with the splat ladder
+/// (okf/plans/splat-order-and-chunks.md).
+const ORDER_VIEW_MOVE_FRACTION: f64 = 0.05;
 
 /// A sorted target's state between flushes (`Spatial::set_draw_sort`).
 #[derive(Default)]
@@ -462,6 +478,32 @@ struct DrawSort {
   dirty: bool,
   /// The target's LOD view changed since the last keying.
   view_moved: bool,
+}
+
+/// The distance from `p` to the nearest point of the world-axis box (0
+/// inside).
+fn point_box_distance(p: [f64; 3], b: &Box3) -> f64 {
+  let mut d2 = 0.0;
+  for k in 0..3 {
+    let gap = if p[k] < b[k] {
+      b[k] - p[k]
+    } else if p[k] > b[k + 3] {
+      p[k] - b[k + 3]
+    } else {
+      0.0
+    };
+    d2 += gap * gap;
+  }
+  d2.sqrt()
+}
+
+/// Half the box's diagonal: the reach a move is measured against from
+/// inside it.
+fn box_half_diagonal(b: &Box3) -> f64 {
+  let dx = b[3] - b[0];
+  let dy = b[4] - b[1];
+  let dz = b[5] - b[2];
+  0.5 * (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
 /// The total order of an f32 as unsigned bits (negative values below
@@ -2265,15 +2307,21 @@ impl Spatial {
   }
 
   /// Feed every order-feed sink (`DrawSink::order_feed`) its target's
-  /// current view direction in the node's model frame: with world matrix
-  /// W, dot(W p + t, f) = dot(p, W3x3^T f) + const, so the records'
-  /// world depth along the view forward f is ordered exactly by the key
-  /// direction W3x3^T f - no inverse, correct under any scale. Written
-  /// only when the direction turned past `ORDER_DIRECTION_EPS_COS` since
-  /// the last write, the gate that meters the consumer's re-sort and
-  /// republish. A target without a view feeds nothing (and keeps the
-  /// sink's last direction); a write that does not land stops that
-  /// sink's feed, the sink itself stays.
+  /// current view as the node's model-to-clip matrix (the target's
+  /// view-projection in origin space over the node's world transform
+  /// shifted by the origin: exactly `uViewProj * uModel`). From it the
+  /// consumer derives the depth direction its records sort by - with
+  /// world matrix W, dot(W p + t, f) = dot(p, W3x3^T f) + const, so the
+  /// records' world depth along the view forward f is ordered exactly by
+  /// the model-frame direction W3x3^T f, which is the matrix's w row -
+  /// and, for a packed population, the frustum and the pixel scale its
+  /// runs are culled and thinned by. Written under three gates: the
+  /// direction turned past `ORDER_DIRECTION_EPS_COS` since the last
+  /// write (the re-sort gate), the eye moved past
+  /// `ORDER_VIEW_MOVE_FRACTION` of its distance to the node's box, or the
+  /// projection changed (the re-selection gates). A target without a
+  /// view feeds nothing (and keeps the sink's last view); a write that
+  /// does not land stops that sink's feed, the sink itself stays.
   fn order_feed_pass(&mut self, out: &mut dyn SinkWriter) {
     if self.order_feeds.is_empty() {
       return;
@@ -2284,12 +2332,14 @@ impl Spatial {
         return false;
       }
       let world = self.nodes[i as usize].world;
+      let world_box = self.nodes[i as usize].world_box;
       let mut sinks = std::mem::take(&mut self.nodes[i as usize].sinks);
       for b in sinks.iter_mut() {
         if !b.sink.order_feed {
           continue;
         }
-        let Some(view) = self.lod_views.get(&b.sink.target) else {
+        let (Some(view), Some(&(vp, _))) = (self.lod_views.get(&b.sink.target), self.view_projs.get(&b.sink.target))
+        else {
           continue;
         };
         let f = view.forward;
@@ -2304,11 +2354,39 @@ impl Spatial {
           continue;
         }
         let d = [d[0] / len, d[1] / len, d[2] / len];
-        if d[0] * b.fed[0] + d[1] * b.fed[1] + d[2] * b.fed[2] > ORDER_DIRECTION_EPS_COS {
+        let turned = d[0] * b.fed[0] + d[1] * b.fed[1] + d[2] * b.fed[2] <= ORDER_DIRECTION_EPS_COS;
+        let reach = match world_box {
+          Some(bx) => point_box_distance(view.eye, &bx).max(box_half_diagonal(&bx)),
+          None => {
+            let dx = view.eye[0] - world[12];
+            let dy = view.eye[1] - world[13];
+            let dz = view.eye[2] - world[14];
+            (dx * dx + dy * dy + dz * dz).sqrt()
+          }
+        };
+        let mx = view.eye[0] - b.fed_eye[0];
+        let my = view.eye[1] - b.fed_eye[1];
+        let mz = view.eye[2] - b.fed_eye[2];
+        let moved = (mx * mx + my * my + mz * mz).sqrt() > ORDER_VIEW_MOVE_FRACTION * reach;
+        let reprojected = view.focal != b.fed_focal || view.ortho != b.fed_ortho;
+        if !(turned || moved || reprojected) {
           continue;
         }
-        if out.write_order_direction(b.sink.target, b.sink.draw, [d[0] as f32, d[1] as f32, d[2] as f32]) {
+        let origin = self.origins.get(&b.sink.target).copied().unwrap_or([0.0; 3]);
+        let mut shifted = world;
+        shifted[12] -= origin[0];
+        shifted[13] -= origin[1];
+        shifted[14] -= origin[2];
+        let clip = math::multiply(vp, shifted);
+        let mut clip32 = [0.0f32; 16];
+        for (o, v) in clip32.iter_mut().zip(clip) {
+          *o = v as f32;
+        }
+        if out.write_order_view(b.sink.target, b.sink.draw, clip32) {
           b.fed = d;
+          b.fed_eye = view.eye;
+          b.fed_focal = view.focal;
+          b.fed_ortho = view.ortho;
         } else {
           b.sink.order_feed = false;
         }
@@ -4187,6 +4265,9 @@ impl Spatial {
       fresh: true,
       fade: [1.0, 1.0],
       fed: [0.0; 3],
+      fed_eye: [0.0; 3],
+      fed_focal: 0.0,
+      fed_ortho: false,
       gate: CullState::Hidden,
     });
     for target in rekeyed {

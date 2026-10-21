@@ -18,8 +18,8 @@
 //! finishes the job in hand and exits, joined by the drop so an engine
 //! teardown leaves no thread behind.
 use super::{
-  materialize_indices, materialize_indices_mapped, order_permutation, order_permutation_packed, InstanceOrder,
-  OrderScratch, PackedKey,
+  materialize_indices, materialize_indices_through, order_packed, order_permutation, InstanceOrder, OrderScratch,
+  PackedKey, RunTable, Selection,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
@@ -42,15 +42,19 @@ pub struct SortJob {
   pub order: InstanceOrder,
   /// Bytes per key record (`KeyColumn::mirror_len`).
   pub stride: usize,
-  /// A packed key's packing and chunk table: the column then holds (id,
-  /// word) pairs in draw order and the ids map through them.
-  pub packed: Option<(PackedKey, Arc<Vec<[f32; 6]>>)>,
+  /// A packed key's packing, run table and selection: the column then
+  /// holds the packed words in storage order, the job selects runs
+  /// before it sorts, and the ids map through the selection.
+  pub packed: Option<PackedJob>,
   /// The key column, shared with the mirror.
   pub keys: Arc<Vec<u8>>,
   /// The published prefix of the column in bytes: what sorts.
   pub len: usize,
   /// A vector the permutation is written into (reused across jobs).
   pub perm: Vec<u32>,
+  /// A vector the selected record ids are written into (packed jobs;
+  /// reused across jobs).
+  pub ids: Vec<u32>,
   /// The id buffer's block, buffer-sized: the sorted ids, then the
   /// sentinel to its end.
   pub block: Vec<u8>,
@@ -60,13 +64,23 @@ pub struct SortJob {
   pub done: Option<Box<dyn FnOnce() + Send>>,
 }
 
+/// A packed job's selection inputs (`SortJob::packed`).
+pub struct PackedJob {
+  pub key: PackedKey,
+  pub table: Arc<RunTable>,
+  pub selection: Selection,
+}
+
 /// A finished re-sort.
 pub struct SortDone {
   pub entry: (u64, u64),
   pub buffer: u64,
   pub generation: u64,
-  /// The permutation (perm[i] = the record drawn i-th).
+  /// The permutation (perm[i] = the slot drawn i-th: a record, or under a
+  /// packed job a selected slot `ids` names).
   pub perm: Vec<u32>,
+  /// A packed job's selected record ids in slot order; empty otherwise.
+  pub ids: Vec<u32>,
   /// The block with the ids materialized.
   pub block: Vec<u8>,
   /// The sort and the materialization, in milliseconds.
@@ -116,14 +130,18 @@ impl OrderWorker {
       while let Ok(mut job) = job_rx.recv() {
         placement.reassert();
         let start = Instant::now();
+        job.ids.clear();
         match &job.packed {
-          Some((key, bounds)) => order_permutation_packed(&job.order, *key, &job.keys[..job.len], bounds, &mut scratch),
+          Some(packed) => {
+            order_packed(&job.order, packed.key, &job.keys[..job.len], &packed.table, &packed.selection, &mut scratch);
+            job.ids.extend_from_slice(scratch.ids());
+          }
           None => order_permutation(&job.order, job.stride, &job.keys[..job.len], &mut scratch),
         }
         job.perm.clear();
         job.perm.extend_from_slice(scratch.perm());
         match &job.packed {
-          Some(_) => materialize_indices_mapped(&job.perm, &job.keys[..job.len], &mut job.block),
+          Some(_) => materialize_indices_through(&job.perm, &job.ids, &mut job.block),
           None => materialize_indices(&job.perm, &mut job.block),
         }
         let work_ms = start.elapsed().as_secs_f32() * 1000.0;
@@ -133,6 +151,7 @@ impl OrderWorker {
           buffer: job.buffer,
           generation: job.generation,
           perm: job.perm,
+          ids: job.ids,
           block: job.block,
           work_ms,
         };

@@ -24,11 +24,11 @@ pub use glyphs::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQ
 pub use lease::WriteLeases;
 pub use limits::GpuLimits;
 pub use order::{
-  gather_ordered, gather_permuted, materialize_indices, materialize_indices_mapped, order_permutation,
-  order_permutation_packed, InstanceOrder, KeyColumn, OrderKey, OrderScratch, PackedFormat, PackedKey, PackedRecords,
-  INDEX_NONE,
+  gather_ordered, gather_permuted, materialize_indices, materialize_indices_through, order_packed, order_permutation,
+  InstanceOrder, KeyColumn, OrderKey, OrderScratch, OrderView, PackedFormat, PackedKey, RunTable, Selection,
+  INDEX_NONE, RUN_RAMP_SAMPLES,
 };
-pub use order_worker::{OrderCounters, OrderWorker, SortJob};
+pub use order_worker::{OrderCounters, OrderWorker, PackedJob, SortJob};
 pub use resources::{
   GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo,
   GpuResources, GpuTextureInfo, GpuWindowShaderInfo, LostContent,

@@ -411,8 +411,9 @@ let entryInstanceOrder = (order: ResolvedInstanceOrder, material: Material, geom
   if (at < 0) throw new Error("Mesh material declares no instance buffer with the mesh's instanceOrder key layout (" + order.key + ")")
   let buffer = geometryBuffers + at
   let indices = order.indices !== null ? { indices: order.indices } : {}
+  let lod = order.lod !== null ? { lod: { threshold: order.lod.threshold } } : {}
   return order.position
-    ? { position: order.floats, direction: ORDER_SEED_DIRECTION, descending: order.descending, buffer, retain: order.retain, ...indices }
+    ? { position: order.floats, direction: ORDER_SEED_DIRECTION, descending: order.descending, buffer, retain: order.retain, ...indices, ...lod }
     : { field: order.floats, descending: order.descending, buffer }
 }
 
@@ -2505,6 +2506,18 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // entry stays at 0 and the unhide restores the new count.
       if (mesh._buffers !== null && mesh._node !== null && !disposed && mesh._instances !== null) {
         spatial.setDrawCount(mesh._node, drawCount(mesh._instances))
+      }
+    },
+    _setLod(mesh) {
+      // The threshold travels to every entry of the mesh as the order
+      // update; the engine re-selects under it.
+      let lod = mesh._instances?.order?.lod
+      if (lod === undefined || lod === null || mesh._buffers === null || disposed) return
+      let update = { orderLod: { threshold: lod.threshold } }
+      if (mesh._entry !== null) setDrawRange(texture, mesh._entry, update)
+      for (let v of views) {
+        let entry = v.entries.get(mesh)
+        if (entry !== undefined) setDrawRange(v.texture, entry, update)
       }
     },
     _setBuffer(mesh) {

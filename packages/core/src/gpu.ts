@@ -185,7 +185,8 @@ export type { AttributeAccess, FormatCodec, FormatKind } from "./vertex.ts"
 // camera moves). That orders ENTRIES; ordering the instance RECORDS within
 // one entry is the instanceOrder creation option (see InstanceOrder), whose
 // projected-key direction updates ride setDraw/setDrawRange as
-// orderDirection.
+// orderDirection, or as orderView (the model-to-clip matrix the spatial
+// core feeds, which a packed population also culls and thins by).
 //
 // Heavy draws and the submission budget: the engine keeps every GPU
 // submission under about half a second (a quarter of the hang timeout at
@@ -1036,8 +1037,9 @@ export function createRecordStream(stride: number, capacity: number, opts?: Crea
  * nothing and partial rewrites are off the table. With a `key` (the
  * record's byte stride and the key's float offset) the engine keeps the
  * records' key column only - the index form, whose sort reads nothing
- * else; a packed position key brings its chunk table and the draw order.
- * Hand off before the entry attaches over the buffer. See
+ * else; a packed position key brings its run table (boxes, starts and
+ * importance ramps), the unit the engine culls and thins by. Hand off
+ * before the entry attaches over the buffer. See
  * `transferRecords` in flux:gpu for the full contract.
  */
 export function transferRecords(id: gpu.BufferId, records: ArrayBuffer | ArrayBufferView, key?: gpu.RecordKey): void {

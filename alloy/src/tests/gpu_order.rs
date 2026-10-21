@@ -1,7 +1,7 @@
 use crate::gpu::{
-  gather_ordered, gather_permuted, materialize_indices, materialize_indices_mapped, order_permutation,
-  order_permutation_packed, InstanceOrder, KeyColumn, OrderKey, OrderScratch, OrderWorker, PackedFormat, PackedKey,
-  PackedRecords, SortJob, INDEX_NONE,
+  gather_ordered, gather_permuted, materialize_indices, materialize_indices_through, order_packed, order_permutation,
+  InstanceOrder, KeyColumn, OrderKey, OrderScratch, OrderView, OrderWorker, PackedFormat, PackedJob, PackedKey,
+  RunTable, Selection, SortJob, INDEX_NONE, RUN_RAMP_SAMPLES,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -18,13 +18,14 @@ fn record_float(block: &[u8], stride: usize, i: usize, at: usize) -> f32 {
   f32::from_ne_bytes(b)
 }
 
-fn field(offset_floats: usize) -> InstanceOrder {
+fn field_order(offset_floats: usize) -> InstanceOrder {
   InstanceOrder {
     key: OrderKey::Field { offset: offset_floats * 4 },
     descending: false,
     key_buffer: None,
     retain: false,
     indices: None,
+    lod_threshold: 0.0,
   }
 }
 
@@ -72,14 +73,15 @@ fn parse_validates_the_key_shape() {
 #[test]
 fn check_stride_bounds_the_key_bytes() {
   // A 16-byte record: float offsets 0..3 hold an f32, 3 is the last that fits.
-  field(3).check_stride(16).expect("last float fits");
-  assert!(field(4).check_stride(16).expect_err("one past").contains("does not fit"));
+  field_order(3).check_stride(16).expect("last float fits");
+  assert!(field_order(4).check_stride(16).expect_err("one past").contains("does not fit"));
   let projected = InstanceOrder {
     key: OrderKey::Projected { offset: 4, direction: [0.0, 0.0, 1.0] },
     descending: false,
     key_buffer: None,
     retain: false,
     indices: None,
+    lod_threshold: 0.0,
   };
   projected.check_stride(16).expect("vec3 at float 1 fits a 16-byte record");
   assert!(projected.check_stride(12).expect_err("vec3 past the record").contains("does not fit"));
@@ -87,7 +89,7 @@ fn check_stride_bounds_the_key_bytes() {
 
 #[test]
 fn set_direction_is_projected_only() {
-  let mut f = field(0);
+  let mut f = field_order(0);
   assert!(f.set_direction([0.0, 1.0, 0.0]).expect_err("field key").contains("field key"));
   let mut p = InstanceOrder {
     key: OrderKey::Projected { offset: 0, direction: [1.0, 0.0, 0.0] },
@@ -95,6 +97,7 @@ fn set_direction_is_projected_only() {
     key_buffer: None,
     retain: false,
     indices: None,
+    lod_threshold: 0.0,
   };
   assert!(p.set_direction([0.0, 0.0, 0.0]).expect_err("zero direction").contains("zero vector"));
   p.set_direction([0.0, 2.0, 0.0]).expect("replace");
@@ -109,7 +112,7 @@ fn gather_sorts_ascending_and_keeps_ties_stable() {
   let stride = 8;
   let mut dst = vec![0u8; src.len()];
   let mut scratch = OrderScratch::default();
-  gather_ordered(&field(0), stride, &src, &mut dst, &mut scratch);
+  gather_ordered(&field_order(0), stride, &src, &mut dst, &mut scratch);
   let order: Vec<f32> = (0..5).map(|i| record_float(&dst, stride, i, 1)).collect();
   // -1 first, then 0, then the two 3.0 records in slot order (stable), NaN last.
   assert_eq!(order, vec![1.0, 4.0, 0.0, 2.0, 3.0]);
@@ -127,6 +130,7 @@ fn gather_descending_reverses() {
     key_buffer: None,
     retain: false,
     indices: None,
+    lod_threshold: 0.0,
   };
   gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 1)).collect();
@@ -146,6 +150,7 @@ fn projected_key_follows_the_direction() {
     key_buffer: None,
     retain: false,
     indices: None,
+    lod_threshold: 0.0,
   };
   gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 3)).collect();
@@ -176,7 +181,7 @@ fn gather_round_trips_a_large_shuffled_population() {
   let stride = stride_floats * 4;
   let mut dst = vec![0u8; src.len()];
   let mut scratch = OrderScratch::default();
-  gather_ordered(&field(1), stride, &src, &mut dst, &mut scratch);
+  gather_ordered(&field_order(1), stride, &src, &mut dst, &mut scratch);
   let mut seen = vec![false; COUNT];
   let mut last = f32::NEG_INFINITY;
   for i in 0..COUNT {
@@ -189,7 +194,7 @@ fn gather_round_trips_a_large_shuffled_population() {
   }
   // Scratch reuse: a second gather over the same population is identical.
   let mut dst2 = vec![0u8; src.len()];
-  gather_ordered(&field(1), stride, &src, &mut dst2, &mut scratch);
+  gather_ordered(&field_order(1), stride, &src, &mut dst2, &mut scratch);
   assert_eq!(dst, dst2, "reused scratch must not change the result");
 }
 
@@ -201,8 +206,8 @@ fn permutation_plus_permuted_gather_equals_gather_ordered() {
   let stride = 8;
   let mut scratch = OrderScratch::default();
   let mut one_shot = vec![0u8; src.len()];
-  gather_ordered(&field(0), stride, &src, &mut one_shot, &mut scratch);
-  order_permutation(&field(0), stride, &src, &mut scratch);
+  gather_ordered(&field_order(0), stride, &src, &mut one_shot, &mut scratch);
+  order_permutation(&field_order(0), stride, &src, &mut scratch);
   let mut split = vec![0u8; src.len()];
   gather_permuted(scratch.perm(), stride, &src, &mut split);
   assert_eq!(one_shot, split);
@@ -215,7 +220,7 @@ fn permuted_gather_follows_a_sibling_stride() {
   // slots 1, 2, 0; the one-float sibling records follow.
   let keys = bytes(&[2.0, 9.0, 0.0, 9.0, 1.0, 9.0]);
   let mut scratch = OrderScratch::default();
-  order_permutation(&field(0), 8, &keys, &mut scratch);
+  order_permutation(&field_order(0), 8, &keys, &mut scratch);
   let sibling = bytes(&[10.0, 11.0, 12.0]);
   let mut dst = vec![0u8; sibling.len()];
   gather_permuted(scratch.perm(), 4, &sibling, &mut dst);
@@ -250,11 +255,11 @@ fn gather_handles_the_trivial_populations() {
   let mut scratch = OrderScratch::default();
   // Zero records.
   let mut empty: Vec<u8> = Vec::new();
-  gather_ordered(&field(0), 8, &[], &mut empty, &mut scratch);
+  gather_ordered(&field_order(0), 8, &[], &mut empty, &mut scratch);
   // One record copies through.
   let src = bytes(&[5.0, 7.0]);
   let mut dst = vec![0u8; src.len()];
-  gather_ordered(&field(0), 8, &src, &mut dst, &mut scratch);
+  gather_ordered(&field_order(0), 8, &src, &mut dst, &mut scratch);
   assert_eq!(src, dst);
 }
 
@@ -268,7 +273,7 @@ fn parse_and_materialize_indices() {
     .expect("an indexed position order parses");
   assert_eq!(indexed.indices, Some(32));
   assert_eq!(indexed.mirror_stride(64), 12, "the mirror holds the key column, not the id stream or the record");
-  assert_eq!(field(0).mirror_stride(52), 52, "without indices the instance record is the record");
+  assert_eq!(field_order(0).mirror_stride(52), 52, "without indices the instance record is the record");
   let odd = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false, Some(30.0));
   assert!(odd.expect_err("a stride off the float grid").contains("multiple of 4"));
   let zero = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false, Some(0.0));
@@ -301,7 +306,7 @@ fn key_column_parses_and_matches_the_order() {
   let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(32.0))
     .expect("an indexed position order parses");
   assert_eq!(indexed.key_column(), Some(column), "the order expects the column the hand-off declared");
-  assert_eq!(field(0).key_column(), None, "a gathered order keeps whole records");
+  assert_eq!(field_order(0).key_column(), None, "a gathered order keeps whole records");
   let shifted =
     InstanceOrder::parse(None, Some(1.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(32.0)).expect("parses");
   assert_ne!(shifted.key_column(), Some(column), "a different offset is a different column");
@@ -341,7 +346,7 @@ fn key_column_extracts_what_the_sort_reads() {
   let mut whole = OrderScratch::default();
   order_permutation(&order, 16, &records, &mut whole);
   assert_eq!(scratch.perm(), whole.perm(), "the column sorts as the records do");
-  assert_eq!(field(2).mirror_order(), field(2), "a gathered order reads its records as declared");
+  assert_eq!(field_order(2).mirror_order(), field_order(2), "a gathered order reads its records as declared");
 }
 
 // The sort thread: a job's key column sorts to the same permutation the
@@ -367,6 +372,7 @@ fn sort_worker_round_trips_a_job() {
     keys: keys.clone(),
     len: keys.len(),
     perm: Vec::new(),
+    ids: Vec::new(),
     block: vec![0u8; 5 * 4],
     done: Some(Box::new(move || flag.store(true, Ordering::Relaxed))),
   };
@@ -387,15 +393,15 @@ fn sort_worker_round_trips_a_job() {
   drop(worker);
 }
 
-// A packed position key: the hand-off's column names the packing and the
-// chunk size, an entry's float position key over the same stride and
-// offset reads it, a field key cannot be packed.
+// A packed position key: the hand-off's column names the packing, an
+// entry's float position key over the same stride and offset reads it,
+// a field key cannot be packed.
 #[test]
 fn packed_key_column_parses_and_matches_the_order() {
-  let packed = PackedKey { format: PackedFormat::parse("unorm16x3").expect("the format"), chunk: 256 };
+  let packed = PackedKey { format: PackedFormat::parse("unorm16x3").expect("the format") };
   let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("a packed position at float 0");
   assert_eq!(column, KeyColumn { stride: 16, offset: 0, len: 8, packed: Some(packed) });
-  assert_eq!(column.mirror_len(), 12, "the mirror holds the id and the two words");
+  assert_eq!(column.mirror_len(), 8, "the mirror holds the two words alone");
   let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0))
     .expect("an indexed position order over 16-byte records");
   assert!(column.accepts(indexed.key_column().expect("indexed")), "a position key reads the packed column");
@@ -407,76 +413,108 @@ fn packed_key_column_parses_and_matches_the_order() {
 
   let field = KeyColumn::parse(16.0, Some(0.0), None, Some(packed));
   assert!(field.expect_err("a packed field").contains("position"));
-  let empty = KeyColumn::parse(16.0, None, Some(0.0), Some(PackedKey { chunk: 0, ..packed }));
-  assert!(empty.expect_err("a zero chunk").contains("chunk"));
   assert!(PackedFormat::parse("unorm11-10-11").expect_err("an unknown format").contains("not supported"));
   // Two packed words fit where a vec3 would not.
   assert!(KeyColumn::parse(16.0, None, Some(2.0), Some(packed)).is_ok());
   assert!(KeyColumn::parse(16.0, None, Some(2.0), None).is_err());
   assert!(KeyColumn::parse(16.0, None, Some(3.0), Some(packed)).expect_err("past the end").contains("does not fit"));
+
+  // The LOD threshold: an indexed order only, finite and non-negative.
+  let lod = indexed.with_lod(0.5).expect("a threshold");
+  assert_eq!(lod.lod_threshold, 0.5);
+  assert!(field_order(0).with_lod(0.5).expect_err("a gathered order").contains("indexed"));
+  assert!(indexed.with_lod(-1.0).expect_err("negative").contains("non-negative"));
+  assert!(indexed.with_lod(f64::NAN).expect_err("NaN").contains("finite"));
 }
 
 // Records of 16 bytes: the packed position words at float 0 (x | y << 16,
 // then z with junk in its high half), the rest junk; positions on the
-// quantization grid of their chunk's box, so the float key and the
-// packed key agree exactly.
-fn packed_cloud(count: usize, chunk: usize) -> (Vec<u8>, Vec<[f32; 6]>, Vec<f32>) {
-  let mut records = Vec::new();
+// quantization grid of their run's box, so the float key and the packed
+// key agree exactly. The runs are `run_len` records each (the last
+// partial), their boxes 1 << 17 apart along every axis, and the ramp
+// ranks the records of a run by (run length - rank): each run's
+// importance falls along it, as a bake stores them.
+fn packed_cloud(count: usize, run_len: usize) -> (Vec<u8>, RunTable, Vec<f32>) {
+  let runs = count.div_ceil(run_len);
   let mut bounds = Vec::new();
-  let mut zs = Vec::new();
-  let chunks = count.div_ceil(chunk);
-  for c in 0..chunks {
+  for c in 0..runs {
     // Box c: each axis over 65535 steps of 2 (exact in f32 at these
-    // magnitudes), boxes 1 << 17 apart.
+    // magnitudes).
     let min = [c as f32 * 131072.0, c as f32 * 131072.0, c as f32 * 131072.0];
     let max = [min[0] + 65535.0 * 2.0, min[1] + 65535.0 * 2.0, min[2] + 65535.0 * 2.0];
     bounds.push([min[0], min[1], min[2], max[0], max[1], max[2]]);
   }
+  let (records, zs) = packed_records(count, &bounds, run_len);
+  let starts: Vec<u32> = (0..runs).map(|c| (c * run_len) as u32).collect();
+  let ramp = falling_ramp(count, &starts);
+  (records, RunTable { bounds, starts, ramp }, zs)
+}
+
+// `count` packed records at random grid positions inside the box of their
+// run (`run_len` per box), and each record's decoded z.
+fn packed_records(count: usize, bounds: &[[f32; 6]], run_len: usize) -> (Vec<u8>, Vec<f32>) {
+  let mut records = Vec::new();
+  let mut zs = Vec::new();
   let mut state = 12345u32;
   let mut next = || {
     state = state.wrapping_mul(1664525).wrapping_add(1013904223);
     state >> 8
   };
   for i in 0..count {
-    let c = i / chunk;
+    let c = i / run_len;
     let (qx, qy, qz) = (next() % 65536, next() % 65536, next() % 65536);
     records.extend_from_slice(&(qx | (qy << 16)).to_ne_bytes());
     records.extend_from_slice(&(qz | 0xEEEE_0000).to_ne_bytes());
     records.extend_from_slice(&[0xEEu8; 8]);
-    zs.push(bounds[c][2] + qz as f32 * 2.0);
+    zs.push(bounds[c][2] + qz as f32 * (bounds[c][5] - bounds[c][2]) / 65535.0);
   }
-  (records, bounds, zs)
+  (records, zs)
 }
 
-// The packed sort over (id, word) pairs in a shuffled draw order gives the
-// float sort's record order along the direction, and the mapped
-// materialization writes record ids, not draw slots.
+// A ramp whose run of `len` records has importance (len - rank) at rank:
+// sample i at rank i x len / RUN_RAMP_SAMPLES.
+fn falling_ramp(count: usize, starts: &[u32]) -> Vec<f32> {
+  let mut ramp = Vec::new();
+  for (r, &start) in starts.iter().enumerate() {
+    let end = starts.get(r + 1).map_or(count, |&s| s as usize);
+    let len = end - start as usize;
+    for i in 0..RUN_RAMP_SAMPLES {
+      ramp.push((len - i * len / RUN_RAMP_SAMPLES) as f32);
+    }
+  }
+  ramp
+}
+
+// Every run whole: no view, no threshold, no budget.
+const WHOLE: Selection = Selection { view: None, viewport: [1.0, 1.0], threshold: 0.0, budget: usize::MAX };
+
+// The ids an index block holds.
+fn block_ids(block: &[u8]) -> Vec<u32> {
+  block.chunks_exact(4).map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]])).collect()
+}
+
+// The packed sort over the words in storage order gives the float sort's
+// record order along the direction, and the materialization through the
+// selected ids writes record ids.
 #[test]
 fn packed_key_sorts_as_the_float_key_does() {
   let count = 700;
-  let chunk = 256;
-  let (records, bounds, zs) = packed_cloud(count, chunk);
-  let packed = PackedKey { format: PackedFormat::Unorm16x3, chunk };
+  let (records, table, zs) = packed_cloud(count, 256);
+  let packed = PackedKey { format: PackedFormat::Unorm16x3 };
   let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("parses");
-  // The draw order: every record, reversed in blocks of 7.
-  let mut order: Vec<u32> = (0..count as u32).collect();
-  for block in order.chunks_mut(7) {
-    block.reverse();
-  }
-  let table = PackedRecords { bounds: bounds.clone(), order: order.clone() };
   column.check_packed(records.len(), &table).expect("a valid hand-off");
-  let mut pairs = Vec::new();
-  column.extract_packed(&records, &order, &mut pairs);
-  assert_eq!(pairs.len(), count * 12);
+  let mut words = Vec::new();
+  column.extract(&records, &mut words);
+  assert_eq!(words.len(), count * 8);
 
   let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0))
     .expect("parses")
     .mirror_order();
   let mut scratch = OrderScratch::default();
-  order_permutation_packed(&indexed, packed, &pairs, &bounds, &mut scratch);
+  assert_eq!(order_packed(&indexed, packed, &words, &table, &WHOLE, &mut scratch), count);
   let mut dst = vec![0u8; (count + 3) * 4];
-  materialize_indices_mapped(scratch.perm(), &pairs, &mut dst);
-  let ids: Vec<u32> = dst.chunks_exact(4).map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]])).collect();
+  materialize_indices_through(scratch.perm(), scratch.ids(), &mut dst);
+  let ids = block_ids(&dst);
   assert_eq!(&ids[count..], &[INDEX_NONE; 3]);
   // Descending z: each drawn record's z is no larger than the previous.
   let mut last = f32::INFINITY;
@@ -488,55 +526,200 @@ fn packed_key_sorts_as_the_float_key_does() {
     assert!(!seen[id as usize], "record {id} drawn twice");
     seen[id as usize] = true;
   }
-  // The same order the float key column gives (equal z keep draw-slot
-  // order under the packed sort, slot order under the float one; the
-  // generator makes z unique enough that both agree).
+  // The same order the float key column gives (equal z keep slot order
+  // under both).
   let floats: Vec<u8> =
     (0..count).flat_map(|i| [0.0f32, 0.0, zs[i]].iter().flat_map(|f| f.to_ne_bytes()).collect::<Vec<u8>>()).collect();
   let mut whole = OrderScratch::default();
   order_permutation(&indexed, 12, &floats, &mut whole);
-  let float_ids: Vec<u32> = whole.perm().to_vec();
-  let float_z: Vec<f32> = float_ids.iter().map(|&i| zs[i as usize]).collect();
-  let packed_z: Vec<f32> = ids[..count].iter().map(|&i| zs[i as usize]).collect();
-  assert_eq!(packed_z, float_z, "the packed key sorts the depths the float key sorts");
+  assert_eq!(&ids[..count], whole.perm(), "the packed key sorts the depths the float key sorts");
 }
 
-// The packed hand-off's contract: a box per chunk, a draw order that is a
-// permutation of the records.
+// The packed hand-off's contract: a box, a start and a ramp per run,
+// the runs tiling the records from 0, the ramps non-increasing.
 #[test]
 fn packed_hand_off_is_validated() {
-  let (records, bounds, _) = packed_cloud(300, 256);
-  let packed = PackedKey { format: PackedFormat::Unorm16x3, chunk: 256 };
+  let (records, table, _) = packed_cloud(300, 256);
+  let packed = PackedKey { format: PackedFormat::Unorm16x3 };
   let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("parses");
-  let order: Vec<u32> = (0..300).collect();
-  let short = PackedRecords { bounds: bounds[..1].to_vec(), order: order.clone() };
-  assert!(column.check_packed(records.len(), &short).expect_err("one box for two chunks").contains("chunk table"));
-  let missing = PackedRecords { bounds: bounds.clone(), order: order[..299].to_vec() };
-  assert!(column.check_packed(records.len(), &missing).expect_err("299 ids").contains("lists 299"));
-  let mut twice = order.clone();
-  twice[5] = 7;
-  let dup = PackedRecords { bounds: bounds.clone(), order: twice };
-  assert!(column.check_packed(records.len(), &dup).expect_err("7 twice").contains("twice"));
-  let mut past = order.clone();
-  past[0] = 300;
-  let out = PackedRecords { bounds: bounds.clone(), order: past };
-  assert!(column.check_packed(records.len(), &out).expect_err("id 300").contains("past"));
+  assert!(column.check_packed(records.len(), &table).is_ok());
   let float = KeyColumn::parse(16.0, None, Some(0.0), None).expect("parses");
-  let table = PackedRecords { bounds, order };
-  assert!(float.check_packed(records.len(), &table).expect_err("not packed").contains("not packed"));
+  assert!(float.check_packed(records.len(), &table).expect_err("a float key").contains("not packed"));
+  let short = RunTable { bounds: table.bounds[..1].to_vec(), ..table.clone() };
+  assert!(column.check_packed(records.len(), &short).expect_err("one box for two runs").contains("boxes"));
+  let ramp = RunTable { ramp: table.ramp[..RUN_RAMP_SAMPLES].to_vec(), ..table.clone() };
+  assert!(column.check_packed(records.len(), &ramp).expect_err("one ramp for two runs").contains("ramp samples"));
+  let late = RunTable { starts: vec![1, 256], ..table.clone() };
+  assert!(column.check_packed(records.len(), &late).expect_err("a first run at 1").contains("not 0"));
+  let backwards = RunTable { starts: vec![0, 300], ..table.clone() };
+  assert!(column.check_packed(records.len(), &backwards).expect_err("an empty last run").contains("runs ascend"));
+  let past = RunTable { starts: vec![0, 400], ..table.clone() };
+  assert!(column.check_packed(records.len(), &past).expect_err("a run past the count").contains("runs ascend"));
+  let mut rising = table.clone();
+  rising.ramp[3] = rising.ramp[2] + 1.0;
+  assert!(column.check_packed(records.len(), &rising).expect_err("a rising ramp").contains("non-increasing"));
+  let mut nan = table.clone();
+  nan.ramp[0] = f32::NAN;
+  assert!(column.check_packed(records.len(), &nan).expect_err("a NaN sample").contains("finite"));
+  // No records: no runs.
+  let empty = RunTable { bounds: vec![], starts: vec![], ramp: vec![] };
+  assert!(empty.check(0).is_ok());
+  assert!(table.check(0).expect_err("runs for nothing").contains("no records"));
+  assert!(empty.check(5).expect_err("records with no runs").contains("no runs"));
+}
+
+// Without a view the budget alone thins, by importance across the whole
+// population: every run keeps a prefix, and the prefixes are cut at one
+// importance floor.
+#[test]
+fn a_budget_without_a_view_is_an_importance_prefix() {
+  let count = 700;
+  let (records, table, _) = packed_cloud(count, 256);
+  let packed = PackedKey { format: PackedFormat::Unorm16x3 };
+  let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("parses");
+  let mut words = Vec::new();
+  column.extract(&records, &mut words);
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0))
+    .expect("parses")
+    .mirror_order();
+  let mut scratch = OrderScratch::default();
+  let sel = Selection { budget: 300, ..WHOLE };
+  let selected = order_packed(&indexed, packed, &words, &table, &sel, &mut scratch);
+  assert!(selected <= 300, "{selected} over budget");
+  assert!(selected >= 297, "{selected} under a 300 budget the step fill meets");
+  assert_eq!(scratch.ids().len(), selected);
+  // Each run keeps a prefix: its kept ids are its first records. The
+  // importance floor is one number: the runs of 256 keep the same count
+  // and the run of 188 (importance 188 - rank) keeps 68 fewer.
+  let kept: Vec<usize> = scratch.runs().iter().map(|&(_, len)| len as usize).collect();
+  for &(start, len) in scratch.runs() {
+    for k in 0..len {
+      assert!(scratch.ids().contains(&(start + k)), "record {} of run at {start} dropped before its tail", start + k);
+    }
+  }
+  assert_eq!(kept.len(), 3);
+  assert!((kept[0] as i64 - kept[1] as i64).abs() <= 1, "kept {kept:?}");
+  assert!((kept[0] as i64 - kept[2] as i64 - 68).abs() <= 2, "kept {kept:?}");
+  // A budget of 0 selects nothing; a budget at the population everything.
+  assert_eq!(order_packed(&indexed, packed, &words, &table, &Selection { budget: 0, ..WHOLE }, &mut scratch), 0);
+  assert_eq!(
+    order_packed(&indexed, packed, &words, &table, &Selection { budget: count, ..WHOLE }, &mut scratch),
+    count
+  );
+}
+
+// A GL perspective (near 1, far 1000, focal f) looking down -z from the
+// origin, column-major.
+fn perspective(f: f32) -> OrderView {
+  let (n, fa) = (1.0f32, 1000.0f32);
+  let mut m = [0.0f32; 16];
+  m[0] = f;
+  m[5] = f;
+  m[10] = -(fa + n) / (fa - n);
+  m[14] = -2.0 * fa * n / (fa - n);
+  m[11] = -1.0;
+  OrderView { clip: m }
+}
+
+// Three runs of 100 records with boxes placed in model space: one in
+// view near the eye, one in view far away, one behind the eye.
+fn placed_cloud() -> (Vec<u8>, RunTable) {
+  let bounds = vec![
+    [-1.0, -1.0, -11.0, 1.0, 1.0, -10.0],
+    [-1.0, -1.0, -101.0, 1.0, 1.0, -100.0],
+    [-1.0, -1.0, 10.0, 1.0, 1.0, 11.0],
+  ];
+  let (records, _) = packed_records(300, &bounds, 100);
+  let starts = vec![0, 100, 200];
+  // Importance (len - rank) / len: 1 down to 0.01.
+  let ramp = falling_ramp(300, &starts).iter().map(|v| v / 100.0).collect();
+  (records, RunTable { bounds, starts, ramp })
+}
+
+// The view culls the run behind the eye whole and cuts the visible runs
+// by their projected scale: at a threshold the near run keeps the share
+// of its ramp above it and the far run nothing; a lower threshold keeps
+// both whole; a box around the eye is kept whole whatever the threshold.
+#[test]
+fn a_view_culls_and_thins_the_runs_by_projected_scale() {
+  let (records, table) = placed_cloud();
+  let packed = PackedKey { format: PackedFormat::Unorm16x3 };
+  let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("parses");
+  let mut words = Vec::new();
+  column.extract(&records, &mut words);
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0))
+    .expect("parses")
+    .mirror_order();
+  let mut scratch = OrderScratch::default();
+  let view = perspective(1.0);
+  assert_eq!(view.direction(), Some([0.0, 0.0, -1.0]), "the w row is the depth direction");
+  // No threshold: the two visible runs whole, the one behind the eye out.
+  let sel = Selection { view: Some(view), viewport: [1000.0, 1000.0], threshold: 0.0, budget: usize::MAX };
+  assert_eq!(order_packed(&indexed, packed, &words, &table, &sel, &mut scratch), 200);
+  assert_eq!(scratch.runs(), &[(0, 100), (100, 100)]);
+  // 1000 px: the near run's pixel scale squared is (500 / 10)^2 = 2500,
+  // so its floor is 0.4 of importance: 60 records; the far run's is
+  // (500 / 100)^2 = 25, a floor of 40: nothing.
+  let sel = Selection { threshold: 1000.0, ..sel };
+  let selected = order_packed(&indexed, packed, &words, &table, &sel, &mut scratch);
+  assert_eq!(scratch.runs().len(), 1);
+  let (start, kept) = scratch.runs()[0];
+  assert_eq!(start, 0);
+  assert!((58..=62).contains(&kept), "near run kept {kept}");
+  assert_eq!(selected as u32, kept);
+  // The drawn order is back to front: the ids are a prefix of the near
+  // run, every one of them.
+  let mut dst = vec![0u8; 100 * 4];
+  materialize_indices_through(scratch.perm(), scratch.ids(), &mut dst);
+  let ids = block_ids(&dst);
+  assert!(ids[..kept as usize].iter().all(|&id| id < kept));
+  assert!(ids[kept as usize..].iter().all(|&id| id == INDEX_NONE));
+  // A threshold the far run clears: its floor at 1 px is 0.04, under the
+  // ramp's last sample (rank 93, 0.07), so the run is whole.
+  let sel = Selection { threshold: 1.0, ..sel };
+  assert_eq!(order_packed(&indexed, packed, &words, &table, &sel, &mut scratch), 200);
+  // A budget under the thinned total raises the floor until it fits.
+  let sel = Selection { threshold: 1.0, budget: 120, ..sel };
+  let selected = order_packed(&indexed, packed, &words, &table, &sel, &mut scratch);
+  assert!(selected <= 120 && selected >= 110, "{selected}");
+  // The eye inside a run's box: kept whole at any threshold, and a budget
+  // below it cuts it in proportion.
+  let mut inside = table.clone();
+  inside.bounds[0] = [-1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
+  let sel = Selection { threshold: 1e9, budget: usize::MAX, ..sel };
+  assert_eq!(order_packed(&indexed, packed, &words, &inside, &sel, &mut scratch), 100);
+  let sel = Selection { budget: 10, ..sel };
+  assert_eq!(order_packed(&indexed, packed, &words, &inside, &sel, &mut scratch), 10);
+  // A flat ramp (every record alike) is all or nothing to a threshold:
+  // the budget still lands, filled in proportion across the step.
+  let mut flat = table.clone();
+  flat.ramp.iter_mut().for_each(|v| *v = 1.0);
+  let sel = Selection { view: None, viewport: [1.0, 1.0], threshold: 0.0, budget: 100 };
+  // (99: each run's share rounds down.)
+  let selected = order_packed(&indexed, packed, &words, &flat, &sel, &mut scratch);
+  assert!((99..=100).contains(&selected), "{selected}");
+  assert_eq!(scratch.runs().len(), 3);
+  assert!(scratch.runs().iter().all(|&(_, len)| (33..=34).contains(&len)), "{:?}", scratch.runs());
+  // An orthographic matrix orders by its z row.
+  let mut ortho = [0.0f32; 16];
+  ortho[0] = 1.0;
+  ortho[5] = 1.0;
+  ortho[10] = -1.0;
+  ortho[15] = 1.0;
+  assert_eq!(OrderView { clip: ortho }.direction(), Some([0.0, 0.0, -1.0]));
+  assert_eq!(OrderView { clip: [0.0; 16] }.direction(), None);
 }
 
 // The sort thread takes a packed job: the ids come back mapped through
-// the pairs, in depth order.
+// the selection, in depth order.
 #[test]
 fn sort_worker_sorts_a_packed_job() {
-  let (records, bounds, zs) = packed_cloud(40, 256);
-  let packed = PackedKey { format: PackedFormat::Unorm16x3, chunk: 256 };
+  let (records, table, zs) = packed_cloud(40, 256);
+  let packed = PackedKey { format: PackedFormat::Unorm16x3 };
   let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("parses");
-  let order: Vec<u32> = (0..40).rev().collect();
-  let mut pairs = Vec::new();
-  column.extract_packed(&records, &order, &mut pairs);
-  let keys = Arc::new(pairs);
+  let mut words = Vec::new();
+  column.extract(&records, &mut words);
+  let keys = Arc::new(words);
   let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false, Some(16.0))
     .expect("parses")
     .mirror_order();
@@ -546,11 +729,12 @@ fn sort_worker_sorts_a_packed_job() {
     buffer: 9,
     generation: 1,
     order: indexed,
-    stride: 12,
-    packed: Some((packed, Arc::new(bounds))),
+    stride: 8,
+    packed: Some(PackedJob { key: packed, table: Arc::new(table), selection: Selection { budget: 30, ..WHOLE } }),
     keys: keys.clone(),
     len: keys.len(),
     perm: Vec::new(),
+    ids: Vec::new(),
     block: vec![0u8; 44 * 4],
     done: None,
   };
@@ -562,11 +746,15 @@ fn sort_worker_sorts_a_packed_job() {
     std::thread::sleep(std::time::Duration::from_millis(1));
   }
   let result = results.pop().expect("the job came back");
-  let ids: Vec<u32> = result.block.chunks_exact(4).map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]])).collect();
-  assert_eq!(&ids[40..], &[INDEX_NONE; 4]);
+  let ids = block_ids(&result.block);
+  // The budget kept a prefix of the one run: 30 of 40.
+  let kept = result.ids.len();
+  assert_eq!(kept, 30);
+  assert_eq!(result.perm.len(), kept);
+  assert!(ids[kept..].iter().all(|&id| id == INDEX_NONE));
   let mut last = f32::NEG_INFINITY;
-  for &id in &ids[..40] {
-    assert!(id < 40, "a record id, not a draw slot");
+  for &id in &ids[..kept] {
+    assert!(id < kept as u32, "a record of the kept prefix");
     assert!(zs[id as usize] >= last, "ascending z");
     last = zs[id as usize];
   }

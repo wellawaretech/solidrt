@@ -1,4 +1,4 @@
-use crate::gpu::{validate_params, DrawPlacement, DrawUpdate, ParamValue, TextureFormat};
+use crate::gpu::{validate_params, DrawPlacement, DrawUpdate, OrderView, ParamValue, TextureFormat};
 use crate::raster::RasterCmd;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -145,16 +145,25 @@ impl SinkWriter for Writer<'_> {
     }
   }
 
-  // A depth-ordered entry's fresh key direction: the orderDirection
-  // update, plus the retained re-sort/republish (a no-op on a gather
-  // entry, whose next publish picks the direction up). Runs with no
-  // target borrow held, which rematerialize's note_buffer_content needs.
-  fn write_order_direction(&mut self, target: u64, draw: u64, direction: [f32; 3]) -> bool {
-    let landed = self.landed(self.ctx.set_instance_order_direction(target, draw, direction));
-    if landed {
-      self.ctx.rematerialize_retained_order(target, draw);
+  // A depth-ordered entry's fresh view: the orderView update, plus the
+  // retained re-sort/republish when the order's inputs changed (a no-op
+  // on a gather entry, whose next publish picks the direction up). Runs
+  // with no target borrow held, which rematerialize's
+  // note_buffer_content needs.
+  fn write_order_view(&mut self, target: u64, draw: u64, clip: [f32; 16]) -> bool {
+    match self.ctx.set_instance_order_view(target, draw, OrderView { clip }) {
+      Ok(changed) => {
+        self.wrote = true;
+        if changed {
+          self.ctx.rematerialize_retained_order(target, draw);
+        }
+        true
+      }
+      Err(e) => {
+        log::warn!("[spatial] order view dropped: {e}");
+        false
+      }
     }
-    landed
   }
 
   // A shared-slot group's array, whole, through the ordinary shared

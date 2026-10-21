@@ -417,12 +417,11 @@ function makeIndexStream(layout: VertexAttribute[], capacity: number, group: num
 }
 
 // The hand-off's key for an indexed order: the record stride and the
-// position's float offset, plus a packed position's chunk table and draw
-// order (the resolved order keeps neither: the engine copies both).
+// position's float offset, plus a packed position's run table (the
+// resolved order keeps none of it: the engine copies the table).
 function indexedKey(order: InstanceOrderOptions, stride: number, floats: number): RecordKey {
   let packed = "packed" in order ? order.packed : undefined
-  let draw = "order" in order ? order.order : undefined
-  if (packed !== undefined && draw !== undefined) return { stride, position: floats, packed, order: draw }
+  if (packed !== undefined) return { stride, position: floats, packed }
   return { stride, position: floats }
 }
 
@@ -509,11 +508,15 @@ function markRecords(mesh: Mesh, stream: InstanceStream, lo: number, hi: number)
  * re-sort then uploads 4 bytes per record instead of the record, and
  * the last instance's group past `count` carries 0xFFFFFFFF, which the
  * shader culls before fetching. A record whose position is PACKED (two
- * uint32 of unorms over its chunk's box, a splat bake's) names that
- * attribute with `packed` (the packing and the chunk table) and `order`
- * (the record ids in the order `count` dials, every record once): the
- * engine keeps the id and the word per record and decodes the depth key
- * against the chunk table, and the records may sit in any order.
+ * uint32 of unorms over its run's box, a splat bake's) names that
+ * attribute with `packed` (the packing and the run table: boxes, starts
+ * and importance ramps): the engine keeps the words per record, decodes
+ * the depth key against the run's box, and under the scene's view culls
+ * a run whose box is out of view and cuts a visible one where its ramp
+ * falls under `lod.threshold` pixels of contribution at the run's
+ * projected scale; `count` is then a budget the threshold rises to meet
+ * (setRecordCount), and the draw range the engine sends is the
+ * selection's.
  */
 export type InstanceOrderOptions =
   | (({ position: string; retain?: boolean } | { field: string }) & {
@@ -533,12 +536,12 @@ export type InstanceOrderOptions =
       /** Largest key first - back-to-front. Default false. */
       descending?: boolean
       /** The position attribute is a packed uint32: its packing and the
-       * chunk table (see PackedPosition in @solidrt/core/gpu). Takes
-       * `order` with it. */
+       * run table (see PackedPosition in @solidrt/core/gpu). */
       packed?: PackedPosition
-      /** The draw order of a packed population: record ids, every record
-       * once, in the order `count` takes a prefix of. */
-      order?: Uint32Array
+      /** A packed population's level of detail: the contribution in
+       * pixels below which a run's tail is not drawn (default 0: the
+       * budget alone thins). Dial later with setRecordLod. */
+      lod?: { threshold: number }
     }
 
 /** The instanceOrder resolved against the material's instance layouts at
@@ -554,6 +557,9 @@ export type ResolvedInstanceOrder = {
   /** The index materialization (InstanceOrderOptions' `records` form):
    * the handed-off record's byte stride; null for gathered records. */
   indices: { stride: number } | null
+  /** A packed population's LOD threshold in pixels (InstanceOrderOptions'
+   * `lod`), live (setRecordLod); null without a packed position. */
+  lod: { threshold: number } | null
 }
 
 // Resolve an instanceOrder option against the material's instance
@@ -573,9 +579,9 @@ function resolveInstanceOrder(order: InstanceOrderOptions | undefined, buffers: 
     }
     let stride = layoutStride(order.records)
     if (stride === 0 || stride % 4 !== 0) throw new Error(site + ": the indexed record layout is " + stride + " bytes; records must be whole floats")
-    if ((order.packed === undefined) !== (order.order === undefined)) {
-      throw new Error(site + ": a packed instanceOrder takes `packed` and `order` together")
-    }
+    if (order.lod !== undefined && order.packed === undefined) throw new Error(site + ": instanceOrder lod applies to a packed position (the runs it thins)")
+    let threshold = order.lod?.threshold ?? 0
+    if (!(Number.isFinite(threshold) && threshold >= 0)) throw new Error(site + ": instanceOrder lod.threshold must be a finite non-negative number of pixels, got " + threshold)
     let at = 0
     for (let a of order.records) {
       if (a.name === order.position) {
@@ -585,7 +591,7 @@ function resolveInstanceOrder(order: InstanceOrderOptions | undefined, buffers: 
           throw new Error(site + ": instanceOrder position attribute '" + a.name + "' must be float32x3 or float32x4, got " + a.format)
         }
         if (at % 4 !== 0) throw new Error(site + ": instanceOrder key attribute '" + a.name + "' starts at byte " + at + " of its record; the key must start on a 4-byte boundary")
-        return { key: layoutKey(ids), floats: at / 4, position: true, descending: order.descending === true, retain: true, indices: { stride } }
+        return { key: layoutKey(ids), floats: at / 4, position: true, descending: order.descending === true, retain: true, indices: { stride }, lod: order.packed !== undefined ? { threshold } : null }
       }
       at += VERTEX_FORMATS[a.format].bytes
     }
@@ -616,6 +622,7 @@ function resolveInstanceOrder(order: InstanceOrderOptions | undefined, buffers: 
           descending: order.descending === true,
           retain: position && (order as { retain?: boolean }).retain === true,
           indices: null,
+          lod: null,
         }
       }
       at += VERTEX_FORMATS[a.format].bytes
@@ -1199,8 +1206,23 @@ export function setRecords(mesh: RecordMesh, records: ArrayBufferView, count?: n
   setRecordCount(mesh, count ?? written)
 }
 
-/** Set how many records draw (clamped to [0, capacity]). The visibility
- * switch composes: a hidden mesh stores the count and draws it on unhide. */
+/** Set a packed population's LOD threshold (InstanceOrderOptions' `lod`):
+ * the contribution in pixels below which a run's tail is not drawn, 0 for
+ * none. The engine re-selects and republishes its own copy. Throws on a
+ * mesh whose instanceOrder is not a packed one. */
+export function setRecordLod(mesh: RecordMesh, threshold: number): void {
+  let inst = mesh._instances
+  if (inst.order === null || inst.order.lod === null) throw new Error("setRecordLod: the mesh has no packed instanceOrder (no runs to thin)")
+  if (!(Number.isFinite(threshold) && threshold >= 0)) throw new Error("setRecordLod: the threshold must be a finite non-negative number of pixels, got " + threshold)
+  if (threshold === inst.order.lod.threshold) return
+  inst.order.lod.threshold = threshold
+  mesh._scene?._setLod(mesh)
+}
+
+/** Set how many records draw (clamped to [0, capacity]): on a packed
+ * population the budget the engine's selection fits (see
+ * InstanceOrderOptions). The visibility switch composes: a hidden mesh
+ * stores the count and draws it on unhide. */
 export function setRecordCount(mesh: RecordMesh, count: number): void {
   let inst = mesh._instances
   let n = Math.max(0, Math.min(Math.floor(count), inst.capacity))

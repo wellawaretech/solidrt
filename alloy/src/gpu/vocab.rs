@@ -1050,6 +1050,14 @@ pub struct DrawUpdate {
   /// UI-side state that shapes the NEXT lease publish - alone it sends
   /// nothing to the raster thread and re-renders nothing.
   pub order_direction: Option<[f32; 3]>,
+  /// Set an ordered entry's view (the feed's form, `OrderView`): the
+  /// projected key's direction follows the matrix, and a packed
+  /// population re-selects its runs under it. Same staging as
+  /// `order_direction`.
+  pub order_view: Option<super::order::OrderView>,
+  /// Replace a packed population's LOD threshold (`InstanceOrder::
+  /// lod_threshold`), re-selecting under it.
+  pub order_lod: Option<f64>,
 }
 
 /// One draw entry's share of a spatial flush: the fresh value of each of

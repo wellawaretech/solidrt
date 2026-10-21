@@ -15,20 +15,23 @@
 // record, what Unity's importer and PlayCanvas's compressed ply converged
 // on) and its position word is the key the core sorts by depth against
 // the chunk table, so runtime loading is a header parse plus byte views.
-// The bake quantizes against 256-splat chunks (positions and log scales
-// as 11/10/11 bits over the chunk's box, the rotation as a smallest-three
-// quaternion, color rgba8), stores the records in spatial order with the
-// draw order (by importance) as an id block beside them, packs the
-// spherical-harmonic bands beyond DC as a byte per coefficient, and
-// stands a y-down capture up to y-up, deleting the orientation footgun
-// every viewer pushes onto the app.
+// The bake quantizes against chunks of up to 256 splats (positions as
+// 16-bit and log scales as 11/10/11-bit unorms over the chunk's box, the
+// rotation as a smallest-three quaternion, color rgba8), stores the
+// records in spatial order - a chunk is a RUN of consecutive records,
+// split finer where the box would move a splat visibly, ordered by
+// importance inside, so the engine culls a run by its box and cuts it
+// where its splats fall under a screen contribution - packs the
+// spherical-harmonic bands beyond DC as a byte per coefficient or a
+// palette code, and stands a y-down capture up to y-up, deleting the
+// orientation footgun every viewer pushes onto the app.
 
 import type { VertexAttribute } from "@solidrt/core/gpu"
 
 /** One baked splat record, 16 bytes = one rgba32ui texel, four words:
  * the position as 16-bit unorms over its chunk's position box (x in the
  * low half of word 0, y in its high half, z in the low half of word 1;
- * the high half of word 1 is reserved, 0), the rotation as a
+ * the high half of word 1 is the record's chunk index), the rotation as a
  * smallest-three quaternion (the largest component's index in the top
  * two bits, the other three as 10-bit unorms over [-1/sqrt2, 1/sqrt2] in
  * 1022 steps, zero exact, in index order at bits 20, 10 and 0; the
@@ -47,12 +50,27 @@ export const SPLAT_COLOR_BYTES = 4
 export const SPLAT_RECORD_TEXELS = 1
 /** Bytes per rgba32ui texel. */
 export const SPLAT_TEXEL_BYTES = 16
-/** Splats per chunk: record id >> 8 is the chunk, whose box the record's
- * position and scale words are unorms over. The field's size (Unity,
- * PlayCanvas): small enough that a chunk's box is a few splats across
- * where the cloud is dense, large enough that the table is 0.2 bytes per
- * splat. */
-export const SPLAT_CHUNK_SIZE = 256
+/** The most splats in a chunk, a run of consecutive records whose box
+ * the position and scale words are unorms over (the record carries its
+ * chunk's index). The field's size (Unity, PlayCanvas): small enough that
+ * a chunk's box is a few splats across where the cloud is dense, large
+ * enough that the table is 0.3 bytes per splat. */
+export const SPLAT_CHUNK_MAX = 256
+/** The fewest splats a chunk is split down to where its box would move
+ * a splat visibly (SPLAT_STEP_VISIBLE): sparse space costs chunk table
+ * where it is sparse, never a wide box. */
+export const SPLAT_CHUNK_MIN = 16
+/** The most chunks a cloud holds: the record's 16-bit chunk index. A
+ * bake past it stops splitting for precision and says so. */
+export const SPLAT_CHUNK_LIMIT = 65536
+/** Importance samples per chunk in the ramp block: sample i is the
+ * importance at rank floor(i x len / samples) of the chunk's run, so a
+ * prefix of the run is cut without reading a record. */
+export const SPLAT_RAMP_SAMPLES = 16
+/** Bytes per chunk of the run block (one u32: the run's first record). */
+export const SPLAT_RUN_BYTES = 4
+/** Bytes per chunk of the ramp block (SPLAT_RAMP_SAMPLES f32). */
+export const SPLAT_RAMP_BYTES = 64
 /** Floats per chunk record: position min xyz, position max xyz, log-scale
  * min xyz, log-scale max xyz - as three rgba32f texels (minX, minY, minZ,
  * maxX | maxY, maxZ, minSx, minSy | minSz, maxSx, maxSy, maxSz). */
@@ -143,7 +161,9 @@ export const SPLAT_ATTRIBUTES: VertexAttribute[] = [
   { name: "iScale", format: "uint32" },
 ]
 
-/** What the bake lost, for the tool to print. `positionStep` is the
+/** What the bake lost, for the tool to print. `chunks` is the chunk
+ * count and `runMin` the smallest chunk's splats (`capped` when the
+ * SPLAT_CHUNK_LIMIT stopped the precision splits); `positionStep` is the
  * chunk's position step over the splat's largest axis (0.01: the step is
  * 1% of the splat), as the median and 99th percentile over the cloud and
  * the share of splats above SPLAT_STEP_VISIBLE; `shClamped` how many SH
@@ -156,6 +176,8 @@ export const SPLAT_ATTRIBUTES: VertexAttribute[] = [
  * byte range. */
 export type BakeReport = {
   chunks: number
+  runMin: number
+  capped: boolean
   positionStep: { median: number; p99: number; visibleShare: number }
   shClamped: number
   shPalette?: { rms: number[]; p99: number[]; clamped: number }
@@ -166,22 +188,28 @@ export const SPLAT_STEP_VISIBLE = 0.1
 
 /** A parsed or loaded splat cloud: `records` is the record block
  * (SPLAT_ATTRIBUTES, SPLAT_RECORD_BYTES per splat, `count` of them) in
- * SPATIAL order (a k-d partition, so every chunk is a compact box),
- * `colors` the color block (SPLAT_COLOR_BYTES per splat, in record
- * order), `chunks` the chunk table (SPLAT_CHUNK_BYTES per chunk of
- * SPLAT_CHUNK_SIZE records, the last chunk partial), `order` the draw
- * population (record ids by importance, size times opacity descending,
- * so its first n are a usable scene at any n), `sh` the matching SH
- * texel block (SPLAT_SH_TEXELS per splat, in record order) or null at
- * degree 0. From decodeSplat the blocks VIEW the container's bytes. */
+ * SPATIAL order - a k-d partition into chunks, each a run of
+ * SPLAT_CHUNK_MIN..SPLAT_CHUNK_MAX consecutive records with a compact box,
+ * ordered by importance (projected area times opacity) descending
+ * inside, so a prefix of a run is its most important splats - `colors`
+ * the color block (SPLAT_COLOR_BYTES per splat, in record order),
+ * `chunks` the chunk table (SPLAT_CHUNK_BYTES per chunk), `runs` each
+ * chunk's first record, `ramp` each chunk's SPLAT_RAMP_SAMPLES importance
+ * samples along its run, `sh` the matching SH block (in record order) or
+ * null at degree 0. From decodeSplat the blocks VIEW the container's
+ * bytes. */
 export type SplatData = {
   count: number
   records: Uint8Array
   colors: Uint8Array
   chunks: Uint8Array
-  /** Record ids in draw order: by importance, descending; `count` of
-   * them, a permutation of the records. */
-  order: Uint32Array
+  /** Chunk c's first record; its run ends at the next chunk's (the
+   * last at `count`). One per chunk. */
+  runs: Uint32Array
+  /** Chunk c's importance ramp: SPLAT_RAMP_SAMPLES floats, sample i the
+   * importance at rank floor(i x run length / samples) of its run,
+   * non-increasing. */
+  ramp: Float32Array
   /** [minX, minY, minZ, maxX, maxY, maxZ] of the splat centers. */
   bounds: Float32Array
   /** Spherical-harmonic bands baked beyond the base color (0..3). */
@@ -272,14 +300,16 @@ const SPZ_SCALE_STEP = 16
 
 /** "SOLS" read as a little-endian u32. */
 const MAGIC = 0x534c4f53
-// Version 3: the 16-byte chunk-quantized record and the chunk table in
-// spatial order, the draw order as an id block, y-up unless the bake kept
-// orientation, the SH block as bytes; the header carries count,
-// chunkSize, shDegree, antialiased, bounds and the block ranges.
+// Version 4: the 16-byte chunk-quantized record (its chunk index in word
+// 1) in spatial order, the chunks as runs of 16..256 records ordered by
+// importance inside, the run and ramp blocks beside the chunk table,
+// y-up unless the bake kept orientation, the SH block as bytes or
+// palette codes; the header carries count, chunkMax, chunkMin, shDegree,
+// antialiased, bounds and the block ranges.
 // (Version 2 was the 32-byte two-texel record with the covariance baked
 // as halves and half-float SH; version 1 the 28-byte instance-attribute
 // record of the first viewer.)
-const VERSION = 3
+const VERSION = 4
 
 /** The de-facto .splat interchange record (antimatter15): position
  * float32x3, scale float32x3, sRGB color + opacity unorm8x4, rotation
@@ -331,9 +361,9 @@ let colorByte = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 255)
  * interchange, or a gunzipped .spz (Niantic; the container is
  * gzip-compressed, and this entry stays decompression-free, so hand it
  * the inflated bytes - `sol tool 3d/splat` does) - into baked SplatData:
- * chunk-quantized records in spatial order, the draw order by importance
- * (size times opacity), y-up by default, bounds measured, the loss
- * reported. Runs anywhere (bun, the runtime); for a capture of real
+ * chunk-quantized records in spatial order (runs ordered by importance,
+ * projected area times opacity, inside), y-up by default, bounds
+ * measured, the loss reported. Runs anywhere (bun, the runtime); for a capture of real
  * size run it at pack time and ship encodeSplat's .sol3s.
  */
 export function parseSplat(bytes: Uint8Array, opts?: ParseSplatOptions): SplatData {
@@ -668,10 +698,12 @@ function unpackRotation(word: number): [number, number, number, number] {
 // The bake: stand a y-down capture up (positions (x, -y, -z); the
 // quaternion composed with the half turn about x, q' = (-x, w, -z, y);
 // the SH coefficients odd in (y, z) negated), partition the records
-// spatially (kdOrder) into chunks of SPLAT_CHUNK_SIZE consecutive
-// records and quantize each against its chunk, rank the records by
-// importance (size times opacity, descending - the .splat convention)
-// into the draw order, measure bounds, pack the SH bands (packSh).
+// spatially (kdOrder) into chunks - runs of consecutive records, split
+// down to SPLAT_CHUNK_MIN where a box would move a splat visibly -
+// ordered by importance inside (projected area times opacity: the two
+// largest scales, what a splat covers on screen at unit distance, times
+// what it blends in), quantize each against its chunk, sample each run's
+// importance ramp, measure bounds, pack the SH bands (packSh).
 function bake(g: Gaussians, antialiased: boolean, encoding: SplatShEncoding): SplatData {
   let n = g.count
   let D = SH_COEFFICIENTS[g.shDegree]!
@@ -680,13 +712,22 @@ function bake(g: Gaussians, antialiased: boolean, encoding: SplatShEncoding): Sp
   let logs = new Float32Array(n * 3)
   let quat = new Float32Array(n * 4)
   let importance = new Float32Array(n)
+  let largest = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     // The + 0 folds a flip's -0 to 0, so the header JSON round-trips.
     pos[i * 3] = g.positions[i * 3]! + 0
     pos[i * 3 + 1] = g.positions[i * 3 + 1]! * sy + 0
     pos[i * 3 + 2] = g.positions[i * 3 + 2]! * sy + 0
     for (let k = 0; k < 3; k++) logs[i * 3 + k] = clampLog(Math.log(g.scales[i * 3 + k]!))
-    importance[i] = g.scales[i * 3]! * g.scales[i * 3 + 1]! * g.scales[i * 3 + 2]! * g.colors[i * 4 + 3]!
+    let s0 = g.scales[i * 3]!
+    let s1 = g.scales[i * 3 + 1]!
+    let s2 = g.scales[i * 3 + 2]!
+    let smin = Math.min(s0, s1, s2)
+    let smax = Math.max(s0, s1, s2)
+    largest[i] = smax
+    // The two largest scales' product: the middle one is what is left of
+    // the sum once the extremes are out.
+    importance[i] = smax * (s0 + s1 + s2 - smax - smin) * (g.colors[i * 4 + 3]! / 255)
     let w = g.rotations[i * 4]!
     let x = g.rotations[i * 4 + 1]!
     let y = g.rotations[i * 4 + 2]!
@@ -713,20 +754,28 @@ function bake(g: Gaussians, antialiased: boolean, encoding: SplatShEncoding): Sp
     }
   }
 
-  // The storage order: order[slot] = the source splat at that record.
+  // The storage order: order[slot] = the source splat at that record,
+  // partitioned into runs (the chunks), each ordered by importance.
   let order = new Uint32Array(n)
   for (let i = 0; i < n; i++) order[i] = i
-  kdOrder(order, 0, n, pos)
-  // The draw order: record ids ranked by importance.
-  let ranks = new Uint32Array(n)
-  for (let i = 0; i < n; i++) ranks[i] = i
-  ranks.sort((a, b) => importance[b]! - importance[a]!)
-  let slotOf = new Uint32Array(n)
-  for (let slot = 0; slot < n; slot++) slotOf[order[slot]!] = slot
-  let drawOrder = new Uint32Array(n)
-  for (let r = 0; r < n; r++) drawOrder[r] = slotOf[ranks[r]!]!
+  let { starts, capped } = kdOrder(order, pos, largest)
+  let chunkCount = starts.length
+  let runMin = n
+  for (let c = 0; c < chunkCount; c++) {
+    let lo = starts[c]!
+    let hi = c + 1 < chunkCount ? starts[c + 1]! : n
+    if (hi - lo < runMin) runMin = hi - lo
+    order.subarray(lo, hi).sort((a, b) => importance[b]! - importance[a]!)
+  }
+  let runs = new Uint32Array(chunkCount)
+  let ramp = new Float32Array(chunkCount * SPLAT_RAMP_SAMPLES)
+  for (let c = 0; c < chunkCount; c++) {
+    let lo = starts[c]!
+    let len = (c + 1 < chunkCount ? starts[c + 1]! : n) - lo
+    runs[c] = lo
+    for (let i = 0; i < SPLAT_RAMP_SAMPLES; i++) ramp[c * SPLAT_RAMP_SAMPLES + i] = importance[order[lo + Math.floor((i * len) / SPLAT_RAMP_SAMPLES)]!]!
+  }
 
-  let chunkCount = Math.ceil(n / SPLAT_CHUNK_SIZE)
   let records = new Uint8Array(n * SPLAT_RECORD_BYTES)
   let rdv = new DataView(records.buffer)
   let colors = new Uint8Array(n * SPLAT_COLOR_BYTES)
@@ -745,8 +794,8 @@ function bake(g: Gaussians, antialiased: boolean, encoding: SplatShEncoding): Sp
   let q = [0, 0, 0]
   let rotation = [0, 0, 0, 0]
   for (let c = 0; c < chunkCount; c++) {
-    let lo = c * SPLAT_CHUNK_SIZE
-    let hi = Math.min(n, lo + SPLAT_CHUNK_SIZE)
+    let lo = starts[c]!
+    let hi = c + 1 < chunkCount ? starts[c + 1]! : n
     for (let k = 0; k < 3; k++) {
       pmin[k] = Infinity
       pmax[k] = -Infinity
@@ -784,7 +833,7 @@ function bake(g: Gaussians, antialiased: boolean, encoding: SplatShEncoding): Sp
       }
       let rat = slot * SPLAT_RECORD_BYTES
       rdv.setUint32(rat, (q[0]! | (q[1]! << SPLAT_POSITION_BITS)) >>> 0, true)
-      rdv.setUint32(rat + 4, q[2]!, true)
+      rdv.setUint32(rat + 4, (q[2]! | (c << SPLAT_POSITION_BITS)) >>> 0, true)
       for (let k = 0; k < 4; k++) rotation[k] = quat[i * 4 + k]!
       rdv.setUint32(rat + 8, packRotation(rotation), true)
       for (let k = 0; k < 3; k++) q[k] = packUnorm(logs[i * 3 + k]!, smin[k]!, smax[k]!, SCALE_MAX[k]!)
@@ -811,7 +860,7 @@ function bake(g: Gaussians, antialiased: boolean, encoding: SplatShEncoding): Sp
   for (let slot = 0; slot < n; slot++) if (stepRatio[slot]! > SPLAT_STEP_VISIBLE) visible++
   stepRatio.sort()
   let at = (p: number) => (n === 0 ? 0 : stepRatio[Math.min(n - 1, Math.floor(p * n))]!)
-  let report: BakeReport = { chunks: chunkCount, positionStep: { median: at(0.5), p99: at(0.99), visibleShare: n === 0 ? 0 : visible / n }, shClamped }
+  let report: BakeReport = { chunks: chunkCount, runMin: n === 0 ? 0 : runMin, capped, positionStep: { median: at(0.5), p99: at(0.99), visibleShare: n === 0 ? 0 : visible / n }, shClamped }
   let packed = packSh(coeffs, n, g.shDegree, encoding)
   if (packed.report !== undefined) report.shPalette = packed.report
   return {
@@ -819,7 +868,8 @@ function bake(g: Gaussians, antialiased: boolean, encoding: SplatShEncoding): Sp
     records,
     colors,
     chunks,
-    order: drawOrder,
+    runs,
+    ramp,
     bounds,
     shDegree: g.shDegree,
     shEncoding: D > 0 ? encoding : "u8",
@@ -1083,18 +1133,69 @@ function nearest(vectors: Float32Array, i: number, dims: number, codebook: Float
   return best
 }
 
-// Partition the records at order[lo..hi) spatially for chunking, in
-// place: a k-d split at the median of the longest axis, the left size
-// snapped to a whole number of chunks, down to leaves of one chunk, so
-// each chunk is a compact box (no Morton seams). The remainder below a
-// chunk is always the rightmost leaf, the cloud's last partial chunk.
-function kdOrder(order: Uint32Array, lo: number, hi: number, pos: Float32Array): void {
-  let n = hi - lo
-  if (n <= SPLAT_CHUNK_SIZE) return
-  let left = Math.max(SPLAT_CHUNK_SIZE, Math.floor((n + SPLAT_CHUNK_SIZE) / (2 * SPLAT_CHUNK_SIZE)) * SPLAT_CHUNK_SIZE)
-  selectAxis(order, lo, hi, lo + left - 1, longestAxis(order, lo, hi, pos), pos)
-  kdOrder(order, lo, lo + left, pos)
-  kdOrder(order, lo + left, hi, pos)
+// Partition the records spatially into runs, in place over `order`: a
+// k-d split at the median of the longest axis while a node holds more
+// than SPLAT_CHUNK_MAX records, then on while a leaf's position step on
+// its longest axis exceeds SPLAT_STEP_VISIBLE of its smallest splat
+// (`largest`: each splat's largest-axis scale) and the leaf holds at
+// least two SPLAT_CHUNK_MIN halves - sparse space gets small boxes,
+// dense space full chunks, every chunk a compact box (no Morton seams).
+// The precision splits spend a budget of SPLAT_CHUNK_LIMIT chunks in
+// record order; past it the rest stay whole and the bake is `capped`.
+// Returns each run's first record.
+function kdOrder(order: Uint32Array, pos: Float32Array, largest: Float32Array): { starts: number[]; capped: boolean } {
+  let n = order.length
+  if (n === 0) return { starts: [], capped: false }
+  // The coarse pass: the left size snapped to whole chunks, so dense
+  // space gets full chunks and the one partial chunk is the cloud's
+  // last.
+  let coarse: number[] = []
+  let splitCoarse = (lo: number, hi: number): void => {
+    let n = hi - lo
+    if (n <= SPLAT_CHUNK_MAX) {
+      coarse.push(lo)
+      return
+    }
+    let left = Math.max(SPLAT_CHUNK_MAX, Math.floor((n + SPLAT_CHUNK_MAX) / (2 * SPLAT_CHUNK_MAX)) * SPLAT_CHUNK_MAX)
+    selectAxis(order, lo, hi, lo + left - 1, longestAxis(order, lo, hi, pos), pos)
+    splitCoarse(lo, lo + left)
+    splitCoarse(lo + left, hi)
+  }
+  splitCoarse(0, n)
+  if (coarse.length > SPLAT_CHUNK_LIMIT) throw new Error("parseSplat: " + n + " splats need " + coarse.length + " chunks; the record's chunk index holds " + SPLAT_CHUNK_LIMIT)
+  let budget = SPLAT_CHUNK_LIMIT - coarse.length
+  let capped = false
+  let starts: number[] = []
+  let splitFine = (lo: number, hi: number): void => {
+    starts.push(lo)
+    if (hi - lo < 2 * SPLAT_CHUNK_MIN) return
+    let axis = longestAxis(order, lo, hi, pos)
+    let extent = 0
+    let smallest = Infinity
+    let min = Infinity
+    let max = -Infinity
+    for (let s = lo; s < hi; s++) {
+      let i = order[s]!
+      let p = pos[i * 3 + axis]!
+      if (p < min) min = p
+      if (p > max) max = p
+      if (largest[i]! < smallest) smallest = largest[i]!
+    }
+    extent = max - min
+    if (!(extent / POSITION_MAX > SPLAT_STEP_VISIBLE * smallest)) return
+    if (budget === 0) {
+      capped = true
+      return
+    }
+    budget--
+    starts.pop()
+    let mid = lo + ((hi - lo) >> 1)
+    selectAxis(order, lo, hi, mid, axis, pos)
+    splitFine(lo, mid)
+    splitFine(mid, hi)
+  }
+  for (let c = 0; c < coarse.length; c++) splitFine(coarse[c]!, c + 1 < coarse.length ? coarse[c + 1]! : n)
+  return { starts, capped }
 }
 
 // The axis with the largest extent over the records at order[lo..hi).
@@ -1154,10 +1255,11 @@ function selectAxis(order: Uint32Array, lo: number, hi: number, nth: number, axi
 export function decodeRecord(data: SplatData, slot: number): SplatRecord {
   if (!(Number.isInteger(slot) && slot >= 0 && slot < data.count)) throw new Error("decodeRecord: slot " + slot + " is outside the cloud's " + data.count + " records")
   let rdv = new DataView(data.records.buffer, data.records.byteOffset + slot * SPLAT_RECORD_BYTES, SPLAT_RECORD_BYTES)
-  let cdv = new DataView(data.chunks.buffer, data.chunks.byteOffset + Math.floor(slot / SPLAT_CHUNK_SIZE) * SPLAT_CHUNK_BYTES, SPLAT_CHUNK_BYTES)
-  let chunk = (f: number) => cdv.getFloat32(f * 4, true)
   let xy = rdv.getUint32(0, true)
-  let z = rdv.getUint32(4, true) & POSITION_MAX
+  let zc = rdv.getUint32(4, true)
+  let z = zc & POSITION_MAX
+  let cdv = new DataView(data.chunks.buffer, data.chunks.byteOffset + (zc >>> SPLAT_POSITION_BITS) * SPLAT_CHUNK_BYTES, SPLAT_CHUNK_BYTES)
+  let chunk = (f: number) => cdv.getFloat32(f * 4, true)
   let scale = rdv.getUint32(12, true)
   let at = slot * SPLAT_COLOR_BYTES
   return {
@@ -1224,14 +1326,16 @@ type Block = { offset: number; bytes: number }
 
 type Header = {
   count: number
-  chunkSize: number
+  chunkMax: number
+  chunkMin: number
   shDegree: number
   antialiased: boolean
   bounds: number[]
   records: Block
   colors: Block
   chunks: Block
-  order: Block
+  runs: Block
+  ramp: Block
   sh?: Block & { encoding: SplatShEncoding; palette?: Block }
 }
 
@@ -1250,18 +1354,18 @@ function paletteBytesOf(shDegree: number, encoding: SplatShEncoding): number {
   return SPLAT_SH_PALETTE_SIZE * SPLAT_SH_LABEL_BYTES[shDegree]! * SPLAT_TEXEL_BYTES
 }
 
-// The chunk table's byte length for a cloud.
-function chunkBytesOf(count: number): number {
-  return Math.ceil(count / SPLAT_CHUNK_SIZE) * SPLAT_CHUNK_BYTES
-}
-
-// The shape checks encode and decode share, naming `site`.
-function checkShape(site: string, count: number, shDegree: number, encoding: SplatShEncoding, bounds: ArrayLike<number>, records: number, colors: number, chunks: number, order: number, sh: number, palette: number): void {
+// The shape checks encode and decode share, naming `site`: the chunk
+// count is the chunk table's, and the run and ramp blocks match it.
+function checkShape(site: string, count: number, shDegree: number, encoding: SplatShEncoding, bounds: ArrayLike<number>, records: number, colors: number, chunks: number, runs: number, ramp: number, sh: number, palette: number): void {
   if (!(Number.isInteger(count) && count >= 0)) throw new Error(site + ": count must be a non-negative integer, got " + count)
   if (records !== count * SPLAT_RECORD_BYTES) throw new Error(site + ": the record block holds " + records + " bytes, not " + count + " whole splat records")
   if (colors !== count * SPLAT_COLOR_BYTES) throw new Error(site + ": the color block holds " + colors + " bytes, not " + count + " rgba8 colors")
-  if (chunks !== chunkBytesOf(count)) throw new Error(site + ": the chunk table holds " + chunks + " bytes; " + count + " splats need " + chunkBytesOf(count))
-  if (order !== count * 4) throw new Error(site + ": the order block holds " + order + " bytes, not " + count + " record ids")
+  if (chunks % SPLAT_CHUNK_BYTES !== 0) throw new Error(site + ": the chunk table holds " + chunks + " bytes, not whole " + SPLAT_CHUNK_BYTES + "-byte chunks")
+  let chunkCount = chunks / SPLAT_CHUNK_BYTES
+  if (chunkCount > SPLAT_CHUNK_LIMIT) throw new Error(site + ": " + chunkCount + " chunks; the record's chunk index holds " + SPLAT_CHUNK_LIMIT)
+  if ((count === 0) !== (chunkCount === 0) || chunkCount > count) throw new Error(site + ": " + chunkCount + " chunks for " + count + " splats")
+  if (runs !== chunkCount * SPLAT_RUN_BYTES) throw new Error(site + ": the run block holds " + runs + " bytes, not " + chunkCount + " run starts")
+  if (ramp !== chunkCount * SPLAT_RAMP_BYTES) throw new Error(site + ": the ramp block holds " + ramp + " bytes, not " + chunkCount + " chunk ramps")
   if (bounds.length !== 6) throw new Error(site + ": bounds must be [minX, minY, minZ, maxX, maxY, maxZ]")
   if (!(Number.isInteger(shDegree) && shDegree >= 0 && shDegree <= 3)) throw new Error(site + ": shDegree must be 0..3, got " + shDegree)
   if (encoding !== "u8" && encoding !== "pq") throw new Error(site + ": SH encoding '" + String(encoding) + "' is not supported (u8, pq)")
@@ -1272,14 +1376,14 @@ function checkShape(site: string, count: number, shDegree: number, encoding: Spl
 /**
  * Serialize a splat cloud into the .sol3s container, all little-endian:
  * "SOLS" u32 | version u32 | jsonLength u32 | json (padded to 4) |
- * payload. The JSON header carries count, chunkSize, shDegree,
+ * payload. The JSON header carries count, chunkMax, chunkMin, shDegree,
  * antialiased, bounds and the byte range of the record block, the color
- * block, the chunk table, the order block and (above degree 0) the SH
- * block with its encoding and, under pq, its palette block; the payload is
- * the blocks verbatim, each starting 4-aligned.
+ * block, the chunk table, the run block, the ramp block and (above degree
+ * 0) the SH block with its encoding and, under pq, its palette block; the
+ * payload is the blocks verbatim, each starting 4-aligned.
  */
 export function encodeSplat(data: SplatData): Uint8Array {
-  checkShape("encodeSplat", data.count, data.shDegree, data.shEncoding, data.bounds, data.records.byteLength, data.colors.byteLength, data.chunks.byteLength, data.order.byteLength, data.sh?.byteLength ?? 0, data.shPalette?.byteLength ?? 0)
+  checkShape("encodeSplat", data.count, data.shDegree, data.shEncoding, data.bounds, data.records.byteLength, data.colors.byteLength, data.chunks.byteLength, data.runs.byteLength, data.ramp.byteLength, data.sh?.byteLength ?? 0, data.shPalette?.byteLength ?? 0)
   let shBytes = shBytesOf(data.count, data.shDegree, data.shEncoding)
   let paletteBytes = paletteBytesOf(data.shDegree, data.shEncoding)
   // Blocks start 4-aligned (decodeSplat views them as typed arrays); a
@@ -1293,14 +1397,16 @@ export function encodeSplat(data: SplatData): Uint8Array {
   }
   let header: Header = {
     count: data.count,
-    chunkSize: SPLAT_CHUNK_SIZE,
+    chunkMax: SPLAT_CHUNK_MAX,
+    chunkMin: SPLAT_CHUNK_MIN,
     shDegree: data.shDegree,
     antialiased: data.antialiased === true,
     bounds: Array.from(data.bounds),
     records: next(data.records.byteLength),
     colors: next(data.colors.byteLength),
     chunks: next(data.chunks.byteLength),
-    order: next(data.order.byteLength),
+    runs: next(data.runs.byteLength),
+    ramp: next(data.ramp.byteLength),
   }
   if (shBytes > 0) {
     header.sh = { ...next(shBytes), encoding: data.shEncoding }
@@ -1318,7 +1424,8 @@ export function encodeSplat(data: SplatData): Uint8Array {
   out.set(data.records, payload + header.records.offset)
   out.set(data.colors, payload + header.colors.offset)
   out.set(data.chunks, payload + header.chunks.offset)
-  out.set(new Uint8Array(data.order.buffer, data.order.byteOffset, data.order.byteLength), payload + header.order.offset)
+  out.set(new Uint8Array(data.runs.buffer, data.runs.byteOffset, data.runs.byteLength), payload + header.runs.offset)
+  out.set(new Uint8Array(data.ramp.buffer, data.ramp.byteOffset, data.ramp.byteLength), payload + header.ramp.offset)
   if (data.sh !== null && shBytes > 0) out.set(data.sh, payload + header.sh!.offset)
   if (data.shPalette !== null && paletteBytes > 0) out.set(data.shPalette, payload + header.sh!.palette!.offset)
   return out
@@ -1341,14 +1448,15 @@ export function decodeSplat(bytes: Uint8Array): SplatData {
   if (bytes.byteLength < 12 + jsonLength) throw new Error("decodeSplat: shorter than its header")
   let header: Header = JSON.parse(new TextDecoder().decode(bytes.subarray(12, 12 + jsonLength)))
   let payload = 12 + jsonLength + ((4 - (jsonLength % 4)) % 4)
-  if (header.chunkSize !== SPLAT_CHUNK_SIZE) throw new Error("decodeSplat: chunk size " + header.chunkSize + ", expected " + SPLAT_CHUNK_SIZE)
+  if (header.chunkMax !== SPLAT_CHUNK_MAX || header.chunkMin !== SPLAT_CHUNK_MIN) throw new Error("decodeSplat: chunks of " + header.chunkMin + ".." + header.chunkMax + " splats, expected " + SPLAT_CHUNK_MIN + ".." + SPLAT_CHUNK_MAX)
   let encoding: SplatShEncoding = header.sh?.encoding ?? "u8"
-  checkShape("decodeSplat", header.count, header.shDegree, encoding, header.bounds, header.records?.bytes ?? -1, header.colors?.bytes ?? -1, header.chunks?.bytes ?? -1, header.order?.bytes ?? -1, header.sh?.bytes ?? 0, header.sh?.palette?.bytes ?? 0)
+  checkShape("decodeSplat", header.count, header.shDegree, encoding, header.bounds, header.records?.bytes ?? -1, header.colors?.bytes ?? -1, header.chunks?.bytes ?? -1, header.runs?.bytes ?? -1, header.ramp?.bytes ?? -1, header.sh?.bytes ?? 0, header.sh?.palette?.bytes ?? 0)
   let block = (b: Block, name: string): Uint8Array => {
     if (!(Number.isInteger(b.offset) && b.offset >= 0 && b.offset % 4 === 0) || bytes.byteLength < payload + b.offset + b.bytes) throw new Error("decodeSplat: shorter than its " + name + " block (or the block is not 4-aligned)")
     return bytes.subarray(payload + b.offset, payload + b.offset + b.bytes)
   }
-  let order = block(header.order, "order")
+  let runs = block(header.runs, "run")
+  let ramp = block(header.ramp, "ramp")
   let sh: Uint8Array | null = null
   let shPalette: Uint8Array | null = null
   if (header.sh !== undefined && header.sh.bytes > 0) {
@@ -1360,7 +1468,8 @@ export function decodeSplat(bytes: Uint8Array): SplatData {
     records: block(header.records, "record"),
     colors: block(header.colors, "color"),
     chunks: block(header.chunks, "chunk"),
-    order: new Uint32Array(order.buffer, order.byteOffset, header.count),
+    runs: new Uint32Array(runs.buffer, runs.byteOffset, runs.byteLength / SPLAT_RUN_BYTES),
+    ramp: new Float32Array(ramp.buffer, ramp.byteOffset, ramp.byteLength / 4),
     bounds: Float32Array.from(header.bounds),
     shDegree: header.shDegree,
     shEncoding: header.shDegree > 0 ? encoding : "u8",

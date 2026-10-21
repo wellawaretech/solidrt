@@ -3,9 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::gpu::{
-  gather_ordered, gather_permuted, materialize_indices, materialize_indices_mapped, order_permutation,
-  order_permutation_packed, BufferIds, BufferStride, InstanceOrder, KeyColumn, OrderCounters, OrderScratch,
-  OrderWorker, PackedRecords, SortJob, StepMode, MAX_BUFFERS,
+  gather_ordered, gather_permuted, materialize_indices, materialize_indices_through, order_packed, order_permutation,
+  BufferIds, BufferStride, DrawRange, InstanceOrder, KeyColumn, OrderCounters, OrderScratch, OrderView, OrderWorker,
+  PackedJob, RunTable, Selection, SortJob, StepMode, MAX_BUFFERS,
 };
 use crate::raster::RasterCmd;
 
@@ -78,6 +78,20 @@ struct OrderedEntry {
   in_flight: Option<u64>,
   wanted: bool,
   spare: Vec<u32>,
+  // A packed population's selection state (the mirror's run table says
+  // whether the entry is one): the view it is selected under (None until
+  // fed: every run whole), the budget in records (the entry's instance
+  // count times its ids per instance, capped at the population), the
+  // record ids the last selection kept in the slot order `perm` indexes
+  // (what a republish materializes through) and the vector the next job
+  // fills, and the records the last landed selection drew - the draw
+  // range the raster thread holds, which is the registry's to set here,
+  // never above the budget the entry's range carries.
+  view: Option<OrderView>,
+  budget: usize,
+  ids: Vec<u32>,
+  spare_ids: Vec<u32>,
+  drawn: Option<usize>,
 }
 
 #[derive(Default)]
@@ -101,9 +115,11 @@ struct Mirror {
   // index-materialized entry whose attach must declare the same column.
   // None holds whole records, what a gathered entry republishes.
   column: Option<KeyColumn>,
-  // The chunk table of a packed column (shared with a sort job in
-  // flight); None otherwise.
-  bounds: Option<Arc<Vec<[f32; 6]>>>,
+  // The run table of a packed column (shared with a sort job in flight);
+  // None otherwise. With one the mirror holds the packed words in
+  // storage order, whole (`published` = `held`), and the entry's
+  // selection decides what sorts.
+  runs: Option<Arc<RunTable>>,
   // Whether an id write ever reached the buffer (index form): a fresh
   // buffer is zeroed, which fetches record 0 everywhere, so the first
   // asynchronous seed writes the sentinel first.
@@ -158,18 +174,32 @@ impl Mirror {
     }
   }
 
-  // Whether the mirror holds (id, packed word) pairs in draw order, whose
-  // permutation maps through the ids.
+  // Whether the mirror holds a packed population's words with its run
+  // table, whose permutation maps through the entry's selected ids.
   fn packed(&self) -> bool {
-    self.column.is_some_and(|c| c.packed.is_some())
+    self.runs.is_some()
+  }
+
+  // The records held.
+  fn records(&self, entry: &OrderedEntry) -> usize {
+    let len = self.record_len(entry);
+    if len == 0 {
+      0
+    } else {
+      self.held / len
+    }
   }
 }
 
 // The published prefix of a handed-off mirror for an instance count: the
 // first count records - count x K under the index materialization, whose
 // instance record is K u32 ids and whose mirror record is the key column -
-// capped at what was handed off.
+// capped at what was handed off. A packed mirror publishes whole: its
+// count is a budget (`record_budget`).
 fn published_prefix(order: &InstanceOrder, instance_stride: usize, instances: usize, mirror: &Mirror) -> usize {
+  if mirror.packed() {
+    return mirror.held;
+  }
   let per_instance = if order.indices.is_some() { instance_stride / 4 } else { 1 };
   let record = match mirror.column {
     Some(column) => column.mirror_len(),
@@ -178,11 +208,17 @@ fn published_prefix(order: &InstanceOrder, instance_stride: usize, instances: us
   (instances * per_instance * record).min(mirror.held)
 }
 
+// A packed entry's budget in records for an instance count: count x K,
+// capped at the population.
+fn record_budget(instance_stride: usize, instances: usize, records: usize) -> usize {
+  instances.saturating_mul(instance_stride / 4).min(records)
+}
+
 // The id materialization of an entry's permutation into `dst`: the slots
-// themselves, or the record ids a packed mirror's slots name.
+// themselves, or the record ids a packed entry's selected slots name.
 fn materialize(entry: &OrderedEntry, mirror: &Mirror, dst: &mut [u8]) {
   if mirror.packed() {
-    materialize_indices_mapped(&entry.perm, &mirror.data[..mirror.published], dst);
+    materialize_indices_through(&entry.perm, &entry.ids, dst);
   } else {
     materialize_indices(&entry.perm, dst);
   }
@@ -395,10 +431,16 @@ impl Context {
       }
     }
     let mut seed = false;
+    let mut budget = 0;
     if let Some(mirror) = orders.mirrors.get_mut(&buffers[key]) {
       if mirror.owned {
         mirror.published = published_prefix(&order, strides[key], instances, mirror);
-        seed = mirror.published > 0;
+        if mirror.packed() {
+          budget = record_budget(strides[key], instances, mirror.held / mirror.column.map_or(1, |c| c.mirror_len()));
+          seed = budget > 0;
+        } else {
+          seed = mirror.published > 0;
+        }
       }
     }
     orders.entries.insert(
@@ -413,6 +455,11 @@ impl Context {
         in_flight: None,
         wanted: false,
         spare: Vec::new(),
+        view: None,
+        budget,
+        ids: Vec::new(),
+        spare_ids: Vec::new(),
+        drawn: None,
       },
     );
     seed
@@ -457,7 +504,7 @@ impl Context {
     id: u64,
     data: &[u8],
     key: Option<KeyColumn>,
-    packed: Option<PackedRecords>,
+    runs: Option<RunTable>,
   ) -> Result<(), String> {
     self.gpu_buffer_len(id)?;
     if data.is_empty() {
@@ -467,23 +514,21 @@ impl Context {
       column.check_records(data.len()).map_err(|e| format!("record hand-off to buffer {id}: {e}"))?;
     }
     let mut held = Vec::new();
-    let mut bounds = None;
-    match (key, packed) {
-      (Some(column), Some(packed)) => {
-        column.check_packed(data.len(), &packed).map_err(|e| format!("record hand-off to buffer {id}: {e}"))?;
-        column.extract_packed(data, &packed.order, &mut held);
-        bounds = Some(Arc::new(packed.bounds));
+    let mut table = None;
+    match (key, runs) {
+      (Some(column), Some(runs)) => {
+        column.check_packed(data.len(), &runs).map_err(|e| format!("record hand-off to buffer {id}: {e}"))?;
+        column.extract(data, &mut held);
+        table = Some(Arc::new(runs));
       }
       (Some(column), None) => {
         if column.packed.is_some() {
-          return Err(format!("record hand-off to buffer {id}: a packed key needs its chunk table and draw order"));
+          return Err(format!("record hand-off to buffer {id}: a packed key needs its run table"));
         }
         column.extract(data, &mut held);
       }
       (None, Some(_)) => {
-        return Err(format!(
-          "record hand-off to buffer {id}: a chunk table and draw order go with a packed record key"
-        ));
+        return Err(format!("record hand-off to buffer {id}: a run table goes with a packed record key"));
       }
       (None, None) => held.extend_from_slice(data),
     }
@@ -491,10 +536,10 @@ impl Context {
     let mirror = orders.mirrors.entry(id).or_default();
     mirror.held = held.len();
     mirror.data = Arc::new(held);
-    mirror.published = mirror.published.min(mirror.held);
+    mirror.published = if table.is_some() { mirror.held } else { mirror.published.min(mirror.held) };
     mirror.owned = true;
     mirror.column = key;
-    mirror.bounds = bounds;
+    mirror.runs = table;
     Ok(())
   }
 
@@ -532,6 +577,7 @@ impl Context {
       return;
     }
     let mut resubmit = Vec::new();
+    let mut drawn = Vec::new();
     {
       let mut orders = self.orders.borrow_mut();
       let orders = &mut *orders;
@@ -555,8 +601,9 @@ impl Context {
           // belong to the old one, so sort again for the new.
           self.recycle_block(done.buffer, done.block);
           entry.wanted = buffer != 0;
-        } else if done.perm != entry.perm {
+        } else if done.perm != entry.perm || done.ids != entry.ids {
           entry.spare = std::mem::replace(&mut entry.perm, done.perm);
+          entry.spare_ids = std::mem::replace(&mut entry.ids, done.ids);
           let len = done.block.len();
           self.send(RasterCmd::WriteBufferLease {
             id: buffer,
@@ -568,8 +615,12 @@ impl Context {
           if orders.mirrors.get_mut(&buffer).is_some_and(Mirror::seeded_only) {
             self.send(RasterCmd::ResetDrawGauge { target: done.entry.0, draw: done.entry.1 });
           }
+          if orders.mirrors.get(&buffer).is_some_and(Mirror::packed) {
+            drawn.push((done.entry, entry.perm.len()));
+          }
         } else {
           entry.spare = done.perm;
+          entry.spare_ids = done.ids;
           self.recycle_block(done.buffer, done.block);
         }
         if entry.wanted {
@@ -578,8 +629,103 @@ impl Context {
         }
       }
     }
+    for ((target, draw), records) in drawn {
+      self.apply_drawn(target, draw, records);
+    }
     for (target, draw) in resubmit {
       self.rematerialize_retained_order(target, draw);
+    }
+  }
+
+  // The selection a packed entry sorts under now: its view (None until
+  // fed), the target's size in pixels as the contribution's unit (a
+  // target without a known size selects as without a view), the order's
+  // LOD threshold and the entry's budget.
+  fn selection_of(&self, target: u64, entry: &OrderedEntry) -> Selection {
+    let viewport = self.target_viewport(target);
+    Selection {
+      view: if viewport.is_some() { entry.view } else { None },
+      viewport: viewport.unwrap_or([1.0, 1.0]),
+      threshold: entry.order.lod_threshold,
+      budget: entry.budget,
+    }
+  }
+
+  // Set the draw range the raster thread holds for a packed entry to
+  // what its last selection drew: ceil(records / K) instances, K the ids
+  // per instance record. The entry's own range keeps the app's count (the
+  // budget); every send of that range applies this override
+  // (`drawn_range`). Runs with no target borrow held.
+  fn apply_drawn(&self, target: u64, draw: u64, records: usize) {
+    let range = {
+      let mut orders = self.orders.borrow_mut();
+      let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
+        return;
+      };
+      let per_instance = (entry.strides[entry.key] / 4).max(1);
+      entry.drawn = Some(records);
+      let instances = records.div_ceil(per_instance) as i32;
+      let targets = self.targets.borrow();
+      let Some(mirror) = targets.get(&target) else {
+        return;
+      };
+      let current = match (draw, mirror.entries.as_ref()) {
+        (0, None) => mirror.draw,
+        (d, Some(list)) => list.entries.get(&d).map(|e| e.draw),
+        _ => None,
+      };
+      let Some(current) = current else {
+        return;
+      };
+      DrawRange { instance_count: instances.min(current.instance_count.max(0)), ..current }
+    };
+    match draw {
+      0 => self.send(RasterCmd::SetDraw { id: target, range }),
+      d => self.send(RasterCmd::SetDrawRange { target, draw: d, range }),
+    }
+    self.note_target_content(target);
+  }
+
+  /// `range` as the raster thread should hold it for entry (`target`,
+  /// `draw`): a packed entry draws its last selection, never more than the
+  /// range's own instance count (the budget); any other entry draws the
+  /// range as given.
+  pub(super) fn drawn_range(&self, target: u64, draw: u64, range: DrawRange) -> DrawRange {
+    let orders = self.orders.borrow();
+    let Some(entry) = orders.entries.get(&(target, draw)) else {
+      return range;
+    };
+    let Some(drawn) = entry.drawn else {
+      return range;
+    };
+    let per_instance = (entry.strides[entry.key] / 4).max(1);
+    let instances = drawn.div_ceil(per_instance) as i32;
+    DrawRange { instance_count: instances.min(range.instance_count.max(0)), ..range }
+  }
+
+  // A target's size in pixels, the unit a selection's contribution is
+  // measured in: a sub-target's rectangle, a texture target's own size.
+  fn target_viewport(&self, target: u64) -> Option<[f32; 2]> {
+    if let Some(tile) = self.sub_targets.borrow().get(&target) {
+      return Some([tile.width as f32, tile.height as f32]);
+    }
+    self.textures.get(target).map(|e| [e.width as f32, e.height as f32])
+  }
+
+  /// Re-select every packed entry of `target` (its size changed: the
+  /// contribution's unit moved). Runs with no target borrow held.
+  pub(super) fn reselect_target_orders(&self, target: u64) {
+    let entries: Vec<(u64, u64)> = {
+      let orders = self.orders.borrow();
+      orders
+        .entries
+        .iter()
+        .filter(|((t, _), e)| *t == target && orders.mirrors.get(&e.buffers[e.key]).is_some_and(Mirror::packed))
+        .map(|(k, _)| *k)
+        .collect()
+    };
+    for (t, d) in entries {
+      self.rematerialize_retained_order(t, d);
     }
   }
 
@@ -634,19 +780,21 @@ impl Context {
         wake();
       }
     });
+    let selection = self.selection_of(target, entry);
     let job = SortJob {
       entry: (target, draw),
       buffer,
       generation,
       order: entry.order.mirror_order(),
       stride: mirror.record_len(entry),
-      packed: match (mirror.column.and_then(|c| c.packed), &mirror.bounds) {
-        (Some(key), Some(bounds)) => Some((key, bounds.clone())),
+      packed: match (mirror.column.and_then(|c| c.packed), &mirror.runs) {
+        (Some(key), Some(table)) => Some(PackedJob { key, table: table.clone(), selection }),
         _ => None,
       },
       keys: mirror.data.clone(),
       len: mirror.published,
       perm: std::mem::take(&mut entry.spare),
+      ids: std::mem::take(&mut entry.spare_ids),
       block: self.write_leases.borrow_mut().take_free(buffer, size),
       done: Some(done),
     };
@@ -685,12 +833,56 @@ impl Context {
     if !mirror.owned {
       return false;
     }
+    if mirror.packed() {
+      let budget = record_budget(entry.strides[entry.key], instances, mirror.records(entry));
+      let entry = orders.entries.get_mut(&(target, draw)).expect("resolved above");
+      if budget == entry.budget {
+        return false;
+      }
+      entry.budget = budget;
+      return true;
+    }
     let published = entry.published_for(instances, mirror);
     if published == mirror.published {
       return false;
     }
     mirror.published = published;
     true
+  }
+
+  /// Set an ordered entry's view (the `orderView` update, the feed's
+  /// form): the projected key's direction follows the matrix, and a
+  /// packed entry keeps the view to select its runs under. Returns
+  /// whether the order's inputs changed - a direction the matrix did not
+  /// turn, on an entry with no runs to select, is nothing to re-sort for.
+  /// Errs on an entry with no instance order, one whose key is a field,
+  /// or a matrix without a depth direction.
+  pub(super) fn set_instance_order_view(&self, target: u64, draw: u64, view: OrderView) -> Result<bool, String> {
+    let mut orders = self.orders.borrow_mut();
+    let orders = &mut *orders;
+    let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
+      return Err("the entry has no instance order (declare instanceOrder at creation)".to_string());
+    };
+    let Some(direction) = view.direction() else {
+      return Err("orderView has no depth direction (its w and z rows are zero or not finite)".to_string());
+    };
+    let before = entry.order.key;
+    entry.order.set_direction(direction)?;
+    let packed = orders.mirrors.get(&entry.buffers[entry.key]).is_some_and(Mirror::packed);
+    entry.view = Some(view);
+    Ok(packed || entry.order.key != before)
+  }
+
+  /// Replace an ordered entry's LOD threshold (the `orderLod` update).
+  /// Returns whether a selection depends on it (a packed entry).
+  pub(super) fn set_instance_order_lod(&self, target: u64, draw: u64, threshold: f64) -> Result<bool, String> {
+    let mut orders = self.orders.borrow_mut();
+    let orders = &mut *orders;
+    let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
+      return Err("the entry has no instance order (declare instanceOrder at creation)".to_string());
+    };
+    entry.order.set_lod(threshold)?;
+    Ok(orders.mirrors.get(&entry.buffers[entry.key]).is_some_and(Mirror::packed))
   }
 
   /// The buffer-swap half of the update transaction, split check/commit so
@@ -785,47 +977,61 @@ impl Context {
     // permutation.
     self.drain_recycled_blocks();
     self.drain_order_results();
+    if let Some(records) = self.rematerialize_in_flush(target, draw) {
+      self.apply_drawn(target, draw, records);
+    }
+  }
+
+  // The in-flush half of `rematerialize_retained_order`, under the
+  // registry borrow: Some(records drawn) when a packed entry's selection
+  // landed here, None otherwise (nothing to do, or a job submitted).
+  fn rematerialize_in_flush(&self, target: u64, draw: u64) -> Option<usize> {
     let mut orders = self.orders.borrow_mut();
     let orders = &mut *orders;
-    let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
-      return;
-    };
+    let entry = orders.entries.get_mut(&(target, draw))?;
     if !entry.retains() {
-      return;
+      return None;
     }
     let key_buffer = entry.buffers[entry.key];
     if key_buffer == 0 {
-      return;
+      return None;
     }
-    let Some(mirror) = orders.mirrors.get(&key_buffer) else {
-      return;
-    };
+    let mirror = orders.mirrors.get(&key_buffer)?;
     let len = mirror.published;
     if len == 0 {
-      return;
+      return None;
     }
     let keys = len / mirror.record_len(entry);
     if entry.order.indices.is_some() && keys > SYNC_SORT_MAX_KEYS && self.submit_order_sort(orders, target, draw) {
-      return;
+      return None;
     }
     let entry = orders.entries.get_mut(&(target, draw)).expect("resolved above");
     let mirror = orders.mirrors.get(&key_buffer).expect("resolved above");
-    match (mirror.column.and_then(|c| c.packed), &mirror.bounds) {
-      (Some(key), Some(bounds)) => {
-        order_permutation_packed(&entry.order.mirror_order(), key, &mirror.data[..len], bounds, &mut orders.scratch)
+    let packed = match (mirror.column.and_then(|c| c.packed), &mirror.runs) {
+      (Some(key), Some(table)) => {
+        let selection = self.selection_of(target, entry);
+        order_packed(&entry.order.mirror_order(), key, &mirror.data[..len], table, &selection, &mut orders.scratch);
+        true
       }
-      _ => order_permutation(
-        &entry.order.mirror_order(),
-        mirror.record_len(entry),
-        &mirror.data[..len],
-        &mut orders.scratch,
-      ),
-    }
-    if orders.scratch.perm() == entry.perm.as_slice() {
-      return;
+      _ => {
+        order_permutation(
+          &entry.order.mirror_order(),
+          mirror.record_len(entry),
+          &mirror.data[..len],
+          &mut orders.scratch,
+        );
+        false
+      }
+    };
+    if orders.scratch.perm() == entry.perm.as_slice() && (!packed || orders.scratch.ids() == entry.ids.as_slice()) {
+      return None;
     }
     entry.perm.clear();
     entry.perm.extend_from_slice(orders.scratch.perm());
+    if packed {
+      entry.ids.clear();
+      entry.ids.extend_from_slice(orders.scratch.ids());
+    }
     let indexed = entry.order.indices.is_some();
     self.republish_slots(entry, &orders.mirrors, None);
     if indexed {
@@ -835,6 +1041,11 @@ impl Context {
           self.send(RasterCmd::ResetDrawGauge { target, draw });
         }
       }
+    }
+    if packed {
+      Some(entry.perm.len())
+    } else {
+      None
     }
   }
 

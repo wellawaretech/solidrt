@@ -905,7 +905,7 @@ through its debug commands, and `camera-components.test.tsx` drives
 | `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (an optional cull box, never a hit: instances pick by themselves, and without it the mesh culls by their union), `instanceOrder?` (draw the records in key order, fixed at creation - see "Instance order"), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount, and `anchor?` (a SceneNode, fixed at creation: the ancestor the records are relative to, so `<Instance mesh>` children may sit anywhere under it - see createInstancedMesh) |
 | `Instance` | one instance of the enclosing `InstancedMesh`: transforms, `transition`, pointer events as Group, plus `style?` (the material's style record, one value per component - `[r, g, b, a]` under `instanceColors`), `ref?(instance)`; a parent too (a `<Mesh>` under an instance rides with it), and `mesh?` (the population, fixed at creation, when the instance is placed outside its `<InstancedMesh>` - inside that mesh's `anchor` subtree) |
 | `RecordMesh` | as Mesh, plus `records` (the per-instance records in the material's first instance layout, an ArrayBufferView; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks), `instanceOrder?` (draw the records in key order, fixed at creation - see "Instance order"), `transfer?` (hand the records to the engine at creation, the write-once form - a later `records` value then throws; see "Instance order"); the record buffers are component-owned and freed on unmount |
-| `SplatMesh` | as Mesh, plus `data` (a baked SplatData from loadSplat; write-once under the default transfer - swap clouds by remounting), `count?` (splats drawn, default all; records are importance-sorted at bake, so a prefix is the scene at that size), `material?` (a fork of the stock splat class) and `transfer?` (default true: records go to the engine, halving residency; see "Splats"); bounds, the back-to-front instance order and the stock material come from the bake |
+| `SplatMesh` | as Mesh, plus `data` (a baked SplatData from loadSplat; write-once under the default transfer - swap clouds by remounting), `count?` (the most splats drawn, default all: a budget the engine's selection fits by thinning every chunk in view by importance), `lodThreshold?` (pixels of contribution below which a chunk's least important splats are not drawn, default SPLAT_LOD_THRESHOLD, 0 for the budget alone), `material?` (a fork of the stock splat class); bounds, the chunk culling, the back-to-front instance order and the stock material come from the bake (see "Splats") |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |
 | `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `sourceRadius?` (world units, default 0 = a point source; above 0 contact-hardening soft shadows), `castShadow?`, `shadow?` (mapSize - default the quality row's -, bias, normalBias, radius, near), `ref?(light)` |
 | `PointLight` | transforms as Group (position is what matters), `color?`, `intensity?`, `distance?`, `decay?`, `sourceRadius?` (as SpotLight), `castShadow?` (six face maps, six shadow slots), `shadow?` (mapSize - default the quality row's -, bias, normalBias, radius, near), `ref?(light)` |
@@ -2033,7 +2033,7 @@ whose records live in a DATA TEXTURE the vertex stage fetches by record
 index - a splat cloud, any large write-once set whose per-instance
 frontend cost matters. `records` is the layout of the record bytes you
 pass: the engine keeps their key column (the position, 12 bytes per
-record) as its sort mirror and nothing else, and the material's ONE
+record; 8 packed) as its sort mirror and nothing else, and the material's ONE
 instance buffer is the id stream: uint32/uint32x4 attributes the engine fills
 with the sorted record indices, K ids per instance record, so one drawn
 instance covers K records - repeat the geometry K times and pick the
@@ -3457,36 +3457,44 @@ successors) as ordinary content, the model-loading split repeated:
   shDegree?, antialiased? })` reads a trainer's `.ply`, the de-facto
   `.splat` interchange or a GUNZIPPED `.spz` (Niantic, version 2 or 3;
   the entry stays decompression-free, so inflate first) and bakes it -
-  the records partitioned spatially (a k-d split down to chunks of
-  SPLAT_CHUNK_SIZE = 256 consecutive records, each a compact box) and
-  quantized against their chunk, the draw order (record ids by
-  importance, size times opacity, so the first n are the scene at n) as
-  a block beside them, y-down captures (.ply, .splat) stood up to y-up
-  (positions, rotations and SH rotated together; `keepOrientation` opts
-  out, `.spz` is y-up already), bounds measured, and the loss reported
-  (`report`: the chunk position step over each splat's largest axis as
-  median, 99th percentile and the share above SPLAT_STEP_VISIBLE, plus
+  the records partitioned spatially into chunks - a k-d split down to
+  runs of SPLAT_CHUNK_MIN..SPLAT_CHUNK_MAX (16..256) consecutive records,
+  each a compact box, split finer where a 256-splat box would move its
+  smallest splat past SPLAT_STEP_VISIBLE, at most SPLAT_CHUNK_LIMIT
+  (65536) chunks - quantized against their chunk and ordered by
+  IMPORTANCE inside (projected area times opacity: the two largest
+  scales times the alpha, so a prefix of a chunk's run is its most
+  important splats), each chunk's SPLAT_RAMP_SAMPLES (16) importance
+  samples along its run as a ramp block (`ramp`) and its first record as
+  a run block (`runs`) beside the chunk table, y-down captures (.ply,
+  .splat) stood up to y-up (positions, rotations and SH rotated
+  together; `keepOrientation` opts out, `.spz` is y-up already), bounds
+  measured, and the loss reported (`report`: the chunk count and the
+  smallest chunk, the chunk position step over each splat's largest axis
+  as median, 99th percentile and the share above SPLAT_STEP_VISIBLE, plus
   the SH coefficients clamped). `encodeSplat`/`decodeSplat` round-trip
-  the `.sol3s` container (the record, chunk, order and SH blocks, next
-  bullet); decode is a header parse plus byte VIEWS, nothing per-splat;
+  the `.sol3s` container (the record, color, chunk, run, ramp and SH
+  blocks, next bullet); decode is a header parse plus byte VIEWS,
+  nothing per-splat;
   `decodeRecord`/`decodeSh` are the reference decoders (per record: for
   tests and tools, not whole clouds). `sol tool 3d/splat <in> [-o
   out.sol3s] [--sh 0..3] [--keep-orientation] [--antialiased]` is the
   parse and bake under bun (tools/splat.ts), printing the report; an
   app bake script uses the same entry.
-- The `.sol3s` record (version 3) is 16 bytes = one rgba32ui texel, a
+- The `.sol3s` record (version 4) is 16 bytes = one rgba32ui texel, a
   chunked record in the field's shape (Unity's importer, PlayCanvas's
   compressed ply) with the position at 16 bits per axis where the field
   has 11 (11 moved a capture's sub-millimetre detail by multiples of its
   size): the position as 16-bit unorms over the chunk's position box in
-  two words (x | y << 16, then z; 16 bits reserved), the rotation as a
+  two words (x | y << 16, then z | chunk index << 16), the rotation as a
   smallest-three quaternion (the largest's index on top, three 10-bit
   components), the scale as 11/10/11-bit unorms over the chunk's
   log-scale box (SPLAT_ATTRIBUTES as a byte layout). The sRGB color +
   opacity are a color block beside the records (rgba8, SPLAT_COLOR_BYTES
   per splat), the chunk table 12 floats per chunk (position min/max,
-  log-scale min/max; SPLAT_CHUNK_TEXELS = 3 rgba32f texels), the order
-  block a u32 per splat. `--sh 1..3` bakes
+  log-scale min/max; SPLAT_CHUNK_TEXELS = 3 rgba32f texels), the run
+  block a u32 per chunk, the ramp block SPLAT_RAMP_SAMPLES floats per
+  chunk. `--sh 1..3` bakes
   that many spherical-harmonic bands beyond the base color from a
   trainer's `.ply` or an `.spz` (`.splat` has none), capped at the
   capture's, stored as `--sh-encoding` says (`shEncoding` on
@@ -3518,28 +3526,38 @@ successors) as ordinary content, the model-loading split repeated:
   24 MB on disk at SH0 (32 at SH3 as pq, 72 as u8) and the bake runs in
   about a second without SH.
 - On the runtime, `loadSplat(path)` reads a `.sol3s` (fetch + decode,
-  the loadModel shape) and `createSplatMesh(data, { count?, material?,
-  label? })` / `<SplatMesh>` shows it: a RecordMesh in the INDEXED form
-  (see "Instance order") with a PACKED position key - the engine keeps
-  each splat's packed position words beside its id in the draw order
-  (12 bytes per splat) and the chunk table, and decodes the depth key
-  from them - AND the record block uploaded once, in place and in row
+  the loadModel shape) and `createSplatMesh(data, { count?,
+  lodThreshold?, material?, label? })` / `<SplatMesh>` shows it: a
+  RecordMesh in the INDEXED form (see "Instance order") with a PACKED
+  position key - the engine keeps each splat's packed position words in
+  storage order (8 bytes per splat) and the chunk table with its runs
+  and ramps, and decodes the depth key from them - AND the record block
+  uploaded once, in place and in row
   bands, as the `rgba32ui` record texture the vertex stage fetches by id
   (`uSplatRecords`, the chunk table as `uSplatChunks`, the colors as
   `uSplatColors`, plus `uSplatSh` when baked; bound per mesh, so a forked
   material keeps them),
   SPLAT_GROUP (16) splats per drawn instance of a merged-quad geometry,
   the header bounds as the cull and picking box, and the id stream
-  sorted back to front core-side - the cloud composes as a mesh
-  (depth-tested against opaque geometry, placed by the transparent
-  entry sort, transformed by its node), a camera turn re-sorts and
-  republishes 4 bytes per splat with zero per-frame JS - on the engine's
-  sort thread above ~16k splats, so the frame never waits and the order
-  lags the camera by one sort (tens of ms at 1M on a phone; a test
-  `settle`s before reading it) - and a parked camera uploads nothing.
-  `count` dials a prefix of the bake's draw order (by importance).
+  SELECTED and sorted back to front core-side under the scene's view
+  (the scene feeds the mesh's model-to-clip matrix): a chunk whose box
+  is out of view is skipped whole, a visible chunk is cut where its
+  ramp falls under `lodThreshold` pixels of contribution at the chunk's
+  projected scale (a far chunk thins, a near one keeps its micro-splats),
+  `count` is a budget the threshold rises to meet, and what passed sorts
+  - the cloud composes as a mesh (depth-tested against opaque geometry,
+  placed by the transparent entry sort, transformed by its node), a
+  camera turn re-sorts and a camera move re-selects, republishing 4
+  bytes per drawn splat with zero per-frame JS - on the engine's sort
+  thread above ~16k splats, so the frame never waits and the order lags
+  the camera by one sort (tens of ms at 1M on a phone; a test `settle`s
+  before reading it) - and a parked camera uploads nothing. The draw
+  range the GPU sees is the selection's (the engine sets it when a sort
+  lands; `_instances.count` stays the budget). `setRecordCount` and
+  `setRecordLod` dial both live. Without a view (no scene flush yet) the
+  budget alone thins, by importance across the cloud.
   Write-once: treat the SplatData as consumed and drop it; at 1M splats
-  the cloud is resident as the engine's 12 MB key copy plus 20 MB of
+  the cloud is resident as the engine's 8 MB key copy plus 20 MB of
   record and color texture (8 MB of labels plus the 32 KB palette more
   at SH3 as pq - `uSplatShLabels`, an `rg8ui` texture at degree 1 and
   one or two `rgba8ui` texels per splat above, and `uSplatShPalette`;
@@ -3550,7 +3568,8 @@ successors) as ordinary content, the model-loading split repeated:
   argument), and `splatVertexSource(opts)` / SPLAT_FRAGMENT /
   SPLAT_ID_ATTRIBUTES are exported for forks; `count` rounds up to whole
   groups.
-- The vertex stage decodes the record against its chunk (the mix over
+- The vertex stage decodes the record against its chunk (the chunk
+  index from the record's second word; the mix over
   the boxes, exp of the log scale, the quaternion's fourth component
   from the unit norm), rebuilds the covariance R S St Rt (measured free:
   vertex ALU is invisible next to the fetch and the fill), projects it

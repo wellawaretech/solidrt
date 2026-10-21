@@ -157,6 +157,9 @@ export type SceneHooks = {
   _bindCurve(mesh: Mesh, binding: CurveBinding): void
   _unbindCurve(mesh: Mesh, binding: CurveBinding): void
   _setCount(mesh: Mesh): void
+  /** Carry the mesh's packed-order LOD threshold to its entries
+   * (setRecordLod). */
+  _setLod(mesh: Mesh): void
   /** Re-point the mesh's entries at its (replaced) instance buffers. */
   _setBuffer(mesh: Mesh): void
   /** Re-point the mesh's morphing entries at its population's (replaced)

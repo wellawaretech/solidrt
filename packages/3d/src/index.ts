@@ -7,7 +7,7 @@
 
 export { add, createGroup, destroy, getMorphNames, getMorphWeights, getRotation, getTransform, lookAt, remove, setMorphWeights, setTimeScale, setTransform, setTransition, setVisible, timeRate, worldInto, worldPosition } from "./node.ts"
 export type { HoverHandlers, LodConfig, MorphWeights, NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneEventBase, SceneNode, ScenePointerEvent, ScenePointerListener, SceneTapEvent, SceneWheelEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
-export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, setCastShadow, setCulling, setDrawRange, setEnvironment, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, instanceAttribute, records, updateRecords, INSTANCE_FLOATS } from "./mesh.ts"
+export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, setCastShadow, setCulling, setDrawRange, setEnvironment, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecordLod, setRecords, setRenderOrder, instanceAttribute, records, updateRecords, INSTANCE_FLOATS } from "./mesh.ts"
 export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceOrderOptions, InstanceSlots, InstanceStream, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions, UpdateRecordsOptions } from "./mesh.ts"
 export { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight } from "./light.ts"
 // The shader-source caps, also on the /glsl subpath next to the sources they size.
@@ -101,7 +101,12 @@ export {
   SPLAT_ATTRIBUTES,
   SPLAT_CHUNK_BYTES,
   SPLAT_CHUNK_FLOATS,
-  SPLAT_CHUNK_SIZE,
+  SPLAT_CHUNK_LIMIT,
+  SPLAT_CHUNK_MAX,
+  SPLAT_CHUNK_MIN,
+  SPLAT_RAMP_BYTES,
+  SPLAT_RAMP_SAMPLES,
+  SPLAT_RUN_BYTES,
   SPLAT_CHUNK_TEXELS,
   SPLAT_COLOR_BYTES,
   SPLAT_POSITION_BITS,
@@ -121,7 +126,7 @@ export {
   SPLAT_TEXEL_BYTES,
 } from "./splat-data.ts"
 export type { BakeReport, ParseSplatOptions, SplatData, SplatFormat, SplatRecord, SplatShEncoding, SplatShSubspace } from "./splat-data.ts"
-export { createSplatMesh, loadSplat, splatMaterialClass, splatVertexSource, SPLAT_FRAGMENT, SPLAT_GROUP, SPLAT_ID_ATTRIBUTES } from "./splat.ts"
+export { createSplatMesh, loadSplat, splatMaterialClass, splatVertexSource, SPLAT_FRAGMENT, SPLAT_GROUP, SPLAT_ID_ATTRIBUTES, SPLAT_LOD_THRESHOLD } from "./splat.ts"
 export type { SplatMaterialOptions, SplatMesh as SplatMeshNode, SplatMeshOptions } from "./splat.ts"
 export { bindSkeleton } from "./skeleton.ts"
 export type { BindSkeletonOptions } from "./skeleton.ts"

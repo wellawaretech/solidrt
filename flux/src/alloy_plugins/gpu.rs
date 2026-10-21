@@ -478,9 +478,43 @@ fn collect_instance_order(
       }
     },
   };
-  alloy::InstanceOrder::parse(field, position, direction, descending, buffer, retain, indices)
-    .map(Some)
-    .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
+  let lod = collect_lod(ctx, &o, "lod", api)?;
+  let order = alloy::InstanceOrder::parse(field, position, direction, descending, buffer, retain, indices)
+    .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
+  match lod {
+    Some(threshold) => order.with_lod(threshold).map(Some).map_err(|e| throw_str(ctx, &format!("{api}: {e}"))),
+    None => Ok(Some(order)),
+  }
+}
+
+// A `{ threshold }` LOD object under `key`: the threshold in pixels,
+// whose value rules (finite, non-negative, an indexed order) are alloy's.
+fn collect_lod(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<Option<f64>> {
+  let Some(o) = obj.get::<_, Option<Object>>(key)? else {
+    return Ok(None);
+  };
+  match o.get::<_, Option<f64>>("threshold")? {
+    Some(t) => Ok(Some(t)),
+    None => Err(throw_str(ctx, &format!("{api}: {key} needs a threshold (a contribution in pixels)"))),
+  }
+}
+
+// A column-major 4x4 matrix under `key`: exactly 16 numbers when present.
+fn collect_matrix(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<Option<[f32; 16]>> {
+  let Some(list) = obj.get::<_, Option<Vec<f64>>>(key)? else {
+    return Ok(None);
+  };
+  if list.len() != 16 {
+    return Err(throw_str(
+      ctx,
+      &format!("{api}: {key} must be a column-major 4x4 matrix (16 numbers), got {}", list.len()),
+    ));
+  }
+  let mut m = [0.0f32; 16];
+  for (o, v) in m.iter_mut().zip(list) {
+    *o = v as f32;
+  }
+  Ok(Some(m))
 }
 
 // An [x, y, z] direction: exactly 3 numbers when the key is present. The
@@ -561,6 +595,8 @@ fn collect_draw_update(ctx: &Ctx<'_>, update: &Object<'_>, api: &str) -> rquickj
     instance_count: update.get::<_, Option<i32>>("instanceCount")?,
     buffers: collect_buffer_update(ctx, update, api)?,
     order_direction: collect_direction(ctx, update, "orderDirection", api)?,
+    order_view: collect_matrix(ctx, update, "orderView", api)?.map(|clip| alloy::OrderView { clip }),
+    order_lod: collect_lod(ctx, update, "orderLod", api)?,
   })
 }
 
@@ -1631,27 +1667,24 @@ fn transfer_records(
           };
           let format =
             alloy::PackedFormat::parse(&format).map_err(|e| throw_str(&ctx, &format!("transferRecords: {e}")))?;
-          let chunk = p.get::<_, Option<f64>>("chunk")?.unwrap_or(0.0);
-          if !(chunk.is_finite() && chunk > 0.0 && chunk.fract() == 0.0) {
-            return Err(throw_str(&ctx, "transferRecords: a packed key needs a positive whole chunk size"));
-          }
           let Some(bounds) = p.get::<_, Option<TypedArray<f32>>>("bounds")? else {
-            return Err(throw_str(
-              &ctx,
-              "transferRecords: a packed key needs its chunk table (bounds, a Float32Array)",
-            ));
+            return Err(throw_str(&ctx, "transferRecords: a packed key needs its run boxes (bounds, a Float32Array)"));
           };
-          let Some(order) = o.get::<_, Option<TypedArray<u32>>>("order")? else {
-            return Err(throw_str(&ctx, "transferRecords: a packed key needs the draw order (order, a Uint32Array)"));
+          let Some(runs) = p.get::<_, Option<TypedArray<u32>>>("runs")? else {
+            return Err(throw_str(&ctx, "transferRecords: a packed key needs its run starts (runs, a Uint32Array)"));
+          };
+          let Some(ramp) = p.get::<_, Option<TypedArray<f32>>>("ramp")? else {
+            return Err(throw_str(&ctx, "transferRecords: a packed key needs its run ramp (ramp, a Float32Array)"));
           };
           let floats = elements_of(&ctx, &bounds, "transferRecords")?;
           if floats.len() % 6 != 0 {
-            return Err(throw_str(&ctx, "transferRecords: the chunk table is six floats per chunk (min xyz, max xyz)"));
+            return Err(throw_str(&ctx, "transferRecords: the run boxes are six floats per run (min xyz, max xyz)"));
           }
           let bounds: Vec<[f32; 6]> = floats.chunks_exact(6).map(|b| [b[0], b[1], b[2], b[3], b[4], b[5]]).collect();
-          let order = elements_of(&ctx, &order, "transferRecords")?.to_vec();
-          packed = Some(alloy::PackedRecords { bounds, order });
-          Some(alloy::PackedKey { format, chunk: chunk as usize })
+          let starts = elements_of(&ctx, &runs, "transferRecords")?.to_vec();
+          let ramp = elements_of(&ctx, &ramp, "transferRecords")?.to_vec();
+          packed = Some(alloy::RunTable { bounds, starts, ramp });
+          Some(alloy::PackedKey { format })
         }
       };
       Some(

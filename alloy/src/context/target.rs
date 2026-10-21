@@ -485,6 +485,8 @@ impl Context {
     drop(tiles);
     self.send(RasterCmd::SetTargetRect { id, x, y, width, height });
     self.note_content(id);
+    // A packed population on the tile selects in its pixels: re-select.
+    self.reselect_target_orders(id);
     Ok(())
   }
 
@@ -942,6 +944,14 @@ impl Context {
     if let Some(direction) = update.order_direction {
       self.set_instance_order_direction(target, entry_key, direction)?;
     }
+    let mut reorder = update.order_direction.is_some();
+    if let Some(view) = update.order_view {
+      reorder |= self.set_instance_order_view(target, entry_key, view)?;
+    }
+    if let Some(threshold) = update.order_lod {
+      reorder |= self.set_instance_order_lod(target, entry_key, threshold)?;
+    }
+    let order_only = update.order_direction.is_some() || update.order_view.is_some() || update.order_lod.is_some();
     if instance_swap {
       self.commit_order_swap(target, entry_key, next_ids);
     }
@@ -954,22 +964,25 @@ impl Context {
     if swapped {
       self.send(RasterCmd::SetDrawBuffers { target, draw, ids: next_ids });
     }
-    // A direction-only update stages UI-side sort state for the next publish
+    // An order-only update stages UI-side sort state for the next publish
     // and renders nothing now; every other update keeps the send-always
-    // behavior it had before orderDirection existed.
-    if update.order_direction.is_none() || swapped || range_changed {
+    // behavior it had before orderDirection existed. The range sent is
+    // what the entry draws: a packed population's last selection, never
+    // more than the range's count (`drawn_range`).
+    if !order_only || swapped || range_changed {
+      let sent = self.drawn_range(target, entry_key, next_range);
       match draw {
-        None => self.send(RasterCmd::SetDraw { id: target, range: next_range }),
-        Some(draw) => self.send(RasterCmd::SetDrawRange { target, draw, range: next_range }),
+        None => self.send(RasterCmd::SetDraw { id: target, range: sent }),
+        Some(draw) => self.send(RasterCmd::SetDrawRange { target, draw, range: sent }),
       }
       self.note_target_content(target);
     }
-    // On a RETAINED entry a direction change re-materializes right here:
-    // core re-sorts its copy and republishes the buffers when the order
-    // changed (the republish notes content on the reading targets, which is
-    // why this runs after the targets borrow dropped). Gather entries
-    // re-order at their next publish, as above.
-    if update.order_direction.is_some() {
+    // On a RETAINED entry a direction, view or LOD change re-materializes
+    // right here: core re-sorts its copy and republishes the buffers when
+    // the order changed (the republish notes content on the reading
+    // targets, which is why this runs after the targets borrow dropped).
+    // Gather entries re-order at their next publish, as above.
+    if reorder {
       self.rematerialize_retained_order(target, entry_key);
     }
     // An instance-count change on an entry over HANDED-OFF records moves

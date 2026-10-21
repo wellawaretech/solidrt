@@ -85,9 +85,9 @@ pub use gpu::{
 pub use gpu::{
   parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferLayout, BufferUpdate, CullMode, DepthState,
   DepthStorage, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat, InstanceOrder, KeyColumn,
-  NodeShader, OrderCounters, OrderKey, PackedFormat, PackedKey, PackedRecords, ParamValue, PipelineDesc, PipelineSpec,
-  ShaderStage, StepMode, TargetSpec, TextureBinding, Topology, UniformKind, UniformSlot, UniformTable, VertexAttr,
-  WindowShader, INDEX_NONE, MAX_BUFFERS,
+  NodeShader, OrderCounters, OrderKey, OrderView, PackedFormat, PackedKey, ParamValue, PipelineDesc, PipelineSpec,
+  RunTable, Selection, ShaderStage, StepMode, TargetSpec, TextureBinding, Topology, UniformKind, UniformSlot,
+  UniformTable, VertexAttr, WindowShader, INDEX_NONE, MAX_BUFFERS, RUN_RAMP_SAMPLES,
 };
 pub use gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use input::InputState;

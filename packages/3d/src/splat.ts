@@ -8,8 +8,11 @@
 // instance (a merged-quad geometry; the instancing frontend was the
 // measured wall), and the instance buffer is the id stream the core sorts
 // back to front from the packed position words, the scene feeding the
-// view direction: zero per-frame JS, a re-sort uploads 4 bytes per splat,
-// a parked camera uploads nothing. Depth-tested against opaque geometry,
+// view: the core culls a chunk (a run of records) whose box is out of
+// view, cuts a visible one where its splats fall under a screen
+// contribution, fits the count as a budget, then sorts what passed -
+// zero per-frame JS, a re-sort uploads 4 bytes per splat, a parked
+// camera uploads nothing. Depth-tested against opaque geometry,
 // placed by the transparent entry sort, picked by its bounds, transformed
 // by its node. The spherical-harmonic bands a bake carries (`--sh`) ride
 // a third data texture, evaluated per corner from the view direction.
@@ -28,10 +31,10 @@ import {
   splatChunkBounds,
   SPLAT_ATTRIBUTES,
   SPLAT_CHUNK_BYTES,
-  SPLAT_CHUNK_SIZE,
   SPLAT_CHUNK_TEXELS,
   SPLAT_COLOR_BYTES,
   SPLAT_POSITION_BITS,
+  SPLAT_RAMP_SAMPLES,
   SPLAT_RECORD_TEXELS,
   SPLAT_ROTATION_BITS,
   SPLAT_SCALE_BITS,
@@ -72,6 +75,12 @@ const SPLAT_NONE = 0xffffffff
 // The packing of a splat record's position words, what the engine's key
 // decodes (the core's PackedFormat).
 const SPLAT_PACKED_FORMAT = "unorm16x3"
+/** The default LOD threshold of a splat mesh, in pixels of contribution
+ * (a splat's projected area times its opacity): below it a chunk's
+ * least important splats are not drawn. A quarter pixel is under what
+ * an 8-bit blend registers for a single splat; set from the Pixel 7
+ * rows and the human flip (okf/plans/splat-order-and-chunks.md). */
+export const SPLAT_LOD_THRESHOLD = 0.25
 
 // The data texture width this device gets, as a power of two with its
 // log2 (compiled into the vertex source as constants).
@@ -205,10 +214,11 @@ let materialKind = (opts: SplatMaterialOptions | undefined, site: string): Splat
  * The stock splat vertex stage for a cloud baked as `opts` says: the id
  * from the instance's id record (quad `gl_VertexID / 4` of the merged
  * geometry), the record's one rgba32ui texel from `uSplatRecords` decoded
- * against its chunk's three rgba32f texels from `uSplatChunks` (the
- * 16-bit position and the packed log scale over the chunk's boxes, the
- * smallest-three rotation - decodeRecord in splat-data.ts is the
- * reference), its rgba8 color from `uSplatColors`, the 3D covariance R S St Rt rebuilt
+ * against its chunk's three rgba32f texels from `uSplatChunks` (the chunk
+ * index from the record's second word; the 16-bit position and the
+ * packed log scale over the chunk's boxes, the smallest-three rotation -
+ * decodeRecord in splat-data.ts is the reference), its rgba8 color from
+ * `uSplatColors`, the 3D covariance R S St Rt rebuilt
  * from them, the SH bands (evaluated per corner from uCamPos) from
  * `uSplatSh` under the u8 encoding or from the splat's labels in
  * `uSplatShLabels` through the codebook texels of `uSplatShPalette` under
@@ -254,11 +264,10 @@ ${shDegree > 0 ? `${shEncoding === "pq" ? "  uniform highp usampler2D uSplatShLa
   const vec4 CULLED = vec4(0.0, 0.0, 2.0, 1.0);
   // The id past the sorted population (the core's sentinel).
   const uint SPLAT_NONE = ${SPLAT_NONE}u;
-  // Texels per record and per chunk, records per chunk, and the data
-  // textures' row addressing.
+  // Texels per record and per chunk, and the data textures' row
+  // addressing.
   const uint SPLAT_RECORD_TEXELS = ${SPLAT_RECORD_TEXELS}u;
   const uint SPLAT_CHUNK_TEXELS = ${SPLAT_CHUNK_TEXELS}u;
-  const uint SPLAT_CHUNK_SIZE = ${SPLAT_CHUNK_SIZE}u;
   const uint SPLAT_TEXEL_MASK = ${width - 1}u;
   const uint SPLAT_TEXEL_SHIFT = ${log2}u;
   // The position's 16-bit unorms (x | y << 16, then z) and the scale
@@ -304,7 +313,8 @@ ${idSelect()}    if (id == SPLAT_NONE) {
       return;
     }
     uvec4 rec = texelFetch(uSplatRecords, splatTexel(id * SPLAT_RECORD_TEXELS), 0);
-    uint chunk = (id / SPLAT_CHUNK_SIZE) * SPLAT_CHUNK_TEXELS;
+    // The record's chunk index rides the high half of its second word.
+    uint chunk = (rec.y >> ${SPLAT_POSITION_BITS}u) * SPLAT_CHUNK_TEXELS;
     vec4 c0 = texelFetch(uSplatChunks, splatTexel(chunk), 0);
     vec4 c1 = texelFetch(uSplatChunks, splatTexel(chunk + 1u), 0);
     vec4 c2 = texelFetch(uSplatChunks, splatTexel(chunk + 2u), 0);
@@ -444,11 +454,18 @@ export function splatMaterialClass(opts?: SplatMaterialOptions): ShaderMaterialC
 export type SplatMesh = RecordMesh
 
 export type SplatMeshOptions = {
-  /** How many splats draw (default all): the first n of the bake's draw
-   * order, by importance, so the first n are the scene at n; dial later
-   * with setRecordCount (the engine re-sorts and republishes the prefix
-   * of its own copy). */
+  /** The most splats drawn (default all): a budget the engine's
+   * selection fits by raising the LOD threshold until the splats in view
+   * sum under it, thinning every chunk by importance; dial later with
+   * setRecordCount. Without a view yet it is the importance prefix. */
   count?: number
+  /** The LOD threshold in pixels of contribution (a splat's projected
+   * area times its opacity, from the chunk's importance ramp at the
+   * chunk's projected scale): below it a chunk's least important splats
+   * are not drawn, so a far chunk thins and a near one keeps its detail.
+   * Default SPLAT_LOD_THRESHOLD; 0 thins nothing but the budget. Dial
+   * later with setRecordLod. */
+  lodThreshold?: number
   /** A custom splat material: a fork of splatVertexSource(data) and
    * SPLAT_FRAGMENT over SPLAT_ID_ATTRIBUTES; default the stock class's
    * shared instance for the cloud's degree, encoding and antialiasing.
@@ -523,9 +540,10 @@ function texelWords(block: Uint8Array, at: number, bytes: number, format: SplatT
  * A mesh drawing a baked splat cloud (loadSplat, or parseSplat at bake
  * scale): a record mesh in the indexed form over the stock splat material
  * for the cloud's SH degree and antialiasing - the records' packed
- * position words kept by the engine as the depth-sort key beside their
- * ids in the bake's draw order (12 bytes per splat, decoded against the
- * chunk table the engine also keeps) AND the record block uploaded once,
+ * position words kept by the engine as the depth-sort key (8 bytes per
+ * splat, decoded against the chunk table it also keeps, whose boxes it
+ * culls by and whose importance ramps it thins by) AND the record block
+ * uploaded once,
  * in place and in row bands, as the rgba32ui record texture the vertex
  * stage fetches by id, the chunk table as an rgba32f texture, the colors
  * as an rgba8 texture, the SH bands (when baked) as a fourth - the u8
@@ -533,9 +551,10 @@ function texelWords(block: Uint8Array, at: number, bytes: number, format: SplatT
  * the 32 KB palette texture - SPLAT_GROUP
  * splats per drawn instance of
  * the merged-quad geometry, the cloud's header bounds as the picking and
- * cull box, and the core-side back-to-front order materialized as the id
- * stream (a camera turn re-sorts and republishes 4 bytes per splat
- * core-side with no publish from JS; an order-preserving move uploads
+ * cull box, and the core-side selection and back-to-front order
+ * materialized as the id stream (a camera turn re-sorts and republishes
+ * 4 bytes per splat core-side with no publish from JS; a camera move
+ * re-culls and re-thins the chunks; an order-preserving move uploads
  * nothing). The cloud is write-once: treat `data` as consumed and let it
  * go (the engine holds the keys; the fetched bytes free with it), and
  * swap clouds by a new mesh. disposeInstances frees the id buffer, the
@@ -558,12 +577,13 @@ export function createSplatMesh(data: SplatData, opts?: SplatMeshOptions): Splat
       throw new Error("createSplatMesh: a pq-encoded cloud at SH degree " + kind.shDegree + " needs a " + paletteBytes + "-byte palette block")
     }
   }
-  let chunkCount = Math.ceil(data.count / SPLAT_CHUNK_SIZE)
-  if (data.chunks.byteLength !== chunkCount * SPLAT_CHUNK_BYTES) {
-    throw new Error("createSplatMesh: the chunk table holds " + data.chunks.byteLength + " bytes; " + data.count + " splats need " + chunkCount * SPLAT_CHUNK_BYTES)
-  }
-  if (data.order.length !== data.count) throw new Error("createSplatMesh: the draw order lists " + data.order.length + " ids for " + data.count + " splats")
+  if (data.chunks.byteLength % SPLAT_CHUNK_BYTES !== 0) throw new Error("createSplatMesh: the chunk table holds " + data.chunks.byteLength + " bytes, not whole " + SPLAT_CHUNK_BYTES + "-byte chunks")
+  let chunkCount = data.chunks.byteLength / SPLAT_CHUNK_BYTES
+  if (data.runs.length !== chunkCount) throw new Error("createSplatMesh: the run block lists " + data.runs.length + " starts for " + chunkCount + " chunks")
+  if (data.ramp.length !== chunkCount * SPLAT_RAMP_SAMPLES) throw new Error("createSplatMesh: the ramp block holds " + data.ramp.length + " samples for " + chunkCount + " chunks")
   if (data.colors.byteLength !== data.count * SPLAT_COLOR_BYTES) throw new Error("createSplatMesh: the color block holds " + data.colors.byteLength + " bytes for " + data.count + " splats")
+  let threshold = opts?.lodThreshold ?? SPLAT_LOD_THRESHOLD
+  if (!(Number.isFinite(threshold) && threshold >= 0)) throw new Error("createSplatMesh: lodThreshold must be a finite non-negative number of pixels, got " + threshold)
   if (stockQuads === null) {
     let one = plane({ width: 2, height: 2, label: "splat-quad" })
     stockQuads = mergeGeometries(Array.from({ length: SPLAT_GROUP }, () => one), "splat-quads")
@@ -583,8 +603,8 @@ export function createSplatMesh(data: SplatData, opts?: SplatMeshOptions): Splat
       position: "iPosition",
       records: SPLAT_ATTRIBUTES,
       descending: true,
-      packed: { format: SPLAT_PACKED_FORMAT, chunk: SPLAT_CHUNK_SIZE, bounds: splatChunkBounds(data) },
-      order: data.order,
+      packed: { format: SPLAT_PACKED_FORMAT, bounds: splatChunkBounds(data), runs: data.runs, ramp: data.ramp },
+      lod: { threshold },
     },
     label,
   })
@@ -608,8 +628,9 @@ export function createSplatMesh(data: SplatData, opts?: SplatMeshOptions): Splat
 }
 
 /** Read a baked .sol3s splat cloud (`sol tool 3d/splat`): no parsing, the
- * records, the colors, the chunk table, the draw order and the SH block
- * view the file's bytes and upload or hand off as-is at createSplatMesh. */
+ * records, the colors, the chunk table, the runs, the ramp and the SH
+ * block view the file's bytes and upload or hand off as-is at
+ * createSplatMesh. */
 export async function loadSplat(path: string): Promise<SplatData> {
   return decodeSplat(await file(path).bytes())
 }

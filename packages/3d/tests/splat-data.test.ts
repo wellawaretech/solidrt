@@ -2,12 +2,13 @@
 // @solidrt/3d/splat) under sol test: the three capture parsers against
 // hand-built inputs, the bake against closed-form covariances through the
 // reference decoder, the y-up flip (rotation and SH), the chunk
-// quantization's error bounds, the k-d chunking and the importance draw
-// order, the SH byte packing and the .sol3s round trip - so a bake
+// quantization's error bounds, the k-d chunking (the runs, the in-chunk
+// importance order and its ramp, the precision splits), the SH byte
+// packing and the .sol3s round trip - so a bake
 // regression fails here rather than as a wrong-looking cloud.
 import { expect, test } from "flux:test"
 import * as entry from "../src/splat-data.ts"
-import { decodeRecord, decodeSh, decodeSplat, encodeSplat, parseSplat, SPLAT_CHUNK_BYTES, SPLAT_CHUNK_SIZE, SPLAT_POSITION_BITS, SPLAT_SCALE_BITS, SPLAT_SH_LABEL_BYTES, SPLAT_SH_PALETTE_SIZE, SPLAT_SH_SUBSPACES, SPLAT_SH_TEXELS, SPLAT_TEXEL_BYTES } from "../src/splat-data.ts"
+import { decodeRecord, decodeSh, decodeSplat, encodeSplat, parseSplat, SPLAT_CHUNK_BYTES, SPLAT_CHUNK_MAX, SPLAT_CHUNK_MIN, SPLAT_POSITION_BITS, SPLAT_RAMP_SAMPLES, SPLAT_RECORD_BYTES, SPLAT_SCALE_BITS, SPLAT_SH_LABEL_BYTES, SPLAT_SH_PALETTE_SIZE, SPLAT_SH_SUBSPACES, SPLAT_SH_TEXELS, SPLAT_STEP_VISIBLE, SPLAT_TEXEL_BYTES } from "../src/splat-data.ts"
 import type { SplatData, SplatRecord } from "../src/splat-data.ts"
 
 // color = 0.5 + SH_C0 * dc, the DC-band mapping (splat-data's constant).
@@ -31,6 +32,31 @@ function covariance(r: SplatRecord): number[] {
 function chunk(data: SplatData, c: number): number[] {
   let dv = new DataView(data.chunks.buffer, data.chunks.byteOffset + c * SPLAT_CHUNK_BYTES, SPLAT_CHUNK_BYTES)
   return Array.from({ length: 12 }, (_, f) => dv.getFloat32(f * 4, true))
+}
+
+// The chunk index record `slot` carries (the high half of its second
+// word).
+function chunkOf(data: SplatData, slot: number): number {
+  return new DataView(data.records.buffer, data.records.byteOffset + slot * SPLAT_RECORD_BYTES, SPLAT_RECORD_BYTES).getUint32(4, true) >>> SPLAT_POSITION_BITS
+}
+
+// Chunk `c`'s run as [first record, past-the-end).
+function run(data: SplatData, c: number): [number, number] {
+  return [data.runs[c]!, c + 1 < data.runs.length ? data.runs[c + 1]! : data.count]
+}
+
+// A record's importance as the bake ranks it: the two largest scales
+// times the opacity.
+function importanceOf(r: SplatRecord): number {
+  let s = [...r.scale].sort((a, b) => a - b)
+  return s[1]! * s[2]! * (r.color[3]! / 255)
+}
+
+// Within the scale quantization's relative error (11/10/11 bits over a
+// chunk's log-scale box: well under a percent).
+const SCALE_QUANTIZATION_TOLERANCE = 0.01
+function expectNear(got: number, want: number): void {
+  expect(Math.abs(got - want)).toBeLessThanOrEqual(SCALE_QUANTIZATION_TOLERANCE * Math.max(Math.abs(want), 1e-12))
 }
 
 // A .splat record: position, linear scale, color bytes, quaternion
@@ -81,8 +107,10 @@ test("a .splat bakes flipped to y-up and decodes to the closed-form covariance",
   expect(data.count).toBe(1)
   expect(data.shDegree).toBe(0)
   expect(data.antialiased).toBe(false)
-  expect(Array.from(data.order)).toEqual([0])
+  expect(Array.from(data.runs)).toEqual([0])
+  expect(data.ramp.length).toBe(SPLAT_RAMP_SAMPLES)
   expect(data.chunks.byteLength).toBe(SPLAT_CHUNK_BYTES)
+  expect(chunkOf(data, 0)).toBe(0)
   let r = decodeRecord(data, 0)
   // The half-turn about x: (x, -y, -z).
   expect(r.position).toEqual([1, -2, -3])
@@ -96,6 +124,8 @@ test("a .splat bakes flipped to y-up and decodes to the closed-form covariance",
   expect(Array.from(data.bounds)).toEqual([1, -2, -3, 1, -2, -3])
   // The parse reports its loss; nothing was lost here.
   expect(data.report!.chunks).toBe(1)
+  expect(data.report!.runMin).toBe(1)
+  expect(data.report!.capped).toBe(false)
   expect(data.report!.positionStep).toEqual({ median: 0, p99: 0, visibleShare: 0 })
   expect(data.report!.shClamped).toBe(0)
 })
@@ -120,16 +150,25 @@ test("a rotated covariance decodes as R S2 Rt and the flip negates xy and xz", (
   expect(flipped[3]).toBeCloseTo(kept[3]!, 2)
 })
 
-test("the draw order is by importance, size times opacity descending", () => {
+test("a chunk's run is ordered by importance, projected area times opacity descending, and its ramp samples it", () => {
+  // A flat disc (two large axes) outranks a needle of the same volume:
+  // the area is what a splat covers.
   let bytes = dotSplat([
     { p: [1, 0, 0], s: [1, 1, 1], c: [1, 0, 0, 128], q: [1, 0, 0, 0] },
     { p: [2, 0, 0], s: [2, 2, 2], c: [2, 0, 0, 255], q: [1, 0, 0, 0] },
     { p: [3, 0, 0], s: [1, 1, 1], c: [3, 0, 0, 255], q: [1, 0, 0, 0] },
+    { p: [4, 0, 0], s: [3, 3, 0.01], c: [4, 0, 0, 255], q: [1, 0, 0, 0] },
+    { p: [5, 0, 0], s: [0.1, 0.1, 9], c: [5, 0, 0, 255], q: [1, 0, 0, 0] },
   ])
   let data = parseSplat(bytes)
-  // Three records are one chunk: the storage order is the input's.
-  expect([0, 1, 2].map(s => decodeRecord(data, s).color[0])).toEqual([1, 2, 3])
-  expect(Array.from(data.order).map(s => decodeRecord(data, s).color[0])).toEqual([2, 3, 1])
+  // Five records are one chunk, stored by importance: the disc (9), the
+  // 2-cube (4), the unit cube (1), the needle (0.9), the half-opaque
+  // unit cube (0.5).
+  expect([0, 1, 2, 3, 4].map(s => decodeRecord(data, s).color[0])).toEqual([4, 2, 3, 5, 1])
+  expect(Array.from(data.runs)).toEqual([0])
+  // The ramp: sample i is the importance at rank floor(i x 5 / 16),
+  // the source's (the decoded record's scales are quantized).
+  for (let i = 0; i < SPLAT_RAMP_SAMPLES; i++) expectNear(data.ramp[i]!, importanceOf(decodeRecord(data, Math.floor((i * 5) / SPLAT_RAMP_SAMPLES))))
 })
 
 test("quantization stays within a step of each chunk's box", () => {
@@ -144,13 +183,18 @@ test("quantization stays within a step of each chunk's box", () => {
   }
   let data = parseSplat(dotSplat(src), { keepOrientation: true })
   expect(data.count).toBe(3000)
-  expect(data.chunks.byteLength).toBe(Math.ceil(3000 / SPLAT_CHUNK_SIZE) * SPLAT_CHUNK_BYTES)
+  expect(data.chunks.byteLength).toBe(Math.ceil(3000 / SPLAT_CHUNK_MAX) * SPLAT_CHUNK_BYTES)
   let seen = new Set<number>()
   for (let slot = 0; slot < data.count; slot++) {
     let r = decodeRecord(data, slot)
     let g = src[tagOf(r)]!
     seen.add(tagOf(r))
-    let box = chunk(data, Math.floor(slot / SPLAT_CHUNK_SIZE))
+    // The record names its chunk, and the chunk's run holds the slot.
+    let c = chunkOf(data, slot)
+    let [lo, hi] = run(data, c)
+    expect(slot).toBeGreaterThanOrEqual(lo)
+    expect(slot).toBeLessThan(hi)
+    let box = chunk(data, c)
     for (let k = 0; k < 3; k++) {
       // Half a unorm step of the chunk's extent on that axis, plus float
       // slack; and the decoded value lies inside the box.
@@ -189,7 +233,7 @@ test("k-d chunks are compact boxes", () => {
     [100, 0],
     [100, 100],
   ]
-  for (let i = 0; i < 4 * SPLAT_CHUNK_SIZE; i++) {
+  for (let i = 0; i < 4 * SPLAT_CHUNK_MAX; i++) {
     let corner = corners[i % 4]!
     src.push({ p: [corner[0]! + rand(), corner[1]! + rand(), rand()], s: [1, 1, 1], c: tagged(i), q: [1, 0, 0, 0] })
   }
@@ -200,13 +244,15 @@ test("k-d chunks are compact boxes", () => {
   // the fifth of six records.
   let more = parseSplat(dotSplat([...src, ...src.slice(0, 6)]), { keepOrientation: true })
   expect(more.report!.chunks).toBe(5)
+  expect(more.report!.runMin).toBe(6)
   expect(more.chunks.byteLength).toBe(5 * SPLAT_CHUNK_BYTES)
+  expect(Array.from(more.runs)).toEqual([0, 256, 512, 768, 1024])
 })
 
-test("the order block is a permutation ranked by importance", () => {
+test("every chunk's run falls in importance and its ramp samples the run", () => {
   // Three importance levels a decade apart, shuffled in the input and
-  // scattered in space: the order block visits every record once, never
-  // ascending in importance.
+  // scattered in space: inside every chunk the records never ascend in
+  // importance, and the ramp is the run's importance at each sixteenth.
   let rand = lcg(11)
   let src: { p: number[]; s: number[]; c: number[]; q: number[] }[] = []
   for (let i = 0; i < 3000; i++) {
@@ -214,20 +260,57 @@ test("the order block is a permutation ranked by importance", () => {
     src.push({ p: [rand() * 50, rand() * 50, rand() * 50], s: [scale, scale, scale], c: tagged(i), q: [1, 0, 0, 0] })
   }
   let data = parseSplat(dotSplat(src), { keepOrientation: true })
-  expect(data.order.length).toBe(3000)
-  expect(new Set(data.order).size).toBe(3000)
-  let importance = (slot: number) => {
-    let r = decodeRecord(data, slot)
-    return r.scale[0]! * r.scale[1]! * r.scale[2]! * r.color[3]!
+  expect(data.runs.length).toBe(data.report!.chunks)
+  expect(data.ramp.length).toBe(data.runs.length * SPLAT_RAMP_SAMPLES)
+  let seen = new Set<number>()
+  for (let c = 0; c < data.runs.length; c++) {
+    let [lo, hi] = run(data, c)
+    expect(hi - lo).toBeLessThanOrEqual(SPLAT_CHUNK_MAX)
+    let last = Infinity
+    for (let slot = lo; slot < hi; slot++) {
+      let r = decodeRecord(data, slot)
+      seen.add(tagOf(r))
+      expect(chunkOf(data, slot)).toBe(c)
+      let imp = importanceOf(r)
+      expect(imp).toBeLessThanOrEqual(last * (1 + 1e-5))
+      last = imp
+    }
+    for (let i = 0; i < SPLAT_RAMP_SAMPLES; i++) {
+      let sample = data.ramp[c * SPLAT_RAMP_SAMPLES + i]!
+      expectNear(sample, importanceOf(decodeRecord(data, lo + Math.floor((i * (hi - lo)) / SPLAT_RAMP_SAMPLES))))
+      if (i > 0) expect(sample).toBeLessThanOrEqual(data.ramp[c * SPLAT_RAMP_SAMPLES + i - 1]!)
+    }
   }
-  let last = Infinity
-  for (let r = 0; r < data.count; r++) {
-    let imp = importance(data.order[r]!)
-    expect(imp).toBeLessThanOrEqual(last * (1 + 1e-6))
-    last = imp
+  expect(seen.size).toBe(3000)
+})
+
+test("a sparse chunk splits down to SPLAT_CHUNK_MIN until its box stops moving its smallest splat", () => {
+  // 256 micro-splats spread over 100 units: one chunk's box would step
+  // 1.5e-3 units, fifteen times a 1e-4 splat, so the leaf splits until
+  // the runs hit the floor; every record still names its chunk.
+  let rand = lcg(5)
+  let src: { p: number[]; s: number[]; c: number[]; q: number[] }[] = []
+  for (let i = 0; i < SPLAT_CHUNK_MAX; i++) src.push({ p: [rand() * 100, rand() * 100, rand() * 100], s: [1e-4, 1e-4, 1e-4], c: tagged(i), q: [1, 0, 0, 0] })
+  let data = parseSplat(dotSplat(src), { keepOrientation: true })
+  expect(data.report!.chunks).toBe(SPLAT_CHUNK_MAX / SPLAT_CHUNK_MIN)
+  expect(data.report!.runMin).toBe(SPLAT_CHUNK_MIN)
+  expect(data.report!.capped).toBe(false)
+  for (let c = 0; c < data.runs.length; c++) {
+    let [lo, hi] = run(data, c)
+    expect(hi - lo).toBe(SPLAT_CHUNK_MIN)
+    for (let slot = lo; slot < hi; slot++) expect(chunkOf(data, slot)).toBe(c)
   }
-  // The first thousand are the big ones.
-  for (let r = 0; r < 1000; r++) expect(tagOf(decodeRecord(data, data.order[r]!)) % 3).toBe(0)
+  // The same splats at unit scale are one chunk: its step is nothing
+  // against them, and no splat moves visibly.
+  let coarse = parseSplat(dotSplat(src.map(g => ({ ...g, s: [1, 1, 1] }))), { keepOrientation: true })
+  expect(coarse.report!.chunks).toBe(1)
+  expect(coarse.report!.positionStep.visibleShare).toBe(0)
+  // The split bake's step against the micro-splats is the coarse bake's
+  // step (against the unit splats) times at most 1e4 / 16 chunks across:
+  // every leaf halved the longest axis four times.
+  expect(data.report!.positionStep.p99).toBeLessThan(coarse.report!.positionStep.p99 * 1e4)
+  expect(data.report!.positionStep.visibleShare).toBeGreaterThan(0)
+  expect(SPLAT_STEP_VISIBLE).toBe(0.1)
 })
 
 // A binary little-endian .ply of float properties `fields`, one row per
@@ -256,9 +339,10 @@ test("a 3DGS .ply parses its training activations", () => {
 
   let data = parseSplat(bytes)
   expect(data.count).toBe(2)
-  expect(Array.from(data.order)).toEqual([1, 0])
-  let big = decodeRecord(data, 1)
-  let small = decodeRecord(data, 0)
+  // The two share a chunk, stored by importance: the big one first.
+  expect(Array.from(data.runs)).toEqual([0])
+  let big = decodeRecord(data, 0)
+  let small = decodeRecord(data, 1)
   // Two splats share a chunk: positions quantize over the chunk's box
   // (within a step, here under 1/65535 of 3 units).
   big.position.forEach((v, k) => expect(v).toBeCloseTo([4, -5, -6][k]!, 4))
@@ -433,7 +517,8 @@ test("the .sol3s container round-trips and views its bytes", () => {
   expect(back.shDegree).toBe(0)
   expect(back.sh).toBeNull()
   expect(back.antialiased).toBe(true)
-  expect(back.order).toEqual(data.order)
+  expect(back.runs).toEqual(data.runs)
+  expect(back.ramp).toEqual(data.ramp)
   expect(Array.from(back.bounds)).toEqual(Array.from(data.bounds))
   expect(back.records).toEqual(data.records)
   expect(back.colors).toEqual(data.colors)
@@ -442,13 +527,15 @@ test("the .sol3s container round-trips and views its bytes", () => {
   // bake's, not the file's.
   expect(back.records.buffer).toBe(file.buffer)
   expect(back.chunks.buffer).toBe(file.buffer)
-  expect(back.order.buffer).toBe(file.buffer)
+  expect(back.runs.buffer).toBe(file.buffer)
+  expect(back.ramp.buffer).toBe(file.buffer)
   expect(back.report).toBeUndefined()
   expect(decodeRecord(back, 1)).toEqual(decodeRecord(data, 1))
   // The empty cloud is a valid file.
   let empty = decodeSplat(encodeSplat(parseSplat(new Uint8Array(0), { format: "splat" })))
   expect(empty.count).toBe(0)
-  expect(empty.order.length).toBe(0)
+  expect(empty.runs.length).toBe(0)
+  expect(empty.ramp.length).toBe(0)
   expect(empty.chunks.byteLength).toBe(0)
 })
 
@@ -468,11 +555,11 @@ test("the .sol3s container carries the SH block and checks its size", () => {
   expect(back.shPalette).toBeNull()
   expect(back.sh).toEqual(data.sh)
   expect(back.sh!.buffer).toBe(file.buffer)
-  // The bigger splat heads the draw order, and its SH texel sits at its
-  // record.
-  expect(Array.from(back.order)).toEqual([1, 0])
-  expect(decodeSh(back, 1)[0]).toBe(-0.25)
-  expect(decodeSh(back, 0)[0]).toBe(0.25)
+  // The bigger splat heads its chunk's run, and its SH texel sits at
+  // its record.
+  expect(Array.from(back.runs)).toEqual([0])
+  expect(decodeSh(back, 0)[0]).toBe(-0.25)
+  expect(decodeSh(back, 1)[0]).toBe(0.25)
   expect(back.sh!.byteLength).toBe(2 * SPLAT_SH_TEXELS[1]! * SPLAT_TEXEL_BYTES)
   // A block of the wrong size for the degree is refused both ways, and
   // so is a chunk table of the wrong size.
@@ -480,7 +567,8 @@ test("the .sol3s container carries the SH block and checks its size", () => {
   expect(() => encodeSplat({ ...data, shDegree: 0 })).toThrow("SH block")
   expect(() => encodeSplat({ ...data, chunks: data.chunks.subarray(0, 8) })).toThrow("chunk table")
   expect(() => encodeSplat({ ...data, colors: data.colors.subarray(0, 4) })).toThrow("color block")
-  expect(() => encodeSplat({ ...data, order: data.order.subarray(0, 1) })).toThrow("order block")
+  expect(() => encodeSplat({ ...data, runs: data.runs.subarray(0, 0) })).toThrow("run block")
+  expect(() => encodeSplat({ ...data, ramp: data.ramp.subarray(0, 4) })).toThrow("ramp block")
 })
 
 // A degree-3 .ply (45 f_rest, channel-major) of `rows` splats at the

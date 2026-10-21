@@ -1,3 +1,5 @@
+use crate::gpu::OrderView;
+use crate::spatial::math;
 use crate::spatial::DrawQueue::{Background, Cutout, Opaque, Transparent};
 use crate::spatial::{
   compose, multiply, narrow, DrawOrder, DrawQueue, DrawSink, Mat4, Mat4f, QueryFilter, SinkWriter, Spatial,
@@ -16,7 +18,7 @@ pub(super) enum Write {
   Fade { target: u64, draw: u64, fade: [f32; 2] },
   Order { target: u64, order: Vec<u64> },
   Shift { target: u64, draws: Vec<u64>, delta: [f32; 3] },
-  OrderDirection { target: u64, draw: u64, direction: [f32; 3] },
+  OrderView { target: u64, draw: u64, clip: [f32; 16] },
   Shared { target: u64, name: String, values: Vec<f32> },
   Instances { buffer: u64, first: u32, values: Vec<f32> },
   Texture { texture: u64, values: Vec<f32> },
@@ -70,8 +72,8 @@ impl SinkWriter for Recorder {
     self.writes.push(Write::Shift { target, draws: draws.to_vec(), delta });
     self.landed(target)
   }
-  fn write_order_direction(&mut self, target: u64, draw: u64, direction: [f32; 3]) -> bool {
-    self.writes.push(Write::OrderDirection { target, draw, direction });
+  fn write_order_view(&mut self, target: u64, draw: u64, clip: [f32; 16]) -> bool {
+    self.writes.push(Write::OrderView { target, draw, clip });
     self.landed(target) && !self.dead_directions.contains(&target)
   }
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool {
@@ -2141,11 +2143,24 @@ fn feed_sink(target: u64, draw: u64) -> DrawSink {
   }
 }
 
+// The depth directions of the view writes, as the consumer derives them
+// from the matrices (`OrderView::direction`).
 fn directions(writes: &[Write]) -> Vec<[f32; 3]> {
   writes
     .iter()
     .filter_map(|w| match w {
-      Write::OrderDirection { direction, .. } => Some(*direction),
+      Write::OrderView { clip, .. } => OrderView { clip: *clip }.direction(),
+      _ => None,
+    })
+    .collect()
+}
+
+// The view writes' matrices.
+fn views(writes: &[Write]) -> Vec<[f32; 16]> {
+  writes
+    .iter()
+    .filter_map(|w| match w {
+      Write::OrderView { clip, .. } => Some(*clip),
       _ => None,
     })
     .collect()
@@ -2191,6 +2206,52 @@ fn the_order_feed_gates_on_the_direction_epsilon_and_follows_the_node() {
   // about y, well past the gate).
   s.set_transform(n, [0.0; 3], [0.0, 0.0872, 0.0, 0.9962], ONE).expect("turn");
   assert_eq!(directions(&flush(&mut s)).len(), 1);
+}
+
+#[test]
+fn the_order_feed_gates_on_the_eye_move_and_the_projection() {
+  let mut s = Spatial::new();
+  // A node with a 2-unit box at the origin, the eye 10 away: the move gate
+  // is 5% of the eye's distance to the box (9 units), 0.45.
+  let n = s.create([0.0; 3], Q, ONE, true);
+  s.set_bounds(n, Some([-1.0, -1.0, -1.0, 1.0, 1.0, 1.0])).expect("bounds");
+  s.bind_sink(n, feed_sink(1, 7)).expect("sink");
+  s.set_view(1, sort_view([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]));
+  assert_eq!(views(&flush(&mut s)).len(), 1);
+  // A small move along the view, same direction: under the gate.
+  s.set_view(1, sort_view([0.0, 0.0, 9.8], [0.0, 0.0, -1.0]));
+  assert!(views(&flush(&mut s)).is_empty());
+  // Past it: a write, with the same direction as before (the matrix's w
+  // row is the view forward in the node frame, unmoved by translation).
+  s.set_view(1, sort_view([0.0, 0.0, 9.0], [0.0, 0.0, -1.0]));
+  let writes = flush(&mut s);
+  assert_direction(&directions(&writes), [0.0, 0.0, -1.0]);
+  // A projection change alone (zoom) re-feeds too.
+  s.set_view(1, Some((view_at([0.0, 0.0, 9.0], [0.0, 0.0, -1.0]), proj(2.0, false))));
+  assert_eq!(views(&flush(&mut s)).len(), 1);
+  assert!(views(&flush(&mut s)).is_empty(), "parked: nothing re-feeds");
+}
+
+#[test]
+fn the_order_view_is_the_node_model_to_clip_matrix() {
+  let mut s = Spatial::new();
+  // A node translated by (2, 3, 4) under a view looking down -z from 10:
+  // the fed matrix maps the node's origin to the view-projection of
+  // (2, 3, 4), and its w row is the forward direction scaled by nothing
+  // but the node's rotation (identity here).
+  let n = s.create([2.0, 3.0, 4.0], Q, ONE, true);
+  s.bind_sink(n, feed_sink(1, 7)).expect("sink");
+  let view = view_at([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]);
+  let p = proj(1.0, false);
+  s.set_view(1, Some((view, p)));
+  let fed = views(&flush(&mut s));
+  assert_eq!(fed.len(), 1);
+  let vp = math::multiply(p, view);
+  let world = math::compose([2.0, 3.0, 4.0], Q, ONE);
+  let want = math::multiply(vp, world);
+  for k in 0..16 {
+    assert!((fed[0][k] as f64 - want[k]).abs() < 1e-5, "element {k}: {} vs {}", fed[0][k], want[k]);
+  }
 }
 
 #[test]
