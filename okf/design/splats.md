@@ -334,7 +334,9 @@ same footprint, and a capture's surfaces are discs).
   nearly resolution-independent (276 ms at a quarter of the pixels, 493
   at all of them); the u8 SH encoding costs about 4x there.
 - **No streaming**: the run is the unit a streaming cloud would load
-  by; a city-scale capture is out of scope.
+  by; a city-scale capture is out of scope. Several clouds blend wrong
+  where they meet (each sorts alone), and nothing tiles a capture into
+  cells ([backlog/splat-large-worlds.md](../backlog/splat-large-worlds.md)).
 - **Floaters.** A capture is clean near the camera path it was taken
   from; elsewhere it is smears. The app keeps the camera near the path.
 

@@ -12,7 +12,7 @@ forge     engine-free cores: fs, http, sqlite, subprocess, p2p, wasm, ...
 
 - **forge** holds domain logic with no scripting engine anywhere in it:
   filesystem, HTTP and fetch, SQLite, subprocesses, peer-to-peer, mDNS,
-  sockets, image and SVG decoding, WebAssembly, FFI, isolates, the event
+  sockets, image and SVG decoding, WebAssembly, isolates, the event
   bus. Any embedder can use it, in any language binding.
 - **alloy** owns the window and the pixels: SDL for platform windowing and
   input, Impeller for 2D drawing, GL through glow underneath, the

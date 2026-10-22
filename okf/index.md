@@ -834,6 +834,14 @@ Shaped, not started.
   LOD check; the per-sink hash lookups and box walks are the suspects, and a
   profile with a per-target index or a faster hasher should cut it well below
   the occlusion work that now sits beside it.
+- **[A splat world larger than one cloud has seams between clouds, no tiling bake, no streaming and no merged far LOD](backlog/splat-large-worlds.md)** [2026-10-22]
+  One cloud culls and thins per chunk under the view, but a world made of
+  several clouds blends wrong where they meet because each sorts alone and the
+  scene orders them as wholes; nothing cuts a large capture into cells,
+  nothing loads a cloud's runs on demand, and a far chunk thins to its
+  brightest splats instead of a merged stand-in. The region handlers can
+  already host a cloud per cell; the cross-cloud sort is the decision that
+  needs discussion first.
 - **[A million splats at phone full resolution spend the frame in fill](backlog/splat-overdraw-fill.md)** [2026-09-27]
   With the instancing frontend gone the Pixel 7 draws 1M splats in ~36 ms at
   1079x2399, of which ~24 ms is fragment work - the gaussian falloff, the
@@ -3218,8 +3226,9 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   for breaking text a line at a time at varying widths.
 - **[Graphics backend strategy](notes/graphics-backend-strategy.md)** [2026-08-12]
   Settled direction; one GLES contract over ANGLE on every platform, native
-  Vulkan rejected, Metal-native kept only as a mapped contingency; includes
-  the Impeller texture-interop analysis and the ANGLE-sunset risk ledger.
+  Vulkan not pursued while Impeller is the renderer, Metal-native kept only as
+  a mapped contingency; includes the Impeller texture-interop analysis and the
+  ANGLE-sunset risk ledger.
 - **[Headless verification traps](notes/headless-verification-traps.md)** [2026-09-11]
   What bites a probe that verifies GPU state under sol render - deferred
   texture destroys, sRGB has no readback, production bundling drops Solid's

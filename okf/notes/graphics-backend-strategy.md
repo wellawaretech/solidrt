@@ -1,6 +1,6 @@
 ---
 title: Graphics backend strategy
-description: Settled direction; one GLES contract over ANGLE on every platform, native Vulkan rejected, Metal-native kept only as a mapped contingency; includes the Impeller texture-interop analysis and the ANGLE-sunset risk ledger.
+description: Settled direction; one GLES contract over ANGLE on every platform, native Vulkan not pursued while Impeller is the renderer, Metal-native kept only as a mapped contingency; includes the Impeller texture-interop analysis and the ANGLE-sunset risk ledger.
 created: 2026-08-12
 ---
 
@@ -123,9 +123,11 @@ different job. Reintroducing a second context reintroduces this whole class.
    conformant, and encodes two decades of driver-quirk workarounds -
    exactly the maintenance we do not want to own. Dropping it would mean
    maintaining two native surfaces ourselves for negative gain.
-2. Native Vulkan is off the roadmap entirely. Vulkan-land is where ANGLE's
-   quirk moat is most valuable and where a first-party team with device
-   farms should own the problem. Zink (Mesa's conformant GL-on-Vulkan,
+2. Native Vulkan is not pursued while Impeller is the renderer. Impeller's
+   texture interop is GL-only (above), so an app-side Vulkan backend would
+   sit beside a GL Impeller, which is exactly the two-context class this
+   note warns against. Without Impeller that constraint is gone and the
+   question reopens on its own terms. Zink (Mesa's conformant GL-on-Vulkan,
    non-Google) exists as an independent second road should ANGLE ever rot.
 3. Metal-native is a mapped contingency, not a roadmap item. Metal was
    assumed to become a necessity for Apple platforms; it is not. ANGLE on
