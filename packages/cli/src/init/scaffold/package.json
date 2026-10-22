@@ -31,6 +31,7 @@
     "server": "sol server",
     "client": "sol client",
     "android": "sol android",
+    "check": "sol check",
     "test": "sol test"
   },
   "dependencies": {

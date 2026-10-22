@@ -22,15 +22,16 @@ import type { LiveRecord } from "../types/registry"
 // launch the client installed there pointed at the dev server, which is
 // resolved like `sol client` does (the project at the cwd, or --port). A
 // device without the client gets it installed, from the project's
-// @solidrt/android-<abi> target for the device's ABI (android-targets.ts,
-// which asks for the targets the first time); an installed client whose
-// version is not the one that package carries is updated after asking, so a
-// client built and installed by hand stays unless you say so. --install
-// reinstalls regardless. --apk runs `sol pack --apk` and installs the
-// packed app instead. --force uninstalls an installed app that blocks an
-// install (adbInstall) without asking. --env NAME=value (repeatable) sets
-// a variable in the client's environment before it starts, for the
-// runtime's knobs (SOLIDRT_CADENCE_HOLD) a measurement pins.
+// @solidrt/android-<abi> target for the device's ABI (android-targets.ts; a
+// project with none is asked for them before any device is looked for); an
+// installed client whose version is not the one that package carries is
+// updated after asking, so a client built and installed by hand stays
+// unless you say so. --install reinstalls regardless. --apk runs `sol pack
+// --apk` and installs the packed app instead. --force uninstalls an
+// installed app that blocks an install (adbInstall) without asking. --env
+// NAME=value (repeatable) sets a variable in the client's environment
+// before it starts, for the runtime's knobs (SOLIDRT_CADENCE_HOLD) a
+// measurement pins.
 
 // The published Player's application id. Every build from a checkout
 // without PUBLISH=1 is the dev Player, com.solidrt.player.dev, installed
@@ -494,11 +495,19 @@ async function installApkFile(path: string) {
   for (let { target } of await resolveTargets(adb)) await installPacked(adb, target, file, appId)
 }
 
+// A project records the Android devices it targets as dev dependencies, so
+// one with none picks them before anything looks for a device: setting up
+// the project comes first, a device's own ABI is checked once it is found.
+async function requireTargets() {
+  if (existsSync("package.json")) await ensureTargets([], process.cwd())
+}
+
 // `sol android --apk`: pack the app for every installed target (sol pack
 // --apk), then install and launch on each device the APK built for its ABI.
-// The devices are resolved first, so their ABIs are among the targets. Pack
-// loads the bundler, so it is imported only on this path.
+// The devices are resolved before packing, so their ABIs are among the
+// targets. Pack loads the bundler, so it is imported only on this path.
 async function packAndInstall() {
+  await requireTargets()
   let adb = await requireAdb()
   let devices = await resolveTargets(adb)
   await ensureTargets(devices.map((d) => d.abi), process.cwd())
@@ -527,11 +536,13 @@ export async function main() {
     for (let { target, abi } of await resolveTargets(adb)) await census(adb, target, censusPackages(abi))
     return
   }
+  await requireTargets()
   let server = await resolveServer()
   let adb = await requireAdb()
   let needed = await neededModule()
 
-  // Only a device that gets the Player installed needs a target for its ABI.
+  // A device that gets the Player installed needs a target for its ABI,
+  // beyond the ones the project already picked.
   let devices = await resolveTargets(adb)
   let installing = devices.filter((d) => values.install || installedVersion(adb, d.target, playerId(d.abi, needed)) === null)
   if (installing.length) await ensureTargets(installing.map((d) => d.abi), process.cwd())

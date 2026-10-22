@@ -29,6 +29,7 @@ const TEMPLATE_FILES: Array<{ from: string; to: string }> = [
   { from: "gitignore", to: ".gitignore" },
   { from: "mcp.json", to: ".mcp.json" },
   { from: "AGENTS.md", to: "AGENTS.md" },
+  { from: "README.md", to: "README.md" },
   { from: "app.test.tsx", to: "tests/app.test.tsx" },
 ]
 
@@ -208,6 +209,7 @@ export async function main() {
     await mkdir(dirname(dest), { recursive: true })
     let body: string | Buffer = await readFile(join(SCAFFOLD_DIR, from))
     if (to === "AGENTS.md") body = resolveMarkers(body.toString("utf8"), extensions)
+    if (to === "README.md") body = body.toString("utf8").replaceAll("{{name}}", packageName(dir))
     await writeFile(dest, body)
   }
 

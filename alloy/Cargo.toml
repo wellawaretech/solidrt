@@ -70,7 +70,6 @@ log = { workspace = true }
 # transmute FFI in gl.rs and the former wgpu texture-allocation layer; Impeller
 # remains the renderer. glow is loader-based, so one entry covers all targets.
 glow = "=0.17.0"
-image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # CSS color-string grammar (hex, rgb()/hsl()/hwb(), named colors) for the
 # color property and the parseColor binding; the color math itself (oklab,
 # mixing) is ours in src/color.rs. Replaced the JS-side colord dependency.
@@ -126,3 +125,7 @@ libloading = "=0.8.9"
 # Compiles the vendored msdfgen core and the C shim over it (build.rs), the
 # glyph engine's distance-field generator; forge's pin.
 cc = "=1.8.0"
+
+[dev-dependencies]
+# PNG dumps of captured pixels in the examples (image::save_buffer).
+image = { version = "=0.25.10", default-features = false, features = ["png"] }

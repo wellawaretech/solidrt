@@ -21,8 +21,8 @@ start`.
 A device without the client gets it installed first, from the project's
 Android target for the device's ABI: the `@solidrt/android-<abi>` dev
 dependency, which carries that ABI's client and its runner (the base of
-`sol pack --apk`). A project with no target yet gets a picker the first
-time (which devices it targets: arm64-v8a for current phones and tablets,
+`sol pack --apk`). A project with no target yet gets a picker first,
+before any device is looked for (which devices it targets: arm64-v8a for current phones and tablets,
 armeabi-v7a for older phones and many Android TVs, x86_64 for emulators and
 Chromebooks); a device whose ABI is not among the targets is offered its
 package. The targets are ordinary dev dependencies, so `bun add -d` and
