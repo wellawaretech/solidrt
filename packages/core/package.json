@@ -37,8 +37,8 @@
     "@solidrt/test": "workspace:*"
   },
   "peerDependencies": {
-    "@solidjs/signals": "2.0.0-rc.15",
-    "@solidjs/universal": "2.0.0-rc.15",
-    "solid-js": "2.0.0-rc.15"
+    "@solidjs/signals": "2.0.0-rc.17",
+    "@solidjs/universal": "2.0.0-rc.17",
+    "solid-js": "2.0.0-rc.17"
   }
 }

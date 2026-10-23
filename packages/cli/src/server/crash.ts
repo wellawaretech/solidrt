@@ -14,7 +14,9 @@
 const WINDOWS_ERROR_STATUS = 0xc0000000
 
 /** The crash a child's exit status tells of, or null for a plain exit. */
-export function crashReason(code: number | null, signal: string | null): string | null {
+export function crashReason(code: number | null, signal: string | number | null): string | null {
+  // Bun reports a signal without a name (a Linux real-time one) by number.
+  if (typeof signal === "number") return "signal " + signal
   if (signal) return signal
   // flux reports the status signed, bun and node unsigned.
   let status = code === null ? 0 : code >>> 0

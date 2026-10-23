@@ -116,14 +116,14 @@ tsconfig.json - the two load-bearing lines are jsx + jsxImportSource:
 ```
 
 Peer deps @solidjs/signals and @solidjs/universal must match (currently
-2.0.0-rc.15); bun resolves them from peerDependencies. On a version bump,
+2.0.0-rc.17); bun resolves them from peerDependencies. On a version bump,
 `bun install` only warns ("incorrect peer dependency") and keeps the old
 ones, and so does deleting their node_modules copies first (bun 1.3.14
 reinstalls them from bun.lock). `bun update solid-js @solidjs/signals
 @solidjs/universal` does not read the pin either: it adds all three to
 package.json at registry latest (solid-js 1.x, off Solid 2.0 entirely).
 The recipe that works pins all three explicitly at the new version:
-`bun add solid-js@2.0.0-rc.15 @solidjs/signals@2.0.0-rc.15 @solidjs/universal@2.0.0-rc.15`.
+`bun add solid-js@2.0.0-rc.17 @solidjs/signals@2.0.0-rc.17 @solidjs/universal@2.0.0-rc.17`.
 It moves exactly those three lock entries and nothing else. An app `sol
 init` wrote has the three pinned in package.json already (the scaffold
 carries them, and release.yml takes the pins from core's peerDependencies
