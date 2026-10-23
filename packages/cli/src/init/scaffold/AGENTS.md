@@ -31,7 +31,8 @@ Convention: every @solidrt package describes itself in
 node_modules/@solidrt/<name>/AGENTS.md, carries its prose in docs/, and
 ships working code in examples/. AGENTS.md is the reference for the package;
 open it before using anything from the package, and read the extensions'
-files only when they are installed.
+files only when they are installed. Where a package holds more than one
+file should, its AGENTS.md indexes topic files in its agents/ folder.
 
 ## Read before you
 
@@ -49,8 +50,24 @@ that matches the work; do not work from memory of what a web framework does.
   freeze the UI (a big parse, a simulation step - isolates take it off
   the thread), or anything writing properties in a loop ->
   node_modules/@solidrt/core/agents/performance.md
-- use an installed extension (UI components, 2D, 3D) ->
-  node_modules/@solidrt/<name>/AGENTS.md and its examples/
+<!-- components:begin -->
+- build a screen from widgets, or theme it ->
+  node_modules/@solidrt/components/AGENTS.md and its examples/
+<!-- components:end -->
+<!-- 2d:begin -->
+- draw 2D: sprites, sprite layers, tile maps ->
+  node_modules/@solidrt/2d/AGENTS.md, then the agents/ file it names for
+  the work, and its examples/
+<!-- 2d:end -->
+<!-- 3d:begin -->
+- draw 3D: scenes, meshes, models, cameras ->
+  node_modules/@solidrt/3d/AGENTS.md, then the agents/ file it names for
+  the work, and its examples/
+<!-- 3d:end -->
+<!-- router:begin -->
+- add screens or navigation between them ->
+  node_modules/@solidrt/router/AGENTS.md
+<!-- router:end -->
 - persist data (a settings file, a database, anything that must survive a
   restart) -> node_modules/@solidrt/flux-types/modules/fs.d.ts and
   sqlite.d.ts (`flux:fs`, `flux:sqlite`; a relative path is the app's own
@@ -72,18 +89,6 @@ that matches the work; do not work from memory of what a web framework does.
 <!-- Claude Code auto-imports these; other tools read the paths above. -->
 @./node_modules/solid-js/CHEATSHEET.md
 @./node_modules/@solidrt/core/AGENTS.md
-<!-- components:begin -->
-@./node_modules/@solidrt/components/AGENTS.md
-<!-- components:end -->
-<!-- 2d:begin -->
-@./node_modules/@solidrt/2d/AGENTS.md
-<!-- 2d:end -->
-<!-- 3d:begin -->
-@./node_modules/@solidrt/3d/AGENTS.md
-<!-- 3d:end -->
-<!-- router:begin -->
-@./node_modules/@solidrt/router/AGENTS.md
-<!-- router:end -->
 @./node_modules/@solidrt/cli/AGENTS.md
 
 ## The three traps that cost the most (this is not React/DOM)

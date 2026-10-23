@@ -174,8 +174,8 @@ export type UnlitOptions = {
   /** Straight [r, g, b] or [r, g, b, a], 0..1, sRGB - a color picker's
    * values. The library decodes it to linear light for shading and the
    * output stage encodes the result back (see the color contract in
-   * AGENTS.md); an unlit surface with no tone mapping shows the value
-   * as given. Default white. */
+   * agents/materials.md); an unlit surface with no tone mapping
+   * shows the value as given. Default white. */
   color?: [number, number, number] | [number, number, number, number]
   /** A texture id to sample (tinted by `color` when both are given).
    * Create a color image with `format: "rgba8-srgb"` so it decodes to
@@ -259,7 +259,7 @@ export type UnlitOptions = {
   instanceColors?: boolean
   /** GLSL at file scope for `surface`: uniforms (each an ordinary
    * per-entry param, `params` on the mesh or setMeshParams) and helper
-   * functions. See the tier-2 look in AGENTS.md "Custom looks". */
+   * functions. See the tier-2 look in agents/shaders.md "Custom looks". */
   prelude?: string
   /** GLSL declaring `void surface(inout Surface s)`, called once the
    * program has resolved the base (the color, the map, the vertex and
@@ -423,7 +423,7 @@ export type LitOptions = UnlitOptions & {
   receiveShadow?: boolean
   /** GLSL at file scope for `surface`: uniforms (each an ordinary
    * per-entry param, `params` on the mesh or setMeshParams) and helper
-   * functions. See the tier-2 look in AGENTS.md "Custom looks". */
+   * functions. See the tier-2 look in agents/shaders.md "Custom looks". */
   prelude?: string
   /** GLSL declaring `void surface(inout Surface s)`, called once the
    * program has filled the Surface from the options (base from `color`,
@@ -1418,7 +1418,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
     for (let source of opts.shadowVertex === undefined ? [opts.vertex] : [opts.vertex, opts.shadowVertex]) {
       if (!new RegExp("\\b" + name + "\\b").test(source)) {
         throw new Error(
-          "shaderMaterial vertex stage must declare and use '" + name + "' (see the standard uniform set in AGENTS.md)",
+          "shaderMaterial vertex stage must declare and use '" + name + "' (see the standard uniform set in @solidrt/3d's agents/materials.md)",
         )
       }
     }

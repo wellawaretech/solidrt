@@ -9,8 +9,8 @@
 // prefilters the faces into the roughness chain (the default), so the
 // ball's satin finish blurs the room the way a baked environment would;
 // `prefilter: false` would keep a sharp mirror at a sixth of the passes
-// (the chain is the frame's largest GPU item; see AGENTS.md). Drag to
-// look around.
+// (the chain is the frame's largest GPU item; see
+// agents/environment.md). Drag to look around.
 
 import { createInputMap, createPointerFeed, createSignal, gamepad, onFrame, pct, render } from "@solidrt/core"
 import { DirectionalLight, HemisphereLight, Mesh, OrbitCamera, orbitActions, orbitBindings, plane, Scene, sphere, standard, unlit } from "@solidrt/3d"

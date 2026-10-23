@@ -1,4 +1,4 @@
-// The time scale contract (AGENTS.md Retargeted motion and Frame
+// The time scale contract (agents/motion.md Retargeted motion and Frame
 // animation) pinned against a running layer: a frozen layer holds a
 // sprite's transition where it is, asks for no frames (`settle` resolves)
 // and resumes from there; a group declaring its own rate keeps running

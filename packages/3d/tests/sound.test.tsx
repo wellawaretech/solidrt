@@ -1,10 +1,10 @@
-// Positional sound through the package (AGENTS.md Positional sound,
+// Positional sound through the package (agents/sound.md Positional sound,
 // sound.ts, scene.ts's listener): a sound attached to a node plays placed
 // while the node is in the scene, stops and is released when the node
-// leaves, places again on re-enter, the scene's listener is one object
-// made on first use and re-pointed by setListener, and the checks throw.
-// The placement itself is core state the mixer applies, so this is an
-// app test over what the surface answers at once.
+// leaves, places again on re-enter, the scene's listener is one object made
+// on first use and re-pointed by setListener, and the checks throw. The
+// placement itself is core state the mixer applies, so this is an app test
+// over what the surface answers at once.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"

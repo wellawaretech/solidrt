@@ -1,13 +1,14 @@
-// The picking contract the docs state in more than one place (AGENTS.md
-// Picking and layers, scene.ts pick()/Hit/setLayers), pinned against a
-// running scene so the copies cannot drift from the runtime again (a Traps
-// entry once claimed box-only picking long after the narrowphase went
-// triangle-accurate): an ordinary mesh picks per triangle, an instanced
-// mesh by its box or per instance, pick and raycast cast the same ray,
-// layer masks, the { meshes } include-list, and updateVertices moving the
-// pick with the mesh. The scene is GPU state, so this is an app test. A
-// query flushes the pending writes, so frames are run only around the
-// vertex update, which needs the geometry on the GPU and a flush after.
+// The picking contract the docs state in more than one place
+// (agents/interaction.md Picking and layers, scene.ts
+// pick()/Hit/setLayers), pinned against a running scene so the copies
+// cannot drift from the runtime again (a Traps entry once claimed box-only
+// picking long after the narrowphase went triangle-accurate): an ordinary
+// mesh picks per triangle, an instanced mesh by its box or per instance,
+// pick and raycast cast the same ray, layer masks, the { meshes }
+// include-list, and updateVertices moving the pick with the mesh. The scene
+// is GPU state, so this is an app test. A query flushes the pending writes,
+// so frames are run only around the vertex update, which needs the geometry
+// on the GPU and a flush after.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"

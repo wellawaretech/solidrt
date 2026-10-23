@@ -1,10 +1,11 @@
-// The mixer's layered model (AGENTS.md Animation, mixer.ts) pinned
-// against a running scene: an override layer replaces its masked joints
-// and nothing else, a stop-with-fade lands on rest, an additive layer adds
-// its clip's deltas, markers and curves reach the facade, a window ends
-// on a stop, a subclip holds within its window, and the rig survives a
-// scene re-enter. The rig is core state over live scene nodes, so this is
-// an app test; every clip here is one or two keys, so the app settles.
+// The mixer's layered model (agents/animation.md Animation, mixer.ts)
+// pinned against a running scene: an override layer replaces its masked
+// joints and nothing else, a stop-with-fade lands on rest, an additive
+// layer adds its clip's deltas, markers and curves reach the facade, a
+// window ends on a stop, a subclip holds within its window, and the rig
+// survives a scene re-enter. The rig is core state over live scene nodes,
+// so this is an app test; every clip here is one or two keys, so the app
+// settles.
 
 import { test, expect } from "@solidrt/test"
 import { add, createIk, createMixer, createModel, createScene, getTransform, remove } from "../src/index.ts"

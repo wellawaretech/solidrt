@@ -270,7 +270,7 @@ reading on the TV (armeabi-v7a, 50 Hz cap) before closing.
 re-bake swap, `applyDensity`), `packages/2d/tests/tiles-residency.test.tsx`
 (the pacing test), `packages/core/src/pool.ts` (aging gives by frames in
 flight) and its test `tests/pool.test.ts`, `alloy/src/raster/frame.rs`
-and `mod.rs` (the fence-published retirement), `packages/2d/AGENTS.md`
+and `mod.rs` (the fence-published retirement), `packages/2d/agents/tiles.md`
 (both rules), `probes/2d-tile-hitch-probe.tsx` (the knobs), and
 `okf/backlog/3d-world-residency.md` (the same rules for model uploads).
 The cadence lock-in: `alloy/src/cadence.rs`, `okf/design/frame-timing.md`.

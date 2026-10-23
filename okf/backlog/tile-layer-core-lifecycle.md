@@ -37,4 +37,4 @@ grid on that; okf/plans/3d-world-residency.md said the tile layer
 ## Involves
 
 `packages/2d/src/tiles.ts`, `packages/core/src/residency.ts` (consumed
-as is), the 2d AGENTS.md Residency text, `packages/2d/tests/tiles-residency.test.tsx`.
+as is), the Residency text in `packages/2d/agents/tiles.md`, `packages/2d/tests/tiles-residency.test.tsx`.

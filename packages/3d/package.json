@@ -17,6 +17,7 @@
     "src/",
     "tools/",
     "examples/",
+    "agents/",
     "AGENTS.md"
   ],
   "devDependencies": {

@@ -49,4 +49,4 @@ offset), `glsl.ts` (the sprite stage's camera split), `region.ts` (a
 cell owns its sprites' buffers), the core's record sinks (a node's
 record moves buffers when its sprite changes cell: `retargetRecords` is
 per buffer, this wants it per node) and `packages/2d/AGENTS.md` (The
-camera, Views).
+camera) and `packages/2d/agents/views.md` (Views).

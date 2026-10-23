@@ -13,6 +13,7 @@
   "files": [
     "src/",
     "examples/",
+    "agents/",
     "AGENTS.md"
   ],
   "devDependencies": {

@@ -6,7 +6,7 @@ created: 2026-08-26
 
 # Model loader follow-ups
 
-What shipped (documented in `packages/3d/AGENTS.md`, "Models"): a pure
+What shipped (documented in `packages/3d/agents/models.md`): a pure
 glTF 2.0 subset parser (`parseGltf`: .gltf/.glb, the node hierarchy
 retained as a pruned pre-order table with node-local vertices since the
 v3 container (2026-08-31; matrix nodes TRS-decomposed, winding flips

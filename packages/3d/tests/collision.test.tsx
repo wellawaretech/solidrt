@@ -1,10 +1,10 @@
-// The collision contract the docs state in more than one place (AGENTS.md
-// Collision, scene.ts, collision.ts), pinned against a running scene so
-// the copies cannot drift from the runtime: a sweep is exact, testing is
-// in world space, the slide filter, layers and the { meshes } include-list,
-// the box tier of a record mesh (a ray's alone), and moveAndSlide's landing. The scene
-// is GPU state, so this is an app test. A query flushes the pending
-// writes, so no frame is run after the mount.
+// The collision contract the docs state in more than one place
+// (agents/interaction.md Collision, scene.ts, collision.ts), pinned against
+// a running scene so the copies cannot drift from the runtime: a sweep is
+// exact, testing is in world space, the slide filter, layers and the {
+// meshes } include-list, the box tier of a record mesh (a ray's alone), and
+// moveAndSlide's landing. The scene is GPU state, so this is an app test. A
+// query flushes the pending writes, so no frame is run after the mount.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"

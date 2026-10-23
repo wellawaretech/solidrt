@@ -1,11 +1,10 @@
-// The spring-bone contract (AGENTS.md Spring bones, springs.ts) pinned
-// against a running scene: a chain under a still bone rests and asks for
-// no frames, a turned bone drags it and it settles along the new rest
-// direction, a frame's own write to the bone reaches the chain in the
-// same frame (the pose post-pass), the declaration survives a scene
-// re-enter, reset puts it back at rest, and dispose leaves the bones at
-// rest. The chains are core state over live scene nodes, so this is an
-// app test.
+// The spring-bone contract (agents/animation.md Spring bones, springs.ts)
+// pinned against a running scene: a chain under a still bone rests and asks
+// for no frames, a turned bone drags it and it settles along the new rest
+// direction, a frame's own write to the bone reaches the chain in the same
+// frame (the pose post-pass), the declaration survives a scene re-enter,
+// reset puts it back at rest, and dispose leaves the bones at rest. The
+// chains are core state over live scene nodes, so this is an app test.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"

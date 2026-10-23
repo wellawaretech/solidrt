@@ -1,10 +1,10 @@
-// The time scale contract (AGENTS.md Retargeted motion, node.ts
+// The time scale contract (agents/animation.md Retargeted motion, node.ts
 // setTimeScale) pinned against a running scene: a frozen scene holds a
 // transition where it is, asks for no frames (so `settle` resolves under
-// it) and resumes from the same place; a group declaring its own rate
-// keeps running inside the frozen scene; half rate covers half the
-// distance. The scene is GPU state, so this is an app test, and frames are
-// stepped so the read is at a known app time.
+// it) and resumes from the same place; a group declaring its own rate keeps
+// running inside the frozen scene; half rate covers half the distance. The
+// scene is GPU state, so this is an app test, and frames are stepped so the
+// read is at a known app time.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"

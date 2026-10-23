@@ -39,8 +39,8 @@
 // tenth of the main zoom) minifies without aliasing.
 //
 // Residency: the layer is a HANDLER over the core's residency gate
-// (flux:spatial createGrid, the Residency section of @solidrt/3d's
-// AGENTS.md): its chunk grid is a grid of regions, every view is a viewer
+// (flux:spatial createGrid; @solidrt/3d's agents/large-worlds.md,
+// Residency): its chunk grid is a grid of regions, every view is a viewer
 // wanting the chunks near its viewport (its camera is pushed to the gate
 // as an orthographic view), and the gate's enter and leave events drive
 // the GPU side. On ENTER a chunk takes a records buffer and a target from

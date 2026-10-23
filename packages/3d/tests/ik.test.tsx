@@ -1,8 +1,8 @@
-// The IK contract (AGENTS.md Inverse kinematics, ik.ts) pinned against a
-// running scene: a look-at aims the head at a node target and follows it
-// when it moves, a two-bone limb reaches a point and reports its reach,
-// the declaration survives a scene re-enter, a weight fade is ramped in
-// core, and dispose lets the joints go. The stacks are core state over
+// The IK contract (agents/animation.md Inverse kinematics, ik.ts) pinned
+// against a running scene: a look-at aims the head at a node target and
+// follows it when it moves, a two-bone limb reaches a point and reports its
+// reach, the declaration survives a scene re-enter, a weight fade is ramped
+// in core, and dispose lets the joints go. The stacks are core state over
 // live scene nodes, so this is an app test.
 
 import { test, expect } from "@solidrt/test"

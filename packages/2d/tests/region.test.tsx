@@ -1,16 +1,16 @@
 // Regions over a sprite layer (region.ts, components/region.tsx, the
-// Residency section of AGENTS.md): a grid cell under a view loads,
-// builds hidden behind its proxy, shows and measures its record bytes
-// into the gate; the view leaving unloads before the content goes, snaps
-// the teardown (no exit plays: the slot recycles at once) and takes the
-// cell's group with it; a sprite re-homed in `unload` with keepWorld
-// outlives its cell at the same world pose; a leave aborts a load in
-// flight; a failed load is fail-soft and retries on the next enter; a
-// grid limit stalls what does not fit; priority orders two grids under a
-// budget of one enter per frame; an explicit region moves with its
-// group and keeps its data under retain; a streaming source wants cells
-// no view sees; the components mount their JSX per cell. The gate and
-// the content are live spatial nodes, so these are app tests.
+// Regions section of agents/views.md): a grid cell under a view loads,
+// builds hidden behind its proxy, shows and measures its record bytes into
+// the gate; the view leaving unloads before the content goes, snaps the
+// teardown (no exit plays: the slot recycles at once) and takes the cell's
+// group with it; a sprite re-homed in `unload` with keepWorld outlives its
+// cell at the same world pose; a leave aborts a load in flight; a failed
+// load is fail-soft and retries on the next enter; a grid limit stalls what
+// does not fit; priority orders two grids under a budget of one enter per
+// frame; an explicit region moves with its group and keeps its data under
+// retain; a streaming source wants cells no view sees; the components mount
+// their JSX per cell. The gate and the content are live spatial nodes, so
+// these are app tests.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"

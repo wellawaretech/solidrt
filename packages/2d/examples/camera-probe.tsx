@@ -6,7 +6,7 @@
 // probe closes that gap on a real client. Self-asserting: watch the logs
 // for CAMERA lines ending in CAMERA-OK. Run it after touching ANY
 // rotation in the package (the touch-one-rotation-touch-all rule in
-// AGENTS.md).
+// agents/views.md).
 //
 // What it checks, all under one rotated + pivoted camera:
 // 1. The shader implements projectCamera: a probe sprite samples opaque

@@ -1,11 +1,11 @@
-// Occlusion culling through the package (AGENTS.md Culling, occluder.ts,
-// the core's spatial/occlusion.rs): a wall marked as an occluder hides
-// the mesh behind it and not the ones before or beside it, read back
-// through scene.cullState; the wall moving or hiding uncovers; the
-// scene's and a view's switches hold; occludersFromMeshes marks the
+// Occlusion culling through the package (agents/large-worlds.md Culling,
+// occluder.ts, the core's spatial/occlusion.rs): a wall marked as an
+// occluder hides the mesh behind it and not the ones before or beside it,
+// read back through scene.cullState; the wall moving or hiding uncovers;
+// the scene's and a view's switches hold; occludersFromMeshes marks the
 // large meshes; the components carry the prop; the shortcuts refuse the
-// meshes whose triangles move. The buffer and the gate are core state
-// over live scene nodes, so this is an app test.
+// meshes whose triangles move. The buffer and the gate are core state over
+// live scene nodes, so this is an app test.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"

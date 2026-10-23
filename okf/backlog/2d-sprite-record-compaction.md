@@ -57,4 +57,4 @@ vertex stage pays for the invisible.
 `alloy/src/context/order.rs` (per-entry mask state, validation),
 `flux/src/alloy_plugins/gpu.rs` + flux-types (`setInstanceMask`),
 `packages/2d/src/layer.ts` and `views.ts` (the query, the switch, the
-count), `packages/2d/AGENTS.md`.
+count), `packages/2d/agents/tiles.md`.

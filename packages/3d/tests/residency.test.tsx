@@ -1,14 +1,14 @@
 // Regions through the package (region.ts, components/region.tsx, the
-// Residency section of AGENTS.md): a region grid's cell under the
-// camera loads, builds one slice per frame with its content hidden and
-// its proxy drawn, then shows and measures its GPU bytes into the gate;
-// the camera leaving unloads before the content goes and takes the cell
-// node with it; a re-entered cell takes its geometry buffers back from
-// the pool; buildModel builds a model across steps and the model's
-// bytes count; an explicit region declares itself while in a scene and
-// leaves when removed; a streaming source wants cells no camera sees;
-// the components mount their JSX per cell. The gate and the content are
-// GPU state over live scene nodes, so these are app tests.
+// Residency section of agents/large-worlds.md): a region grid's cell under
+// the camera loads, builds one slice per frame with its content hidden and
+// its proxy drawn, then shows and measures its GPU bytes into the gate; the
+// camera leaving unloads before the content goes and takes the cell node
+// with it; a re-entered cell takes its geometry buffers back from the pool;
+// buildModel builds a model across steps and the model's bytes count; an
+// explicit region declares itself while in a scene and leaves when removed;
+// a streaming source wants cells no camera sees; the components mount their
+// JSX per cell. The gate and the content are GPU state over live scene
+// nodes, so these are app tests.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
