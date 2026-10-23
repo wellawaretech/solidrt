@@ -7,7 +7,7 @@ they draw.
 In their layout form they take no geometry props at all. A shape derives its
 geometry from the layout box it sits in, which is why a `rect` with no props
 fills its parent. To place one freely, use the
-[detached form](/core/reference/detached/) instead.
+[detached form](/docs/reference/detached/) instead.
 
 ## Paint
 

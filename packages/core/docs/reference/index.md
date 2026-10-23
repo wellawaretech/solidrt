@@ -10,23 +10,23 @@ elements at once (every element takes pointer handlers, every drawing
 primitive takes paint props), so a page per element would print the same
 interface a dozen times and still not say where a prop comes from.
 
-- [Elements](/core/reference/elements/) - `window` and `view`, the structural
+- [Elements](/docs/reference/elements/) - `window` and `view`, the structural
   vocabulary
-- [Drawing](/core/reference/drawing/) - `rect`, `oval`, `line`, `path`,
+- [Drawing](/docs/reference/drawing/) - `rect`, `oval`, `line`, `path`,
   `texture`, and the paint props they share
-- [Text](/core/reference/text/) - `text` and `span`
-- [Detached elements](/core/reference/detached/) - the `d-*` forms and their
+- [Text](/docs/reference/text/) - `text` and `span`
+- [Detached elements](/docs/reference/detached/) - the `d-*` forms and their
   paint-space geometry
-- [Layout](/core/reference/layout/) - flexbox, the grid subset, and the box
+- [Layout](/docs/reference/layout/) - flexbox, the grid subset, and the box
   props
-- [Transforms](/core/reference/transforms/) - post-layout transform, opacity,
+- [Transforms](/docs/reference/transforms/) - post-layout transform, opacity,
   and scroll offsets
-- [Input](/core/reference/input/) - handlers and the event objects they receive
-- [Shaders](/core/reference/shaders/) - the `shader` prop on `window` and
+- [Input](/docs/reference/input/) - handlers and the event objects they receive
+- [Shaders](/docs/reference/shaders/) - the `shader` prop on `window` and
   `view`
-- [GPU](/core/reference/gpu/) - textures, shader targets, pipelines and the
+- [GPU](/docs/reference/gpu/) - textures, shader targets, pipelines and the
   draw list from `@solidrt/core/gpu`
-- [Types](/core/reference/types/) - the shared aliases
+- [Types](/docs/reference/types/) - the shared aliases
 
 ## The element vocabulary
 

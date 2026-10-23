@@ -1,6 +1,6 @@
 # Extensions
 
-Extensions are built on top of [Core](/core/): component sets, theming, and
+Extensions are built on top of [Core](/docs/): component sets, theming, and
 app structure. They are siblings, not a stack. You pick one, some, or none,
 and you can always drop down to Core underneath, because an extension
 component is just a component that returns Core elements.
@@ -56,8 +56,8 @@ widget.
 ### What "evolving" means
 
 The APIs still change between releases. Build with it, and expect to move
-with it. Core underneath is the layer that changes least, which is why the
-[Start](/start/) walkthrough teaches Core first.
+with it. Core underneath is the layer that changes least, which is why
+[The basics](/guides/the-basics/) teaches Core first.
 
 The full component list with props and examples is under
 [@solidrt/components](/extensions/components/).

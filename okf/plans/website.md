@@ -38,23 +38,30 @@ standalone experiment at `~/solidrt/docs` gets ported here and retired.
 pages on request via `flux:http`; production renders everything to static
 output instead. Dynamic serving is not needed once source is markdown.
 
-**Nav:** `Start - Core - Extensions - Tools - Runtime - Architecture`
-(the section was "Frameworks" until 2026-08-18; renamed to match the
-scaffolder's `sol init --with` vocabulary; URLs are `/extensions/...`)
+**Nav:** `Guides - Docs - Extensions - Tools - Runtime - Architecture`
+(Extensions was "Frameworks" until 2026-08-18; renamed to match the
+scaffolder's `sol init --with` vocabulary; URLs are `/extensions/...`.
+Start became Guides and Core became Docs on 2026-10-23, URLs `/guides/...`
+and `/docs/...`; Docs is still the mount of `packages/core/docs`)
 
 (News is deferred: blog + changelog get added as a top-level section later,
 not in the initial site.)
 
-- **Start** (new since the original nav): the one journey-shaped item in an
-  otherwise layer-shaped nav. A single page, not a section: install,
-  scaffold, run, change one line, see it update. Five minutes, one scroll.
-  Ends with the fork: go deeper (Core Concepts) or go faster (Extensions).
-  Hold the line at "first successful edit"; everything past that belongs in
-  section Guides.
-- **Core**: the stable spine. Sub-structure: Concepts first (mental model),
-  then Guides, then Examples, plus Reference. Concept-vs-Guide test: if
-  removing the page costs transferable understanding it is a Concept; if it
-  costs one specific task it is a Guide.
+- **Guides** (was Start until 2026-10-23): the journey-shaped section in an
+  otherwise layer-shaped nav. Its index lists the written guides, one line
+  each, and its `order:` sets the sidebar. The first guide, The basics, is
+  the old Start page simplified: scaffold (the extension picker skimmed,
+  Extensions get their own guide), run, change one line, pack. Five
+  minutes, one scroll. Then The dev loop (which took Start's "make it
+  react" step), React and SolidJS 2 (a quick comparison, not a "coming
+  from"), Coming from React Native, and Coming from Electron. Guides
+  moved out of Core into this top-level section, so a guide is not owned by
+  one package.
+- **Docs** (was Core until 2026-10-23, content still `packages/core/docs`):
+  the stable spine. Concepts first (mental model), then Examples, plus
+  Reference. Concept-vs-Guide test: if removing the page costs transferable
+  understanding it is a Concept and belongs in Docs; if it costs one
+  specific task it is a Guide.
 - **Extensions** (was Frameworks): things built on Core, siblings not a stack. Plain card
   list until a second framework exists. Explicit maturity labels in
   frontmatter (stable / evolving / experimental) so Components can honestly
@@ -173,6 +180,11 @@ each, visible and reorderable. Expected page count drops from 94 to ~45.
    landing page), everything else copied. Titles from the first h1. Content
    pages are `<dir>/index.md` for clean URLs. `website` joined the bun
    workspace.
+   Dev loop 2026-10-23: the output is `dist/site/`, cleared per build so
+   removed pages do not linger, and `make dev` serves the site from memory
+   on `PORT`, rebuilding on any source change and live-reloading the
+   browser; a failed rebuild keeps the last good site, and a change to the
+   generator itself re-bundles and restarts it.
    Content filled 2026-07-26: landing plus all six top-level pages are real
    prose, no stubs, every command and API name verified against the shipped
    CLI and packages. Sub-pages (Concepts, Guides, per-crate Architecture)
@@ -286,7 +298,7 @@ Decisions:
   `@solidrt/core/color` subpath export (that file only imports colord), so
   it no longer reaches core's index (which pulls `flux:rendertree`, absent
   on the plain flux binary) and is importable as `@solidrt/components/theme`
-  from the website build. `website/src/tokens.ts` emits `dist/css/tokens.css`
+  from the website build. `website/src/tokens.ts` emits `dist/site/css/tokens.css`
   (both color presets, plus spacing, radius, borderWidth and the type scale
   on `:root`). An earlier idea of extracting a separate `tokens.ts` data
   file was dropped as unnecessary.

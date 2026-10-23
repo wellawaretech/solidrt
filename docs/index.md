@@ -1,5 +1,5 @@
 ---
-order: start core extensions tools runtime architecture
+order: guides docs extensions tools runtime architecture
 ---
 <section>
   <hgroup>
@@ -11,7 +11,7 @@ order: start core extensions tools runtime architecture
     technologies. Built from the ground up for developers and AI agents to
     work together.
   </p>
-  <p><a href="/start/" role="button">Get started</a></p>
+  <p><a href="/guides/the-basics/" role="button">Get started</a></p>
 </section>
 
 <section>
@@ -76,5 +76,5 @@ render(() => <App />)
     The same source runs on Linux, macOS, Windows, and Android, and the dev
     server drives a desktop window and a phone at the same time.
   </p>
-  <p><a href="/start/" role="button">Get started</a></p>
+  <p><a href="/guides/the-basics/" role="button">Get started</a></p>
 </section>

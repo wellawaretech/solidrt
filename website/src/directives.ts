@@ -63,6 +63,12 @@ async function commandsOf(): Promise<Map<string, Command>> {
   return commands;
 }
 
+// Drop what was read from sources, so a dev rebuild reads them again.
+export function clearSourceCache(): void {
+  parsed.clear();
+  commands = undefined;
+}
+
 type Provider = (args: string[]) => Promise<string>;
 
 let providers: Record<string, Provider> = {

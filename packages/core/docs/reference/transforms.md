@@ -5,7 +5,7 @@ nothing reflows, on a laid-out `view` as much as on a `d-view`, so these are
 the props to animate.
 
 They live on `ViewOwnProps`, which means both `view` and `d-view` have them;
-see [elements](/core/reference/elements/).
+see [elements](/docs/reference/elements/).
 
 {{ decl packages/core/src/types.d.ts TransformProps }}
 

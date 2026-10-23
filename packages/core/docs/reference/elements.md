@@ -2,21 +2,21 @@
 
 The two structural elements. Neither one paints: `window` is the root, `view`
 is a box that lays out, clips, transforms and receives input. Everything
-visible comes from the [drawing](/core/reference/drawing/) and
-[text](/core/reference/text/) primitives inside them.
+visible comes from the [drawing](/docs/reference/drawing/) and
+[text](/docs/reference/text/) primitives inside them.
 
 ## window
 
 One per app, the root of the tree. It composes
-[layout](/core/reference/layout/) props, so the window is itself the outermost
-flex container, and [pointer](/core/reference/input/) props, which is where
+[layout](/docs/reference/layout/) props, so the window is itself the outermost
+flex container, and [pointer](/docs/reference/input/) props, which is where
 app-global key handling lives: key events always end their walk at the window
 root.
 
 {{ decl packages/core/src/types.d.ts WindowProps }}
 
 The `shader` prop runs the finished frame through a GPU program as the last
-step before the screen; see [shaders](/core/reference/shaders/).
+step before the screen; see [shaders](/docs/reference/shaders/).
 
 ## view
 

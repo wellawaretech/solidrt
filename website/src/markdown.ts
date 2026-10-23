@@ -1,5 +1,5 @@
 import { file } from "flux:fs";
-import { Renderer, marked } from "marked";
+import { Marked, Renderer } from "marked";
 import { markedHighlight } from "marked-highlight";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
@@ -203,7 +203,12 @@ export function highlight(code: string, lang: string | undefined): string {
   return escapeHtml(code);
 }
 
+// The configured parser. Each configureMarked builds a fresh one, so a dev
+// rebuild with edited rules does not stack extensions on the old ones.
+let marked = new Marked();
+
 export function configureMarked(rules: Rules) {
+  marked = new Marked();
   if (!rules) return;
   marked.use(markedHighlight({ highlight }));
   marked.use({ renderer: buildRenderer(rules.elements) });
@@ -230,9 +235,9 @@ export async function renderPage(content: string, rules: Rules, page: PageShell 
 
 /** Markdown to an HTML fragment, no page shell. */
 export async function renderMarkdown(md: string): Promise<string> {
-  return marked(md);
+  return marked.parse(md);
 }
 
 export async function markdownToHtml(md: string, rules: Rules, page: PageShell = {}): Promise<string> {
-  return renderPage(await marked(md), rules, page);
+  return renderPage(await marked.parse(md), rules, page);
 }

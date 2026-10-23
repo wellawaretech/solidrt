@@ -33,7 +33,7 @@ only where content is genuinely drawn rather than arranged.
 ## What changes
 
 A detached element composes exactly the same paint, text and pointer props as
-its layout twin. One thing is swapped: the [layout](/core/reference/layout/)
+its layout twin. One thing is swapped: the [layout](/docs/reference/layout/)
 props are replaced by geometry props.
 
 | | Layout form | Detached form |
@@ -43,7 +43,7 @@ props are replaced by geometry props.
 | Costs a reflow | yes | no |
 
 `d-view` is the container case: it composes `ViewOwnProps` directly (see
-[elements](/core/reference/elements/)), so it still transforms, clips and
+[elements](/docs/reference/elements/)), so it still transforms, clips and
 takes input, but a layout prop on it is dropped with a one-time warning
 rather than silently ignored.
 
@@ -88,7 +88,7 @@ the inherited box:
 
 ## The other x and y
 
-`x` and `y` also appear on [transform](/core/reference/transforms/) props,
+`x` and `y` also appear on [transform](/docs/reference/transforms/) props,
 where they mean a post-layout subtree translation and exist on laid-out views
 too. The two never collide on one element: on a `d-*` primitive `x`/`y` is
 where the geometry is drawn, and on a `view` or `d-view` it is a translation

@@ -1,3 +1,6 @@
+---
+nav: Docs
+---
 # Core
 
 `@solidrt/core` is the spine of SolidRT. It links SolidJS reactivity
@@ -156,7 +159,7 @@ let camera = createCamera()
 <texture src={camera.texture()} fit="cover" />
 ```
 
-The same pattern covers `@solidrt/core/microphone`, `/sound`,
+The same pattern covers `@solidrt/core/microphone`, `/audio`,
 `/text-input`, `/image`, `/color`, and `/gpu`.
 
 ## Lifecycle
@@ -209,7 +212,7 @@ if (env.launch === "restored") state = JSON.parse(await file("session.json").tex
 
 ## Reference
 
-The [reference](/core/reference/) covers the API by subject: the element
+The [reference](/docs/reference/) covers the API by subject: the element
 vocabulary, drawing, text, detached elements, layout, transforms, input,
 shaders, the GPU module, and the shared types. It shows the shipped declarations themselves,
 so it says exactly what your editor says.

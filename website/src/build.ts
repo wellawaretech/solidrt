@@ -1,4 +1,5 @@
-// Static site build: renders ../docs into dist/ (see okf/plans/website.md).
+// Static site build: renders ../docs into dist/site/ (see okf/plans/website.md),
+// or with `--dev [port]` serves it from memory and rebuilds on every change.
 //
 // docs/ is markdown only and its tree is the site: a directory is a section
 // (and a sidebar group), a file is a page, and a name starting with "_" is not
@@ -10,6 +11,8 @@
 // the in-section sidebar lists hand-written and generated pages alike.
 
 import { file, dir } from "flux:fs";
+import { serve } from "flux:http";
+import { argv, exit } from "flux:process";
 import {
   configureMarked,
   markdownToHtml,
@@ -19,7 +22,7 @@ import {
   type PageEntry,
   type Rules,
 } from "./markdown.ts";
-import { resolveDirectives, undocumentedCommands, unpulled } from "./directives.ts";
+import { clearSourceCache, resolveDirectives, undocumentedCommands, unpulled } from "./directives.ts";
 import { referencePages } from "./reference.ts";
 import { tokensCss } from "./tokens.ts";
 
@@ -35,16 +38,13 @@ const DOCS_DIR = "../docs";
 // their relative `<name>/docs.md` links rewritten to section URLs.
 type Mount = { dir: string } | { index: string; pages: string; label: string };
 const MOUNTS: Record<string, Mount> = {
-  "/core": { dir: "../packages/core/docs" },
+  "/docs": { dir: "../packages/core/docs" },
   "/tools": { index: "../packages/cli/README.md", pages: "../packages/cli/src", label: "Tools" },
 };
 const ASSETS_DIR = "assets";
-const OUT_DIR = "dist";
+const OUT_DIR = "dist/site";
 const TEMPLATE = "template.json";
 const SITE_NAME = "SolidRT";
-
-let rules: Rules = await file(TEMPLATE).json();
-configureMarked(rules);
 
 // The page's own title: the first h1 of the markdown, or of a raw HTML block
 // in it (the landing page is written as HTML).
@@ -161,72 +161,199 @@ async function walk(rel: string): Promise<string[]> {
   return files;
 }
 
-// Copy a directory tree byte-for-byte into dist/.
-async function copyTree(rel: string): Promise<number> {
-  await dir(OUT_DIR + rel.slice(ASSETS_DIR.length)).create();
-  let copied = 0;
+// The site: each output file's URL path ("/guides/index.html") and contents.
+type Site = Map<string, string | Uint8Array>;
+
+// Add a directory tree to the site byte-for-byte, at its path below assets/.
+async function readTree(rel: string, site: Site): Promise<void> {
   for (let entry of await dir(rel).entries()) {
     let path = rel + "/" + entry.name;
-    if (entry.type === "directory") copied += await copyTree(path);
-    else if (entry.type === "file") {
-      await file(OUT_DIR + path.slice(ASSETS_DIR.length)).write(await file(path).bytes());
-      copied++;
-    }
+    if (entry.type === "directory") await readTree(path, site);
+    else if (entry.type === "file") site.set(path.slice(ASSETS_DIR.length), await file(path).bytes());
   }
-  return copied;
 }
 
-// Pass 1: collect every page (body, url, label) so each render knows its section.
-type Source = { url: string; body: string; own?: string; label: string };
-let sources: Source[] = [];
-let authored: string[] = [];
-for (let rel of await walk("")) {
-  let { front, body } = frontmatter(rewriteLinks(rel, await file(sourceFile(rel)).text()));
-  let url = urlOf(rel);
-  let own = h1Of(body);
-  authored.push(body);
-  // A composed section's index is a package README; the section label is
-  // the mount's, not the README's h1.
-  let mount = mountOf(rel);
-  let sectionLabel = mount && !("dir" in mount[1]) && rel === mount[0] + "/index.md" ? mount[1].label : undefined;
-  sources.push({
-    url,
-    body: await resolveDirectives(body, "docs" + rel),
-    own,
-    label: front.nav ?? sectionLabel ?? own ?? url.slice(url.lastIndexOf("/") + 1),
+// Render the whole site from its sources, reading them all afresh.
+async function render(): Promise<Site> {
+  clearSourceCache();
+  let rules: Rules = await file(TEMPLATE).json();
+  configureMarked(rules);
+  let site: Site = new Map();
+
+  // Pass 1: collect every page (body, url, label) so each render knows its section.
+  type Source = { url: string; body: string; own?: string; label: string };
+  let sources: Source[] = [];
+  let authored: string[] = [];
+  for (let rel of await walk("")) {
+    let { front, body } = frontmatter(rewriteLinks(rel, await file(sourceFile(rel)).text()));
+    let url = urlOf(rel);
+    let own = h1Of(body);
+    authored.push(body);
+    // A composed section's index is a package README; the section label is
+    // the mount's, not the README's h1.
+    let mount = mountOf(rel);
+    let sectionLabel = mount && !("dir" in mount[1]) && rel === mount[0] + "/index.md" ? mount[1].label : undefined;
+    sources.push({
+      url,
+      body: await resolveDirectives(body, "docs" + rel),
+      own,
+      label: front.nav ?? sectionLabel ?? own ?? url.slice(url.lastIndexOf("/") + 1),
+    });
+  }
+  let generated = await referencePages();
+
+  let pages: PageEntry[] = [
+    ...sources.map((s) => ({ path: s.url, title: s.label })),
+    ...generated.map((g) => ({ path: g.path, title: g.title })),
+  ];
+  // The nav is the section index pages: one path segment, in document order.
+  let nav = pages.filter((p) => p.path.length > 1 && !p.path.includes("/", 1));
+
+  // Pass 2: render.
+  for (let s of sources) {
+    let page = { title: pageTitle(s.own), nav: buildNav(nav, rules), sidebar: buildSidebar(s.url, pages, rules) };
+    site.set(s.url + "/index.html", await markdownToHtml(s.body, rules, page));
+  }
+  for (let g of generated) {
+    let page = { title: pageTitle(g.title), nav: buildNav(nav, rules), sidebar: buildSidebar(g.path, pages, rules) };
+    site.set(g.path + "/index.html", await renderPage(g.html, rules, page));
+  }
+
+  let before = site.size;
+  await readTree(ASSETS_DIR, site);
+  let assets = site.size - before;
+  site.set("/css/tokens.css", tokensCss());
+
+  console.log(`Built ${sources.length} pages, generated ${generated.length}, with ${assets} assets and css/tokens.css`);
+
+  let missing = await unpulled(COVERED, authored);
+  if (missing.length > 0) console.log(`Not shown anywhere, from ${COVERED}: ${missing.join(", ")}`);
+  let missingCommands = await undocumentedCommands(authored);
+  if (missingCommands.length > 0) console.log(`Not shown anywhere, sol commands: ${missingCommands.join(", ")}`);
+  return site;
+}
+
+// Write the site into OUT_DIR, which the Makefile has emptied first.
+async function write(site: Site): Promise<void> {
+  for (let [path, contents] of site) {
+    await dir(OUT_DIR + path.slice(0, path.lastIndexOf("/"))).create();
+    await file(OUT_DIR + path).write(contents);
+  }
+  console.log(`Wrote ${site.size} files into ${OUT_DIR}/`);
+}
+
+// -- Dev server ----------------------------------------------------------------
+
+// Exit status asking `make dev` to re-bundle this script and start it again: a
+// change to the generator itself cannot be picked up in-process. The Makefile's
+// RESTART_EXIT is the same number.
+const RESTART_EXIT = 75;
+// How long the sources stay quiet before a rebuild starts: one save arrives as
+// several watch events.
+const REBUILD_DEBOUNCE_MS = 100;
+// How long the reload script waits before reconnecting to a restarting server.
+const RELOAD_RETRY_MS = 500;
+const RELOAD_PATH = "/__reload";
+const RELOAD_TOPIC = "reload";
+// Repo sources the pages read (docs, READMEs, declarations, package.json),
+// beside the docs tree itself.
+const PACKAGES_DIR = "../packages";
+const PACKAGE_SOURCE = /\.(md|tsx?|json)$/;
+const NOT_SOURCE = /[\\/](node_modules|dist)[\\/]/;
+
+const CONTENT_TYPES: Record<string, string> = {
+  html: "text/html; charset=utf-8",
+  css: "text/css; charset=utf-8",
+  js: "text/javascript; charset=utf-8",
+  json: "application/json",
+  svg: "image/svg+xml",
+  png: "image/png",
+  ico: "image/x-icon",
+  woff2: "font/woff2",
+};
+
+// Added to every served page: reload on a rebuild, and after the server comes
+// back from a restart.
+const RELOAD_SCRIPT = `<script>
+(function connect(reconnecting) {
+  let socket = new WebSocket("ws://" + location.host + "${RELOAD_PATH}");
+  socket.onopen = () => reconnecting && location.reload();
+  socket.onmessage = () => location.reload();
+  socket.onclose = () => setTimeout(() => connect(true), ${RELOAD_RETRY_MS});
+})(false);
+</script>`;
+
+// Serve the site from memory on `port` (0: any free one), rebuilding it when
+// a source changes and reloading the open pages. A failed rebuild keeps the
+// last good site.
+async function dev(port: number): Promise<void> {
+  let site: Site = new Map();
+  let server = serve({
+    port,
+    host: "127.0.0.1",
+    fetch(req, server) {
+      // The path of the absolute request URL, without query or fragment.
+      let path = decodeURIComponent(req.url.replace(/^\w+:\/\/[^/]*/, "").replace(/[?#].*$/, ""));
+      if (path === RELOAD_PATH) {
+        if (server.upgrade(req)) return;
+        return new Response("Expected a websocket", { status: 400 });
+      }
+      if (path.endsWith("/")) path += "index.html";
+      let contents = site.get(path);
+      if (contents === undefined) {
+        if (site.has(path + "/index.html")) return new Response(null, { status: 308, headers: { location: path + "/" } });
+        return new Response("Not found", { status: 404 });
+      }
+      let ext = path.slice(path.lastIndexOf(".") + 1);
+      if (ext === "html") contents = (contents as string).replace("</body>", RELOAD_SCRIPT + "</body>");
+      return new Response(contents, { headers: { "content-type": CONTENT_TYPES[ext] ?? "application/octet-stream" } });
+    },
+    websocket: {
+      open(ws) {
+        ws.subscribe(RELOAD_TOPIC);
+      },
+    },
   });
+
+  let building = false;
+  let stale = false;
+  let restart = false;
+  async function rebuild(): Promise<void> {
+    if (building) {
+      stale = true;
+      return;
+    }
+    building = true;
+    do {
+      if (restart) exit(RESTART_EXIT);
+      stale = false;
+      try {
+        site = await render();
+        server.publish(RELOAD_TOPIC, "reload");
+      } catch (error) {
+        console.error("Build failed, still serving the last good site:", error);
+      }
+    } while (stale || restart);
+    building = false;
+  }
+
+  let pending: ReturnType<typeof setTimeout> | undefined;
+  function changed(generator = false): void {
+    restart ||= generator;
+    clearTimeout(pending);
+    pending = setTimeout(rebuild, REBUILD_DEBOUNCE_MS);
+  }
+  dir("src").watch((e) => /\.tsx?$/.test(e.path) && changed(true), { recursive: true });
+  dir(".").watch((e) => /[\\/]template\.[^\\/]+$/.test(e.path) && changed());
+  dir(ASSETS_DIR).watch(() => changed(), { recursive: true });
+  dir(DOCS_DIR).watch((e) => e.path.endsWith(".md") && changed(), { recursive: true });
+  dir(PACKAGES_DIR).watch((e) => PACKAGE_SOURCE.test(e.path) && !NOT_SOURCE.test(e.path) && changed(), {
+    recursive: true,
+  });
+
+  await rebuild();
+  console.log(`Serving the site at http://127.0.0.1:${server.port}/, rebuilding on change`);
 }
-let generated = await referencePages();
 
-let pages: PageEntry[] = [
-  ...sources.map((s) => ({ path: s.url, title: s.label })),
-  ...generated.map((g) => ({ path: g.path, title: g.title })),
-];
-// The nav is the section index pages: one path segment, in document order.
-let nav = pages.filter((p) => p.path.length > 1 && !p.path.includes("/", 1));
-
-// Pass 2: render.
-async function writePage(url: string, html: string): Promise<void> {
-  await dir(OUT_DIR + url).create();
-  await file(OUT_DIR + url + "/index.html").write(html);
-}
-for (let s of sources) {
-  let page = { title: pageTitle(s.own), nav: buildNav(nav, rules), sidebar: buildSidebar(s.url, pages, rules) };
-  await writePage(s.url, await markdownToHtml(s.body, rules, page));
-}
-for (let g of generated) {
-  let page = { title: pageTitle(g.title), nav: buildNav(nav, rules), sidebar: buildSidebar(g.path, pages, rules) };
-  await writePage(g.path, await renderPage(g.html, rules, page));
-}
-
-let assets = await copyTree(ASSETS_DIR);
-await file(OUT_DIR + "/css/tokens.css").write(tokensCss());
-
-console.log(
-  `Built ${sources.length} pages, generated ${generated.length}, copied ${assets} assets and wrote css/tokens.css into ${OUT_DIR}/`,
-);
-
-let missing = await unpulled(COVERED, authored);
-if (missing.length > 0) console.log(`Not shown anywhere, from ${COVERED}: ${missing.join(", ")}`);
-let missingCommands = await undocumentedCommands(authored);
-if (missingCommands.length > 0) console.log(`Not shown anywhere, sol commands: ${missingCommands.join(", ")}`);
+if (argv[0] === "--dev") await dev(Number(argv[1] ?? 0));
+else await write(await render());
