@@ -6,7 +6,7 @@ tree. Prop names match CSS, so `flexDirection`, `alignItems`,
 
 These props exist on `window`, `view`, and the layout form of every drawing
 and text primitive. They do not exist on the
-[detached](/docs/reference/detached/) forms, which own their geometry instead.
+[detached](/core/detached/) forms, which own their geometry instead.
 
 ## Units
 

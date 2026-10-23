@@ -44,11 +44,22 @@
             </a>
           </li>
         </ul>
-        <ul>
+        <button class="menu-toggle" aria-expanded="false" aria-controls="site-sections" aria-label="Menu">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h16"/>
+          </svg>
+        </button>
+        <ul id="site-sections">
           {nav}
         </ul>
       </nav>
     </header>
+    <script>
+      document.querySelector(".menu-toggle").addEventListener("click", (event) => {
+        let toggle = event.currentTarget;
+        toggle.setAttribute("aria-expanded", String(toggle.getAttribute("aria-expanded") !== "true"));
+      });
+    </script>
     <main>
       {sidebar}
       <article>

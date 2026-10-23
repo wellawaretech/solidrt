@@ -38,11 +38,12 @@ standalone experiment at `~/solidrt/docs` gets ported here and retired.
 pages on request via `flux:http`; production renders everything to static
 output instead. Dynamic serving is not needed once source is markdown.
 
-**Nav:** `Guides - Docs - Extensions - Tools - Runtime - Architecture`
+**Nav:** `Guides - Core - Extensions - Tools - Runtime - Architecture`
 (Extensions was "Frameworks" until 2026-08-18; renamed to match the
 scaffolder's `sol init --with` vocabulary; URLs are `/extensions/...`.
-Start became Guides and Core became Docs on 2026-10-23, URLs `/guides/...`
-and `/docs/...`; Docs is still the mount of `packages/core/docs`)
+Start became Guides on 2026-10-23, URLs `/guides/...`; a rename of Core
+to "Docs" was tried the same day and reverted, because the section is the
+core package and Extensions, Tools and Runtime are docs too)
 
 (News is deferred: blog + changelog get added as a top-level section later,
 not in the initial site.)
@@ -57,10 +58,14 @@ not in the initial site.)
   from"), Coming from React Native, and Coming from Electron. Guides
   moved out of Core into this top-level section, so a guide is not owned by
   one package.
-- **Docs** (was Core until 2026-10-23, content still `packages/core/docs`):
-  the stable spine. Concepts first (mental model), then Examples, plus
-  Reference. Concept-vs-Guide test: if removing the page costs transferable
-  understanding it is a Concept and belongs in Docs; if it costs one
+- **Core**: the stable spine, the core package's own docs. Concepts first
+  (mental model), then Examples, plus its reference pages. Since 2026-10-23
+  the reference pages sit directly under the package (`/core/layout/`, not
+  `/core/reference/layout/`): one flat sidebar, the index's `order:` line
+  sets it, the generated intrinsics table is its own Element vocabulary
+  page, and the index's Reference section lists the pages.
+  Concept-vs-Guide test: if removing the page costs transferable
+  understanding it is a Concept and belongs in Core; if it costs one
   specific task it is a Guide.
 - **Extensions** (was Frameworks): things built on Core, siblings not a stack. Plain card
   list until a second framework exists. Explicit maturity labels in
@@ -77,8 +82,9 @@ section with an API surface also gets a Reference subsection (generated):
 Core Reference from `packages/core` types, Runtime Reference from
 `packages/flux-types` (one page per module), Tools Reference from CLI
 command definitions, Components Reference later once type extraction
-handles it. URLs like `/core/reference/view`, `/runtime/reference/http`,
-`/tools/reference/create`. "Persistent sidebar" means: within a section,
+handles it. URLs like `/runtime/reference/http`, `/tools/reference/create`
+(Core is the exception since 2026-10-23: its reference pages are flat, see
+the Core bullet above). "Persistent sidebar" means: within a section,
 the sidebar always links into its Reference regardless of the page being
 read. Changelog is NOT per-section; it arrives with News later (per-section
 changelogs would need per-package release tagging - over-engineered now).

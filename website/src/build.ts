@@ -38,7 +38,7 @@ const DOCS_DIR = "../docs";
 // their relative `<name>/docs.md` links rewritten to section URLs.
 type Mount = { dir: string } | { index: string; pages: string; label: string };
 const MOUNTS: Record<string, Mount> = {
-  "/docs": { dir: "../packages/core/docs" },
+  "/core": { dir: "../packages/core/docs" },
   "/tools": { index: "../packages/cli/README.md", pages: "../packages/cli/src", label: "Tools" },
 };
 const ASSETS_DIR = "assets";

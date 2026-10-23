@@ -1,5 +1,5 @@
 ---
-nav: Docs
+order: vocabulary elements drawing text detached layout transforms input shaders gpu types
 ---
 # Core
 
@@ -212,7 +212,33 @@ if (env.launch === "restored") state = JSON.parse(await file("session.json").tex
 
 ## Reference
 
-The [reference](/docs/reference/) covers the API by subject: the element
-vocabulary, drawing, text, detached elements, layout, transforms, input,
-shaders, the GPU module, and the shared types. It shows the shipped declarations themselves,
-so it says exactly what your editor says.
+Core's API is its types. `@solidrt/core` ships `types.d.ts` and
+`jsx-runtime.d.ts` as sources, with a doc comment on every prop that deviates
+from the CSS or DOM meaning you already expect, so these pages show those
+declarations directly rather than paraphrasing them: they say exactly what
+your editor says.
+
+They are grouped by subject, not by element. Most props live on several
+elements at once (every element takes pointer handlers, every drawing
+primitive takes paint props), so a page per element would print the same
+interface a dozen times and still not say where a prop comes from.
+
+- [Element vocabulary](/core/vocabulary/) - every element and the prop
+  interfaces it takes, and what clearing a prop does
+- [Elements](/core/elements/) - `window` and `view`, the structural
+  vocabulary
+- [Drawing](/core/drawing/) - `rect`, `oval`, `line`, `path`,
+  `texture`, and the paint props they share
+- [Text](/core/text/) - `text` and `span`
+- [Detached elements](/core/detached/) - the `d-*` forms and their
+  paint-space geometry
+- [Layout](/core/layout/) - flexbox, the grid subset, and the box
+  props
+- [Transforms](/core/transforms/) - post-layout transform, opacity,
+  and scroll offsets
+- [Input](/core/input/) - handlers and the event objects they receive
+- [Shaders](/core/shaders/) - the `shader` prop on `window` and
+  `view`
+- [GPU](/core/gpu/) - textures, shader targets, pipelines and the
+  draw list from `@solidrt/core/gpu`
+- [Types](/core/types/) - the shared aliases

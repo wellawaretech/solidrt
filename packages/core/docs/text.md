@@ -33,7 +33,7 @@ Paragraph-level behavior lives here: `textAlign`, `maxLines` with
 (`"balance"` for headings, `"pretty"` to avoid a lone last word).
 
 An element child of a `<text>` is an inline atom, which is where the
-[layout](/docs/reference/layout/) props `float` and `clear` apply: a floated
+[layout](/core/layout/) props `float` and `clear` apply: a floated
 atom leaves the flow and the lines it overlaps wrap around it.
 
 ## span

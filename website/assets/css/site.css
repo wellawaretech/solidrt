@@ -25,6 +25,16 @@
   --sol-page-width: calc(
     var(--sol-content-width) + var(--sol-sidebar-width) + var(--sol-column-gap)
   );
+  /* The sticky header's height: the nav's padding and the brand link (its
+   * 40px mark plus padding). What stays clear below it: the sidebar and
+   * anchor targets. */
+  --sol-header-height: 5.5rem;
+  /* The landing's eyebrow mint, for the dash that marks the current page in
+   * the sidebar; a deep teal in the light scheme, where mint is too faint. */
+  --sol-accent-line: light-dark(#0f766e, #5eead4);
+  /* The dash's width; it sits that far left of the current link, just
+   * outside the link's hover fill. */
+  --sol-accent-line-width: 3px;
   --sol-page-gradient-end: color-mix(in srgb, var(--sol-background) 75%, var(--sol-primary));
   /* Filled boxes carry the page's diagonal wash, run the other way: the accent
    * end sits top-left where the page fill is plainest, so a card reads as a
@@ -61,12 +71,35 @@ body {
   flex-direction: column;
 }
 
-header,
 main {
   width: 100%;
   max-width: var(--sol-page-width);
   margin: 0 auto;
   padding: 0 var(--sol-spacing-xl);
+}
+
+/* The header stays in view while the page scrolls. It has no fill of its
+   own, so it reads as the page, and blurs whatever passes under it. It spans
+   the viewport so the blur covers the whole width, and its padding keeps the
+   content on the page block, aligned with main. */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0 max(var(--sol-spacing-xl), calc((100% - var(--sol-page-width)) / 2 + var(--sol-spacing-xl)));
+}
+
+/* The blur sits on its own layer behind the nav so a mask can fade it out
+   toward the header's lower edge, leaving no line where blurred content
+   meets sharp; the nav itself stays unmasked. */
+header::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  backdrop-filter: blur(12px);
+  /* Full blur down to here, then fading to none at the bottom edge. */
+  mask-image: linear-gradient(to bottom, black 50%, transparent);
 }
 
 main {
@@ -84,7 +117,14 @@ main {
    they keep the text off the block's left edge. */
 article {
   flex: 1;
+  /* Fills main on a narrow screen, where main stacks: the auto margins below
+     would otherwise shrink it to its widest content (a long code line) and
+     push the page sideways. */
+  width: 100%;
   min-width: 0;
+  /* A long identifier (a heading named after a type) breaks rather than
+     running off a narrow screen. */
+  overflow-wrap: break-word;
   max-width: var(--sol-content-width);
   margin-inline: auto;
 }
@@ -111,8 +151,8 @@ aside {
     flex: 0 0 var(--sol-sidebar-width);
     width: auto;
     position: sticky;
-    top: var(--sol-spacing-xl);
-    max-height: calc(100vh - var(--sol-spacing-xl) * 2);
+    top: calc(var(--sol-header-height) + var(--sol-spacing-xl));
+    max-height: calc(100vh - var(--sol-header-height) - var(--sol-spacing-xl) * 2);
     overflow-y: auto;
   }
 }
@@ -121,6 +161,12 @@ aside ul {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* Room for the current page's dash left of the top-level links; the
+   scrolling aside would clip it otherwise. */
+aside nav > ul {
+  padding-left: var(--sol-accent-line-width);
 }
 
 aside li {
@@ -136,7 +182,8 @@ aside details > ul {
 
 /* A group heading is a disclosure row: the title still navigates to the
    group's own page, the rest of the row opens and closes it. The row carries
-   the hover and current fills so it reads as one target either way. */
+   the hover fill so it reads as one target either way; the current page's
+   dash sits on the title link, as on any other item. */
 aside summary {
   display: flex;
   align-items: center;
@@ -157,8 +204,10 @@ aside summary:hover {
   background: var(--sol-overlay-hover);
 }
 
+/* A current group heading: the row carries the fill, as it does the hover. */
 aside summary:has(> a[aria-current="page"]) {
-  background: var(--sol-surface);
+  border-radius: 0 var(--sol-radius-sm) var(--sol-radius-sm) 0;
+  background: var(--sol-surface-gradient);
 }
 
 aside summary > a:hover,
@@ -197,9 +246,24 @@ aside a:hover {
   background: var(--sol-overlay-hover);
 }
 
+/* The current page: bold, on the fill quotes and code blocks share, which
+   opens with the landing eyebrow's dash stood upright (as they do). */
 aside a[aria-current="page"] {
-  background: var(--sol-surface);
+  position: relative;
+  border-radius: 0 var(--sol-radius-sm) var(--sol-radius-sm) 0;
+  background: var(--sol-surface-gradient);
   font-weight: var(--sol-label-weight);
+}
+
+aside a[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  /* The link's full height, so it meets the hover fill edge to edge, and
+     just left of the link. */
+  inset: 0 auto 0 calc(var(--sol-accent-line-width) * -1);
+  width: var(--sol-accent-line-width);
+  border-radius: 2px;
+  background: var(--sol-accent-line);
 }
 
 /* -- Header nav --------------------------------------------------------- */
@@ -254,6 +318,46 @@ header nav > ul:first-child a:hover {
   background: transparent;
 }
 
+/* The menu button that stands in for the section links on narrow screens,
+   where they do not fit beside the brand. */
+.menu-toggle {
+  display: none;
+}
+
+@media (max-width: 50rem) {
+  header nav {
+    flex-wrap: wrap;
+  }
+
+  .menu-toggle {
+    display: inline-flex;
+    padding: var(--sol-spacing-md);
+    background: transparent;
+    color: var(--sol-text);
+  }
+
+  .menu-toggle:hover {
+    color: var(--sol-text);
+  }
+
+  /* Collapsed until the button opens it, then a full-width column under
+     the brand row. */
+  #site-sections {
+    display: none;
+    flex-basis: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .menu-toggle[aria-expanded="true"] + #site-sections {
+    display: flex;
+  }
+
+  #site-sections a {
+    display: block;
+  }
+}
+
 /* -- Type scale --------------------------------------------------------- */
 
 h1,
@@ -266,7 +370,7 @@ h6 {
   color: var(--sol-text);
   font-weight: var(--sol-heading-weight);
   line-height: var(--sol-heading-line-height);
-  scroll-margin-top: var(--sol-spacing-xl);
+  scroll-margin-top: calc(var(--sol-header-height) + var(--sol-spacing-xl));
 }
 
 h1 {
@@ -403,18 +507,24 @@ article > section > h2 {
   margin-top: 0;
 }
 
-/* Code shares the card surface; a block inside a card steps to surfaceAlt. */
+/* Inline code sits on the gradient fill quotes and code blocks share. */
 code {
   font-family: var(--sol-font-mono);
   font-size: 0.9em;
   padding: 0.1em 0.35em;
   border-radius: var(--sol-radius-sm);
-  background: var(--sol-surface);
+  background: var(--sol-surface-gradient);
 }
 
+/* A code block is panelled like a quote: the accent bar, then the fill,
+   with the code on the column's left edge and the panel reaching out to the
+   left. The bar is a border, not a positioned layer, so it stays put while
+   a long line scrolls. */
 pre {
-  padding: var(--sol-spacing-lg);
-  border-radius: var(--sol-radius-md);
+  margin-left: calc((var(--sol-spacing-md) + var(--sol-accent-line-width)) * -1);
+  padding: var(--sol-spacing-lg) var(--sol-spacing-lg) var(--sol-spacing-lg) var(--sol-spacing-md);
+  border-left: var(--sol-accent-line-width) solid var(--sol-accent-line);
+  border-radius: 0 var(--sol-radius-md) var(--sol-radius-md) 0;
   background: var(--sol-surface-gradient);
   overflow-x: auto;
 }
@@ -429,18 +539,15 @@ pre code.hljs {
   color: var(--sol-text);
 }
 
-section code {
-  background: var(--sol-surface-alt);
-}
-
-section pre {
-  background: var(--sol-surface-alt-gradient);
-}
-
+/* A quote: a gradient panel opening with the accent bar, like the current
+   page in the sidebar. Its text stays on the column's left edge with the
+   paragraphs around it; the panel and the bar reach out to the left. */
 blockquote {
-  padding: var(--sol-spacing-lg) var(--sol-spacing-xl);
-  border-radius: var(--sol-radius-md);
-  background: var(--sol-surface-alt-gradient);
+  margin-left: calc((var(--sol-spacing-md) + var(--sol-accent-line-width)) * -1);
+  padding: var(--sol-spacing-lg) var(--sol-spacing-xl) var(--sol-spacing-lg) var(--sol-spacing-md);
+  border-left: var(--sol-accent-line-width) solid var(--sol-accent-line);
+  border-radius: 0 var(--sol-radius-md) var(--sol-radius-md) 0;
+  background: var(--sol-surface-gradient);
   color: var(--sol-text-muted);
 }
 
@@ -471,6 +578,9 @@ td {
   padding: var(--sol-spacing-md) var(--sol-spacing-lg);
   text-align: left;
   vertical-align: top;
+  /* Lets a cell of long inline code break, so the table narrows to fit a
+     phone instead of widening the page; with room to spare nothing breaks. */
+  overflow-wrap: anywhere;
 }
 
 th {
@@ -500,10 +610,5 @@ img {
   main {
     padding-left: var(--sol-spacing-lg);
     padding-right: var(--sol-spacing-lg);
-  }
-
-  header nav,
-  header nav ul {
-    flex-wrap: wrap;
   }
 }
