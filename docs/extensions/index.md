@@ -1,6 +1,6 @@
 # Extensions
 
-Extensions are built on top of [Core](/docs/): component sets, theming, and
+Extensions are built on top of [Core](/core/): component sets, theming, and
 app structure. They are siblings, not a stack. You pick one, some, or none,
 and you can always drop down to Core underneath, because an extension
 component is just a component that returns Core elements.

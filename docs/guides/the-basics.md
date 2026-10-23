@@ -14,7 +14,7 @@ cd my-app
 ```
 
 A picker asks which extensions the app takes. Ignore it for now: press enter
-and you get [Core](/docs/), which every SolidRT app has. You can add
+and you get [Core](/core/), which every SolidRT app has. You can add
 extensions later as ordinary dependencies.
 
 Scaffolding installs the dependencies, so there is no separate install step.
@@ -99,5 +99,5 @@ app asks for, and the other outputs.
 - Know another framework? [React and SolidJS 2](/guides/react-and-solid/),
   [Coming from React Native](/guides/coming-from-react-native/) and
   [Coming from Electron](/guides/coming-from-electron/) map what you know.
-- [Docs](/docs/): the element vocabulary, layout, input, and how reactive
+- [Core](/core/): the element vocabulary, layout, input, and how reactive
   props reach native nodes.

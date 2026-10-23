@@ -13,7 +13,7 @@ React, see [React and SolidJS 2](/guides/react-and-solid/).
 | Electron | SolidRT |
 | --- | --- |
 | `BrowserWindow` | `<window>`, one per app, the root of the tree |
-| HTML and CSS | The [elements](/docs/reference/elements/) and [layout](/docs/reference/layout/) props: flexbox and a subset of CSS grid |
+| HTML and CSS | The [elements](/core/elements/) and [layout](/core/layout/) props: flexbox and a subset of CSS grid |
 | Main process, renderer process, IPC | One process: the UI code calls the runtime's modules directly |
 | `fs`, `child_process`, `http`, `net` | `flux:fs`, `flux:subprocess`, `flux:http`, `flux:net` (see [Runtime](/runtime/)) |
 | `fetch` | `fetch`, the same standard API |
@@ -27,4 +27,4 @@ Plain TypeScript libraries work as usual.
 
 Styling is props on elements instead of stylesheets. A `view` never paints,
 so a background is a `<rect>` inside the view rather than a
-`background-color`. The [Docs](/docs/) explain the element vocabulary.
+`background-color`. The [element vocabulary](/core/vocabulary/) lists every element.

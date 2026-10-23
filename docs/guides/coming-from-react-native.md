@@ -23,7 +23,7 @@ out and takes input, but never paints.
 | `StyleSheet.create` | Layout and paint props go directly on the element |
 | `flexDirection` defaults to `column` | Same |
 | `<Pressable onPress>` | `onPointerDown`/`onPointerUp` on any element, or a button from [Components](/extensions/) |
-| `Animated`, Reanimated | `onFrame` driving the [detached elements](/docs/reference/detached/) (`d-rect`, `d-view`, ...), which move without a layout pass |
+| `Animated`, Reanimated | `onFrame` driving the [detached elements](/core/detached/) (`d-rect`, `d-view`, ...), which move without a layout pass |
 | `useWindowDimensions` | `windowSize()` |
 | `SafeAreaView` | `safeArea()` insets, used as padding |
 | `BackHandler` | `onBack` |

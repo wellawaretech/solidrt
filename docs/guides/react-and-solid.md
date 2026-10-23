@@ -58,5 +58,5 @@ reads a plain value from `props.value`.
 Import everything from `@solidrt/core`, not from `solid-js`: it re-exports
 the reactive and control-flow vocabulary next to the elements and the rest
 of Core. The elements are native nodes, not DOM elements, so there is no
-`className`, `style` or `onClick`; see the [Docs](/docs/) for the element
-vocabulary.
+`className`, `style` or `onClick`; the
+[element vocabulary](/core/vocabulary/) lists what there is instead.

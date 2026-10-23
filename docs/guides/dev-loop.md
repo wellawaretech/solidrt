@@ -33,8 +33,8 @@ render(() => <App />)
 
 Save, click the window, and the number goes up. No component ran again:
 reading `count()` inside the JSX subscribed that one piece of text to that
-one signal, and each update writes straight to the native node. The
-[Docs](/docs/) explain this model in full.
+one signal, and each update writes straight to the native node.
+[Core](/core/) explains this model in full.
 
 ## What triggers a reload
 
