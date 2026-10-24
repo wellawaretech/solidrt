@@ -1,5 +1,5 @@
 ---
-order: guides core extensions tools runtime architecture
+order: guides core tools runtime extensions architecture
 ---
 <!-- The aurora behind the whole landing page (website/assets/js/aurora.js).
      It is dark in either color scheme, so the page pins the dark theme; the
@@ -19,6 +19,8 @@ order: guides core extensions tools runtime architecture
     --hero-text-2: #a7b2d4;
     --hero-text-3: #66729a;
     --hero-panel: #0e1629;
+    /* A panel over the aurora, which shows through it. */
+    --hero-panel-glass: rgb(10 17 34 / 0.8);
     --hero-stroke: #1e2a4a;
     --hero-blue: #7ea9ea;
     --hero-blue-light: #9fb8ff;
@@ -179,7 +181,7 @@ order: guides core extensions tools runtime architecture
     padding: 0.8em 1.4em;
     border: 1.5px solid var(--hero-stroke);
     border-radius: var(--sol-radius-full);
-    background: rgb(10 17 34 / 0.8);
+    background: var(--hero-panel-glass);
     color: var(--hero-text);
     font-family: var(--sol-font-mono);
     font-size: 0.95rem;
@@ -187,6 +189,59 @@ order: guides core extensions tools runtime architecture
   .hero-command > span {
     color: var(--hero-text-3);
     margin-right: 0.6em;
+  }
+  /* A section that spans the hero's width instead of the reading width. */
+  article:has(> .hero) > section.wide {
+    max-width: none;
+  }
+  /* What you get: one card per result, three columns (one on a narrow
+     screen, with the hero). The grid spans the window up to a cap, inset by
+     the page gutter: its section spans the centered page block, so half the
+     block less half the grid's width centers it on the window. */
+  .outcomes {
+    /* The widest the grid gets, gutters included, so lines stay readable on
+       a wide window. */
+    --outcomes-max-width: 80rem;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--sol-spacing-lg);
+    margin: 0 calc(50% - min(50vw, var(--outcomes-max-width) / 2));
+    padding: 0 var(--sol-spacing-xl);
+    list-style: none;
+  }
+  .outcomes > li {
+    margin: 0;
+    padding: var(--sol-spacing-lg) var(--sol-spacing-xl);
+    border: 1.5px solid var(--hero-stroke);
+    border-radius: var(--sol-radius-lg);
+    background: var(--hero-panel-glass);
+    color: var(--hero-text-2);
+    line-height: 1.55;
+  }
+  .outcomes strong {
+    display: block;
+    margin-bottom: var(--sol-spacing-sm);
+    color: var(--hero-text);
+    font-size: 1.05rem;
+  }
+  /* The closing band: the hero's call to action again. */
+  .closing {
+    /* Headline size: scales with the viewport between these bounds. */
+    --closing-title-size: clamp(2rem, 5vw, 3rem);
+  }
+  .closing-title {
+    margin: 0 0 var(--sol-spacing-xl);
+    color: var(--hero-text);
+    font-size: var(--closing-title-size);
+    font-weight: 800;
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+  }
+  .closing-title > span {
+    display: block;
+  }
+  .closing > .hero-lead {
+    margin: 0 0 calc(var(--sol-spacing-xl) * 2);
   }
   /* The mark: the logo over a soft glow twice its size, as in the demo. */
   .hero-mark {
@@ -209,7 +264,8 @@ order: guides core extensions tools runtime architecture
     width: 100%;
     height: auto;
   }
-  /* Below this width the columns stack, the mark on top. */
+  /* Below this width the columns stack, the mark on top, and the outcome
+     cards drop to one column. */
   @media (max-width: 52rem) {
     .hero {
       flex-direction: column-reverse;
@@ -219,6 +275,9 @@ order: guides core extensions tools runtime architecture
     .hero-mark {
       width: var(--hero-mark-size-stacked);
       align-self: center;
+    }
+    .outcomes {
+      grid-template-columns: 1fr;
     }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -235,7 +294,7 @@ order: guides core extensions tools runtime architecture
 <p class="hero-lead">SolidRT lets you build cross-platform native apps with familiar web technologies. Built from the ground up for developers and AI agents to work together.</p>
 <ul class="hero-chips">
 <li style="--dot: var(--hero-amber)">Rust engine, GPU rendering</li>
-<li style="--dot: var(--hero-blue)">SolidJS 2.0 signals</li>
+<li style="--dot: var(--hero-blue)">SolidJS 2.0</li>
 <li style="--dot: var(--hero-violet)">2D and 3D built in</li>
 <li style="--dot: var(--hero-mint)">Linux &middot; Windows &middot; macOS &middot; Android</li>
 </ul>
@@ -274,87 +333,108 @@ render(() => <App />)
 ```
 
   <p>
-    No build config, no markup language, no virtual DOM: reading
-    <code>count()</code> in the JSX wires that one piece of text to that one
-    signal, and a click writes it straight to the native node.
+    This is all there is to it: a fully working application, on desktop
+    and mobile.
   </p>
 </section>
 
-<section>
+<section class="wide">
   <h2 class="eyebrow">What you get</h2>
-  <ul>
+  <ul class="outcomes">
     <li>
-      <strong>Native rendering.</strong> A GPU renderer behind a small
-      element vocabulary, with demand-driven frames. Nothing draws when
-      nothing changed.
+      <strong>Write it once, run it on every screen.</strong>
+      The same source runs on Linux, Windows, macOS, and Android, and looks
+      the same on each, because SolidRT draws every pixel itself.
     </li>
     <li>
-      <strong>Real layout.</strong> <a href="/core/layout/">Flexbox and
-      grid</a>, with CSS prop
-      names: <code>flexDirection</code>, <code>gap</code> and
-      <code>gridTemplateColumns</code> mean what you expect.
+      <strong>You already know how.</strong>
+      If you have built a web app, you can build this one: JSX, components,
+      and signals from <a href="https://www.solidjs.com/">SolidJS</a>, and
+      <a href="/core/layout/">flexbox and grid</a> with the CSS names you
+      expect.
     </li>
     <li>
-      <strong>Real text.</strong> <a href="/core/text/">Shaped paragraphs</a>
-      laid out by the engine, styled spans, line clamping with an ellipsis,
-      and elements floated inside a paragraph with the text wrapping around
-      them.
+      <strong>Components and routing to start with.</strong>
+      Themable widgets (buttons, inputs, sliders, dialogs, menus) and a
+      router that turns screens into routes. Switch the theme and the running
+      UI recolors without remounting.
     </li>
     <li>
-      <strong>2D and 3D built in.</strong> <a href="/extensions/">Extensions</a>
-      for instanced sprites, atlases, tile worlds and cameras, and for scenes,
-      meshes, materials and lighting, built on Core's GPU primitives.
+      <strong>A spatial core for fast 2D and 3D.</strong>
+      Thousands of animated sprites in one draw call, 3D scenes, and
+      <a href="/core/shaders/">custom shaders</a>, all in the same tree as
+      your UI. A dashboard and a game are the same kind of project.
     </li>
     <li>
-      <strong>Shaders and the GPU.</strong> A <a href="/core/shaders/">custom
-      shader</a> on the window or any view, and
-      <a href="/core/gpu/">textures, render targets and draw lists</a> when
-      you need the GPU itself.
+      <strong>Reach the device and the network.</strong>
+      Camera, microphone, audio, video, files, HTTP, SQLite, and peer-to-peer
+      have one API on desktop and phone, built into
+      <a href="/runtime/">the runtime</a>, with no plugin per platform.
     </li>
     <li>
-      <strong>A familiar model.</strong> JSX, signals, and components, from
-      <a href="https://www.solidjs.com/">SolidJS</a>. If you have written a
-      web app, you already know how to write this one.
+      <strong>Save once, see it everywhere.</strong>
+      Save a file and your desktop window and your phone reload together, with
+      no rebuild and no cable. See <a href="/guides/dev-loop/">the dev
+      loop</a>.
     </li>
     <li>
-      <strong>Batteries in the runtime.</strong> Files, HTTP, SQLite,
-      sockets, subprocesses, and peer-to-peer ship with
-      <a href="/runtime/">Flux</a>, the JavaScript runtime underneath.
+      <strong>Your agent sees what it built.</strong>
+      A coding agent reads the running app's logs, layout, and screenshots on
+      each connected device, so it checks its own work on every screen
+      instead of guessing.
     </li>
     <li>
-      <strong>Device access.</strong> Camera, microphone, audio and video
-      from Core, the same on desktop and Android.
+      <strong>Tests that never flake.</strong>
+      <a href="/tools/test/">App tests</a> run without a window and count
+      frames instead of wall-clock time, so every run gives the same result.
     </li>
     <li>
-      <strong>Made to be inspected.</strong> The running app exposes its
-      logs, render tree, and live screenshots over MCP, so a coding agent
-      can see what your app is actually doing.
-    </li>
-    <li>
-      <strong>One dev server, every device.</strong> Save a file and the
-      desktop window and a phone reload together. See
-      <a href="/guides/dev-loop/">the dev loop</a>.
-    </li>
-    <li>
-      <strong>Headless tests.</strong> <a href="/tools/test/">App tests</a>
-      run without a window and without a wall clock: time is the frames the
-      test asks for, so a run is the same every time.
-    </li>
-    <li>
-      <strong>Ship anywhere.</strong> One standalone executable for the
-      desktop, and an installable Android APK built without the Android SDK.
-      See <a href="/tools/pack/">sol pack</a>.
+      <strong>One app file, one binary per platform.</strong>
+      The app is a single <code>.solapp</code>, the same file on every
+      platform. <code>sol pack</code> combines it with the runtime into a
+      standalone executable, or an installable APK with no Android SDK
+      needed.
     </li>
   </ul>
 </section>
 
 <section>
-  <h2 class="eyebrow">From example to app</h2>
+  <h2 class="eyebrow">About</h2>
   <p>
-    The <a href="/tools/">tools</a> take you from a running example to a
-    standalone app: one CLI for scaffolding, live development, and packaging.
-    The same source runs on Linux, macOS, Windows, and Android, and the dev
-    server drives a desktop window and a phone at the same time.
+    SolidRT is made by Antoine van Wel at
+    <a href="https://wellawaretech.com/">Well-Aware Technologies</a> and
+    developed in the open on
+    <a href="https://github.com/wellawaretech/solidrt">GitHub</a>. Why it
+    exists is written up in
+    <a href="https://wellawaretech.com/blog/why/">
+    Why?</a>
   </p>
-  <p><a href="/guides/the-basics/" role="button">Get started</a></p>
+  <p>
+    SolidRT is free and open source. If it is useful to you or your
+    company, consider
+    <a href="https://github.com/sponsors/wellawaretech">sponsoring the
+    project</a>: it helps keep development going.
+  </p>
+</section>
+
+<section class="closing">
+  <h2 class="eyebrow">Get started</h2>
+  <p class="closing-title"><span>Your first window,</span><span class="hero-accent">in one minute.</span></p>
+  <p class="hero-lead">
+    All you need is <a href="https://bun.sh/">Bun</a>. One command scaffolds
+    the project, develops it live on every device, and packs it into a
+    standalone app, an Android APK included. No Android Studio, no SDK, no
+    other tooling to install: <a href="/tools/">the CLI</a> takes care of
+    the rest.
+  </p>
+  <p class="hero-lead">
+    And you never have to leave. When an app needs more, add Rust to your
+    toolchain and build <a href="/guides/custom-runtime/">a runtime of your own</a>: a
+    customized, optimized executable around the same project and the same
+    code. Nothing to eject from, because it is an addition, not a rewrite.
+  </p>
+  <div class="hero-actions">
+    <a href="/guides/the-basics/" role="button">Get started &rarr;</a>
+    <span class="hero-command"><span>$</span>bun create solidrt my-app</span>
+  </div>
 </section>

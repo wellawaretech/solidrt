@@ -5,19 +5,20 @@ import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
-import bash from "highlight.js/lib/languages/bash";
 import json from "highlight.js/lib/languages/json";
 import css from "highlight.js/lib/languages/css";
+import rust from "highlight.js/lib/languages/rust";
+import ini from "highlight.js/lib/languages/ini";
 
 hljs.registerLanguage("javascript", javascript);
 hljs.registerLanguage("typescript", typescript);
 hljs.registerLanguage("xml", xml);
-hljs.registerLanguage("bash", bash);
 hljs.registerLanguage("json", json);
 hljs.registerLanguage("css", css);
+hljs.registerLanguage("rust", rust);
+hljs.registerLanguage("ini", ini); // its grammar carries the "toml" alias
 hljs.registerAliases(["jsx"], { languageName: "javascript" });
 hljs.registerAliases(["tsx"], { languageName: "typescript" });
-hljs.registerAliases(["sh", "shell"], { languageName: "bash" });
 
 function applyTemplate(
   template: string,
@@ -188,12 +189,19 @@ export function buildSidebar(current: string, pages: PageEntry[], rules: Rules):
   return applyTemplate(page.sidebar, { items: out.join("\n") });
 }
 
-/** The site nav: one item per section, in `sections` order. */
-export function buildNav(sections: PageEntry[], rules: Rules): string {
+/** The site nav: one item per section, in `sections` order, the section
+ * holding the page at `current` marked current. */
+export function buildNav(current: string, sections: PageEntry[], rules: Rules): string {
   let navItem = rules?.page?.navItem;
   if (!navItem) return "";
   return sections
-    .map((s) => applyTemplate(navItem, { href: s.path + "/", text: escapeHtml(s.title) }))
+    .map((s) =>
+      applyTemplate(navItem, {
+        href: s.path + "/",
+        text: escapeHtml(s.title),
+        current: current === s.path || current.startsWith(s.path + "/") ? ' aria-current="true"' : "",
+      }),
+    )
     .join("\n          ");
 }
 

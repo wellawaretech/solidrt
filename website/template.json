@@ -1,7 +1,7 @@
 {
   "page": {
     "template": "file:./template.html",
-    "navItem": "<li><a href=\"{href}\">{text}</a></li>",
+    "navItem": "<li><a href=\"{href}\"{current}>{text}</a></li>",
     "sidebar": "<aside><nav><ul>\n{items}\n</ul></nav></aside>",
     "sidebarItem": "<li><a href=\"{href}\"{current}>{text}</a></li>",
     "sidebarGroup": "<li><details{open}><summary><a href=\"{href}\"{current}>{text}</a></summary><ul>\n{items}\n</ul></details></li>",

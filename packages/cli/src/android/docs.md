@@ -58,4 +58,10 @@ while the app is on screen. An app has several layers and only one carries
 its buffers, so among the matches the one whose history holds presents is
 read (checked on Android 12 and 17, whose layer lists differ in form).
 
-adb is a system tool (Android Platform Tools) and is never bundled.
+adb is a system tool (Android Platform Tools) and is never bundled. It is
+looked up on PATH, then under `$ANDROID_HOME` / `$ANDROID_SDK_ROOT`, then in
+`~/.solidrt/platform-tools`. When none has it, a run on a terminal offers to
+download Google's platform-tools zip (about 15 MB) there; removing the folder
+uninstalls it. Google's Linux build is x86-64 only, so on Linux ARM, and on
+any non-interactive run, the command prints the install line for the OS
+instead.

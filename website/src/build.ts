@@ -211,11 +211,11 @@ async function render(): Promise<Site> {
 
   // Pass 2: render.
   for (let s of sources) {
-    let page = { title: pageTitle(s.own), nav: buildNav(nav, rules), sidebar: buildSidebar(s.url, pages, rules) };
+    let page = { title: pageTitle(s.own), nav: buildNav(s.url, nav, rules), sidebar: buildSidebar(s.url, pages, rules) };
     site.set(s.url + "/index.html", await markdownToHtml(s.body, rules, page));
   }
   for (let g of generated) {
-    let page = { title: pageTitle(g.title), nav: buildNav(nav, rules), sidebar: buildSidebar(g.path, pages, rules) };
+    let page = { title: pageTitle(g.title), nav: buildNav(g.path, nav, rules), sidebar: buildSidebar(g.path, pages, rules) };
     site.set(g.path + "/index.html", await renderPage(g.html, rules, page));
   }
 

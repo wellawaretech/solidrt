@@ -32,6 +32,10 @@
   /* The landing's eyebrow mint, for the dash that marks the current page in
    * the sidebar; a deep teal in the light scheme, where mint is too faint. */
   --sol-accent-line: light-dark(#0f766e, #5eead4);
+  /* The bar at rest, sunk toward the page (darker on dark, lighter on
+   * light); it brightens to the full accent while hovered. The percentage
+   * is how much accent stays. */
+  --sol-accent-line-rest: color-mix(in srgb, var(--sol-accent-line) 35%, var(--sol-background));
   /* The dash's width; it sits that far left of the current link, just
    * outside the link's hover fill. */
   --sol-accent-line-width: 3px;
@@ -44,12 +48,20 @@
     var(--sol-surface),
     color-mix(in srgb, var(--sol-surface) 82%, var(--sol-primary))
   );
-  --sol-surface-alt-gradient: linear-gradient(
-    315deg,
-    var(--sol-surface-alt),
-    color-mix(in srgb, var(--sol-surface-alt) 82%, var(--sol-primary))
-  );
+  /* Code, quotes and tables sit on a flat panel with a thin outline: in the dark
+   * scheme the landing cards' navy, which the page's wash shows through. */
+  --sol-panel: light-dark(var(--sol-surface), rgb(10 17 34 / 0.8));
+  --sol-panel-stroke: light-dark(var(--sol-surface-alt), #1e2a4a);
   color-scheme: light dark;
+}
+
+/* A forced theme forces the scheme too, so light-dark() follows it. */
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 /* -- Page --------------------------------------------------------------- */
@@ -187,7 +199,6 @@ aside details > ul {
 aside summary {
   display: flex;
   align-items: center;
-  border-radius: var(--sol-radius-sm);
   list-style: none;
   cursor: pointer;
 }
@@ -200,13 +211,9 @@ aside summary > a {
   flex: 1;
 }
 
-aside summary:hover {
-  background: var(--sol-overlay-hover);
-}
-
-/* A current group heading: the row carries the fill, as it does the hover. */
+/* A hovered or current group heading: the row carries the fill. */
+aside summary:hover,
 aside summary:has(> a[aria-current="page"]) {
-  border-radius: 0 var(--sol-radius-sm) var(--sol-radius-sm) 0;
   background: var(--sol-surface-gradient);
 }
 
@@ -233,36 +240,45 @@ aside details[open] > summary::after {
 }
 
 aside a {
+  position: relative;
   display: block;
   padding: var(--sol-spacing-sm) var(--sol-spacing-md);
-  border-radius: var(--sol-radius-sm);
   color: var(--sol-text);
   font-size: calc(var(--sol-label-size) * var(--sol-prose-scale));
   font-weight: var(--sol-body-weight);
   line-height: var(--sol-body-line-height);
 }
 
-aside a:hover {
-  background: var(--sol-overlay-hover);
+/* A hovered link and the current page look alike: the fill quotes and code
+   blocks share, which opens with the landing eyebrow's dash stood upright
+   (as they do). The current page is also bold. */
+aside a:hover,
+aside a[aria-current="page"] {
+  background: var(--sol-surface-gradient);
 }
 
-/* The current page: bold, on the fill quotes and code blocks share, which
-   opens with the landing eyebrow's dash stood upright (as they do). */
 aside a[aria-current="page"] {
-  position: relative;
-  border-radius: 0 var(--sol-radius-sm) var(--sol-radius-sm) 0;
-  background: var(--sol-surface-gradient);
   font-weight: var(--sol-label-weight);
 }
 
-aside a[aria-current="page"]::before {
+aside a::before {
   content: "";
   position: absolute;
-  /* The link's full height, so it meets the hover fill edge to edge, and
-     just left of the link. */
+  /* The link's full height, so it meets the fill edge to edge, and just
+     left of the link. */
   inset: 0 auto 0 calc(var(--sol-accent-line-width) * -1);
   width: var(--sol-accent-line-width);
-  border-radius: 2px;
+}
+
+/* Hovered, the dash keeps its resting color; only the current page's is
+   bright. */
+aside a:hover::before,
+aside summary:hover > a::before {
+  background: var(--sol-accent-line-rest);
+}
+
+aside a[aria-current="page"]::before,
+aside summary:hover > a[aria-current="page"]::before {
   background: var(--sol-accent-line);
 }
 
@@ -289,11 +305,13 @@ header nav li {
   margin: 0;
 }
 
-/* Section links as ghost buttons: no fill until hover, like Button ghost. */
+/* Section links as ghost buttons: no fill until hover, then the sidebar's
+   fill over its bar laid flat as an underline, at the bar's resting color.
+   The current section keeps the fill, its underline bright. */
 header nav a {
+  position: relative;
   display: inline-block;
   padding: var(--sol-spacing-md) var(--sol-spacing-lg);
-  border-radius: var(--sol-radius-md);
   color: var(--sol-text);
   font-size: calc(var(--sol-label-size) * var(--sol-prose-scale));
   font-weight: var(--sol-label-weight);
@@ -302,8 +320,22 @@ header nav a {
   text-transform: capitalize;
 }
 
-header nav a:hover {
-  background: var(--sol-overlay-hover);
+header nav a:hover,
+#site-sections a[aria-current] {
+  background: var(--sol-surface-gradient);
+}
+
+#site-sections a:hover::after,
+#site-sections a[aria-current]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: var(--sol-accent-line-width);
+  background: var(--sol-accent-line-rest);
+}
+
+#site-sections a[aria-current]::after {
+  background: var(--sol-accent-line);
 }
 
 /* The brand link: title-sized wordmark, no button treatment. */
@@ -507,26 +539,33 @@ article > section > h2 {
   margin-top: 0;
 }
 
-/* Inline code sits on the gradient fill quotes and code blocks share. */
+/* Inline code sits on the panel quotes and code blocks share. */
 code {
   font-family: var(--sol-font-mono);
   font-size: 0.9em;
   padding: 0.1em 0.35em;
   border-radius: var(--sol-radius-sm);
-  background: var(--sol-surface-gradient);
+  background: var(--sol-panel);
 }
 
-/* A code block is panelled like a quote: the accent bar, then the fill,
-   with the code on the column's left edge and the panel reaching out to the
-   left. The bar is a border, not a positioned layer, so it stays put while
-   a long line scrolls. */
+/* A code block is panelled like a quote: the accent bar, then the panel in
+   its outline, with the code on the column's left edge and the panel
+   reaching out to the left. The bar is a border, not a positioned layer, so
+   it stays put while a long line scrolls. */
 pre {
   margin-left: calc((var(--sol-spacing-md) + var(--sol-accent-line-width)) * -1);
   padding: var(--sol-spacing-lg) var(--sol-spacing-lg) var(--sol-spacing-lg) var(--sol-spacing-md);
-  border-left: var(--sol-accent-line-width) solid var(--sol-accent-line);
+  border: 1.5px solid var(--sol-panel-stroke);
+  border-left: var(--sol-accent-line-width) solid var(--sol-accent-line-rest);
   border-radius: 0 var(--sol-radius-md) var(--sol-radius-md) 0;
-  background: var(--sol-surface-gradient);
+  background: var(--sol-panel);
   overflow-x: auto;
+  transition: border-left-color 120ms ease-out;
+}
+
+pre:hover,
+blockquote:hover {
+  border-left-color: var(--sol-accent-line);
 }
 
 pre code,
@@ -539,16 +578,18 @@ pre code.hljs {
   color: var(--sol-text);
 }
 
-/* A quote: a gradient panel opening with the accent bar, like the current
+/* A quote: an outlined panel opening with the accent bar, like the current
    page in the sidebar. Its text stays on the column's left edge with the
    paragraphs around it; the panel and the bar reach out to the left. */
 blockquote {
   margin-left: calc((var(--sol-spacing-md) + var(--sol-accent-line-width)) * -1);
   padding: var(--sol-spacing-lg) var(--sol-spacing-xl) var(--sol-spacing-lg) var(--sol-spacing-md);
-  border-left: var(--sol-accent-line-width) solid var(--sol-accent-line);
+  border: 1.5px solid var(--sol-panel-stroke);
+  border-left: var(--sol-accent-line-width) solid var(--sol-accent-line-rest);
   border-radius: 0 var(--sol-radius-md) var(--sol-radius-md) 0;
-  background: var(--sol-surface-gradient);
+  background: var(--sol-panel);
   color: var(--sol-text-muted);
+  transition: border-left-color 120ms ease-out;
 }
 
 blockquote > :last-child {
@@ -568,9 +609,10 @@ table {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
+  border: 1.5px solid var(--sol-panel-stroke);
   border-radius: var(--sol-radius-md);
   overflow: hidden;
-  background: var(--sol-surface-gradient);
+  background: var(--sol-panel);
 }
 
 th,
@@ -587,7 +629,13 @@ th {
   font-size: calc(var(--sol-label-size) * var(--sol-prose-scale));
   font-weight: var(--sol-label-weight);
   color: var(--sol-text-muted);
-  background: var(--sol-surface-alt-gradient);
+  background: var(--sol-panel-stroke);
+}
+
+/* Inline code inside a panel would vanish into it; it takes the outline's
+   color instead. */
+:is(blockquote, td) code {
+  background: var(--sol-panel-stroke);
 }
 
 /* -- Media -------------------------------------------------------------- */

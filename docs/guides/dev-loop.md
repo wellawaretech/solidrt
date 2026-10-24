@@ -61,7 +61,8 @@ The first time, this asks which Android targets the project builds for:
 arm64-v8a for current phones and tablets, armeabi-v7a for older phones and
 many Android TVs, x86_64 for emulators and Chromebooks. It then installs the
 SolidRT client on the device over adb and launches it against your server.
-adb comes with Android Platform Tools, which you install yourself.
+adb comes with Android Platform Tools; if none is installed, the command
+offers to download them into `~/.solidrt`.
 
 From then on, a save reloads the phone and the desktop window together: one
 server drives every client connected to it. The device can also join without

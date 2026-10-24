@@ -1,5 +1,5 @@
 ---
-order: the-basics dev-loop react-and-solid coming-from-react-native coming-from-electron
+order: the-basics dev-loop react-and-solid coming-from-react-native coming-from-electron custom-runtime
 ---
 # Guides
 
@@ -15,3 +15,6 @@ Code samples and walkthroughs for common tasks with SolidRT
   elements, device APIs and the workflow, mapped to SolidRT.
 - [Coming from Electron](/guides/coming-from-electron/) - one process, no
   browser: what replaces what.
+- [Build a custom runtime](/guides/custom-runtime/) - advanced: your own
+  runtime with only the features you want, then extended with native code of
+  your own.
