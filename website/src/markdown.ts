@@ -36,6 +36,16 @@ export function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+// Inline code breaks at its spaces only: each space-separated token is kept
+// whole, so `d-texture` never splits at the hyphen and an identifier never
+// splits mid-word, while a long snippet can still wrap on a narrow screen.
+function unbrokenTokens(html: string): string {
+  return html
+    .split(" ")
+    .map((token) => (token ? `<span class="nobr">${token}</span>` : token))
+    .join(" ");
+}
+
 function buildRenderer(
   elements: Record<string, string | undefined>,
 ): Partial<Renderer> {
@@ -84,7 +94,7 @@ function buildRenderer(
   let codespan = elements.codespan;
   if (codespan)
     r.codespan = ({ text }) =>
-      applyTemplate(codespan, { text: escapeHtml(text) });
+      applyTemplate(codespan, { text: unbrokenTokens(escapeHtml(text)) });
 
   let blockquote = elements.blockquote;
   if (blockquote)

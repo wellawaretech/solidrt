@@ -1,67 +1,79 @@
 # Build a custom runtime
 
-An advanced guide, for developers who are comfortable with Rust and with
-building native code, on the platforms they ship to. It starts with the easy
-part, a runtime of your own with only the features you want, and builds on
-that by extending it with native code of your own. The app stays the same
-app: this adds a Rust project beside it, and takes nothing away.
+This is an advanced guide. It is for developers who know Rust and know how
+to build native code for their target platforms. The guide starts with the
+easy part: a runtime of your own, with only the features that you want.
+Then it shows how to add your own native code to that runtime. Your app
+does not change. The guide adds a Rust project next to the app, and removes
+nothing.
 
-## When you need one
+## When to use one
 
-The stock runtime covers most apps: UI, 2D and 3D, camera, audio, video,
-files, HTTP, SQLite, peer-to-peer. Reach for your own when you want:
+The stock runtime is sufficient for most apps. It has UI, 2D and 3D,
+camera, audio, video, files, HTTP, SQLite, and peer-to-peer. Use your own
+runtime when you want one of these:
 
-- a leaner binary, with only the features the app uses,
-- your own fonts built into every app on the runtime,
-- or, going further, your own native code: a library (an inference engine, a
-  codec, a physics solver) or a platform SDK (a vendor's camera or sensor SDK
-  on Android).
+- A smaller binary, with only the features that the app uses.
+- Your own fonts in each app on the runtime.
+- As a more advanced step, your own native code. This can be a library (an
+  inference engine, a codec, a physics solver) or a platform SDK (the
+  camera or sensor SDK of a vendor on Android).
 
-If the code is portable compute that compiles to WebAssembly, you may not need
-the last one: `flux:wasm` runs the same `.wasm` file on every platform.
+If your code is portable compute code that compiles to WebAssembly, the
+last item is possibly not necessary. `flux:wasm` runs the same `.wasm` file
+on all platforms.
 
-Nothing here is an eject. You do not move out of the project you have, and the
-app code does not change. Apps that never needed more never see any of this.
+None of these steps is an eject. You stay in the project that you have, and
+the app code does not change. If the stock runtime is sufficient for an
+app, this guide has no effect on that app.
 
-## What you need
+## Necessary software
 
-Bun still runs the app. A custom runtime is a Rust project, so building it
-adds:
+Bun continues to run the app. A custom runtime is a Rust project. To build
+it, you must also have:
 
-- Rust, through [rustup](https://rustup.rs/). The project pins its toolchain,
-  and rustup installs the pinned version the first time you build.
-- `make` and a C toolchain, since the runtime compiles the native libraries
-  it is built on.
-- For Android: the Android NDK (point `NDK_HOME` at it) and `cargo-ndk`.
+- Rust, from [rustup](https://rustup.rs/). The build pins the Rust
+  version. When you build for the first time, rustup installs the pinned
+  version.
+- `make`, `cmake` and a C toolchain. The runtime compiles the native
+  libraries that it uses.
+- On x64, `nasm`. The `video` feature uses it.
+- On Linux, libclang and the development packages of SDL. The
+  [CI setup](https://github.com/wellawaretech/solidrt/blob/main/.github/actions/linux-system-deps/action.yml)
+  lists them.
+- On Windows, MSVC and MSYS2. Run `make` from an MSYS2 shell. In MSYS2,
+  install `make`, `diffutils` and `nasm`.
+- For Android: the Android NDK and `cargo-ndk`. Set `NDK_HOME` to the NDK
+  path.
 
-You only need these on the machine that builds the runtime. The people who
-run your app need nothing.
+This software is necessary only on the machine that builds the runtime. The
+users of your app do not have to install anything.
 
-## 1. Set up a runtime
+## 1. Make a runtime
 
-In a new project:
+For a new project, use this command:
 
 ```sh
 bun create solidrt my-app --runtime
 ```
 
-Or in the project you already have, from its folder:
+For a project that you have, use this command in the project folder:
 
 ```sh
 bun run sol init --runtime
 ```
 
-This adds a `runtime/` folder and points `package.json` at the folder the
-build will fill. The files are yours. The build itself is one line in
-`runtime/Makefile` that includes the build base shipped in `@solidrt/cli`, so
-an upgrade never leaves your copy stale.
+This command adds a `runtime/` folder. It also sets `package.json` to point
+to the folder for the build output. You own these files. The build is one
+line in `runtime/Makefile`. That line includes the build base in
+`@solidrt/cli`. Thus, after an upgrade, your copy is always current.
 
-## 2. Choose your features
+## 2. Select the features
 
-The capabilities of the runtime are features of the `lattice` crate, chosen
-on its line in `runtime/Cargo.toml`. The line the scaffold writes takes the
-stock set. To leave something out, turn the defaults off and name everything
-you keep:
+The capabilities of the runtime are features of the `lattice` crate. You
+select them on the `lattice` line in `runtime/Cargo.toml`. The initial line
+selects the stock set. To remove a feature, set the defaults to off. Then
+write the name of each feature that you keep:
 
 ```toml
 lattice = {
@@ -72,22 +84,27 @@ lattice = {
 }
 ```
 
-The features:
+These are the features:
 
 - `video`: video playback.
-- `video-encode`: video recording (`record` of `flux:video`). Implies `video`.
+- `video-encode`: video recording (`record` of `flux:video`). It includes
+  `video`.
 - `ktx2`: compressed textures.
 - `p2p-relay`: the self-hosted relay (`serveRelay` of `flux:p2p`).
-- `wasm-native`: `flux:wasm` compiled to machine code where the target allows
-  it, interpreted elsewhere. `wasm` alone is the interpreter everywhere.
+- `wasm-native`: `flux:wasm` on wasmtime, which compiles a module to
+  machine code. Some targets do not support wasmtime (armeabi-v7a, x86
+  Android, iOS). On these targets, the build uses wasmi. `wasm` alone is
+  wasmi, the interpreter, on all targets.
 
-The player you develop against carries every feature whatever the runtime
-lists, so `bun run dev` does not catch an import of something you trimmed. That
-shows up on the device, where `Flux.capabilities` tells the truth.
+The player that you use during development has all features, whatever the
+runtime lists. Thus, `bun run dev` does not find an import of a feature
+that you removed. You see that error only in the packed app, on the
+desktop and on Android. There, `Flux.capabilities` shows the correct
+features.
 
-The fonts every app on the runtime starts from are chosen the same way, in
-`fonts()` in `runtime/src/lib.rs`: drop the stock faces or add your own. See
-[The fonts](/runtime/#the-fonts).
+You select the initial fonts of each app on the runtime in the same way.
+Use `fonts()` in `runtime/src/lib.rs` to remove the stock faces or add your
+own. Refer to [The fonts](/runtime/#the-fonts).
 
 ## 3. Build and run it
 
@@ -95,48 +112,56 @@ The fonts every app on the runtime starts from are chosen the same way, in
 make -C runtime
 ```
 
-This builds the player and the runtime for this machine into `runtime/dist/`.
-The first build compiles everything and takes several minutes. Then the app
-runs on it, with nothing to configure:
+This command builds the player and the runtime for this machine into
+`runtime/dist/`. The first build compiles all code and takes several
+minutes. After the build, the app runs on the new runtime. No configuration
+is necessary:
 
 ```sh
 bun run dev
 bun run test
 ```
 
-`sol run`, `sol test`, `sol pack` and `sol android` all find your runtime
+`sol run`, `sol test`, `sol pack`, and `sol android` find your runtime
 through `package.json`.
 
-## 4. Ship it
+## 4. Prepare a release
 
-For what you ship, build with the optimized profile:
+For a release, build with the optimized profile:
 
 ```sh
 make -C runtime PROFILE=release-opt
 ```
 
-It is much slower to build and gives a smaller, faster binary: fat LTO, one
-codegen unit, stripped. For a phone or tablet, build the Android runtime too:
+This build takes much more time. It gives a smaller and faster binary: fat
+LTO, one codegen unit, stripped. For a phone or tablet, also build the
+Android runtime:
 
 ```sh
 make -C runtime android
 ```
 
-Then `bun run android` installs your own player on the device, and
-`bun run pack --apk` packs the app with your runtime inside. The player is
-named after your app id, so it sits beside the stock Player and the players of
-your other projects instead of replacing them.
+Before you use Android, set `appId` in `package.json`, for example
+`com.example.myapp`. The value must be an Android application id.
 
-Commit `runtime/Cargo.lock`. It fixes the crates a build on another machine
-resolves, so two builds of the same project give the same runtime.
-[Building and shipping it](/runtime/#building-and-shipping-it) has the
-profiles, the build times, and the lock in full.
+Then `bun run android` installs your own player on the device.
+`bun run pack --apk` packs the app with your runtime in it. The id of the
+player is your app id with `.player` added, for example
+`com.example.myapp.player`. Thus, it installs next to the stock Player and
+the players of your other projects. It does not replace them.
 
-## 5. Extend it with your own code
+Commit `runtime/Cargo.lock`. This file sets the crate versions that a build
+on a different machine uses. Thus, two builds of the same project give the
+same runtime. For full data about the profiles, the build times, and the
+lock file, refer to
+[Build the runtime](/runtime/#build-the-runtime).
 
-The scaffold wrote a starter module, `runtime:hello`, with a test
-(`tests/runtime.test.tsx`) that imports it, so `bun run test` already proves
-the whole path works. In app code a module is an ordinary import:
+## 5. Add your own code
+
+Step 1 wrote a starter module, `runtime:hello`. It also wrote a test
+(`tests/runtime.test.tsx`) that imports the module. Thus, `bun run test`
+already shows that the full path works. In app code, you import a module as
+usual:
 
 ```tsx
 import { hello } from "runtime:hello"
@@ -144,8 +169,9 @@ import { hello } from "runtime:hello"
 <text>{hello()}</text>
 ```
 
-A module is a Rust file in `runtime/src/`. Open `runtime/src/hello.rs` and
-add a second function beside `hello`. This one sums the bytes of a buffer:
+A module is a Rust file in `runtime/src/`. Open `runtime/src/hello.rs`. Add
+a second function next to `hello`. This function calculates the sum of the
+bytes in a buffer:
 
 ```rust
 use lattice::flux;
@@ -159,7 +185,7 @@ fn checksum<'js>(ctx: Ctx<'js>, bytes: TypedArray<'js, u8>) -> Result<f64> {
 }
 ```
 
-Declare it and export it in the module:
+Declare the function in the module. Then export it:
 
 ```rust
 fn declare(decl: &Declarations<'_>) -> Result<()> {
@@ -175,7 +201,7 @@ fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
 }
 ```
 
-Describe it for TypeScript in `runtime/types/hello.d.ts`:
+Write the TypeScript types for it in `runtime/types/hello.d.ts`:
 
 ```ts
 declare module "runtime:hello" {
@@ -185,21 +211,21 @@ declare module "runtime:hello" {
 }
 ```
 
-Test it in `tests/runtime.test.tsx`:
+Step 1 wrote `tests/runtime.test.tsx`. This file already imports `test`
+and `expect` from `@solidrt/test`. Add `checksum` to the import from
+`runtime:hello`, and add this test:
 
 ```tsx
-import { checksum } from "runtime:hello"
-
 test("checksum sums the bytes", async () => {
   expect(checksum(new Uint8Array([1, 2, 3]))).toBe(6)
 })
 ```
 
-Then `make -C runtime` and `bun run test`. After the first build, a change to
-a module alone rebuilds in about fifteen seconds.
+Then run `make -C runtime` and `bun run test`. After the first build, a
+change to only a module rebuilds in approximately fifteen seconds.
 
-A new module is a new file with a `mod` line and one `add` line in
-`runtime/src/lib.rs`:
+To add a new module, make a new file. Then add a `mod` line and an `add`
+line in `runtime/src/lib.rs`:
 
 ```rust
 mod physics;
@@ -211,16 +237,21 @@ pub fn modules() -> lattice::Modules {
 }
 ```
 
-A module can also read buffers in place, return promises for work on another
-thread, tick every frame, and reach the camera, the microphone, and the
-renderer. [Writing a module](/runtime/#writing-a-module) has each shape, and
-the traps that come with native libraries.
+A module can also do these tasks:
 
-## Where to go from here
+- Read buffers in place.
+- Return promises for work on a different thread.
+- Tick in each frame.
+- Access the camera, the microphone, and the renderer.
 
-- [Writing a module](/runtime/#writing-a-module) for every binding shape, the
-  frame tick, and camera and microphone taps.
-- [Building and shipping it](/runtime/#building-and-shipping-it) for profiles,
-  capability flags, build times, and the lock.
-- [The fonts](/runtime/#the-fonts) for building a typeface set into the
+[Write a module](/runtime/#write-a-module) shows each shape. It also
+shows the traps that come with native libraries.
+
+## More information
+
+- [Write a module](/runtime/#write-a-module): all binding shapes, the
+  frame tick, and the camera and microphone taps.
+- [Build the runtime](/runtime/#build-the-runtime): profiles,
+  capability flags, build times, and the lock file.
+- [The fonts](/runtime/#the-fonts): how to build a typeface set into the
   runtime.

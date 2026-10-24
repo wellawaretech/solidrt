@@ -305,9 +305,8 @@ header nav li {
   margin: 0;
 }
 
-/* Section links as ghost buttons: no fill until hover, then the sidebar's
-   fill over its bar laid flat as an underline, at the bar's resting color.
-   The current section keeps the fill, its underline bright. */
+/* Section links: no fill, an underline as wide as the text on hover, at the
+   sidebar bar's resting color. The current section's underline is bright. */
 header nav a {
   position: relative;
   display: inline-block;
@@ -320,16 +319,11 @@ header nav a {
   text-transform: capitalize;
 }
 
-header nav a:hover,
-#site-sections a[aria-current] {
-  background: var(--sol-surface-gradient);
-}
-
 #site-sections a:hover::after,
 #site-sections a[aria-current]::after {
   content: "";
   position: absolute;
-  inset: auto 0 0 0;
+  inset: auto var(--sol-spacing-lg) var(--sol-spacing-sm);
   height: var(--sol-accent-line-width);
   background: var(--sol-accent-line-rest);
 }
@@ -346,8 +340,25 @@ header nav > ul:first-child a {
   text-transform: none;
 }
 
-header nav > ul:first-child a:hover {
-  background: transparent;
+/* The brand takes the free space, so the sections and the icon links pack
+   together on the right. */
+header nav > ul:first-child {
+  margin-right: auto;
+}
+
+/* Icon links (GitHub, Discord): muted until hover, no underline. */
+#site-links {
+  gap: 0;
+}
+
+#site-links a {
+  display: flex;
+  padding: var(--sol-spacing-md);
+  color: var(--sol-text-muted);
+}
+
+#site-links a:hover {
+  color: var(--sol-text);
 }
 
 /* The menu button that stands in for the section links on narrow screens,
@@ -363,6 +374,7 @@ header nav > ul:first-child a:hover {
 
   .menu-toggle {
     display: inline-flex;
+    order: 1;
     padding: var(--sol-spacing-md);
     background: transparent;
     color: var(--sol-text);
@@ -373,9 +385,10 @@ header nav > ul:first-child a:hover {
   }
 
   /* Collapsed until the button opens it, then a full-width column under
-     the brand row. */
+     the brand row, which keeps the icon links. */
   #site-sections {
     display: none;
+    order: 2;
     flex-basis: 100%;
     flex-direction: column;
     align-items: stretch;
@@ -630,6 +643,15 @@ th {
   font-weight: var(--sol-label-weight);
   color: var(--sol-text-muted);
   background: var(--sol-panel-stroke);
+  /* A header is a short label, never long code: it breaks between words
+     only, so a squeezed column cannot split one mid-word. */
+  overflow-wrap: normal;
+}
+
+/* A token of inline code (see unbrokenTokens in markdown.ts): the code
+   breaks between tokens, never inside one. */
+.nobr {
+  white-space: nowrap;
 }
 
 /* Inline code inside a panel would vanish into it; it takes the outline's

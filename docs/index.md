@@ -299,7 +299,7 @@ order: guides core tools runtime extensions architecture
 <li style="--dot: var(--hero-mint)">Linux &middot; Windows &middot; macOS &middot; Android</li>
 </ul>
 <div class="hero-actions">
-<a href="/guides/the-basics/" role="button">Get started &rarr;</a>
+<a href="/guides/basics/" role="button">Get started &rarr;</a>
 <span class="hero-command"><span>$</span>bun create solidrt my-app</span>
 </div>
 </div>
@@ -434,7 +434,7 @@ render(() => <App />)
     code. Nothing to eject from, because it is an addition, not a rewrite.
   </p>
   <div class="hero-actions">
-    <a href="/guides/the-basics/" role="button">Get started &rarr;</a>
+    <a href="/guides/basics/" role="button">Get started &rarr;</a>
     <span class="hero-command"><span>$</span>bun create solidrt my-app</span>
   </div>
 </section>

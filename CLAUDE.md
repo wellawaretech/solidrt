@@ -21,6 +21,9 @@ The rendertree must stay engine-independent: no QuickJS/`rquickjs` (or any JavaS
 
 `flux/src/` has three plugin layers, named for what they marshal (and a fourth, `test_plugins/`, for `flux:test`: behind the `test` feature, on the `flux` binary only, over flux's own facilities): `standards_plugins/` for web-standard JS APIs (e.g. `fetch`, `Response`, `Headers`, `console`, timers) whatever backs them, `forge_plugins/` for the `flux:*` capability modules (e.g. `serve`, `file`, `sqlite`) that marshal forge cores, and `alloy_plugins/` (behind the `gui` feature, exported as `flux::gui`) for the alloy-backed render/capture bindings. A web standard goes in `standards_plugins/`; otherwise the crate marshalled decides. `flux/src/plugins/` holds only the shared marshalling toolkit (`js_error.rs`/`marshal.rs`/`value.rs`), the event bus mechanism (`events.rs`, no JS surface of its own) and context setup.
 
+## Documentation
+Write the prose and headings in `docs/` in ASD-STE100 Simplified Technical English: approved words, short sentences, one instruction per sentence, active voice. Product, command and API names stay as they are (`sol pack` is "pack"). The landing page (`docs/index.md`) is exempt.
+
 # API design
 Look at standard (web) functionality through a solidrt lens: solidrt runs a single known application, not the whole internet. Keep the standard names and shapes, but simplify the semantics to what an app needs, and document the simplified contract plainly.
 

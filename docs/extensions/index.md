@@ -1,32 +1,33 @@
 # Extensions
 
-Extensions are built on top of [Core](/core/): component sets, theming, and
-app structure. They are siblings, not a stack. You pick one, some, or none,
-and you can always drop down to Core underneath, because an extension
-component is just a component that returns Core elements.
+An extension is a layer above [Core](/core/). Extensions supply component
+sets, theming, and app structure. Extensions are parallel. They do not go on
+top of each other. You can use one, some, or no extensions. You can always
+use Core directly below an extension. An extension component is only a
+component that returns Core elements.
 
-Today there are three, all written by the SolidRT project:
-[Components](/extensions/components/), [2D](/extensions/2d/) and
-[3D](/extensions/3d/). There is room for others, including community and
-commercial ones.
+At this time, there are three extensions. The SolidRT project wrote all
+three: [Components](/extensions/components/), [2D](/extensions/2d/) and
+[3D](/extensions/3d/). Other extensions are possible, from the community and
+from companies.
 
 ## Components
 
 *Status: evolving.*
 
-`@solidrt/components` is the official component extension: the widgets you
-would otherwise write yourself for every app.
+`@solidrt/components` is the official component extension. It contains the
+widgets that you must otherwise write yourself for each app.
 
 - **Input:** `Button`, `TextInput`, `RichTextEditor`, `Checkbox`, `RadioGroup`
   with `Radio`, `Switch`, `Slider`, `Select`, `SegmentedControl`, `Pressable`.
 - **Structure:** `Window`, `View`, `Card`, `Divider`, `ScrollView`,
   `SplitView`, `NavShell`, `SafeArea`, `Portal`.
 - **Content and feedback:** `Text`, `Image`, `Icon`, `Badge`, `Spinner`,
-  `ProgressBar`, `Modal`, `Tooltip`, `ContextMenu`, `QrCode` (its own
+  `ProgressBar`, `Modal`, `Tooltip`, `ContextMenu`, `QrCode` (in a different
   entry, `@solidrt/components/qrcode`).
 
-Start a project on it by picking `@solidrt/components` in the scaffolder,
-or add it to an existing one:
+To make a project with it, select `@solidrt/components` in the scaffolder.
+To add it to a project that you have, use this command:
 
 ```sh
 bun add @solidrt/components
@@ -34,8 +35,9 @@ bun add @solidrt/components
 
 ### Theming
 
-Colors, spacing, and the type scale come from one reactive theme. Switching
-it recolors the running UI without remounting anything:
+Colors, spacing, and the type scale come from one reactive theme. When you
+change the theme, the UI that runs gets the new colors immediately. No
+component mounts again:
 
 ```tsx
 import { setTheme, lightTheme } from "@solidrt/components"
@@ -46,34 +48,40 @@ setTheme({ color: { primary: "#f04e23" } })  // or override one value
 
 ### Gestures and policy
 
-Every gesture in the app goes through Core's single gesture arena, so a
-press inside a scrolling list resolves the way you expect: the press claims
-provisionally, and a pan that passes its slop steals the gesture or lets it
-go. Cross-cutting behavior (motion, density, focus ring) lives in a policy
-layer, derived from Core's `capabilities` and `env`, rather than in each
-widget.
+All gestures in the app go through the single gesture arena of Core. Thus,
+a press inside a list that scrolls operates as you expect. The press claims
+the gesture first, but not permanently. A pan that moves past its slop
+takes the gesture. Otherwise, the pan releases it.
+
+Behavior that applies to all widgets (motion, density, focus ring) is in a
+policy layer, not in each widget. This layer gets its values from the
+`capabilities` and `env` of Core.
 
 ### What "evolving" means
 
-The APIs still change between releases. Build with it, and expect to move
-with it. Core underneath is the layer that changes least, which is why
-[The basics](/guides/the-basics/) teaches Core first.
+The APIs can change between releases. You can use the extension in your
+app, but expect changes to your code when the APIs change. Core, below the
+extension, changes the least. For this reason,
+[Basics](/guides/basics/) teaches Core first.
 
-The full component list with props and examples is under
+For the full list of components, with props and examples, see
 [@solidrt/components](/extensions/components/).
 
 ## 2D
 
 *Status: experimental.*
 
-`@solidrt/2d` is the extension for 2D-heavy apps and games. Core already
-draws 2D well - a `d-texture` with an atlas sub-rect is a sprite, with native
-transitions and pointer events - and carries populations into the low
-thousands. `@solidrt/2d` starts where that stops: an instanced sprite layer
-puts thousands of per-frame animated sprites (entities, particles, bullets)
-into one GPU buffer and one draw call, composited into your UI tree as an
-ordinary texture. Moving ten thousand sprites is ten thousand float stores
-and one publish, not twenty thousand property writes.
+`@solidrt/2d` is the extension for apps and games with much 2D content. Core
+already draws 2D content well. A `d-texture` with an atlas sub-rect is a
+sprite, with native transitions and pointer events. Core can show a few
+thousand of these sprites.
+
+`@solidrt/2d` is for larger quantities. Its instanced sprite layer puts
+thousands of sprites into one GPU buffer and one draw call. These sprites
+(entities, particles, bullets) can move in each frame. The layer composites
+into your UI tree as an ordinary texture. To move ten thousand sprites, the
+layer does ten thousand float stores and one publish. It does not do twenty
+thousand property writes.
 
 ```tsx
 import { decodeImage } from "@solidrt/core"
@@ -91,20 +99,21 @@ let frames = grid(atlas, 4, 4)
 </window>
 ```
 
-A layer declares the atlases it draws from and binds them as one draw, so
-sprites from several sheets interleave freely; every frame carries the
-sheet it was cut from.
+A layer declares the atlases that it uses and binds them as one draw. Thus,
+sprites from different sheets can mix in any order. Each frame keeps a
+reference to its sheet.
 
-Pick it in the scaffolder or `bun add @solidrt/2d`. Overview and the export
-surface are under [@solidrt/2d](/extensions/2d/).
+To use it, select it in the scaffolder, or use `bun add @solidrt/2d`. For an
+overview and the export surface, see [@solidrt/2d](/extensions/2d/).
 
 ## 3D
 
 *Status: experimental.*
 
-`@solidrt/3d` is a retained 3D scene graph above Core's GPU layer: meshes,
-materials, and a camera declared as Solid components, rendered into an
-ordinary texture in your UI tree. A static scene costs zero GPU passes.
+`@solidrt/3d` is a retained 3D scene graph above the GPU layer of Core. You
+declare meshes, materials, and a camera as Solid components. The scene
+renders into an ordinary texture in your UI tree. A static scene uses no GPU
+passes.
 
 ```tsx
 import { box, Mesh, PerspectiveCamera, Scene, unlit } from "@solidrt/3d"
@@ -117,6 +126,6 @@ import { box, Mesh, PerspectiveCamera, Scene, unlit } from "@solidrt/3d"
 </window>
 ```
 
-Pick it in the scaffolder or `bun add @solidrt/3d`. Expect more API churn
-here than in the rest of SolidRT. Overview and the export surface are under
-[@solidrt/3d](/extensions/3d/).
+To use it, select it in the scaffolder, or use `bun add @solidrt/3d`. The
+API of this extension changes more frequently than the rest of SolidRT. For
+an overview and the export surface, see [@solidrt/3d](/extensions/3d/).

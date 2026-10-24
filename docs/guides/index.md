@@ -1,20 +1,28 @@
 ---
-order: the-basics dev-loop react-and-solid coming-from-react-native coming-from-electron custom-runtime
+order: basics dev-loop coming-from-html coming-from-react coming-from-react-native coming-from-electron animation custom-runtime
 ---
 # Guides
 
-Code samples and walkthroughs for common tasks with SolidRT
+Code examples and step-by-step procedures for usual tasks with SolidRT.
 
-- [The basics](/guides/the-basics/) - scaffold an app, run it, change it, and
-  pack it into a standalone executable. Start here.
-- [The dev loop](/guides/dev-loop/) - edit, save, see it: what reloads and
-  when, running on your phone, and what to do when something wedges.
-- [React and SolidJS 2](/guides/react-and-solid/) - a quick comparison of
+- [Basics](/guides/basics/) - make an app, run it, change it, and
+  pack it into one executable file. Start here.
+- [Dev loop](/guides/dev-loop/) - edit, save, see the result. What
+  causes a reload, how to run the app on your phone, and what to do when the
+  window does not respond.
+- [Coming from HTML](/guides/coming-from-html/) - an overview of the
+  elements, compared to HTML, and the usual errors.
+- [Coming from React](/guides/coming-from-react/) - a short comparison of
   the reactive model, for React developers.
-- [Coming from Expo/React Native](/guides/coming-from-react-native/) -
-  elements, device APIs and the workflow, mapped to SolidRT.
+- [Coming from Expo/React Native](/guides/coming-from-react-native/) - the
+  elements, device APIs and workflow, compared to SolidRT. What SolidRT has
+  that React Native does not have, and what SolidRT does not have.
 - [Coming from Electron](/guides/coming-from-electron/) - one process, no
-  browser: what replaces what.
-- [Build a custom runtime](/guides/custom-runtime/) - advanced: your own
-  runtime with only the features you want, then extended with native code of
-  your own.
+  browser, one executable file. What does not work the same, and what
+  SolidRT does not have.
+- [Animation](/guides/animation/) - animate with the `transition` prop and
+  with `onFrame`: prop changes, enter and exit, layout changes, and what is
+  fast to animate.
+- [Build a custom runtime](/guides/custom-runtime/) - advanced. Make your
+  own runtime with only the features that you want. Then add your own native
+  code to it.

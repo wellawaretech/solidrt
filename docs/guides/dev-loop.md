@@ -1,11 +1,12 @@
-# The dev loop
+# Dev loop
 
-Edit, save, see it. This guide picks up where [The basics](/guides/the-basics/)
-left off: a project scaffolded and `bun run dev` running.
+Edit, save, see the result. This guide starts at the end of
+[Basics](/guides/basics/). You have a project, and `bun run dev`
+runs.
 
-## Make it react
+## Make the app respond to input
 
-The loop works for behavior, not just text. Replace the contents of
+The loop also works for behavior, not only for text. Replace the contents of
 `src/index.tsx` with a signal and a pointer handler:
 
 ```tsx
@@ -31,75 +32,100 @@ function App() {
 render(() => <App />)
 ```
 
-Save, click the window, and the number goes up. No component ran again:
-reading `count()` inside the JSX subscribed that one piece of text to that
-one signal, and each update writes straight to the native node.
-[Core](/core/) explains this model in full.
+Save the file and click the window. The number increases. No component runs
+again. The JSX reads `count()`, and this read connects that one text to that
+one signal. Each update writes directly to the native node.
+[Core](/core/) gives a full description of this model.
 
-## What triggers a reload
+## What causes a reload
 
-The server watches every file the running bundle was built from: your
-modules, the dependencies it bundles, `package.json`, `tsconfig.json`, and
-the `assets/` folder. Save any of them and every connected window reloads.
-A file the app doesn't import never triggers a reload.
+The server monitors each file that it used to build the running bundle:
 
-A reload restarts the app, so the count above goes back to 0.
+- Your modules.
+- The dependencies in the bundle.
+- `package.json` and `tsconfig.json`.
+- The `assets/` folder.
 
-`console.log` from the local window prints in the terminal where you ran
-`bun run dev`, with stack traces pointing at your `.tsx` source.
+When you save one of these files, all connected windows load the app again.
+A file that the app does not import does not cause a reload.
 
-## On your phone
+A reload starts the app again. Thus, the count in the example above goes
+back to 0.
 
-The `dev` script runs the server with `--lan`, so devices on your network
-can reach it. Connect an Android phone or tablet with USB debugging on, and:
+The `console.log` output from the local window shows in the terminal where
+you started `bun run dev`. The stack traces refer to your `.tsx` source.
+
+## Run the app on your phone
+
+The `dev` script starts the server with `--lan`. Thus, devices on your
+network can connect to the server. Connect an Android phone or tablet that
+has USB debugging on. Keep `bun run dev` open. In a second terminal, run
+this command:
 
 ```sh
 bun run android
 ```
 
-The first time, this asks which Android targets the project builds for:
-arm64-v8a for current phones and tablets, armeabi-v7a for older phones and
-many Android TVs, x86_64 for emulators and Chromebooks. It then installs the
-SolidRT client on the device over adb and launches it against your server.
-adb comes with Android Platform Tools; if none is installed, the command
-offers to download them into `~/.solidrt`.
+The first time, the command asks which Android targets the project builds
+for:
 
-From then on, a save reloads the phone and the desktop window together: one
-server drives every client connected to it. The device can also join without
-a cable: at startup the server prints its address and a QR code, and the
-SolidRT player on the device can scan the code or take the address typed in.
-A second computer joins with `bun run client --server <address>`.
+- arm64-v8a: current phones and tablets.
+- armeabi-v7a: older phones and many Android TVs.
+- x86_64: emulators and Chromebooks.
 
-## When something wedges
+Then the command installs the SolidRT client on the device with adb. It
+starts the client, and the client connects to your server. adb is part of
+Android Platform Tools. If Platform Tools is not installed, the command
+can download it into `~/.solidrt`.
 
-The server outlives its window. If the window hangs or you close it, the
-server keeps running, and
+After this, when you save a file, the phone and the desktop window load the
+app again at the same time. One server controls all clients that connect to
+it.
+
+After the first `bun run android`, the SolidRT player stays on the device.
+Then the device can connect without a cable. When the server starts, it
+shows its address and a QR code. On the device, the player can scan the
+code. You can also type the address into the player.
+
+To connect a second computer, open a copy of the project on that computer.
+Then run `bun run client --server <address>`.
+
+## When the window does not respond
+
+If the window does not respond, or if you close it, the server continues to
+run. This command opens a new window and connects it to the server:
 
 ```sh
 bun run client
 ```
 
-attaches a fresh window to it. To restart everything, stop `bun run dev`
-with Ctrl-C and start it again.
+To start all again, stop `bun run dev` with Ctrl-C. Then start it again.
 
-## More from the terminal
+## More terminal commands
 
-The terminal running `bun run dev` takes commands at the `sol>` prompt:
-`reload` pushes the app again, `list` shows the connected clients, `whoami`
-reprints the address and its QR code, `watch off` stops reloading on save,
-and `quit` stops the server. Tab completes commands.
+The terminal that runs `bun run dev` accepts commands at the `sol>` prompt:
 
-A few flags for less common setups:
+- `reload` sends the app again.
+- `list` shows the connected clients.
+- `whoami` shows the address and its QR code again.
+- `watch off` stops the reload when you save.
+- `quit` stops the server.
 
-- `bun run dev --tunnel` connects devices through a peer-to-peer tunnel
-  instead of the local network, for when the phone can't reach your machine.
-- `bun run dev --proxy-http` routes the app's `fetch` calls through your
-  machine and caches the responses, for devices that need data only your
-  machine can reach.
+Push Tab to complete a command.
 
-Before you commit, `bun run check` builds and typechecks every entry
-without writing any output.
+Some flags are for less usual setups:
 
-The reference pages cover every flag: [sol run](/tools/server/),
+- `bun run dev --tunnel` connects devices through a peer-to-peer tunnel,
+  not through the local network. Use it when the phone cannot connect to
+  your computer. With `--tunnel`, the QR code contains the tunnel ticket,
+  not the address.
+- `bun run dev --proxy-http` sends the app's `fetch` calls through your
+  computer and keeps the responses in a cache. Use it for devices that need
+  data that only your computer can get.
+
+Before you commit, run `bun run check`. It builds and typechecks all
+entries. It does not write output.
+
+The reference pages describe all flags: [sol run](/tools/server/),
 [sol client](/tools/client/), [sol android](/tools/android/) and
 [sol check](/tools/check/).

@@ -9,6 +9,8 @@
 // Everything else the site needs (css, icon) lives in assets/ and is copied
 // byte-for-byte. Generated pages (the References) join the same page list, so
 // the in-section sidebar lists hand-written and generated pages alike.
+// Only the landing page and the PUBLISHED sections are written; the rest of
+// the tree is still read and checked, and links into it lose their link.
 
 import { file, dir } from "flux:fs";
 import { serve } from "flux:http";
@@ -41,6 +43,9 @@ const MOUNTS: Record<string, Mount> = {
   "/core": { dir: "../packages/core/docs" },
   "/tools": { index: "../packages/cli/README.md", pages: "../packages/cli/src", label: "Tools" },
 };
+// Top-level sections put on the site, beside the landing page. The others are
+// not published yet.
+const PUBLISHED = ["guides"];
 const ASSETS_DIR = "assets";
 const OUT_DIR = "dist/site";
 const TEMPLATE = "template.json";
@@ -161,6 +166,20 @@ async function walk(rel: string): Promise<string[]> {
   return files;
 }
 
+// Whether a page URL path is on the site: the landing page, or in a PUBLISHED
+// section.
+function published(url: string): boolean {
+  return url === "" || PUBLISHED.includes(url.split("/")[1]!);
+}
+
+// A link into an unpublished page keeps its text and loses the link: the
+// sources link the whole tree, the site is only part of it.
+function unlinkUnpublished(html: string, unpublished: Set<string>): string {
+  return html.replace(/<a\b[^>]*?\bhref="(\/[^"#?]*)[^"]*"[^>]*>([\s\S]*?)<\/a>/g, (link, path: string, text: string) =>
+    unpublished.has(path.replace(/\/$/, "")) ? text : link,
+  );
+}
+
 // The site: each output file's URL path ("/guides/index.html") and contents.
 type Site = Map<string, string | Uint8Array>;
 
@@ -200,23 +219,28 @@ async function render(): Promise<Site> {
       label: front.nav ?? sectionLabel ?? own ?? url.slice(url.lastIndexOf("/") + 1),
     });
   }
-  let generated = await referencePages();
+  let allGenerated = await referencePages();
+  let unpublished = new Set(
+    [...sources.map((s) => s.url), ...allGenerated.map((g) => g.path)].filter((url) => !published(url)),
+  );
+  let shown = sources.filter((s) => published(s.url));
+  let generated = allGenerated.filter((g) => published(g.path));
 
   let pages: PageEntry[] = [
-    ...sources.map((s) => ({ path: s.url, title: s.label })),
+    ...shown.map((s) => ({ path: s.url, title: s.label })),
     ...generated.map((g) => ({ path: g.path, title: g.title })),
   ];
   // The nav is the section index pages: one path segment, in document order.
   let nav = pages.filter((p) => p.path.length > 1 && !p.path.includes("/", 1));
 
   // Pass 2: render.
-  for (let s of sources) {
+  for (let s of shown) {
     let page = { title: pageTitle(s.own), nav: buildNav(s.url, nav, rules), sidebar: buildSidebar(s.url, pages, rules) };
-    site.set(s.url + "/index.html", await markdownToHtml(s.body, rules, page));
+    site.set(s.url + "/index.html", unlinkUnpublished(await markdownToHtml(s.body, rules, page), unpublished));
   }
   for (let g of generated) {
     let page = { title: pageTitle(g.title), nav: buildNav(g.path, nav, rules), sidebar: buildSidebar(g.path, pages, rules) };
-    site.set(g.path + "/index.html", await renderPage(g.html, rules, page));
+    site.set(g.path + "/index.html", unlinkUnpublished(await renderPage(g.html, rules, page), unpublished));
   }
 
   let before = site.size;
@@ -224,7 +248,10 @@ async function render(): Promise<Site> {
   let assets = site.size - before;
   site.set("/css/tokens.css", tokensCss());
 
-  console.log(`Built ${sources.length} pages, generated ${generated.length}, with ${assets} assets and css/tokens.css`);
+  console.log(
+    `Built ${shown.length} pages, generated ${generated.length}, with ${assets} assets and css/tokens.css` +
+      ` (${unpublished.size} pages not published)`,
+  );
 
   let missing = await unpulled(COVERED, authored);
   if (missing.length > 0) console.log(`Not shown anywhere, from ${COVERED}: ${missing.join(", ")}`);
