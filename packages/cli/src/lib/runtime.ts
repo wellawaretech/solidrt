@@ -19,9 +19,8 @@
 // app on the device, `<appId>.player` labelled "<displayName> Player"
 // (playerIdentity), installed beside the stock Player and beside other
 // projects' rather than over them, and told apart from the project's packed
-// app by the suffix; so a project with a runtime needs an appId that is a
-// valid Android id. `sol init --runtime` sets one, and a project without is
-// refused here.
+// app by the suffix; so deriving it needs an appId that is a valid Android
+// id, and a project without one is refused then, not on the desktop.
 
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
@@ -74,14 +73,18 @@ function load(): ProjectRuntime | null {
   let project = loadProject(existsSync("package.json") ? process.cwd() : null)
   let declared = project?.config.runtime
   if (!project || !declared) return null
-  let appId = project.config.appId
-  if (appId === undefined || !ANDROID_APP_ID.test(appId)) {
-    fail(
-      `"solidrt": "runtime" needs "appId" to be an Android application id (the runtime's player is named after it, ${appId === undefined ? "none is set" : `"${appId}" is not one`}): use ${ANDROID_APP_ID_HINT}`,
-    )
-  }
   let dir = resolve(project.dir, declared)
-  let player = playerIdentity(loadAppIdentity(projectEntry(project.dir), project.dir))
+  // The Player's identity, wanted only when one is derived: the appId names
+  // an Android app and plays no part on the desktop.
+  let player = () => {
+    let appId = project.config.appId
+    if (appId === undefined || !ANDROID_APP_ID.test(appId)) {
+      fail(
+        `The project's Android player is named after the app, so "solidrt": "appId" in package.json must be an Android application id (${appId === undefined ? "none is set" : `"${appId}" is not one`}): use ${ANDROID_APP_ID_HINT}`,
+      )
+    }
+    return playerIdentity(loadAppIdentity(projectEntry(project.dir), project.dir))
+  }
   let noticed = new Set<string>()
   // A target the project did not build: the error when a module of the
   // runtime is needed, else null, with a notice (once per path) when a
@@ -104,7 +107,8 @@ function load(): ProjectRuntime | null {
     },
     apk(abi, base, needed) {
       let libDir = join(dir, "android", abi)
-      return derive("Player", libDir, PLAYER_APK, abi, base, player) ?? missing(`Player libs for ${abi}`, libDir, needed, base !== null)
+      if (libNames(libDir).length === 0) return missing(`Player libs for ${abi}`, libDir, needed, base !== null)
+      return derive("Player", libDir, PLAYER_APK, abi, base, player())
     },
     runnerApk(abi, base, needed) {
       let libDir = join(dir, "android-runtime", abi)

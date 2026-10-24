@@ -3,7 +3,7 @@ import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { styleText } from "node:util"
 import { source, values } from "../lib/args"
-import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, CLI_VERSION } from "../lib/project"
+import { CLI_VERSION } from "../lib/project"
 import { abort, intro, multiselect, outro, spinner, step, text } from "../lib/prompt"
 import { runQuiet } from "../lib/util"
 import { RUNTIME_DIR, RUNTIME_TYPES, renderRuntime, withRuntime, withRuntimeIgnore, withRuntimeTypes } from "./runtime"
@@ -116,32 +116,12 @@ function resolveTemplate(extensions: Extension[]): string {
   return templates.join("+") || DEFAULT_TEMPLATE
 }
 
-// The app's appId, which a runtime needs as a valid Android id: its Player
-// is named after it (lib/runtime.ts), so it is set here, once, rather than
-// derived from a package name that may change and orphan the installed
-// Player. The one in package.json when it qualifies, else asked for; a
-// non-TTY cannot ask, so it says what to set.
-async function requireAppId(pkg: any): Promise<string> {
-  let current = pkg.solidrt?.appId
-  if (typeof current === "string" && ANDROID_APP_ID.test(current)) return current
-  let why = `A runtime's player is named after the app, so "solidrt": "appId" in package.json must be an Android application id: ${ANDROID_APP_ID_HINT}`
-  if (!process.stdin.isTTY) abort(`${why}; set it and run sol init --runtime again`)
-  console.log(why)
-  for (;;) {
-    let answer = await text("Application id")
-    if (ANDROID_APP_ID.test(answer)) return answer
-    console.log(`"${answer}" is not one: use ${ANDROID_APP_ID_HINT}`)
-  }
-}
-
 // Write the runtime into the project at `dir` (its package.json read for
-// the app's name and identity) and wire it in: the runtime key and the
-// appId, the types in tsconfig, the target dir ignored. What cannot be
-// edited is said, not skipped.
+// the app's name) and wire it in: the runtime key, the types in tsconfig,
+// the target dir ignored. What cannot be edited is said, not skipped.
 async function writeRuntime(dir: string): Promise<void> {
   let pkgPath = join(dir, "package.json")
   let pkg = JSON.parse(await readFile(pkgPath, "utf8"))
-  let appId = await requireAppId(pkg)
   let templates: Record<string, string> = {}
   for (let { from, to } of RUNTIME_FILES) {
     templates[to] = await readFile(join(SCAFFOLD_DIR, "runtime", from), "utf8")
@@ -160,7 +140,7 @@ async function writeRuntime(dir: string): Promise<void> {
   let lock = [join(PACKAGE_DIR, "runtime", "Cargo.lock"), ...(existsSync(join(CHECKOUT_DIR, "lattice", "Cargo.toml")) ? [join(CHECKOUT_DIR, "Cargo.lock")] : [])].find((path) => existsSync(path))
   if (lock) await cp(lock, join(dir, RUNTIME_DIR, "Cargo.lock"))
   else console.log(`No Cargo.lock to seed ${RUNTIME_DIR}/ from; the first build writes one`)
-  await writeFile(pkgPath, withRuntime(await readFile(pkgPath, "utf8"), appId))
+  await writeFile(pkgPath, withRuntime(await readFile(pkgPath, "utf8")))
   let tsconfigPath = join(dir, "tsconfig.json")
   let tsconfig = existsSync(tsconfigPath) ? withRuntimeTypes(await readFile(tsconfigPath, "utf8")) : null
   if (tsconfig) await writeFile(tsconfigPath, tsconfig)

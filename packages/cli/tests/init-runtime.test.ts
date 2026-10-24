@@ -24,11 +24,11 @@ test("the templates get the crate, its lib name and the release", () => {
   expect(files["runtime/src/bin/solidrt.rs"]).toBe("my_app_runtime::program()")
 })
 
-test("package.json names the runtime and the app id, keeping the rest", () => {
-  let out = JSON.parse(withRuntime('{"name": "x", "solidrt": {"appId": null, "runtime": null, "org": "o"}, "scripts": {}}', "com.acme.x"))
-  expect(out.solidrt).toEqual({ appId: "com.acme.x", runtime: RUNTIME_DIST, org: "o" })
+test("package.json names the runtime, keeping the rest", () => {
+  let out = JSON.parse(withRuntime('{"name": "x", "solidrt": {"appId": null, "runtime": null, "org": "o"}, "scripts": {}}'))
+  expect(out.solidrt).toEqual({ appId: null, runtime: RUNTIME_DIST, org: "o" })
   expect(out.scripts).toEqual({})
-  expect(JSON.parse(withRuntime('{"name": "x"}', "com.acme.x")).solidrt).toEqual({ appId: "com.acme.x", runtime: RUNTIME_DIST })
+  expect(JSON.parse(withRuntime('{"name": "x"}')).solidrt).toEqual({ runtime: RUNTIME_DIST })
 })
 
 test("tsconfig includes the module types once", () => {
