@@ -34,6 +34,10 @@ import { tokensCss } from "./tokens.ts";
 const COVERED = "packages/core/src/types.d.ts";
 
 const DOCS_DIR = "../docs";
+// The page for an unknown path. Its "_" keeps it out of the tree; the build
+// writes it to /404.html, where the host (Cloudflare Pages) serves it with a
+// 404 status for every path the site does not have.
+const NOT_FOUND = "/_404.md";
 // Sections whose pages live with the package they document, mounted into
 // the tree at the given section path: a docs/ folder shipped as is, or a
 // composed section whose index is the package README and whose pages are
@@ -233,16 +237,27 @@ async function render(): Promise<Site> {
   ];
   // The nav is the section index pages: one path segment, in document order.
   let nav = pages.filter((p) => p.path.length > 1 && !p.path.includes("/", 1));
+  // Temporary, while only one section is published: the phone menu lists
+  // that section's pages, so it does not open on a lone link to click
+  // through. Remove once a second section is published.
+  let menuPages = nav.length === 1 ? pages.filter((p) => p.path.startsWith(nav[0]!.path + "/")) : [];
+  let headerNav = (current: string) => buildNav(current, nav, rules) + "\n          " + buildNav(current, menuPages, rules, "menu-page");
 
   // Pass 2: render.
   for (let s of shown) {
-    let page = { title: pageTitle(s.own), nav: buildNav(s.url, nav, rules), sidebar: buildSidebar(s.url, pages, rules) };
+    let page = { title: pageTitle(s.own), nav: headerNav(s.url), sidebar: buildSidebar(s.url, pages, rules) };
     site.set(s.url + "/index.html", unlinkUnpublished(await markdownToHtml(s.body, rules, page), unpublished));
   }
   for (let g of generated) {
-    let page = { title: pageTitle(g.title), nav: buildNav(g.path, nav, rules), sidebar: buildSidebar(g.path, pages, rules) };
+    let page = { title: pageTitle(g.title), nav: headerNav(g.path), sidebar: buildSidebar(g.path, pages, rules) };
     site.set(g.path + "/index.html", unlinkUnpublished(await renderPage(g.html, rules, page), unpublished));
   }
+
+  let notFound = await file(DOCS_DIR + NOT_FOUND).text();
+  // Its h1 is markup (spans for the two lines); the title takes the text.
+  let notFoundTitle = h1Of(notFound)?.replace(/<[^>]*>/g, "");
+  let notFoundPage = { title: pageTitle(notFoundTitle), nav: headerNav(""), sidebar: "" };
+  site.set("/404.html", unlinkUnpublished(await markdownToHtml(notFound, rules, notFoundPage), unpublished));
 
   let before = site.size;
   await readTree(ASSETS_DIR, site);
@@ -337,13 +352,17 @@ async function dev(port: number): Promise<void> {
       }
       if (path.endsWith("/")) path += "index.html";
       let contents = site.get(path);
+      let status = 200;
       if (contents === undefined) {
         if (site.has(path + "/index.html")) return new Response(null, { status: 308, headers: { location: path + "/" } });
-        return new Response("Not found", { status: 404 });
+        // As the host does: the 404 page, with a 404 status.
+        path = "/404.html";
+        contents = site.get(path)!;
+        status = 404;
       }
       let ext = path.slice(path.lastIndexOf(".") + 1);
       if (ext === "html") contents = (contents as string).replace("</body>", RELOAD_SCRIPT + "</body>");
-      return new Response(contents, { headers: { "content-type": CONTENT_TYPES[ext] ?? "application/octet-stream" } });
+      return new Response(contents, { status, headers: { "content-type": CONTENT_TYPES[ext] ?? "application/octet-stream" } });
     },
     websocket: {
       open(ws) {

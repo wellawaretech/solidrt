@@ -210,12 +210,14 @@ export function buildSidebar(current: string, pages: PageEntry[], rules: Rules):
 
 /** The site nav: one item per section, in `sections` order, the section
  * holding the page at `current` marked current. */
-export function buildNav(current: string, sections: PageEntry[], rules: Rules): string {
+// `className`, when given, marks every item with that class.
+export function buildNav(current: string, sections: PageEntry[], rules: Rules, className?: string): string {
   let navItem = rules?.page?.navItem;
   if (!navItem) return "";
   return sections
     .map((s) =>
       applyTemplate(navItem, {
+        class: className ? ` class="${className}"` : "",
         href: s.path + "/",
         text: escapeHtml(s.title),
         current: current === s.path || current.startsWith(s.path + "/") ? ' aria-current="true"' : "",

@@ -367,6 +367,12 @@ header nav > ul:first-child {
   display: none;
 }
 
+/* The pages of the one published section, listed in the phone menu only
+   (see menuPages in build.ts). Temporary, like that list. */
+#site-sections > .menu-page {
+  display: none;
+}
+
 @media (max-width: 50rem) {
   header nav {
     flex-wrap: wrap;
@@ -400,6 +406,43 @@ header nav > ul:first-child {
 
   #site-sections a {
     display: block;
+  }
+
+  /* With the section's pages in the menu, the lone section link is left
+     out. */
+  #site-sections > .menu-page {
+    display: list-item;
+  }
+
+  #site-sections:has(> .menu-page) > li:not(.menu-page) {
+    display: none;
+  }
+
+  /* Page links set like the sidebar's: tight rows, page titles as written. */
+  #site-sections > .menu-page > a {
+    padding-top: var(--sol-spacing-sm);
+    padding-bottom: var(--sol-spacing-sm);
+    font-weight: var(--sol-body-weight);
+    text-transform: none;
+  }
+
+  #site-sections > .menu-page > a[aria-current] {
+    font-weight: var(--sol-label-weight);
+  }
+
+  /* In the stacked menu the marker is the sidebar's upright dash on the
+     left, not an underline. */
+  #site-sections a:hover::after,
+  #site-sections a[aria-current]::after {
+    inset: 0 auto 0 0;
+    width: var(--sol-accent-line-width);
+    height: auto;
+  }
+
+  /* The menu then carries the section's pages, so the sidebar stacked
+     above the article would list them a second time. */
+  body:has(#site-sections > .menu-page) aside {
+    display: none;
   }
 }
 
