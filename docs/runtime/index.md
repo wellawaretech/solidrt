@@ -111,6 +111,9 @@ for that code, and the sandbox decides which route to use:
   for each target where the app runs. The app stays a usual portable
   `.solapp`. Only the runtime below it is different.
 
+[Performance](/guides/performance/) shows where the other types of work
+belong.
+
 On purpose, app code cannot load a shared library. A shared library is
 specific to one platform. Thus, the app payload would also be specific to
 one platform. Also, on Android, the only native code that can run is the

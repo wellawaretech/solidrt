@@ -19,6 +19,11 @@ The same app runs on these platforms:
 - Linux (x64 and arm64).
 - Android.
 
+SolidRT is an engine written in Rust, and JavaScript is its scripting
+language. In Electron, the app is JavaScript, and Chromium and Node serve
+it. In SolidRT, the engine does the work of each frame, and your JavaScript
+coordinates it. [Performance](/guides/performance/) explains this model.
+
 The UI code uses SolidJS for reactivity. If you build your Electron UI with
 React, see [Coming from React](/guides/coming-from-react/).
 
@@ -77,6 +82,10 @@ Packages for the browser DOM do not run, because there is no `document`.
 Packages that use the Node built-in modules (`fs`, `path`, `crypto`,
 `Buffer`) also do not run. Packages that use only standard JavaScript and
 the web APIs work as usual.
+
+JavaScript runs in an interpreter, not in a JIT compiler as in V8. Thus,
+move heavy calculations to WebAssembly or to Rust.
+[Performance](/guides/performance/) shows where each type of work belongs.
 
 To set the style, you use props on elements, not stylesheets. A `view` does
 not paint. Thus, for a background, put a `<d-rect>` in the view. Do not use

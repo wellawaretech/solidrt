@@ -15,6 +15,9 @@ order: guides core tools runtime extensions architecture
      so it lives here rather than in site.css. */
   /* The demo's palette, for the hero and the sections below it. */
   article:has(> .hero) {
+    /* The measure of the landing's running text: the hero lead and every
+       section's paragraphs. */
+    --hero-text-width: 36rem;
     --hero-text: #eef2ff;
     --hero-text-2: #a7b2d4;
     --hero-text-3: #66729a;
@@ -47,7 +50,10 @@ order: guides core tools runtime extensions architecture
     color: var(--hero-text-2);
   }
   /* The mark's glow reaches past the screen edge; clip it there rather than
-     let it widen the page. */
+     let it widen the page. The root carries it too: a mobile browser sizes
+     the viewport to the content and pans it sideways unless the root
+     clips, whatever the body does. */
+  :root:has(.hero),
   body:has(.hero) {
     overflow-x: clip;
   }
@@ -63,6 +69,11 @@ order: guides core tools runtime extensions architecture
     padding: 0;
     border-radius: 0;
     background: none;
+  }
+  /* Section text keeps the lead's measure, so every paragraph on the page
+     ends at the same right edge. */
+  article:has(> .hero) > section > p {
+    max-width: var(--hero-text-width);
   }
   /* A section's heading is its eyebrow. */
   article:has(> .hero) > section > h2.eyebrow {
@@ -126,7 +137,7 @@ order: guides core tools runtime extensions architecture
     color: transparent;
   }
   .hero-lead {
-    max-width: 36rem;
+    max-width: var(--hero-text-width);
     font-size: 1.2rem;
     line-height: 1.55;
     text-wrap: pretty;
@@ -240,8 +251,15 @@ order: guides core tools runtime extensions architecture
   .closing-title > span {
     display: block;
   }
+  /* The band's paragraphs are prose, at the size of every other section's
+     text; only the hero's own lead is larger. */
   .closing > .hero-lead {
-    margin: 0 0 calc(var(--sol-spacing-xl) * 2);
+    font-size: inherit;
+    line-height: inherit;
+  }
+  /* The call to action keeps its distance from the text above it. */
+  .closing > .hero-lead:has(+ .hero-actions) {
+    margin-bottom: calc(var(--sol-spacing-xl) * 2);
   }
   /* The mark: the logo over a soft glow twice its size, as in the demo. */
   .hero-mark {
@@ -294,8 +312,7 @@ order: guides core tools runtime extensions architecture
 <p class="hero-lead">SolidRT lets you build cross-platform native apps with familiar web technologies. Built from the ground up for developers and AI agents to work together.</p>
 <ul class="hero-chips">
 <li style="--dot: var(--hero-amber)">Rust engine, GPU rendering</li>
-<li style="--dot: var(--hero-blue)">SolidJS 2.0</li>
-<li style="--dot: var(--hero-violet)">2D and 3D built in</li>
+<li style="--dot: var(--hero-blue)">SolidJS 2.0 + TypeScript</li>
 <li style="--dot: var(--hero-mint)">Linux &middot; Windows &middot; macOS &middot; Android</li>
 </ul>
 <div class="hero-actions">
@@ -405,9 +422,9 @@ render(() => <App />)
     <a href="https://wellawaretech.com/">Well-Aware Technologies</a> and
     developed in the open on
     <a href="https://github.com/wellawaretech/solidrt">GitHub</a>. Why it
-    exists is written up in
+    exists is written up 
     <a href="https://wellawaretech.com/blog/why/">
-    Why?</a>
+    here</a>.
   </p>
   <p>
     SolidRT is free and open source. If it is useful to you or your

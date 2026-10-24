@@ -36,13 +36,15 @@ export function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-// Inline code breaks at its spaces only: each space-separated token is kept
-// whole, so `d-texture` never splits at the hyphen and an identifier never
-// splits mid-word, while a long snippet can still wrap on a narrow screen.
+// An identifier in inline code is kept whole: `d-texture` never splits at the
+// hyphen, `getBoundingBoxViewport` never mid-word. Other tokens (paths, `::`
+// chains) keep their break points, so a long one cannot widen a phone page.
+const IDENTIFIER = /^[\w$-]+$/;
+
 function unbrokenTokens(html: string): string {
   return html
     .split(" ")
-    .map((token) => (token ? `<span class="nobr">${token}</span>` : token))
+    .map((token) => (IDENTIFIER.test(token) ? `<span class="nobr">${token}</span>` : token))
     .join(" ");
 }
 
@@ -95,6 +97,13 @@ function buildRenderer(
   if (codespan)
     r.codespan = ({ text }) =>
       applyTemplate(codespan, { text: unbrokenTokens(escapeHtml(text)) });
+
+  // A table renders as marked's own, inside the template's wrapper.
+  let table = elements.table;
+  if (table)
+    r.table = function (token) {
+      return applyTemplate(table, { text: Renderer.prototype.table.call(this, token) });
+    };
 
   let blockquote = elements.blockquote;
   if (blockquote)

@@ -14,6 +14,7 @@
 
 import { file, dir } from "flux:fs";
 import { serve } from "flux:http";
+import { interfaces } from "flux:net";
 import { argv, exit } from "flux:process";
 import {
   configureMarked,
@@ -310,14 +311,23 @@ const RELOAD_SCRIPT = `<script>
 })(false);
 </script>`;
 
-// Serve the site from memory on `port` (0: any free one), rebuilding it when
-// a source changes and reloading the open pages. A failed rebuild keeps the
-// last good site.
+// The LAN address to announce: the IPv4 of the interface holding the default
+// route, which is the one other hosts reach (VPN and bridge interfaces are up
+// too). Without a default route, the first up, non-loopback IPv4.
+function lanAddress(): string | undefined {
+  let reachable = interfaces().filter((i) => i.up && !i.loopback);
+  let v4 = (list: typeof reachable) => list.flatMap((i) => i.addrs).find((a) => a.family === "v4")?.ip;
+  return v4(reachable.filter((i) => i.default)) ?? v4(reachable);
+}
+
+// Serve the site from memory on `port` (0: any free one), on every interface
+// so a phone on the LAN can open it, rebuilding it when a source changes and
+// reloading the open pages. A failed rebuild keeps the last good site.
 async function dev(port: number): Promise<void> {
   let site: Site = new Map();
   let server = serve({
     port,
-    host: "127.0.0.1",
+    host: "0.0.0.0",
     fetch(req, server) {
       // The path of the absolute request URL, without query or fragment.
       let path = decodeURIComponent(req.url.replace(/^\w+:\/\/[^/]*/, "").replace(/[?#].*$/, ""));
@@ -379,7 +389,9 @@ async function dev(port: number): Promise<void> {
   });
 
   await rebuild();
-  console.log(`Serving the site at http://127.0.0.1:${server.port}/, rebuilding on change`);
+  let lan = lanAddress();
+  let also = lan ? ` and http://${lan}:${server.port}/` : "";
+  console.log(`Serving the site at http://127.0.0.1:${server.port}/${also}, rebuilding on change`);
 }
 
 if (argv[0] === "--dev") await dev(Number(argv[1] ?? 0));

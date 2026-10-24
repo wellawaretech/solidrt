@@ -3,6 +3,13 @@
 The element model is almost the same as the React Native model: a small
 set of native elements, with flexbox layout.
 
+The role of JavaScript is different. SolidRT is an engine written in Rust,
+and JavaScript is its scripting language. In React Native, the app is
+JavaScript, and the native side serves it. In SolidRT, the engine does the
+work of each frame, for example the animation and the layout, and your
+JavaScript coordinates it. [Performance](/guides/performance/) explains
+this model.
+
 If you build with Expo, the workflow is also familiar. There is a dev
 server, a client app that connects to the server, and one command that
 builds an installable app. The client runs on all devices: Windows, macOS

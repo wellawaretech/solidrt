@@ -1,5 +1,5 @@
 ---
-order: basics dev-loop coming-from-html coming-from-react coming-from-react-native coming-from-electron animation custom-runtime
+order: basics dev-loop coming-from-html coming-from-react coming-from-react-native coming-from-electron performance animation custom-runtime
 ---
 # Guides
 
@@ -20,6 +20,10 @@ Code examples and step-by-step procedures for usual tasks with SolidRT.
 - [Coming from Electron](/guides/coming-from-electron/) - one process, no
   browser, one executable file. What does not work the same, and what
   SolidRT does not have.
+- [Performance](/guides/performance/) - JavaScript as the scripting
+  language of a Rust engine. Where each type of work belongs: the runtime,
+  detached elements, the GPU, the spatial core, isolates, WebAssembly and
+  Rust.
 - [Animation](/guides/animation/) - animate with the `transition` prop and
   with `onFrame`: prop changes, enter and exit, layout changes, and what is
   fast to animate.

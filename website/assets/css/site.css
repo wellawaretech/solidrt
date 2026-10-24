@@ -618,6 +618,17 @@ hr {
 
 /* -- Tables ------------------------------------------------------------- */
 
+/* The wrapper of every table: a table too wide for a phone scrolls inside
+   it, rather than widening the page. */
+.table {
+  overflow-x: auto;
+  margin: 0 0 var(--sol-spacing-lg);
+}
+
+.table > table {
+  margin: 0;
+}
+
 table {
   width: 100%;
   border-collapse: separate;

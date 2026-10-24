@@ -14,6 +14,7 @@
     "image": "<img src=\"{href}\" alt=\"{text}\">",
     "code": "<pre><code class=\"hljs language-{lang}\">{text}</code></pre>\n",
     "codespan": "<code>{text}</code>",
+    "table": "<div class=\"table\">{text}</div>\n",
     "blockquote": "<blockquote>{text}</blockquote>\n",
     "strong": "<strong>{text}</strong>",
     "em": "<em>{text}</em>"
