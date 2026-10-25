@@ -183,7 +183,7 @@ rustix = { version = "=1.1.5", features = ["termios", "process", "time"] }
 # glibc's allocator settings (forge::process::return_large_allocations).
 # Already in the tree (alloy, flux).
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
-libc = "=0.2.190"
+libc = "=0.2.191"
 
 # The crash line (forge::process::report_crashes): the last-chance exception
 # filter, the faulting module's name, and a raw stderr write. The same pin
@@ -195,7 +195,7 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Stor
 [build-dependencies]
 # Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the
 # Android build can link clang_rt.builtins; see build.rs.
-cc = "=1.8.0"
+cc = "=1.9.0"
 # Drives the vendored libopus's CMake project (build.rs); already in the tree
 # (sdl3-sys builds SDL with it).
 cmake = "=0.1.58"
