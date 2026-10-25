@@ -8,7 +8,7 @@ name = "basic"
 
 [target.'cfg(target_os = "android")'.dependencies]
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys"] }
-sdl3 = { version = "=0.19.0", features = ["build-from-source"] }
+sdl3 = { version = "=0.20.0", features = ["build-from-source"] }
 # Bridge SDL's JNI env + activity into the process-wide ndk-context that
 # JNI-using deps (e.g. iroh's network monitoring via flux:p2p) read on Android.
 ndk-context = "=0.1.1"
