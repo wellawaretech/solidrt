@@ -3497,6 +3497,11 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   escape hatch ("move setters into untrack" / "untracked blocks") throws
   anyway; folded in, the thrown Error should name the owner it already
   computes for emitDiagnostic.
+- **[Solid babel plugin peers Babel 8 but depends on Babel 7 helpers](upstream/solid-babel-plugin-babel7-deps-under-babel8.md)** [2026-10-28]
+  "@solidjs/babel-plugin rc.19 widened its @babel/core peer to ^7 || ^8 but
+  still depends on @babel/plugin-syntax-jsx ^7, @babel/types ^7 and
+  @babel/helper-module-imports 7.18.6, so a Babel 8 install carries a Babel 7
+  helper set plus an unused nested @babel/core 7."
 - **[Solid babel plugin HTML-escapes text in universal mode](upstream/solid-babel-plugin-universal-escapes-text.md)** [2026-08-30]
   With generate universal, static string children are passed through
   escapeHTML ("<" becomes "&lt;", "&" becomes "&amp;", ">" untouched) and JSX
