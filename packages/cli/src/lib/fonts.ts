@@ -54,3 +54,18 @@ export function checkFontsMap(fonts: unknown, runtimeAliases: string[] | null): 
   }
   return null
 }
+
+/**
+ * The hint for a project runtime that compiles in fonts its app never
+ * draws, or null when there are none: each alias the app claims (`claimed`,
+ * dropped with `false` or replaced with its own file) whose runtime face is
+ * in `runtimeAliases`, the set the project's runtime binds. Those bytes stay
+ * in the binary whatever package.json says; only the runtime's lib.rs can
+ * leave them out. The stock runtime has no such hint: its set is fixed.
+ */
+export function compiledInUnusedHint(claimed: string[], runtimeAliases: string[] | null): string | null {
+  let unused = claimed.filter((alias) => runtimeAliases?.includes(alias))
+  if (unused.length === 0) return null
+  let list = unused.join(", ")
+  return `The app drops or replaces ${list}, which the runtime still compiles in: delete ${unused.length === 1 ? "its line" : "their lines"} in fonts() of the runtime's lib.rs to leave the bytes out`
+}

@@ -70,22 +70,20 @@ fn load_fonts_reads_bound_files_and_claims_every_alias() {
 }
 
 #[test]
-fn stock_set_edits_by_alias() {
-  use crate::Fonts;
-  assert_eq!(Fonts::stock().aliases(), ["sans", "serif", "mono"]);
-  // A replaced role keeps its place and takes the new bytes; a dropped role
-  // leaves; an added alias appends.
-  let fonts = Fonts::stock().without("mono").with("sans", &b"brand-sans"[..]).with("display", &b"display"[..]);
+fn font_set_edits_by_alias() {
+  use crate::fonts::{Fonts, NOTO_SANS, NOTO_SERIF};
+  assert_eq!(Fonts::none().aliases(), Vec::<&str>::new());
+  // A replaced alias keeps its place and takes the new bytes; an added
+  // alias appends.
+  let fonts = Fonts::none()
+    .with("sans", NOTO_SANS)
+    .with("serif", NOTO_SERIF)
+    .with("sans", &b"brand-sans"[..])
+    .with("display", &b"display"[..]);
   assert_eq!(fonts.aliases(), ["sans", "serif", "display"]);
   let payloads = fonts.into_payloads();
   assert_eq!(payloads[0].bytes.as_ref(), b"brand-sans");
-  assert_eq!(Fonts::none().aliases(), Vec::<&str>::new());
-}
-
-#[test]
-#[should_panic(expected = "bind no 'mono' to drop")]
-fn dropping_an_unbound_alias_is_a_programming_error() {
-  let _ = crate::Fonts::none().with("sans", &b"sans"[..]).without("mono");
+  assert_eq!(payloads[1].bytes.as_ref(), NOTO_SERIF);
 }
 
 #[test]

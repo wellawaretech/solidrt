@@ -3,7 +3,7 @@
 // roles for a project without a runtime of its own; an unknown set (a
 // custom runtime not built here) lets any alias through.
 import { test, expect } from "flux:test"
-import { checkFontsMap, STOCK_FONT_ROLES } from "../src/lib/fonts.ts"
+import { checkFontsMap, compiledInUnusedHint, STOCK_FONT_ROLES } from "../src/lib/fonts.ts"
 
 test("the scaffold's map and an app's own faces pass", () => {
   expect(checkFontsMap({ sans: true, serif: true, mono: true }, STOCK_FONT_ROLES)).toBe(null)
@@ -29,4 +29,14 @@ test("the shape: a map of alias to path, true or false", () => {
   expect(checkFontsMap(["sans"], STOCK_FONT_ROLES)).toContain("must be a map")
   expect(checkFontsMap({ sans: 1 }, STOCK_FONT_ROLES)).toContain('"sans" must be a font file path, true or false')
   expect(checkFontsMap({ ["x".repeat(256)]: "./assets/fonts/F.ttf" }, STOCK_FONT_ROLES)).toContain("too long")
+})
+
+test("a project runtime's face the app drops or replaces is hinted", () => {
+  let hint = compiledInUnusedHint(["serif", "mono", "display"], ["sans", "serif", "mono"])
+  expect(hint).toContain("drops or replaces serif, mono, which the runtime still compiles in")
+  expect(hint).toContain("their lines")
+  expect(compiledInUnusedHint(["sans"], ["sans"])).toContain("its line")
+  // Nothing claimed the runtime binds, or its set unknown: no hint.
+  expect(compiledInUnusedHint(["display"], ["sans"])).toBe(null)
+  expect(compiledInUnusedHint(["serif"], null)).toBe(null)
 })

@@ -11,9 +11,12 @@ pub fn modules() -> lattice::Modules {
 
 /// The fonts every app on the stock runtime starts from: Noto Sans, Noto
 /// Serif and Noto Sans Mono under the role aliases `sans`, `serif` and
-/// `mono`. A custom runtime edits this set (docs/runtime, "The fonts").
+/// `mono`. A custom runtime lists its own set (docs/runtime, "The fonts").
 pub fn fonts() -> lattice::Fonts {
-  lattice::Fonts::stock()
+  lattice::Fonts::none()
+    .with("sans", lattice::fonts::NOTO_SANS)
+    .with("serif", lattice::fonts::NOTO_SERIF)
+    .with("mono", lattice::fonts::NOTO_SANS_MONO)
 }
 
 /// The program: the modules, the fonts, and the two screens the runtime

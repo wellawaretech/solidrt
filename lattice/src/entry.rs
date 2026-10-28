@@ -97,7 +97,7 @@ pub(crate) fn well_formed_module_name(rest: &str) -> bool {
 /// version as the lattice tag a custom runtime depends on.
 pub struct Program {
   pub modules: Modules,
-  /// The fonts every app on this runtime starts from (`Fonts::stock()` in
+  /// The fonts every app on this runtime starts from (the three Notos in
   /// the stock program): an app's own fonts layer over them, in the player
   /// and in a pack alike, so a pack ships only what the app binds itself.
   pub fonts: crate::Fonts,

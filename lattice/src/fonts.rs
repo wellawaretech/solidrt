@@ -1,14 +1,23 @@
 //! The font set a program carries, and how an app's own fonts layer over
 //! it. A runtime's fonts are the ones every app on it starts from: the stock
-//! program carries the three Noto role defaults, a custom runtime edits that
-//! set in its `lib.rs` (drop a role, replace one with its own file, add
-//! faces), and a pack ships only the files its app binds on top. The dev
-//! client and the production runtime register the same set, so an app
-//! renders in the player as its pack does.
+//! program carries the three Noto role defaults, a custom runtime lists its
+//! own set in its `lib.rs` (the Notos it keeps, its own files, added faces),
+//! and a pack ships only the files its app binds on top. The dev client and
+//! the production runtime register the same set, so an app renders in the
+//! player as its pack does.
 
 use crate::manifest::AppFonts;
 use alloy::rendertree::FontPayload;
 use std::borrow::Cow;
+
+/// Noto Sans, the stock `sans` role. Each stock face is its own static, so
+/// a program links only the faces it names: one it leaves out costs no
+/// bytes in the binary.
+pub static NOTO_SANS: &[u8] = include_bytes!("../../alloy/assets/fonts/NotoSans.ttf");
+/// Noto Serif, the stock `serif` role.
+pub static NOTO_SERIF: &[u8] = include_bytes!("../../alloy/assets/fonts/NotoSerif.ttf");
+/// Noto Sans Mono, the stock `mono` role.
+pub static NOTO_SANS_MONO: &[u8] = include_bytes!("../../alloy/assets/fonts/NotoSansMono.ttf");
 
 /// The fonts a runtime brings, each under its alias. The three role aliases
 /// are `sans` (text's default family, and what an unknown family resolves
@@ -17,24 +26,19 @@ use std::borrow::Cow;
 /// it, since two fonts under one alias would form one family in which the
 /// first registered wins.
 ///
+/// The set is written out face by face, and what it names is what the
+/// binary carries. A role left out resolves like an unknown family:
+///
 /// ```ignore
-/// lattice::Fonts::stock().without("mono").with("sans", include_bytes!("../fonts/Brand.ttf"))
+/// lattice::Fonts::none()
+///   .with("sans", include_bytes!("../fonts/Brand.ttf"))
+///   .with("serif", lattice::fonts::NOTO_SERIF)
 /// ```
 #[derive(Clone, Default)]
 pub struct Fonts(Vec<FontPayload>);
 
 impl Fonts {
-  /// The stock set: Noto Sans, Noto Serif and Noto Sans Mono under the
-  /// three role aliases, so a default app renders identically on every
-  /// platform. Compiled in from `alloy/assets/fonts/`.
-  pub fn stock() -> Fonts {
-    Fonts::none()
-      .with("sans", &include_bytes!("../../alloy/assets/fonts/NotoSans.ttf")[..])
-      .with("serif", &include_bytes!("../../alloy/assets/fonts/NotoSerif.ttf")[..])
-      .with("mono", &include_bytes!("../../alloy/assets/fonts/NotoSansMono.ttf")[..])
-  }
-
-  /// No fonts: a runtime whose apps bring every face they draw.
+  /// No fonts; `with` adds each face the runtime carries.
   pub fn none() -> Fonts {
     Fonts(Vec::new())
   }
@@ -48,16 +52,6 @@ impl Fonts {
       Some(slot) => *slot = font,
       None => self.0.push(font),
     }
-    self
-  }
-
-  /// The set without the font under `alias`. A set that has none is a
-  /// programming error in the program's `lib.rs` and panics here.
-  pub fn without(mut self, alias: &str) -> Fonts {
-    let Some(at) = self.0.iter().position(|font| font.alias.as_deref() == Some(alias)) else {
-      panic!("The program's fonts bind no '{alias}' to drop; they bind {}", self.aliases().join(", "));
-    };
-    self.0.remove(at);
     self
   }
 

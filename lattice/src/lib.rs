@@ -1,5 +1,5 @@
 mod entry;
-mod fonts;
+pub mod fonts;
 mod frame;
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 mod frame_history;

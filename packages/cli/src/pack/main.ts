@@ -1,6 +1,6 @@
 import { values, source } from "../lib/args"
 import { bundleFlux, bundleSolid, compileToBytecode, engineFingerprint, findFluxIsolates } from "../bundle/bundler"
-import { STOCK_FONT_ROLES } from "../lib/fonts"
+import { compiledInUnusedHint, STOCK_FONT_ROLES } from "../lib/fonts"
 import { projectRuntime, type ProjectRuntime } from "../lib/runtime"
 import { fail } from "../lib/fail"
 import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, loadAppIdentity, loadProject, resolveCapabilities, type Capability, type ManifestFont, type Project } from "../lib/project"
@@ -130,6 +130,8 @@ async function buildApp(mode: Mode) {
   let runtime = projectRuntime()
   if (runtime) await checkEngine(runtime)
   console.log(`>> fonts: ${describeFonts(folder.fonts, runtime ? runtime.fonts() : STOCK_FONT_ROLES)}`)
+  let unused = runtime && compiledInUnusedHint(folder.fonts.map((f) => f.alias), runtime.fonts())
+  if (unused) console.log(`>> hint: ${unused}`)
   return { bytecode, folder, needed }
 }
 

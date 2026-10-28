@@ -155,6 +155,11 @@ copy (release.yml stopped staging `packages/cli/fonts/`).
   83.28 MB, the same program with `Fonts::none()` 77.63 MB. The 5.65 MB
   difference is the three Notos, so a runtime that carries none does not
   pay for `stock()`: the unreferenced bytes are dropped at link.
+  That held for `none()` only: `stock()` referenced all three files, so
+  `stock().without(..)` kept every byte (reported 2026-10-28). `stock()`
+  and `without()` are gone since; each Noto is its own static
+  (`lattice::fonts::NOTO_SANS`, ...) and `fonts()` lists the faces it
+  keeps.
 - Beside it: `fail()` in the CLI throws a `UsageError` that main.ts
   catches once, so a config rule is testable where it lives; lattice's
   `compile` feature is gone (every build evaluates source, so flux's

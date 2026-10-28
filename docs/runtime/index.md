@@ -232,24 +232,32 @@ app goes on top of them:
 
 `sol pack` includes only the files that the app binds. The stock set is
 Noto Sans, Noto Serif and Noto Sans Mono, under the role aliases `sans`,
-`serif` and `mono`. To change the set, edit `fonts()` in `lib.rs`:
+`serif` and `mono`. Lattice gives each stock face as a static:
+`lattice::fonts::NOTO_SANS`, `NOTO_SERIF` and `NOTO_SANS_MONO`. `fonts()`
+in `lib.rs` lists the set, one face on each line. The binary contains only
+the faces in this list. To change the set, edit the list:
 
 ```rust
 // runtime/src/lib.rs
 pub fn fonts() -> lattice::Fonts {
-  lattice::Fonts::stock()
-    .without("mono")                                        // no mono role: it resolves like sans
-    .with("sans", include_bytes!("../fonts/Brand.ttf"))     // the brand face is the default
+  lattice::Fonts::none()
+    .with("sans", include_bytes!("../fonts/Brand.ttf"))      // the brand face is the default
+    .with("serif", lattice::fonts::NOTO_SERIF)               // the stock serif
     .with("display", include_bytes!("../fonts/Display.ttf")) // selectable as fontFamily "display"
 }
 ```
 
-`Fonts::none()` starts with an empty set. Use it for a runtime whose apps
-bring all the faces that they draw. Each alias has one face. `with` on an
-alias that is already in the set replaces the face. `without` on an alias
-that is not in the set causes a panic at startup, because the set is the
-code of the program. If you remove a role from the runtime, you also
-remove it for its apps. No step adds a stock font back.
+In this set, `mono` is not in the list. Thus the binary does not contain
+Noto Sans Mono, and the mono role resolves like `sans`. Each alias has one
+face. `with` on an alias that is already in the set replaces the face. If
+you remove a role from the runtime, you also remove it for its apps. No
+step adds a stock font back.
+
+`false` in `solidrt.fonts` does not make the runtime smaller. It removes
+the font from the set that the app registers, but the font stays in the
+binary. To remove the bytes, remove the line in `fonts()`. When an app
+removes or replaces a font that the runtime of the project contains,
+`sol pack` gives a hint.
 
 The host goals write the set to `dist/fonts.txt`. They get the set from
 the binary that they staged (`solidrt --fonts` prints the aliases, one per

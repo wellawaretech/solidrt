@@ -10,14 +10,19 @@ pub fn modules() -> lattice::Modules {
   lattice::Modules::new().add("runtime:hello", hello::HelloModule)
 }
 
-/// The fonts every app on this runtime starts from: the stock set is Noto
-/// Sans, Noto Serif and Noto Sans Mono under the role aliases `sans`,
-/// `serif` and `mono`. Edit it here and every app on the runtime follows,
-/// in the player and packed alike: `.without("mono")` drops a role,
-/// `.with("sans", include_bytes!("../fonts/Brand.ttf"))` replaces one or
-/// adds a face under a new alias, `lattice::Fonts::none()` starts empty.
+/// The fonts every app on this runtime starts from: the stock Noto Sans,
+/// Noto Serif and Noto Sans Mono under the role aliases `sans`, `serif` and
+/// `mono`. Edit it here and every app on the runtime follows, in the player
+/// and packed alike. The binary carries exactly the faces listed: delete a
+/// line to drop a role and its bytes (`false` in package.json drops a role
+/// but leaves its bytes in), point one at
+/// `include_bytes!("../fonts/Brand.ttf")` to replace it, or add a line under
+/// a new alias for a face an app selects by name.
 pub fn fonts() -> lattice::Fonts {
-  lattice::Fonts::stock()
+  lattice::Fonts::none()
+    .with("sans", lattice::fonts::NOTO_SANS)
+    .with("serif", lattice::fonts::NOTO_SERIF)
+    .with("mono", lattice::fonts::NOTO_SANS_MONO)
 }
 
 /// The program: the modules, the fonts, and the two screens the runtime

@@ -34,8 +34,13 @@ preparing a build for distribution.
 
 - The default fonts are the runtime's: the stock runtime carries Noto Sans,
   Noto Serif and Noto Sans Mono under the role aliases `sans`/`serif`/`mono`,
-  and a custom runtime sets its own in `runtime/src/lib.rs` (`fonts()`:
-  drop a role, replace one with its file, add faces). Custom fonts of the
+  and a custom runtime lists its own in `runtime/src/lib.rs` (`fonts()`,
+  one `.with` per face, the Notos as `lattice::fonts::NOTO_SANS`/
+  `NOTO_SERIF`/`NOTO_SANS_MONO`). The binary carries exactly the faces
+  listed: `false` in package.json drops a role for the app but never
+  shrinks the runtime, so to save the bytes delete the line in `fonts()`
+  (pack hints when an app drops or replaces a face its project's runtime
+  compiles in; the stock runtime always carries all three). Custom fonts of the
   app go in `assets/fonts/` and are declared in the `solidrt.fonts` map in
   package.json (alias -> file path replaces the runtime's font under that
   alias or adds one selectable via fontFamily; `false` drops the runtime's
