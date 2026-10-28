@@ -37,6 +37,9 @@ type ImageEntry = {
 let imageCache = new Map<string, ImageEntry>()
 
 async function loadImage(url: string): Promise<TextureId> {
+  // A runtime built without the http feature has no fetch: say so instead of
+  // a bare ReferenceError.
+  if (typeof fetch === "undefined") throw new Error(`Image URLs need a runtime built with the http feature: ${url}`)
   // Images are assets: cache to disk, no freshness. Use a versioned URL (or
   // fetch + decodeImage manually) when a URL's content must be re-checked.
   let res = await fetch(url, { cache: "force-cache" })

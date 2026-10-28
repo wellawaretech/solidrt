@@ -113,8 +113,11 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:fs");
   loader.add_module("flux:fs", crate::forge_plugins::fs::FsModule);
 
-  resolver.add_module("flux:http");
-  loader.add_module("flux:http", crate::forge_plugins::serve::HttpModule);
+  #[cfg(feature = "http")]
+  {
+    resolver.add_module("flux:http");
+    loader.add_module("flux:http", crate::forge_plugins::serve::HttpModule);
+  }
 
   #[cfg(any(feature = "p2p", feature = "p2p-relay"))]
   {
@@ -190,8 +193,10 @@ pub(crate) async fn init_context(
       }
       let flux_obj = Object::new(ctx.clone()).unwrap();
 
+      #[cfg(feature = "http")]
       crate::standards_plugins::http::init_http(&ctx);
       crate::standards_plugins::time::init(&ctx);
+      #[cfg(feature = "http")]
       crate::standards_plugins::fetch::init_fetch(&ctx);
       crate::standards_plugins::console::init_console(&ctx);
       events::init(&ctx);
@@ -202,6 +207,7 @@ pub(crate) async fn init_context(
       crate::standards_plugins::response::init_response(&ctx);
       crate::standards_plugins::text::init_text(&ctx);
       crate::standards_plugins::streams::init_streams(&ctx);
+      #[cfg(feature = "http")]
       crate::standards_plugins::websocket::init_websocket(&ctx);
       crate::standards_plugins::abort::init_abort(&ctx);
       crate::standards_plugins::crypto::init_crypto(&ctx);
@@ -247,6 +253,7 @@ fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
 const BASE_CAPABILITIES: &[&str] = &[
   "sqlite",
   "fs",
+  #[cfg(feature = "http")]
   "http",
   #[cfg(feature = "p2p")]
   "p2p",

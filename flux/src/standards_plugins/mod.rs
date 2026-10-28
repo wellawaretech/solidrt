@@ -16,6 +16,7 @@ pub mod clipboard;
 pub mod compression;
 pub mod console;
 pub mod crypto;
+#[cfg(feature = "http")]
 pub mod fetch;
 pub mod headers;
 pub mod http;
@@ -25,4 +26,5 @@ pub mod response;
 pub mod streams;
 pub mod text;
 pub mod time;
+#[cfg(feature = "http")]
 pub mod websocket;

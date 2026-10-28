@@ -1,4 +1,4 @@
-#![cfg(feature = "compile")]
+#![cfg(all(feature = "compile", feature = "http"))]
 
 mod common;
 

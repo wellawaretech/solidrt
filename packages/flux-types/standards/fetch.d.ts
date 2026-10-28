@@ -159,6 +159,8 @@ declare let Response: {
 /**
  * Fetch a resource over HTTP(S). The body may be a string, Uint8Array, or a
  * stream (a `ReadableStream` or any async-iterable, sent as it is
- * produced). Resolves to a {@link Response}.
+ * produced). Resolves to a {@link Response}. Only in a build with the
+ * "http" capability (the stock runtimes have it); the global is absent
+ * without it.
  */
 declare function fetch(url: string, options?: RequestInit): Promise<Response>

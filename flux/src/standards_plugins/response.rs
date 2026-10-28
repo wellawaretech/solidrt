@@ -7,11 +7,15 @@ use std::pin::Pin;
 
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::OptArg;
+#[cfg(feature = "http")]
+use crate::standards_plugins::body::ByteStream;
 use crate::standards_plugins::body::{
   body_read_all, body_stream, collect_array_buffer, collect_bytes, collect_json, collect_text, extract_streaming_body,
-  BodyRead, ByteStream, JsArrayBuffer, JsBytes, JsonValue, MessageBody,
+  BodyRead, JsArrayBuffer, JsBytes, JsonValue, MessageBody,
 };
-use crate::standards_plugins::headers::{headers_from_init, headers_from_pairs, Headers};
+#[cfg(feature = "http")]
+use crate::standards_plugins::headers::headers_from_pairs;
+use crate::standards_plugins::headers::{headers_from_init, Headers};
 
 #[derive(JsLifetime)]
 #[rquickjs::class(rename = "Response")]
@@ -134,6 +138,7 @@ impl<'js> Response<'js> {
 
 /// Build a Response instance directly from Rust state (used by fetch.rs). The
 /// `body` is a live network stream, drained on demand (streamed by default).
+#[cfg(feature = "http")]
 pub(crate) fn response_from_parts<'js>(
   ctx: &Ctx<'js>,
   body: ByteStream,

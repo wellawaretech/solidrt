@@ -52,6 +52,10 @@ interface WebSocket {
   readonly CLOSED: 3
 }
 
+/**
+ * The WebSocket client. Only in a build with the "http" capability (the
+ * stock runtimes have it); the global is absent without it.
+ */
 declare let WebSocket: {
   /** Open a connection. `url` must be ws:// (wss:// is not supported yet). */
   new (url: string): WebSocket

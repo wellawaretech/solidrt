@@ -8,9 +8,12 @@ use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
+#[cfg(feature = "http")]
 use tokio::sync::mpsc;
 
-use crate::logger::{format_js_error, Logger};
+use crate::logger::format_js_error;
+#[cfg(feature = "http")]
+use crate::logger::Logger;
 use crate::pending::{Hold, PendingOps};
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{attach_async_iterator, mark_observed, CopyBytes, Step};
@@ -48,6 +51,7 @@ pub(crate) struct IncomingBody {
 }
 
 impl IncomingBody {
+  #[cfg(feature = "http")]
   pub(crate) fn new(stream: ByteStream) -> Self {
     Self { stream: Rc::new(RefCell::new(Some(stream))) }
   }
@@ -64,6 +68,9 @@ impl IncomingBody {
 /// or the one `.body` handed out) lives in the message's `stream` field, not here.
 pub(crate) enum MessageBody {
   Buffered(BodyState),
+  // Built only by fetch and the HTTP server (the `http` feature); the readers
+  // handle it in every build.
+  #[cfg_attr(not(feature = "http"), allow(dead_code))]
   Incoming(IncomingBody),
 }
 
@@ -72,6 +79,7 @@ impl MessageBody {
     MessageBody::Buffered(BodyState::new(bytes))
   }
 
+  #[cfg(feature = "http")]
   pub(crate) fn incoming(stream: ByteStream) -> Self {
     MessageBody::Incoming(IncomingBody::new(stream))
   }
@@ -414,6 +422,7 @@ fn return_iterator<'js>(ctx: &Ctx<'js>, iter: &Object<'js>) {
 /// What the HTTP server's streamed responses and a streamed fetch request
 /// body run under `ctx.spawn`; an error is logged, since no caller is left
 /// to receive it.
+#[cfg(feature = "http")]
 pub(crate) async fn pump_async_iterable<'js>(
   ctx: Ctx<'js>,
   iterable: Object<'js>,

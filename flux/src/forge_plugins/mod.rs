@@ -9,6 +9,7 @@ pub mod net;
 pub mod p2p;
 pub mod path;
 pub mod process;
+#[cfg(feature = "http")]
 pub mod serve;
 pub mod sqlite;
 pub mod subprocess;
@@ -16,4 +17,5 @@ pub mod svg;
 pub mod tty;
 #[cfg(feature = "wasm")]
 pub mod wasm;
+#[cfg(feature = "http")]
 pub mod websocket;

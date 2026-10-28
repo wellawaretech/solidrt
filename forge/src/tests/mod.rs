@@ -1,10 +1,12 @@
 #[cfg(feature = "audio")]
 mod audio;
+#[cfg(feature = "http")]
 mod cache;
 mod compression;
 mod crypto;
 #[cfg(all(feature = "video-encode", not(target_os = "android")))]
 mod encode;
+#[cfg(feature = "http")]
 mod fetch;
 mod fs;
 mod image;
@@ -26,6 +28,8 @@ mod reader;
 mod record;
 #[cfg(all(feature = "video-encode", not(target_os = "android")))]
 mod sink;
+// Serves its clips over HTTP to the http producer.
+#[cfg(feature = "http")]
 mod source;
 mod sqlite;
 mod stream;

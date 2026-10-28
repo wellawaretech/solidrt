@@ -25,6 +25,7 @@ pub use engine::{
   on_shutdown, resolve_isolate_from_assets, EngineConfig, ExecHandle, FluxEngine, FluxEngineBuilder, IsolateResolver,
   ModuleCode, ShutdownHooks, ENTRY_MODULE,
 };
+#[cfg(feature = "http")]
 pub use forge::fetch::{do_fetch, ResponseData};
 pub use forge::process::{arch, platform};
 pub use forge::seek::{SeekableRead, SeekableReader};
@@ -48,6 +49,7 @@ pub use rquickjs;
 // blocking work and timers (`tokio::task::spawn_blocking`, `sync::oneshot`),
 // named through flux like rquickjs rather than pinned again by the module.
 pub use standards_plugins::body::{attach_body, JsBytes, JsonValue};
+#[cfg(feature = "http")]
 pub use standards_plugins::fetch::{request_body_from_value, JsResponseData};
 pub use standards_plugins::headers::header_pairs_from_init;
 pub use standards_plugins::random::{seed_random, DEFAULT_SEED};

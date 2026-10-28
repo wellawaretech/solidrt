@@ -1,6 +1,6 @@
 ---
 title: Put every optional flux module behind a cargo feature
-description: A custom runtime can only leave out what is a cargo feature all the way down, and today sqlite, subprocess, mdns and QR scanning are unconditional (wasm and p2p are done); make each optional module a lattice feature, chosen in the runtime crate's Cargo.toml with the stock set as default and the player carrying all of them, starting with wasm.
+description: A custom runtime can only leave out what is a cargo feature all the way down, and today sqlite, subprocess, mdns and QR scanning are unconditional (wasm, p2p and http are done); make each optional module a lattice feature, chosen in the runtime crate's Cargo.toml with the stock set as default and the player carrying all of them, starting with wasm.
 created: 2026-10-06
 ---
 
@@ -153,6 +153,29 @@ tunnel needs the endpoint); the flux binary names both. Checked: no iroh
 in `cargo tree` for lattice with `default-features = false` nor for a
 relay-only forge; a flux binary without `p2p` lists no `"p2p"` capability
 and fails to resolve `flux:p2p`. The size row is still open.
+
+## Stage 3: http
+
+Landed 2026-10-28, one feature with TLS inside: an app that declares
+`internet: false` had the whole HTTP stack linked all the same. forge's
+`http` owns reqwest (on rustls, ring and the webpki roots), hyper,
+hyper-util, http-body-util and fastwebsockets, plus the small crates only
+fetch, the cache and the server use (fastrand, blake3, serde, serde_json,
+percent-encoding); it gates `fetch`, `cache`, `http` and `websocket`, and
+the http(s) half of `forge::source`, whose `Source::Http` then fails to
+open with a clear error. flux gates the `fetch` and `WebSocket` globals,
+`flux:http` and the `"http"` capability; `Request`, `Response` and
+`Headers` stay as data types, their server-only fields behind the feature.
+core's image loader says a URL needs the feature rather than throwing a
+bare ReferenceError. lattice lists `http` in `default` and in `go` (the dev
+proxy and the version store fetch). The `flux` binary names it, and
+`fluxrt`, the packed flux program's runner, now names `http,p2p`: its
+default features had silently dropped both since p2p became a feature.
+
+TLS still comes with `p2p` and `p2p-relay` (iroh's QUIC, the relay's
+server), so a runtime free of TLS leaves out all three. Tying `internet:
+false` to the feature belongs to the build-time check below. The size row
+is still open.
 
 ## The build-time check
 

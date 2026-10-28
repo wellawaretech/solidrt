@@ -30,7 +30,9 @@
 //! proxying. The device reaches the host directly.
 
 use bytes::{Buf, Bytes};
-use std::collections::{HashMap, VecDeque};
+#[cfg(feature = "http")]
+use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::io::{self, ErrorKind, Read, Seek, SeekFrom};
 use std::pin::Pin;
@@ -39,7 +41,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
-use crate::stream::{to_byte_stream, ByteStream};
+#[cfg(feature = "http")]
+use crate::stream::to_byte_stream;
+use crate::stream::ByteStream;
 
 /// Bytes the ring holds ahead of the consumer before the producer waits. A
 /// transfer buffer, not the playback buffer: read-ahead is the consumer's.
@@ -610,6 +614,7 @@ async fn reconnect(shared: &Shared, generation: u64, retry: &mut Retry, trouble:
 
 // --- The HTTP producer ---
 
+#[cfg(feature = "http")]
 /// A file served over HTTP. `GET` with `Range: bytes=N-`: a 206 is seekable,
 /// with the length from `Content-Range` (`a-b/*` leaves it unknown); a 200 is
 /// unseekable, with the length from `Content-Length` when there is one. No
@@ -622,6 +627,7 @@ pub struct HttpSource {
   identity: Option<Identity>,
 }
 
+#[cfg(feature = "http")]
 /// What the first response said, for the reopens to match.
 struct Identity {
   total: Option<u64>,
@@ -629,6 +635,7 @@ struct Identity {
   validator: Option<String>,
 }
 
+#[cfg(feature = "http")]
 impl HttpSource {
   /// One reqwest client per user agent, shared by every source.
   pub fn new(url: &str, user_agent: &str) -> io::Result<HttpSource> {
@@ -682,17 +689,20 @@ impl HttpSource {
   }
 }
 
+#[cfg(feature = "http")]
 impl Producer for HttpSource {
   fn open(&mut self, offset: u64) -> OpenFuture<'_> {
     Box::pin(self.open_at(offset))
   }
 }
 
+#[cfg(feature = "http")]
 /// A failure no reconnect can mend: the source is not what was asked for.
 fn final_error(message: String) -> io::Error {
   io::Error::new(ErrorKind::InvalidData, message)
 }
 
+#[cfg(feature = "http")]
 /// `bytes a-b/total` or `bytes a-b/*` -> (a, total).
 fn parse_content_range(value: &str) -> Option<(u64, Option<u64>)> {
   let spec = value.trim().strip_prefix("bytes")?.trim_start();
@@ -740,9 +750,18 @@ impl Source {
   pub fn open(&self, user_agent: &str) -> io::Result<ByteSource> {
     match self {
       Source::Path(path) => open_file(path),
+      #[cfg(feature = "http")]
       Source::Http(url) => {
         let reader = Reader::open(HttpSource::new(url, user_agent)?, STREAM_RING_BYTES);
         Ok(ByteSource { handle: Some(reader.handle()), inner: SourceBytes::Streamed(reader) })
+      }
+      #[cfg(not(feature = "http"))]
+      Source::Http(url) => {
+        let _ = user_agent;
+        Err(io::Error::new(
+          ErrorKind::Unsupported,
+          format!("{url}: http URLs need a runtime built with the http feature"),
+        ))
       }
     }
   }

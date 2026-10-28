@@ -453,6 +453,8 @@ stock runtime:
 - `video-encode`: recording, the `record` function of `flux:video`. It
   includes `video`.
 - `ktx2`: compressed textures.
+- `http`: `fetch`, the `WebSocket` client, and `flux:http`, with TLS.
+  Without it, an app cannot load an image or a video from a URL.
 - `p2p`: `flux:p2p`, and the `p2p` option of `serve` in `flux:http`.
 - `p2p-relay`: `serveRelay` of `flux:p2p`, the self-hosted relay.
 - `wasm-native`: `flux:wasm` on wasmtime, which compiles a module to

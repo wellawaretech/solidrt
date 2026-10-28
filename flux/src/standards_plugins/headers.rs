@@ -131,6 +131,7 @@ impl Headers {
 }
 
 /// Build a Headers instance from a list of (name, value) pairs (Rust side).
+#[cfg(feature = "http")]
 pub(crate) fn headers_from_pairs<'js>(
   ctx: &Ctx<'js>,
   pairs: Vec<(String, String)>,

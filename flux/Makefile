@@ -36,7 +36,12 @@ build-opt:
 # dev server's tunnel accepts on the endpoint.
 # The interpreted wasm lane on a desktop is a cargo line with `wasm` alone
 # (okf/notes/wasm-vs-js-throughput.md).
-FLUX_FEATURES = --features ktx2,wasm-native,p2p,p2p-relay,test
+FLUX_FEATURES = --features ktx2,wasm-native,http,p2p,p2p-relay,test
+
+# fluxrt is the runner a packed flux program ships on: the networking a
+# headless program had before the modules became features (HTTP with TLS,
+# and the p2p endpoint), no more.
+FLUXRT_FEATURES = --features http,p2p
 
 flux:
 	cargo build $(CARGO_PROFILE_FLAG) $(FLUX_FEATURES) --bin flux
@@ -47,7 +52,7 @@ fluxc:
 	$(call stage-bin,fluxc)
 
 fluxrt:
-	cargo build $(CARGO_PROFILE_FLAG) --bin fluxrt
+	cargo build $(CARGO_PROFILE_FLAG) $(FLUXRT_FEATURES) --bin fluxrt
 	$(call stage-bin,fluxrt)
 
 test:

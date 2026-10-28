@@ -670,6 +670,7 @@ fn a_failure_carries_the_details_read_in_its_engine() {
 
 // A test that ran out of time has its details read all the same, in the
 // interrupted engine: here a fetch nobody answers, which is what kept it.
+#[cfg(feature = "http")]
 #[test]
 fn a_timed_out_test_says_what_is_in_flight() {
   let hook: crate::test::DetailsHook =

@@ -35,6 +35,10 @@ video = ["forge/video"]
 # `record` of flux:video (behind forge/video-encode): the encoders, the WebM
 # writer and the recorder; implies video. See okf/plans/video-encode.md.
 video-encode = ["video", "forge/video-encode"]
+# fetch, WebSocket and flux:http (serve, server WebSockets) and the `http`
+# capability (behind forge/http): the HTTP client with its TLS and the
+# server, one switch. Not a cargo default; see forge/Cargo.toml.
+http = ["forge/http"]
 # flux:p2p, the `p2p` option of flux:http's serve and the `p2p` capability
 # (behind forge/p2p): not a cargo default; see forge/Cargo.toml.
 p2p = ["forge/p2p"]

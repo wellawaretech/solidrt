@@ -1,3 +1,4 @@
+#[cfg(feature = "http")]
 use forge::http::UpgradeHandle;
 use rquickjs::class::Trace;
 use rquickjs::promise::Promised;
@@ -6,14 +7,19 @@ use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
 
+#[cfg(feature = "http")]
 use crate::forge_plugins::websocket::ServeUpgrade;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::OptArg;
+#[cfg(feature = "http")]
+use crate::standards_plugins::body::ByteStream;
 use crate::standards_plugins::body::{
   body_read_all, body_stream, collect_array_buffer, collect_bytes, collect_json, collect_text, extract_body_value,
-  BodyRead, ByteStream, JsArrayBuffer, JsBytes, JsonValue, MessageBody,
+  BodyRead, JsArrayBuffer, JsBytes, JsonValue, MessageBody,
 };
-use crate::standards_plugins::headers::{headers_from_init, headers_from_pairs, Headers};
+#[cfg(feature = "http")]
+use crate::standards_plugins::headers::headers_from_pairs;
+use crate::standards_plugins::headers::{headers_from_init, Headers};
 
 type BodyFuture<'js, T> = Promised<Pin<Box<dyn Future<Output = JsResult<T>> + 'js>>>;
 
@@ -36,11 +42,13 @@ pub struct Request<'js> {
   pub(crate) params: Object<'js>,
   /// WebSocket upgrade capability, set only on requests built by the flux:http
   /// server (None for JS-constructed Requests). Consumed by `server.upgrade(req)`.
+  #[cfg(feature = "http")]
   #[qjs(skip_trace)]
   pub(crate) upgrade: RefCell<Option<ServeUpgrade<'js>>>,
   /// The connection's peer (a TCP address or a p2p endpoint id), set only on
   /// requests built by the flux:http server. Read by `server.requestIP(req)`
   /// and carried onto an upgraded socket's `remoteAddr`.
+  #[cfg(feature = "http")]
   #[qjs(skip_trace)]
   pub(crate) remote: Option<forge::http::Remote>,
 }
@@ -52,6 +60,7 @@ impl<'js> Trace<'js> for Request<'js> {
     if let Some(stream) = &*self.stream.borrow() {
       stream.trace(tracer);
     }
+    #[cfg(feature = "http")]
     if let Some(upgrade) = &*self.upgrade.borrow() {
       upgrade.trace(tracer);
     }
@@ -82,7 +91,9 @@ impl<'js> Request<'js> {
       url,
       headers,
       params,
+      #[cfg(feature = "http")]
       upgrade: RefCell::new(None),
+      #[cfg(feature = "http")]
       remote: None,
     })
   }
@@ -144,6 +155,7 @@ impl<'js> Request<'js> {
 /// incoming request body stream, read incrementally by the handler rather than
 /// buffered up front. `params` are matched route path parameters; pass an empty
 /// Vec when there is no route match.
+#[cfg(feature = "http")]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn request_from_parts<'js>(
   ctx: &Ctx<'js>,

@@ -220,13 +220,16 @@ declare module "flux:http" {
      * Accept connections on a `flux:p2p` Endpoint alongside the TCP listener:
      * each incoming connection whose ALPN matches `protocol` has the HTTP/WS
      * protocol spoken over its first bidirectional stream. `server.close()`
-     * stops accepting; the endpoint itself stays open for its owner.
+     * stops accepting; the endpoint itself stays open for its owner. Needs
+     * the "p2p" capability as well; without it the option throws.
      */
     p2p?: P2pOptions
   }
 
   /**
-   * Start an HTTP server. Loosely models Bun's `Bun.serve`.
+   * Start an HTTP server. Loosely models Bun's `Bun.serve`. Only in a build
+   * with the "http" capability (the stock runtimes have it); the module is
+   * absent without it.
    *
    * @param options  Port, host, routes, fetch fallback, error handler, and
    *                 websocket callbacks.

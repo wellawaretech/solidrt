@@ -15,12 +15,15 @@
 
 #[cfg(feature = "audio")]
 pub mod audio;
+#[cfg(feature = "http")]
 pub mod cache;
 pub mod compression;
 pub mod crypto;
 pub mod events;
+#[cfg(feature = "http")]
 pub mod fetch;
 pub mod fs;
+#[cfg(feature = "http")]
 pub mod http;
 pub mod image;
 pub mod isolate;
@@ -46,6 +49,7 @@ pub mod value;
 pub mod video;
 #[cfg(feature = "wasm")]
 pub mod wasm;
+#[cfg(feature = "http")]
 pub mod websocket;
 pub mod workers;
 

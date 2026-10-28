@@ -31,6 +31,25 @@ video = ["audio", "dep:ndk", "dep:ndk-sys"]
 # module, and the tests decode what they encode. See
 # okf/plans/video-encode.md.
 video-encode = ["video"]
+# forge::fetch, forge::cache, forge::http and forge::websocket (fetch,
+# WebSocket and flux:http): the HTTP client with its TLS (reqwest on rustls,
+# ring and the webpki roots), the HTTP server and the WebSocket framing, and
+# the http(s) half of forge::source. One switch, TLS included: a runtime
+# without it opens no HTTP connection either way. Not a cargo default;
+# lattice's default set and its player turn it on. See
+# okf/backlog/module-feature-flags.md.
+http = [
+  "dep:reqwest",
+  "dep:hyper",
+  "dep:hyper-util",
+  "dep:http-body-util",
+  "dep:fastwebsockets",
+  "dep:fastrand",
+  "dep:blake3",
+  "dep:serde",
+  "dep:serde_json",
+  "dep:percent-encoding",
+]
 # forge::p2p (flux:p2p): direct peer-to-peer connections over iroh, its QUIC
 # and TLS stack, and the p2p accept loop of the HTTP server. Not a cargo
 # default; lattice's default set and its player turn it on. See
@@ -68,10 +87,11 @@ wasm-native = ["wasm", "dep:wasmtime"]
 [dependencies]
 log = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }
-reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "stream"] }
-hyper = { version = "=1.12.0", features = ["server", "http1"] }
-hyper-util = { version = "=0.1.21", features = ["tokio"] }
-http-body-util = "=0.1.5"
+# The HTTP stack behind `http`: the client with TLS, the server, bodies.
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "stream"], optional = true }
+hyper = { version = "=1.12.0", features = ["server", "http1"], optional = true }
+hyper-util = { version = "=0.1.21", features = ["tokio"], optional = true }
+http-body-util = { version = "=0.1.5", optional = true }
 # The digest core behind crypto.subtle.digest.
 sha2 = "=0.11.1"
 # forge::compression (CompressionStream / DecompressionStream): deflate, the
@@ -80,20 +100,22 @@ sha2 = "=0.11.1"
 flate2 = "=1.1.10"
 bytes = "=1.12.1"
 futures-core = "=0.3.34"
-# Jitter for the fetch 429 backoff. Already in the tree (tokio and others
-# depend on it).
-fastrand = "=2.5.0"
-# Entry file names for forge::cache (hash of the cache key). Already in the
-# tree (iroh depends on it).
-blake3 = "=1.8.7"
+# Jitter for the fetch 429 backoff, behind `http`. Already in the tree
+# (tokio and others depend on it).
+fastrand = { version = "=2.5.0", optional = true }
+# Entry file names for forge::cache (hash of the cache key), behind `http`.
+# Already in the tree (iroh depends on it).
+blake3 = { version = "=1.8.7", optional = true }
 # ReaderStream: cached entry file -> ByteStream for forge::cache lookups;
 # CancellationToken (no feature needed): close of a forge::source pump.
 # Already in the tree (hyper-util/iroh depend on it).
 tokio-util = { version = "=0.7.20", features = ["io"] }
-# The fetch cache's metadata blob (response snapshot stored next to the body).
-serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.154"
-percent-encoding = "=2.3.2"
+# The fetch cache's metadata blob (response snapshot stored next to the
+# body), behind `http`.
+serde = { version = "=1.0.229", features = ["derive"], optional = true }
+serde_json = { version = "=1.0.154", optional = true }
+# Path decoding for the server's routes, behind `http`.
+percent-encoding = { version = "=2.3.2", optional = true }
 # Raw terminal mode and key events for forge::tty (a safe binding crate:
 # termios on unix, the Console API on Windows). No event-stream: keys are
 # read blocking on the stdin reader thread.
@@ -109,7 +131,8 @@ glob = "=0.3.4"
 notify = { version = "=8.2.0", default-features = false, features = ["macos_fsevent"] }
 # Current-process stats for flux:process (memoryUsage rss).
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
-fastwebsockets = { version = "=0.10.0", features = ["upgrade", "unstable-split"] }
+# WebSocket framing for the client and the server, behind `http`.
+fastwebsockets = { version = "=0.10.0", features = ["upgrade", "unstable-split"], optional = true }
 # The p2p core behind `p2p` (forge::p2p).
 iroh = { version = "=1.3.0", optional = true }
 # The relay's access token behind `p2p-relay`: a fresh secret key's bytes,

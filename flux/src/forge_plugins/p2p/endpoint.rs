@@ -38,6 +38,7 @@ pub struct P2pEndpoint {
 impl P2pEndpoint {
   /// The engine-free forge endpoint, cloned out for native consumers (the
   /// flux:http serve `endpoint` option accepts connections on it).
+  #[cfg(feature = "http")]
   pub(crate) fn core(&self) -> Endpoint {
     self.inner.clone()
   }
