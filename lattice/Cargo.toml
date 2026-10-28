@@ -87,7 +87,7 @@ libloading = "=0.9.0"
 # Android reaches the dev server via the adb-reverse loopback instead, and
 # receiving mDNS there would need a WifiManager.MulticastLock, so it is excluded.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-mdns-sd = "=0.21.5"
+mdns-sd = "=0.21.6"
 
 # The per-user protocol registration a packed app writes on
 # registerProtocolHandler (src/links.rs), through Microsoft's safe registry
