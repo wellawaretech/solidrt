@@ -116,8 +116,11 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:http");
   loader.add_module("flux:http", crate::forge_plugins::serve::HttpModule);
 
-  resolver.add_module("flux:p2p");
-  loader.add_module("flux:p2p", crate::forge_plugins::p2p::P2pModule);
+  #[cfg(any(feature = "p2p", feature = "p2p-relay"))]
+  {
+    resolver.add_module("flux:p2p");
+    loader.add_module("flux:p2p", crate::forge_plugins::p2p::P2pModule);
+  }
 
   resolver.add_module("flux:net");
   loader.add_module("flux:net", crate::forge_plugins::net::NetModule);
@@ -245,6 +248,7 @@ const BASE_CAPABILITIES: &[&str] = &[
   "sqlite",
   "fs",
   "http",
+  #[cfg(feature = "p2p")]
   "p2p",
   #[cfg(feature = "p2p-relay")]
   "p2p-relay",

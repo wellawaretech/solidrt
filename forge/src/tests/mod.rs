@@ -15,7 +15,8 @@ mod ktx2;
 mod live;
 mod mdns;
 mod net;
-#[cfg(feature = "p2p-relay")]
+// Peers dial each other through the relay: both halves.
+#[cfg(all(feature = "p2p", feature = "p2p-relay"))]
 mod p2p_relay;
 mod path;
 mod process;

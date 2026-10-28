@@ -7,6 +7,7 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
+#[cfg(feature = "p2p")]
 use crate::forge_plugins::p2p::P2pEndpoint;
 use crate::forge_plugins::websocket::{message_payload, parse_ws_handlers, spawn_socket, ServeUpgrade, WsHandlers};
 use crate::logger::{format_js_error, CtxLogger, Logger};
@@ -16,9 +17,10 @@ use crate::standards_plugins::body::{pump_async_iterable, ByteStream, MessageBod
 use crate::standards_plugins::headers::headers_from_init;
 use crate::standards_plugins::request::{request_from_parts, Request};
 use crate::standards_plugins::response::Response;
+#[cfg(feature = "p2p")]
+use forge::http::accept_loop_p2p;
 use forge::http::{
-  accept_loop, accept_loop_p2p, bind_listener, serve_connection, Remote, Reply, RequestParts, Route, RouteTable,
-  ServerShared,
+  accept_loop, bind_listener, serve_connection, Remote, Reply, RequestParts, Route, RouteTable, ServerShared,
 };
 use forge::websocket::{accept_upgrade, Topics};
 
@@ -498,6 +500,13 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   // The `p2p: { endpoint, protocol }` option: a flux:p2p Endpoint to accept
   // connections on next to the TCP listener, and the protocol (ALPN) to accept.
   // Cloning the forge core out here keeps the accept loop free of JS types.
+  // A build without the p2p feature has no Endpoint to accept on: the option
+  // throws rather than serving TCP alone.
+  #[cfg(not(feature = "p2p"))]
+  if opts.contains_key("p2p")? {
+    return Err(Exception::throw_message(&ctx, "serve: p2p needs a runtime built with the p2p feature"));
+  }
+  #[cfg(feature = "p2p")]
   let p2p = match opts.get::<_, Option<Object<'js>>>("p2p")? {
     Some(o) => {
       let endpoint: Option<Class<'js, P2pEndpoint>> = o.get("endpoint")?;
@@ -552,6 +561,7 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   // The p2p twin of the TCP loop: a connection's io is its first bi-stream, its
   // peer identity the remote endpoint id. `close()` stops both loops through the
   // shared shutdown signal; the endpoint itself stays open for its owner.
+  #[cfg(feature = "p2p")]
   if let Some((endpoint, alpn)) = p2p {
     let loop_hold = pending.standing("server");
     let loop_ctx = ctx.clone();

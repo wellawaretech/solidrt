@@ -101,7 +101,11 @@ declare module "flux:p2p" {
     close(): void
   }
 
-  /** A bound iroh endpoint with a stable keypair. */
+  /**
+   * A bound iroh endpoint with a stable keypair. Only in a build with the
+   * "p2p" capability (the stock runtimes have it); the export is absent
+   * without it.
+   */
   export class Endpoint {
     /**
      * Bind an endpoint.

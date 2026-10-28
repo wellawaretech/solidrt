@@ -5,6 +5,7 @@ pub mod image;
 pub mod isolate;
 pub mod mdns;
 pub mod net;
+#[cfg(any(feature = "p2p", feature = "p2p-relay"))]
 pub mod p2p;
 pub mod path;
 pub mod process;

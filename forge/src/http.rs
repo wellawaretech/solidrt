@@ -400,6 +400,7 @@ pub async fn accept_loop<F>(
   }
 }
 
+#[cfg(feature = "p2p")]
 /// The p2p sibling of `accept_loop`: accept incoming connections on `endpoint`
 /// whose ALPN matches `alpn` until shutdown (or the endpoint closes), handing
 /// each connection's first bi-stream to `on_conn` as a byte duplex plus the

@@ -453,6 +453,7 @@ stock runtime:
 - `video-encode`: recording, the `record` function of `flux:video`. It
   includes `video`.
 - `ktx2`: compressed textures.
+- `p2p`: `flux:p2p`, and the `p2p` option of `serve` in `flux:http`.
 - `p2p-relay`: `serveRelay` of `flux:p2p`, the self-hosted relay.
 - `wasm-native`: `flux:wasm` on wasmtime, which compiles a module to
   machine code. Some targets do not support wasmtime (armeabi-v7a, x86

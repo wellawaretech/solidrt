@@ -15,7 +15,7 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
-use iroh::SecretKey;
+use iroh_base::SecretKey;
 use iroh_relay::server::{Access, AccessControl, ClientRequest, RelayConfig, Server, ServerConfig};
 use tokio::sync::Mutex;
 use url::Url;

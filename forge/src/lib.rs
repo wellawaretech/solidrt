@@ -29,6 +29,7 @@ pub mod ktx2;
 pub mod logger;
 pub mod mdns;
 pub mod net;
+#[cfg(any(feature = "p2p", feature = "p2p-relay"))]
 pub mod p2p;
 pub mod path;
 pub mod process;

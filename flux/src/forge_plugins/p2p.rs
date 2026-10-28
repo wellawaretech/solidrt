@@ -24,315 +24,30 @@
 //! stage 1: unidirectional streams, multiple streams per peer, gossip/blobs, and
 //! key persistence (the caller stores the `secretKey` getter value itself).
 //!
-//! The stream-building paths (`connect`, the `accept` iterator's `next`) keep a
-//! hand-rolled `Promised` rather than `with_in_flight`: they must build a JS
-//! class, so the future captures `Ctx`. They report errors
-//! with `Exception::throw_message` (a clean `Error`, no `IO Error:` prefix), the
-//! same clean rejection `with_in_flight`/`JsResult` give the other methods.
+//! Each half is its own feature: `p2p` the endpoint (`endpoint.rs`), and
+//! `p2p-relay` the relay (`relay.rs`). An app that serves the relay for others
+//! need not be a peer, so a relay-only build exports `serveRelay` alone.
 
-use std::future::Future;
-use std::pin::Pin;
-use std::rc::Rc;
-
-use rquickjs::class::Trace;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::promise::Promised;
-use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object};
+#[cfg(feature = "p2p")]
+use rquickjs::Class;
+use rquickjs::Ctx;
+#[cfg(feature = "p2p-relay")]
+use rquickjs::Function;
 
-use crate::pending::PendingOps;
-use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{attach_async_iterator, iter_result, with_in_flight, OptArg};
-use crate::plugins::value::Neutral;
-use crate::standards_plugins::body::byte_stream_readable;
-use crate::standards_plugins::streams::writable_to;
-use forge::p2p::{decode_hex32, Endpoint, Stream};
+#[cfg(feature = "p2p")]
+mod endpoint;
+#[cfg(feature = "p2p")]
+pub use endpoint::P2pEndpoint;
 
 #[cfg(feature = "p2p-relay")]
-mod relay {
-  //! `serveRelay`: the self-hosted relay, marshalled over `forge::p2p::Relay`.
-  //! Only in a build with the `p2p-relay` feature, which `Flux.capabilities`
-  //! reports as "p2p-relay"; without it the export is absent, like `record`
-  //! without `video-encode`.
-
-  use std::cell::Cell;
-  use std::future::Future;
-
-  use rquickjs::class::Trace;
-  use rquickjs::promise::Promised;
-  use rquickjs::{Ctx, JsLifetime, Object};
-
-  use crate::pending::{Hold, PendingOps};
-  use crate::plugins::js_error::JsResult;
-  use crate::plugins::marshal::{with_in_flight, OptArg};
-  use forge::p2p::Relay;
-
-  /// The `flux:p2p` `Relay`: a thin wrapper over the forge relay, holding
-  /// the engine (standing) while it serves.
-  #[derive(Trace, JsLifetime)]
-  #[rquickjs::class(rename = "Relay")]
-  pub struct P2pRelay {
-    #[qjs(skip_trace)]
-    inner: Relay,
-    #[qjs(skip_trace)]
-    hold: Cell<Option<Hold>>,
-  }
-
-  #[rquickjs::methods]
-  impl P2pRelay {
-    /// The port the relay listens on.
-    #[qjs(get)]
-    pub fn port(&self) -> u16 {
-      self.inner.port()
-    }
-
-    /// The relay URL peers pass as `relayUrl`; see `forge::p2p::Relay::serve`.
-    #[qjs(get)]
-    pub fn url(&self) -> String {
-      self.inner.url().to_string()
-    }
-
-    /// Stop the relay; the connections it carries end.
-    pub fn close<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
-      let inner = self.inner.clone();
-      let hold = self.hold.take();
-      Ok(with_in_flight(&ctx, "p2p", async move {
-        inner.close().await;
-        drop(hold);
-        Ok::<(), String>(())
-      }))
-    }
-  }
-
-  /// `serveRelay({ port? })` -> `Promise<Relay>`; `port` 0 (the default) is
-  /// a free one. The relay is standing work until its `close`.
-  pub fn serve_relay<'js>(
-    ctx: Ctx<'js>,
-    opts: OptArg<Object<'js>>,
-  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<P2pRelay>>>> {
-    let port = match opts.0 {
-      Some(opts) => opts.get::<_, Option<u16>>("port")?.unwrap_or(0),
-      None => 0,
-    };
-    let hold = PendingOps::of(&ctx).standing("p2p relay");
-    Ok(with_in_flight(&ctx, "p2p", async move {
-      Relay::serve(port).await.map(|inner| P2pRelay { inner, hold: Cell::new(Some(hold)) })
-    }))
-  }
-}
-
-/// `next()` of the `accept` async-iterable: a promise resolving to an iterator
-/// result object (boxed so the closure has a nameable return type).
-type AcceptStep<'js> = Promised<Pin<Box<dyn Future<Output = rquickjs::Result<Object<'js>>> + 'js>>>;
-
-/// The `flux:p2p` `Endpoint`: a thin JS wrapper over the forge endpoint core.
-#[derive(Trace, JsLifetime)]
-#[rquickjs::class(rename = "Endpoint")]
-pub struct P2pEndpoint {
-  #[qjs(skip_trace)]
-  inner: Endpoint,
-}
-
-impl P2pEndpoint {
-  /// The engine-free forge endpoint, cloned out for native consumers (the
-  /// flux:http serve `endpoint` option accepts connections on it).
-  pub(crate) fn core(&self) -> Endpoint {
-    self.inner.clone()
-  }
-}
-
-#[rquickjs::methods]
-impl P2pEndpoint {
-  #[qjs(constructor)]
-  pub fn new(ctx: Ctx<'_>) -> rquickjs::Result<P2pEndpoint> {
-    Err(Exception::throw_message(&ctx, "use Endpoint.create() to bind a p2p endpoint"))
-  }
-
-  /// Bind an endpoint. `opts`: `{ secretKey?, relayUrl?, protocols?, port?, paths? }`.
-  /// `secretKey` is 64 hex chars (omit for an ephemeral key); `relayUrl`
-  /// selects a self-hosted relay (omit for none: direct paths only);
-  /// `protocols` lists the protocols this endpoint will `accept`. `port` pins
-  /// the UDP bind port (IPv4-only) so the ticket stays stable across restarts;
-  /// omit for an ephemeral port. `paths` is `"any"` (the default) or
-  /// `"relay"` (no UDP socket; every packet through the relay). See
-  /// `forge::p2p::Endpoint::bind`.
-  #[qjs(static)]
-  pub fn create<'js>(
-    ctx: Ctx<'js>,
-    opts: OptArg<Object<'js>>,
-  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<P2pEndpoint>>>> {
-    let (secret, relay_url, alpns, port, relay_only) = parse_create_opts(&ctx, opts.0)?;
-    Ok(with_in_flight(&ctx, "p2p", async move {
-      Endpoint::bind(secret, relay_url, alpns, port, relay_only).await.map(|inner| P2pEndpoint { inner })
-    }))
-  }
-
-  /// This endpoint's dial address: the string peers pass to `connect`.
-  #[qjs(get)]
-  pub fn id(&self) -> String {
-    self.inner.id()
-  }
-
-  /// The secret key as 64 hex chars, for the caller to persist and feed back to
-  /// `create` to keep a stable identity across restarts.
-  #[qjs(get, rename = "secretKey")]
-  pub fn secret_key(&self) -> String {
-    self.inner.secret_key_hex()
-  }
-
-  /// A self-contained dial token carrying this endpoint's id, home relay, and
-  /// direct addresses, so a peer can `connect` without relying on discovery.
-  pub fn ticket<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<String>>>> {
-    let inner = self.inner.clone();
-    Ok(with_in_flight(&ctx, "p2p", async move { Ok::<String, String>(inner.ticket().await) }))
-  }
-
-  /// Dial a peer and open one bidirectional stream over `protocol`. `peer` is
-  /// either a `ticket` (preferred: connects directly, no discovery) or a bare
-  /// endpoint `id` (needs discovery to resolve the peer's address).
-  pub fn connect<'js>(
-    &self,
-    ctx: Ctx<'js>,
-    peer: String,
-    protocol: String,
-  ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, P2pStream>>>>> {
-    let inner = self.inner.clone();
-    let hold = PendingOps::of(&ctx).in_flight("p2p connect");
-    let ctx2 = ctx.clone();
-    Ok(Promised(async move {
-      let r = inner.connect(peer, protocol).await;
-      drop(hold);
-      match r {
-        Ok(stream) => P2pStream::create(&ctx2, stream),
-        Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
-      }
-    }))
-  }
-
-  /// An async-iterable of incoming streams whose protocol matches `protocol`.
-  /// Iterating ends (`done`) when the endpoint is closed.
-  pub fn accept<'js>(&self, ctx: Ctx<'js>, protocol: String) -> rquickjs::Result<Object<'js>> {
-    let inner = self.inner.clone();
-    let alpn = Rc::new(protocol.into_bytes());
-    let iter = Object::new(ctx.clone())?;
-
-    let next_fn = Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<AcceptStep<'js>> {
-      let inner = inner.clone();
-      let alpn = alpn.clone();
-      // A pending accept waits on a peer: standing, like the endpoint.
-      let hold = PendingOps::of(&ctx).standing("p2p accept");
-      let ctx2 = ctx.clone();
-      Ok(Promised(Box::pin(async move {
-        let r = inner.accept_one(&alpn).await;
-        drop(hold);
-        match r {
-          Ok(Some(stream)) => {
-            let stream = P2pStream::create(&ctx2, stream)?;
-            iter_result(&ctx2, Some(stream.into_js(&ctx2)?))
-          }
-          Ok(None) => iter_result(&ctx2, None),
-          Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
-        }
-      })))
-    })?;
-    iter.set("next", next_fn)?;
-    attach_async_iterator(&ctx, &iter)?;
-    Ok(iter)
-  }
-
-  /// Snapshot of how the connection to `id` is currently carried. Resolves to
-  /// `{ path, addrs }`; see `forge::p2p::ConnInfo`. iroh starts on the relay and
-  /// upgrades to direct after hole-punching, so poll this to watch it settle.
-  #[qjs(rename = "connInfo")]
-  pub fn conn_info<'js>(
-    &self,
-    ctx: Ctx<'js>,
-    id: String,
-  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Neutral>>>> {
-    let inner = self.inner.clone();
-    Ok(with_in_flight(&ctx, "p2p", async move { inner.conn_info(id).await.map(|c| Neutral(c.into())) }))
-  }
-
-  /// Close the endpoint, ending any `accept` iteration.
-  pub fn close<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
-    let inner = self.inner.clone();
-    Ok(with_in_flight(&ctx, "p2p", async move {
-      inner.close().await;
-      Ok::<(), String>(())
-    }))
-  }
-}
-
-/// A single bidirectional p2p stream: a byte duplex as a `readable`/`writable`
-/// pair of web streams over the forge `Stream`, plus `close()` and `remoteId`.
-#[derive(Trace, JsLifetime)]
-#[rquickjs::class(rename = "P2pStream")]
-pub struct P2pStream {
-  #[qjs(skip_trace)]
-  inner: Rc<Stream>,
-}
-
-impl P2pStream {
-  /// Build the JS stream object over the forge `Stream`: the class instance
-  /// with its `readable` (the recv half, a read waiting on the peer held as
-  /// standing) and `writable` (the send half; a write is work in flight) as
-  /// own properties. The streams capture only the shared `Rc` of the core.
-  fn create<'js>(ctx: &Ctx<'js>, stream: Stream) -> rquickjs::Result<Class<'js, P2pStream>> {
-    let inner = Rc::new(stream);
-    let pending = PendingOps::of(ctx);
-    let readable = byte_stream_readable(ctx, inner.readable(), move || pending.standing("p2p stream read"))?;
-    let writable = writable_to(
-      ctx,
-      "P2pStream.writable",
-      "p2p write",
-      {
-        let stream = inner.clone();
-        move |bytes| {
-          let stream = stream.clone();
-          Box::pin(async move { stream.write(bytes).await })
-        }
-      },
-      {
-        let stream = inner.clone();
-        move || {
-          let stream = stream.clone();
-          Box::pin(async move { stream.finish().await })
-        }
-      },
-      {
-        let stream = inner.clone();
-        move |reason| {
-          stream.abort(reason);
-          Box::pin(std::future::ready(Ok(())))
-        }
-      },
-    )?;
-    let instance = Class::instance(ctx.clone(), P2pStream { inner })?;
-    instance.set("readable", readable)?;
-    instance.set("writable", writable)?;
-    Ok(instance)
-  }
-}
-
-#[rquickjs::methods]
-impl P2pStream {
-  /// Tear the stream down: a pending read ends, the recv half is released and
-  /// the send half finished.
-  pub fn close(&self) -> rquickjs::Result<()> {
-    self.inner.close();
-    Ok(())
-  }
-
-  /// The remote peer's endpoint id.
-  #[qjs(get, rename = "remoteId")]
-  pub fn remote_id(&self) -> String {
-    self.inner.remote_id()
-  }
-}
+mod relay;
 
 pub struct P2pModule;
 
 impl ModuleDef for P2pModule {
   fn declare(decl: &Declarations<'_>) -> rquickjs::Result<()> {
+    #[cfg(feature = "p2p")]
     decl.declare("Endpoint")?;
     #[cfg(feature = "p2p-relay")]
     decl.declare("serveRelay")?;
@@ -340,37 +55,13 @@ impl ModuleDef for P2pModule {
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
-    let ctor = Class::<P2pEndpoint>::create_constructor(ctx)?.expect("Endpoint class has a constructor");
-    exports.export("Endpoint", ctor)?;
+    #[cfg(feature = "p2p")]
+    {
+      let ctor = Class::<P2pEndpoint>::create_constructor(ctx)?.expect("Endpoint class has a constructor");
+      exports.export("Endpoint", ctor)?;
+    }
     #[cfg(feature = "p2p-relay")]
     exports.export("serveRelay", Function::new(ctx.clone(), relay::serve_relay)?)?;
     Ok(())
   }
-}
-
-/// Parsed `create` options: `(secretKey bytes, relayUrl, protocols/alpns,
-/// bind port, relay-only)`, the native config `Endpoint::bind` takes.
-type CreateOpts = (Option<[u8; 32]>, Option<String>, Vec<Vec<u8>>, Option<u16>, bool);
-
-/// Parse the `create` options object into native config. `opts` may be absent.
-fn parse_create_opts<'js>(ctx: &Ctx<'js>, opts: Option<Object<'js>>) -> rquickjs::Result<CreateOpts> {
-  let Some(opts) = opts else {
-    return Ok((None, None, Vec::new(), None, false));
-  };
-  let secret = match opts.get::<_, Option<String>>("secretKey")? {
-    Some(s) => Some(decode_hex32(&s).map_err(|m| Exception::throw_message(ctx, &m))?),
-    None => None,
-  };
-  let relay_url = opts.get::<_, Option<String>>("relayUrl")?;
-  let alpns =
-    opts.get::<_, Option<Vec<String>>>("protocols")?.unwrap_or_default().into_iter().map(String::into_bytes).collect();
-  let port = opts.get::<_, Option<u16>>("port")?;
-  let relay_only = match opts.get::<_, Option<String>>("paths")?.as_deref() {
-    None | Some("any") => false,
-    Some("relay") => true,
-    Some(other) => {
-      return Err(Exception::throw_message(ctx, &format!("paths must be \"any\" or \"relay\", not \"{other}\"")))
-    }
-  };
-  Ok((secret, relay_url, alpns, port, relay_only))
 }

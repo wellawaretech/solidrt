@@ -31,11 +31,12 @@ build-opt:
 # The flux binary hosts the dev server and the bake tools, so it carries
 # the texture encoder (flux:image encodeTexture) and every module a shipped
 # runtime can (the native wasm lane, like the stock runtime). It is also
-# what `sol test` runs test files on, so it alone carries flux:test. The
-# relay (flux:p2p serveRelay) is in the stock runtime, so it is here too.
+# what `sol test` runs test files on, so it alone carries flux:test. Both
+# halves of flux:p2p are in the stock runtime, so they are here too, and the
+# dev server's tunnel accepts on the endpoint.
 # The interpreted wasm lane on a desktop is a cargo line with `wasm` alone
 # (okf/notes/wasm-vs-js-throughput.md).
-FLUX_FEATURES = --features ktx2,wasm-native,p2p-relay,test
+FLUX_FEATURES = --features ktx2,wasm-native,p2p,p2p-relay,test
 
 flux:
 	cargo build $(CARGO_PROFILE_FLAG) $(FLUX_FEATURES) --bin flux

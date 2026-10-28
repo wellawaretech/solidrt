@@ -58,11 +58,11 @@ jobs:
 
       # --all-targets so tests, examples and bins compile too: without it a
       # broken test or probe example passes CI untouched. The capabilities
-      # (video, ktx2, wasm-native) are lattice's default features, so the
+      # (video, ktx2, wasm-native, p2p) are lattice's default features, so the
       # workspace build carries them through lattice; flux's own are named
       # so its gui video plugin and texture marshalling compile here too.
       - name: Check
-        run: cargo check --workspace --all-targets --features flux/video,flux/ktx2,flux/wasm-native,flux/p2p-relay
+        run: cargo check --workspace --all-targets --features flux/video,flux/ktx2,flux/wasm-native,flux/p2p,flux/p2p-relay
 
       # A runtime that trims lattice's capabilities (default-features =
       # false) must still build: every cfg a feature gates is checked here,
@@ -77,7 +77,7 @@ jobs:
       # included; flux stays because its headless half is what test-flux runs
       # elsewhere and the gui half has no other home.
       - name: Test
-        run: cargo test --workspace --exclude forge --features flux/video-encode,flux/wasm-native,flux/p2p-relay
+        run: cargo test --workspace --exclude forge --features flux/video-encode,flux/wasm-native,flux/p2p,flux/p2p-relay
 
       # `go` is not a default feature, so the step above compiles none of the
       # client-only code - including lattice's app-store and dev-server-tunnel
@@ -146,9 +146,9 @@ jobs:
       # iOS builds ship), so both engines meet the same contract on every
       # platform.
       - name: Test forge
-        run: cargo test -p forge --features video-encode,wasm-native,p2p-relay -- --test-threads=1 ${{ matrix.skip }}
+        run: cargo test -p forge --features video-encode,wasm-native,p2p,p2p-relay -- --test-threads=1 ${{ matrix.skip }}
       - name: Test forge, interpreted wasm lane
-        run: cargo test -p forge --features video-encode,wasm,p2p-relay -- --test-threads=1 ${{ matrix.skip }}
+        run: cargo test -p forge --features video-encode,wasm,p2p,p2p-relay -- --test-threads=1 ${{ matrix.skip }}
 
   # The headless flux runtime (QuickJS + the forge marshalling: value, time,
   # marshal, intrinsics) on the same four platforms, same principle as

@@ -1,6 +1,6 @@
 ---
 title: Put every optional flux module behind a cargo feature
-description: A custom runtime can only leave out what is a cargo feature all the way down, and today p2p, wasm, sqlite, subprocess, mdns and QR scanning are unconditional while video, ktx2 and the wasm lane are Makefile knobs; make each optional module a lattice feature, chosen in the runtime crate's Cargo.toml with the stock set as default and the player carrying all of them, starting with wasm.
+description: A custom runtime can only leave out what is a cargo feature all the way down, and today sqlite, subprocess, mdns and QR scanning are unconditional (wasm and p2p are done); make each optional module a lattice feature, chosen in the runtime crate's Cargo.toml with the stock set as default and the player carrying all of them, starting with wasm.
 created: 2026-10-06
 ---
 
@@ -136,6 +136,23 @@ has no knobs either. Open from "Done looks like": the build-time check in
   wasmi nor wasmtime (`cargo tree`), has no `"wasm"` capability, and an
   import of `flux:wasm` fails with a clear error; the stock client and
   runtime are unchanged; one size row for wasm entirely off.
+
+## Stage 2: p2p
+
+Landed 2026-10-28 in the shape above, as two independent features: an app
+that serves the relay for others need not be a peer, and iroh-relay does
+not depend on iroh. forge owns `p2p = ["dep:iroh", "dep:url"]` (the
+endpoint, `forge/src/p2p/endpoint.rs`, and `http::accept_loop_p2p`) and
+`p2p-relay` (iroh-relay, plus iroh-base for the token's key bytes);
+`forge::p2p` exists under either. flux mirrors the split
+(`forge_plugins/p2p/{endpoint,relay}.rs`): `flux:p2p` is registered under
+either, `Endpoint` under `p2p`, `serveRelay` under `p2p-relay`, and the
+`p2p` option of `serve` throws in a build without `p2p` rather than
+serving TCP alone. lattice lists both in `default` and in `go` (the dev
+tunnel needs the endpoint); the flux binary names both. Checked: no iroh
+in `cargo tree` for lattice with `default-features = false` nor for a
+relay-only forge; a flux binary without `p2p` lists no `"p2p"` capability
+and fails to resolve `flux:p2p`. The size row is still open.
 
 ## The build-time check
 

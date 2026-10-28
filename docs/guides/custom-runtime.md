@@ -90,6 +90,8 @@ These are the features:
 - `video-encode`: video recording (`record` of `flux:video`). It includes
   `video`.
 - `ktx2`: compressed textures.
+- `p2p`: peer-to-peer connections (`flux:p2p`, and the `p2p` option of
+  `serve` in `flux:http`).
 - `p2p-relay`: the self-hosted relay (`serveRelay` of `flux:p2p`).
 - `wasm-native`: `flux:wasm` on wasmtime, which compiles a module to
   machine code. Some targets do not support wasmtime (armeabi-v7a, x86
