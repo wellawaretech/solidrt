@@ -404,6 +404,17 @@ header nav > ul:first-child {
     display: flex;
   }
 
+  /* While the menu is open, the page under it holds still, and the header
+     takes the page's fill, so the menu reads as a panel and the page does
+     not scroll by beneath it. */
+  :root:has(.menu-toggle[aria-expanded="true"]) {
+    overflow: hidden;
+  }
+
+  header:has(.menu-toggle[aria-expanded="true"]) {
+    background: var(--sol-background);
+  }
+
   #site-sections a {
     display: block;
   }
