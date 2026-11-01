@@ -2,20 +2,82 @@ package com.solidrt.app;
 
 import android.content.Context;
 import android.os.Build;
+import android.util.Log;
 import android.view.MotionEvent;
+import android.view.SurfaceHolder;
 import android.view.View;
 
 import org.libsdl.app.SDLSurface;
 
-// SDL's surface with a touch path of our own. SDL hands native a touch
-// without its time (it is stamped when the call arrives) and never reads a
-// batch's historical samples, while Android delivers a time with every
-// sample. Finger events therefore go to nativeTouch, every sample with its
-// own time, and SDL sees none of them; mouse and stylus events stay with
-// SDL.
-class SolidRTSurface extends SDLSurface {
+// SDL's surface with a touch path and held redraws of our own.
+//
+// Touch: SDL hands native a touch without its time (it is stamped when the
+// call arrives) and never reads a batch's historical samples, while Android
+// delivers a time with every sample. Finger events therefore go to
+// nativeTouch, every sample with its own time, and SDL sees none of them;
+// mouse and stylus events stay with SDL.
+//
+// Held redraws: the surface sits beneath a window that is see-through over
+// it (SolidRTActivity.createSDLSurface), so a surface without a frame shows
+// what is beneath the app, the launcher during a launch. SDL's plain
+// Callback lets SurfaceView declare each redraw finished at once; as a
+// Callback2 the surface instead holds it until native has drawn a frame
+// into it. Meanwhile SurfaceView keeps the window covering it, and the
+// window's draw report waits, so the splash stays up through a launch and
+// no stale or mis-sized frame shows on a return or a rotation.
+class SolidRTSurface extends SDLSurface implements SurfaceHolder.Callback2 {
+    // Bounds a wedged engine: the platform never waits longer than this for
+    // a held redraw.
+    private static final long REDRAW_HOLD_MAX_MS = 5000;
+
+    // Numbers the held redraws, so a late answer to an older one never
+    // releases a newer one. Static: unique across surfaces in the process.
+    // UI thread only, as are the two fields below.
+    private static int redrawGeneration;
+    private int pendingGeneration;
+    // SurfaceView's continuation for the held redraw; null when none.
+    private Runnable pendingRedraw;
+
     SolidRTSurface(Context context) {
         super(context);
+    }
+
+    // Asks native for a frame built after this call; it answers through
+    // SolidRTActivity.redrawPresented with the same generation.
+    private static native void nativeRedrawNeeded(int generation);
+
+    // Required by Callback2 but never reached: SurfaceView calls the async
+    // variant below on API 26+, our minSdk.
+    @Override
+    public void surfaceRedrawNeeded(SurfaceHolder holder) {
+    }
+
+    @Override
+    public void surfaceRedrawNeededAsync(SurfaceHolder holder, Runnable drawingFinished) {
+        // A newer redraw supersedes the held one: finish that, or its sync
+        // never completes.
+        finishRedraw(pendingGeneration);
+        final int generation = ++redrawGeneration;
+        pendingGeneration = generation;
+        pendingRedraw = drawingFinished;
+        nativeRedrawNeeded(generation);
+        postDelayed(() -> {
+            if (finishRedraw(generation)) {
+                Log.w(SolidRTActivity.TAG, "Redraw not answered in " + REDRAW_HOLD_MAX_MS + " ms: showing the window anyway");
+            }
+        }, REDRAW_HOLD_MAX_MS);
+    }
+
+    // Releases held redraw `generation`, if it is still the held one. True
+    // when it was.
+    boolean finishRedraw(int generation) {
+        if (pendingRedraw == null || generation != pendingGeneration) {
+            return false;
+        }
+        Runnable finished = pendingRedraw;
+        pendingRedraw = null;
+        finished.run();
+        return true;
     }
 
     // One finger sample: the pointer's id, the MotionEvent's masked action,

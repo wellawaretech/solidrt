@@ -1014,18 +1014,17 @@ pub fn surface_rotation_degrees(frame: *mut SDL_Surface) -> u32 {
   }
 }
 
-/// Android's own answer to "does this device have a touchscreen"
-/// (PackageManager.hasSystemFeature). SDL's touch-device enumeration
-/// over-reports on TV boxes whose virtual input drivers claim pointer
-/// sources (measured: a Philips TPM171E lists a touch device while the
-/// platform declares no android.hardware.touchscreen feature), so the
-/// InputDevices touch fact gates on the platform feature too. Cached:
-/// hardware features cannot change at runtime. Errors default to true so a
-/// JNI hiccup can only ever fail toward the touch-device default, never
-/// strip a real touchscreen of its policy.
+// The local references a `with_android_activity` frame reserves up front:
+// a hint, the JVM grows the frame past it on demand. Covers the dialog
+// call, the largest (a string per filter plus the array and the strings).
+#[cfg(target_os = "android")]
+const JNI_LOCAL_FRAME_CAPACITY: usize = 16;
+
 /// Run `f` against SDL's JNI env and the activity object on the current
 /// thread (SDL attaches the thread to the JVM). A JNI failure or a Java
-/// exception comes back as the error, prefixed with `what`.
+/// exception comes back as the error, prefixed with `what`. Local
+/// references `f` makes are freed when it returns, so it hands back plain
+/// values or global references only.
 #[cfg(target_os = "android")]
 pub(crate) fn with_android_activity<T>(
   what: &str,
@@ -1041,7 +1040,12 @@ pub(crate) fn with_android_activity<T>(
   let outcome = unowned
     .with_env(|env| {
       let activity = unsafe { jni::objects::JObject::from_raw(env, activity_ptr) };
-      f(env, &activity)
+      // SDL's threads never return to Java, so no JNI frame ends to free the
+      // local references made here: `f`'s go with a frame of their own, the
+      // activity reference SDL handed out is deleted by hand.
+      let result = env.with_local_frame(JNI_LOCAL_FRAME_CAPACITY, |env| f(env, &activity));
+      env.delete_local_ref(activity);
+      result
     })
     .into_outcome();
   match outcome {
@@ -1066,6 +1070,15 @@ pub(crate) fn java_strings(
   Ok(out)
 }
 
+/// Android's own answer to "does this device have a touchscreen"
+/// (PackageManager.hasSystemFeature). SDL's touch-device enumeration
+/// over-reports on TV boxes whose virtual input drivers claim pointer
+/// sources (measured: a Philips TPM171E lists a touch device while the
+/// platform declares no android.hardware.touchscreen feature), so the
+/// InputDevices touch fact gates on the platform feature too. Cached:
+/// hardware features cannot change at runtime. Errors default to true so a
+/// JNI hiccup can only ever fail toward the touch-device default, never
+/// strip a real touchscreen of its policy.
 #[cfg(target_os = "android")]
 pub fn has_touchscreen_feature() -> bool {
   use sdl3::sys::system::{SDL_GetAndroidActivity, SDL_GetAndroidJNIEnv};

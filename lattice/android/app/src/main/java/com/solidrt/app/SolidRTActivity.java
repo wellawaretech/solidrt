@@ -357,16 +357,30 @@ public class SolidRTActivity extends SDLActivity {
     // whatever its buffers hold. The GL side asks for alpha bits to match
     // (alloy configure_opengl) and already clears the backbuffer to
     // transparent black, so uncovered pixels show what is beneath: the video
-    // plane while one exists, else the window's black background as before.
-    // Both settings must precede the window attaching, which is why they are
-    // made at surface creation rather than in onCreate. The surface is our
-    // subclass, for its touch path (see SolidRTSurface).
+    // plane while one exists. Without one, what is beneath the activity
+    // window: the window clears its own background over the SurfaceView, so
+    // that is nothing once a transition ends (reads black) and the launcher
+    // or recents during one, which is why the surface holds its redraws
+    // until native has drawn. Both settings must precede the window
+    // attaching, which is why they are made at surface creation rather than
+    // in onCreate. The surface is our subclass, for its touch path and its
+    // held redraws (see SolidRTSurface).
     @Override
     protected SDLSurface createSDLSurface(Context context) {
         SDLSurface surface = new SolidRTSurface(context);
         surface.getHolder().setFormat(PixelFormat.TRANSLUCENT);
         surface.setZOrderMediaOverlay(true);
         return surface;
+    }
+
+    // Native's answer to SolidRTSurface.nativeRedrawNeeded: a frame built
+    // after held redraw `generation` was asked for has reached the surface.
+    // Called on the SDL thread; the release runs on the UI thread.
+    public static void redrawPresented(final int generation) {
+        final SDLSurface surface = mSurface;
+        if (surface instanceof SolidRTSurface) {
+            surface.post(() -> ((SolidRTSurface) surface).finishRedraw(generation));
+        }
     }
 
     // Creates the video plane sized to fit a videoWidth x videoHeight picture

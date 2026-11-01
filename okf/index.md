@@ -324,6 +324,17 @@ Shaped, not started.
   for minutes, queries to the client (dialog state, debug list, settle) timed
   out for tens of seconds and then recovered; a BACK-cancelled picker and
   content reads alone did not stall; seen twice, cause not found.
+- **[Find the 0.5 s to 0.7 s between an Android surface resize and the engine's next frame](backlog/android-resize-frame-delay.md)** [2026-11-01]
+  On the SM-T500 the engine presents its first frame at a new size 0.5 s to
+  0.7 s after SDL's surfaceChanged() on a rotation, while the system's own
+  windows redraw in 50 ms to 300 ms; the frame itself builds in about 60 ms,
+  so most of the wait comes before the UI thread starts it. Since held
+  redraws, the screen stays frozen for that whole time.
+- **[Colour the Android splash from the project's iconBackground](backlog/android-splash-colour.md)** [2026-11-01]
+  A packed app's API 31+ splash shows on the runner theme's black
+  windowBackground whatever the app looks like; give the theme a splash colour
+  resource that pack patches from "solidrt": "iconBackground", so the splash,
+  the icon and the first frame read as one surface.
 - **[Android TV on Google Play](backlog/android-tv-play-distribution.md)** [2026-09-27]
   Play offers an app on TVs only after a form-factor opt-in and a TV quality
   review, not by app category; a `tv` key in package.json makes TV an explicit
@@ -484,6 +495,11 @@ Shaped, not started.
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
   itself?
+- **[TLS options for fetch](backlog/fetch-tls-options.md)** [2026-10-30]
+  fetch verifies servers against the webpki roots only and has no client
+  certificate, so an app cannot reach a private-CA or self-signed server, pin
+  a server certificate, or do mutual TLS; add a client certificate, extra
+  roots and a pin, through a client object the app creates.
 - **["FFI write batching: batched creation, one-call drain, interned keys, command buffer"](backlog/ffi-write-batching.md)** [2026-08-05]
   Every property write is one string-keyed FFI call (mount fans a props object
   into per-prop calls; update bursts pay per-call overhead N times); four
@@ -683,6 +699,12 @@ Shaped, not started.
   Windows runner would lose Authenticode the same way; embed the pack inside
   the executable image (Mach-O segment, PE resource) and re-sign after
   packing.
+- **[Apply SVG clipPath in parseSvg](backlog/parse-svg-clip-path.md)** [2026-11-01]
+  parseSvg drops clipPath (usvg resolves it, forge never reads it) and the
+  render tree has no path clip at all (Impeller's clip_path is never called,
+  overflow clips need a layout box); add a generic clipPath prop on
+  view/d-view/d-path in alloy, emit per-draw clips from forge in flat mode,
+  and carry the same field on groups once tree mode lands.
 - **[parseSvg tree output](backlog/parse-svg-tree.md)** [2026-08-28]
   parseSvg flattens usvg's group tree into one draw list, losing group ids,
   group opacity and group transforms; add an opt-in tree output (groups with
@@ -1434,6 +1456,12 @@ Finished, kept for the reasoning.
   hold above 1 was permanent; done means the frame's GPU term comes from the
   compositor stack's per-frame timestamps on Android, and the tablet runs the
   reporting app's slide at hold 1.
+- **[Hold Android window draws until the engine has drawn into its surface](done/android-launch-home-flash.md)** [2026-11-01]
+  On every Android cold start the launcher flashes between the system splash
+  and the app's first frame, because SDL's translucent SurfaceView opens its
+  hole in the window before native has queued a buffer; implement
+  SurfaceHolder.Callback2 so every window draw that needs a new SDL frame
+  waits for one, which also keeps the splash icon up until the first frame.
 - **[The main loop thread rarely sleeps on Android](done/android-main-loop-rarely-sleeps.md)** [2026-09-21]
   In a 5 s scheduler trace of an animating app on the SM-T500, SDLThread (the
   alloy main loop) was switched out 259 times and only 15 of those were
@@ -3067,6 +3095,14 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   hit/routing) are covered by a 168-test suite. Remaining gaps are the
   unenforced unsafe Send/Sync (now four types), hot-path expect(&format!), and
   panics at the tree boundary.
+- **[Recording and reading the Android launch hand-over](notes/android-launch-handover.md)** [2026-11-01]
+  How to record what the screen shows between a tap and an app's first frame
+  on Android (launcher launch for the icon splash, screenrecord, frame sheets,
+  brightness for black), what decides the hand-over (the starting window
+  leaves on the window's draw report, SurfaceView holds that report only
+  through Callback2), and two measured facts nearby (0.5 s to 0.7 s from
+  surfaceChanged to a new-size frame on the SM-T500; jni 0.22's with_env makes
+  no local frame).
 - **[The raster thread's CPU per frame on Android is the driver's swap, not our code](notes/android-raster-thread-cpu-per-frame.md)** [2026-09-21]
   On the SM-T500 (Adreno 610, Android 12) the raster thread spends about 8 ms
   of CPU per 60 fps frame on a one-rectangle fullscreen frame; a DWARF

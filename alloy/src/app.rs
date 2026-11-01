@@ -493,6 +493,7 @@ impl App {
     };
     #[cfg(target_os = "android")]
     crate::touch::set_wake(wake.clone());
+    crate::redraw::set_wake(wake.clone());
     let raster =
       platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.frame_sink(), stats.clone());
 
@@ -732,7 +733,10 @@ impl App {
       let mut disconnected = false;
       loop {
         match rx.try_recv() {
-          Ok(FrameOutput::Presented { at, ready_at, gpu_micros, demanded }) => {
+          Ok(FrameOutput::Presented { at, ready_at, gpu_micros, demanded, frame: built, swapped }) => {
+            if let Some(generation) = liveness.on_present(built, swapped) {
+              crate::redraw::answer(generation);
+            }
             fps_frame_count += 1;
             // The frame's work time (see cadence.rs): its signal's emission
             // to the swap call on the raster thread, plus the GPU time of
@@ -773,7 +777,7 @@ impl App {
                 frame += 1;
                 last_frame_signal = Instant::now();
                 last_emission = last_frame_signal;
-                liveness.on_frame_signal(last_frame_signal);
+                liveness.on_frame_signal(last_frame_signal, frame);
                 if let (Some(v), Some(delay)) = (&vsync, arm) {
                   v.request(delay);
                 }
@@ -914,7 +918,7 @@ impl App {
           }
           stats.idle_ticks.fetch_add(1, Ordering::Relaxed);
           last_emission = Instant::now();
-          liveness.on_frame_signal(last_emission);
+          liveness.on_frame_signal(last_emission, frame);
         }
         last_frame_signal = Instant::now();
       }
@@ -1017,6 +1021,11 @@ impl App {
           }
         }
       }
+      // A held redraw (see redraw.rs), taken after this iteration's events so
+      // the rebinds they caused are queued ahead of the frame that answers.
+      if let Some(generation) = crate::redraw::take() {
+        liveness.on_redraw_requested(generation);
+      }
       // Flush presents deferred to vsync or to a cadence-hold slot end -
       // after the SDL event drain, so the input delivered at the same vsync
       // is already in the event channel and the UI batch runs it before
@@ -1073,7 +1082,7 @@ impl App {
             }
             last_frame_signal = Instant::now();
             last_emission = last_frame_signal;
-            liveness.on_frame_signal(last_frame_signal);
+            liveness.on_frame_signal(last_frame_signal, frame);
             if let (Some(v), Some(delay)) = (&vsync, arm) {
               v.request(delay);
             }
@@ -1149,7 +1158,7 @@ impl App {
                 }
                 last_frame_signal = Instant::now();
                 last_emission = last_frame_signal;
-                liveness.on_frame_signal(last_frame_signal);
+                liveness.on_frame_signal(last_frame_signal, frame);
               }
             }
           },

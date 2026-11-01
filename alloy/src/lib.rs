@@ -29,6 +29,7 @@ pub mod motion;
 mod present;
 mod raster;
 pub use raster::{DamageRect, PresentDamage, RasterCounters, TargetCounters};
+pub mod redraw;
 pub mod renderer;
 pub mod rendertree;
 pub mod resample;

@@ -51,16 +51,16 @@ fn resize_relatches_on_frame_signals_until_settled() {
   assert!(latch.swap(false, Ordering::Relaxed));
 
   // Frame signals inside the settle window re-latch a repaint.
-  liveness.on_frame_signal(start + Duration::from_millis(100));
+  liveness.on_frame_signal(start + Duration::from_millis(100), 0);
   assert!(latch.swap(false, Ordering::Relaxed));
-  liveness.on_frame_signal(start + Duration::from_millis(499));
+  liveness.on_frame_signal(start + Duration::from_millis(499), 0);
   assert!(latch.swap(false, Ordering::Relaxed));
 
   // The first signal past the deadline closes the window; nothing after
   // latches.
-  liveness.on_frame_signal(start + Duration::from_millis(500));
+  liveness.on_frame_signal(start + Duration::from_millis(500), 0);
   assert!(!latch.load(Ordering::Relaxed));
-  liveness.on_frame_signal(start + Duration::from_millis(501));
+  liveness.on_frame_signal(start + Duration::from_millis(501), 0);
   assert!(!latch.load(Ordering::Relaxed));
 }
 
@@ -74,9 +74,9 @@ fn resize_stream_pushes_the_deadline_out() {
   latch.store(false, Ordering::Relaxed);
 
   // 700ms after the first resize but inside the second one's window.
-  liveness.on_frame_signal(start + Duration::from_millis(700));
+  liveness.on_frame_signal(start + Duration::from_millis(700), 0);
   assert!(latch.swap(false, Ordering::Relaxed));
-  liveness.on_frame_signal(start + Duration::from_millis(901));
+  liveness.on_frame_signal(start + Duration::from_millis(901), 0);
   assert!(!latch.load(Ordering::Relaxed));
 }
 
@@ -105,5 +105,48 @@ fn no_latch_registered_still_reports_rebinds() {
 
   assert!(liveness.on_event(&AlloyEvent::Exposed, now));
   assert!(liveness.on_event(&resize(), now));
-  liveness.on_frame_signal(now + Duration::from_millis(100));
+  liveness.on_frame_signal(now + Duration::from_millis(100), 0);
+}
+
+#[test]
+fn held_redraw_waits_for_a_frame_built_after_the_ask() {
+  let (mut liveness, latch) = liveness_with_latch();
+  let now = Instant::now();
+
+  liveness.on_redraw_requested(7);
+  assert!(latch.swap(false, Ordering::Relaxed), "the ask latches a repaint");
+
+  // Frame 4 was in flight at the ask: built before it, it does not answer.
+  assert_eq!(liveness.on_present(4, true), None);
+
+  // The first signal after the ask names frame 5 as the first that counts,
+  // and re-latches so frame 5 is built even if frame 4 took the first latch.
+  liveness.on_frame_signal(now, 5);
+  assert!(latch.swap(false, Ordering::Relaxed));
+
+  // An unswapped present (backgrounded) does not answer; signals keep
+  // re-latching until one does.
+  assert_eq!(liveness.on_present(5, false), None);
+  liveness.on_frame_signal(now, 6);
+  assert!(latch.swap(false, Ordering::Relaxed));
+  assert_eq!(liveness.on_present(6, true), Some(7));
+
+  // Answered: nothing re-latches and later presents answer nothing.
+  liveness.on_frame_signal(now, 7);
+  assert!(!latch.load(Ordering::Relaxed));
+  assert_eq!(liveness.on_present(7, true), None);
+}
+
+#[test]
+fn a_newer_redraw_ask_supersedes_an_unanswered_one() {
+  let (mut liveness, _latch) = liveness_with_latch();
+  let now = Instant::now();
+
+  liveness.on_redraw_requested(1);
+  liveness.on_frame_signal(now, 3);
+  // The newer ask restarts the wait: frame 3 was built before it.
+  liveness.on_redraw_requested(2);
+  assert_eq!(liveness.on_present(3, true), None);
+  liveness.on_frame_signal(now, 4);
+  assert_eq!(liveness.on_present(4, true), Some(2));
 }

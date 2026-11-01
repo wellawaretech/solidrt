@@ -319,6 +319,19 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTSurface_nativeTouch(
   alloy::touch::push(pointer_id as i32, action as i32, x, y, time_ns);
 }
 
+// Receives a held redraw from SolidRTSurface (Android UI thread): the
+// platform shows the window only once the surface has a frame built after
+// this ask; alloy answers with the generation (see alloy's redraw.rs).
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_solidrt_app_SolidRTSurface_nativeRedrawNeeded(
+  _env: *mut core::ffi::c_void,
+  _class: *mut core::ffi::c_void,
+  generation: core::ffi::c_int,
+) {
+  alloy::redraw::request(generation as i32);
+}
+
 // --- End Android entry point ------------------------------
 
 pub const VERSION: &str = match option_env!("SOLIDRT_VERSION") {

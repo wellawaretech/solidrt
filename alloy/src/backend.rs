@@ -21,8 +21,18 @@ pub enum FrameOutput {
   /// time of the most recently retired frame, its window draw plus the
   /// passes issued ahead of it (a frame or two behind, timer queries retire
   /// late), None without timer queries. Both feed the cadence hold
-  /// (cadence.rs).
-  Presented { at: std::time::Instant, ready_at: std::time::Instant, gpu_micros: Option<u64>, demanded: bool },
+  /// (cadence.rs). `frame` is the UI frame number the list was built under;
+  /// `swapped` whether its buffer actually reached the window (a
+  /// backgrounded or failed frame still reports, unswapped). Together they
+  /// answer a platform's held redraw (see liveness.rs).
+  Presented {
+    at: std::time::Instant,
+    ready_at: std::time::Instant,
+    gpu_micros: Option<u64>,
+    demanded: bool,
+    frame: u64,
+    swapped: bool,
+  },
   /// The GL context is lost and the raster thread has released it
   /// (okf/done/gpu-context-loss.md): the platform side destroys it and
   /// answers with a binding onto a fresh one (a new context on the same

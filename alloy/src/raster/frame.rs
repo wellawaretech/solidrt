@@ -281,6 +281,8 @@ impl RasterState {
           ready_at: present_start,
           gpu_micros: self.last_frame_gpu_micros,
           demanded,
+          frame,
+          swapped: presented,
         })
         .map_err(|_| FrameExit::MainGone)?;
     }
