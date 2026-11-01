@@ -19,7 +19,10 @@ matches the work before starting it:
 When SolidRT itself gets in the way (a bug, a missing export, a doc that
 misled you, a trap nothing warned about), append it to SOLIDRT-FEEDBACK.md
 in the project root, creating the file if needed: what you hit, and what
-you expected instead.
+you expected instead. Write about SolidRT only, and leave out everything
+about the app being built: its name, purpose, features, domain, data and
+code. When a repro helps, write a minimal snippet with generic names, not
+code taken from the app.
 
 ## The window is device-sized - design fluid
 
