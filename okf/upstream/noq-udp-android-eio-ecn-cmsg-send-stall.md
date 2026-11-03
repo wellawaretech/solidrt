@@ -1,10 +1,10 @@
 ---
 title: noq-udp keeps failing every send after an EIO on Android
-description: On a phone whose kernel answers a GSO sendmsg with EIO, noq-udp halts segmentation offload but keeps attaching the ECN cmsg, which that kernel also refuses with EIO, so every later send fails and the phone's uploads over flux:p2p stall while downloads work; fixed in quinn and synced into noq's main, not in a noq release yet.
+description: On a phone whose kernel answers a GSO sendmsg with EIO, noq-udp halts segmentation offload but keeps attaching the ECN cmsg, which that kernel also refuses with EIO, so every later send fails and the phone's uploads over flux:p2p stall while downloads work; fixed in noq-udp 1.4.0, in our tree since the iroh 1.4.1 bump (2026-11-03).
 created: 2026-10-17
-status: fixed-upstream
+status: resolved
 project: noq-udp (n0's quinn fork, under iroh)
-versions: noq-udp 1.3.0 (iroh 1.3.0)
+versions: noq-udp 1.3.0 (iroh 1.3.0); fixed in noq-udp 1.4.0 (iroh 1.4.1)
 link: https://github.com/quinn-rs/quinn/pull/2719
 ---
 
@@ -37,19 +37,24 @@ is untouched, hence uploads stall and downloads work.
 - quinn PR 2719, "quinn-udp: handle EIO from sendmsg in the cmsg fallback
   (not just EINVAL)", merged 2026-07-10 (closes quinn issue 2718).
 - n0 synced it into noq's `main` with "chore: sync quinn main" (noq PR
-  823, merged 2026-10-16). No noq release carries it yet; our tree pins
-  noq-udp 1.3.0 through iroh 1.3.0, whose `send` still has the
-  `EINVAL`-only fallback.
+  823, merged 2026-10-16), released in noq-udp 1.4.0 (2026-10-20; its
+  `unix.rs` cmsg fallback matches `EINVAL | EIO`), which iroh 1.4.1
+  (2026-10-21) requires.
 - The separate half, the dropped batch itself (quinn issue 2399, "retry
-  failed GSO sendmsg on EIO without GSO"), is open upstream with a
-  partial-sends PR linked.
+  failed GSO sendmsg on EIO without GSO"), is still open upstream:
+  okf/upstream/noq-udp-android-gso-eio-first-call-stall.md.
 
-## When it resolves
+## Outcome
 
-Bump iroh (and with it noq, noq-proto, noq-udp) to the release that carries
-the sync, then re-run the Pixel as a sender over a direct path:
-`examples/screencast` cast from the phone, and `examples/call` as the
-guest, both without a relay. Until then the phone works as a receiver, and
-through a relay (`serveRelay` of flux:p2p) its direct path dies and the
-relay path carries the data, late and in bursts. okf/plans/video-encode.md
-step 7 records the decision not to work around it in our tree.
+Bumped iroh, iroh-base and iroh-relay to 1.4.1 on 2026-11-03 (noq,
+noq-proto and noq-udp to 1.4.0), the Pixel 7 client and the laptop host
+both rebuilt. `examples/call` with the Pixel as the guest on a direct
+path (`relayOnly` off) now holds `live; sending; path mixed` in both
+directions with no redial (80 s and longer), where the direct path used to
+die and the relay carried the data late and in bursts.
+
+What remains is a 15 s stall on the first call of a fresh phone endpoint,
+which the redial on the same endpoint gets past; a relay-only guest has
+none. That is the other half, worked around by building Android endpoints
+without GSO and tracked in
+okf/upstream/noq-udp-android-gso-eio-first-call-stall.md.

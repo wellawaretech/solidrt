@@ -262,12 +262,17 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   frame and no cut over a minute each way, and the glass to glass delay
   read off the laptop's clock in the Pixel's picture of it is 0.2 to
   0.3 s (okf/done/live-latency-floor.md).
-- **Owed on the Pixel 7**: the phone as the sender over a direct path after the noq
-  bump (okf/upstream/noq-udp-android-eio-ecn-cmsg-send-stall.md), when
-  `paths: "relay"` stops being needed for it; the live bitrate (its
+- **Owed on the Pixel 7**: the live bitrate (its
   hardware encoder gave 240 kbit/s at 324x720 under a 700 kbit/s budget
   in CBR mode, a soft picture: see whether the mode takes, or raise the
-  live default). The two-way call itself ran 2026-10-17 (Findings).
+  live default). The two-way call itself ran 2026-10-17 (Findings). The
+  phone as the sender over a direct path ran 2026-11-03 after the iroh
+  1.4.1 bump (okf/upstream/noq-udp-android-eio-ecn-cmsg-send-stall.md,
+  resolved): live both ways on `path mixed`. A fresh endpoint's first
+  call stalled 15 s until forge built Android endpoints without GSO
+  (okf/upstream/noq-udp-android-gso-eio-first-call-stall.md); with that,
+  the first call is live by +4 s and `paths: "relay"` is no longer needed
+  for this phone.
 - **The relay across NATs.** Without a QUIC address-discovery listener
   (TLS, so a self-signed certificate the clients would have to accept)
   the endpoints learn no public address from the relay, so two peers on

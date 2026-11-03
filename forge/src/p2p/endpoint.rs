@@ -85,7 +85,7 @@ impl Endpoint {
   /// lets iroh pick an ephemeral port. `relay_only` binds no UDP socket at
   /// all: every packet goes through the relay (which must then be given),
   /// for a device whose UDP sends fail
-  /// (okf/upstream/noq-udp-android-eio-ecn-cmsg-send-stall.md).
+  /// (okf/upstream/noq-udp-android-gso-eio-first-call-stall.md).
   ///
   /// Bind runs on a worker thread (`tokio::spawn`), not the caller's thread:
   /// iroh's bind does blocking work that otherwise stalls a single-threaded host
@@ -515,6 +515,18 @@ async fn build_endpoint(
     None => RelayMode::Disabled,
   };
   builder = builder.relay_mode(relay_mode);
+  // No GSO on Android: a phone kernel may answer a segmented send with EIO,
+  // and noq-udp halts GSO then but drops that batch, so a fresh endpoint's
+  // first bulk data stalls on the direct path until loss recovery finds it
+  // (okf/upstream/noq-udp-android-gso-eio-first-call-stall.md). Starting
+  // without it costs CPU per datagram, which is negligible at call rates.
+  // Remove once a noq-udp release under iroh resends that batch (quinn
+  // issue 2399); the note lists the steps and the re-test.
+  #[cfg(target_os = "android")]
+  {
+    let transport = iroh::endpoint::QuicTransportConfig::builder().enable_segmentation_offload(false).build();
+    builder = builder.transport_config(transport);
+  }
   let endpoint = builder.bind().await.map_err(|e| e.to_string())?;
   Ok((endpoint, bytes))
 }

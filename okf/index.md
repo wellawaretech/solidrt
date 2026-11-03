@@ -3478,8 +3478,14 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   On a phone whose kernel answers a GSO sendmsg with EIO, noq-udp halts
   segmentation offload but keeps attaching the ECN cmsg, which that kernel
   also refuses with EIO, so every later send fails and the phone's uploads
-  over flux:p2p stall while downloads work; fixed in quinn and synced into
-  noq's main, not in a noq release yet.
+  over flux:p2p stall while downloads work; fixed in noq-udp 1.4.0, in our
+  tree since the iroh 1.4.1 bump (2026-11-03).
+- **[The first p2p call from a fresh Android endpoint stalls on the direct path](upstream/noq-udp-android-gso-eio-first-call-stall.md)** [2026-11-03]
+  On a Pixel 7 the first call over a direct UDP path gets no data through for
+  15 s in either direction, while the redial on the same endpoint goes live at
+  once and a relay-only endpoint is live in 3 s: the GSO batch that fails with
+  EIO is dropped rather than resent unsegmented (quinn issue 2399, open);
+  forge builds Android endpoints without GSO until then.
 - **[quickjs-ng ArrayBuffer.prototype.transfer mishandles external buffers](upstream/quickjs-ng-transfer-external-buffers.md)** [2026-08-03]
   transfer() on a JS_NewArrayBuffer-backed (external) buffer calls js_realloc
   on a pointer the JS allocator does not own when the length changes (heap
