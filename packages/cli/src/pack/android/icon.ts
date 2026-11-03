@@ -1,10 +1,12 @@
 // The Android launcher icon's two patchable slots (see the runner's
-// ic_launcher_prod.xml): the foreground is the app's own square PNG, dropped
+// ic_launcher_runner.xml): the foreground is the app's own square PNG, dropped
 // into the safe-zone inset as-is; the background is a 1x1 PNG of the
-// configured color that Android stretches full-bleed. Nothing is ever
+// configured color that Android stretches full-bleed.
+// The splash takes the same color (splash.ts). Nothing is ever
 // resampled here - Android does all scaling.
 
 import { deflateRawSync } from "node:zlib"
+import type { Rgb } from "../../lib/icon-background"
 import { crc32 } from "./zip"
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -23,11 +25,10 @@ function pngChunk(type: string, data: Buffer): Buffer {
   return out
 }
 
-/// A 1x1 opaque RGB PNG of `color` ("#rrggbb"): the adaptive-icon background
-/// slot. Hand-assembled because it is fixed-shape and tiny; zlib provides the
+/// A 1x1 opaque RGB PNG of `rgb`: the adaptive-icon background slot.
+/// Hand-assembled because it is fixed-shape and tiny; zlib provides the
 /// (one-pixel) IDAT stream.
-export function backgroundPixel(color: string): Buffer {
-  let rgb = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16))
+export function backgroundPixel(rgb: Rgb): Buffer {
   let ihdr = Buffer.alloc(13)
   ihdr.writeUInt32BE(1, 0) // width
   ihdr.writeUInt32BE(1, 4) // height

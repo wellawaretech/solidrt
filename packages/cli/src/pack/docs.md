@@ -72,7 +72,9 @@ needs `appId` to be an Android application id (`sol init --runtime` sets
 one).
 
 `iconBackground` is the ground behind the icon's transparent foreground
-(the adaptive icon's background layer behind `assets/icon.png`).
+(the adaptive icon's background layer behind `assets/icon.png`), and the
+color of the Android 12+ splash, which shows the icon on it until the
+app's first frame.
 `capabilities` is what the app may ask the user for, in platform-neutral
 names. All are on unless switched off, so a packed app can do what it did
 in the player; the scaffold lists them all, and `"camera": false` (or

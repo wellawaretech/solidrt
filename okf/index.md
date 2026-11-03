@@ -330,11 +330,6 @@ Shaped, not started.
   windows redraw in 50 ms to 300 ms; the frame itself builds in about 60 ms,
   so most of the wait comes before the UI thread starts it. Since held
   redraws, the screen stays frozen for that whole time.
-- **[Colour the Android splash from the project's iconBackground](backlog/android-splash-colour.md)** [2026-11-01]
-  A packed app's API 31+ splash shows on the runner theme's black
-  windowBackground whatever the app looks like; give the theme a splash colour
-  resource that pack patches from "solidrt": "iconBackground", so the splash,
-  the icon and the first frame read as one surface.
 - **[Android TV on Google Play](backlog/android-tv-play-distribution.md)** [2026-09-27]
   Play offers an app on TVs only after a form-factor opt-in and a TV quality
   review, not by app category; a `tv` key in package.json makes TV an explicit
@@ -1473,6 +1468,11 @@ Finished, kept for the reasoning.
   (149 missed presents in a window that presented on every vsync); the
   refresh-rate fact is read at init and by a polled safety net that did not
   pick the change up.
+- **[Colour the Android splash from the project's iconBackground](done/android-splash-colour.md)** [2026-11-01]
+  A packed app's API 31+ splash shows on the runner theme's black
+  windowBackground whatever the app looks like; give the theme a splash colour
+  resource that pack patches from "solidrt": "iconBackground", so the splash,
+  the icon and the first frame read as one surface.
 - **[Android surface swap blocks four vsyncs](done/android-surface-swap-latency.md)** [2026-07-28]
   SOLVED, it was our 4x MSAA all along, the ~80 ms swap block was the GPU
   draining full off-tile multisample resolve traffic every frame. Fixed via a

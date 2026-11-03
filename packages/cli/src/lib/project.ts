@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fail } from "./fail"
 import { checkFontsMap, STOCK_FONT_ROLES } from "./fonts"
+import { iconBackgroundRgb } from "./icon-background"
 
 // Project configuration lives in the `solidrt` key of the project's
 // package.json (okf/plans/client-storage-updates.md):
@@ -15,11 +16,13 @@ import { checkFontsMap, STOCK_FONT_ROLES } from "./fonts"
 //                                   // time (@solidrt/core/textures)
 //     "icon": "./assets/icon.svg",  // optional app icon (SVG, under assets/);
 //                                   // an undeclared assets/icon.svg is picked
-//                                   // up by convention. A .png also feeds the
-//                                   // Android launcher icon (pack --apk)
+//                                   // up by convention. assets/icon.png beside
+//                                   // it is the Android launcher icon (pack
+//                                   // --apk)
 //     "iconBackground": "#ffffff",  // the ground behind the icon's transparent
-//                                   // foreground (Android adaptive icon; other
-//                                   // packers as they compose icons)
+//                                   // foreground (Android adaptive icon and
+//                                   // splash; other packers as they compose
+//                                   // icons)
 //     "capabilities": {             // what the app may ask the user for; all
 //       "camera": true,             // on by default (a packed app then works
 //       "microphone": true,         // like it did in the player), false drops
@@ -203,7 +206,7 @@ function parseProjectConfig(raw: unknown, dir: string): ProjectConfig {
   for (let key of ["entry", "appId", "org", "displayName", "icon", "runtime"]) {
     if (key in config && typeof config[key] !== "string") fail(`"solidrt": "${key}" must be a string`)
   }
-  if ("iconBackground" in config && !(typeof config.iconBackground === "string" && /^#[0-9a-fA-F]{6}$/.test(config.iconBackground))) {
+  if ("iconBackground" in config && !(typeof config.iconBackground === "string" && iconBackgroundRgb(config.iconBackground))) {
     fail('"solidrt": "iconBackground" must be a "#rrggbb" color')
   }
   if ("capabilities" in config) {

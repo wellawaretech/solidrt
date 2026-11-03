@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Placeholder splash background (values-v31/styles.xml); the sol pack
+         apk flow rewrites it to the app's iconBackground (the patcher
+         locates it by this exact value, see
+         packages/cli/src/pack/android/splash.ts). Keep it unlike any other
+         color in the runner. -->
+    <color name="splash_background">#c39d6f</color>
+</resources>

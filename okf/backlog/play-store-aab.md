@@ -159,6 +159,9 @@ reads.
   - label in `resources.pb`, found by resource name (`string/app_name`),
     not by value: the proto table carries names, so the `BASE_LABELS`
     value-matching trap does not apply here;
+  - splash color in `resources.pb`, found by name
+    (`color/splash_background`), set to `iconBackground` as `patchSplash`
+    does in `resources.arsc`;
   - icon slots, same entry names with a `base/` prefix;
   - `base/lib/<abi>/*.so` from each runner APK, plus a generated
     `base/native.pb` with one directory entry per ABI;

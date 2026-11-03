@@ -2,6 +2,7 @@
 title: Colour the Android splash from the project's iconBackground
 description: A packed app's API 31+ splash shows on the runner theme's black windowBackground whatever the app looks like; give the theme a splash colour resource that pack patches from "solidrt": "iconBackground", so the splash, the icon and the first frame read as one surface.
 created: 2026-11-01
+completed: 2026-11-01
 ---
 
 # Colour the Android splash from the project's iconBackground
@@ -30,3 +31,13 @@ colour.
 A `values-v31` style with `android:windowSplashScreenBackground` naming a
 colour resource in the runner, and pack patching that colour's value in
 `resources.arsc`, next to `patchLabel`.
+
+## Outcome
+
+Built as shaped. The runner's `values-v31` `AppTheme` names
+`@color/splash_background`, a placeholder (`#c39d6f`) that `patchSplash`
+(packages/cli/src/pack/android/splash.ts) finds by value in
+`resources.arsc` and sets to `iconBackground`; pack fails on a runner
+without it. Below API 31 the starting window stays as it was, by decision.
+Verified on an SM-T500 (Android 12, One UI): from the app drawer, the
+icon shows on its own ground and the splash fades into the first frame.

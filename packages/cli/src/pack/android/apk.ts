@@ -4,12 +4,12 @@
 // rewrite renames the scheme the app answers to with it; see the runner's
 // AndroidManifest.xml), declare the app's permissions there and, when
 // the app opts in, turn backup on for its data/ folder; rewrite the launcher
-// label in the resource table (strings.ts), swap the adaptive-icon slot PNGs
-// (icon.ts), add the .solapp payload as a stored asset, then re-align and
-// re-sign the zip (zip.ts, sign.ts). The dex, the native libs and every
-// other resource are carried byte-for-byte; the activity class name is
-// stored fully qualified in the manifest, so changing the id never touches
-// the dex (okf/done/standalone-android-apk.md,
+// label in the resource table (strings.ts) and color its splash (splash.ts),
+// swap the adaptive-icon slot PNGs (icon.ts), add the .solapp payload as a
+// stored asset, then re-align and re-sign the zip (zip.ts, sign.ts). The
+// dex, the native libs and every other resource are carried byte-for-byte;
+// the activity class name is stored fully qualified in the manifest, so
+// changing the id never touches the dex (okf/done/standalone-android-apk.md,
 // okf/done/packed-apk-data-on-device.md).
 
 import { createHash } from "node:crypto"
@@ -28,6 +28,8 @@ import {
 } from "./strings"
 import { backgroundPixel } from "./icon"
 import { signApk } from "./sign"
+import { patchSplash } from "./splash"
+import { iconBackgroundRgb, type Rgb } from "../../lib/icon-background"
 
 // Where the payload lands in the APK: under assets/ so the runtime can reach
 // it through AAssetManager (open_file_descriptor needs an asset, not just any
@@ -64,7 +66,7 @@ export type ApkPatch = {
   // The app's launcher icon as a square PNG; undefined keeps the runner's
   // placeholder slot.
   icon?: Buffer
-  // Adaptive-icon background, "#rrggbb".
+  // Adaptive-icon background and splash color, "#rrggbb".
   iconBackground: string
   // Fully qualified permission names to declare (the capabilities mapped,
   // plus the project's extras; duplicates are skipped).
@@ -126,17 +128,23 @@ function patchLabel(entry: ZipEntry, label: string) {
 
 // Swap the adaptive-icon slot PNGs; without an app icon the runner's
 // placeholder foreground stays.
-function patchIcon(entries: ZipEntry[], icon: Buffer | undefined, background: string) {
+function patchIcon(entries: ZipEntry[], icon: Buffer | undefined, background: Rgb) {
   if (icon) replaceData(entryNamed(entries, ICON_FG_ENTRY), icon)
   replaceData(entryNamed(entries, ICON_BG_ENTRY), backgroundPixel(background))
 }
 
 export function patchApk(base: Buffer, patch: ApkPatch): Buffer {
+  let background = iconBackgroundRgb(patch.iconBackground)
+  if (!background) throw new Error(`Icon background "${patch.iconBackground}" is not a color`)
   let entries = parseZip(base)
   patchManifest(entryNamed(entries, "AndroidManifest.xml"), patch, patch.versionName)
   if (patch.backup) patchBackup(entries)
-  patchLabel(entryNamed(entries, "resources.arsc"), patch.label)
-  patchIcon(entries, patch.icon, patch.iconBackground)
+  let table = entryNamed(entries, "resources.arsc")
+  patchLabel(table, patch.label)
+  let tableBytes = Buffer.from(table.data)
+  patchSplash(tableBytes, background)
+  replaceData(table, tableBytes)
+  patchIcon(entries, patch.icon, background)
 
   // The payload entry borrows its bookkeeping fields (fixed timestamp,
   // version words, attributes) from another stored entry so the zip stays

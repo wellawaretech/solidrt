@@ -32,22 +32,17 @@ const ANDROID_CAPABILITY_PERMISSIONS: Record<Capability, string> = {
   internet: "android.permission.INTERNET",
 }
 
-// The app's Android launcher icon as PNG bytes: the `icon` config key when it
-// names a .png, else the assets/icon.png convention. An SVG icon (the desktop
-// and player-tile source) cannot be rasterized at pack time, so with no PNG
-// beside it the runner's placeholder stays and a note says so.
+// The app's Android launcher icon as PNG bytes: assets/icon.png, by
+// convention. The `icon` config key names the SVG (the desktop and
+// player-tile source), which cannot be rasterized at pack time, so with no
+// PNG beside it the runner's placeholder stays and a note says so.
 function resolveLauncherIcon(project: Project | null): Buffer | undefined {
   if (!project) return undefined
-  let declared = project.config.icon
-  let path = declared?.endsWith(".png") ? resolve(project.dir, declared) : join(project.dir, "assets", "icon.png")
+  let path = join(project.dir, "assets", "icon.png")
   if (!existsSync(path)) {
-    if (declared?.endsWith(".png")) {
-      console.error(`"solidrt": "icon" names ${declared}, which does not exist`)
-      process.exit(1)
-    }
     // Declared SVG or the conventional assets/icon.svg: the app has icon
     // artwork, just not in a form the patcher can use.
-    if (declared || existsSync(join(project.dir, "assets", "icon.svg"))) {
+    if (project.config.icon || existsSync(join(project.dir, "assets", "icon.svg"))) {
       console.log(">> note: an SVG icon cannot be rasterized at pack time; add assets/icon.png for the launcher icon")
     }
     return undefined
