@@ -41,13 +41,12 @@ function App() {
     let r = Math.min(width * 0.24, (height - 2 * PAD) / 2)
     let cx = PAD + r
     let cy = height / 2
-    let units = prepared.units
     // Single style: every line is as tall as its first unit.
-    let lineH = units[0]!.ascent + units[0]!.descent
+    let lineH = prepared.ascent[0]! + prepared.descent[0]!
     let out: Placed[] = []
     let cursor = 0
     // The circle, top to bottom: each band's width is the chord at its middle.
-    for (let y = cy - r; y + lineH <= cy + r && cursor < units.length; y += lineH) {
+    for (let y = cy - r; y + lineH <= cy + r && cursor < prepared.length; y += lineH) {
       let dy = y + lineH / 2 - cy
       let half = Math.sqrt(Math.max(0, (r - INSET) * (r - INSET) - dy * dy))
       if (2 * half < MIN_BAND) continue
@@ -59,7 +58,7 @@ function App() {
     // The column beside it continues from the same cursor.
     let colX = cx + r + GAP
     let colW = width - colX - PAD
-    for (let y = PAD; y + lineH <= height - PAD && cursor < units.length; y += lineH) {
+    for (let y = PAD; y + lineH <= height - PAD && cursor < prepared.length; y += lineH) {
       let line = layoutNextLine(prepared, cursor, colW)
       if (!line) break
       out.push({ x: colX, y, w: line.width, text: prepared.text.slice(line.start, line.end) })

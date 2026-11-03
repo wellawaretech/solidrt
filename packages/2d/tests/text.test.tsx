@@ -140,8 +140,8 @@ test("a run's pose is its group's, and a run anchors, spaces and wraps as laid o
   expect(inkIn(view.texture, 16, 16, 16 + run.width, 16 + run.height)).toBeGreaterThan(0)
   // Letter spacing is shaped by the engine: the second glyph's pen moves
   // by it, and the run widens with it.
-  let plain = font.prepare("ab").units[0]!.glyphs[1]!.x
-  expect(font.prepare("ab", { letterSpacing: 2 }).units[0]!.glyphs[1]!.x).toBe(plain + 2)
+  let plain = font.prepare("ab").glyphs.x[1]!
+  expect(font.prepare("ab", { letterSpacing: 2 }).glyphs.x[1]!).toBe(plain + 2)
   let unspaced = run.width
   setText(run, { letterSpacing: 2 })
   expect(run.width).toBeGreaterThan(unspaced)

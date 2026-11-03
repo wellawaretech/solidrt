@@ -19,14 +19,15 @@ declare module "flux:rendertree" {
     lineHeight?: number
     /** measureText only. */
     maxLines?: number
-    /** prepareText only: also report each unit's {@link TextUnit.carets} (kerned per-glyph positions). */
+    /** prepareText only: also report every unit's caret stops, {@link PreparedText.carets} (kerned per-glyph positions). */
     carets?: boolean
     /**
      * prepareText only: styled ranges over the text, in JS string offsets,
      * sorted and disjoint (text between them is in the base font). Each
      * overrides the font options it names. A wrap unit crossing a range
-     * boundary comes back as one {@link TextUnit} per range, the pieces
-     * after the first `glue`d to it. Throws on an invalid range.
+     * boundary comes back as one unit per range, the pieces after the
+     * first `glue`d to it, and the result carries {@link PreparedText.run}.
+     * Throws on an invalid range.
      */
     runs?: TextRunRange[]
   }
@@ -45,46 +46,77 @@ declare module "flux:rendertree" {
   }
 
   /**
-   * One wrap unit (a word plus its trailing whitespace, or an empty unit at
-   * a blank line) of a {@link prepareText} result: everything the engine
-   * knows about it, for app-side line breaking.
+   * A text in one font, segmented into wrap units (a word plus its
+   * trailing whitespace, or an empty unit at a blank line) and shaped once:
+   * everything the engine knows about each unit, for app-side line
+   * breaking. Plain data in columns: unit `i` is entry `i` of every
+   * per-unit array, `length` of them, and layout is arithmetic over them
+   * (`breakLines`, core's layoutNextLine, or a loop of your own).
    */
-  export interface TextUnit {
-    /** The unit's text without its break characters. */
-    text: string
-    /** Offsets into the prepared text (JS string indexing), break characters included: the ranges tile the text. */
-    start: number
-    end: number
-    /** Horizontal extent including trailing whitespace: what the next unit's pen position advances by. */
-    advance: number
-    /** Ink extent without trailing whitespace: what the unit needs at the end of a line. */
-    width: number
-    ascent: number
-    descent: number
-    /** The unit ends at a hard line break (newline). */
-    hardBreak: boolean
-    /** A continuation piece of the previous unit (it crossed a `runs` boundary): a line never breaks before it. */
-    glue: boolean
-    /** Index into `runs` of the range this piece was shaped in; absent for the base font. */
-    run?: number
-    /**
-     * With `carets`: the caret positions inside the unit, one per grapheme
-     * cluster boundary from its start (`offset` = start, x 0) to the end of
-     * its shaped text (before any break characters), in order. `offset` is
-     * into the prepared text, `x` from the unit's pen position. These are
-     * the runtime's own shaper's glyph positions for the unit, kerning
-     * included, within a texel of what is drawn and ending on the unit's
-     * drawn advance: for placing or animating single glyphs, use them rather
-     * than measuring characters one at a time with measureText, which sees
-     * no neighbors and drifts on every kerning pair.
-     */
-    carets?: { offset: number, x: number }[]
-  }
-
-  /** The wrap units of a text in one font, shaped once. Plain data; layout is arithmetic over `units`. */
   export interface PreparedText {
     text: string
-    units: TextUnit[]
+    /** The number of units. */
+    length: number
+    /** Offsets into `text` (JS string indexing), break characters included: the ranges tile the text. */
+    start: Uint32Array
+    end: Uint32Array
+    /** Horizontal extent including trailing whitespace: what the next unit's pen position advances by. */
+    advance: Float32Array
+    /** Ink extent without trailing whitespace: what the unit needs at the end of a line. */
+    width: Float32Array
+    ascent: Float32Array
+    descent: Float32Array
+    /** 1 where the unit ends at a hard line break (newline). */
+    hardBreak: Uint8Array
+    /** 1 where the unit continues the one before it (it crossed a `runs` boundary): a line never breaks before it. */
+    glue: Uint8Array
+    /** With `runs`: the index into `runs` of the range each unit was shaped in, -1 for the base font. */
+    run?: Int32Array
+    /**
+     * With `carets`: every unit's caret positions in one table. Unit `i`'s
+     * are entries `first[i]` to `first[i + 1]` (exclusive) of `offset` and
+     * `x`, one per grapheme cluster boundary from its start (x 0) to the
+     * end of its shaped text (before any break characters), in order;
+     * `first` has `length + 1` entries. `offset` is into `text`, `x` from
+     * the unit's pen position. These are the runtime's own shaper's glyph
+     * positions for the unit, kerning included, within a texel of what is
+     * drawn and ending on the unit's drawn advance: for placing or
+     * animating single glyphs, use them rather than measuring characters
+     * one at a time with measureText, which sees no neighbors and drifts on
+     * every kerning pair.
+     */
+    carets?: { first: Uint32Array, offset: Uint32Array, x: Float32Array }
+  }
+
+  /**
+   * The lines of a {@link PreparedText} at one width, from
+   * {@link breakLines}: line `i` is entry `i` of every array, `length` of
+   * them, holding units `from[i]` to `to[i]` (exclusive). Its text is
+   * `prepared.text.slice(prepared.start[from[i]], prepared.end[to[i] - 1])`
+   * (break characters included).
+   */
+  export interface TextLines {
+    length: number
+    from: Uint32Array
+    to: Uint32Array
+    /** Each line's top: the heights of the lines before it, summed. */
+    y: Float64Array
+    /** Ink width: the units' advances plus the last unit's width, without its trailing whitespace. */
+    width: Float32Array
+    /** The baseline below the line's top: the line's highest ascent. */
+    ascent: Float32Array
+    /** The highest ascent plus the deepest descent on the line. */
+    height: Float32Array
+    /** 1 where the line ended at a hard break rather than by running out of width. */
+    hardBreak: Uint8Array
+    /** The lines' heights summed: where a block of them ends. */
+    totalHeight: number
+  }
+
+  /** Options for {@link breakLines}. */
+  export interface BreakLinesOptions {
+    /** How lines are chosen beyond greedy fitting, as a `<text>`'s `textWrap`; default "wrap". */
+    textWrap?: "wrap" | "balance" | "pretty"
   }
 
   /** Create the window root node with the given id. */
@@ -208,9 +240,24 @@ declare module "flux:rendertree" {
    * shaping), for app-side line breaking - text into a shape, around an
    * obstacle, across columns, fitted by size, per glyph; see layoutNextLine
    * in @solidrt/core. `runs` restyle ranges, `carets` adds caret stops;
-   * `maxLines` is ignored.
+   * `maxLines` is ignored. A word costs its shaping once while the cache
+   * holds it (a long document's whole vocabulary fits); a long text's
+   * first prepare is that shaping for every distinct word, on the order of
+   * 10 microseconds a word on a desktop and 30 on a phone.
    */
   export function prepareText(text: string, options?: MeasureTextOptions): PreparedText
+  /**
+   * The lines `prepared` breaks into at `width`: the `<text>` breaker
+   * itself, run natively over the prepared columns in one call, so every
+   * break lands where a `<text>` of the same words would (greedy: units go
+   * on while their ink fits; a hard break ends a line; a unit wider than
+   * `width` goes on a line of its own and overflows), and `textWrap`
+   * balances or rescues a lone last word as a `<text>` does. `width` is in
+   * the prepared text's pixels, Infinity for hard breaks only; throws on a
+   * negative or NaN width or on columns that disagree with `length`.
+   * Any PreparedText-shaped columns break, not only prepareText's own.
+   */
+  export function breakLines(prepared: PreparedText, width: number, options?: BreakLinesOptions): TextLines
   /**
    * One font to warm for {@link warmText}: a font (family, size, weight,
    * style) as a `<text>` names it, and optionally a string the app will

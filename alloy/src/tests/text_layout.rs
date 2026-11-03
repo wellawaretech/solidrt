@@ -1,6 +1,6 @@
 use crate::rendertree::text::layout::{
-  layout, layout_wrap, max_intrinsic_width, min_intrinsic_width, segments, Align, Clear, LineCursor, LineExtent,
-  PlacedRun, Run, RunMetrics, Side, Wrap,
+  break_lines, layout, layout_wrap, max_intrinsic_width, min_intrinsic_width, segments, Align, Clear, LineCursor,
+  LineExtent, PlacedRun, Run, RunMetrics, Side, Wrap,
 };
 
 fn full(width: f32) -> impl Fn(LineCursor) -> Vec<LineExtent> {
@@ -114,6 +114,75 @@ fn baseline_alignment_and_right_align() {
   assert_eq!(l.runs[0].y, 8.0);
   assert_eq!(l.runs[1].y, 0.0);
   assert_eq!(l.runs[0].x, 20.0);
+}
+
+// An inline atom is all ascent; text beside it descends below the
+// baseline. The line box holds both: the atom's ascent plus the text's
+// descent, not the taller of the two alone, so the next line starts below
+// the descenders.
+#[test]
+fn line_box_is_highest_ascent_plus_deepest_descent() {
+  let atom =
+    Run { metrics: RunMetrics { advance: 20.0, ink_width: 20.0, ascent: 20.0, descent: 0.0 }, ..word(0.0, 0.0) };
+  let text =
+    Run { metrics: RunMetrics { advance: 10.0, ink_width: 10.0, ascent: 13.0, descent: 4.0 }, ..word(0.0, 0.0) };
+  let runs = [atom, Run { hard_break: true, ..text }, text];
+  let l = layout(&runs, &full(100.0), Align::Left, 0, None);
+  assert_eq!(l.lines.len(), 2);
+  assert_eq!(l.lines[0].ascent, 20.0);
+  assert_eq!(l.lines[0].height, 24.0);
+  assert_eq!(l.runs[1].y + text.metrics.ascent + text.metrics.descent, 24.0, "the text's bottom is the line's");
+  assert_eq!(l.lines[1].y, 24.0, "the next line starts below the descenders");
+  assert_eq!(l.height, 24.0 + 17.0);
+}
+
+// The ellipsis line's box follows the same rule over what stays on it.
+#[test]
+fn ellipsis_line_box_keeps_the_deepest_descent() {
+  let deep =
+    Run { metrics: RunMetrics { advance: 10.0, ink_width: 10.0, ascent: 6.0, descent: 6.0 }, ..word(0.0, 0.0) };
+  let runs = [word(10.0, 10.0), deep, word(10.0, 10.0), word(10.0, 10.0)];
+  let ellipsis = RunMetrics { advance: 5.0, ink_width: 5.0, ascent: 8.0, descent: 2.0 };
+  let l = layout(&runs, &full(28.0), Align::Left, 1, Some(ellipsis));
+  assert!(l.truncated);
+  assert_eq!(l.lines[0].ascent, 8.0);
+  assert_eq!(l.lines[0].height, 14.0);
+}
+
+// break_lines is the breaker on a plain column: the same lines as
+// `layout`, as run ranges with each line's box and ink width.
+#[test]
+fn break_lines_reports_the_breakers_lines() {
+  let runs = [word(10.0, 8.0), word(10.0, 8.0), hard(10.0, 8.0), word(10.0, 8.0), glued(10.0, 8.0)];
+  let lines = break_lines(&runs, 25.0, Wrap::Wrap);
+  let ranges: Vec<_> = lines.iter().map(|l| (l.first, l.end)).collect();
+  assert_eq!(ranges, vec![(0, 2), (2, 3), (3, 5)]);
+  assert_eq!(lines[0].width, 18.0, "the last unit's ink, not its advance");
+  assert!(!lines[0].hard_break);
+  assert!(lines[1].hard_break);
+  assert_eq!(lines[1].y, 10.0);
+  assert_eq!((lines[2].ascent, lines[2].height), (8.0, 10.0));
+  // The glued pair is one unit: its ink is the first piece's advance plus
+  // the second's ink.
+  assert_eq!(lines[2].width, 18.0);
+}
+
+#[test]
+fn break_lines_at_infinity_breaks_at_hard_breaks_only() {
+  let runs = [word(10.0, 8.0), hard(10.0, 8.0), word(10.0, 8.0), word(10.0, 8.0)];
+  let lines = break_lines(&runs, f32::INFINITY, Wrap::Wrap);
+  let ranges: Vec<_> = lines.iter().map(|l| (l.first, l.end)).collect();
+  assert_eq!(ranges, vec![(0, 2), (2, 4)]);
+  assert!(break_lines(&[], 100.0, Wrap::Wrap).is_empty());
+}
+
+#[test]
+fn break_lines_balances_like_a_text() {
+  let runs: Vec<Run> = (0..5).map(|_| word(10.0, 8.0)).collect();
+  let greedy = break_lines(&runs, 40.0, Wrap::Wrap);
+  let balanced = break_lines(&runs, 40.0, Wrap::Balance);
+  assert_eq!(greedy.iter().map(|l| l.end - l.first).collect::<Vec<_>>(), vec![4, 1]);
+  assert_eq!(balanced.iter().map(|l| l.end - l.first).collect::<Vec<_>>(), vec![3, 2]);
 }
 
 #[test]

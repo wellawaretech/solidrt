@@ -22,14 +22,15 @@ type Glyph = { x: number, text: string }
 // Kerned: each unit's pen position plus its caret offsets.
 function fromCarets(): Glyph[] {
   let prepared = prepareText(HEADLINE, { ...FONT, carets: true })
+  let { first, offset, x } = prepared.carets!
   let out: Glyph[] = []
   let pen = 0
-  for (let unit of prepared.units) {
-    let carets = unit.carets!
-    for (let i = 0; i + 1 < carets.length; i++) {
-      out.push({ x: pen + carets[i]!.x, text: prepared.text.slice(carets[i]!.offset, carets[i + 1]!.offset) })
+  for (let u = 0; u < prepared.length; u++) {
+    // A unit's stops run from its start to its end: one glyph between each pair.
+    for (let k = first[u]!; k + 1 < first[u + 1]!; k++) {
+      out.push({ x: pen + x[k]!, text: prepared.text.slice(offset[k], offset[k + 1]) })
     }
-    pen += unit.advance
+    pen += prepared.advance[u]!
   }
   return out
 }

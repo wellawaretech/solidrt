@@ -198,7 +198,14 @@ Rules, in order of leverage:
    lines, not its words, and a re-breaking one shapes only the lines whose
    breaks moved. A justified line or a per-word style change draws per
    word. Animate text with transforms and paint (rule 5), or by
-   re-breaking; not by resizing it per frame.
+   re-breaking; not by resizing it per frame. The first shaping of a word
+   is the cost that does not go away: on the order of 10 us on a desktop
+   and 30 us on a mid-range phone, so a long text of thousands of distinct
+   words (a document, license notices) prepared in one call is half a
+   second or more of JS-thread time on a phone. Prepare it per paragraph
+   as the reader reaches it, and break it with `breakLines` (one native
+   call for every line at one width). The cache keeps a long text's whole
+   vocabulary, so preparing it again costs the lookups only.
 
 ## Isolates: heavy work off the JS thread
 
@@ -247,6 +254,31 @@ frames; the handle cancels (the generator closes, its `finally` runs) and
 settles. A world streaming by the residency gate builds its regions this
 way (`createRegion`/`createRegionGrid` in `@solidrt/core` and the node
 forms in @solidrt/3d), with the data prepared in an isolate first.
+
+## Where JS work stops being cheap
+
+The runtime's JavaScript engine is an interpreter (QuickJS, no JIT), so app
+code runs one to two orders of magnitude slower than the same code under bun
+or a browser, and a phone is several times slower again. Measured on one
+desktop, the same code, bun against the runtime:
+
+- building objects (100k of 8 fields): 13x
+- regular expressions (a split/replace/test paragraph reflow): 22x
+- a tight arithmetic loop: 72x
+
+A mid-range 2020 tablet (Galaxy Tab A7) runs the runtime about 6x slower
+than that desktop: the reflow above took 0.75 s there against 5.8 ms under
+bun on the desktop, 130x in all. So a frame budget measured under bun is no
+budget at all; measure under `sol run` and scale by 5 to 10 for a phone.
+What does not fit:
+
+- data an app only reshapes (text reflow, a parse, a lookup table) is baked
+  at build time with a `sol tool` script;
+- work that must run in the app goes to an isolate (above), or to
+  `flux:wasm` for compute (rule 8);
+- text goes through the native paths: `prepareText` shapes in native code
+  and hands back columns, `breakLines` breaks every line in one call
+  (rule 10).
 
 ## Where GPU work stops being free
 

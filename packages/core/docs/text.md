@@ -64,7 +64,9 @@ for (let band of bands) {                        // any widths, in any order
 ```
 
 `prepareText` returns the paragraph's wrap units (a word and its trailing
-whitespace) with their advance, ink width, ascent and descent. `layoutNextLine`
+whitespace) as columns: `prepared.advance[i]`, `width[i]` (the ink, without
+the trailing whitespace), `ascent[i]`, `descent[i]`, `start[i]` and `end[i]`
+into the text, and `hardBreak[i]`, for `prepared.length` units. `layoutNextLine`
 is a greedy breaker over those numbers: it fills one line to the width you hand
 it and returns the cursor for the next, so a circle is a stack of chords, a
 column is the same loop with a new box, and a headline that must fit is a loop
@@ -78,3 +80,43 @@ unit's per-grapheme x positions from that same shaping - the kerned source for
 per-glyph placement and animation, which measuring characters one at a time
 cannot give. `runs` restyles ranges, with a unit crossing a run boundary coming
 back as glued pieces that always land on one line.
+
+When every line has the same width, `breakLines` does the whole text in one
+native call, with the breaker a `<text>` uses, and returns the lines as
+columns:
+
+```tsx
+let lines = breakLines(prepared, width)            // or { textWrap: "balance" }
+for (let i = 0; i < lines.length; i++) {
+  let text = prepared.text.slice(prepared.start[lines.from[i]], prepared.end[lines.to[i] - 1])
+  rows.push({ y: lines.y[i], text })
+}
+```
+
+`lines.y[i]` is each line's top and `lines.totalHeight` the block's height, so
+a long text in a scroller draws only the lines in view: a binary search over
+`y` finds the first one.
+
+### Long texts
+
+The words of a prepared text stay in the shared word cache, which holds a
+long document's whole vocabulary, so preparing the same text again costs the
+lookups only. The first prepare shapes every distinct word once: on the order
+of 10 us a word on a desktop and 30 us on a mid-range phone. A document or a
+license list of thousands of distinct words is then a stall of half a second
+or more if it is prepared in one call. Prepare it a paragraph at a time, as
+the reader reaches it:
+
+```tsx
+let paragraphs = licenses.split("\n\n")
+let prepared: PreparedText[] = []
+function linesOf(i: number, width: number) {
+  prepared[i] ??= prepareText(paragraphs[i], font)
+  return breakLines(prepared[i], width)
+}
+```
+
+A scroller draws the paragraphs in view and the next few; a paragraph not
+prepared yet can hold a height estimated from its length until it is. To
+prepare a long text in one go, do it once behind a drawn screen (a heading,
+a loading line), not on a frame that has to animate.

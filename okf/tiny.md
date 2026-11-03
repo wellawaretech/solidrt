@@ -26,7 +26,7 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 - video volume and mute: neither `flux:video` player exposes any, while their PCM sink is a plain SDL3 audio stream (`PcmStream`, alloy/src/audio.rs) that has a gain; add `volume` and `muted` with the web names over `SDL_SetAudioStreamGain` (flux/src/alloy_plugins/video.rs, flux-types gui/video.d.ts).
 - `/dialog` and the `get_dialog`/`answer_dialog` tools have no automated test over the HTTP hop (the plugin and the harness are tested; the route was verified by hand on 2026-10-15): add one beside packages/test/tests/debug.test.tsx.
-
+- `measureText`/`prepareText` (and `<text fontSize>`) take a zero or negative `fontSize` without a word: `fontSize` decodes through `opt_f32` in flux/src/alloy_plugins/properties/text.rs, where `fontStretch` already uses `opt_positive_f32`; throw like it (the font module's prepareText already does).
 
 ## Components
 
@@ -64,6 +64,7 @@ The `sol` CLI, the dev server, MCP, debug commands, examples and probes.
 - No scriptable cold start of a device client: a `/reload` is an engine swap and hides startup bugs (okf/done/android-cold-start-shadow-loss.md was found that way), and the only true cold start is `am start -S` by hand; add a `sol android --restart` (force-stop and relaunch the installed Player at the server) and the matching control endpoint so startup behaviour is testable from a script.
 - Derived Players (`solidrt.runtime` projects) are re-signed with sol's development key, so switching between a gradle-built Player.dev and a derived one costs `adb uninstall` and the app's data every time; sign with the Android debug keystore (`~/.android/debug.keystore`) when it exists, so the checkout dev loop stays uninstall-free.
 - tower-toppling demo (outside the repo): `publish()` in `src/index.tsx` still draws only the count the previous publish uploaded, the workaround from its FEEDBACK.md issue 1 that the sync-before-paint fix (2ebf397b) made unnecessary; drop it and the `uploaded` bookkeeping.
+- `app.settle()` with nothing mounted never comes to rest ("frames are still demanded by a write to the tree or to a texture", after 5000 ms of app time), so a test of a non-visual API must mount a `<view />` first; make an empty app settle, or say in packages/test/AGENTS.md that settle needs a mount.
 
 ## Runtime
 

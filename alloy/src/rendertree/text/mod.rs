@@ -9,7 +9,7 @@ mod words;
 pub use decoration::{Underline, UnderlineMetrics};
 pub use glyphs::Fallback;
 pub use runs::{FontStyle, FontWeight, RunOverrides, RunStyle, Span, TextAlignment, TextRun, ATOM_CHAR};
-pub use shape::{prepare_units, PreparedRun, PreparedUnit};
+pub use shape::{prepare_units, CaretColumns, GlyphColumns, PreparedColumns, PreparedRun, PreparedUnit};
 pub use words::{CaretStop, ShapedWord, WordCache};
 
 use crate::gpu::{GlyphGroup, GlyphQuad};

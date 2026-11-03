@@ -374,20 +374,40 @@ export function measureText(text: string, options?: tree.MeasureTextOptions): { 
 /**
  * App-side line breaking. Segments `text` into wrap units (words with their
  * trailing whitespace) and shapes each in the given font, once, through the
- * shared word cache; laying lines out is then arithmetic over `units`, with
- * layoutNextLine or a loop of your own. This is how text goes into a shape,
- * parts around an obstacle that is not in the flow, pours across columns
- * (layoutNextLine's `cursor` continues a paragraph in the next box), fits a
- * box by trying sizes, and gets per-glyph positions (`carets: true`; the
- * only kerned source, see TextUnit.carets). Draw each line as a d-text of
- * exactly its own text. Re-breaking every frame is cheap - the words are
- * shaped already and the lines' d-texts hit the same cache - so a shape
- * that moves or breathes can re-flow at frame rate. A paragraph that just
- * wraps in a box is a <text>, which also does floats, balancing and
- * ellipsis.
+ * shared word cache; laying lines out is then arithmetic over the units'
+ * columns (`prepared.advance[i]`, `prepared.width[i]`, ...), with breakLines
+ * for every line at one width, layoutNextLine for one line at a time, or a
+ * loop of your own. This is how text goes into a shape, parts around an
+ * obstacle that is not in the flow, pours across columns (layoutNextLine's
+ * `cursor` continues a paragraph in the next box), fits a box by trying
+ * sizes, and gets per-glyph positions (`carets: true`; the only kerned
+ * source, see PreparedText.carets). Draw each line as a d-text of exactly
+ * its own text. Re-breaking every frame is cheap - the words are shaped
+ * already and the lines' d-texts hit the same cache - so a shape that moves
+ * or breathes can re-flow at frame rate. A paragraph that just wraps in a
+ * box is a <text>, which also does floats, balancing and ellipsis. A long
+ * text's first prepare shapes every distinct word once (some 30 us a word
+ * on a phone): prepare it per paragraph as the reader reaches it, or once
+ * behind a drawn loading state, not on a frame that must animate.
  */
 export function prepareText(text: string, options?: tree.MeasureTextOptions): tree.PreparedText {
   return tree.prepareText(text, options)
+}
+
+/**
+ * Every line `prepared` breaks into at `width`, in one native call: the
+ * <text> breaker itself, so the breaks are the ones a <text> of the same
+ * words would make, and `textWrap` balances or rescues a lone last word as
+ * a <text> does. The lines come back as columns (`lines.from[i]`,
+ * `lines.y[i]`, ...): line `i` holds units `from[i]` to `to[i]`, its text is
+ * `prepared.text.slice(prepared.start[from[i]], prepared.end[to[i] - 1])`,
+ * and `y` is its top, so a long text's visible lines are a binary search
+ * over `y`. Infinity breaks at hard breaks only. For one line at a time (a
+ * width per line, a cursor handed to the next box) use layoutNextLine;
+ * both follow the same greedy rule.
+ */
+export function breakLines(prepared: tree.PreparedText, width: number, options?: tree.BreakLinesOptions): tree.TextLines {
+  return tree.breakLines(prepared, width, options)
 }
 
 /**
@@ -431,7 +451,7 @@ export function textRendering(): TextRenderingPolicy {
 
 /** One laid-out line from layoutNextLine. */
 export type TextLine = {
-  /** Unit range [from, to) into prepared.units. */
+  /** Unit range [from, to) into the prepared text's columns. */
   from: number
   to: number
   /** Character range into prepared.text: `text.slice(start, end)` is the line's text (break characters included). */
@@ -439,7 +459,7 @@ export type TextLine = {
   end: number
   /** Ink width: the units' advances plus the last unit's width, without its trailing whitespace. */
   width: number
-  /** Tallest ascent plus tallest descent on the line. */
+  /** Highest ascent plus deepest descent on the line. */
   height: number
   ascent: number
   /** The line ended at a hard break rather than by running out of width. */
@@ -448,11 +468,6 @@ export type TextLine = {
   cursor: number
 }
 
-/**
- * Ink width of the wrap unit starting at unit `index`: its advance through
- * every glued piece that follows, plus the last piece's ink. What must fit on
- * the line for the unit to go on it.
- */
 // Slack a line's width may be exceeded by and still fit, logical px: the
 // width a laid-out box hands back is a float ulp off the width its text
 // measured (the rendertree's layout::FIT_SLACK, the same value), so an
@@ -460,12 +475,18 @@ export type TextLine = {
 // unit: far above any ulp drift, far below a visible overhang.
 export const FIT_SLACK = 1 / 64
 
-export function unitInk(units: tree.TextUnit[], index: number): number {
-  let ink = units[index]!.width
-  let advance = 0
-  for (let j = index + 1; j < units.length && units[j]!.glue; j++) {
-    advance += units[j - 1]!.advance
-    ink = advance + units[j]!.width
+/**
+ * Ink width of the wrap unit starting at unit `index`: its advance through
+ * every glued piece that follows, plus the last piece's ink. What must fit on
+ * the line for the unit to go on it.
+ */
+export function unitInk(prepared: tree.PreparedText, index: number): number {
+  let { advance, width, glue, length } = prepared
+  let ink = width[index]!
+  let pen = 0
+  for (let j = index + 1; j < length && glue[j]; j++) {
+    pen += advance[j - 1]!
+    ink = pen + width[j]!
   }
   return ink
 }
@@ -480,36 +501,40 @@ export function unitInk(units: tree.TextUnit[], index: number): number {
  * with the same font options; its words are already shaped, so that is
  * cheap. With `runs`, a unit crossing a run boundary is several glued units
  * that always land on one line; draw such a line with a <span> per run.
- * Floats, balancing and ellipsis are <text> features, not this.
+ * Every line at one width, balanced if asked, is breakLines (one native
+ * call, the same rule); floats and ellipsis are <text> features.
  */
 export function layoutNextLine(prepared: tree.PreparedText, cursor: number, width: number): TextLine | null {
-  let units = prepared.units
-  if (cursor >= units.length) return null
+  let { length, advance, width: inks, ascent: ascents, descent: descents, hardBreak, glue } = prepared
+  if (cursor >= length) return null
   let pen = 0
   let ascent = 0
   let descent = 0
   let i = cursor
-  while (i < units.length) {
-    let unit = units[i]!
+  while (i < length) {
     // Glued pieces stay with the unit they continue: the whole wrap unit
     // (this piece through the last glued one) must fit for any of it to go on.
-    if (i > cursor && !unit.glue && pen + unitInk(units, i) > width + FIT_SLACK) break
-    pen += unit.advance
-    if (unit.ascent > ascent) ascent = unit.ascent
-    if (unit.descent > descent) descent = unit.descent
+    // A unit with no piece glued to it is its own ink, the common case.
+    if (i > cursor && !glue[i]) {
+      let ink = i + 1 < length && glue[i + 1] ? unitInk(prepared, i) : inks[i]!
+      if (pen + ink > width + FIT_SLACK) break
+    }
+    pen += advance[i]!
+    if (ascents[i]! > ascent) ascent = ascents[i]!
+    if (descents[i]! > descent) descent = descents[i]!
     i++
-    if (unit.hardBreak) break
+    if (hardBreak[i - 1]) break
   }
-  let last = units[i - 1]!
+  let last = i - 1
   return {
     from: cursor,
     to: i,
-    start: units[cursor]!.start,
-    end: last.end,
-    width: pen - last.advance + last.width,
+    start: prepared.start[cursor]!,
+    end: prepared.end[last]!,
+    width: pen - advance[last]! + inks[last]!,
     height: ascent + descent,
     ascent,
-    hardBreak: last.hardBreak,
+    hardBreak: hardBreak[last] === 1,
     cursor: i,
   }
 }

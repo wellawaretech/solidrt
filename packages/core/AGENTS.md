@@ -315,18 +315,28 @@ moves core's peerDependencies and the scaffold's pins
   poured into a shape, parting around an obstacle that is not in the flow,
   continued across columns, fitted to a box by size, or placed glyph by
   glyph. `prepareText(text, font)` shapes the words once (through the
-  shared word cache) into `units` carrying advance, ink width, ascent and
-  descent; `layoutNextLine(prepared, cursor, width)` is the greedy breaker,
+  shared word cache) into COLUMNS, not objects: `prepared.length` units,
+  unit `i` at `prepared.advance[i]`, `width[i]` (ink), `ascent[i]`,
+  `descent[i]`, `start[i]`/`end[i]` (into `prepared.text`), `hardBreak[i]`.
+  `layoutNextLine(prepared, cursor, width)` is the greedy breaker,
   returning one line and the `cursor` for the next, at whatever width you
   hand it per call (a chord of a circle, a slot beside an obstacle, the next
-  column). Draw each line as a `<d-text>` of exactly its text with the same
-  font. Re-breaking every frame is arithmetic plus cache hits, so a moving
-  or breathing shape re-flows at frame rate; only the first shaping cost
-  anything. `carets: true` adds each unit's per-grapheme x positions - the
-  ONLY kerned per-glyph source; per-character `measureText` drops kerning
-  and visibly drifts on pairs like AV/TA. Styled runs come from `runs` (draw
-  such a line with a `<span>` per run). See examples/text-flow.tsx and
-  examples/text-glyphs.tsx.
+  column); `breakLines(prepared, width)` breaks the whole text at one width
+  in one native call (the `<text>` breaker, `textWrap` included) and
+  returns line columns with each line's top `y`. Draw each line as a
+  `<d-text>` of exactly its text with the same font. Re-breaking every frame
+  is arithmetic plus cache hits, so a moving or breathing shape re-flows at
+  frame rate; only the first shaping cost anything. A long text (thousands
+  of distinct words: a document, license notices) costs that first shaping
+  for every distinct word, half a second or more on a phone in one call:
+  prepare it per paragraph as the reader reaches it (docs/text.md, "Long
+  texts").
+  `carets: true` adds every unit's per-grapheme x positions as one table
+  (`prepared.carets.first[i]` to `first[i + 1]` index `offset` and `x`) -
+  the ONLY kerned per-glyph source; per-character `measureText` drops
+  kerning and visibly drifts on pairs like AV/TA. Styled runs come from
+  `runs` (draw such a line with a `<span>` per run). See
+  examples/text-flow.tsx and examples/text-glyphs.tsx.
 
 - Events: there is NO `onClick`/`onPress`. A "button" is a `<view>`/`<rect>`
   with `onPointerDown`. Handlers: onPointerDown/Up/Move/Enter/Leave, onWheel,

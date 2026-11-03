@@ -6,7 +6,7 @@
 
 import { createMemo, createSignal, flush, untrack } from "@solidjs/signals"
 import { FIT_SLACK, getLayoutBox, layoutNextLine, measureText, prepareText, unitInk } from "./core"
-import type { MeasureTextOptions, PreparedText, TextRunRange, TextUnit } from "flux:rendertree"
+import type { MeasureTextOptions, PreparedText, TextRunRange } from "flux:rendertree"
 import { onLayout } from "./window"
 
 /**
@@ -308,7 +308,7 @@ export function createTextEditorLayout(
   type PlacedLine = EditorLine & { from: number; to: number; hardBreak: boolean }
   // `holds` is the range of wrap widths [min, max) the breaker yields these
   // same lines at (see holdRange); the layout handler skips a width inside it.
-  type Placement = { units: TextUnit[]; lines: PlacedLine[]; holds: [number, number] }
+  type Placement = { units: PreparedText; lines: PlacedLine[]; holds: [number, number] }
   let placed = createMemo(
     (prev): Placement => {
       let { text, wrap, caretWidth } = breaking()
@@ -337,18 +337,18 @@ export function createTextEditorLayout(
         line = layoutNextLine(units, line.cursor, width)
       }
       if (out.length === 0 || hardBreak) {
-        let n = units.units.length
+        let n = units.length
         out.push({ start: text.length, end: text.length, y, height: space().height, width: 0, from: n, to: n, hardBreak: false })
       }
-      if (prev && prev.units === units.units) {
+      if (prev && prev.units === units) {
         for (let i = 0; i < out.length && i < prev.lines.length; i++) {
           if (sameLine(prev.lines[i]!, out[i]!)) out[i] = prev.lines[i]!
         }
       }
       // Split units are the width's own (a unit wider than it), so those
       // lines hold for no other width.
-      let holds: [number, number] = units.units === prepared().units ? holdRange(units.units, out) : [Infinity, Infinity]
-      return { units: units.units, lines: out, holds }
+      let holds: [number, number] = units === prepared() ? holdRange(units, out) : [Infinity, Infinity]
+      return { units, lines: out, holds }
     },
     { equals: samePlacement },
   )
@@ -361,15 +361,14 @@ export function createTextEditorLayout(
     let line = lines[index]
     if (!line) return []
     let stops: { offset: number; x: number }[] = []
+    let { first, offset, x } = units.carets!
     let pen = 0
     for (let u = line.from; u < line.to; u++) {
-      let unit = units[u]!
-      for (let stop of unit.carets ?? []) {
-        let x = pen + stop.x
-        if (stops.length && stops[stops.length - 1]!.offset === stop.offset) continue
-        stops.push({ offset: stop.offset, x })
+      for (let k = first[u]!; k < first[u + 1]!; k++) {
+        if (stops.length && stops[stops.length - 1]!.offset === offset[k]) continue
+        stops.push({ offset: offset[k]!, x: pen + x[k]! })
       }
-      pen += unit.advance
+      pen += units.advance[u]!
     }
     if (stops.length === 0) stops.push({ offset: line.start, x: 0 })
     return stops
@@ -457,22 +456,22 @@ export function createTextEditorLayout(
 
   let step = (offset: number, direction: "left" | "right"): number => {
     let { units } = placed()
+    let { start, end, length } = units
+    let stops = units.carets!
     let text = input().text
     if (direction === "right") {
-      for (let unit of units) {
-        if (unit.end <= offset) continue
-        for (let stop of unit.carets ?? []) if (stop.offset > offset) return stop.offset
+      for (let u = 0; u < length; u++) {
+        if (end[u]! <= offset) continue
+        for (let k = stops.first[u]!; k < stops.first[u + 1]!; k++) if (stops.offset[k]! > offset) return stops.offset[k]!
         // Past the unit's shaped text: over its break characters in one step.
-        return unit.end
+        return end[u]!
       }
       return text.length
     }
-    for (let u = units.length - 1; u >= 0; u--) {
-      let unit = units[u]!
-      if (unit.start >= offset) continue
-      let stops = unit.carets ?? []
-      for (let i = stops.length - 1; i >= 0; i--) if (stops[i]!.offset < offset) return stops[i]!.offset
-      return unit.start
+    for (let u = length - 1; u >= 0; u--) {
+      if (start[u]! >= offset) continue
+      for (let k = stops.first[u + 1]! - 1; k >= stops.first[u]!; k--) if (stops.offset[k]! < offset) return stops.offset[k]!
+      return start[u]!
     }
     return 0
   }
@@ -539,44 +538,81 @@ export function createTextEditorLayout(
 // Wrap units wider than `width` (through their glued pieces) split into one
 // unit per grapheme (from their caret stops), so the greedy breaker wraps
 // them like `<text>`'s overflowWrap "anywhere". Everything else is passed
-// through as is.
+// through as is; with nothing to split, the prepared text itself.
 function splitWide(prepared: PreparedText, width: number): PreparedText {
-  let all = prepared.units
-  if (!all.some((u, i) => !u.glue && unitInk(all, i) > width + FIT_SLACK)) return prepared
+  let n = prepared.length
+  let fits = (u: number) => prepared.glue[u] || unitInk(prepared, u) <= width + FIT_SLACK
+  let u0 = 0
+  while (u0 < n && fits(u0)) u0++
+  if (u0 === n) return prepared
+  let { start, end, advance, width: ink, ascent, descent, hardBreak, glue, run } = prepared
+  let carets = prepared.carets!
+  let out = {
+    start: [] as number[], end: [] as number[], advance: [] as number[], width: [] as number[],
+    ascent: [] as number[], descent: [] as number[], hardBreak: [] as number[], glue: [] as number[],
+    run: [] as number[], first: [] as number[], offset: [] as number[], x: [] as number[],
+  }
+  // One unit out: its range and metrics, with source unit `u`'s ascent,
+  // descent and run.
+  let push = (u: number, from: number, to: number, pieceAdvance: number, pieceInk: number, hard: number, glued: number) => {
+    out.start.push(from)
+    out.end.push(to)
+    out.advance.push(pieceAdvance)
+    out.width.push(pieceInk)
+    out.ascent.push(ascent[u]!)
+    out.descent.push(descent[u]!)
+    out.hardBreak.push(hard)
+    out.glue.push(glued)
+    if (run) out.run.push(run[u]!)
+    out.first.push(out.offset.length)
+  }
   let wide = false
-  let units: TextUnit[] = []
-  for (let u = 0; u < all.length; u++) {
-    let unit = all[u]!
-    if (!unit.glue) wide = unitInk(all, u) > width + FIT_SLACK
-    let stops = unit.carets
-    if (!wide || !stops || stops.length <= 2) {
-      units.push(unit)
+  for (let u = 0; u < n; u++) {
+    if (!glue[u]) wide = !fits(u)
+    let k0 = carets.first[u]!
+    let k1 = carets.first[u + 1]!
+    if (!wide || k1 - k0 <= 2) {
+      push(u, start[u]!, end[u]!, advance[u]!, ink[u]!, hardBreak[u]!, glue[u]!)
+      for (let k = k0; k < k1; k++) {
+        out.offset.push(carets.offset[k]!)
+        out.x.push(carets.x[k]!)
+      }
       continue
     }
-    for (let i = 1; i < stops.length; i++) {
-      let a = stops[i - 1]!
-      let b = stops[i]!
-      let last = i === stops.length - 1
-      let advance = last ? unit.advance - a.x : b.x - a.x
-      units.push({
-        text: prepared.text.slice(a.offset, b.offset),
-        start: a.offset,
-        end: last ? unit.end : b.offset,
-        advance,
-        width: Math.max(0, Math.min(b.x, unit.width) - a.x),
-        ascent: unit.ascent,
-        descent: unit.descent,
-        hardBreak: last && unit.hardBreak,
-        glue: i === 1 && unit.glue,
-        run: unit.run,
-        carets: [
-          { offset: a.offset, x: 0 },
-          { offset: b.offset, x: b.x - a.x },
-        ],
-      })
+    for (let k = k0 + 1; k < k1; k++) {
+      let a = carets.offset[k - 1]!
+      let b = carets.offset[k]!
+      let ax = carets.x[k - 1]!
+      let bx = carets.x[k]!
+      let last = k === k1 - 1
+      push(
+        u,
+        a,
+        last ? end[u]! : b,
+        last ? advance[u]! - ax : bx - ax,
+        Math.max(0, Math.min(bx, ink[u]!) - ax),
+        last ? hardBreak[u]! : 0,
+        k === k0 + 1 ? glue[u]! : 0,
+      )
+      out.offset.push(a, b)
+      out.x.push(0, bx - ax)
     }
   }
-  return { text: prepared.text, units }
+  out.first.push(out.offset.length)
+  return {
+    text: prepared.text,
+    length: out.start.length,
+    start: Uint32Array.from(out.start),
+    end: Uint32Array.from(out.end),
+    advance: Float32Array.from(out.advance),
+    width: Float32Array.from(out.width),
+    ascent: Float32Array.from(out.ascent),
+    descent: Float32Array.from(out.descent),
+    hardBreak: Uint8Array.from(out.hardBreak),
+    glue: Uint8Array.from(out.glue),
+    run: run ? Int32Array.from(out.run) : undefined,
+    carets: { first: Uint32Array.from(out.first), offset: Uint32Array.from(out.offset), x: Float32Array.from(out.x) },
+  }
 }
 
 // The wrap widths [min, max) at which the greedy breaker yields exactly
@@ -584,7 +620,7 @@ function splitWide(prepared: PreparedText, width: number): PreparedText {
 // unit fits at the end of the line before it (max), except across a hard
 // break, where it never joins. Greedy breaking is decided line by line on
 // just those two tests, so inside the range the placement is unchanged.
-function holdRange(units: TextUnit[], lines: { from: number; to: number; width: number; hardBreak: boolean }[]): [number, number] {
+function holdRange(units: PreparedText, lines: { from: number; to: number; width: number; hardBreak: boolean }[]): [number, number] {
   let min = 0
   let max = Infinity
   for (let i = 0; i < lines.length; i++) {
@@ -593,7 +629,7 @@ function holdRange(units: TextUnit[], lines: { from: number; to: number; width: 
     let next = lines[i + 1]
     if (!next || line.hardBreak || next.from >= units.length) continue
     let pen = 0
-    for (let u = line.from; u < line.to; u++) pen += units[u]!.advance
+    for (let u = line.from; u < line.to; u++) pen += units.advance[u]!
     let join = pen + unitInk(units, next.from)
     if (join < max) max = join
   }
@@ -620,7 +656,7 @@ function sameLine(a: EditorLine, b: EditorLine): boolean {
 
 // Two placements of the same units with the same lines, break for break and
 // metric for metric.
-function samePlacement(a: { units: TextUnit[]; lines: EditorLine[] }, b: { units: TextUnit[]; lines: EditorLine[] }): boolean {
+function samePlacement(a: { units: PreparedText; lines: EditorLine[] }, b: { units: PreparedText; lines: EditorLine[] }): boolean {
   if (a.units !== b.units || a.lines.length !== b.lines.length) return false
   return a.lines.every((l, i) => sameLine(l, b.lines[i]!))
 }

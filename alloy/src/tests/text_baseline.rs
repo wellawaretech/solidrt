@@ -108,9 +108,10 @@ fn baseline_lines(platform: &PlatformContext) -> Vec<String> {
       }
       if pin_words {
         for unit in &units {
-          if seen.insert(unit.text.clone()) {
+          let word = text[unit.start..unit.end].trim_end_matches(layout::is_break_char);
+          if seen.insert(word.to_string()) {
             let m = unit.metrics;
-            lines.push(format!("u {s} {:?}\t{:.*} {:.*}", unit.text, DECIMALS, m.advance, DECIMALS, m.ink_width));
+            lines.push(format!("u {s} {:?}\t{:.*} {:.*}", word, DECIMALS, m.advance, DECIMALS, m.ink_width));
           }
         }
       }

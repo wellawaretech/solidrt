@@ -192,7 +192,7 @@ export function createSpriteFont(face: FontFace, opts?: SpriteFontOptions): Spri
   if (chars !== false) {
     let warm = chars ?? ascii()
     let ids = new Set<number>()
-    for (let unit of font.prepare(warm).units) for (let g of unit.glyphs ?? []) ids.add(g.id)
+    for (let g of font.prepare(warm).glyphs.id) ids.add(g)
     font.request(ids)
   }
   if (autoFree !== false && getOwner()) onCleanup(() => font.dispose())

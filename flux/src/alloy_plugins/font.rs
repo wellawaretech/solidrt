@@ -19,7 +19,7 @@ use alloy::rendertree::text::glyphs::{
   weight_value, AtlasPacker, CellJob, CellKind, CellPlacement, CellRequest, CellWorker, GlyphAtlas, Hint,
   InsertOutcome, JobPriority,
 };
-use alloy::rendertree::text::{prepare_units, Fallback, RunStyle};
+use alloy::rendertree::text::{prepare_units, Fallback, PreparedColumns, RunStyle};
 use alloy::rendertree::Text;
 use alloy::{SamplerState, TextureFormat};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
@@ -297,7 +297,8 @@ fn prepare_text<'js>(
   // One face per handle, so a character it lacks is its notdef: this
   // atlas holds no other face's cells.
   let units = prepare_units(&st.gui.platform, &text, &style, &[], carets, Fallback::None);
-  super::tree::prepared_to_js(&ctx, text, units, true)
+  let columns = PreparedColumns::from_units(&text, &units, false, carets, true);
+  super::tree::prepared_to_js(&ctx, text, columns)
 }
 
 // Glyph ids from JS: non-negative integers within the font's id range.

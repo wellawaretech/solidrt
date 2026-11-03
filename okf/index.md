@@ -2499,6 +2499,14 @@ Finished, kept for the reasoning.
   A portal visible at first mount throws "no mount target" because windowRoot
   is set only after the initial build; decided as by design, documented with a
   clearer error.
+- **[Prepared text as columns, breakLines on the text breaker, a byte-bounded scan-resistant word cache](done/prepare-text-bulk-result.md)** [2026-11-03]
+  Preparing and breaking 600k characters took 1.0 s plus 0.13 s on a Galaxy
+  Tab A7, split between marshalling one JS object per wrap unit and shaping a
+  vocabulary the 8192-word cache could not hold; PreparedText is now
+  typed-array columns, breakLines runs the <text> breaker natively for every
+  line at one width, the word cache is a 16 MiB segmented LRU keyed without
+  paint, and the <text> line box is max ascent plus max descent. An async
+  prepareText was built and dropped.
 - **[A reactive halt wedges the control API queries](done/reactive-halt-wedges-control-api.md)** [2026-08-23]
   After an uncaught error at mount, /snapshot timed out while /tree and /stats
   kept answering, because the render subscription lives in onSettled and a

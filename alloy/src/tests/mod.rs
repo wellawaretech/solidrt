@@ -50,6 +50,7 @@ mod text_baseline;
 mod text_gradient;
 mod text_layout;
 mod text_motion;
+mod text_prepare;
 mod texture;
 mod transitions;
 mod tree;

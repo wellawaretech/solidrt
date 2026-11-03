@@ -1,11 +1,11 @@
 // Tests for the text layout (text-layout.ts): glyph placements from
-// hand-built prepared units (what a sprite font's prepare returns),
+// hand-built prepared columns (what a sprite font's prepare returns),
 // pinning the greedy breaking against core's layoutNextLine rules, the
 // alignment and anchors and the throws. Pure-module input only, so it
 // runs headless on flux: `sol test packages/2d`.
 
 import { expect, test } from "flux:test"
-import type { FontPreparedText, FontTextUnit } from "flux:font"
+import type { FontPreparedText } from "flux:font"
 import { layoutText } from "../src/text-layout.ts"
 
 // A monospace stand-in: every glyph advances by ADVANCE, a unit's width is
@@ -14,38 +14,60 @@ const ADVANCE = 10
 const ASCENT = 8
 const DESCENT = 2
 
+// One hand-built unit: its range, metrics, flags and glyphs.
+type Unit = { start: number; end: number; advance: number; width: number; hardBreak: boolean; glyphs: { id: number; x: number }[] }
+
+// Units as the columns a sprite font's prepare returns.
+function columns(text: string, units: Unit[]): FontPreparedText {
+  let first: number[] = []
+  let glyphs: { id: number; x: number }[] = []
+  for (let unit of units) {
+    first.push(glyphs.length)
+    glyphs.push(...unit.glyphs)
+  }
+  first.push(glyphs.length)
+  return {
+    text,
+    length: units.length,
+    start: Uint32Array.from(units.map(u => u.start)),
+    end: Uint32Array.from(units.map(u => u.end)),
+    advance: Float32Array.from(units.map(u => u.advance)),
+    width: Float32Array.from(units.map(u => u.width)),
+    ascent: Float32Array.from(units.map(() => ASCENT)),
+    descent: Float32Array.from(units.map(() => DESCENT)),
+    hardBreak: Uint8Array.from(units.map(u => (u.hardBreak ? 1 : 0))),
+    glue: new Uint8Array(units.length),
+    glyphs: {
+      first: Uint32Array.from(first),
+      id: Uint16Array.from(glyphs.map(g => g.id)),
+      x: Float32Array.from(glyphs.map(g => g.x)),
+      y: new Float32Array(glyphs.length),
+      advance: Float32Array.from(glyphs.map(() => ADVANCE)),
+    },
+  }
+}
+
 // `text` as units: words split at spaces, each unit's advance including
 // its trailing space, glyph ids the char codes, pen positions per glyph.
 function prepare(text: string): FontPreparedText {
-  let units: FontTextUnit[] = []
+  let units: Unit[] = []
   let at = 0
   for (let line of text.split("\n")) {
     let words = line.split(" ")
     for (let [i, word] of words.entries()) {
       let last = i === words.length - 1
-      let glyphs = [...word].map((ch, j) => ({ id: ch.charCodeAt(0), x: j * ADVANCE, y: 0, advance: ADVANCE }))
+      let glyphs = [...word].map((ch, j) => ({ id: ch.charCodeAt(0), x: j * ADVANCE }))
       let width = word.length * ADVANCE
       let advance = width + (last ? 0 : ADVANCE)
       let end = at + word.length + (last ? 0 : 1)
-      units.push({
-        text: word,
-        start: at,
-        end,
-        advance,
-        width,
-        ascent: ASCENT,
-        descent: DESCENT,
-        hardBreak: last,
-        glue: false,
-        glyphs,
-      })
+      units.push({ start: at, end, advance, width, hardBreak: last, glyphs })
       at = end
     }
     at += 1
   }
   // The last unit's hard break is the text's end, not a break.
   units[units.length - 1]!.hardBreak = false
-  return { text, units }
+  return columns(text, units)
 }
 
 test("a single line places every glyph at its pen position on one baseline", () => {
@@ -133,7 +155,7 @@ test("a non-positive wrap width throws", () => {
 })
 
 test("an empty text is one empty line of no size", () => {
-  let layout = layoutText({ text: "", units: [] })
+  let layout = layoutText(columns("", []))
   expect(layout.glyphs.length).toBe(0)
   expect(layout.lines.length).toBe(1)
   expect([layout.width, layout.height]).toEqual([0, 0])

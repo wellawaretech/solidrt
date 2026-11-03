@@ -6,9 +6,10 @@ use std::sync::mpsc::Sender;
 use taffy::prelude::*;
 
 use crate::alloy_plugins::value::PropValue;
-use crate::plugins::marshal::{bytes_of, elements, OptArg};
+use crate::plugins::marshal::{bytes_of, elements, elements_of, OptArg};
 use alloy::rendertree::text::glyphs::Hint;
-use alloy::rendertree::text::{prepare_units, Fallback, PreparedRun, PreparedUnit};
+use alloy::rendertree::text::layout::{Run, RunMetrics, Wrap};
+use alloy::rendertree::text::{prepare_units, Fallback, PreparedColumns, PreparedRun, RunStyle};
 use alloy::rendertree::{
   AnimValue, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, Rect, RenderTree, Text, Window,
 };
@@ -340,6 +341,7 @@ impl ModuleDef for RenderTreeModule {
     decl.declare("dropCursor")?;
     decl.declare("measureText")?;
     decl.declare("prepareText")?;
+    decl.declare("breakLines")?;
     decl.declare("warmText")?;
     decl.declare("setTextRendering")?;
     decl.declare("textRendering")?;
@@ -370,6 +372,7 @@ impl ModuleDef for RenderTreeModule {
     exports.export("dropCursor", Function::new(ctx.clone(), drop_cursor)?)?;
     exports.export("measureText", Function::new(ctx.clone(), measure_text)?)?;
     exports.export("prepareText", Function::new(ctx.clone(), prepare_text)?)?;
+    exports.export("breakLines", Function::new(ctx.clone(), break_lines)?)?;
     exports.export("warmText", Function::new(ctx.clone(), warm_text)?)?;
     exports.export("setTextRendering", Function::new(ctx.clone(), set_text_rendering)?)?;
     exports.export("textRendering", Function::new(ctx.clone(), text_rendering)?)?;
@@ -786,85 +789,195 @@ pub(super) fn hint_mode(value: &Value<'_>) -> Option<Hint> {
   }
 }
 
-fn prepare_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>> {
+// What prepareText reads from its options: the base style, the styled runs
+// (byte offsets), whether the runs column was asked for (a `runs` array was
+// given) and whether carets were.
+struct PrepareInput {
+  style: RunStyle,
+  runs: Vec<PreparedRun>,
+  with_runs: bool,
+  carets: bool,
+}
+
+fn prepare_input<'js>(ctx: &Ctx<'js>, text: &str, options: OptArg<Object<'js>>) -> rquickjs::Result<PrepareInput> {
   let mut node = Text::default();
   let mut carets = false;
   let mut runs = Vec::new();
+  let mut with_runs = false;
   if let Some(opts) = options.0 {
-    apply_font_options(&ctx, &mut node, &opts)?;
+    apply_font_options(ctx, &mut node, &opts)?;
     carets = opts.get::<_, bool>("carets").unwrap_or(false);
     if let Ok(list) = opts.get::<_, rquickjs::Array<'js>>("runs") {
-      runs = prepared_runs(&ctx, &text, &node, list)?;
+      runs = prepared_runs(ctx, text, &node, list)?;
+      with_runs = true;
     }
   }
-  let s = state(&ctx);
-  let units = prepare_units(&s.gui.platform, &text, &node.run_style(), &runs, carets, Fallback::Registered);
-  prepared_to_js(&ctx, text, units, false)
+  Ok(PrepareInput { style: node.run_style(), runs, with_runs, carets })
 }
 
-/// A prepared text as its JS shape (`PreparedText`): the units with their
-/// metrics, caret stops when asked for, and with `glyphs` their glyphs (an
-/// object per glyph). Shared with the font module, whose prepareText is
-/// the one that reports glyphs: its ids name cells of its own atlas, where
-/// a `<text>`'s glyphs may come from any registered face.
+fn prepare_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>> {
+  let input = prepare_input(&ctx, &text, options)?;
+  let s = state(&ctx);
+  let units = prepare_units(&s.gui.platform, &text, &input.style, &input.runs, input.carets, Fallback::Registered);
+  let columns = PreparedColumns::from_units(&text, &units, input.with_runs, input.carets, false);
+  prepared_to_js(&ctx, text, columns)
+}
+
+/// A prepared text as its JS shape (`PreparedText`): the text, the unit
+/// count and one typed array per unit column, the run column and the caret
+/// table when asked for, and with glyph columns the glyph table (the font
+/// module's prepareText, whose ids name cells of its own atlas, where a
+/// `<text>`'s glyphs may come from any registered face).
 pub(crate) fn prepared_to_js<'js>(
   ctx: &Ctx<'js>,
   text: String,
-  units: Vec<PreparedUnit>,
-  glyphs: bool,
+  columns: PreparedColumns,
 ) -> rquickjs::Result<Object<'js>> {
-  let array = rquickjs::Array::new(ctx.clone())?;
-  // Byte offsets to UTF-16 (JS string) offsets, incrementally: units tile
-  // the text in order.
-  let (mut byte, mut utf16) = (0usize, 0usize);
-  let mut to_utf16 = |at: usize| {
-    utf16 += text[byte..at].encode_utf16().count();
-    byte = at;
-    utf16
-  };
-  for (i, unit) in units.into_iter().enumerate() {
-    let obj = Object::new(ctx.clone())?;
-    let start = to_utf16(unit.start) as u32;
-    obj.set("start", start)?;
-    obj.set("end", to_utf16(unit.end) as u32)?;
-    if let Some(stops) = &unit.carets {
-      let array = rquickjs::Array::new(ctx.clone())?;
-      for (j, stop) in stops.iter().enumerate() {
-        let o = Object::new(ctx.clone())?;
-        o.set("offset", start + stop.offset)?;
-        o.set("x", stop.x)?;
-        array.set(j, o)?;
-      }
-      obj.set("carets", array)?;
-    }
-    if glyphs {
-      let array = rquickjs::Array::new(ctx.clone())?;
-      for (j, glyph) in unit.glyphs.glyphs.iter().enumerate() {
-        let o = Object::new(ctx.clone())?;
-        o.set("id", glyph.id as u32)?;
-        o.set("x", glyph.x)?;
-        o.set("y", glyph.y)?;
-        o.set("advance", glyph.advance)?;
-        array.set(j, o)?;
-      }
-      obj.set("glyphs", array)?;
-    }
-    obj.set("text", unit.text)?;
-    obj.set("advance", unit.metrics.advance)?;
-    obj.set("width", unit.metrics.ink_width)?;
-    obj.set("ascent", unit.metrics.ascent)?;
-    obj.set("descent", unit.metrics.descent)?;
-    obj.set("hardBreak", unit.hard_break)?;
-    obj.set("glue", unit.glue)?;
-    if let Some(run) = unit.run {
-      obj.set("run", run as u32)?;
-    }
-    array.set(i, obj)?;
-  }
   let prepared = Object::new(ctx.clone())?;
   prepared.set("text", text)?;
-  prepared.set("units", array)?;
+  prepared.set("length", columns.len() as u32)?;
+  prepared.set("start", TypedArray::<u32>::new(ctx.clone(), columns.start)?)?;
+  prepared.set("end", TypedArray::<u32>::new(ctx.clone(), columns.end)?)?;
+  prepared.set("advance", TypedArray::<f32>::new(ctx.clone(), columns.advance)?)?;
+  prepared.set("width", TypedArray::<f32>::new(ctx.clone(), columns.width)?)?;
+  prepared.set("ascent", TypedArray::<f32>::new(ctx.clone(), columns.ascent)?)?;
+  prepared.set("descent", TypedArray::<f32>::new(ctx.clone(), columns.descent)?)?;
+  prepared.set("hardBreak", TypedArray::<u8>::new(ctx.clone(), columns.hard_break)?)?;
+  prepared.set("glue", TypedArray::<u8>::new(ctx.clone(), columns.glue)?)?;
+  if let Some(run) = columns.run {
+    prepared.set("run", TypedArray::<i32>::new(ctx.clone(), run)?)?;
+  }
+  if let Some(table) = columns.carets {
+    let carets = Object::new(ctx.clone())?;
+    carets.set("first", TypedArray::<u32>::new(ctx.clone(), table.first)?)?;
+    carets.set("offset", TypedArray::<u32>::new(ctx.clone(), table.offset)?)?;
+    carets.set("x", TypedArray::<f32>::new(ctx.clone(), table.x)?)?;
+    prepared.set("carets", carets)?;
+  }
+  if let Some(table) = columns.glyphs {
+    let glyphs = Object::new(ctx.clone())?;
+    glyphs.set("first", TypedArray::<u32>::new(ctx.clone(), table.first)?)?;
+    glyphs.set("id", TypedArray::<u16>::new(ctx.clone(), table.id)?)?;
+    glyphs.set("x", TypedArray::<f32>::new(ctx.clone(), table.x)?)?;
+    glyphs.set("y", TypedArray::<f32>::new(ctx.clone(), table.y)?)?;
+    glyphs.set("advance", TypedArray::<f32>::new(ctx.clone(), table.advance)?)?;
+    prepared.set("glyphs", glyphs)?;
+  }
   Ok(prepared)
+}
+
+// One column of a prepared text handed back to breakLines: the typed array
+// under `key`, of the prepared text's unit count. Throws on a missing or
+// mistyped column or a length that disagrees, naming it.
+fn prepared_column<'js, T>(
+  ctx: &Ctx<'js>,
+  prepared: &Object<'js>,
+  key: &str,
+  kind: &str,
+  len: usize,
+) -> rquickjs::Result<TypedArray<'js, T>>
+where
+  TypedArray<'js, T>: rquickjs::FromJs<'js>,
+{
+  let fail =
+    || rquickjs::Exception::throw_message(ctx, &format!("breakLines: prepared.{key} must be a {kind} of {len} units"));
+  let column: TypedArray<'js, T> = prepared.get(key).map_err(|_| fail())?;
+  if column.len() != len {
+    return Err(fail());
+  }
+  Ok(column)
+}
+
+// The lines a prepared text breaks into at one width, on the `<text>`
+// breaker (alloy's break_lines): the columns read in place, one run per
+// unit handed over, the lines back as columns. Line tops are summed in
+// f64 here, so a text of tens of thousands of lines places its last one
+// as exactly as its first.
+fn break_lines<'js>(
+  ctx: Ctx<'js>,
+  prepared: Object<'js>,
+  width: f64,
+  options: OptArg<Object<'js>>,
+) -> rquickjs::Result<Object<'js>> {
+  if !(width >= 0.0) {
+    return Err(rquickjs::Exception::throw_message(
+      &ctx,
+      &format!("breakLines: width must be a non-negative number or Infinity, got {width}"),
+    ));
+  }
+  let wrap = match options.0.map(|o| o.get::<_, Option<String>>("textWrap")).transpose()?.flatten().as_deref() {
+    None | Some("wrap") => Wrap::Wrap,
+    Some("balance") => Wrap::Balance,
+    Some("pretty") => Wrap::Pretty,
+    Some(v) => {
+      return Err(rquickjs::Exception::throw_message(
+        &ctx,
+        &format!("breakLines: unknown textWrap value \"{v}\"; expected wrap, balance or pretty"),
+      ))
+    }
+  };
+  let len = prepared
+    .get::<_, f64>("length")
+    .ok()
+    .filter(|n| *n >= 0.0 && n.fract() == 0.0)
+    .ok_or_else(|| rquickjs::Exception::throw_message(&ctx, "breakLines: prepared.length must be the unit count"))?
+    as usize;
+  let advance = prepared_column::<f32>(&ctx, &prepared, "advance", "Float32Array", len)?;
+  let ink = prepared_column::<f32>(&ctx, &prepared, "width", "Float32Array", len)?;
+  let ascent = prepared_column::<f32>(&ctx, &prepared, "ascent", "Float32Array", len)?;
+  let descent = prepared_column::<f32>(&ctx, &prepared, "descent", "Float32Array", len)?;
+  let hard_break = prepared_column::<u8>(&ctx, &prepared, "hardBreak", "Uint8Array", len)?;
+  let glue = prepared_column::<u8>(&ctx, &prepared, "glue", "Uint8Array", len)?;
+  let (advance, ink, ascent, descent, hard_break, glue) = (
+    elements_of(&ctx, &advance, "breakLines")?,
+    elements_of(&ctx, &ink, "breakLines")?,
+    elements_of(&ctx, &ascent, "breakLines")?,
+    elements_of(&ctx, &descent, "breakLines")?,
+    elements_of(&ctx, &hard_break, "breakLines")?,
+    elements_of(&ctx, &glue, "breakLines")?,
+  );
+  let runs: Vec<Run> = (0..len)
+    .map(|i| Run {
+      metrics: RunMetrics { advance: advance[i], ink_width: ink[i], ascent: ascent[i], descent: descent[i] },
+      hard_break: hard_break[i] != 0,
+      glue: glue[i] != 0,
+      float: None,
+      clear: None,
+    })
+    .collect();
+  let lines = alloy::rendertree::text::layout::break_lines(&runs, width as f32, wrap);
+  let n = lines.len();
+  let (mut from, mut to, mut y, mut line_width, mut line_ascent, mut height, mut hard) = (
+    Vec::with_capacity(n),
+    Vec::with_capacity(n),
+    Vec::with_capacity(n),
+    Vec::with_capacity(n),
+    Vec::with_capacity(n),
+    Vec::with_capacity(n),
+    Vec::with_capacity(n),
+  );
+  let mut top = 0.0f64;
+  for line in &lines {
+    from.push(line.first as u32);
+    to.push(line.end as u32);
+    y.push(top);
+    top += line.height as f64;
+    line_width.push(line.width);
+    line_ascent.push(line.ascent);
+    height.push(line.height);
+    hard.push(line.hard_break as u8);
+  }
+  let out = Object::new(ctx.clone())?;
+  out.set("length", n as u32)?;
+  out.set("from", TypedArray::<u32>::new(ctx.clone(), from)?)?;
+  out.set("to", TypedArray::<u32>::new(ctx.clone(), to)?)?;
+  out.set("y", TypedArray::<f64>::new(ctx.clone(), y)?)?;
+  out.set("width", TypedArray::<f32>::new(ctx.clone(), line_width)?)?;
+  out.set("ascent", TypedArray::<f32>::new(ctx.clone(), line_ascent)?)?;
+  out.set("height", TypedArray::<f32>::new(ctx.clone(), height)?)?;
+  out.set("hardBreak", TypedArray::<u8>::new(ctx.clone(), hard)?)?;
+  out.set("totalHeight", top)?;
+  Ok(out)
 }
 
 fn get_bounding_box(ctx: Ctx<'_>, id: u64) -> Option<JsBoundingBox> {

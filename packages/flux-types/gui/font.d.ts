@@ -14,7 +14,7 @@
 
 declare module "flux:font" {
   import type { TextureId } from "flux:gpu"
-  import type { TextUnit } from "flux:rendertree"
+  import type { PreparedText } from "flux:rendertree"
 
   /** A created font, valid until {@link destroyFont}. */
   type FontId = number
@@ -123,20 +123,16 @@ declare module "flux:font" {
   }
 
   /**
-   * A wrap unit shaped on a font: `flux:rendertree`'s unit plus the unit's
-   * glyphs - the font's glyph `id` (a cell of this font's atlas), the glyph
-   * origin `x`/`y` from the unit's pen position (kerned, letter-spaced, y
-   * down) and the pen `advance` it contributes - all in pixels at the
-   * shaping size.
+   * A text shaped on a font: `flux:rendertree`'s `PreparedText` plus every
+   * unit's glyphs in one table. Unit `i`'s glyphs are entries `first[i]`
+   * to `first[i + 1]` (exclusive) of the other arrays (`first` has
+   * `length + 1` entries): the font's glyph `id` (a cell of this font's
+   * atlas), the glyph origin `x`/`y` from the unit's pen position (kerned,
+   * letter-spaced, y down) and the pen `advance` it contributes, all in
+   * pixels at the shaping size.
    */
-  type FontTextUnit = TextUnit & {
-    glyphs: { id: number, x: number, y: number, advance: number }[]
-  }
-
-  /** A text shaped on a font: `flux:rendertree`'s `PreparedText` with every unit carrying its glyphs. */
-  type FontPreparedText = {
-    text: string
-    units: FontTextUnit[]
+  type FontPreparedText = PreparedText & {
+    glyphs: { first: Uint32Array, id: Uint16Array, x: Float32Array, y: Float32Array, advance: Float32Array }
   }
 
   /**
@@ -151,7 +147,7 @@ declare module "flux:font" {
   function fontAtlas(font: FontId): FontAtlas
   /**
    * Shape `text` on the font (the runtime's own shaper): the units of
-   * `flux:rendertree`'s prepareText, each also carrying its glyphs, for
+   * `flux:rendertree`'s prepareText, with their glyphs, for
    * app-side line breaking with `layoutNextLine` and glyph placement.
    * The font is one face and its atlas holds that face's cells only, so a
    * character the face lacks shapes to its missing glyph (id 0) with no

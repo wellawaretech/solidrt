@@ -238,8 +238,10 @@ pub struct Layout {
 /// `max_lines` of 0 means unlimited; when it cuts the text short and
 /// `ellipsis` gives the metrics of an ellipsis run, the last line's last
 /// segment is trimmed until the ellipsis fits and its position is reported.
-/// Each line is as tall as its tallest run and every run's baseline sits on
-/// the line's baseline, across segments.
+/// Every run's baseline sits on the line's baseline, across segments, and
+/// the line is as tall as its highest ascent plus its deepest descent (the
+/// CSS line box of baseline-aligned content): an inline atom, all ascent,
+/// beside text that descends makes the line taller than either.
 pub fn layout(
   runs: &[Run],
   extent: &dyn Fn(LineCursor) -> Vec<LineExtent>,
@@ -312,6 +314,47 @@ pub fn layout_wrap(
   best
 }
 
+/// One line of `break_lines`: the runs `first..end` it holds, its top `y`,
+/// its ink width (to the last run's last inked glyph), its baseline
+/// `ascent` below the top and its `height`, and whether it ended at a hard
+/// break rather than by running out of width.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BrokenLine {
+  pub first: usize,
+  pub end: usize,
+  pub y: f32,
+  pub width: f32,
+  pub ascent: f32,
+  pub height: f32,
+  pub hard_break: bool,
+}
+
+/// The lines `runs` (in-flow runs only: no floats or clears) break into at
+/// `width` under `wrap`: the `<text>` breaker itself on a plain column,
+/// left aligned and uncapped, so app-side breaking of a prepared text
+/// lands every break where a `<text>` of the same words would. A width of
+/// infinity breaks at hard breaks only.
+pub fn break_lines(runs: &[Run], width: f32, wrap: Wrap) -> Vec<BrokenLine> {
+  let extent = move |_: LineCursor| vec![LineExtent::full(width)];
+  let layout = layout_wrap(runs, &extent, Align::Left, 0, None, wrap);
+  // No floats and no cap: every run is placed, in order, so the placed
+  // ranges are run ranges.
+  debug_assert_eq!(layout.runs.len(), runs.len(), "break_lines takes in-flow runs only");
+  layout
+    .lines
+    .iter()
+    .map(|line| BrokenLine {
+      first: line.first,
+      end: line.end,
+      y: line.y,
+      width: line.right_edge(),
+      ascent: line.ascent,
+      height: line.height,
+      hard_break: line.end > line.first && runs[line.end - 1].hard_break,
+    })
+    .collect()
+}
+
 // `layout` with an optional break cap `(from_line, x)`: on lines with index
 // >= from_line a unit only fits while its ink ends left of `x` (from the
 // layout origin). Fitting only; alignment and justify still use the real
@@ -337,6 +380,7 @@ fn layout_capped(
     seg_ink: 0.0,
     pen: 0.0,
     y: 0.0,
+    descent: 0.0,
     pending: Vec::new(),
     exclusions: Vec::new(),
   };
@@ -451,6 +495,9 @@ struct Breaker<'a> {
   seg_ink: f32,
   pen: f32,
   y: f32,
+  // The open line's deepest descent below its baseline (its ascent is the
+  // line's own `ascent`).
+  descent: f32,
   // Float runs waiting for the next line top, and the boxes of the placed ones.
   pending: Vec<usize>,
   exclusions: Vec<Exclusion>,
@@ -589,7 +636,8 @@ impl Breaker<'_> {
     self.line.end = self.out.runs.len();
     self.seg_ink = self.pen + run.metrics.ink_width;
     self.line.ascent = self.line.ascent.max(run.metrics.ascent);
-    self.line.height = self.line.height.max(run.metrics.height());
+    self.descent = self.descent.max(run.metrics.descent);
+    self.line.height = self.line.ascent + self.descent;
     self.pen += run.metrics.advance;
   }
 
@@ -657,6 +705,7 @@ impl Breaker<'_> {
     self.line.y = self.y;
     self.y += self.line.height;
     let next = Line { first: self.out.runs.len(), end: self.out.runs.len(), ..Line::default() };
+    self.descent = 0.0;
     self.out.lines.push(std::mem::replace(&mut self.line, next));
     self.extents.clear();
     self.pen = 0.0;
@@ -680,14 +729,15 @@ impl Breaker<'_> {
     }
     // Recompute the line box from what remains plus the ellipsis.
     let mut ascent = ell.ascent;
-    let mut height = ell.height();
+    let mut descent = ell.descent;
     for placed in &self.out.runs[self.line.first..self.line.end] {
       let m = self.runs[placed.run].metrics;
       ascent = ascent.max(m.ascent);
-      height = height.max(m.height());
+      descent = descent.max(m.descent);
     }
     self.line.ascent = ascent;
-    self.line.height = height;
+    self.descent = descent;
+    self.line.height = ascent + descent;
     self.seg_ink = ell_x + ell.ink_width;
     self.out.ellipsis = Some((ell_x, ell.ascent));
   }

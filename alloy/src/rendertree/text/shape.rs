@@ -165,8 +165,6 @@ fn split_at_regions<R>(segment: layout::Segment, mut region_at: impl FnMut(usize
 /// for app-side line breaking.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreparedUnit {
-  /// The unit's text without its break characters.
-  pub text: String,
   /// Byte range in the source text, break characters included, so the
   /// ranges tile the text.
   pub start: usize,
@@ -215,6 +213,7 @@ pub fn prepare_units(
   fallback: Fallback,
 ) -> Vec<PreparedUnit> {
   let fonts = platform.glyphs();
+  let mut words = platform.words();
   let mut units: Vec<PreparedUnit> = Vec::new();
   let mut run_index = 0;
   for segment in layout::segments(text) {
@@ -241,13 +240,11 @@ pub fn prepare_units(
         continue;
       }
       let style = piece.region.map_or(style, |i| &runs[i].style);
-      let mut words = platform.words();
       let Some(word) = words.get_or_shape(&fonts, word_text, style, fallback) else {
         return units;
       };
       let stops = if carets { words.carets(&fonts, word_text, style, fallback) } else { None };
       units.push(PreparedUnit {
-        text: word_text.to_string(),
         start: piece.start,
         end: piece.end,
         metrics: word.metrics,
@@ -260,6 +257,128 @@ pub fn prepare_units(
     }
   }
   units
+}
+
+/// A prepared text as columns, the shape a script reads it in: entry `i`
+/// of every per-unit column is unit `i`, offsets are UTF-16 code units
+/// into the source text (a JS string's indexing), and the optional parts
+/// are tables indexed through `first`. One allocation per column rather
+/// than one object per unit is what makes a long text cheap to hand over.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PreparedColumns {
+  pub start: Vec<u32>,
+  pub end: Vec<u32>,
+  pub advance: Vec<f32>,
+  pub width: Vec<f32>,
+  pub ascent: Vec<f32>,
+  pub descent: Vec<f32>,
+  /// 1 where the unit ends at a hard line break.
+  pub hard_break: Vec<u8>,
+  /// 1 where the unit continues the one before it (no break between).
+  pub glue: Vec<u8>,
+  /// The styled run each unit was shaped in, -1 for the base style; None
+  /// when the prepare had no runs.
+  pub run: Option<Vec<i32>>,
+  pub carets: Option<CaretColumns>,
+  pub glyphs: Option<GlyphColumns>,
+}
+
+/// Every unit's caret stops in one table: unit `i`'s are entries
+/// `first[i]..first[i + 1]`, offsets absolute (UTF-16 into the text), x
+/// from the unit's pen position.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CaretColumns {
+  pub first: Vec<u32>,
+  pub offset: Vec<u32>,
+  pub x: Vec<f32>,
+}
+
+/// Every unit's glyphs in one table: unit `i`'s are entries
+/// `first[i]..first[i + 1]`, each the font's glyph id and its origin and
+/// advance from the unit's pen position.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GlyphColumns {
+  pub first: Vec<u32>,
+  pub id: Vec<u16>,
+  pub x: Vec<f32>,
+  pub y: Vec<f32>,
+  pub advance: Vec<f32>,
+}
+
+impl PreparedColumns {
+  /// `units` of `text` (from `prepare_units`) as columns: with `runs` the
+  /// run column, with `carets` the caret table (the units must carry their
+  /// stops), with `glyphs` the glyph table.
+  pub fn from_units(text: &str, units: &[PreparedUnit], runs: bool, carets: bool, glyphs: bool) -> Self {
+    let n = units.len();
+    let mut out = PreparedColumns {
+      start: Vec::with_capacity(n),
+      end: Vec::with_capacity(n),
+      advance: Vec::with_capacity(n),
+      width: Vec::with_capacity(n),
+      ascent: Vec::with_capacity(n),
+      descent: Vec::with_capacity(n),
+      hard_break: Vec::with_capacity(n),
+      glue: Vec::with_capacity(n),
+      run: runs.then(|| Vec::with_capacity(n)),
+      carets: carets.then(|| CaretColumns { first: Vec::with_capacity(n + 1), ..CaretColumns::default() }),
+      glyphs: glyphs.then(|| GlyphColumns { first: Vec::with_capacity(n + 1), ..GlyphColumns::default() }),
+    };
+    // Byte offsets to UTF-16, incrementally: the units tile the text in
+    // order.
+    let (mut byte, mut utf16) = (0usize, 0u32);
+    let mut to_utf16 = |at: usize| {
+      utf16 += text[byte..at].encode_utf16().count() as u32;
+      byte = at;
+      utf16
+    };
+    for unit in units {
+      let start = to_utf16(unit.start);
+      out.start.push(start);
+      out.end.push(to_utf16(unit.end));
+      out.advance.push(unit.metrics.advance);
+      out.width.push(unit.metrics.ink_width);
+      out.ascent.push(unit.metrics.ascent);
+      out.descent.push(unit.metrics.descent);
+      out.hard_break.push(unit.hard_break as u8);
+      out.glue.push(unit.glue as u8);
+      if let Some(run) = &mut out.run {
+        run.push(unit.run.map_or(-1, |r| r as i32));
+      }
+      if let Some(table) = &mut out.carets {
+        table.first.push(table.offset.len() as u32);
+        for stop in unit.carets.iter().flat_map(|stops| stops.iter()) {
+          table.offset.push(start + stop.offset);
+          table.x.push(stop.x);
+        }
+      }
+      if let Some(table) = &mut out.glyphs {
+        table.first.push(table.id.len() as u32);
+        for glyph in &unit.glyphs.glyphs {
+          table.id.push(glyph.id);
+          table.x.push(glyph.x);
+          table.y.push(glyph.y);
+          table.advance.push(glyph.advance);
+        }
+      }
+    }
+    if let Some(table) = &mut out.carets {
+      table.first.push(table.offset.len() as u32);
+    }
+    if let Some(table) = &mut out.glyphs {
+      table.first.push(table.id.len() as u32);
+    }
+    out
+  }
+
+  /// The number of units.
+  pub fn len(&self) -> usize {
+    self.start.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.start.is_empty()
+  }
 }
 
 impl Text {
@@ -331,10 +450,10 @@ impl Text {
     hard_break: bool,
     glue: bool,
   ) -> Option<ShapedRun> {
-    let word = platform.words().get_or_shape(&platform.glyphs(), text, &styles[style], Fallback::Registered)?;
+    let metrics = platform.words().metrics(&platform.glyphs(), text, &styles[style], Fallback::Registered)?;
     Some(ShapedRun {
       atom: false,
-      run: Run { metrics: word.metrics, hard_break, glue, float: None, clear: None },
+      run: Run { metrics, hard_break, glue, float: None, clear: None },
       text: text.to_string(),
       style,
     })
