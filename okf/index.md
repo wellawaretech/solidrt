@@ -319,6 +319,11 @@ Shaped, not started.
   On a touch-only Android device the capability layer gains "keyboard" as soon
   as the virtual keyboard opens, so any keyboard-first behavior gated on it
   would switch on for users who have no keyboard.
+- **[Reopen a microphone that SDL leaves dead after an Android resume](backlog/android-microphone-dead-after-background.md)** [2026-11-03]
+  When Android disconnects the AAudio recording stream while the app is in the
+  background, SDL's resume ignores the failed restart and the session delivers
+  no samples ever again, with no error; alloy needs the same
+  reopen-after-resume workaround it has for playback, per recording stream.
 - **[Control-API queries stall after the Android picker returns a pick](backlog/android-query-stall-after-picker.md)** [2026-10-15]
   On the tablet, after a file dialog pick that kept the app behind DocumentsUI
   for minutes, queries to the client (dialog state, debug list, settle) timed
@@ -3492,6 +3497,12 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   (ordinary JS for "not given", and what any wrapper forwarding its own
   optional parameter produces) is still converted into T and fails. Proposal
   is an undefined/null-tolerant optional param type, or Opt doing it natively.
+- **[SDL AAudio never recovers a playback stream that was disconnected while paused](upstream/sdl-android-aaudio-resume-disconnected-never-recovers.md)** [2026-11-03]
+  On Android, when AAudio disconnects a stream while the app is in the
+  background, SDL's resume calls requestStart, ignores the error it returns,
+  and its device thread then waits forever on a data callback that never
+  comes, so playback (and recording) stays dead until the device is closed;
+  alloy reopens the playback stream when it does not pull after a resume.
 - **[SDL_WaitEventTimeout busy-waits on Android because the poll sentinel wakes the lifecycle semaphore](upstream/sdl-android-wait-event-poll-sentinel-spin.md)** [2026-09-21]
   On Android every SDL_PumpEvents pushes a poll sentinel, every pushed event
   sends the lifecycle WAKE, and the event wait blocks on that same semaphore,

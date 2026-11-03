@@ -30,6 +30,7 @@ use engine::{clamp_rate, pcm_all_finite, Command, Ramp, Slot, Source, Voice, SLO
 pub use engine::{Pcm, VoiceShared, MAX_BUSES, MAX_LIVE_TRACKS, OPEN_CUTOFF_HZ};
 
 use device::Device;
+pub(crate) use device::{device_backgrounded, device_foregrounded};
 use ring::{RingConsumer, RingProducer, RingShared};
 use stream::{Decoder, StreamControl};
 

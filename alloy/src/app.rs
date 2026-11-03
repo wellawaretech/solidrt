@@ -549,7 +549,19 @@ impl App {
           watch_event_tx.send(AlloyEvent::Suspend { hold: crate::event::SuspendHold::take() }).ok();
         }
         sdl3::event::Event::AppDidEnterBackground { .. } => {
+          if cfg!(target_os = "android") {
+            crate::audio::device_backgrounded();
+          }
           watch_event_tx.send(AlloyEvent::Visibility { visible: false }).ok();
+        }
+        // SDL has just restarted its audio devices (Android_OnResume runs
+        // the restart right before it sends this event); reopen the
+        // playback device if the restart left it dead (see
+        // audio::device_foregrounded).
+        sdl3::event::Event::AppDidEnterForeground { .. } => {
+          if cfg!(target_os = "android") {
+            crate::audio::device_foregrounded();
+          }
         }
         _ => {}
       },
