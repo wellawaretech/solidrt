@@ -5,7 +5,7 @@
 import { test, expect } from "flux:test"
 import { iconBackgroundRgb } from "../src/lib/icon-background.ts"
 import { patchSplash } from "../src/pack/android/splash.ts"
-import { applicationIdRenames } from "../src/pack/android/strings.ts"
+import { applicationIdRenames } from "../src/pack/android/app-id.ts"
 
 // An RGB8 color Res_value as aapt2 writes it: size 8, zero, type 0x1d, data.
 function colorValue(data: number): number[] {

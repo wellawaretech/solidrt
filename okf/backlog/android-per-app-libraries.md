@@ -71,5 +71,5 @@ The features in the design note's test set that need a library:
   each library ships whole. Turning it on would shrink the Java side to
   what is used, but every Java method native code calls over JNI needs a
   keep rule (`proguard-rules.pro` has SDL's, not ours), or the call fails
-  at run time with `NoSuchMethodError`. Worth weighing once the libraries
-  add up; against the native libraries, the Java side is small.
+  at run time with `NoSuchMethodError`. The library-only shrink is its own
+  item: okf/backlog/android-r8-library-shrink.md.

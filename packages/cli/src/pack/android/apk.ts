@@ -22,7 +22,6 @@ import {
   labelIndices,
   replacePoolStrings,
   poolStrings,
-  applicationIdRenames,
   BOOL_TRUE,
   XML_POOL_OFFSET,
   TABLE_POOL_OFFSET,
@@ -30,6 +29,7 @@ import {
 import { backgroundPixel } from "./icon"
 import { signApk } from "./sign"
 import { patchSplash } from "./splash"
+import { applicationIdRenames } from "./app-id"
 import { iconBackgroundRgb, type Rgb } from "../../lib/icon-background"
 
 // Where the payload lands in the APK: under assets/ so the runtime can reach

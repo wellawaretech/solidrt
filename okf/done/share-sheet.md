@@ -128,7 +128,8 @@ the share sheet exists to avoid that detour.
   libraries, and only R8 removes what is unreachable. R8 stays off for
   now; the measured size (work step 3) says whether a library-only
   shrink (keep rules over all of `com.solidrt.app` and
-  `org.libsdl.app`, no renaming) earns its own item. A hand-written
+  `org.libsdl.app`, no renaming) earns its own item; it did:
+  okf/backlog/android-r8-library-shrink.md. A hand-written
   provider was rejected: androidx comes in with the next platform
   features anyway.
 - **Not in scope:** answering a share with a cancel under test (an app's

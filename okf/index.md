@@ -354,6 +354,13 @@ Shaped, not started.
   for minutes, queries to the client (dialog state, debug list, settle) timed
   out for tens of seconds and then recovered; a BACK-cancelled picker and
   content reads alone did not stall; seen twice, cause not found.
+- **[Shrink the Android libraries' Java code with R8](backlog/android-r8-library-shrink.md)** [2026-11-04]
+  "Every APK ships androidx.core and what it pulls (the Kotlin standard
+  library, kotlinx-coroutines, lifecycle, ...) whole, about 3.9 MB of dex,
+  because R8 is off (minifyEnabled = false, inherited from SDL's Android
+  project template, never a decision): turn it on for release builds as a
+  library-only shrink, with keep rules over all of our own Java and SDL's and
+  no renaming, so only unreachable library code goes."
 - **[Find the 0.5 s to 0.7 s between an Android surface resize and the engine's next frame](backlog/android-resize-frame-delay.md)** [2026-11-01]
   On the SM-T500 the engine presents its first frame at a new size 0.5 s to
   0.7 s after SDL's surfaceChanged() on a rotation, while the system's own
@@ -930,6 +937,10 @@ Shaped, not started.
   partly-built subtree without freeing it, so every retry leaks the elements
   built before the suspend point - and the leak sentinel that catches it names
   the wrong cause.
+- **[Make a test's window size land reliably](backlog/test-window-size-flaky.md)** [2026-11-04]
+  An app test with { size } sometimes mounts at the run's window (1280x720)
+  instead of the size it set; seen twice in CI on "a size alone keeps scale
+  1", while the same commit passes on rerun.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,
