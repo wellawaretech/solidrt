@@ -167,6 +167,11 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   bytes per splat; a product-quantized encoding behind the SH block's
   `encoding` field would cut the dominant texture 12x, at the price of a
   bake-time k-means to engineer and a quality judgement of its own.
+- **[TLS follow-ups - HTTPS serving, server startTls, certificates, WebSocket options, one limiter per app](plans/tls-follow-ups.md)** [2026-11-05]
+  The gaps tls-and-fetch-limits left "until a real app needs it" - HTTPS (and
+  h2) in serve, startTls as the server, certificate generation, subprotocols
+  and a TLS client for WebSocket, the per-host limits shared across isolates -
+  plus the open decision on media sources and the cap; one stage each.
 - **[Encode video and audio](plans/video-encode.md)** [2026-10-16]
   The runtime decodes VP9 and Opus but cannot encode either, so an app cannot
   record its camera and microphone to a file or send them anywhere; a VP9
@@ -537,11 +542,6 @@ Shaped, not started.
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
   itself?
-- **[TLS options for fetch](backlog/fetch-tls-options.md)** [2026-10-30]
-  fetch verifies servers against the webpki roots only and has no client
-  certificate, so an app cannot reach a private-CA or self-signed server, pin
-  a server certificate, or do mutual TLS; add a client certificate, extra
-  roots and a pin, through a client object the app creates.
 - **["FFI write batching: batched creation, one-call drain, interned keys, command buffer"](backlog/ffi-write-batching.md)** [2026-08-05]
   Every property write is one string-keyed FFI call (mount fans a props object
   into per-prop calls; update bursts pay per-call overhead N times); four
@@ -1804,6 +1804,16 @@ Finished, kept for the reasoning.
   Explicit opt-in caching in the forge fetch core (server cache headers
   ignored) with a per-app store and an LRU size cap, then GET coalescing and
   per-host limits.
+- **[Per-host limits for every fetch](done/fetch-host-limits.md)** [2026-11-04]
+  The per-host concurrency cap and the 429 cooldown protect only cached
+  fetches, so a plain fetch flood opens a connection per request and gets an
+  app rate-limited; apply them to every fetch the way browsers cap HTTP/1.1,
+  and turn on HTTP/2 so a multiplexing host skips the cap.
+- **[TLS options for fetch](done/fetch-tls-options.md)** [2026-11-04]
+  fetch verifies servers against the webpki roots only and has no client
+  certificate, so an app cannot reach a private-CA or self-signed server, pin
+  a server certificate, or do mutual TLS; add a client certificate, extra
+  roots and a pin, through a client object the app creates.
 - **["flux:ffi: pass a JS buffer as a ptr argument"](done/ffi-buffer-args.md)** [2026-08-15]
   Signatures are scalar-only and a Uint8Array cannot be handed to a ptr
   parameter, so every out-parameter or buffer call first loads libc as a
@@ -2380,6 +2390,11 @@ Finished, kept for the reasoning.
   A press on a Pressable nested inside another fires both onPress callbacks;
   the contract is resolved by component-gestures' innermost-wins arena and the
   usage survey stands.
+- **[TLS sockets in flux:net](done/net-tls.md)** [2026-11-04]
+  flux:net is plain TCP, so an app cannot speak a TLS protocol other than
+  HTTPS (IMAP, SMTP STARTTLS, MQTTS, its own protocol) or serve one; add
+  connectTls, startTls and listenTls that return the existing Conn and
+  Listener.
 - **[The standard vertex prefix has no opt-out, so a point cloud pays double](done/non-surface-vertex-layouts.md)** [2026-09-11]
   Every layout must start with aPos/aNormal/aUV, 8 floats a vertex, but a
   lidar point is 4 (position plus one packed channel) and has neither a normal
@@ -3012,6 +3027,11 @@ Finished, kept for the reasoning.
   gated or slow frames a 1.5 s timer observably fires ~0.5-1 s late - async UI
   (pending buttons, toasts, polls) feels laggy while the app idles or animates
   lightly.
+- **[TLS for sockets, fetch and WebSocket, and per-host fetch limits](done/tls-and-fetch-limits.md)** [2026-11-04]
+  One plan over four related items - per-host limits and HTTP/2 for every
+  fetch, a shared forge::tls with TLS sockets in flux:net, TLS options for
+  fetch through a client object, and wss:// - in that order, one stage per
+  item.
 - **[A cancelled touch ends its pointer](done/touch-cancel.md)** [2026-09-30]
   When the system takes a touch away from the app (a system gesture, a palm
   rejection, a window losing the touch), the pointer stays down forever - the

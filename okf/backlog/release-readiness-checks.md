@@ -19,7 +19,7 @@ release is attempted:
 ## Candidate pre-build checks
 
 - Types/runtime lockstep (postmortem 5.2): every flux surface change mirrored
-  in flux-types (and docs/50-runtime/index.md where its prose lists modules or
+  in flux-types (and docs/runtime/index.md where its prose lists modules or
   globals); the flux-types/docs mirroring is still a
   manual convention with no check. Partly covered since 2026-07-25: CI
   (.github/workflows/ci.yml) typechecks core/components/cli/cli-server/

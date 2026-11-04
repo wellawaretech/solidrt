@@ -11,7 +11,9 @@
 //! halves; `ReadSlot` + `read_half`, its read half as a `ByteStream` the
 //! duplex can still end. The read half is a view the consumer owns and drops
 //! when it stops reading; the duplex keeps the reader itself, so `close()`
-//! releases it whether or not anyone is reading.
+//! releases it whether or not anyone is reading. A TCP connection keeps its
+//! reader past the view instead (`read_view`), so `startTls` can still
+//! upgrade it.
 
 use bytes::Bytes;
 use futures_core::Stream;
@@ -226,6 +228,12 @@ impl<R> ReadSlot<R> {
   pub fn close(&self) {
     self.0.lock().expect("read slot lock").take();
   }
+
+  /// Take the reader out, leaving the slot empty: a view over it then ends
+  /// once the duplex is closed. `None` when the reader is gone already.
+  pub fn take(&self) -> Option<R> {
+    self.0.lock().expect("read slot lock").take()
+  }
 }
 
 /// The read half of a duplex as a `ByteStream`: one chunk of at most `chunk`
@@ -237,12 +245,31 @@ pub fn read_half<R>(slot: &ReadSlot<R>, closing: &Closing, chunk: usize) -> Byte
 where
   R: AsyncRead + Unpin + Send + 'static,
 {
+  read_stream(slot, closing, chunk, true)
+}
+
+/// `read_half` whose drop keeps the reader in the slot: for a duplex whose
+/// reader must survive its view (a TCP connection that `startTls` upgrades
+/// later), and where dropping the reader tells the peer nothing anyway.
+/// The duplex releases the reader when it closes.
+pub fn read_view<R>(slot: &ReadSlot<R>, closing: &Closing, chunk: usize) -> ByteStream
+where
+  R: AsyncRead + Unpin + Send + 'static,
+{
+  read_stream(slot, closing, chunk, false)
+}
+
+fn read_stream<R>(slot: &ReadSlot<R>, closing: &Closing, chunk: usize, release_on_drop: bool) -> ByteStream
+where
+  R: AsyncRead + Unpin + Send + 'static,
+{
   Box::pin(ReadHalf {
     slot: slot.clone(),
     closing: closing.clone(),
     closed: Box::pin(closing.token.clone().cancelled_owned()),
     buf: vec![0u8; chunk],
     done: false,
+    release_on_drop,
   })
 }
 
@@ -252,6 +279,7 @@ struct ReadHalf<R> {
   closed: Pin<Box<WaitForCancellationFutureOwned>>,
   buf: Vec<u8>,
   done: bool,
+  release_on_drop: bool,
 }
 
 impl<R: AsyncRead + Unpin + Send + 'static> Stream for ReadHalf<R> {
@@ -297,6 +325,8 @@ impl<R: AsyncRead + Unpin + Send + 'static> Stream for ReadHalf<R> {
 
 impl<R> Drop for ReadHalf<R> {
   fn drop(&mut self) {
-    self.slot.close();
+    if self.release_on_drop {
+      self.slot.close();
+    }
   }
 }

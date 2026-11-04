@@ -63,7 +63,7 @@ serve({
 | `flux:fs` | Files, directories, canonical paths, and the files that match a glob pattern. |
 | `flux:path` | Join paths, check if a path contains a different path, split a path (`basename` / `dirname` / `extname`), find the path from one location to a different location, and match glob patterns. |
 | `flux:http` | HTTP and WebSocket servers, with routing. |
-| `flux:net` | TCP and UDP sockets. |
+| `flux:net` | TCP and UDP sockets, and TLS sockets with the `tls` capability. |
 | `flux:p2p` | Direct peer-to-peer connections, with no server between the peers. |
 | `flux:mdns` | Service discovery on the local network. |
 | `flux:sqlite` | SQLite. It runs on its own thread. |
@@ -466,7 +466,10 @@ stock runtime:
   includes `video`.
 - `ktx2`: compressed textures.
 - `http`: `fetch`, the `WebSocket` client, and `flux:http`, with TLS.
-  Without it, an app cannot load an image or a video from a URL.
+  Without it, an app cannot load an image or a video from a URL. It
+  includes `tls`.
+- `tls`: the TLS sockets of `flux:net` (`connectTls`, `startTls` and
+  `listenTls`).
 - `p2p`: `flux:p2p`, and the `p2p` option of `serve` in `flux:http`.
 - `p2p-relay`: `serveRelay` of `flux:p2p`, the self-hosted relay.
 - `wasm-native`: `flux:wasm` on wasmtime, which compiles a module to

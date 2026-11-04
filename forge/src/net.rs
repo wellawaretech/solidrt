@@ -19,6 +19,10 @@
 //! `Stream`. No background task is needed (writes go straight out under a
 //! lock), so the caller spawns nothing.
 //!
+//! With the `tls` feature a `Conn` also runs over TLS (`connect_tls`,
+//! `start_tls`, `listen_tls`, configs from `forge::tls`): each half is then a
+//! half of the split TLS stream, and the rest of `Conn` is the same.
+//!
 //! Every socket type has a `close()` that releases the fd immediately and
 //! unblocks its pending await (a read / `accept` / `recv` resolve their
 //! end-of-stream value). Without it a pending op would pin the socket - and in
@@ -29,20 +33,33 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex as SyncMutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::stream::{read_half, ByteStream, Closing, ReadSlot};
+use crate::stream::{read_view, ByteStream, Closing, ReadSlot};
+#[cfg(feature = "tls")]
+use crate::tls;
+#[cfg(feature = "tls")]
+use tokio_rustls::rustls::pki_types::ServerName;
+#[cfg(feature = "tls")]
+use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
 
 /// Read granularity: each read off a `Conn` pulls at most this many bytes.
 const READ_CHUNK: usize = 64 * 1024;
+
+/// How long a `listen_tls` connection may take for its handshake before it
+/// is dropped: a client that connects and stalls holds nothing past it.
+#[cfg(feature = "tls")]
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Largest UDP datagram a single `recv` will return. A beacon is far smaller;
 /// this is only the ceiling so a stray jumbo datagram isn't silently truncated.
@@ -93,18 +110,92 @@ pub async fn probe(host: &str, port: u16, timeout_ms: u64) -> Liveness {
 
 // ---- TCP streams ------------------------------------------------------------
 
+#[cfg(feature = "tls")]
+type TlsTcp = TlsStream<TcpStream>;
+
+/// The read half of a `Conn`: the TCP half, or a half of a split TLS stream.
+enum ReadPart {
+  Tcp(OwnedReadHalf),
+  #[cfg(feature = "tls")]
+  Tls(tokio::io::ReadHalf<TlsTcp>),
+}
+
+impl AsyncRead for ReadPart {
+  fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+    match self.get_mut() {
+      ReadPart::Tcp(r) => Pin::new(r).poll_read(cx, buf),
+      #[cfg(feature = "tls")]
+      ReadPart::Tls(r) => match Pin::new(r).poll_read(cx, buf) {
+        // A peer that closes without close_notify ends the stream, as a
+        // TCP close does: most servers skip it.
+        Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::UnexpectedEof => Poll::Ready(Ok(())),
+        other => other,
+      },
+    }
+  }
+}
+
+/// The write half of a `Conn`, the mirror of `ReadPart`.
+enum WritePart {
+  Tcp(OwnedWriteHalf),
+  #[cfg(feature = "tls")]
+  Tls(tokio::io::WriteHalf<TlsTcp>),
+}
+
+impl WritePart {
+  /// One attempt, without waiting, to send close_notify ahead of the drop
+  /// that ends the connection; a plain TCP half needs none.
+  fn try_close_notify(&mut self) {
+    #[cfg(feature = "tls")]
+    if let WritePart::Tls(w) = self {
+      let _ = Pin::new(w).poll_shutdown(&mut Context::from_waker(std::task::Waker::noop()));
+    }
+  }
+}
+
+impl AsyncWrite for WritePart {
+  fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    match self.get_mut() {
+      WritePart::Tcp(w) => Pin::new(w).poll_write(cx, buf),
+      #[cfg(feature = "tls")]
+      WritePart::Tls(w) => Pin::new(w).poll_write(cx, buf),
+    }
+  }
+
+  fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    match self.get_mut() {
+      WritePart::Tcp(w) => Pin::new(w).poll_flush(cx),
+      #[cfg(feature = "tls")]
+      WritePart::Tls(w) => Pin::new(w).poll_flush(cx),
+    }
+  }
+
+  // On TLS this sends close_notify, then the TCP FIN.
+  fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    match self.get_mut() {
+      WritePart::Tcp(w) => Pin::new(w).poll_shutdown(cx),
+      #[cfg(feature = "tls")]
+      WritePart::Tls(w) => Pin::new(w).poll_shutdown(cx),
+    }
+  }
+}
+
 /// A connected TCP stream: a byte duplex. The read half is read through the
 /// `readable()` view (a `ByteStream` that advances only as it is polled);
 /// writes go straight out under a lock so concurrent writes serialize instead
 /// of racing. The write half is held in an `Option` taken across awaits (no
 /// borrow is held across `.await`), the same shape as the p2p `Stream`.
 /// `close()` ends both halves gracefully, `abort(reason)` with an error the
-/// reader reports; dropping the `Conn` closes the socket.
+/// reader reports; dropping the `Conn` closes the socket. Over TLS the
+/// halves are the split TLS stream's, and the negotiated protocol and the
+/// peer's key are read once, after the handshake.
 pub struct Conn {
-  read: ReadSlot<OwnedReadHalf>,
-  write: Mutex<Option<OwnedWriteHalf>>,
+  read: ReadSlot<ReadPart>,
+  write: Mutex<Option<WritePart>>,
   peer: SocketAddr,
   closing: Closing,
+  alpn: Option<String>,
+  peer_key: Option<String>,
 }
 
 /// What a write reports once the connection was closed (not aborted).
@@ -115,16 +206,37 @@ impl Conn {
     let peer = stream.peer_addr().map_err(|e| e.to_string())?;
     let _ = stream.set_nodelay(true);
     let (read, write) = stream.into_split();
-    Ok(Conn { read: ReadSlot::new(read), write: Mutex::new(Some(write)), peer, closing: Closing::new() })
+    Ok(Conn::from_parts(ReadPart::Tcp(read), WritePart::Tcp(write), peer, None, None))
+  }
+
+  #[cfg(feature = "tls")]
+  fn from_tls(stream: TlsTcp) -> Result<Conn, String> {
+    let (tcp, state) = stream.get_ref();
+    let peer = tcp.peer_addr().map_err(|e| e.to_string())?;
+    let alpn = tls::alpn_protocol(state);
+    let peer_key = tls::peer_key(state);
+    let (read, write) = tokio::io::split(stream);
+    Ok(Conn::from_parts(ReadPart::Tls(read), WritePart::Tls(write), peer, alpn, peer_key))
+  }
+
+  fn from_parts(
+    read: ReadPart,
+    write: WritePart,
+    peer: SocketAddr,
+    alpn: Option<String>,
+    peer_key: Option<String>,
+  ) -> Conn {
+    Conn { read: ReadSlot::new(read), write: Mutex::new(Some(write)), peer, closing: Closing::new(), alpn, peer_key }
   }
 
   /// The read half as a `ByteStream`: at most `READ_CHUNK` bytes per chunk,
   /// pulled as the consumer polls, ending at end-of-stream or when the
   /// connection is closed (as an error when aborted). One view per
-  /// connection: dropping it releases the read half, so a consumer that
-  /// stops reading holds nothing while the write half stays usable.
+  /// connection. Dropping it keeps the read half until `close()`, so a
+  /// consumer that stops reading can still `start_tls`; on the wire this is
+  /// the same, since dropping a read half sends nothing.
   pub fn readable(&self) -> ByteStream {
-    read_half(&self.read, &self.closing, READ_CHUNK)
+    read_view(&self.read, &self.closing, READ_CHUNK)
   }
 
   /// Write all of `bytes`, serialized behind the write lock. Errors once the
@@ -135,8 +247,13 @@ impl Conn {
     let Some(w) = guard.as_mut() else {
       return Err(self.write_closed());
     };
+    // The flush sends what TLS still holds in its record buffer; on plain
+    // TCP it is a no-op.
     let r = tokio::select! {
-      r = w.write_all(&bytes) => r.map_err(|e| e.to_string()),
+      r = async {
+        w.write_all(&bytes).await?;
+        w.flush().await
+      } => r.map_err(|e| e.to_string()),
       _ = self.closing.closed() => Err(self.closing.write_error(CONN_CLOSED)),
     };
     if self.closing.is_closed() {
@@ -145,8 +262,8 @@ impl Conn {
     r
   }
 
-  /// Half-close: flush and shut down the write side (the peer sees FIN), keeping
-  /// the read side open. After it, `write` errors; reads continue until the peer
+  /// Half-close: flush and shut down the write side (the peer sees FIN, after
+  /// close_notify over TLS), keeping the read side open. After it, `write` errors; reads continue until the peer
   /// closes. Idempotent, and a no-op once the connection is closed.
   pub async fn close_write(&self) -> Result<(), String> {
     let mut guard = self.write.lock().await;
@@ -163,7 +280,8 @@ impl Conn {
 
   /// Close the connection now: a pending read ends, both halves are dropped
   /// (dropping the write half sends FIN) and the fd is released. Bytes already
-  /// handed to the OS still flush. Idempotent.
+  /// handed to the OS still flush. Over TLS, close_notify goes out first if
+  /// the socket takes it without waiting. Idempotent.
   pub fn close(&self) {
     self.closing.close();
     self.release();
@@ -181,7 +299,9 @@ impl Conn {
   fn release(&self) {
     self.read.close();
     if let Ok(mut guard) = self.write.try_lock() {
-      guard.take();
+      if let Some(mut w) = guard.take() {
+        w.try_close_notify();
+      }
     } // else a write is in flight; its closed branch drops the half
   }
 
@@ -197,18 +317,95 @@ impl Conn {
   pub fn remote_addr(&self) -> String {
     self.peer.to_string()
   }
+
+  /// The protocol agreed by ALPN; `None` on plain TCP or when none was.
+  pub fn alpn_protocol(&self) -> Option<String> {
+    self.alpn.clone()
+  }
+
+  /// The SHA-256 of the peer's SubjectPublicKeyInfo, lowercase hex; `None`
+  /// on plain TCP or without a peer certificate.
+  pub fn peer_key(&self) -> Option<String> {
+    self.peer_key.clone()
+  }
 }
 
 /// Open a TCP connection to `host:port`, bounded by `timeout_ms`. Unlike `probe`
 /// this hands back a live `Conn` for app protocols / banner grabs; a refused or
 /// timed-out connect comes back as a plain message string.
 pub async fn connect(host: &str, port: u16, timeout_ms: u64) -> Result<Conn, String> {
-  let stream = match tokio::time::timeout(Duration::from_millis(timeout_ms), TcpStream::connect((host, port))).await {
-    Ok(Ok(s)) => s,
-    Ok(Err(e)) => return Err(format!("connect {host}:{port}: {e}")),
-    Err(_) => return Err(format!("connect {host}:{port} timed out after {timeout_ms}ms")),
+  Conn::from_stream(tcp_connect(host, port, timeout_ms).await?)
+}
+
+async fn tcp_connect(host: &str, port: u16, timeout_ms: u64) -> Result<TcpStream, String> {
+  match tokio::time::timeout(Duration::from_millis(timeout_ms), TcpStream::connect((host, port))).await {
+    Ok(Ok(s)) => Ok(s),
+    Ok(Err(e)) => Err(format!("connect {host}:{port}: {e}")),
+    Err(_) => Err(format!("connect {host}:{port} timed out after {timeout_ms}ms")),
+  }
+}
+
+/// Open a TLS connection to `host:port`: the TCP connect and the handshake
+/// as the client, both within `timeout_ms`. `server_name` is what the
+/// server is verified as and what goes out as SNI (see `tls::server_name`).
+#[cfg(feature = "tls")]
+pub async fn connect_tls(
+  host: &str,
+  port: u16,
+  timeout_ms: u64,
+  config: Arc<tls::ClientConfig>,
+  server_name: ServerName<'static>,
+) -> Result<Conn, String> {
+  let start = tokio::time::Instant::now();
+  let stream = tcp_connect(host, port, timeout_ms).await?;
+  let left = Duration::from_millis(timeout_ms).saturating_sub(start.elapsed());
+  match tokio::time::timeout(left, TlsConnector::from(config).connect(server_name, stream)).await {
+    Ok(Ok(stream)) => Conn::from_tls(TlsStream::Client(stream)),
+    Ok(Err(e)) => Err(format!("TLS handshake with {host}:{port}: {}", tls::handshake_error(&e))),
+    Err(_) => Err(format!("connect {host}:{port} timed out after {timeout_ms}ms")),
+  }
+}
+
+/// Upgrade an open plain `Conn` to TLS as the client, and return the new
+/// `Conn`; the handshake is bounded by `timeout_ms`. `server_name` `None`
+/// verifies the peer's IP address, which suits a pinned server (the pin
+/// skips the name check). The old `Conn` is spent
+/// whatever the outcome: its view ends (a pending read as end-of-stream)
+/// and its writes fail. Waits for a write in flight to finish first. Fails
+/// on a `Conn` that is TLS already, closed, half-closed, or whose peer ended
+/// its side.
+#[cfg(feature = "tls")]
+pub async fn start_tls(
+  conn: &Conn,
+  timeout_ms: u64,
+  config: Arc<tls::ClientConfig>,
+  server_name: Option<ServerName<'static>>,
+) -> Result<Conn, String> {
+  let server_name = server_name.unwrap_or_else(|| ServerName::IpAddress(conn.peer.ip().into()));
+  let mut write = conn.write.lock().await;
+  match write.as_ref() {
+    Some(WritePart::Tcp(_)) => {}
+    Some(WritePart::Tls(_)) => return Err("startTls: the connection is TLS already".to_string()),
+    None => return Err(format!("startTls: {}", conn.write_closed())),
+  }
+  let Some(ReadPart::Tcp(read)) = conn.read.take() else {
+    return Err("startTls: the connection's read side has ended".to_string());
   };
-  Conn::from_stream(stream)
+  let Some(WritePart::Tcp(write)) = write.take() else {
+    return Err("startTls: the connection's write side has ended".to_string());
+  };
+  // Ends the old view and its writes; the halves are out of their slots
+  // already, so nothing is dropped.
+  conn.closing.close();
+  let stream = read.reunite(write).map_err(|e| e.to_string())?;
+  let peer = conn.peer;
+  match tokio::time::timeout(Duration::from_millis(timeout_ms), TlsConnector::from(config).connect(server_name, stream))
+    .await
+  {
+    Ok(Ok(stream)) => Conn::from_tls(TlsStream::Client(stream)),
+    Ok(Err(e)) => Err(format!("TLS handshake with {peer}: {}", tls::handshake_error(&e))),
+    Err(_) => Err(format!("TLS handshake with {peer} timed out after {timeout_ms}ms")),
+  }
 }
 
 /// A bound TCP listener. `accept` yields one `Conn` per incoming connection; the
@@ -217,12 +414,39 @@ pub async fn connect(host: &str, port: u16, timeout_ms: u64) -> Result<Conn, Str
 pub struct Listener {
   inner: SyncMutex<Option<Arc<TcpListener>>>,
   closed: CancellationToken,
+  #[cfg(feature = "tls")]
+  tls: Option<TlsAccept>,
+}
+
+/// The TLS side of a `listen_tls` listener: the acceptor, and the
+/// handshakes in flight, each a task of its own so a stalled client holds
+/// up no other.
+#[cfg(feature = "tls")]
+struct TlsAccept {
+  acceptor: TlsAcceptor,
+  handshakes: Mutex<tokio::task::JoinSet<Option<Conn>>>,
 }
 
 /// Bind a TCP listener to `host:port` (port `0` = OS-assigned).
 pub async fn listen(host: &str, port: u16) -> Result<Listener, String> {
   let inner = TcpListener::bind((host, port)).await.map_err(|e| format!("listen {host}:{port}: {e}"))?;
-  Ok(Listener { inner: SyncMutex::new(Some(Arc::new(inner))), closed: CancellationToken::new() })
+  Ok(Listener {
+    inner: SyncMutex::new(Some(Arc::new(inner))),
+    closed: CancellationToken::new(),
+    #[cfg(feature = "tls")]
+    tls: None,
+  })
+}
+
+/// Bind a TLS listener to `host:port`: `accept` yields the connections whose
+/// handshake as the server finished. A handshake that fails or takes longer
+/// than `HANDSHAKE_TIMEOUT` drops its connection and never reaches `accept`.
+#[cfg(feature = "tls")]
+pub async fn listen_tls(host: &str, port: u16, config: Arc<tls::ServerConfig>) -> Result<Listener, String> {
+  let mut listener = listen(host, port).await?;
+  listener.tls =
+    Some(TlsAccept { acceptor: TlsAcceptor::from(config), handshakes: Mutex::new(tokio::task::JoinSet::new()) });
+  Ok(listener)
 }
 
 impl Listener {
@@ -233,6 +457,10 @@ impl Listener {
     let Some(listener) = self.inner.lock().expect("net listener lock").clone() else {
       return Ok(None);
     };
+    #[cfg(feature = "tls")]
+    if let Some(tls) = &self.tls {
+      return self.accept_tls(&listener, tls).await;
+    }
     tokio::select! {
       r = listener.accept() => match r {
         Ok((stream, _peer)) => Conn::from_stream(stream).map(Some),
@@ -242,11 +470,50 @@ impl Listener {
     }
   }
 
+  /// The TLS `accept`: takes in TCP connections and starts their handshakes
+  /// while it waits for the first handshake to finish. The handshakes run
+  /// on their own, so they advance between two `accept`s too.
+  #[cfg(feature = "tls")]
+  async fn accept_tls(&self, listener: &TcpListener, tls: &TlsAccept) -> Result<Option<Conn>, String> {
+    let mut handshakes = tls.handshakes.lock().await;
+    loop {
+      tokio::select! {
+        r = listener.accept() => {
+          let (stream, _peer) = r.map_err(|e| e.to_string())?;
+          let _ = stream.set_nodelay(true);
+          let acceptor = tls.acceptor.clone();
+          handshakes.spawn(async move {
+            match tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
+              Ok(Ok(stream)) => Conn::from_tls(TlsStream::Server(stream)).ok(),
+              _ => None,
+            }
+          });
+        }
+        Some(done) = handshakes.join_next() => {
+          if let Ok(Some(conn)) = done {
+            return Ok(Some(conn));
+          }
+        }
+        _ = self.closed.cancelled() => {
+          handshakes.abort_all();
+          return Ok(None);
+        }
+      }
+    }
+  }
+
   /// Close the listener: release the port and unblock a pending `accept`.
-  /// Idempotent.
+  /// Handshakes in flight are dropped. Idempotent.
   pub fn close(&self) {
     self.closed.cancel();
     self.inner.lock().expect("net listener lock").take();
+    #[cfg(feature = "tls")]
+    if let Some(tls) = &self.tls {
+      // A pending accept holds the lock; it aborts them itself as it ends.
+      if let Ok(mut handshakes) = tls.handshakes.try_lock() {
+        handshakes.abort_all();
+      }
+    }
   }
 
   /// The bound local address (with the OS-assigned port when `0` was requested).

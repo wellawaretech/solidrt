@@ -35,6 +35,9 @@ pub struct ResponseData {
   pub url: String,
   pub headers: Vec<(String, String)>,
   pub body: ByteStream,
+  /// The response came over HTTP/2 (false for a disk hit). `HostLimits`
+  /// records it per host.
+  pub http2: bool,
 }
 
 /// The HTTP client `fetch` sends through: one per engine, carrying the host's
@@ -49,6 +52,41 @@ impl Client {
   pub fn new(user_agent: &str) -> Result<Client, String> {
     reqwest::Client::builder().user_agent(user_agent).build().map(|inner| Client { inner }).map_err(|e| e.to_string())
   }
+
+  /// A client on a TLS config of `forge::tls` (extra roots, a client
+  /// certificate, a pin) instead of reqwest's own. reqwest sends a
+  /// preconfigured config as it is, so the ALPN list `new` would offer is
+  /// set here: HTTP/2 first, then HTTP/1.1.
+  pub fn with_tls(user_agent: &str, config: &crate::tls::ClientConfig) -> Result<Client, String> {
+    let mut config = config.clone();
+    config.alpn_protocols = FETCH_ALPN.iter().map(|p| p.to_vec()).collect();
+    reqwest::Client::builder()
+      .user_agent(user_agent)
+      .use_preconfigured_tls(config)
+      .build()
+      .map(|inner| Client { inner })
+      .map_err(|e| e.to_string())
+  }
+}
+
+/// The protocols a fetch offers by ALPN, as reqwest's own TLS config does.
+const FETCH_ALPN: [&[u8]; 2] = [b"h2", b"http/1.1"];
+
+/// A failed request as one message: reqwest's own ("error sending request
+/// for url (..)") says nothing of the cause, so the sources follow it, each
+/// once. A TLS error of our verifiers is rendered by `tls::rustls_message`.
+fn error_message(e: &reqwest::Error) -> String {
+  let mut message = e.to_string();
+  let mut source = std::error::Error::source(e);
+  while let Some(err) = source {
+    let part = crate::tls::rustls_message(err).unwrap_or_else(|| err.to_string());
+    if !message.ends_with(&part) {
+      message.push_str(": ");
+      message.push_str(&part);
+    }
+    source = err.source();
+  }
+  message
 }
 
 /// An outgoing request body: buffered bytes (`bytes`), or the streamed side
@@ -92,10 +130,12 @@ fn headers_to_pairs(headers: &reqwest::header::HeaderMap) -> Vec<(String, String
     .collect()
 }
 
-/// Send an HTTP request and read the response into a `ResponseData`. The `body`
-/// may be buffered (`RequestBody::bytes`) or streamed
+/// Send one HTTP request and read the response into a `ResponseData`, with
+/// no per-host limit and no retry: the dev-server proxy, which funnels every
+/// host into one, sends through this. Everything else sends through
+/// `do_fetch`. The `body` may be buffered (`RequestBody::bytes`) or streamed
 /// (`channel_request_body`); `None` sends no body.
-pub async fn do_fetch(
+pub async fn send(
   client: &Client,
   method: &str,
   url: &str,
@@ -121,10 +161,11 @@ pub async fn do_fetch(
     req = req.body(body.0);
   }
 
-  let resp = req.send().await.map_err(|e| e.to_string())?;
+  let resp = req.send().await.map_err(|e| error_message(&e))?;
   let status = resp.status();
   let resp_url = resp.url().to_string();
   let resp_headers = headers_to_pairs(resp.headers());
+  let http2 = resp.version() == reqwest::Version::HTTP_2;
   // Streamed by default: the body is read lazily as JS consumes it (text/bytes/
   // json drain it; response.body iterates it), rather than buffered up front.
   let body: ByteStream = to_byte_stream(resp.bytes_stream());
@@ -138,14 +179,72 @@ pub async fn do_fetch(
     url: resp_url,
     headers: resp_headers,
     body,
+    http2,
   })
 }
 
-/// Per-host concurrency cap for cached (asset-mode) fetches. Uncoordinated
-/// fetch floods (one per mounted image) slow every transfer and get clients
-/// rate-limited; disk hits bypass the limit, and plain `do_fetch` traffic is
-/// deliberately not throttled (API calls, long-polls, and streams must never
-/// queue behind a politeness knob).
+/// Send an HTTP request through the per-host limits: take a slot on the host
+/// (see `HostLimits::acquire`), send, and record the response's HTTP version
+/// for the host. A 429 puts the host on cooldown (Retry-After when sent,
+/// jittered exponential otherwise); a body-less `GET` or `HEAD` then retries
+/// up to `RETRY_LIMIT` times, and any other request hands the 429 to the
+/// caller (a body cannot be replayed, and repeating another method is the
+/// caller's decision). The slot rides the response body and frees when the
+/// body ends or its consumer drops it.
+pub async fn do_fetch(
+  client: &Client,
+  limits: &HostLimits,
+  method: &str,
+  url: &str,
+  headers: Vec<(String, String)>,
+  body: Option<RequestBody>,
+) -> Result<ResponseData, String> {
+  let host = host_key(url);
+  let permit = match &host {
+    Some(host) => limits.acquire(host).await,
+    // An unparsable url: skip the limit and let send produce the error.
+    None => None,
+  };
+  let can_retry = body.is_none() && (method == "GET" || method == "HEAD");
+  let mut attempt: u32 = 0;
+  let mut resp = send(client, method, url, headers.clone(), body).await?;
+  loop {
+    if let Some(host) = &host {
+      limits.record(host, resp.http2);
+    }
+    if resp.status != 429 {
+      break;
+    }
+    let delay = match retry_after(&resp.headers) {
+      // "Come back much later": no host-wide pause, the caller gets the 429.
+      Some(after) if after > RETRY_AFTER_MAX => break,
+      Some(after) => after,
+      None => jittered_backoff(attempt),
+    };
+    if let Some(host) = &host {
+      limits.cooldown(host, delay);
+    }
+    if !can_retry || attempt == RETRY_LIMIT {
+      break;
+    }
+    // Sleep it out while holding the slot (see `acquire`): the other requests
+    // queue behind the cooldown instead of taking over the freed slot.
+    tokio::time::sleep(delay).await;
+    attempt += 1;
+    resp = send(client, method, url, headers.clone(), None).await?;
+  }
+  if let Some(permit) = permit {
+    resp.body = Box::pin(LimitedStream { inner: resp.body, _permit: permit });
+  }
+  Ok(resp)
+}
+
+/// Per-host concurrency cap for every `do_fetch`, the browser model for
+/// HTTP/1.1: uncoordinated fetch floods (one per mounted image) slow every
+/// transfer, open a connection each and get clients rate-limited. Disk hits
+/// bypass the limit. A host whose last response came over HTTP/2 skips the
+/// cap: its requests share one connection, and the server's stream limit is
+/// the cap. A host is capped until its first response says otherwise.
 ///
 /// A permit is an async RAII value: waiters are pending futures (nothing
 /// blocks), and the permit rides the response body stream so it releases when
@@ -163,6 +262,8 @@ pub struct HostLimits {
 struct HostState {
   semaphore: Arc<Semaphore>,
   cooldown_until: Cell<Option<Instant>>,
+  /// The host's last response came over HTTP/2.
+  multiplexed: Cell<bool>,
 }
 
 impl HostLimits {
@@ -176,24 +277,40 @@ impl HostLimits {
       .borrow_mut()
       .entry(host.to_string())
       .or_insert_with(|| {
-        Rc::new(HostState { semaphore: Arc::new(Semaphore::new(self.max_per_host)), cooldown_until: Cell::new(None) })
+        Rc::new(HostState {
+          semaphore: Arc::new(Semaphore::new(self.max_per_host)),
+          cooldown_until: Cell::new(None),
+          multiplexed: Cell::new(false),
+        })
       })
       .clone()
   }
 
   /// Wait for a slot on `host`, then for any active cooldown. The returned
-  /// permit frees the slot on drop. The permit is held through the cooldown
+  /// permit frees the slot on drop; an HTTP/2 host takes no slot (`None`) but
+  /// still waits out the cooldown. The permit is held through the cooldown
   /// sleep on purpose: a 429'd host drains to idle and stays paused, instead
   /// of freed slots re-flooding it the moment their transfers finish.
-  pub async fn acquire(&self, host: &str) -> OwnedSemaphorePermit {
+  pub async fn acquire(&self, host: &str) -> Option<OwnedSemaphorePermit> {
     let state = self.state(host);
-    let permit = state.semaphore.clone().acquire_owned().await.expect("host semaphore never closes");
+    let permit = match state.multiplexed.get() {
+      true => None,
+      false => Some(state.semaphore.clone().acquire_owned().await.expect("host semaphore never closes")),
+    };
     loop {
       match state.cooldown_until.get() {
         Some(until) if until > Instant::now() => tokio::time::sleep_until(until).await,
         _ => return permit,
       }
     }
+  }
+
+  /// Record the HTTP version of a response from `host`. The last response
+  /// wins: a host that moves back to HTTP/1.1 is capped from its next
+  /// request on. A burst that starts before the first response records
+  /// HTTP/2 is capped once more, which is harmless.
+  pub fn record(&self, host: &str, http2: bool) {
+    self.state(host).multiplexed.set(http2);
   }
 
   /// Pause new requests to `host` for `delay`. Extends, never shortens, an
@@ -303,25 +420,21 @@ fn jittered_backoff(attempt: u32) -> Duration {
 /// `do_fetch` with an explicit disk-cache policy. Only GET requests with 2xx
 /// responses are cached, keyed by the request url; anything else degrades to
 /// a plain `do_fetch`. Stored bodies write through as the consumer drains the
-/// response and commit only on clean completion (see `Cache::store`). Cache
-/// misses queue on the per-host limit; disk hits bypass it.
-///
-/// A 429 response backs off reactively: the host goes on cooldown (Retry-After
-/// when sent, jittered exponential otherwise) and the request retries up to
-/// `RETRY_LIMIT` times. Plain `do_fetch` traffic deliberately has none of
-/// this; a caller that wants backoff on API calls implements its own policy.
+/// response and commit only on clean completion (see `Cache::store`). A disk
+/// hit takes no slot on the per-host limit; a miss goes through `do_fetch`
+/// with its limit and 429 retry.
 pub async fn do_fetch_cached(
   client: &Client,
+  limits: &HostLimits,
   method: &str,
   url: &str,
   headers: Vec<(String, String)>,
   body: Option<RequestBody>,
   cache: Rc<Cache>,
   mode: CacheMode,
-  limits: Rc<HostLimits>,
 ) -> Result<ResponseData, String> {
   if method != "GET" {
-    return do_fetch(client, method, url, headers, body).await;
+    return do_fetch(client, limits, method, url, headers, body).await;
   }
   if mode == CacheMode::ForceCache {
     if let Some((meta, cached_body)) = cache.lookup(url).await {
@@ -334,47 +447,19 @@ pub async fn do_fetch_cached(
           url: m.url,
           headers: m.headers,
           body: cached_body,
+          http2: false,
         });
       }
     }
   }
-  let host = host_key(url);
-  let permit = match &host {
-    Some(host) => Some(limits.acquire(host).await),
-    // An unparsable url: skip the limit and let do_fetch produce the error.
-    None => None,
-  };
-  // A request body cannot be replayed (it may be a stream), so only body-less
-  // requests retry; a GET with a body is a fringe case.
-  let can_retry = body.is_none();
-  let mut attempt: u32 = 0;
-  let mut resp = do_fetch(client, method, url, headers.clone(), body).await?;
-  while can_retry && resp.status == 429 && attempt < RETRY_LIMIT {
-    let delay = match retry_after(&resp.headers) {
-      Some(after) if after > RETRY_AFTER_MAX => break,
-      Some(after) => after,
-      None => jittered_backoff(attempt),
-    };
-    if let Some(host) = &host {
-      limits.cooldown(host, delay);
-    }
-    // Sleep it out while holding the permit (see `acquire`): the other lanes
-    // queue behind the cooldown instead of taking over the freed slot.
-    tokio::time::sleep(delay).await;
-    attempt += 1;
-    resp = do_fetch(client, method, url, headers.clone(), None).await?;
+  let resp = do_fetch(client, limits, method, url, headers, body).await?;
+  if !(200..300).contains(&resp.status) {
+    return Ok(resp);
   }
-  let ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body: resp_body } = resp;
-  let resp_body = match permit {
-    Some(permit) => Box::pin(LimitedStream { inner: resp_body, _permit: permit }) as ByteStream,
-    None => resp_body,
-  };
-  if !(200..300).contains(&status) {
-    return Ok(ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body: resp_body });
-  }
+  let ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body: resp_body, http2 } = resp;
   let meta =
     CacheMeta { status, status_text: status_text.clone(), url: resolved_url.clone(), headers: resp_headers.clone() };
   let meta = serde_json::to_vec(&meta).map_err(|e| e.to_string())?;
   let body = cache.store(url, meta, resp_body);
-  Ok(ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body })
+  Ok(ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body, http2 })
 }

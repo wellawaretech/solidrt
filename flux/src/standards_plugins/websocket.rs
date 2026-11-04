@@ -77,9 +77,18 @@ impl<'js> WebSocket<'js> {
         drop(hold);
       });
     };
+    // wss:// verifies the server as fetch does, against the webpki roots:
+    // the web constructor has no TLS options.
+    let tls = match target.tls {
+      true => Some(
+        forge::tls::client_config(&forge::tls::ClientOptions::default())
+          .map_err(|msg| Exception::throw_message(&ctx, &msg))?,
+      ),
+      false => None,
+    };
     let task_socket = socket.clone();
     ctx.spawn(async move {
-      run_client(task_socket, target, &dispatch, spawn_writer, &logger).await;
+      run_client(task_socket, target, tls, &dispatch, spawn_writer, &logger).await;
       drop(hold);
     });
     Ok(WebSocket { socket, handlers, url })

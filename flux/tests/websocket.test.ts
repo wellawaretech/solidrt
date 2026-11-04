@@ -1,7 +1,9 @@
 // The WebSocket client, against flux's own serve.
 import { expect, test } from "flux:test"
 import { serve } from "flux:http"
-import { listen } from "flux:net"
+import { listen, listenTls } from "flux:net"
+import SERVER from "../../forge/src/tests/data/tls/server.pem" with { type: "text" }
+import SERVER_KEY from "../../forge/src/tests/data/tls/server-key.pem" with { type: "text" }
 
 test("the client echoes text and binary and closes cleanly", async () => {
   let server = serve({
@@ -72,8 +74,27 @@ test("a refused connection reports an error and an unclean 1006 close", async ()
   expect(lines).toEqual(["error: error string", "close: 1006 false 3"])
 })
 
+test("a wss:// server the built-in roots do not trust reports an error and a 1006 close", async () => {
+  // A TLS server whose certificate is from the test CA: the handshake fails.
+  let listener = await listenTls(0, { cert: SERVER, key: SERVER_KEY })
+  listener[Symbol.asyncIterator]().next()
+  let port = Number(listener.localAddr.split(":").pop())
+
+  let lines: string[] = []
+  let ws = new WebSocket(`wss://localhost:${port}/`)
+  await new Promise<void>((resolve) => {
+    ws.onerror = (event) => lines.push(`error: ${event.message.includes("invalid peer certificate")}`)
+    ws.onclose = (event) => {
+      lines.push(`close: ${event.code} ${event.wasClean}`)
+      resolve()
+    }
+  })
+  expect(lines).toEqual(["error: true", "close: 1006 false"])
+  listener.close()
+})
+
 test("the client rejects a bad url", () => {
-  for (let url of ["wss://example.com/", "http://example.com/", "ws://"]) {
+  for (let url of ["http://example.com/", "ws://", "wss://"]) {
     expect(() => new WebSocket(url)).toThrow()
   }
 })

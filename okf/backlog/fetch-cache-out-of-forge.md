@@ -49,6 +49,7 @@ real shapes to weigh:
    RequestInit member) and forks fetch behavior between bare flux and
    GUI apps at the API surface.
 
-Related tension to resolve with it: the 429 backoff currently protects
-cached (asset) fetches only; if the cache moves, decide where that
-protection lives. Authoritative history: okf/plans/fetch-cache.md.
+The 429 backoff and the per-host limit protect every fetch, in
+`forge::fetch`, independent of the cache
+([fetch-host-limits](../done/fetch-host-limits.md)). So they do not move
+with the cache, whichever shape is chosen here. Authoritative history: [fetch-cache](../done/fetch-cache.md).

@@ -31,6 +31,11 @@ video = ["audio", "dep:ndk", "dep:ndk-sys"]
 # module, and the tests decode what they encode. See
 # okf/plans/video-encode.md.
 video-encode = ["video"]
+# forge::tls and the TLS half of forge::net (flux:net's connectTls,
+# startTls and listenTls): rustls on the ring provider with the webpki
+# roots, the stack reqwest uses for fetch. Implied by `http`. See
+# okf/done/tls-and-fetch-limits.md.
+tls = ["dep:tokio-rustls", "dep:webpki-roots"]
 # forge::fetch, forge::cache, forge::http and forge::websocket (fetch,
 # WebSocket and flux:http): the HTTP client with its TLS (reqwest on rustls,
 # ring and the webpki roots), the HTTP server and the WebSocket framing, and
@@ -39,6 +44,7 @@ video-encode = ["video"]
 # lattice's default set and its player turn it on. See
 # okf/backlog/module-feature-flags.md.
 http = [
+  "tls",
   "dep:reqwest",
   "dep:hyper",
   "dep:hyper-util",
@@ -88,8 +94,15 @@ wasm-native = ["wasm", "dep:wasmtime"]
 log = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }
 # The HTTP stack behind `http`: the client with TLS, the server, bodies.
-reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "stream"], optional = true }
+# `http2` is crate-wide: the media source clients (src/source.rs) offer h2
+# over TLS as well, though they take no per-host fetch slot.
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "stream", "http2"], optional = true }
 hyper = { version = "=1.12.0", features = ["server", "http1"], optional = true }
+# The TLS stack behind `tls`: rustls through tokio-rustls, without its
+# default aws-lc-rs provider (a second provider and a C build), and the
+# webpki roots.
+tokio-rustls = { version = "=0.26.4", default-features = false, features = ["ring", "tls12", "logging"], optional = true }
+webpki-roots = { version = "=1.0.11", optional = true }
 hyper-util = { version = "=0.1.21", features = ["tokio"], optional = true }
 http-body-util = { version = "=0.1.5", optional = true }
 # The digest core behind crypto.subtle.digest.
@@ -233,3 +246,7 @@ cc = "=1.10.0"
 # Drives the vendored libopus's CMake project (build.rs); already in the tree
 # (sdl3-sys builds SDL with it).
 cmake = "=0.1.58"
+
+[dev-dependencies]
+# The HTTP/2 server of the fetch tests: an HTTP/2 host takes no per-host slot.
+hyper = { version = "=1.12.0", features = ["server", "http1", "http2"] }

@@ -44,6 +44,8 @@ pub mod sqlite;
 pub mod stream;
 pub mod subprocess;
 pub mod svg;
+#[cfg(feature = "tls")]
+pub mod tls;
 pub mod trailer;
 pub mod tty;
 pub mod value;

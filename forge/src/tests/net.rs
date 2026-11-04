@@ -177,7 +177,7 @@ async fn conn_abort_errors_the_pending_read_with_the_reason() {
 }
 
 #[tokio::test]
-async fn dropping_the_read_view_releases_the_half_and_keeps_writing() {
+async fn dropping_the_read_view_keeps_the_half_and_keeps_writing() {
   let listener = listen("127.0.0.1", 0).await.unwrap();
   let port = listener.local_addr().rsplit(':').next().unwrap().parse::<u16>().unwrap();
   let (client, server) = tokio::join!(connect("127.0.0.1", port, 1000), listener.accept());
@@ -190,9 +190,12 @@ async fn dropping_the_read_view_releases_the_half_and_keeps_writing() {
   client.write(b"still writing".to_vec()).await.unwrap();
   let chunk = soon(next_chunk(&mut from_client)).await.unwrap().expect("bytes");
   assert_eq!(chunk.as_slice(), b"still writing");
-  // A new view over the released half finds nothing to read: it ends at once.
-  assert!(matches!(
-    client.readable().as_mut().poll_next(&mut std::task::Context::from_waker(std::task::Waker::noop())),
-    std::task::Poll::Ready(None)
-  ));
+  // The read half stays with the connection (startTls needs it), so a new
+  // view reads on.
+  server.write(b"still reading".to_vec()).await.unwrap();
+  let chunk = soon(next_chunk(&mut client.readable())).await.unwrap().expect("bytes");
+  assert_eq!(chunk.as_slice(), b"still reading");
+  // close() releases it: a new view ends at once.
+  client.close();
+  assert!(matches!(soon(next_chunk(&mut client.readable())).await, Ok(None)));
 }

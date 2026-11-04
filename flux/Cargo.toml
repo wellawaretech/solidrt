@@ -38,7 +38,10 @@ video-encode = ["video", "forge/video-encode"]
 # fetch, WebSocket and flux:http (serve, server WebSockets) and the `http`
 # capability (behind forge/http): the HTTP client with its TLS and the
 # server, one switch. Not a cargo default; see forge/Cargo.toml.
-http = ["forge/http"]
+http = ["tls", "forge/http"]
+# connectTls, startTls and listenTls of flux:net and the `tls` capability
+# (behind forge/tls); `http` implies it. Not a cargo default.
+tls = ["forge/tls"]
 # flux:p2p, the `p2p` option of flux:http's serve and the `p2p` capability
 # (behind forge/p2p): not a cargo default; see forge/Cargo.toml.
 p2p = ["forge/p2p"]

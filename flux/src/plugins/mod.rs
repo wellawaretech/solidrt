@@ -265,6 +265,8 @@ const BASE_CAPABILITIES: &[&str] = &[
   "fs",
   #[cfg(feature = "http")]
   "http",
+  #[cfg(feature = "tls")]
+  "tls",
   #[cfg(feature = "p2p")]
   "p2p",
   #[cfg(feature = "p2p-relay")]

@@ -1,6 +1,6 @@
 // The web-standard WebSocket client. A deliberate subset: handler properties
-// only (no addEventListener), plain-object events (not Event instances), ws://
-// only (wss:// is not supported yet), and send accepts only string or Uint8Array.
+// only (no addEventListener), plain-object events (not Event instances), and
+// send accepts only string or Uint8Array.
 
 /** The event passed to {@link WebSocket.onopen}. */
 interface WebSocketOpenEvent {
@@ -57,7 +57,14 @@ interface WebSocket {
  * stock runtimes have it); the global is absent without it.
  */
 declare let WebSocket: {
-  /** Open a connection. `url` must be ws:// (wss:// is not supported yet). */
+  /**
+   * Open a connection. `url` is `ws://` (default port 80) or `wss://` (TLS,
+   * default port 443). A `wss://` server is verified as `fetch` verifies
+   * one: its certificate must chain to the built-in web roots and name the
+   * host. The constructor has no TLS options, so a private CA or a pin is
+   * not reachable here. A failed TLS handshake reports `error`, then an
+   * unclean 1006 `close`, as a refused connection does.
+   */
   new (url: string): WebSocket
   readonly CONNECTING: 0
   readonly OPEN: 1

@@ -26,6 +26,8 @@ ktx2 = ["flux/ktx2"]
 # player needs it whatever the runtime lists: the dev proxy and the version
 # store (src/go/) fetch over it.
 http = ["flux/http"]
+# Passthrough: the TLS sockets of flux:net (see flux). `http` implies it.
+tls = ["flux/tls"]
 # Passthrough: flux:p2p (see flux). The player needs it whatever the
 # runtime lists: the dev tunnel (src/go/tunnel.rs) dials over it.
 p2p = ["flux/p2p"]

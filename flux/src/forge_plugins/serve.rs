@@ -591,18 +591,22 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   Ok(server)
 }
 
-/// The `flux:http` module. Exports `serve`, the HTTP server entry point.
+/// The `flux:http` module. Exports `serve`, the HTTP server entry point, and
+/// `createHttpClient`, a `fetch` client with TLS options (`http_client.rs`).
 pub struct HttpModule;
 
 impl ModuleDef for HttpModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("serve")?;
+    decl.declare("createHttpClient")?;
     Ok(())
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
     let serve_fn = Function::new(ctx.clone(), serve_impl)?;
     exports.export("serve", serve_fn)?;
+    exports
+      .export("createHttpClient", Function::new(ctx.clone(), crate::forge_plugins::http_client::create_http_client)?)?;
     Ok(())
   }
 }

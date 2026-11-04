@@ -1,6 +1,8 @@
 pub mod dir;
 pub mod file;
 pub mod fs;
+#[cfg(feature = "http")]
+pub mod http_client;
 pub mod image;
 pub mod isolate;
 pub mod mdns;

@@ -17,6 +17,10 @@
 //!   cleanly. `a.readable.pipeTo(b.writable)` is a proxy half.
 //! - `listen(port, opts?)` -> `Listener`, an async-iterable of incoming `Conn`s;
 //!   `close()` releases the port and ends the iteration.
+//! - `connectTls(host, port, opts?)`, `startTls(conn, opts)` and
+//!   `listenTls(port, opts)`: the same `Conn` and `Listener` over TLS, with
+//!   `conn.alpnProtocol` and `conn.peerKey`. Behind the `tls` feature; without
+//!   it the three throw and name it.
 //! - `udp(opts?)` -> `Udp`: `send` / `recv` plus the broadcast / multicast knobs
 //!   the peer beacon needs; `close()` releases the socket and resolves a pending
 //!   `recv` with `null`.
@@ -37,6 +41,8 @@
 use std::future::Future;
 use std::net::Ipv4Addr;
 use std::rc::Rc;
+#[cfg(feature = "tls")]
+use std::sync::Arc;
 
 use rquickjs::class::Trace;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
@@ -102,6 +108,165 @@ fn net_listen<'js>(
       Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
     }
   }))
+}
+
+/// The default bound of `connectTls` (connect and handshake) and of the
+/// `startTls` handshake, as `connect`'s.
+#[cfg(feature = "tls")]
+const TLS_TIMEOUT_MS: u64 = 10_000;
+
+/// `connectTls(host, port, { timeoutMs?, caCerts?, cert?, key?, pin?, alpn? })`
+/// -> `Promise<Conn>`. `host` is the name verified and sent as SNI.
+#[cfg(feature = "tls")]
+fn net_connect_tls<'js>(
+  ctx: Ctx<'js>,
+  host: String,
+  port: u16,
+  opts: OptArg<Object<'js>>,
+) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, NetConn>>> + 'js>> {
+  let timeout_ms = opt_u64(&opts, "timeoutMs", TLS_TIMEOUT_MS)?;
+  let config = tls_client_config(&ctx, "connectTls", &opts)?;
+  let name = forge::tls::server_name(&host).map_err(|m| Exception::throw_message(&ctx, &format!("connectTls: {m}")))?;
+  let hold = PendingOps::of(&ctx).in_flight("connect");
+  let ctx2 = ctx.clone();
+  Ok(Promised(async move {
+    let r = forge::net::connect_tls(&host, port, timeout_ms, config, name).await;
+    drop(hold);
+    match r {
+      Ok(conn) => NetConn::create(&ctx2, conn),
+      Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
+    }
+  }))
+}
+
+/// `startTls(conn, { hostname?, timeoutMs?, caCerts?, cert?, key?, pin?, alpn? })`
+/// -> `Promise<Conn>`: upgrade a plain `Conn` as the client. `hostname` is
+/// required unless `pin` is given; without it the peer's IP is verified.
+#[cfg(feature = "tls")]
+fn net_start_tls<'js>(
+  ctx: Ctx<'js>,
+  conn: Class<'js, NetConn>,
+  opts: OptArg<Object<'js>>,
+) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, NetConn>>> + 'js>> {
+  let throw = |m: String| Exception::throw_message(&ctx, &format!("startTls: {m}"));
+  let hostname = opt_string(&opts, "hostname")?;
+  if hostname.is_none() && opt_string(&opts, "pin")?.is_none() {
+    return Err(throw("hostname is required without a pin".to_string()));
+  }
+  let name = match hostname {
+    Some(host) => Some(forge::tls::server_name(&host).map_err(throw)?),
+    None => None,
+  };
+  let timeout_ms = opt_u64(&opts, "timeoutMs", TLS_TIMEOUT_MS)?;
+  let config = tls_client_config(&ctx, "startTls", &opts)?;
+  let inner = conn.borrow().inner.clone();
+  let hold = PendingOps::of(&ctx).in_flight("tls handshake");
+  let ctx2 = ctx.clone();
+  Ok(Promised(async move {
+    let r = forge::net::start_tls(&inner, timeout_ms, config, name).await;
+    drop(hold);
+    match r {
+      Ok(conn) => NetConn::create(&ctx2, conn),
+      Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
+    }
+  }))
+}
+
+/// `listenTls(port, { cert, key, host?, alpn?, caCerts?, anyClientCert? })`
+/// -> `Promise<Listener>`, whose connections arrive with the handshake done.
+#[cfg(feature = "tls")]
+fn net_listen_tls<'js>(
+  ctx: Ctx<'js>,
+  port: u16,
+  opts: OptArg<Object<'js>>,
+) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, NetListener>>> + 'js>> {
+  let throw = |m: &str| Exception::throw_message(&ctx, &format!("listenTls: {m}"));
+  let host = opt_string(&opts, "host")?.unwrap_or_else(|| "0.0.0.0".to_string());
+  let (Some(cert), Some(key)) = (opt_string(&opts, "cert")?, opt_string(&opts, "key")?) else {
+    return Err(throw("cert and key are required"));
+  };
+  let ca_certs = opt_get::<Vec<String>>(&opts, "caCerts")?;
+  let client_auth = match (ca_certs, opt_bool(&opts, "anyClientCert")?.unwrap_or(false)) {
+    (Some(_), true) => return Err(throw("caCerts and anyClientCert exclude each other")),
+    (Some(certs), false) => forge::tls::ClientAuth::Chain(certs.into_iter().map(String::into_bytes).collect()),
+    (None, true) => forge::tls::ClientAuth::AnyKey,
+    (None, false) => forge::tls::ClientAuth::None,
+  };
+  let options = forge::tls::ServerOptions {
+    cert: cert.into_bytes(),
+    key: key.into_bytes(),
+    alpn: opt_get::<Vec<String>>(&opts, "alpn")?.unwrap_or_default(),
+    client_auth,
+  };
+  let config = forge::tls::server_config(&options).map_err(|m| throw(&m))?;
+  let hold = PendingOps::of(&ctx).in_flight("listen");
+  let ctx2 = ctx.clone();
+  Ok(Promised(async move {
+    let r = forge::net::listen_tls(&host, port, config).await;
+    drop(hold);
+    match r {
+      Ok(listener) => NetListener::create(&ctx2, listener),
+      Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
+    }
+  }))
+}
+
+/// The client config of `connectTls` and `startTls` from their options.
+#[cfg(feature = "tls")]
+fn tls_client_config<'js>(
+  ctx: &Ctx<'js>,
+  api: &str,
+  opts: &OptArg<Object<'js>>,
+) -> rquickjs::Result<Arc<forge::tls::ClientConfig>> {
+  let options = tls_client_options(ctx, api, opts)?;
+  forge::tls::client_config(&options).map_err(|m| Exception::throw_message(ctx, &format!("{api}: {m}")))
+}
+
+/// The TLS client options (`caCerts`, `cert`, `key`, `pin`, `alpn`) of a
+/// call's options object; a malformed pin throws, prefixed with `api`.
+/// `createHttpClient` of flux:http reads the same.
+#[cfg(feature = "tls")]
+pub(crate) fn tls_client_options<'js>(
+  ctx: &Ctx<'js>,
+  api: &str,
+  opts: &OptArg<Object<'js>>,
+) -> rquickjs::Result<forge::tls::ClientOptions> {
+  let pin = match opt_string(opts, "pin")? {
+    Some(hex) => Some(forge::tls::parse_pin(&hex).map_err(|m| Exception::throw_message(ctx, &format!("{api}: {m}")))?),
+    None => None,
+  };
+  Ok(forge::tls::ClientOptions {
+    ca_certs: opt_get::<Vec<String>>(opts, "caCerts")?
+      .unwrap_or_default()
+      .into_iter()
+      .map(String::into_bytes)
+      .collect(),
+    cert: opt_string(opts, "cert")?.map(String::into_bytes),
+    key: opt_string(opts, "key")?.map(String::into_bytes),
+    pin,
+    alpn: opt_get::<Vec<String>>(opts, "alpn")?.unwrap_or_default(),
+  })
+}
+
+/// Without the `tls` feature the TLS functions exist and throw, naming it.
+#[cfg(not(feature = "tls"))]
+fn no_tls(ctx: Ctx<'_>, api: &str) -> rquickjs::Error {
+  Exception::throw_message(&ctx, &format!("{api}: this runtime was built without the \"tls\" feature"))
+}
+
+#[cfg(not(feature = "tls"))]
+fn net_connect_tls(ctx: Ctx<'_>) -> rquickjs::Result<()> {
+  Err(no_tls(ctx, "connectTls"))
+}
+
+#[cfg(not(feature = "tls"))]
+fn net_start_tls(ctx: Ctx<'_>) -> rquickjs::Result<()> {
+  Err(no_tls(ctx, "startTls"))
+}
+
+#[cfg(not(feature = "tls"))]
+fn net_listen_tls(ctx: Ctx<'_>) -> rquickjs::Result<()> {
+  Err(no_tls(ctx, "listenTls"))
 }
 
 /// `udp({ port?, reuse? })` -> `Promise<Udp>`. `port` 0 (default) = OS-assigned;
@@ -218,6 +383,27 @@ impl NetConn {
   #[qjs(get, rename = "remoteAddr")]
   pub fn remote_addr(&self) -> String {
     self.inner.remote_addr()
+  }
+
+  /// The protocol agreed by ALPN, or `null` (plain TCP, or none agreed).
+  #[qjs(get, rename = "alpnProtocol")]
+  pub fn alpn_protocol<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    string_or_null(ctx, self.inner.alpn_protocol())
+  }
+
+  /// The SHA-256 of the peer's SubjectPublicKeyInfo as lowercase hex, or
+  /// `null` (plain TCP, or no peer certificate).
+  #[qjs(get, rename = "peerKey")]
+  pub fn peer_key<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    string_or_null(ctx, self.inner.peer_key())
+  }
+}
+
+/// `None` as `null` (an `Option` marshals to `undefined`).
+fn string_or_null<'js>(ctx: Ctx<'js>, value: Option<String>) -> rquickjs::Result<Value<'js>> {
+  match value {
+    Some(s) => s.into_js(&ctx),
+    None => Ok(Value::new_null(ctx)),
   }
 }
 
@@ -416,6 +602,9 @@ impl ModuleDef for NetModule {
     decl.declare("probe")?;
     decl.declare("connect")?;
     decl.declare("listen")?;
+    decl.declare("connectTls")?;
+    decl.declare("startTls")?;
+    decl.declare("listenTls")?;
     decl.declare("udp")?;
     decl.declare("icmpEcho")?;
     decl.declare("interfaces")?;
@@ -426,6 +615,9 @@ impl ModuleDef for NetModule {
     exports.export("probe", Function::new(ctx.clone(), net_probe)?)?;
     exports.export("connect", Function::new(ctx.clone(), net_connect)?)?;
     exports.export("listen", Function::new(ctx.clone(), net_listen)?)?;
+    exports.export("connectTls", Function::new(ctx.clone(), net_connect_tls)?)?;
+    exports.export("startTls", Function::new(ctx.clone(), net_start_tls)?)?;
+    exports.export("listenTls", Function::new(ctx.clone(), net_listen_tls)?)?;
     exports.export("udp", Function::new(ctx.clone(), net_udp)?)?;
     exports.export("icmpEcho", Function::new(ctx.clone(), net_icmp_echo)?)?;
     exports.export("interfaces", Function::new(ctx.clone(), net_interfaces)?)?;

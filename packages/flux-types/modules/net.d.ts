@@ -11,6 +11,71 @@ declare module "flux:net" {
     host?: string
   }
 
+  /**
+   * How a TLS client verifies the server and identifies itself: the options
+   * of {@link connectTls} and {@link startTls}. By default the server must
+   * have a certificate that chains to the built-in web roots and names the
+   * host.
+   */
+  type TlsClientOptions = {
+    /**
+     * Give up after this many ms. Default 10000. For {@link connectTls} it
+     * covers the connect and the handshake together.
+     */
+    timeoutMs?: number
+    /** Extra trusted roots (PEM), on top of the built-in web roots: a private CA. */
+    caCerts?: string[]
+    /** A client certificate chain (PEM), for mutual TLS. Needs {@link key}. */
+    cert?: string
+    /** The private key (PEM) of {@link cert}. */
+    key?: string
+    /**
+     * Trust the server by its key alone: the SHA-256 of its
+     * SubjectPublicKeyInfo, as 64 hex characters (the form
+     * {@link Conn.peerKey} reports, so store what you saw at pairing). It
+     * replaces the chain check and the name check, so a self-signed
+     * certificate on any address passes when its key matches. Cannot be
+     * combined with {@link caCerts}.
+     */
+    pin?: string
+    /** The protocols to offer by ALPN, in preference order (e.g. `["h2", "http/1.1"]`). */
+    alpn?: string[]
+  }
+
+  /** Options for {@link startTls}. */
+  type StartTlsOptions = TlsClientOptions & {
+    /**
+     * The server name to verify and to send as SNI: the connection knows
+     * only the peer's IP. Required unless {@link TlsClientOptions.pin} is
+     * given.
+     */
+    hostname?: string
+  }
+
+  /** Options for {@link listenTls}. */
+  type ListenTlsOptions = {
+    /** Local address to bind. Default "0.0.0.0" (all interfaces). */
+    host?: string
+    /** The server certificate chain (PEM). */
+    cert: string
+    /** The private key (PEM) of {@link cert}. */
+    key: string
+    /** The protocols to accept by ALPN, in preference order. */
+    alpn?: string[]
+    /**
+     * Require a client certificate that chains to one of these roots (PEM).
+     * Without it and without {@link anyClientCert}, no client certificate
+     * is asked for.
+     */
+    caCerts?: string[]
+    /**
+     * Require a client certificate but accept any key: check
+     * {@link Conn.peerKey} yourself (the pairing case). Cannot be combined
+     * with {@link caCerts}.
+     */
+    anyClientCert?: boolean
+  }
+
   /** Options for {@link udp}. */
   type UdpOptions = {
     /** Local port to bind. Default 0 (OS-assigned). */
@@ -73,16 +138,28 @@ declare module "flux:net" {
    * `for await (let chunk of conn.readable)` reads it, `conn.readable
    * .pipeTo(other.writable)` is one half of a proxy, and a pipe carries the
    * half-close: when the source ends, the destination's write side closes.
+   * A TLS connection ({@link connectTls}, {@link startTls},
+   * {@link listenTls}) is the same class: the streams carry the plain text.
    */
   export class Conn {
     /** The remote peer's address, e.g. "192.168.2.37:445". */
     readonly remoteAddr: string
+    /** The protocol agreed by ALPN, or `null` (plain TCP, or none agreed). */
+    readonly alpnProtocol: string | null
+    /**
+     * The SHA-256 of the peer's SubjectPublicKeyInfo as lowercase hex, or
+     * `null` (plain TCP, or the peer sent no certificate). The same form as
+     * {@link TlsClientOptions.pin}.
+     */
+    readonly peerKey: string | null
     /**
      * What the peer sends, one chunk per read, pulled only as far as it is
      * read. Ends when the peer ends its write side or closes, or on
      * {@link close}; errors with the reason after `writable.abort(reason)`.
-     * `cancel()` stops reading and releases the read half: the write side
-     * stays usable and the connection stays open until {@link close}.
+     * Over TLS, a peer that closes without `close_notify` also ends it.
+     * `cancel()` stops reading: the write side stays usable and the
+     * connection stays open until {@link close}, and {@link startTls} can
+     * still upgrade it.
      */
     readonly readable: ReadableStream<Uint8Array>
     /**
@@ -95,12 +172,17 @@ declare module "flux:net" {
      * tears the connection down with an error: a pending or later read of
      * {@link readable} rejects with the reason. TCP has no abortive
      * half-close, so the peer still sees a plain end-of-stream.
+     *
+     * Over TLS, `close()` sends `close_notify` and then ends the TCP write
+     * side. Reading on after it works on TLS 1.3 only: a TLS 1.2 peer
+     * usually answers `close_notify` by closing the whole connection.
      */
     readonly writable: WritableStream<string | Uint8Array>
     /**
      * Close the connection now: a pending read ends, a pending write rejects,
      * the peer sees end-of-stream at once. Bytes already handed to the OS
-     * still flush.
+     * still flush. Over TLS, `close_notify` goes out first if the socket
+     * takes it without waiting.
      */
     close(): void
   }
@@ -172,6 +254,43 @@ declare module "flux:net" {
 
   /** Bind a TCP {@link Listener} on `port` (0 = OS-assigned). */
   export function listen(port: number, opts?: ListenOptions): Promise<Listener>
+
+  /**
+   * Open a TLS connection: the TCP connect, then the handshake as the
+   * client. `host` is the name the server is verified as and the SNI. A
+   * failed handshake or a pin mismatch rejects.
+   *
+   * On TLS 1.3 the client finishes its handshake before the server checks
+   * a client certificate. So a server that rejects the certificate (or a
+   * missing one) is seen as an error on the first read, not here.
+   *
+   * Only with the "tls" capability; without it this throws.
+   */
+  export function connectTls(host: string, port: number, opts?: TlsClientOptions): Promise<Conn>
+
+  /**
+   * Upgrade an open plain {@link Conn} to TLS as the client (SMTP and IMAP
+   * `STARTTLS`, the PostgreSQL `SSLRequest`), and resolve the new
+   * {@link Conn}. The old one is spent at once: its `readable` ends (a
+   * pending read as end-of-stream) and its writes reject. It works whatever
+   * was done with the old `readable` (a released reader, a `break` out of
+   * `for await`, a `cancel()`, a pending read). No plain-text bytes are lost:
+   * the stream holds no chunk it was not asked for. Rejects for a connection
+   * that is TLS already, closed or half-closed, or whose peer ended.
+   *
+   * Only with the "tls" capability; without it this throws.
+   */
+  export function startTls(conn: Conn, opts: StartTlsOptions): Promise<Conn>
+
+  /**
+   * Bind a TLS {@link Listener} on `port` (0 = OS-assigned). Its connections
+   * arrive with the handshake done: a client that stalls does not hold up
+   * the next one, and a failed handshake (or one longer than 10 s) is
+   * dropped and never arrives.
+   *
+   * Only with the "tls" capability; without it this throws.
+   */
+  export function listenTls(port: number, opts: ListenTlsOptions): Promise<Listener>
 
   /** Bind a {@link Udp} socket. */
   export function udp(opts?: UdpOptions): Promise<Udp>

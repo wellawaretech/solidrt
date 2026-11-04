@@ -47,8 +47,8 @@ every test in an engine of its own, and the `flux` binary's `--test` mode
 is that host. A failed test's record carries details read in its engine
 (what is in flight, plus what an embedder's `DetailsHook` adds).
 
-The flux module tests are `flux/tests/*.test.ts`, run by `srt test --only
-flux` on that host, typed against `packages/flux-types`. `flux/tests/*.rs`
+The flux module tests are `flux/tests/*.test.ts`, run by `bun run sol test
+--only flux` on that host, typed against `packages/flux-types`. `flux/tests/*.rs`
 holds only what Rust observes about an engine and a test inside it cannot
 (the logger, uncaught reporting, idleness, exit, the embedding API, isolate
 spawning, the websocket wire against a raw client); a test that only checks
@@ -112,7 +112,7 @@ Any change to what JS can see - a `decl.declare`/`exports.export`, a
 describes - updates `packages/flux-types` (the matching `.d.ts` under
 `modules/`/`standards/`/`gui/`) in the same change: those declarations are the
 documentation, since the website generates the Runtime reference from them.
-The only prose page is `docs/50-runtime/index.md`, which lists the modules,
+The only prose page is `docs/runtime/index.md`, which lists the modules,
 globals and capabilities by name: touch it when one of those is added or
 removed, and nothing else. Flux
 projects compile with no lib.dom and no Node/Bun types: flux-types is the only

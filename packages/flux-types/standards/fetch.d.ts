@@ -64,11 +64,8 @@ interface RequestInit {
    *   freshness model to modulate).
    *
    * Only GET requests with 2xx responses are cached, keyed by URL; on other
-   * methods the option is ignored. Unknown values throw.
-   *
-   * Cached fetches queue on a small per-host concurrency limit so asset
-   * floods stay polite; disk hits and plain (uncached) fetches are never
-   * throttled.
+   * methods the option is ignored. Unknown values throw. A disk hit takes
+   * no slot on the per-host limit (see {@link fetch}).
    */
   cache?: "force-cache" | "reload" | "default" | "no-store" | "no-cache"
   /**
@@ -78,6 +75,13 @@ interface RequestInit {
    * `Request` constructor.
    */
   signal?: AbortSignal
+  /**
+   * The client to send through, for TLS options (a private CA, a client
+   * certificate, a pin): see `createHttpClient` of `flux:http`. Default:
+   * the engine's own client. A closed client rejects the fetch. Ignored by
+   * the `Request` constructor.
+   */
+  client?: import("flux:http").HttpClient
 }
 
 /**
@@ -162,5 +166,23 @@ declare let Response: {
  * produced). Resolves to a {@link Response}. Only in a build with the
  * "http" capability (the stock runtimes have it); the global is absent
  * without it.
+ *
+ * Every fetch to a host (host plus port) takes one of 6 slots, as browsers
+ * cap HTTP/1.1; further fetches wait for a free slot. A slot is held until
+ * the response body is read to its end or cancelled (`body.cancel()`, a
+ * `break` out of `for await`). A host whose last
+ * response came over HTTP/2 takes no slot: its requests share one
+ * connection. HTTPS hosts offer HTTP/2; a plain `http://` host is always
+ * HTTP/1.1.
+ *
+ * The trap: 6 long-polls, event streams or long downloads to one HTTP/1.1
+ * host hold every slot, and every other fetch to that host waits behind
+ * them. Use a `WebSocket` for a long-lived channel; it takes no slot.
+ *
+ * A 429 response pauses every fetch to that host for its `Retry-After`
+ * (whole seconds), or for a short backoff without one. A body-less GET or
+ * HEAD then retries up to 3 times; any other request resolves with the
+ * 429. A `Retry-After` above 60 seconds pauses nothing and resolves with
+ * the 429.
  */
 declare function fetch(url: string, options?: RequestInit): Promise<Response>

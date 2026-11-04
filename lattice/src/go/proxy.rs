@@ -12,8 +12,8 @@ use flux::rquickjs::{
   promise::Promised,
   Ctx, Function, JsLifetime, Object, Value,
 };
-use flux::{do_fetch, header_pairs_from_init, request_body_from_value, JsResponseData, JsResult};
-use forge::fetch::Client;
+use flux::{header_pairs_from_init, request_body_from_value, JsResponseData, JsResult};
+use forge::fetch::{send, Client};
 use std::rc::Rc;
 
 #[derive(Clone, JsLifetime)]
@@ -57,9 +57,12 @@ pub fn install_proxy_state(ctx: Ctx<'_>, dev_server: String) {
 
         let proxy_url = (*proxy_url).clone();
         let client = state.client.clone();
-        Ok(Promised(async move {
-          JsResult(do_fetch(&client, &method, &proxy_url, headers, body).await.map(JsResponseData))
-        }))
+        // No per-host limit here: every app fetch goes to the one dev server,
+        // and a limit belongs to the real host, which the dev server reaches
+        // with its own fetch.
+        Ok(Promised(
+          async move { JsResult(send(&client, &method, &proxy_url, headers, body).await.map(JsResponseData)) },
+        ))
       }
     }),
   )

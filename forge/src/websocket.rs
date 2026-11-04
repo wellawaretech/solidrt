@@ -10,9 +10,10 @@
 //!   (`run_reader`, `run_writer`) generic over a `WsDispatch` the host
 //!   implements.
 //! - Client (the web-standard `WebSocket` global): `parse_ws_url`, the shared
-//!   `ClientSocket` state, and `run_client`, which drives connect, handshake
-//!   and the frame loop against a `ClientDispatch`; the host spawns the
-//!   `ClientWriter` it is handed.
+//!   `ClientSocket` state, and `run_client`, which drives connect (with a
+//!   `forge::tls` handshake for `wss://`), handshake and the frame loop
+//!   against a `ClientDispatch`; the host spawns the `ClientWriter` it is
+//!   handed.
 //!
 //! It names no scripting-engine types; the marshalling layer (flux
 //! `forge_plugins/websocket.rs` and `standards_plugins/websocket.rs`) builds
@@ -31,6 +32,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
@@ -557,22 +559,31 @@ pub async fn run_writer<D>(
 
 // ---- Client ----------------------------------------------------------------
 
-/// A parsed `ws://` target: what `run_client` dials.
+/// A parsed `ws://` or `wss://` target: what `run_client` dials.
 pub struct WsTarget {
   pub host: String,
   pub port: u16,
   /// Path and query, always starting with `/`.
   pub path: String,
+  /// A `wss://` target: the connection runs over TLS.
+  pub tls: bool,
 }
 
-/// Parse a `ws://` URL. `wss://` is recognized but rejected until TLS support
-/// lands; `Err` is the message to surface.
+/// The default ports of `ws://` and `wss://`.
+const WS_PORT: u16 = 80;
+const WSS_PORT: u16 = 443;
+
+/// The one protocol a `wss://` connection offers by ALPN. A server that
+/// picked `h2` would expect the upgrade as an RFC 8441 extended CONNECT,
+/// which this client does not speak.
+const WSS_ALPN: &[u8] = b"http/1.1";
+
+/// Parse a `ws://` or `wss://` URL; `Err` is the message to surface.
 pub fn parse_ws_url(url: &str) -> Result<WsTarget, String> {
-  if url.starts_with("wss://") {
-    return Err("wss:// is not supported yet (no TLS)".to_string());
-  }
-  let Some(rest) = url.strip_prefix("ws://") else {
-    return Err("WebSocket URL must start with ws://".to_string());
+  let (rest, tls) = match (url.strip_prefix("ws://"), url.strip_prefix("wss://")) {
+    (Some(rest), _) => (rest, false),
+    (_, Some(rest)) => (rest, true),
+    _ => return Err("WebSocket URL must start with ws:// or wss://".to_string()),
   };
   if rest.contains('#') {
     return Err("WebSocket URL must not contain a fragment".to_string());
@@ -605,9 +616,10 @@ pub fn parse_ws_url(url: &str) -> Result<WsTarget, String> {
   }
   let port = match port {
     Some(p) => p.parse::<u16>().map_err(|_| "invalid WebSocket URL port".to_string())?,
-    None => 80,
+    None if tls => WSS_PORT,
+    None => WS_PORT,
   };
-  Ok(WsTarget { host: host.to_string(), port, path })
+  Ok(WsTarget { host: host.to_string(), port, path, tls })
 }
 
 /// State shared between the host's client handle and `run_client`: the
@@ -734,11 +746,14 @@ where
 /// Connect, handshake, then drive the socket until it closes: the client-side
 /// mirror of the server's `run_reader`. `socket` carries the state the host's
 /// handle reads and writes; `spawn_writer` receives the writer task once the
-/// socket is OPEN. Events go to `dispatch`; a failed connect reports `error`
-/// then an unclean `close`.
+/// socket is OPEN. Events go to `dispatch`; a failed connect (or TLS
+/// handshake) reports `error` then an unclean `close`. `tls` is the config a
+/// `wss://` target connects with (its ALPN is set here, to `http/1.1`
+/// only); a `ws://` target ignores it.
 pub async fn run_client<D, S>(
   socket: Rc<ClientSocket>,
   target: WsTarget,
+  tls: Option<Arc<crate::tls::ClientConfig>>,
   dispatch: &D,
   spawn_writer: S,
   logger: &Logger,
@@ -746,7 +761,7 @@ pub async fn run_client<D, S>(
   D: ClientDispatch,
   S: FnOnce(ClientWriter),
 {
-  let WsTarget { host, port, path } = target;
+  let WsTarget { host, port, path, tls: secure } = target;
   // IPv6 hosts get their brackets back for the Host header.
   let authority = if host.contains(':') { format!("[{host}]:{port}") } else { format!("{host}:{port}") };
   let connect = async {
@@ -761,6 +776,19 @@ pub async fn run_client<D, S>(
       .header("Sec-WebSocket-Version", "13")
       .body(Empty::<bytes::Bytes>::new())
       .map_err(|e| e.to_string())?;
+    if !secure {
+      return handshake::client(&SpawnExecutor, req, stream).await.map_err(|e| e.to_string());
+    }
+    let Some(tls) = tls else {
+      return Err("wss:// needs a TLS config".to_string());
+    };
+    let mut config = (*tls).clone();
+    config.alpn_protocols = vec![WSS_ALPN.to_vec()];
+    let name = crate::tls::server_name(&host)?;
+    let stream = tokio_rustls::TlsConnector::from(Arc::new(config))
+      .connect(name, stream)
+      .await
+      .map_err(|e| format!("TLS handshake: {}", crate::tls::handshake_error(&e)))?;
     handshake::client(&SpawnExecutor, req, stream).await.map_err(|e| e.to_string())
   };
   tokio::pin!(connect);

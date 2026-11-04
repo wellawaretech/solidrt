@@ -236,4 +236,49 @@ declare module "flux:http" {
    * @returns The running {@link Server}.
    */
   export function serve(options: ServeOptions): Server
+
+  /**
+   * The TLS options of {@link createHttpClient}. Without any, the client
+   * verifies servers as plain `fetch` does: against the built-in web roots,
+   * by name.
+   */
+  type HttpClientOptions = {
+    /** Extra trusted roots (PEM), on top of the built-in web roots: a private CA. */
+    caCerts?: string[]
+    /** A client certificate chain (PEM), for mutual TLS. Needs {@link key}. */
+    cert?: string
+    /** The private key (PEM) of {@link cert}. */
+    key?: string
+    /**
+     * Trust the server by its key alone: the SHA-256 of its
+     * SubjectPublicKeyInfo, as 64 hex characters (the form `peerKey` of a
+     * `flux:net` `Conn` reports). It replaces the chain check and the name
+     * check, so a self-signed server on any address passes when its key
+     * matches, and a renewed certificate on the same key still does. Cannot
+     * be combined with {@link caCerts}.
+     */
+    pin?: string
+  }
+
+  /**
+   * A `fetch` client with TLS options, from {@link createHttpClient}: pass it
+   * as `fetch(url, { client })`. It keeps its own connections; the per-host
+   * limits of `fetch` are shared with every other client, so a server sees
+   * one app.
+   */
+  export class HttpClient {
+    /**
+     * Close the client and release its connections. A later fetch through
+     * it rejects; a fetch in flight finishes.
+     */
+    close(): void
+  }
+
+  /**
+   * Create a `fetch` client that trusts a private CA, presents a client
+   * certificate, or pins the server's key (Deno's `Deno.createHttpClient`,
+   * here a `flux:http` export). The certificates are checked once, here: a
+   * malformed one throws. A server that fails the check rejects the fetch.
+   */
+  export function createHttpClient(options?: HttpClientOptions): HttpClient
 }

@@ -49,3 +49,13 @@ its root `LICENSE`. The source repository ships no separate NOTICE file.
 
 This file is test data. It is not compiled into or distributed with any
 binary.
+
+## tls/ (generated)
+
+`src/tests/tls.rs`, `src/tests/fetch.rs` and `src/tests/websocket.rs`,
+and the flux module tests `flux/tests/net-tls.test.ts`,
+`http-client.test.ts` and `websocket.test.ts`. A private CA, server and
+client leaves signed by it, a self-signed server, and the key hashes of
+two of them, all made with the `openssl` command-line tool. The commands
+and what each file is are in [tls/README.md](tls/README.md). The private
+keys are test material and public on purpose.

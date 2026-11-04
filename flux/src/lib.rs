@@ -27,7 +27,7 @@ pub use engine::{
   ModuleCode, ShutdownHooks, ENTRY_MODULE,
 };
 #[cfg(feature = "http")]
-pub use forge::fetch::{do_fetch, ResponseData};
+pub use forge::fetch::ResponseData;
 pub use forge::process::{arch, platform};
 pub use forge::seek::{SeekableRead, SeekableReader};
 pub use forge_plugins::process::{ProcessArgs, ProcessExit};

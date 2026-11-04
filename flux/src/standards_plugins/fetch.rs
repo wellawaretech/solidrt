@@ -1,23 +1,20 @@
 use rquickjs::{function::MutFn, Class, Ctx, Exception, Function, IntoJs, Object, Promise, TypedArray, Value};
 use std::rc::Rc;
 
+use crate::forge_plugins::http_client::FetchClient;
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
 use crate::plugins::marshal::{with_in_flight, CopyBytes, OptArg};
 use crate::standards_plugins::abort::AbortSignal;
 use crate::standards_plugins::body::{is_async_iterable, pump_async_iterable};
 use crate::standards_plugins::headers::header_pairs_from_init;
-use crate::standards_plugins::http::HttpClient;
+use crate::standards_plugins::http::{FetchLimits, HttpClient};
 use crate::standards_plugins::response::response_from_parts;
 use forge::cache::Cache;
-use forge::fetch::{channel_request_body, do_fetch, do_fetch_cached, CacheMode, HostLimits, RequestBody, ResponseData};
+use forge::fetch::{channel_request_body, do_fetch, do_fetch_cached, CacheMode, RequestBody, ResponseData};
 
 /// Placeholder cap until a real default is decided (plan open question).
 const FETCH_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
-
-/// Browser convention for per-host connection concurrency; applies to cached
-/// (asset-mode) fetches only.
-const FETCHES_PER_HOST: usize = 6;
 
 pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
   let globals = ctx.globals();
@@ -27,12 +24,29 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
     .userdata::<crate::engine::EngineConfig>()
     .and_then(|config| config.cache_dir.clone())
     .map(|dir| Rc::new(Cache::new(dir, FETCH_CACHE_MAX_BYTES)));
-  let limits = Rc::new(HostLimits::new(FETCHES_PER_HOST));
 
   let fetch_fn = Function::new(
     ctx.clone(),
     MutFn::from(fetch_builder(move |ctx, url: String, opts| {
-      let client = ctx.userdata::<HttpClient>().expect("http client").0.clone();
+      // A `createHttpClient` client, else the engine's; both send through
+      // the engine's per-host limits.
+      let custom: Option<Class<FetchClient>> = match opts.0.as_ref() {
+        Some(o) => o
+          .get::<_, Option<Class<FetchClient>>>("client")
+          .map_err(|_| Exception::throw_type(&ctx, "client must be an HttpClient from createHttpClient"))?,
+        None => None,
+      };
+      let client = match custom {
+        Some(custom) => match custom.borrow().client() {
+          Some(client) => client,
+          None => {
+            let closed = async { Err::<JsResponseData, String>("fetch: the HttpClient is closed".to_string()) };
+            return with_in_flight(&ctx, "fetch", closed).into_js(&ctx);
+          }
+        },
+        None => ctx.userdata::<HttpClient>().expect("http client").0.clone(),
+      };
+      let limits = ctx.userdata::<FetchLimits>().expect("fetch limits").0.clone();
 
       let cache_mode: Option<CacheMode> =
         match opts.0.as_ref().and_then(|o| o.get::<_, Option<String>>("cache").ok().flatten()) {
@@ -47,7 +61,6 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
           },
         };
       let cache = cache.clone();
-      let limits = limits.clone();
 
       let method = opts
         .0
@@ -76,9 +89,9 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
       let net = async move {
         match (cache, cache_mode) {
           (Some(cache), Some(mode)) => {
-            do_fetch_cached(&client, &method, &url, headers, body, cache, mode, limits).await
+            do_fetch_cached(&client, &limits, &method, &url, headers, body, cache, mode).await
           }
-          _ => do_fetch(&client, &method, &url, headers, body).await,
+          _ => do_fetch(&client, &limits, &method, &url, headers, body).await,
         }
       };
 
@@ -187,7 +200,7 @@ pub fn request_body_from_value<'js>(val: Value<'js>) -> rquickjs::Result<Option<
 /// out - a foreign `IntoJs` on a foreign type would otherwise trip the orphan
 /// rule. Public because the lattice dev-server proxy also returns it from its
 /// own `fetch`; both the `fetch` global and that proxy `.map(JsResponseData)`
-/// the bare `do_fetch` result.
+/// the bare forge result.
 pub struct JsResponseData(pub ResponseData);
 
 impl<'js> IntoJs<'js> for JsResponseData {

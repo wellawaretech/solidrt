@@ -91,11 +91,14 @@ These are the features:
   `video`.
 - `ktx2`: compressed textures.
 - `http`: HTTP with TLS (`fetch`, the `WebSocket` client, and `flux:http`).
-  Without it, an app cannot load an image or a video from a URL.
+  Without it, an app cannot load an image or a video from a URL. It
+  includes `tls`.
+- `tls`: TLS sockets (`connectTls`, `startTls` and `listenTls` of
+  `flux:net`).
 - `p2p`: peer-to-peer connections (`flux:p2p`, and the `p2p` option of
   `serve` in `flux:http`). It also contains TLS, because the connections
-  are encrypted. A runtime without TLS removes `http`, `p2p` and
-  `p2p-relay`.
+  are encrypted. A runtime without TLS removes `http`, `tls`, `p2p`
+  and `p2p-relay`.
 - `p2p-relay`: the self-hosted relay (`serveRelay` of `flux:p2p`).
 - `wasm-native`: `flux:wasm` on wasmtime, which compiles a module to
   machine code. Some targets do not support wasmtime (armeabi-v7a, x86

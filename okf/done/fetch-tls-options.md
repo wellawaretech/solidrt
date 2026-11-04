@@ -2,6 +2,7 @@
 title: TLS options for fetch
 description: fetch verifies servers against the webpki roots only and has no client certificate, so an app cannot reach a private-CA or self-signed server, pin a server certificate, or do mutual TLS; add a client certificate, extra roots and a pin, through a client object the app creates.
 created: 2026-10-30
+completed: 2026-11-04
 ---
 
 # TLS options for fetch
@@ -55,22 +56,57 @@ before building.
 
 **The pin.** Pin the SHA-256 of the server's SubjectPublicKeyInfo (the
 HPKP / OkHttp `CertificatePinner` form), not of the whole certificate, so a
-server can renew a certificate on the same key. A pin replaces CA
-verification for that client: the chain does not have to reach a trusted
-root, but the leaf must match the pin and be valid for the host name. That
-needs a custom rustls `ServerCertVerifier`, handed to reqwest with
-`use_preconfigured_tls`. Client certificates (`Identity::from_pem`) and
-extra roots (`add_root_certificate`) are plain reqwest builder calls.
+server can renew a certificate on the same key. The pin is a lowercase hex
+string, the form `flux:net` reports as `peerKey`. It is the verifier of
+[net-tls](net-tls.md), with the same rule:
 
-**Layering.** forge takes the TLS configuration as native types (PEM bytes,
-pin bytes) and builds the client; the standards plugin only marshals the
-options and holds the client handle. All of it stays behind the `http`
-feature.
+- The leaf's SPKI hash must match the pin. The pin replaces both the
+  chain check and the name check: the key is the identity, and a
+  self-hosted server's certificate often does not name the address the
+  app reaches it on.
+- The handshake signatures are still verified, by delegating
+  `verify_tls12_signature` and `verify_tls13_signature` to rustls with
+  the ring provider's algorithms.
+- The host name still goes out as SNI when it is a name.
+
+**Layering.** `forge::tls` (from [net-tls](net-tls.md)) builds the rustls
+`ClientConfig` from native types (PEM bytes, pin bytes): the roots, the
+client certificate and the pin verifier. `forge::fetch` hands that config
+to reqwest with `use_preconfigured_tls`, so one TLS configuration code
+path serves `fetch`, `flux:net` and later `wss://`. reqwest keeps its own
+connector and pool; only the TLS config is shared. reqwest uses a
+preconfigured config as it is and sets no ALPN on it (reqwest 0.12,
+`async_impl/client.rs`), so `forge::fetch` sets `alpn` itself:
+`h2` and `http/1.1`, since [fetch-host-limits](fetch-host-limits.md)
+turned reqwest's `http2` on. The
+standards plugin only marshals the options and holds the client handle.
+All of it stays behind the `tls` feature, which `http` implies. Whichever
+of the two items lands first builds `forge::tls`.
 
 ## Out of scope, related
 
 - `wss://` is rejected by the WebSocket client (`forge/src/websocket.rs`,
   "no TLS"). When it gets TLS, it should accept the same client so one
-  configuration covers both.
+  configuration covers both. `wss://` landed as stage 4 of
+  [tls-and-fetch-limits](tls-and-fetch-limits.md), with the default roots
+  only.
 - `forge::source` builds its own reqwest clients per user agent; remote
   media sources keep the default TLS.
+
+## Outcome
+
+Stage 3 of [tls-and-fetch-limits](tls-and-fetch-limits.md).
+`createHttpClient({ caCerts, cert, key, pin })` is a `flux:http` export,
+used as `fetch(url, { client })`; `close()` releases the client, and a
+fetch through a closed one rejects. Every client shares the engine's
+per-host limits. Built as shaped, with these choices:
+
+- A pin mismatch rejects with a plain `Error`, as every other network
+  failure of `fetch` does in flux, not a `TypeError`.
+- A failed request's message now carries its cause: reqwest's own
+  ("error sending request for url (..)") is followed by each source
+  once, so a TLS failure says which check failed.
+- The end-to-end "an HTTP/2 host takes no slot" case of
+  [fetch-host-limits](fetch-host-limits.md) is in `forge/src/tests/fetch.rs`,
+  against a hyper HTTP/2 server over tokio-rustls (hyper's `http2` as a
+  dev-dependency feature only).

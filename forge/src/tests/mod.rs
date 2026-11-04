@@ -36,6 +36,8 @@ mod stream;
 mod svg;
 #[cfg(feature = "video")]
 mod texture;
+#[cfg(feature = "tls")]
+mod tls;
 mod trailer;
 #[cfg(feature = "video")]
 mod video;
@@ -45,6 +47,8 @@ mod wasm;
 mod webm;
 #[cfg(all(feature = "video-encode", not(target_os = "android")))]
 mod webm_writer;
+#[cfg(feature = "http")]
+mod websocket;
 #[cfg(feature = "video")]
 mod worker;
 mod workers;
