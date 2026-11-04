@@ -56,7 +56,7 @@ half = "=2.7.1"
 rquickjs = { workspace = true }
 # taffy stays: the properties plugins assign taffy Style directly. The render
 # tree (and its lyon/svgtypes path deps) moved to alloy.
-taffy = "=0.15.0"
+taffy = "=0.15.1"
 base64 = { version = "=0.23.1", optional = true }
 tokio = { workspace = true }
 tokio-websockets = { version = "=0.13.3", features = ["client", "fastrand", "sha1_smol"], optional = true }
@@ -90,4 +90,4 @@ libloading = "=0.9.0"
 # Android reaches the dev server via the adb-reverse loopback instead, and
 # receiving mDNS there would need a WifiManager.MulticastLock, so it is excluded.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-mdns-sd = "=0.21.5"
+mdns-sd = "=0.21.6"

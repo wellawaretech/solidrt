@@ -19,6 +19,6 @@ alloy = { path = "alloy" }
 forge = { path = "forge" }
 flux = { path = "flux", default-features = false }
 ore = { path = "ore" }
-log = "=0.4.34"
+log = "=0.4.35"
 rquickjs = { version = "=0.14.0", features = ["bindgen", "rust-alloc", "futures", "macro", "loader"] }
-tokio = { version = "=1.53.3", features = ["rt", "rt-multi-thread", "time", "sync", "net"] }
+tokio = { version = "=1.54.1", features = ["rt", "rt-multi-thread", "time", "sync", "net"] }
