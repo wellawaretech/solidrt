@@ -1,6 +1,6 @@
 ---
 title: Run the live player timing tests on a virtual clock
-description: Two live floor tests in forge/src/tests/live.rs feed and play frames on the wall clock with ~15 ms of slack for thread wakeups, so the macos-14 CI runner fails them and CI skips them there; a clock that owns the player's waits would make them deterministic.
+description: Two live floor tests in forge/src/tests/live.rs feed and play frames on the wall clock with ~15 ms of slack for thread wakeups, so the macOS CI runner fails them and CI skips them there; a clock that owns the player's waits would make them deterministic.
 created: 2026-10-21
 ---
 
@@ -28,7 +28,8 @@ in runs of five frames (a buffering episode, then a catch-up to the floor),
 and the stall test once lost a frame after its recovery. The same commit
 passed both tests 10 times out of 10 on an M1 (8 cores, load average up to
 17), so macOS itself holds the floor. `.github/workflows/ci.yml` skips the
-two tests on the darwin runner (`matrix.skip` in test-forge).
+two tests on the darwin runner (`matrix.skip` in test-forge). CI has moved
+to macos-15 since; the skip stays until the tests are measured there.
 
 The stepped clock does not fit as it stands: against it the worker drops
 nothing as late and does not judge buffering on the lead (the

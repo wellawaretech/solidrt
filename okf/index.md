@@ -656,9 +656,9 @@ Shaped, not started.
   from_source over a slot-holding source and build stages 1+2 together.
 - **[Run the live player timing tests on a virtual clock](backlog/live-player-tests-virtual-clock.md)** [2026-10-21]
   Two live floor tests in forge/src/tests/live.rs feed and play frames on the
-  wall clock with ~15 ms of slack for thread wakeups, so the macos-14 CI
-  runner fails them and CI skips them there; a clock that owns the player's
-  waits would make them deterministic.
+  wall clock with ~15 ms of slack for thread wakeups, so the macOS CI runner
+  fails them and CI skips them there; a clock that owns the player's waits
+  would make them deterministic.
 - **[Content damage for live-sampled textures](backlog/live-texture-content-damage.md)** [2026-09-12]
   A texture whose pixels change behind an unchanged id produces no damage,
   because nodes displaying it hold a live reference and need none to show the

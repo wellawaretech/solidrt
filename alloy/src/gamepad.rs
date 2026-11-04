@@ -200,8 +200,8 @@ const RAW_BACK_INDEX: u32 = 4;
 impl Pad {
   fn id(&self) -> u32 {
     match self {
-      Pad::Mapped { pad, .. } => pad.id().ok().map_or(0, u32::from),
-      Pad::Raw(joystick) => joystick.id(),
+      Pad::Mapped { pad, .. } => pad.id().ok().map_or(0, JoystickId::raw),
+      Pad::Raw(joystick) => joystick.id().raw(),
       Pad::Synthetic(pad) => pad.id,
     }
   }
@@ -387,13 +387,13 @@ impl Gamepads {
   pub(crate) fn handle_event(&mut self, e: &SdlEvent) {
     match e {
       SdlEvent::JoyDeviceAdded { which, .. } => {
-        if self.slot_of(*which).is_some() {
+        if self.slot_of(which.raw()).is_some() {
           return; // already open (SDL can re-announce)
         }
         let Some((gamepad, joystick)) = &self.sdl else {
           return;
         };
-        let id = JoystickId::new(*which);
+        let id = *which;
         let opened = if gamepad.is_gamepad(id) {
           gamepad.open(id).map(|pad| Pad::Mapped { pad, joystick: joystick.open(id).ok() }).map_err(|e| e.to_string())
         } else {
@@ -418,7 +418,7 @@ impl Gamepads {
         }
       }
       SdlEvent::JoyDeviceRemoved { which, .. } => {
-        if let Some(i) = self.slot_of(*which) {
+        if let Some(i) = self.slot_of(which.raw()) {
           self.slots[i] = None;
           self.dirty = true;
         }
