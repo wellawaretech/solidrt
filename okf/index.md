@@ -450,6 +450,11 @@ Shaped, not started.
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
   either not found or checked against the wrong file.
+- **[Move CI to the macos-15 runner](backlog/ci-macos-15-runner.md)** [2026-11-04]
+  On the macos-15 GitHub runner the flux:mdns browse and services tests fail
+  with "No route to host (os error 65)" on the multicast send, most likely
+  macOS 15 Local Network privacy, so CI and release stay on macos-14 until the
+  darwin mDNS tests are handled.
 - **[Copy an image to the clipboard](backlog/clipboard-image.md)** [2026-11-03]
   "navigator.clipboard is text only; wanted an image write (image/png) on
   desktop through SDL_SetClipboardData, listed as \"clipboard-image\" in

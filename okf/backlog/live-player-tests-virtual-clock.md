@@ -28,8 +28,7 @@ in runs of five frames (a buffering episode, then a catch-up to the floor),
 and the stall test once lost a frame after its recovery. The same commit
 passed both tests 10 times out of 10 on an M1 (8 cores, load average up to
 17), so macOS itself holds the floor. `.github/workflows/ci.yml` skips the
-two tests on the darwin runner (`matrix.skip` in test-forge). CI has moved
-to macos-15 since; the skip stays until the tests are measured there.
+two tests on the darwin runner (`matrix.skip` in test-forge).
 
 The stepped clock does not fit as it stands: against it the worker drops
 nothing as late and does not judge buffering on the lead (the
