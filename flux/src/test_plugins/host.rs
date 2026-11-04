@@ -300,6 +300,8 @@ impl Session {
           ctx.logger().error(&format!("Test host: failed to seed Math.random: {e}"));
         }
       })
+      // A test's links are recorded, never opened.
+      .plugin(|ctx| crate::link::set_record_only(&ctx))
   }
 
   /// Evaluate the file in `engine` (built from a builder `install` went

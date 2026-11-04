@@ -219,6 +219,13 @@ fn link(ctx: Ctx<'_>, link: String) -> flux::rquickjs::Result<bool> {
   Ok(listening)
 }
 
+/// `requestedLinks()`: the links the app asked to open (`flux:link`),
+/// oldest first; a test engine records them and opens none.
+fn requested_links(ctx: Ctx<'_>) -> flux::rquickjs::Result<Vec<String>> {
+  stepper(&ctx, "requestedLinks()")?;
+  Ok(flux::link::opener(&ctx).map(|opener| opener.requested()).unwrap_or_default())
+}
+
 /// `debug(name, args)`: call a debug command the app registered
 /// (`registerDebug` of `sol:dev`), `args` and the result as JSON text
 /// (null for none).
@@ -540,6 +547,7 @@ impl ModuleDef for SolTestModule {
     decl.declare("settle")?;
     decl.declare("until")?;
     decl.declare("link")?;
+    decl.declare("requestedLinks")?;
     decl.declare("debug")?;
     decl.declare("stats")?;
     decl.declare("capture")?;
@@ -571,6 +579,7 @@ impl ModuleDef for SolTestModule {
       ctx.store_userdata(Pads(Rc::new(RefCell::new(alloy::Gamepads::synthetic())))).expect("store pads");
     }
     exports.export("link", Function::new(ctx.clone(), link)?)?;
+    exports.export("requestedLinks", Function::new(ctx.clone(), requested_links)?)?;
     exports.export("debug", Function::new(ctx.clone(), debug)?)?;
     exports.export("stats", Function::new(ctx.clone(), stats)?)?;
     exports.export("capture", Function::new(ctx.clone(), capture)?)?;

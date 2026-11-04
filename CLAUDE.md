@@ -19,7 +19,7 @@ Plugins (the `*/plugins/` modules that register `ffi`/global functions) should b
 
 The rendertree must stay engine-independent: no QuickJS/`rquickjs` (or any JavaScript) references. It should be usable from other engines, not even necessarily JavaScript. JS value parsing belongs in the plugin layer; rendertree methods take and return native Rust types only.
 
-`flux/src/` has three plugin layers, named for what they marshal (and a fourth, `test_plugins/`, for `flux:test`: behind the `test` feature, on the `flux` binary only, over flux's own facilities): `standards_plugins/` for web-standard JS APIs (e.g. `fetch`, `Response`, `Headers`, `console`, timers) whatever backs them, `forge_plugins/` for the `flux:*` capability modules (e.g. `serve`, `file`, `sqlite`) that marshal forge cores, and `alloy_plugins/` (behind the `gui` feature, exported as `flux::gui`) for the alloy-backed render/capture bindings. A web standard goes in `standards_plugins/`; otherwise the crate marshalled decides. `flux/src/plugins/` holds only the shared marshalling toolkit (`js_error.rs`/`marshal.rs`/`value.rs`), the event bus mechanism (`events.rs`, no JS surface of its own) and context setup.
+`flux/src/` has four plugin layers, named for what they marshal (and a fifth, `test_plugins/`, for `flux:test`: behind the `test` feature, on the `flux` binary only, over flux's own facilities): `standards_plugins/` for web-standard JS APIs (e.g. `fetch`, `Response`, `Headers`, `console`, timers, `navigator`) whatever backs them, `forge_plugins/` for the `flux:*` capability modules (e.g. `serve`, `file`, `sqlite`) that marshal forge cores, `ore_plugins/` for the `flux:*` modules that marshal ore's OS facilities (e.g. `flux:link`), and `alloy_plugins/` (behind the `gui` feature, exported as `flux::gui`) for the alloy-backed render/capture bindings. A web standard goes in `standards_plugins/`; otherwise the crate marshalled decides. `flux/src/plugins/` holds only the shared marshalling toolkit (`js_error.rs`/`marshal.rs`/`value.rs`), the event bus mechanism (`events.rs`, no JS surface of its own) and context setup.
 
 ## Documentation
 Write the prose and headings in `docs/` in ASD-STE100 Simplified Technical English: approved words, short sentences, one instruction per sentence, active voice. Product, command and API names stay as they are (`sol pack` is "pack"). The landing page (`docs/index.md`) is exempt.
@@ -48,26 +48,35 @@ not a reason to adopt unproven software. Do not hand-write FFI to reach
 beneath the safe API of a crate we already trust (e.g. rquickjs's raw `qjs`).
 
 ## SDL
-SDL is accessed through the sdl3 Rust crate, which does not expose all SDL functionality. If something is not available in the sdl3 crate, check if it's available in SDL directly, and if so, add a wrapper function in `alloy/src/sdl_utils.rs`.
+SDL is the OS abstraction library, and `ore` is the one crate that names it for new work (alloy's existing SDL code moves there as features touch it). ore reaches SDL through the sdl3 Rust crate, which does not expose all SDL functionality. If something is not available in the sdl3 crate, check if it's available in SDL directly (`sdl3::sys`), and if so, wrap it in the ore module of its facility. `alloy/src/sdl_utils.rs` takes no new wrappers.
 
 # Projects
 ## Rust
-- `alloy` what needs SDL: the window and the platform loop thread, GL (glow) and Impeller, the SDL subsystems (audio device, camera, clipboard, file dialogs) and SDL's handles (the Android activity), and the rendertree (layout, hit testing, compositing)
-- `forge` what a headless process can do (HTTP, fs, sqlite, subprocess, p2p, decoders, ...), OS-specific code included: it reaches the OS directly (libc, ndk, ndk-context, Win32), never through SDL, and names no scripting-engine types
-- `flux` embeds a JavaScript runtime built on QuickJS; its plugins marshal the forge cores and the alloy GUI
-- `lattice` the SolidRT runtime: binds alloy, forge, and flux and drives the event loop
+- `ore` the OS layer, the platform boundary: every OS facility, one contract each (today the main-thread bridge, opening a link and the locale). It wraps SDL where SDL reaches and our own native code (JNI, Win32, Objective-C, D-Bus) where it stops, and depends on nothing of ours. Read okf/design/platform-layering.md before placing any platform or OS feature
+- `alloy` the window's scene and its rendering: the renderer and raster thread, GL (glow) and Impeller, the rendertree (layout, hit testing, compositing), the spatial core and the frame timing policy. It still holds the SDL window, the event pump and the device subsystems (audio device, camera, clipboard, file dialogs) and the Android glue; they move to ore as features touch them
+- `forge` portable capabilities, the same code on every platform (HTTP, fs, sqlite, subprocess, p2p, decoders, ...): it calls ore where a capability touches the OS, and names no scripting-engine types. Its existing OS code (content providers, the AMediaCodec decoder's JNI side, the tty) moves to ore as features touch it
+- `flux` embeds a JavaScript runtime built on QuickJS; its plugins marshal the forge cores, the ore facilities and the alloy GUI
+- `lattice` the SolidRT runtime: binds alloy, forge, ore and flux and drives the event loop; it reaches ore for host concerns only (init order, app identity, storage roots, the windowless host), never for app features
 - `runtime` the stock program over lattice (crate `solidrt`): the `solidrt` and `solidrt-go` binaries and the Android cdylib, embedding the player and BSOD bundles from `packages/cli/player/` (generated by `make player-bundle`); built by `packages/cli/runtime/runtime.mk`, the base its one-line Makefile includes, as a custom runtime (this crate with modules, `sol init --runtime`) does from its node_modules
 
-Placement between alloy and forge is one question: could the `flux` CLI (no
-`gui` feature) do it? Then forge, JNI included (the AMediaCodec decoder in
-forge::video, the content providers in forge::fs). Does it need a window or
-the loop thread? Then alloy. "Engine-free" does not decide it: both crates
-are. A feature with both halves (a dialog shows in alloy, the picked document
-reads in forge) puts each half where its question says, and the halves meet on
-a plain value (a location string, a NativeWindow, decoded PCM), never on a
-trait forge exposes for alloy to implement behind a global. On Android, alloy
-publishes the JavaVM and the activity once in ndk-context at startup; forge
-reads them there.
+Placement, in order (okf/design/platform-layering.md):
+
+1. Does it reach the OS or SDL - anything per platform, any `cfg(target_os)`? ore.
+2. Is it the scene, rendering, or frame timing policy? alloy.
+3. Is it the same code on every platform? forge.
+4. Is it how an app is hosted? lattice.
+
+New work that reaches SDL or the OS goes into ore; nothing new of that kind
+lands in alloy, forge or lattice, and their existing OS code moves to ore
+when a feature touches it, not before. "Engine-free" and "headless" do not
+decide it: ore has no window part yet, and headless `flux` links it. An
+app-facing facility reaches JS through flux `ore_plugins/`, never through
+lattice. A feature with two halves (a dialog shows in alloy, the picked
+document reads in forge) puts each half where its question says, and the
+halves meet on a plain value (a location string, a NativeWindow, decoded
+PCM), never on a trait one crate exposes for another to implement behind a
+global. On Android, alloy publishes the JavaVM and the activity once in
+ndk-context at startup; forge and ore read them there.
 
 ## JavaScript
 - `packages/core` SolidRT core, linking SolidJS and Lattice

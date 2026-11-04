@@ -1,15 +1,17 @@
 //! Capability cores for a headless process.
 //!
-//! `forge` holds what a process can do without a window or a platform loop:
-//! the HTTP server core, the engine-free halves of sqlite/p2p/subprocess/
-//! fetch/fs/path/process/events/websocket, the decoders, the shared
-//! byte-stream primitive, and the logging sink. OS-specific code lives here
-//! too when it needs no SDL (AMediaCodec in `video`, the content providers in
-//! `fs`, the terminal in `tty`): forge reaches the OS directly, on Android
-//! through the process-wide JavaVM and activity the platform (alloy)
-//! publishes in ndk-context at startup. What needs SDL (the window, the loop
-//! thread, a device subsystem) is alloy's; see CLAUDE.md, Projects. Code
-//! here names no `rquickjs` / `'js` types; a pure-Rust host could use it
+//! `forge` holds the portable capabilities, the same code on every
+//! platform: the HTTP server core, the engine-free halves of sqlite/p2p/
+//! subprocess/fetch/fs/path/process/events/websocket, the decoders, the
+//! shared byte-stream primitive, and the logging sink. What reaches the OS
+//! or SDL (anything per platform, any `cfg(target_os)`) is ore's, the OS
+//! layer; forge calls ore where a capability touches the OS. The OS code
+//! forge still holds (AMediaCodec in `video`, the content providers in
+//! `fs`, the terminal in `tty`, reaching the OS directly, on Android through
+//! the JavaVM and activity alloy publishes in ndk-context at startup) moves
+//! to ore when a feature touches it; new OS code does not land here. See
+//! CLAUDE.md, Projects, and okf/design/platform-layering.md. Code here
+//! names no `rquickjs` / `'js` types; a pure-Rust host could use it
 //! directly. The scripting host (flux) depends on this crate and supplies
 //! all the marshalling.
 

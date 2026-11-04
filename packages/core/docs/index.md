@@ -205,6 +205,17 @@ installs a single executable, and does nothing on Android, whose package
 declares the scheme. A second desktop instance started with a link hands
 it to the running one and exits.
 
+Use `openLink` to send the user out to a link: a store page, a website, a
+`mailto:` address. The platform opens it in the app that handles it. The
+promise resolves when the platform accepts the link, and rejects when the
+platform refuses it. A link of the app's own scheme comes back in through
+`onLink`. Under `sol test`, the test host records the link and opens
+nothing.
+
+```ts
+await openLink("mailto:feedback@example.com")
+```
+
 ```tsx
 onSuspend(() => file("session.json").write(JSON.stringify(state)))
 if (env.launch === "restored") state = JSON.parse(await file("session.json").text())

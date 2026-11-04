@@ -437,7 +437,9 @@ const CONTROL_ENDPOINTS = [
   "/__control__/snapshot",
   "/__control__/gpu",
   "/__control__/debug",
+  "/__control__/dialog",
   "/__control__/link",
+  "/__control__/requested-links",
   "/__control__/texture",
   "/__control__/clock",
   "/__control__/input",
@@ -588,6 +590,10 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       if (!link) return Response.json({ error: "Link delivery requires ?link=<link>" }, { status: 400 })
       return handleQuery(query, "link", { link })
     }
+    case "/__control__/requested-links":
+      // The links the app asked to open (openLink), oldest first, refused
+      // ones too: { links: [...] }. The client opens each and records it.
+      return handleQuery(query, "requested_links")
     case "/__control__/texture": {
       let textureId = parseInt(query.get("id") ?? "", 10)
       if (!Number.isFinite(textureId)) return Response.json({ error: "Texture requires ?id=<textureId>" }, { status: 400 })

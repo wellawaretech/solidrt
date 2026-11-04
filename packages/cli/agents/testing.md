@@ -172,6 +172,10 @@ the state another way, and the test uses it:
 - `await app.link("myapp://item/42")` delivers a link the way the OS does
   (throws when the app has no `onLink`); with a router, that renders the
   screen the link names.
+- `app.requestedLinks()` lists the links the app asked to open with
+  `openLink`, oldest first. Under test nothing opens: each link is
+  recorded and the app's call resolves at once, so drive the app, then
+  assert the list.
 - `await app.camera(image)` makes an RGBA8 image (a `decodeImage` result,
   or `{ width, height, data }` the test builds) what the camera sees,
   before the app opens its camera: the viewfinder shows it and a QR code

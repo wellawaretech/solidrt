@@ -152,11 +152,12 @@ jobs:
 
   # The headless flux runtime (QuickJS + the forge marshalling: value, time,
   # marshal, intrinsics) on the same four platforms, same principle as
-  # test-forge. `--lib` without gui: the gui half needs alloy (SDL, Impeller)
+  # test-forge. `--lib` without gui: the gui half needs alloy (Impeller)
   # and lives in `check` on Linux. The `test` feature adds flux:test, which
-  # the `flux` binary carries, and its tests. QuickJS builds through bindgen,
-  # so libclang must be present: the macOS and Windows images ship it (the
-  # client builds there with no setup), the Ubuntu images need the package.
+  # the `flux` binary carries, and its tests. QuickJS builds through bindgen
+  # and ore builds SDL from source: the macOS and Windows images ship what
+  # both need (the client builds there with no setup), the Ubuntu images
+  # need the packages.
   test-flux:
     name: test-flux (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
@@ -182,9 +183,10 @@ jobs:
         with:
           key: test-flux-${{ matrix.platform }}
 
-      - name: Install libclang
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev clang
+      # libclang for QuickJS's bindgen, and SDL's build dependencies: flux
+      # links ore, which builds SDL from source (D-Bus for the portal).
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/linux-system-deps
 
       - name: Test flux
         run: cargo test -p flux --lib --features test,http
@@ -234,9 +236,10 @@ jobs:
         with:
           key: test-js-${{ matrix.platform }}-ci
 
-      - name: Install libclang
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev clang
+      # libclang for QuickJS's bindgen, and SDL's build dependencies: flux
+      # links ore, which builds SDL from source (D-Bus for the portal).
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/linux-system-deps
 
       # For make; the image's own is not on PATH.
       - if: matrix.platform == 'windows'

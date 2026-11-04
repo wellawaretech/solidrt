@@ -287,7 +287,7 @@ ignored with a warning.
 
 `<Router>` reports the current path through `reportLocation` from
 `sol:dev`, so `GET /__control__/link` and the `get_location` MCP tool read
-where the app is, and `POST /__control__/link` or `open_link` opens a
+where the app is, and `POST /__control__/link` or `send_link` opens a
 screen directly. `sol render --link /settings` renders that screen. A hot
 reload starts the rebuilt app at the path it was on: the runtime hands the
 last reported path to the new run as `env.launchLink`.

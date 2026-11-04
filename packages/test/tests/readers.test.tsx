@@ -1,10 +1,10 @@
 // The verbs an app test has beside naming nodes and sending pointer input:
-// a link, a debug command, a synthetic gamepad, and the readers past a
+// a link in and the links out, a debug command, a synthetic gamepad, and the readers past a
 // node's record: the subtree as text, its pixels, the GPU inventory.
 
 import { registerDebug } from "sol:dev"
 import { test, expect } from "../src/index.ts"
-import { createSignal, gamepads, onLink } from "@solidrt/core"
+import { createSignal, gamepads, onLink, openLink } from "@solidrt/core"
 
 // The error `run` rejects with; fails when it fulfills.
 async function failure(run: () => Promise<unknown>): Promise<string> {
@@ -24,6 +24,14 @@ test("a link reaches onLink, and an app without a handler fails the verb", async
   await app.mount(() => <text>{screen()}</text>)
   await app.link("app://settings/display")
   expect(app.find({ text: "app://settings/display" }).exists).toBe(true)
+})
+
+test("a link the app opens is recorded, not opened", async app => {
+  await app.mount(() => <text>credits</text>)
+  expect(app.requestedLinks()).toEqual([])
+  await openLink("https://example.com/credits")
+  await openLink("mailto:feedback@example.com")
+  expect(app.requestedLinks()).toEqual(["https://example.com/credits", "mailto:feedback@example.com"])
 })
 
 test("a debug command is called with its args and returns its value", async app => {

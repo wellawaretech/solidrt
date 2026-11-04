@@ -35,6 +35,10 @@ promptly on this return path. The `[sol] suspend` line is logged when the
 picker opens and nothing is logged for the resume, only `visibility:
 hidden` / `visible`.
 
+Possibly the same family as
+okf/backlog/android-first-query-after-launch-times-out.md (the first query
+after a launch times out, the next one answers).
+
 ## Done looks like
 
 - Reproduced with a controlled hide time: open the picker, leave the app

@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { camera as installCamera, capture, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, microphone as installMicrophone, painted as paintFrame, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowReady } from "sol:test"
+import { camera as installCamera, capture, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, requestedLinks, microphone as installMicrophone, painted as paintFrame, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
@@ -221,6 +221,17 @@ export interface TestApp {
    * `settle()` after it.
    */
   link(link: string): Promise<void>
+  /**
+   * The links the app asked to open (`openLink`), oldest first, the last
+   * 64. Under test no link is opened: each is recorded and the app's
+   * call resolves at once, so a test asserts which link a button opens.
+   *
+   * @example
+   * await app.input([{ type: "pointer", action: "tap", x: 100, y: 40 }])
+   * await app.settle()
+   * expect(app.requestedLinks()).toEqual(["https://example.com/credits"])
+   */
+  requestedLinks(): string[]
   /**
    * Makes `image` what the camera sees: every camera the app opens from
    * now on shows it (a `createCamera` or `open` resolves at once, no device
@@ -628,6 +639,7 @@ let app: TestApp = {
     if (!link(target)) throw new Error(`link: the app does not listen for links (no onLink handler), so ${JSON.stringify(target)} went nowhere`)
     await app.frame()
   },
+  requestedLinks: () => requestedLinks(),
   async camera(image) {
     let ok = image !== null && typeof image === "object" && image.data instanceof Uint8Array
     if (!ok) throw new TypeError("camera: pass { width, height, data }, with data a Uint8Array of RGBA8 (what decodeImage returns)")

@@ -134,6 +134,7 @@ const QUERY_KINDS: &[&str] = &[
   "location",
   "dialog",
   "dialog_answer",
+  "requested_links",
 ];
 
 #[cfg(not(target_os = "android"))]
@@ -1081,6 +1082,23 @@ async fn try_serve(
                   }
                 }
               }
+              Some("requested_links") => {
+                // The links the app asked to open (flux:link's openLink),
+                // oldest first, refused ones too: a dev client opens each
+                // and records it, so an agent reads back what a tap tried.
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(requested_links_reply(&ctx, id));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
               Some("dialog_answer") => {
                 // Answer the waiting file dialog, or queue the answer for
                 // the next one: the paths (in the client's own file system)
@@ -1513,6 +1531,14 @@ fn link_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, link: String) -> String {
   obj.set("link", link).expect("set link");
   flux::emit_event(ctx, "link", obj);
   serde_json::json!({"type": "result", "id": id, "data": {"delivered": delivered}}).to_string()
+}
+
+/// The links the app asked to open (the engine's `ore::link::Opener`
+/// session).
+/// Runs on the JS thread.
+fn requested_links_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
+  let links = flux::link::opener(ctx).map(|opener| opener.requested()).unwrap_or_default();
+  serde_json::json!({"type": "result", "id": id, "data": {"links": links}}).to_string()
 }
 
 /// The file dialog state (the engine's `alloy::Dialogs` session, as

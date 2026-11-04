@@ -1,9 +1,9 @@
-// navigator. The one navigator surface flux provides: the clipboard, text
-// only. Solidrt semantics on the standard shape: no permissions model and no
-// clipboard events - a single known app does not ask itself for permission.
-// GUI builds only (the clipboard belongs to the windowing platform); on a
-// headless flux there is no `navigator` at all, so
-// `typeof navigator !== "undefined"` is the availability check.
+// navigator.clipboard: the clipboard, text only. Solidrt semantics on the
+// standard shape: no permissions model and no clipboard events - a single
+// known app does not ask itself for permission. GUI builds only (the
+// clipboard belongs to the windowing platform); a headless flux has
+// `navigator` (navigator.d.ts) but no `navigator.clipboard`, so
+// `"clipboard" in navigator` is the availability check.
 
 interface Clipboard {
   /**
@@ -21,5 +21,3 @@ interface Clipboard {
 interface Navigator {
   readonly clipboard: Clipboard
 }
-
-declare var navigator: Navigator

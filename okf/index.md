@@ -131,6 +131,14 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   could not build; the embed moves to a program crate (runtime/, the stock
   program and the shape of every custom one), the CLI package ships the
   bundles, and a custom runtime embeds them from its node_modules.
+- **[ore landing zone - the OS layer crate, openLink first](plans/ore-landing-zone.md)** [2026-11-03]
+  "Start the platform-layering design (okf/design/platform-layering.md):
+  create the `ore` crate with the main-thread bridge and its first facilities
+  (openLink on SDL_OpenURL, the locale), marshal them through a new flux
+  `ore_plugins/` layer, re-export openLink from core next to onLink, rewrite
+  the placement rule in all six places in the same change, and rename the MCP
+  open_link tool to send_link; existing code moves later, as features touch
+  it."
 - **[Reactivity halt containment](plans/reactivity-halt-containment.md)** [2026-07-17]
   One unclaimed error used to halt the whole app for good; decided and built
   as a root error boundary around the app's window (error window with reset)
@@ -326,6 +334,12 @@ Shaped, not started.
   any relaunch that does not come from the CLI (the device's own launcher, a
   crash, a reboot) starts into apps/default and never reconnects; recovery
   needs adb.
+- **[The first control-API query after an Android launch can time out](backlog/android-first-query-after-launch-times-out.md)** [2026-11-04]
+  On the tablet, the first query to a freshly launched dev client sometimes
+  times out at 10 s while the next one on the same client answers in
+  milliseconds; seen on 2 of 11 launches, once during the first-connect asset
+  download and once with no download, cause not found; a query landing before
+  the app's entry ran is the leading suspect.
 - **[Android reports a keyboard that is not there](backlog/android-keyboard-capability.md)** [2026-08-14]
   On a touch-only Android device the capability layer gains "keyboard" as soon
   as the virtual keyboard opens, so any keyboard-first behavior gated on it
@@ -687,11 +701,6 @@ Shaped, not started.
   frame while the app keeps presenting partial frames, so on screen it reads
   as a logic bug (entities drawn after the throwing line vanish) and the only
   trace is a log line the reader has to think to look for.
-- **[Open a link in another app](backlog/open-url.md)** [2026-11-03]
-  "An app cannot open an external link (a store page, a credits link, a
-  mailto:, a text share link): onLink only receives links; wanted an
-  openUrl(url) backed by SDL_OpenURL, which the sdl3 crate already wraps and
-  SDLActivity already implements on Android."
 - **[Coalesce the per-event syncs of writes made outside a frame](backlog/outside-frame-sync-coalescing.md)** [2026-10-06]
   A pointer move handler that moves a sprite or a mesh flushes its layer or
   scene once per dispatched move, because every event is its own JS entry with

@@ -93,6 +93,11 @@ declare module "sol:test" {
    */
   export function link(link: string): boolean
   /**
+   * The links the app asked to open (`openLink` of `flux:link`), oldest
+   * first, the last 64. A test engine records them and opens none.
+   */
+  export function requestedLinks(): string[]
+  /**
    * Calls a debug command the app registered with `registerDebug`. `args`
    * and the result are JSON text (null for no args). Throws on an unknown
    * name, a throwing command and a result JSON cannot carry.

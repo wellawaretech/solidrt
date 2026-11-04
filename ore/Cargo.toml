@@ -1,0 +1,21 @@
+[package]
+name = "ore"
+version = "0.0.0"
+edition = "2021"
+
+# SDL, built from source as alloy builds it: per target, the same pin and
+# features, so the two crates unify on one SDL in a GUI build.
+[target.'cfg(target_os = "android")'.dependencies]
+sdl3 = { version = "=0.19.0", features = ["build-from-source"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+sdl3 = { version = "=0.19.0", features = ["build-from-source-static"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+sdl3 = { version = "=0.19.0", features = ["build-from-source-static"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+sdl3 = { version = "=0.19.0", features = ["build-from-source-static"] }
+
+[dependencies]
+log = { workspace = true }

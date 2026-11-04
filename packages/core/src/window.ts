@@ -5,6 +5,7 @@ import { renderFrame } from "sol:render"
 import { on, once } from "sol:events"
 import { exit as nativeExit, background as nativeBackground, registerProtocolHandler as nativeRegisterProtocolHandler } from "sol:app"
 import { platform } from "flux:process"
+import { openLink as nativeOpenLink } from "flux:link"
 import type { BufferId, TextureId } from "flux:gpu"
 import { getEventHandler, focusedNode, setFocus, activateTextInput, setInterestRoot } from "./core"
 import { scanForOrphans, getNodePath } from "./renderer"
@@ -625,7 +626,7 @@ export function onWindowFocus(fn: () => void) {
 /**
  * Calls `fn` with a link handed to the running app from outside: a custom
  * scheme link the OS routed here (another app, a QR code, a notification),
- * or one a dev tool sent (`open_link` over MCP, `POST /__control__/link`).
+ * or one a dev tool sent (`send_link` over MCP, `POST /__control__/link`).
  * The raw string, exactly as it arrived; the app decides what it means, and
  * it is untrusted input: validate before acting on any part of it. The link
  * the app was *started* with is not an event (nothing was listening yet) but
@@ -637,6 +638,28 @@ export function onLink(fn: (link: string) => void) {
   let unsubscribe = on("link", (e: { link: string }) => fn(e.link))
   if (getOwner()) onCleanup(unsubscribe)
   return unsubscribe
+}
+
+/**
+ * Sends the user out to `link`: the platform's opener hands it to the app
+ * that handles it (a browser for `https:`, the mail app for `mailto:`, the
+ * store app for a store link). It always goes out to the platform: a link
+ * of the app's own scheme comes back in through `onLink`, and in-app
+ * navigation is the router's `createLink(...).go()`.
+ *
+ * Resolves once the platform's opener accepted the link; rejects when the
+ * platform refuses it, with a "NotSupportedError" where it has no opener
+ * (`Flux.capabilities.includes("link")` says up front). It says nothing
+ * about what the other app does with the link. Throws a TypeError on a
+ * link without a scheme, or with a drive letter in its place (`C:\file`).
+ * Under `sol test` the link is recorded, not opened
+ * (`app.requestedLinks()`).
+ *
+ * @example
+ * await openLink("https://example.com/credits")
+ */
+export function openLink(link: string): Promise<void> {
+  return nativeOpenLink(link)
 }
 
 export function onWindowBlur(fn: () => void) {

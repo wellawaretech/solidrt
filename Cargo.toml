@@ -4,6 +4,7 @@ members = [
   "forge",
   "flux",
   "lattice",
+  "ore",
   "runtime",
 ]
 resolver = "2"
@@ -17,6 +18,7 @@ resolver = "2"
 alloy = { path = "alloy" }
 forge = { path = "forge" }
 flux = { path = "flux", default-features = false }
+ore = { path = "ore" }
 log = "=0.4.34"
 rquickjs = { version = "=0.14.0", features = ["bindgen", "rust-alloc", "futures", "macro", "loader"] }
 tokio = { version = "=1.53.3", features = ["rt", "rt-multi-thread", "time", "sync", "net"] }

@@ -33,7 +33,8 @@ fn roundtrip<T: Send + 'static>(
   cmd_tx.send(make(respond)).map(|_| rx).map_err(|_| format!("{what}: platform loop is gone"))
 }
 
-/// Install the `navigator` global with its `clipboard.readText`/`writeText`.
+/// Add `clipboard.readText`/`writeText` to the `navigator` global
+/// (navigator.rs installs it in every engine).
 pub fn init_clipboard(ctx: &Ctx<'_>, cmd_tx: Sender<AlloyCommand>) {
   let read_tx = cmd_tx.clone();
   let read_fn = Function::new(
@@ -77,7 +78,6 @@ pub fn init_clipboard(ctx: &Ctx<'_>, cmd_tx: Sender<AlloyCommand>) {
   let clipboard = Object::new(ctx.clone()).expect("failed to create navigator.clipboard");
   clipboard.set("readText", read_fn).expect("failed to set navigator.clipboard.readText");
   clipboard.set("writeText", write_fn).expect("failed to set navigator.clipboard.writeText");
-  let navigator = Object::new(ctx.clone()).expect("failed to create navigator");
+  let navigator: Object = ctx.globals().get("navigator").expect("navigator global");
   navigator.set("clipboard", clipboard).expect("failed to set navigator.clipboard");
-  ctx.globals().set("navigator", navigator).expect("failed to set navigator global");
 }

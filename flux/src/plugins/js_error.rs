@@ -29,3 +29,11 @@ impl<'js, T: IntoJs<'js>> IntoJs<'js> for JsTypeResult<T> {
     }
   }
 }
+
+/// An `Error` with a DOMException-style `name`, for a rejection code can
+/// branch on (`e.name === "NotSupportedError"`).
+pub(crate) fn named_error<'js>(ctx: &Ctx<'js>, name: &str, message: &str) -> rquickjs::Result<Value<'js>> {
+  let error = Exception::from_message(ctx.clone(), message)?;
+  error.set("name", name)?;
+  Ok(error.into_value())
+}

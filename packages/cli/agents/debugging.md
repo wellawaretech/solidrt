@@ -374,6 +374,10 @@ when exactly one client is connected.
   arrives (raw, on `onLink`) and answers `{ delivered }`, false when
   nothing listened. The way to open a screen directly, and to test link
   handling with no scheme registered anywhere.
+- `/requested-links` - the links the app asked to open with `openLink`
+  (`{ links }`, oldest first, the last 64, refused ones too). The client
+  opens each one for real and records it: read it after tapping a button that opens a
+  store page, a website or a `mailto:`.
 - POST `/input` with `{ "events": [...] }` - synthetic input through the
   real pipeline, same event shape as the `send_input` tool (tap real
   coordinates read from `/tree` just before: the window's logical size

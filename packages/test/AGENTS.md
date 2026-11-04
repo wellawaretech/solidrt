@@ -61,7 +61,10 @@ agents/testing.md.
   (an `onFrame` loop, a looping animation) fails it after 5000 ms of app
   time (`{ maxMs }` for another cap), naming what still wanted frames.
 - `await app.link(link)` delivers a link as the OS does (throws when the
-  app has no `onLink`); `await app.debug(name, args)` calls a command the
+  app has no `onLink`); `app.requestedLinks()` lists the links the app asked
+  to open with `openLink`, oldest first: under test each is
+  recorded, none opened, and the app's call resolves at once.
+  `await app.debug(name, args)` calls a command the
   app registered with `registerDebug` and returns its value: the way to
   put a loaded app into a state its UI reaches slowly. A `gamepad` event
   in `app.input` seats and drives a synthetic pad, as `send_input` does.

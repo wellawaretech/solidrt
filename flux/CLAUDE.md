@@ -7,20 +7,23 @@ still apply.
 ## Plugin layering
 
 Plugins are thin FFI layers: marshal arguments and results between JavaScript and
-Rust, nothing more. Domain logic belongs in the owning module (forge / alloy),
-exposed as methods the plugin forwards to.
+Rust, nothing more. Domain logic belongs in the owning module (forge / ore /
+alloy), exposed as methods the plugin forwards to.
 
-Three plugin layers, crate-level siblings under `flux/src/`, named for what
+Four plugin layers, crate-level siblings under `flux/src/`, named for what
 they marshal:
 
 - `standards_plugins/`: web-standard JS APIs installed as globals (`console`,
   `fetch`, the Fetch types `Headers`/`Request`/`Response`/`Body`, the streams
   `ReadableStream`/`WritableStream`/`TransformStream` (plain JS in
   `streams.js`, like `test.js`), timers, `WebSocket` client,
-  `TextEncoder`/`Decoder`), whatever backs them.
+  `TextEncoder`/`Decoder`, `navigator`), whatever backs them.
 - `forge_plugins/`: the `flux:*` capability modules, imported as `flux:http`,
   `flux:sqlite`, `flux:subprocess`, ... - marshalling over the forge capability
   cores.
+- `ore_plugins/`: the `flux:*` modules over ore, the OS layer (`flux:link`):
+  the platform's own facilities. An ore facility with a web-standard surface
+  (`navigator.languages`) goes in `standards_plugins/` instead.
 - `alloy_plugins/` (behind the `gui` feature, and re-exported as `flux::gui`
   to pair with the feature name): the alloy-backed render-tree, capture, media
   and input bindings. The runner (lattice) supplies the host instances via
@@ -34,9 +37,9 @@ they marshal:
   those four calls, never the per-plugin hooks or the tree handle (both
   crate-private).
 
-A fourth layer, `test_plugins/` (behind the `test` feature, which only the
+A fifth layer, `test_plugins/` (behind the `test` feature, which only the
 `flux` binary turns on): `flux:test`, which is no web standard and marshals
-neither forge nor alloy but flux's own facilities. Its surface is plain JS
+neither forge, ore nor alloy but flux's own facilities. Its surface is plain JS
 embedded in the crate (`test.js`), exported by a native module definition.
 Beside it sits the test host (`host.rs`, exported as `flux::test`): it runs
 a test file by evaluating it once to list its tests and once more per test,
@@ -53,7 +56,8 @@ what a module call returns belongs in the `.test.ts` file beside it.
 
 Placement rule: is the JS surface a web standard? `standards_plugins/`,
 regardless of what backs it (`fetch` marshals forge but is a standard).
-Otherwise the crate it marshals decides: `forge_plugins/` or `alloy_plugins/`.
+Otherwise the crate it marshals decides: `forge_plugins/`, `ore_plugins/` or
+`alloy_plugins/`.
 `packages/flux-types` keeps its own reader-facing `modules/`/`standards/`/`gui/`
 split (import, global, GUI); do not "fix" the asymmetry.
 

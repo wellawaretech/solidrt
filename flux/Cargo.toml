@@ -65,6 +65,9 @@ test = ["compile", "dep:serde_json"]
 
 [dependencies]
 forge = { workspace = true }
+# The OS layer (flux:link, navigator.languages), headless included: the SDL
+# it builds is about 4 MB of the binary (okf/design/platform-layering.md).
+ore = { workspace = true }
 alloy = { workspace = true, optional = true }
 # Render-tree layout types named by the gui tree/properties bindings. Must match
 # the version alloy + lattice pin (0.12.2) so the taffy `Style` type unifies

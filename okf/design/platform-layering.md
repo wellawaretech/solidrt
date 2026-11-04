@@ -12,7 +12,7 @@ it go through SDL" (alloy) - and they disagree whenever SDL wraps something
 that needs no window. Each time we either put the feature in the wrong
 crate or rewrote tested code: forge's own WAV decoder exists because
 `SDL_LoadWAV` "would put a decoder in alloy" (okf/done/audio-unification.md),
-and opening a link stalled on the same fork (okf/backlog/open-url.md).
+and opening a link stalled on the same fork (now okf/plans/ore-landing-zone.md).
 
 The cause: both crates were defined by SDL. alloy was "what needs SDL",
 forge "what does not". Talking to the OS on the app's behalf had no home,
@@ -237,10 +237,22 @@ This is rule 5 of the platform-layering memory as written: facts below
 the boundary, timeline and policy above. The vsync source is a fact,
 `FrameRelease` is policy.
 
-To verify before relying on it: SDL's event wait runs the
-`SDL_RunOnMainThread` callbacks, and queuing one wakes a blocked wait.
-If both hold, the main-thread bridge comes with the pump, in the GUI host
-and in headless `flux` alike.
+The main-thread bridge comes with the pump, in the GUI host and in
+headless `flux` alike (`ore::main_thread`, confirmed 2026-11-04 in the SDL
+3.4.18 source and with a probe on Wayland, X11 and offscreen):
+
+- Queuing a callback from another thread wakes a blocked wait: SDL sends
+  the video driver's wakeup with a shown window, a lifecycle wake on
+  Android, and with no window the wait polls every 1 ms.
+- The callback runs inside the wait, 0.1 to 0.8 ms after it is queued,
+  and the wait does not return for it: no event comes out. A bridge call
+  answers through what its callback captures, never through a turn of the
+  loop, so the loop needs no change.
+- On the main thread, or while `SDL_INIT_EVENTS` was never initialized,
+  the callback runs at once on the calling thread. Headless `flux` never
+  initializes events and runs JS on its main thread, so a call from its
+  JS runs directly; a call from an isolate thread there runs on that
+  thread (fine for `SDL_OpenURL` on every platform).
 
 ## Positional audio
 
@@ -383,8 +395,8 @@ it, not as a big-bang refactor.
    alloy for now: the OS crate's first facilities are window-free SDL
    calls that work without alloy's context, and headless `flux` initializes
    what it needs on its main thread, which is also its JS thread.
-2. **Rule.** Rewrite the placement rule (CLAUDE.md Projects,
-   alloy/CLAUDE.md, forge/src/lib.rs, the platform-layering memory): new
+2. **Rule.** Rewrite the placement rule (all six places are listed in
+   okf/plans/ore-landing-zone.md, work step 6): new
    work that reaches SDL or the OS goes into the OS crate; nothing new of
    that kind lands in alloy, forge or lattice.
 3. **Moves, as features touch them.** The pump and window interface (the
@@ -396,9 +408,8 @@ it, not as a big-bang refactor.
 
 ## Open
 
-- The SDL main thread: confirm that the first `SDL_Init` fixes it, that
-  the pump runs `SDL_RunOnMainThread` callbacks and that queuing one wakes
-  a blocked wait, and what a headless process that never pumps needs.
+- The SDL main thread: confirm that the first `SDL_Init` fixes it (the
+  bridge's wake and run are confirmed, see "The main loop").
 - SDL init ownership once the window moves: the OS layer inits every
   subsystem, on the host's main thread.
 - The windowless Android start: whether SDL's native library loads and
@@ -407,5 +418,6 @@ it, not as a big-bang refactor.
 - iOS (a future target): APNs, BGTaskScheduler and entitlements fit the
   same pieces; not checked further.
 - None of the test-set features has a backlog item except those already
-  in `backlog/` (open-url, deep-links, clipboard-image, share-sheet,
-  location-module, gamepad-haptics, desktop-widget-window).
+  in `backlog/` (deep-links, clipboard-image, share-sheet,
+  location-module, gamepad-haptics, desktop-widget-window) and opening a
+  link, now part of okf/plans/ore-landing-zone.md.

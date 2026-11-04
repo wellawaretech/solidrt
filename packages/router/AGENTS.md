@@ -155,6 +155,6 @@ export function SettingsRoutes() {
 - Links are untrusted: put validation in `params.parse`, never in the
   screen. `linkToPath` strips a custom scheme whole (`myapp://a/b` is
   `/a/b`) and an http(s) host.
-- Tooling: `open_link` / `POST /__control__/link` opens a screen,
+- Tooling: `send_link` / `POST /__control__/link` opens a screen,
   `get_location` / `GET /__control__/link` reads the path the router
   publishes, `sol render --link <path>` renders that screen.

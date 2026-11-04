@@ -12,6 +12,7 @@
 /// <reference path="./modules/mdns.d.ts" />
 /// <reference path="./modules/wasm.d.ts" />
 /// <reference path="./modules/isolate.d.ts" />
+/// <reference path="./modules/link.d.ts" />
 /// <reference path="./modules/test.d.ts" />
 
 // Web-standard globals. The runtime is QuickJS, not a browser or Node, so it
@@ -28,6 +29,7 @@
 /// <reference path="./standards/websocket.d.ts" />
 /// <reference path="./standards/abort.d.ts" />
 /// <reference path="./standards/crypto.d.ts" />
+/// <reference path="./standards/navigator.d.ts" />
 /// <reference path="./standards/clipboard.d.ts" />
 
 // GUI capabilities (present only on a gui-enabled runtime). rendertree/camera/

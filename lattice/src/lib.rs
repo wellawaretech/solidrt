@@ -1794,11 +1794,13 @@ fn start_with(
 }
 
 /// What every stepped engine gets beside the stepper: the window state a
-/// host waits on, and the wall taken out (performance.now() reads 0, the
-/// calendar is the fixed epoch plus frame time).
+/// host waits on, the wall taken out (performance.now() reads 0, the
+/// calendar is the fixed epoch plus frame time), and links recorded
+/// instead of opened.
 #[cfg(any(feature = "go", feature = "test"))]
 fn stepped_engine(ctx: &flux::rquickjs::Ctx<'_>) {
   ctx.store_userdata(stepped::WindowReady::default()).expect("store window ready");
+  flux::link::set_record_only(ctx);
   if let Err(e) = flux::freeze_wall(ctx, stepped::EPOCH_MS) {
     log::error!("[sol] stepped engine: failed to freeze the wall clock: {e}");
   }

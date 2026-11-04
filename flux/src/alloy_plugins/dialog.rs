@@ -23,6 +23,7 @@ use alloy::{
   AlloyCommand, DialogAnswer, DialogError, DialogFilter, DialogKind, DialogRequest, DialogResponder, Dialogs,
 };
 
+use crate::plugins::js_error::named_error;
 use crate::plugins::marshal::OptArg;
 
 struct Inner {
@@ -262,12 +263,4 @@ impl<'js> IntoJs<'js> for Settled {
       },
     }
   }
-}
-
-/// An `Error` with a DOMException-style `name`, for a rejection code can
-/// branch on (`e.name === "NotSupportedError"`).
-fn named_error<'js>(ctx: &Ctx<'js>, name: &str, message: &str) -> rquickjs::Result<Value<'js>> {
-  let error = Exception::from_message(ctx.clone(), message)?;
-  error.set("name", name)?;
-  Ok(error.into_value())
 }

@@ -463,7 +463,7 @@ let TOOLS: {
     },
   },
   {
-    name: "open_link",
+    name: "send_link",
     annotations: DRIVES_APP,
     description:
       "Deliver a link to the running app, the way a custom-scheme link routed by the OS arrives: the raw string reaches the app's onLink handlers (a router opens the screen it names; an app without a router handles it itself). Use it to open a screen directly instead of tapping through the tree - `/settings/theme` or `myapp://settings/theme`, whichever the app documents. Returns delivered: false when nothing in the app listens, in which case the link was dropped. Follow with get_location or get_snapshot to see where the app landed.",
@@ -473,10 +473,17 @@ let TOOLS: {
     },
   },
   {
+    name: "get_requested_links",
+    annotations: READ_ONLY,
+    description:
+      "Read the links the running app asked to open with openLink (a store page, a website, a mailto:), oldest first, the last 64: `links`, the ones the platform refused included. The client opens each link for real and records it too, so after tapping a \"Rate app\" or \"Send feedback\" button this says which link it tried. Under the test host the links are only recorded, never opened. The opposite direction of send_link, which delivers a link into the app.",
+    inputSchema: { client: CLIENT_ARG },
+  },
+  {
     name: "get_location",
     annotations: READ_ONLY,
     description:
-      "Read where the app is: the location it reports through reportLocation from sol:dev (a router's current path). null when the app reports none. The cheap way to confirm a navigation or an open_link landed before taking a snapshot. A reload starts the app at this location again.",
+      "Read where the app is: the location it reports through reportLocation from sol:dev (a router's current path). null when the app reports none. The cheap way to confirm a navigation or a send_link landed before taking a snapshot. A reload starts the app at this location again.",
     inputSchema: { client: CLIENT_ARG },
   },
   {
@@ -548,7 +555,7 @@ let TOOLS: {
     name: "settle",
     annotations: READ_ONLY,
     description:
-      "Wait until a running app client is at rest, in place of a sleep: nothing the app started is still in flight (a fetch, a file or body read, a query, an isolate call), no timer is due, and no frame is demanded (no running transition, no pending tree write). Call it after send_input, call_debug, open_link or reload and before reading the tree or taking a snapshot, so the read sees the finished state. Returns `settled` (true when the app came to rest within max_ms) and `waitedMs`; when false, what is left: `demand` (why frames are still wanted: \"onFrame\", \"a transition on view labelled ...\", \"a playing video\", \"requestAnimationFrame\", ...), `inFlight` (a count per kind of work, e.g. {fetch: 1}), `timerDue` and `idleDue`. An app that animates on its own (a game loop, a looping animation, a video) never settles: that is the answer, not an error - freeze it with set_time_scale 0 and step_frames instead, or, when something loads behind the animation (a spinner over a model load), pass frames: false to wait for the app's work alone: nothing in flight, and a frame after the last of it in which nothing more started. What stands is not waited for: servers, open sockets, timers not yet due. With max_ms 0 it reads the state without waiting.",
+      "Wait until a running app client is at rest, in place of a sleep: nothing the app started is still in flight (a fetch, a file or body read, a query, an isolate call), no timer is due, and no frame is demanded (no running transition, no pending tree write). Call it after send_input, call_debug, send_link or reload and before reading the tree or taking a snapshot, so the read sees the finished state. Returns `settled` (true when the app came to rest within max_ms) and `waitedMs`; when false, what is left: `demand` (why frames are still wanted: \"onFrame\", \"a transition on view labelled ...\", \"a playing video\", \"requestAnimationFrame\", ...), `inFlight` (a count per kind of work, e.g. {fetch: 1}), `timerDue` and `idleDue`. An app that animates on its own (a game loop, a looping animation, a video) never settles: that is the answer, not an error - freeze it with set_time_scale 0 and step_frames instead, or, when something loads behind the animation (a spinner over a model load), pass frames: false to wait for the app's work alone: nothing in flight, and a frame after the last of it in which nothing more started. What stands is not waited for: servers, open sockets, timers not yet due. With max_ms 0 it reads the state without waiting.",
     inputSchema: {
       max_ms: z
         .number()
@@ -706,12 +713,14 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
     }
     case "list_debug":
       return control(`/debug${clientParam(args)}`)
-    case "open_link": {
-      if (typeof args?.link !== "string" || !args.link) return { ok: false, message: "open_link requires a link" }
+    case "send_link": {
+      if (typeof args?.link !== "string" || !args.link) return { ok: false, message: "send_link requires a link" }
       let params = new URLSearchParams({ link: args.link })
       if (typeof args?.client === "number") params.set("client", String(args.client))
       return control(`/link?${params.toString()}`, "POST")
     }
+    case "get_requested_links":
+      return control(`/requested-links${clientParam(args)}`)
     case "get_location":
       return control(`/link${clientParam(args)}`)
     case "get_dialog":
