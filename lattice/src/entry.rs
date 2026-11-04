@@ -279,13 +279,16 @@ pub fn main(program: Program) {
     // A link of the app's own scheme as the first argument is how the OS
     // hands a registered scheme to its handler (`"<exe>" "%1"`, `%u`): the
     // launch link, not an app argument. An instance already running takes
-    // it instead, and this process ends without a window (links.rs).
+    // it instead, and this process ends without a window (ore::link's
+    // hand-off, at the endpoint in the app's client dir).
     let link = match app_args.first() {
-      Some(arg) if crate::links::own_link(&payload.app_id, arg) => Some(app_args.remove(0)),
+      Some(arg) if ore::link::own_link(&payload.app_id, arg) => Some(app_args.remove(0)),
       _ => None,
     };
     if let Some(link) = &link {
-      if crate::links::hand_off(&payload.app_id, link) {
+      let handed_off =
+        crate::storage::pref_dir(&payload.app_id).is_some_and(|dir| ore::link::hand_off(&payload.app_id, &dir, link));
+      if handed_off {
         return;
       }
     }

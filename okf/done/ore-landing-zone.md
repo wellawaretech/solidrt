@@ -1,6 +1,6 @@
 ---
-title: ore landing zone - the OS layer crate, openLink first
-description: "Start the platform-layering design (okf/design/platform-layering.md): create the `ore` crate with the main-thread bridge and its first facilities (openLink on SDL_OpenURL, the locale), marshal them through a new flux `ore_plugins/` layer, re-export openLink from core next to onLink, rewrite the placement rule in all six places in the same change, and rename the MCP open_link tool to send_link; existing code moves later, as features touch it."
+title: ore landing zone - the OS layer crate, the link facility first
+description: "Start the platform-layering design (okf/design/platform-layering.md): create the `ore` crate with the main-thread bridge and its first facilities (openLink on SDL_OpenURL, the locale, the scheme registration and single-instance hand-off moved from lattice), marshal them through a new flux `ore_plugins/` layer (`flux:link` with openLink and registerProtocolHandler), re-export them from core next to onLink, rewrite the placement rule in all six places in the same change, and rename the MCP open_link tool to send_link; existing code moves later, as features touch it."
 created: 2026-11-03
 ---
 
@@ -39,6 +39,10 @@ screen, a `mailto:` for feedback, a messenger's text-share link.
   platform has no handler or refuses it. It says nothing about what the
   other app does with the link.
 - The locale reachable from JS (`navigator.languages`).
+- The scheme registration and the single-instance hand-off in
+  `ore::link`, `registerProtocolHandler` in `flux:link` (core re-exports
+  it, as before), the app's identity handed to the engine as a plain
+  value.
 - Under `sol test` and the control API, `openLink` is recorded instead of
   opening anything, so a test or an agent can assert which link the app
   opened.
@@ -74,10 +78,33 @@ screen, a `mailto:` for feedback, a messenger's text-share link.
 - **SDL init stays in alloy for now.** `ore`'s first facilities are
   window-free calls that work without alloy's context. Headless `flux`
   runs JS on its main thread, so a main-thread call runs there directly.
-- **Module `flux:link`** (2026-11-04). It holds `openLink` only; the
-  inbound side stays the `link` bus event. The scheme registration
-  (`registerProtocolHandler`, `links.rs`) can join it once it moves to ore.
+- **Module `flux:link`** (2026-11-04). It holds `openLink` and
+  `registerProtocolHandler`; the inbound side stays the `link` bus event.
   `flux:shell` read as a subprocess, `flux:open` as a bare verb.
+- **The scheme registration moves now** (2026-11-04), not when a feature
+  touches it: it is the other half of the link facility, and `openLink`
+  already gave ore its link session. All of `lattice/src/links.rs` is OS
+  code, so all of it goes to `ore::link`: `register` (the freedesktop
+  entry, the Windows protocol key; Android's package and macOS's bundle
+  declare the scheme), `own_link`, and the single-instance `hand_off` and
+  `listen`. `listen` hands each link to a callback as a plain string;
+  lattice turns it into `AlloyEvent::Link` and raises the window. The
+  endpoint dir stays a parameter: the pref path is the storage roots' move.
+  `windows-registry` moves with it, and ore takes `tokio` for the listener.
+- **The app's identity is a plain value the host hands the engine.** The
+  link session (`ore::link::Session`, renamed from `Opener`) holds an
+  `OwnScheme`: `Unknown` (no app identity: headless flux, a dev run of the
+  runner; the call throws), `NotHandler` (the dev client and the player:
+  the call warns and returns, so startup code runs unchanged) or `Own`
+  (a packed app: the call writes the registration). lattice picks the
+  variant where it built the `sol:app` closure before, through
+  `flux::link::set_own_scheme`; ore decides what the platform does with
+  `Own`; flux marshals. A record-only session writes nothing and returns.
+  The hand-off stays a host call: lattice calls ore before start and to
+  listen. `sol:app` keeps `exit` and `background`.
+- **No read-back and no capability for the registration.** A test does not
+  need to assert it yet, and the call throws with the reason where it
+  cannot register; only packed desktop apps call it.
 - **A link needs a scheme** (RFC 3986 grammar), any scheme of two or
   more characters: `openLink` throws a TypeError on `/settings` or
   `example.com`, the likely mistakes, and on a Windows drive path
@@ -93,7 +120,7 @@ screen, a `mailto:` for feedback, a messenger's text-share link.
   `flux --test` host record without opening. A human using a dev client
   driven by an agent still gets the browser.
 - **Not in scope:** moving the pump, the window, the audio device, the
-  camera, the Android glue, `links.rs` or forge's OS modules. They move
+  camera, the Android glue, the pref path or forge's OS modules. They move
   when a feature touches them (the design note, "Migration").
 
 ## Work
@@ -140,6 +167,14 @@ screen, a `mailto:` for feedback, a messenger's text-share link.
    re-spawn.
 8. **CI.** Check that every target the `flux` binary builds for can build
    SDL from source, and the build time it adds.
+9. **The scheme registration to ore.** `lattice/src/links.rs` and its
+   tests to `ore::link` (`register`, `own_link`, `hand_off`, `listen`);
+   `Opener` renamed `Session`, with the `OwnScheme` and `register_handler`;
+   `registerProtocolHandler` in `flux:link`, core re-exporting it from
+   there, out of `sol:app` and its types; lattice sets the `OwnScheme` and
+   calls ore for the hand-off. Then the notes: the design note ("app
+   identity", the lattice inventory), okf/backlog/deep-links.md, the pack
+   docs and the lattice comments that name `links.rs`.
 
 ## Findings
 

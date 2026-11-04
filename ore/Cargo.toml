@@ -19,3 +19,13 @@ sdl3 = { version = "=0.19.0", features = ["build-from-source-static"] }
 
 [dependencies]
 log = { workspace = true }
+# The single-instance link listener (src/link/instance.rs): a Unix domain
+# socket or a named pipe, served on the host's runtime.
+tokio = { workspace = true, features = ["io-util"] }
+
+# The per-user protocol registration a packed app writes on
+# registerProtocolHandler (src/link/registration.rs), through Microsoft's
+# safe registry binding; already in the graph (ipconfig, the resolver's
+# Windows DNS config).
+[target.'cfg(windows)'.dependencies]
+windows-registry = "=0.6.1"

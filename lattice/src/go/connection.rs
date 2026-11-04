@@ -1533,11 +1533,10 @@ fn link_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, link: String) -> String {
   serde_json::json!({"type": "result", "id": id, "data": {"delivered": delivered}}).to_string()
 }
 
-/// The links the app asked to open (the engine's `ore::link::Opener`
-/// session).
+/// The links the app asked to open (the engine's `ore::link::Session`).
 /// Runs on the JS thread.
 fn requested_links_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
-  let links = flux::link::opener(ctx).map(|opener| opener.requested()).unwrap_or_default();
+  let links = flux::link::session(ctx).map(|session| session.requested()).unwrap_or_default();
   serde_json::json!({"type": "result", "id": id, "data": {"links": links}}).to_string()
 }
 

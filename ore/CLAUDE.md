@@ -26,7 +26,7 @@ a capability. Platform differences end here: what ore hands upward is
 normalized.
 
 A facility a test must take the place of has a session an embedder keeps
-per engine (`link::Opener`), the same shape as the dialog session: the log a
+per engine (`link::Session`), the same shape as the dialog session: the log a
 test or an agent reads back, and a mode in which the platform is never
 reached.
 

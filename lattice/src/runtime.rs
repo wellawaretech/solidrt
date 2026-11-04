@@ -129,7 +129,9 @@ impl EventSender {
     Self { tx, wall_start }
   }
 
-  /// Send an event that happens now. Err when the loop is gone.
+  /// Send an event that happens now. Err when the loop is gone. No caller
+  /// in the packed Android runtime: the link hand-off is desktop only.
+  #[cfg_attr(all(target_os = "android", not(any(feature = "go", feature = "test"))), allow(dead_code))]
   pub fn send(&self, event: AlloyEvent) -> Result<(), ()> {
     let raw_ms = self.wall_start.elapsed().as_secs_f64() * 1000.0;
     self.tx.send(Arrived { event, raw_ms }).map_err(|_| ())

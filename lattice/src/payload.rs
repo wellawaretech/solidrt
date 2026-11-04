@@ -29,7 +29,7 @@ pub struct FactoryPayload {
   pub fonts: crate::manifest::AppFonts,
   pub app_id: String,
   // The manifest's displayName: what the OS shows for the app where the
-  // runtime names it (a registered scheme handler, links.rs).
+  // runtime names it (a registered scheme handler, ore::link).
   pub display_name: Option<String>,
   pub base: forge::fs::AssetsBase,
   // (filename, bytes) in section order; only the single-file trailer carries

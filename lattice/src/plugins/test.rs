@@ -223,7 +223,7 @@ fn link(ctx: Ctx<'_>, link: String) -> flux::rquickjs::Result<bool> {
 /// oldest first; a test engine records them and opens none.
 fn requested_links(ctx: Ctx<'_>) -> flux::rquickjs::Result<Vec<String>> {
   stepper(&ctx, "requestedLinks()")?;
-  Ok(flux::link::opener(&ctx).map(|opener| opener.requested()).unwrap_or_default())
+  Ok(flux::link::session(&ctx).map(|session| session.requested()).unwrap_or_default())
 }
 
 /// `debug(name, args)`: call a debug command the app registered

@@ -22,7 +22,7 @@ pub enum AlloyCommand {
   SetUiBusyFlag(std::sync::Arc<std::sync::atomic::AtomicBool>),
   SetTitle(String),
   // Bring the window to the front: a link handed over by a second instance
-  // (lattice links.rs) should show the screen it opened, not stay behind
+  // (ore::link's hand-off) should show the screen it opened, not stay behind
   // whatever started that instance.
   RaiseWindow,
   // Window icon from straight-alpha RGBA8 pixels (width * height * 4 bytes).

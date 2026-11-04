@@ -1,8 +1,9 @@
-// flux:link's openLink and the navigator locale. The test host records
-// links instead of opening them, so a call resolves without a browser
-// showing up, and the capability is listed whatever the machine has.
+// flux:link and the navigator locale. The test host records links instead
+// of opening them, so a call resolves without a browser showing up, and
+// the capability is listed whatever the machine has; it writes no
+// registration either.
 import { expect, test } from "flux:test"
-import { openLink } from "flux:link"
+import { openLink, registerProtocolHandler } from "flux:link"
 
 test("the test host lists the link capability", () => {
   expect(Flux.capabilities.includes("link")).toBe(true)
@@ -32,4 +33,8 @@ test("navigator.languages lists BCP 47 tags, navigator.language is the first", (
 
 test("navigator.languages is frozen", () => {
   expect(Object.isFrozen(navigator.languages)).toBe(true)
+})
+
+test("registerProtocolHandler writes nothing under the test host", () => {
+  expect(registerProtocolHandler()).toBeUndefined()
 })

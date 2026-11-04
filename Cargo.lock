@@ -2628,6 +2628,7 @@ dependencies = [
  "libloading 0.9.0",
  "log",
  "mdns-sd",
+ "ore",
  "reqwest 0.12.28",
  "resvg",
  "rquickjs",
@@ -2638,7 +2639,6 @@ dependencies = [
  "taffy",
  "tokio",
  "tokio-websockets",
- "windows-registry",
 ]
 
 [[package]]
@@ -3546,6 +3546,8 @@ version = "0.0.0"
 dependencies = [
  "log",
  "sdl3",
+ "tokio",
+ "windows-registry",
 ]
 
 [[package]]

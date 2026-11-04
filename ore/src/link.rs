@@ -14,15 +14,28 @@
 //! false on a Linux session with neither the portal nor `xdg-open` (a
 //! server). An embedder lists the capability from it.
 //!
-//! `Opener` is the session an embedder keeps per engine: every link the
+//! The other direction is the app's own scheme, its app id
+//! (`com.example.app://settings`): `register` makes this executable its
+//! handler (registration.rs), and a second instance the OS starts with a
+//! link hands it to the first (instance.rs).
+//!
+//! `Session` is the session an embedder keeps per engine: every link the
 //! app asks to open goes in its log, refused ones included, which a test
-//! or an agent reads back, and a session set to record only opens nothing,
-//! as a test host's engine does. Like the dialog session, it is where a
-//! test takes the platform's place.
+//! or an agent reads back, and a session set to record only opens nothing
+//! and registers nothing, as a test host's engine does. Like the dialog
+//! session, it is where a test takes the platform's place. It also holds
+//! what the host knows of the app's own scheme (`OwnScheme`), which the
+//! registration reads.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+
+pub(crate) mod instance;
+pub(crate) mod registration;
+
+pub use instance::{hand_off, listen};
+pub use registration::register;
 
 /// How many links the log keeps, the newest last: what a test or an agent
 /// reads back, without an app that asks for links in a loop growing it.
@@ -99,7 +112,14 @@ pub fn scheme(link: &str) -> Option<&str> {
   .then_some(scheme)
 }
 
-/// Open `link` now. Main thread only: reach it through `Opener::open`.
+/// Whether `arg` is a link of the app's own scheme: `<scheme>:` followed by
+/// anything, the scheme compared case-insensitively as schemes are.
+pub fn own_link(scheme: &str, arg: &str) -> bool {
+  let n = scheme.len();
+  arg.len() > n && arg.is_char_boundary(n) && arg[..n].eq_ignore_ascii_case(scheme) && arg.as_bytes()[n] == b':'
+}
+
+/// Open `link` now. Main thread only: reach it through `Session::open`.
 ///
 /// Called through `sdl3::sys`, not `sdl3::url::open_url`: on Android
 /// `SDL_OpenURL` fails without setting an error (the activity's `openURL`
@@ -122,19 +142,40 @@ fn open_now(link: &str) -> Result<(), LinkError> {
   Err(LinkError::Failed(if error.is_empty() { "no app on this device handles the link".to_string() } else { error }))
 }
 
-/// The link session of one engine (see the module doc).
-pub struct Opener {
-  record_only: AtomicBool,
-  requested: Mutex<VecDeque<String>>,
+/// Who answers the app's own scheme in this host, as the host knows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OwnScheme {
+  /// No app identity (headless flux, a dev run of the runner): there is
+  /// nothing to register, and `register_handler` says so.
+  Unknown,
+  /// This host is not the scheme's handler (the dev client, the player):
+  /// `register_handler` warns and writes nothing, so an app that registers
+  /// at startup runs unchanged.
+  NotHandler,
+  /// A packed app: `register_handler` makes this executable the handler.
+  /// `display_name` is what the OS shows for it.
+  Own { scheme: String, display_name: String },
 }
 
-impl Opener {
-  pub fn new() -> Arc<Opener> {
-    Arc::new(Opener { record_only: AtomicBool::new(false), requested: Mutex::new(VecDeque::new()) })
+/// The link session of one engine (see the module doc).
+pub struct Session {
+  record_only: AtomicBool,
+  requested: Mutex<VecDeque<String>>,
+  own_scheme: Mutex<OwnScheme>,
+}
+
+impl Session {
+  pub fn new() -> Arc<Session> {
+    Arc::new(Session {
+      record_only: AtomicBool::new(false),
+      requested: Mutex::new(VecDeque::new()),
+      own_scheme: Mutex::new(OwnScheme::Unknown),
+    })
   }
 
-  /// Never open a link in this session: every open is logged and resolves
-  /// (a test host's engine, a render).
+  /// Never reach the platform in this session: every open is logged and
+  /// resolves, and a registration writes nothing (a test host's engine, a
+  /// render).
   pub fn set_record_only(&self) {
     self.record_only.store(true, Ordering::Relaxed);
   }
@@ -148,6 +189,28 @@ impl Opener {
   /// which link a button tried, whatever the platform answered.
   pub fn requested(&self) -> Vec<String> {
     self.requested.lock().unwrap_or_else(PoisonError::into_inner).iter().cloned().collect()
+  }
+
+  /// What the host knows of the app's own scheme; `Unknown` until set.
+  pub fn set_own_scheme(&self, own: OwnScheme) {
+    *self.own_scheme.lock().unwrap_or_else(PoisonError::into_inner) = own;
+  }
+
+  /// Make this executable the handler for the app's own scheme, as
+  /// `OwnScheme` says (see there); a record-only session writes nothing.
+  pub fn register_handler(&self) -> Result<(), String> {
+    if self.is_record_only() {
+      return Ok(());
+    }
+    let own = self.own_scheme.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    match own {
+      OwnScheme::Unknown => Err("this run has no app identity (not a packed app); nothing to register".to_string()),
+      OwnScheme::NotHandler => {
+        log::warn!("[ore] Nothing registered: this host (a dev client, the player) is not the app's scheme handler; a packed app registers its own scheme");
+        Ok(())
+      }
+      OwnScheme::Own { scheme, display_name } => register(&scheme, &display_name),
+    }
   }
 
   /// Open `link` on the main thread and answer through `respond`, logging

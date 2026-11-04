@@ -49,6 +49,9 @@ flux = { workspace = true, default-features = false, features = ["gui", "compile
 # client, the p2p tunnel core flux:p2p marshals (the `p2p` feature, which
 # `go` implies). Already in the tree via flux.
 forge = { workspace = true }
+# The OS layer, for the host's own concerns: the single-instance link
+# hand-off and the app's scheme identity it hands the engine.
+ore = { workspace = true }
 half = "=2.7.1"
 rquickjs = { workspace = true }
 # taffy stays: the properties plugins assign taffy Style directly. The render
@@ -88,9 +91,3 @@ libloading = "=0.9.0"
 # receiving mDNS there would need a WifiManager.MulticastLock, so it is excluded.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 mdns-sd = "=0.21.5"
-
-# The per-user protocol registration a packed app writes on
-# registerProtocolHandler (src/links.rs), through Microsoft's safe registry
-# binding; already in the graph (ipconfig, the resolver's Windows DNS config).
-[target.'cfg(windows)'.dependencies]
-windows-registry = "=0.6.1"

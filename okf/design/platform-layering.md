@@ -91,8 +91,10 @@ lattice reaches ore for host concerns only, never for features:
   native side and publishes ndk-context; no alloy runs there;
 - init order: the host owns the main thread and makes the first
   `SDL_Init` on it, before alloy or forge start anything;
-- app identity: the scheme registration and the single-instance hand-off
-  (`links.rs` today), called with the app's id;
+- app identity: the single-instance hand-off (`ore::link`'s `hand_off`
+  and `listen`), called with the app's id, and the app's own scheme handed
+  to the engine as a plain value (`OwnScheme`), which the app-facing
+  registration (`registerProtocolHandler` in `flux:link`) reads;
 - storage roots: the per-app user folders (`storage.rs` and `gl_libs.rs`
   call `get_pref_path` today).
 
@@ -291,9 +293,8 @@ OS integration is spread over three crates:
   AMediaCodec decoder's JNI side, `process::home_dir` (a slice of
   `SDL_GetUserFolder` rebuilt from `HOME`/`USERPROFILE`), the WAV decoder
   in place of `SDL_LoadWAV`.
-- **lattice**: the scheme registration (`links.rs`: a .desktop file,
-  mimeapps.list, the Windows registry), the pref path for the storage roots
-  (`storage.rs`) and the GL library cache (`gl_libs.rs`), both calling
+- **lattice**: the pref path for the storage roots (`storage.rs`) and the
+  GL library cache (`gl_libs.rs`), both calling
   `sdl3::filesystem::get_pref_path` directly.
 
 A headless `flux` script has no per-app data directory, no locale, no
@@ -401,8 +402,10 @@ it, not as a big-bang refactor.
    that kind lands in alloy, forge or lattice.
 3. **Moves, as features touch them.** The pump and window interface (the
    biggest single piece, mechanical, not a redesign), the audio device and
-   camera (with the mixer to forge), the Android glue, `links.rs`, the
-   pref-path calls, forge's OS modules, `barcode.rs` to forge.
+   camera (with the mixer to forge), the Android glue, the pref-path
+   calls, forge's OS modules, `barcode.rs` to forge. The scheme
+   registration and the single-instance hand-off (`links.rs`) moved with
+   the link facility (okf/plans/ore-landing-zone.md).
 4. **Windowless run mode**, its own backlog item, before push, alarms or
    background sync.
 

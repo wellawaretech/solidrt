@@ -68,7 +68,8 @@ lattice and core see one event; the cold link is a launch fact
 
 In order of difficulty, hardest first:
 
-1. DONE 2026-09-23: **desktop single instance** (`lattice/src/links.rs`).
+1. DONE 2026-09-23: **desktop single instance** (`ore/src/link/instance.rs`,
+   moved from `lattice/src/links.rs`).
    The first instance listens on a local endpoint in the app's own client
    dir, a Unix domain socket `link.sock` on Linux and macOS, a named pipe
    scoped by the client dir on Windows; a second instance started with a
@@ -80,7 +81,7 @@ In order of difficulty, hardest first:
    raised (`AlloyCommand::RaiseWindow`). A second instance without a link
    keeps the recorded behavior (client-storage-updates: warn and run).
 2. DONE 2026-09-23: **desktop registration without an installer**, on the
-   explicit call `registerProtocolHandler()` (`sol:app`, re-exported by
+   explicit call `registerProtocolHandler()` (`flux:link`, re-exported by
    core; the web's name, no arguments since the scheme is fixed). Linux:
    `~/.local/share/applications/<appId>.desktop` (Exec quoted only where
    the Desktop Entry spec requires it, since xdg-open's generic path takes

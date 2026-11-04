@@ -6,8 +6,9 @@
 //! It depends on nothing of ours, and names no scripting-engine types: the
 //! hosts (lattice) and the marshalling (flux `ore_plugins/`) call it.
 //!
-//! Its first facilities are window-free: the main-thread bridge, opening a
-//! link and the locale. The window, the event pump, the devices and the
+//! Its first facilities are window-free: the main-thread bridge, the
+//! links (opening one, the app's own scheme registration and its
+//! single-instance hand-off) and the locale. The window, the event pump, the devices and the
 //! Android glue move in from alloy, forge and lattice as features touch
 //! them, not before.
 

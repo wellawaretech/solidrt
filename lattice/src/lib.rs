@@ -13,8 +13,6 @@ mod gl_libs;
 mod go;
 #[cfg(any(feature = "go", feature = "test"))]
 mod input_plan;
-#[cfg_attr(any(feature = "go", target_os = "android"), allow(dead_code))]
-mod links;
 mod manifest;
 mod overlay;
 mod paced_clock;
@@ -398,8 +396,8 @@ struct RunOptions {
   app: Option<AppSource>,
   launch: Launch,
   // The packed app's display name (its manifest's), what the OS shows for
-  // the app where the runtime registers it (links.rs); None for a dev run
-  // and for the player, which register nothing.
+  // the app where the runtime registers its scheme (ore::link); None for a
+  // dev run and for the player, which register nothing.
   display_name: Option<String>,
   // The frame rate of a headless (stepped) run, whose time is frame / fps;
   // None on a display.
@@ -557,30 +555,23 @@ fn anchor_app(app_id: &str, current: &mut Option<String>) {
   *current = Some(app_id.to_string());
 }
 
-// sol:app registerProtocolHandler, by host: a packed desktop app registers
-// this executable for its scheme (links.rs); on Android the package declares
-// the scheme, so there is nothing to do and the call succeeds; the dev client
-// is not a scheme handler and says so without failing, so app code that
-// registers at startup runs unchanged under the player; a dev run of the
-// runner has no app identity to register.
-fn register_protocol_handler(app_id: Option<&str>, display_name: Option<&str>) -> Result<(), String> {
+// Who answers the app's own scheme in this host, for flux:link's
+// registerProtocolHandler: a packed app owns its scheme (its app id; ore
+// decides what registering means per platform); the dev client is no scheme
+// handler, so app code that registers at startup runs unchanged under the
+// player; a dev run of the runner has no app identity to register.
+fn own_scheme(app_id: Option<&str>, display_name: Option<&str>) -> ore::link::OwnScheme {
   #[cfg(feature = "go")]
   {
     let _ = (app_id, display_name);
-    log::warn!(
-      "[sol] registerProtocolHandler: nothing registered in the dev client; a packed app registers its own scheme"
-    );
-    Ok(())
+    ore::link::OwnScheme::NotHandler
   }
-  #[cfg(all(not(feature = "go"), target_os = "android"))]
-  {
-    let _ = (app_id, display_name);
-    Ok(())
-  }
-  #[cfg(all(not(feature = "go"), not(target_os = "android")))]
-  {
-    let app_id = app_id.ok_or("this run has no app identity (not a packed app); nothing to register")?;
-    links::register(app_id, display_name)
+  #[cfg(not(feature = "go"))]
+  match app_id {
+    Some(app_id) => {
+      ore::link::OwnScheme::Own { scheme: app_id.to_string(), display_name: display_name.unwrap_or(app_id).to_string() }
+    }
+    None => ore::link::OwnScheme::Unknown,
   }
 }
 
@@ -742,11 +733,17 @@ fn ui_thread(
   #[cfg(any(feature = "go", feature = "test"))]
   let step_tx = ev_tx.clone();
   // A packed desktop app answers links for the second instance the OS starts
-  // with one (links.rs). Not the dev client, which is no scheme handler, and
-  // not Android, where the activity is singleInstance.
+  // with one (ore::link's hand-off): each arrives as an OS-routed link does,
+  // and the window is raised. Not the dev client, which is no scheme
+  // handler, and not Android, where the activity is singleInstance.
   #[cfg(all(not(feature = "go"), not(target_os = "android")))]
   if let (Some(app_id), Some(store)) = (&storage_spec.app_id, storage::get()) {
-    links::listen(app_id, store.client_dir.clone(), &handle, ev_tx.clone(), alloy_cmd_tx.clone());
+    let events = ev_tx.clone();
+    let commands = alloy_cmd_tx.clone();
+    ore::link::listen(app_id, store.client_dir.clone(), &handle, move |link| {
+      let _ = events.send(alloy::AlloyEvent::Link { link });
+      let _ = commands.send(alloy::AlloyCommand::RaiseWindow);
+    });
   }
   std::thread::spawn(move || {
     while let Ok(alloy::Arrival { event, at }) = event_rx.recv() {
@@ -1342,25 +1339,21 @@ fn ui_thread(
       };
       // The running app's own surface (exit(), background()), in every
       // build: the production runtime leaves too, it just never has a
-      // player to return to.
+      // player to return to. And who answers its scheme, for flux:link's
+      // registerProtocolHandler.
       let builder = {
         let exit_policy_exit = exit_policy.clone();
         let exit_policy_background = exit_policy.clone();
-        let register_app_id = storage_spec.app_id.clone();
-        let register_display_name = display_name.clone();
+        let own = own_scheme(storage_spec.app_id.as_deref(), display_name.as_deref());
         builder.plugin(move |ctx| {
-          let register_app_id = register_app_id.clone();
-          let register_display_name = register_display_name.clone();
           plugins::app::install(
             &ctx,
             plugins::app::AppControl::new(plugins::app::AppControlInner {
               exit: Box::new(move || exit_policy_exit.exit()),
               background: Box::new(move || exit_policy_background.background()),
-              register_protocol_handler: Box::new(move || {
-                register_protocol_handler(register_app_id.as_deref(), register_display_name.as_deref())
-              }),
             }),
-          )
+          );
+          flux::link::set_own_scheme(&ctx, own);
         })
       };
       // The runtime's own modules: after the built-ins and the app surface,

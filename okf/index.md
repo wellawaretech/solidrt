@@ -131,11 +131,13 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   could not build; the embed moves to a program crate (runtime/, the stock
   program and the shape of every custom one), the CLI package ships the
   bundles, and a custom runtime embeds them from its node_modules.
-- **[ore landing zone - the OS layer crate, openLink first](plans/ore-landing-zone.md)** [2026-11-03]
+- **[ore landing zone - the OS layer crate, the link facility first](plans/ore-landing-zone.md)** [2026-11-03]
   "Start the platform-layering design (okf/design/platform-layering.md):
   create the `ore` crate with the main-thread bridge and its first facilities
-  (openLink on SDL_OpenURL, the locale), marshal them through a new flux
-  `ore_plugins/` layer, re-export openLink from core next to onLink, rewrite
+  (openLink on SDL_OpenURL, the locale, the scheme registration and
+  single-instance hand-off moved from lattice), marshal them through a new
+  flux `ore_plugins/` layer (`flux:link` with openLink and
+  registerProtocolHandler), re-export them from core next to onLink, rewrite
   the placement rule in all six places in the same change, and rename the MCP
   open_link tool to send_link; existing code moves later, as features touch
   it."
