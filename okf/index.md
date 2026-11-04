@@ -35,6 +35,17 @@ The architecture of an area and the decisions behind it, kept current. Read befo
   (no 3D-rendered controls, hover lift over tilt, press sink over press scale,
   an app-owned light at event rate) and the open items. Read before moving the
   model into the package.
+- **[Platform layering](design/platform-layering.md)** [2026-11-04]
+  Where OS integration lives - our own OS layer (`ore`) that wraps SDL where
+  SDL reaches and our native code where it stops (SDL is the OS abstraction,
+  decided 2026-11-04), with alloy reduced to the window's scene, rendering and
+  frame policy and forge to portable capabilities; the main loop's split along
+  the existing SDL pump, the facts that constrain it (SDL's thread rules, its
+  activity-bound Android helpers, the headless link cost), the test set of
+  platform features an app platform needs (push, alarms, background sync,
+  secure storage, printing and more), the alternatives rejected, and the
+  landing zone that makes new work land right before any existing code moves.
+  Read before placing any platform or OS feature.
 - **[Gaussian splats](design/splats.md)** [2026-10-18]
   The splat viewer in one place - the .sol3s bake and its chunked 16-bit
   record, the data textures and the one-texel vertex decode, the packed depth
@@ -418,6 +429,11 @@ Shaped, not started.
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
   either not found or checked against the wrong file.
+- **[Copy an image to the clipboard](backlog/clipboard-image.md)** [2026-11-03]
+  "navigator.clipboard is text only; wanted an image write (image/png) on
+  desktop through SDL_SetClipboardData, listed as \"clipboard-image\" in
+  Flux.capabilities only where it works; Android is out, since copying an
+  image is not a normal Android action."
 - **[A 3d scene mounted after a context recovery draws black on the SM-T500](backlog/context-recovery-3d-scene-black.md)** [2026-10-19]
   On the Samsung SM-T500 (Adreno 610) a splat scene created fifteen seconds
   after a guilty-reset recovery renders black at 2 ms per pass although its
@@ -671,6 +687,11 @@ Shaped, not started.
   frame while the app keeps presenting partial frames, so on screen it reads
   as a logic bug (entities drawn after the throwing line vanish) and the only
   trace is a log line the reader has to think to look for.
+- **[Open a link in another app](backlog/open-url.md)** [2026-11-03]
+  "An app cannot open an external link (a store page, a credits link, a
+  mailto:, a text share link): onLink only receives links; wanted an
+  openUrl(url) backed by SDL_OpenURL, which the sdl3 crate already wraps and
+  SDLActivity already implements on Android."
 - **[Coalesce the per-event syncs of writes made outside a frame](backlog/outside-frame-sync-coalescing.md)** [2026-10-06]
   A pointer move handler that moves a sprite or a mesh flushes its layer or
   scene once per dispatched move, because every event is its own JS entry with
@@ -836,6 +857,12 @@ Shaped, not started.
   per option (the player's settings screen shows three); the option row's For
   callback reads the controlled value untracked at its top, so the warning may
   be naming a real stale read."
+- **[Hand a file or text to the OS share sheet](backlog/share-sheet.md)** [2026-11-03]
+  "An app cannot give a file it made (a PNG from captureSnapshot plus
+  encodeImage) or a text to another app: wanted a share call that opens the
+  platform's share sheet (Android ACTION_SEND through a chooser and a
+  FileProvider in the packed APK), listed as \"share\" in Flux.capabilities
+  only where a sheet exists, so the app chooses its own fallback."
 - **[Home for cross-crate constants](backlog/shared-config-constants.md)** [2026-07-27]
   One defined home for cross-crate constants that today live as per-site
   literals (.solidrt-data, http-cache.db, the SolidRT/go identity, size caps);
