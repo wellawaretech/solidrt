@@ -131,16 +131,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   could not build; the embed moves to a program crate (runtime/, the stock
   program and the shape of every custom one), the CLI package ships the
   bundles, and a custom runtime embeds them from its node_modules.
-- **[ore landing zone - the OS layer crate, the link facility first](plans/ore-landing-zone.md)** [2026-11-03]
-  "Start the platform-layering design (okf/design/platform-layering.md):
-  create the `ore` crate with the main-thread bridge and its first facilities
-  (openLink on SDL_OpenURL, the locale, the scheme registration and
-  single-instance hand-off moved from lattice), marshal them through a new
-  flux `ore_plugins/` layer (`flux:link` with openLink and
-  registerProtocolHandler), re-export them from core next to onLink, rewrite
-  the placement rule in all six places in the same change, and rename the MCP
-  open_link tool to send_link; existing code moves later, as features touch
-  it."
 - **[Reactivity halt containment](plans/reactivity-halt-containment.md)** [2026-07-17]
   One unclaimed error used to halt the whole app for good; decided and built
   as a root error boundary around the app's window (error window with reset)
@@ -351,6 +341,14 @@ Shaped, not started.
   background, SDL's resume ignores the failed restart and the session delivers
   no samples ever again, with no error; alloy needs the same
   reopen-after-resume workaround it has for playback, per recording stream.
+- **[Android Java libraries for platform features ship in the stock runner](backlog/android-per-app-libraries.md)** [2026-11-04]
+  "The model is set: the stock Player and runner carry everything, and a
+  developer who wants less builds a custom runtime. That covers native code,
+  but a custom runtime's APK is the stock APK with its .so files swapped in,
+  so the Java libraries the platform features need (Firebase Messaging, Play
+  Billing, WorkManager, ...) can be neither dropped nor added per runtime;
+  open: what that costs each app, and how per-app configuration such as a
+  Firebase project reaches the stock code."
 - **[Control-API queries stall after the Android picker returns a pick](backlog/android-query-stall-after-picker.md)** [2026-10-15]
   On the tablet, after a file dialog pick that kept the app behind DocumentsUI
   for minutes, queries to the client (dialog state, debug list, settle) timed
@@ -868,12 +866,6 @@ Shaped, not started.
   per option (the player's settings screen shows three); the option row's For
   callback reads the controlled value untracked at its top, so the warning may
   be naming a real stale read."
-- **[Hand a file or text to the OS share sheet](backlog/share-sheet.md)** [2026-11-03]
-  "An app cannot give a file it made (a PNG from captureSnapshot plus
-  encodeImage) or a text to another app: wanted a share call that opens the
-  platform's share sheet (Android ACTION_SEND through a chooser and a
-  FileProvider in the packed APK), listed as \"share\" in Flux.capabilities
-  only where a sheet exists, so the app chooses its own fallback."
 - **[Home for cross-crate constants](backlog/shared-config-constants.md)** [2026-07-27]
   One defined home for cross-crate constants that today live as per-site
   literals (.solidrt-data, http-cache.db, the SolidRT/go identity, size caps);
@@ -2389,6 +2381,16 @@ Finished, kept for the reasoning.
   Two gaps the third-dimension demo hand-rolls around createOrbitCamera - an
   eased wheel zoom (Three's enableDamping) and a distance-dependent elevation
   floor (a clampPose hook beside the pan-only clampTarget).
+- **[ore landing zone - the OS layer crate, the link facility first](done/ore-landing-zone.md)** [2026-11-04]
+  "Start the platform-layering design (okf/design/platform-layering.md):
+  create the `ore` crate with the main-thread bridge and its first facilities
+  (openLink on SDL_OpenURL, the locale, the scheme registration and
+  single-instance hand-off moved from lattice), marshal them through a new
+  flux `ore_plugins/` layer (`flux:link` with openLink and
+  registerProtocolHandler), re-export them from core next to onLink, rewrite
+  the placement rule in all six places in the same change, and rename the MCP
+  open_link tool to send_link; existing code moves later, as features touch
+  it."
 - **[overflow + viewBox clips the wrong rectangle](done/overflow-viewbox-clip.md)** [2026-08-08]
   The overflow clip rect took the element's box extent as a raw number and
   applied it in the child's design (pre-viewBox) space, so a magnifying fit
@@ -2626,6 +2628,13 @@ Finished, kept for the reasoning.
   `shadow` joins the native transitions - offset, blur, spread and color move
   together on one track, an unset shadow counts as none, so elevation changes
   animate without cross-faded shadow layers.
+- **[Hand a file or text to the OS share sheet](done/share-sheet.md)** [2026-11-04]
+  "navigator.share({ title, text, url, files }) opens the platform's share
+  sheet, Android first (ACTION_SEND through a chooser, a FileProvider over app
+  storage in the packed APK): an ore facility marshalled in standards_plugins,
+  files as flux:fs handles, a cancel rejecting with AbortError, defined and
+  listed as \"share\" only where a sheet exists, recorded instead of shown
+  under sol test and readable by an agent."
 - **[Shell layout fixes found rendering NavShell beside SplitView](done/shell-layout-fixes.md)** [2026-08-26]
   Navigation follows the pane count instead of its own breakpoint, and
   TextInput/Select share Button's vertical padding so controls in a row are

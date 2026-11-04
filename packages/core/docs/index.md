@@ -216,6 +216,20 @@ nothing.
 await openLink("mailto:feedback@example.com")
 ```
 
+Use `navigator.share` to give a file or a text to an app that the user
+picks: a messenger, mail, a cloud drive. Write the file with `flux:fs`
+first, then share its handle. The target app reads the file later, so do
+not delete the file after the call. The promise resolves when the user
+picks a target. It rejects with an `AbortError` when the user closes the
+sheet. `navigator.share` exists only on Android for now: check it before
+you show a Share button.
+
+```ts
+let png = file("share/board.png")
+await png.write(encodeImage(await captureSnapshot(boardNode)))
+if (navigator.share) await navigator.share({ text: "My board", files: [png] })
+```
+
 ```tsx
 onSuspend(() => file("session.json").write(JSON.stringify(state)))
 if (env.launch === "restored") state = JSON.parse(await file("session.json").text())

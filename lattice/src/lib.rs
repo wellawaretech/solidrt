@@ -24,6 +24,8 @@ mod render_host;
 mod runtime;
 #[cfg(any(feature = "go", feature = "test"))]
 mod settle;
+#[cfg(any(feature = "go", feature = "test"))]
+mod share;
 mod stats;
 #[cfg(any(feature = "go", feature = "test"))]
 mod stats_query;
@@ -285,6 +287,20 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeDialogResult(
   names: *mut core::ffi::c_void,
 ) {
   alloy::android_result_raw(env, id, uris, names);
+}
+
+// Receives a share sheet's outcome from SolidRTActivity (on the Android UI
+// thread): whether share `id` went out (a target picked, or one of the
+// sheet's own actions) or the sheet closed without one.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeShareResult(
+  _env: *mut core::ffi::c_void,
+  _class: *mut core::ffi::c_void,
+  id: i64,
+  shared: u8,
+) {
+  ore::share::android_result(id, shared != 0);
 }
 
 // Receives one Choreographer frame time from the video plane view (every
@@ -1788,12 +1804,13 @@ fn start_with(
 
 /// What every stepped engine gets beside the stepper: the window state a
 /// host waits on, the wall taken out (performance.now() reads 0, the
-/// calendar is the fixed epoch plus frame time), and links recorded
-/// instead of opened.
+/// calendar is the fixed epoch plus frame time), and links and shares
+/// recorded instead of opened or shown.
 #[cfg(any(feature = "go", feature = "test"))]
 fn stepped_engine(ctx: &flux::rquickjs::Ctx<'_>) {
   ctx.store_userdata(stepped::WindowReady::default()).expect("store window ready");
   flux::link::set_record_only(ctx);
+  flux::share::set_record_only(ctx);
   if let Err(e) = flux::freeze_wall(ctx, stepped::EPOCH_MS) {
     log::error!("[sol] stepped engine: failed to freeze the wall clock: {e}");
   }

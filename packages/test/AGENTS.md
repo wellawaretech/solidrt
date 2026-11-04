@@ -64,6 +64,9 @@ agents/testing.md.
   app has no `onLink`); `app.requestedLinks()` lists the links the app asked
   to open with `openLink`, oldest first: under test each is
   recorded, none opened, and the app's call resolves at once.
+  `app.requestedShares()` lists what the app handed to `navigator.share`
+  (`{ title, text, url, files: [{ path, name }] }`, unset fields null):
+  under test no sheet shows and the call resolves at once.
   `await app.debug(name, args)` calls a command the
   app registered with `registerDebug` and returns its value: the way to
   put a loaded app into a state its UI reaches slowly. A `gamepad` event

@@ -193,6 +193,7 @@ pub(crate) async fn init_context(
       ctx.store_userdata(rejections.clone()).expect("store rejection log");
       ctx.store_userdata(shutdown_hooks).unwrap();
       crate::ore_plugins::link::store_state(&ctx);
+      crate::standards_plugins::share::store_state(&ctx);
       for store in userdata {
         store(&ctx);
       }
@@ -205,6 +206,7 @@ pub(crate) async fn init_context(
       crate::standards_plugins::fetch::init_fetch(&ctx);
       crate::standards_plugins::console::init_console(&ctx);
       crate::standards_plugins::navigator::init_navigator(&ctx);
+      crate::standards_plugins::share::init_share(&ctx);
       events::init(&ctx);
       flux_obj.set("version", env!("FLUX_VERSION")).expect("failed to set Flux.version");
       flux_obj.set("capabilities", build_capabilities(&ctx)).expect("failed to set Flux.capabilities");
@@ -255,8 +257,9 @@ fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
 /// code here, the wasmtime lane, instead of interpreting them) is the one
 /// entry no cfg of this crate decides: the `wasm-native` feature resolves to
 /// wasmi on a target without a backend, so `base_capabilities` reads the
-/// lane forge was built with. `link` (flux:link's openLink) is a fact of
-/// the platform, not the build: listed only where it has an opener.
+/// lane forge was built with. `link` (flux:link's openLink) and `share`
+/// (navigator.share) are facts of the platform, not the build: listed only
+/// where it has an opener and a share sheet.
 const BASE_CAPABILITIES: &[&str] = &[
   "sqlite",
   "fs",
@@ -292,6 +295,9 @@ pub fn base_capabilities() -> Vec<&'static str> {
   }
   if ore::link::available() {
     caps.push(crate::ore_plugins::link::CAPABILITY);
+  }
+  if ore::share::available() {
+    caps.push(crate::standards_plugins::share::CAPABILITY);
   }
   caps
 }

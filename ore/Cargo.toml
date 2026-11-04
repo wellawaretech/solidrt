@@ -7,6 +7,11 @@ edition = "2021"
 # features, so the two crates unify on one SDL in a GUI build.
 [target.'cfg(target_os = "android")'.dependencies]
 sdl3 = { version = "=0.19.0", features = ["build-from-source"] }
+# The activity's helpers (src/android.rs: the share sheet), over JNI on the
+# process-wide JavaVM and activity alloy publishes in ndk-context; alloy's
+# and forge's pins, so the unified build compiles no extra crate.
+jni = "=0.22.4"
+ndk-context = "=0.1.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 sdl3 = { version = "=0.19.0", features = ["build-from-source-static"] }

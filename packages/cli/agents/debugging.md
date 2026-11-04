@@ -19,6 +19,10 @@ What the individual descriptions cannot tell you:
   request shows the native dialog on the client, which nothing remote can
   dismiss. `get_dialog` shows what the app asked for (kind, filters,
   suggested name) and how the last request was answered.
+- A flow that shares (`navigator.share`) shows the platform's share sheet
+  on an Android client, and nothing remote can close it: only the user
+  picks a target or dismisses it, and the app's call (and `settle`) waits
+  until then. `get_requested_shares` shows what the app handed out.
 - If `list_clients` is empty, no app is running: ask the user to start
   `bun run sol run` rather than starting a second one yourself.
   The bridge needs no port: it resolves the server currently serving this
@@ -378,6 +382,10 @@ when exactly one client is connected.
   (`{ links }`, oldest first, the last 64, refused ones too). The client
   opens each one for real and records it: read it after tapping a button that opens a
   store page, a website or a `mailto:`.
+- `/requested-shares` - what the app handed to `navigator.share` (`{
+  shares }`, oldest first, the last 64, each `{ title, text, url, files:
+  [{ path, name }] }`). The client shows the share sheet for each and
+  records it.
 - POST `/input` with `{ "events": [...] }` - synthetic input through the
   real pipeline, same event shape as the `send_input` tool (tap real
   coordinates read from `/tree` just before: the window's logical size

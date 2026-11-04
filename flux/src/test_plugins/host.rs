@@ -302,6 +302,8 @@ impl Session {
       })
       // A test's links are recorded, never opened.
       .plugin(|ctx| crate::link::set_record_only(&ctx))
+      // A test's shares are recorded, never shown.
+      .plugin(|ctx| crate::share::set_record_only(&ctx))
   }
 
   /// Evaluate the file in `engine` (built from a builder `install` went

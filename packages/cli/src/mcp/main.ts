@@ -480,6 +480,13 @@ let TOOLS: {
     inputSchema: { client: CLIENT_ARG },
   },
   {
+    name: "get_requested_shares",
+    annotations: READ_ONLY,
+    description:
+      "Read the shares the running app asked for with navigator.share, oldest first, the last 64: `shares`, each `{ title, text, url, files: [{ path, name }] }` as the app passed it (an unset field null). On a visible client each share shows the platform's share sheet, which nothing can close remotely: only the user can pick a target or dismiss it, and the app's call waits until then. Under the test host the shares are only recorded and the call resolves at once. Read it after tapping a Share button to see what the app handed out.",
+    inputSchema: { client: CLIENT_ARG },
+  },
+  {
     name: "get_location",
     annotations: READ_ONLY,
     description:
@@ -721,6 +728,8 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
     }
     case "get_requested_links":
       return control(`/requested-links${clientParam(args)}`)
+    case "get_requested_shares":
+      return control(`/requested-shares${clientParam(args)}`)
     case "get_location":
       return control(`/link${clientParam(args)}`)
     case "get_dialog":

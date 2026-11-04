@@ -30,6 +30,7 @@
 /// <reference path="./standards/abort.d.ts" />
 /// <reference path="./standards/crypto.d.ts" />
 /// <reference path="./standards/navigator.d.ts" />
+/// <reference path="./standards/share.d.ts" />
 /// <reference path="./standards/clipboard.d.ts" />
 
 // GUI capabilities (present only on a gui-enabled runtime). rendertree/camera/

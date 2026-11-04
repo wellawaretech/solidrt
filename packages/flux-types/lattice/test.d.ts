@@ -98,6 +98,13 @@ declare module "sol:test" {
    */
   export function requestedLinks(): string[]
   /**
+   * The shares the app asked for (`navigator.share`), oldest first, the
+   * last 64, as JSON text: `[{ title, text, url, files: [{ path, name }]
+   * }]`, an unset field null. A test engine records them and shows no
+   * sheet.
+   */
+  export function requestedShares(): string
+  /**
    * Calls a debug command the app registered with `registerDebug`. `args`
    * and the result are JSON text (null for no args). Throws on an unknown
    * name, a throwing command and a result JSON cannot carry.

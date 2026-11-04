@@ -1,8 +1,9 @@
 // The verbs an app test has beside naming nodes and sending pointer input:
-// a link in and the links out, a debug command, a synthetic gamepad, and the readers past a
+// a link in and the links and shares out, a debug command, a synthetic gamepad, and the readers past a
 // node's record: the subtree as text, its pixels, the GPU inventory.
 
 import { registerDebug } from "sol:dev"
+import { file } from "flux:fs"
 import { test, expect } from "../src/index.ts"
 import { createSignal, gamepads, onLink, openLink } from "@solidrt/core"
 
@@ -32,6 +33,13 @@ test("a link the app opens is recorded, not opened", async app => {
   await openLink("https://example.com/credits")
   await openLink("mailto:feedback@example.com")
   expect(app.requestedLinks()).toEqual(["https://example.com/credits", "mailto:feedback@example.com"])
+})
+
+test("a share the app asks for is recorded, no sheet shown", async app => {
+  await app.mount(() => <text>board</text>)
+  expect(app.requestedShares()).toEqual([])
+  await navigator.share!({ text: "My board", files: [file("share/board.png")] })
+  expect(app.requestedShares()).toEqual([{ title: null, text: "My board", url: null, files: [{ path: "share/board.png", name: "board.png" }] }])
 })
 
 test("a debug command is called with its args and returns its value", async app => {

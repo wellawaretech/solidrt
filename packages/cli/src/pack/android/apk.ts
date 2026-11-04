@@ -22,6 +22,7 @@ import {
   labelIndices,
   replacePoolStrings,
   poolStrings,
+  applicationIdRenames,
   BOOL_TRUE,
   XML_POOL_OFFSET,
   TABLE_POOL_OFFSET,
@@ -99,10 +100,8 @@ function patchManifest(entry: ZipEntry, patch: ApkPatch, versionName: string) {
   axml.writeUInt32LE(patch.versionCode, info.versionCodeOffset)
   if (patch.backup) axml.writeUInt32LE(BOOL_TRUE, applicationFlagOffset(axml, "allowBackup"))
   axml = addUsesPermissions(axml, patch.permissions)
-  let replacements = new Map([
-    [info.packageIndex, patch.appId],
-    [info.versionNameIndex, versionName],
-  ])
+  let replacements = applicationIdRenames(poolStrings(axml, XML_POOL_OFFSET), info.packageValue, patch.appId)
+  replacements.set(info.versionNameIndex, versionName)
   replaceData(entry, replacePoolStrings(axml, XML_POOL_OFFSET, replacements))
 }
 

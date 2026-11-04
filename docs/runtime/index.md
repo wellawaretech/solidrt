@@ -31,7 +31,9 @@ you know from the web:
 - `atob` and `btoa`.
 - `AbortController` and `AbortSignal`.
 - `navigator`, with `navigator.languages` and `navigator.language`: the
-  locales of the user, as BCP 47 tags.
+  locales of the user, as BCP 47 tags. On Android, it also has
+  `navigator.share`: the share sheet of the platform. The `share`
+  capability is in the list only on platforms that have a share sheet.
 
 Some APIs are not there, on purpose: `URL`, `crypto`, `Blob` and
 `FormData`. One known app does not usually need them. When an app needs

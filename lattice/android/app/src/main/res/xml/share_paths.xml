@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What the share FileProvider serves (AndroidManifest.xml): the app's
+     files dir, which SDL's pref path is and so the root of app storage.
+     Only a URI the share intent grants is readable by another app. -->
+<paths>
+    <files-path name="app" path="." />
+</paths>

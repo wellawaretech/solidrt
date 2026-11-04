@@ -96,6 +96,24 @@
              the activity would finish on every back press. -->
         <meta-data android:name="SDL_ENV.SDL_ANDROID_TRAP_BACK_BUTTON" android:value="1"/>
 
+        <!-- The share sheet's files (SolidRTActivity.share): a file in app
+             storage goes to the target app as a content:// URI this provider
+             serves, with a read grant on that one URI. The authority is the
+             application id, spelled identically, so the compiled manifest's
+             string pool holds it once and the APK pack's rewrite of the
+             package string renames it with it: two packed apps never
+             declare the same authority (packages/cli/src/pack/android/apk.ts,
+             patchManifest). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/share_paths" />
+        </provider>
+
         <activity android:name=".MainActivity"
             android:label="@string/app_name"
             android:alwaysRetainTaskState="true"

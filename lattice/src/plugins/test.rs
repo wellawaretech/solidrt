@@ -226,6 +226,14 @@ fn requested_links(ctx: Ctx<'_>) -> flux::rquickjs::Result<Vec<String>> {
   Ok(flux::link::session(&ctx).map(|session| session.requested()).unwrap_or_default())
 }
 
+/// `requestedShares()`: the shares the app asked for (`navigator.share`),
+/// oldest first, as JSON text (`[{ title, text, url, files: [{ path,
+/// name }] }]`); a test engine records them and shows no sheet.
+fn requested_shares(ctx: Ctx<'_>) -> flux::rquickjs::Result<String> {
+  stepper(&ctx, "requestedShares()")?;
+  Ok(crate::share::requested_json(&ctx).to_string())
+}
+
 /// `debug(name, args)`: call a debug command the app registered
 /// (`registerDebug` of `sol:dev`), `args` and the result as JSON text
 /// (null for none).
@@ -548,6 +556,7 @@ impl ModuleDef for SolTestModule {
     decl.declare("until")?;
     decl.declare("link")?;
     decl.declare("requestedLinks")?;
+    decl.declare("requestedShares")?;
     decl.declare("debug")?;
     decl.declare("stats")?;
     decl.declare("capture")?;
@@ -580,6 +589,7 @@ impl ModuleDef for SolTestModule {
     }
     exports.export("link", Function::new(ctx.clone(), link)?)?;
     exports.export("requestedLinks", Function::new(ctx.clone(), requested_links)?)?;
+    exports.export("requestedShares", Function::new(ctx.clone(), requested_shares)?)?;
     exports.export("debug", Function::new(ctx.clone(), debug)?)?;
     exports.export("stats", Function::new(ctx.clone(), stats)?)?;
     exports.export("capture", Function::new(ctx.clone(), capture)?)?;

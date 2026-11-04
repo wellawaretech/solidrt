@@ -5,6 +5,7 @@
 import { test, expect } from "flux:test"
 import { iconBackgroundRgb } from "../src/lib/icon-background.ts"
 import { patchSplash } from "../src/pack/android/splash.ts"
+import { applicationIdRenames } from "../src/pack/android/strings.ts"
 
 // An RGB8 color Res_value as aapt2 writes it: size 8, zero, type 0x1d, data.
 function colorValue(data: number): number[] {
@@ -40,4 +41,20 @@ test("the splash takes the icon background", () => {
 test("a table without the placeholder, or with two, is refused", () => {
   expect(() => patchSplash(table(0xff1a1a1a), [0, 0, 0])).toThrow("older runner build")
   expect(() => patchSplash(table(PLACEHOLDER, PLACEHOLDER), [0, 0, 0])).toThrow("ambiguous")
+})
+
+test("the application id and every name derived from it move to the app's", () => {
+  let pool = [
+    "com.solidrt.runner",
+    "com.solidrt.runner.androidx-startup",
+    "com.solidrt.runner.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+    "com.solidrt.app.MainActivity",
+    "com.solidrt.runnerx",
+    "versionName",
+  ]
+  expect([...applicationIdRenames(pool, "com.solidrt.runner", "com.example.app")]).toEqual([
+    [0, "com.example.app"],
+    [1, "com.example.app.androidx-startup"],
+    [2, "com.example.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"],
+  ])
 })

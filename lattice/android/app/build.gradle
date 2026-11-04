@@ -143,4 +143,11 @@ androidComponents {
 
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
+    // FileProvider and ShareCompat for the share sheet (SolidRTActivity.share):
+    // the provider serves a file in app storage to the target app. The base
+    // the other Android libraries the platform features need build on; in
+    // every APK, as everything is (okf/done/share-sheet.md). An exact
+    // version, bumped deliberately: 1.19 needs compileSdk 37, so 1.18.0 is
+    // the newest for compileSdk 36; bump the two together.
+    implementation 'androidx.core:core:1.18.0'
 }

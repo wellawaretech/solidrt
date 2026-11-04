@@ -15,7 +15,7 @@ in about 13 ms, and everything after that is normal. An agent that reads
 the first timeout as "the app is wedged" goes looking in the wrong place.
 
 Seen on 2026-11-04 (SM-T500, Android 12, dev client over WiFi with `sol run
---lan`), verifying `openLink` (okf/plans/ore-landing-zone.md) with a probe
+--lan`), verifying `openLink` (okf/done/ore-landing-zone.md) with a probe
 app whose debug commands read `navigator.languages` and start an
 `openLink`:
 

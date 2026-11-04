@@ -2,6 +2,7 @@
 title: ore landing zone - the OS layer crate, the link facility first
 description: "Start the platform-layering design (okf/design/platform-layering.md): create the `ore` crate with the main-thread bridge and its first facilities (openLink on SDL_OpenURL, the locale, the scheme registration and single-instance hand-off moved from lattice), marshal them through a new flux `ore_plugins/` layer (`flux:link` with openLink and registerProtocolHandler), re-export them from core next to onLink, rewrite the placement rule in all six places in the same change, and rename the MCP open_link tool to send_link; existing code moves later, as features touch it."
 created: 2026-11-03
+completed: 2026-11-04
 ---
 
 # ore landing zone
@@ -203,5 +204,11 @@ screen, a `mailto:` for feedback, a messenger's text-share link.
   browser (checked by hand).
 - `sdl3::get_error()` unwraps the message as UTF-8 and panics on anything
   else; ore reads `SDL_GetError` itself (`ore::sdl_error`).
+- CI (work step 8): every flux job builds SDL from source and passes on
+  Linux x64, Linux arm64, macOS and Windows. The first run with ore added
+  about a minute to `test-flux` (Linux 137 to 180 s, Linux arm64 109 to
+  165 s, macOS 117 to 193 s, Windows 273 to 282 s); `test-js` moved
+  within its usual run-to-run spread. Recorded in
+  okf/design/platform-layering.md, "The headless link cost".
 - The control API's 404 list (`CONTROL_ENDPOINTS` in control.ts) lacked
   `/__control__/dialog`; added with `/__control__/requested-links`.

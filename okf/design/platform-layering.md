@@ -12,7 +12,7 @@ it go through SDL" (alloy) - and they disagree whenever SDL wraps something
 that needs no window. Each time we either put the feature in the wrong
 crate or rewrote tested code: forge's own WAV decoder exists because
 `SDL_LoadWAV` "would put a decoder in alloy" (okf/done/audio-unification.md),
-and opening a link stalled on the same fork (now okf/plans/ore-landing-zone.md).
+and opening a link stalled on the same fork (now okf/done/ore-landing-zone.md).
 
 The cause: both crates were defined by SDL. alloy was "what needs SDL",
 forge "what does not". Talking to the OS on the app's behalf had no home,
@@ -179,6 +179,10 @@ Measured with a throwaway crate linking `sdl3 =0.19.0`
   cores, balanced power profile, 8 jobs; a rough figure). The `flux`
   target builds it once per target directory and feature set, as the
   client already does.
+- On CI the first run with ore linked into headless `flux` added about a
+  minute to the `test-flux` jobs (Linux 137 to 180 s, Linux arm64 109 to
+  165 s, macOS 117 to 193 s, Windows 273 to 282 s; 2026-11-04, warm
+  caches for everything but SDL).
 - `SDL_Init` of events, audio, camera and sensor succeeds with no display
   (`DISPLAY` and `WAYLAND_DISPLAY` unset): the window-free subsystems
   work headless.
@@ -363,7 +367,12 @@ What the set says:
   lattice host that runs the app's JS with no window. The vendored SDL
   files stay untouched.
 - **Packaging half**: capabilities to manifest entries, entitlements and
-  Gradle dependencies in `sol pack`.
+  Gradle dependencies. A library goes into the stock runner, as everything
+  does (the stock runtime carries every capability; a custom runtime is
+  how a developer gets less). `sol pack` patches manifest entries into a
+  copy of that runner and runs no Gradle, and a custom runtime swaps only
+  `.so` files into it, so the Java side cannot change per app or per
+  runtime (okf/backlog/android-per-app-libraries.md).
 - **Permissions**: one model across camera, microphone, location,
   notifications and exact alarms; today `request_android_permission` in
   alloy serves the camera and microphone only.
@@ -397,7 +406,7 @@ it, not as a big-bang refactor.
    calls that work without alloy's context, and headless `flux` initializes
    what it needs on its main thread, which is also its JS thread.
 2. **Rule.** Rewrite the placement rule (all six places are listed in
-   okf/plans/ore-landing-zone.md, work step 6): new
+   okf/done/ore-landing-zone.md, work step 6): new
    work that reaches SDL or the OS goes into the OS crate; nothing new of
    that kind lands in alloy, forge or lattice.
 3. **Moves, as features touch them.** The pump and window interface (the
@@ -405,12 +414,17 @@ it, not as a big-bang refactor.
    camera (with the mixer to forge), the Android glue, the pref-path
    calls, forge's OS modules, `barcode.rs` to forge. The scheme
    registration and the single-instance hand-off (`links.rs`) moved with
-   the link facility (okf/plans/ore-landing-zone.md).
+   the link facility (okf/done/ore-landing-zone.md).
 4. **Windowless run mode**, its own backlog item, before push, alarms or
    background sync.
 
 ## Open
 
+- The Java libraries the platform features need (Firebase for push, Play
+  Billing, WorkManager) ship in the stock runner; a custom runtime can
+  neither drop nor add one, and per-app configuration (a Firebase
+  project) has to reach stock code at run time:
+  okf/backlog/android-per-app-libraries.md.
 - The SDL main thread: confirm that the first `SDL_Init` fixes it (the
   bridge's wake and run are confirmed, see "The main loop").
 - SDL init ownership once the window moves: the OS layer inits every
@@ -423,4 +437,4 @@ it, not as a big-bang refactor.
 - None of the test-set features has a backlog item except those already
   in `backlog/` (deep-links, clipboard-image, share-sheet,
   location-module, gamepad-haptics, desktop-widget-window) and opening a
-  link, now part of okf/plans/ore-landing-zone.md.
+  link, now part of okf/done/ore-landing-zone.md.

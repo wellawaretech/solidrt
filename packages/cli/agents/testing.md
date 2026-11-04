@@ -176,6 +176,11 @@ the state another way, and the test uses it:
   `openLink`, oldest first. Under test nothing opens: each link is
   recorded and the app's call resolves at once, so drive the app, then
   assert the list.
+- `app.requestedShares()` lists what the app handed to
+  `navigator.share`, oldest first, as `{ title, text, url, files: [{
+  path, name }] }` with unset fields null. Under test no sheet shows:
+  each share is recorded and the call resolves at once. A dismissed sheet
+  (the app's `AbortError` branch) cannot be played under test yet.
 - `await app.camera(image)` makes an RGBA8 image (a `decodeImage` result,
   or `{ width, height, data }` the test builds) what the camera sees,
   before the app opens its camera: the viewfinder shows it and a QR code

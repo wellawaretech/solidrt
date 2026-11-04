@@ -1,9 +1,13 @@
 package com.solidrt.app;
 
+import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
+import android.content.ClipData;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.database.Cursor;
 import android.graphics.PixelFormat;
 import android.net.Uri;
@@ -24,6 +28,10 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.widget.RelativeLayout;
 
+import androidx.core.app.ShareCompat;
+import androidx.core.content.FileProvider;
+
+import java.io.File;
 import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -153,8 +161,156 @@ public class SolidRTActivity extends SDLActivity {
         return true;
     }
 
+    // The share sheet (ore share.rs): an ACTION_SEND through the chooser,
+    // answered back through nativeShareResult. The chooser's chosen-target
+    // broadcast arrives at the pick, while onActivityResult arrives only
+    // when the user comes back to the app (and says RESULT_CANCELED even
+    // after a pick), so the broadcast settles the share as shared; a result
+    // with no broadcast before it settles it as shared on RESULT_OK (one of
+    // the sheet's own actions, Copy) and as cancelled otherwise, and a
+    // result after the broadcast is ignored (okf/done/share-sheet.md,
+    // Findings). A file in app storage goes out through the FileProvider
+    // the manifest declares, under the application id as its authority; a
+    // content URI a file dialog picked goes out as it is.
+    private static final int SHARE_REQUEST_CODE = 0x5348;
+    private static final String SHARE_CHOSEN_ACTION = "com.solidrt.app.SHARE_CHOSEN";
+    private static final String SHARE_ID_EXTRA = "com.solidrt.app.SHARE_ID";
+    // What share() returns besides the index of a file it cannot hand out.
+    private static final int SHARE_STARTED = -1;
+    private static final int SHARE_NOT_STARTED = -2;
+    private static volatile long pendingShareId;
+    private BroadcastReceiver shareChosen;
+
+    private static native void nativeShareResult(long id, boolean shared);
+
+    // Show the sheet for share `id`: the files at `locations` (absolute
+    // paths in app storage, or content URIs) named `names`, a title (the
+    // subject), a text and a url (sent after the text, on a line of its
+    // own); empty strings are unset. SHARE_STARTED once the chooser is up,
+    // the index of the first location the provider does not serve, or
+    // SHARE_NOT_STARTED.
+    public static int share(long id, String[] locations, String[] names, String title, String text, String url) {
+        if (mSingleton == null) {
+            return SHARE_NOT_STARTED;
+        }
+        ArrayList<Uri> uris = new ArrayList<>();
+        ArrayList<String> mimes = new ArrayList<>();
+        for (int i = 0; i < locations.length; i++) {
+            Uri uri;
+            if (locations[i].startsWith("content://")) {
+                uri = Uri.parse(locations[i]);
+            } else {
+                try {
+                    uri = FileProvider.getUriForFile(mSingleton, mSingleton.getPackageName(), new File(locations[i]));
+                } catch (IllegalArgumentException e) {
+                    return i;
+                }
+            }
+            uris.add(uri);
+            mimes.add(shareMime(uri, names[i]));
+        }
+
+        ShareCompat.IntentBuilder builder = new ShareCompat.IntentBuilder(mSingleton)
+                .setType(uris.isEmpty() ? "text/plain" : commonMime(mimes));
+        String body = text.isEmpty() ? url : url.isEmpty() ? text : text + "\n" + url;
+        if (!body.isEmpty()) {
+            builder.setText(body);
+        }
+        if (!title.isEmpty()) {
+            builder.setSubject(title);
+        }
+        for (Uri uri : uris) {
+            builder.addStream(uri);
+        }
+        Intent send = builder.getIntent();
+        if (!uris.isEmpty()) {
+            ClipData clip = ClipData.newRawUri(names[0], uris.get(0));
+            for (int i = 1; i < uris.size(); i++) {
+                clip.addItem(new ClipData.Item(uris.get(i)));
+            }
+            send.setClipData(clip);
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        }
+
+        Intent callback = new Intent(SHARE_CHOSEN_ACTION)
+                .setPackage(mSingleton.getPackageName())
+                .putExtra(SHARE_ID_EXTRA, id);
+        // Mutable, so the chooser can add the chosen target to it; explicit
+        // (setPackage), as a mutable PendingIntent must be on API 34+.
+        PendingIntent chosen = PendingIntent.getBroadcast(mSingleton, (int) id, callback,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
+        Intent chooser = Intent.createChooser(send, null, chosen.getIntentSender());
+        pendingShareId = id;
+        try {
+            mSingleton.startActivityForResult(chooser, SHARE_REQUEST_CODE);
+        } catch (ActivityNotFoundException e) {
+            Log.e(TAG, "No chooser for the share sheet", e);
+            pendingShareId = 0;
+            return SHARE_NOT_STARTED;
+        }
+        return SHARE_STARTED;
+    }
+
+    // A file's MIME type: the provider's for a content URI, the extension's
+    // otherwise.
+    private static String shareMime(Uri uri, String name) {
+        String mime = null;
+        if ("content".equals(uri.getScheme()) && !uri.getAuthority().equals(mSingleton.getPackageName())) {
+            mime = mSingleton.getContentResolver().getType(uri);
+        }
+        if (mime == null) {
+            int dot = name.lastIndexOf('.');
+            if (dot >= 0) {
+                mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substring(dot + 1).toLowerCase());
+            }
+        }
+        return mime != null ? mime : "application/octet-stream";
+    }
+
+    // The type of the whole share: the files' one type, their shared kind
+    // ("image/*"), or any.
+    private static String commonMime(ArrayList<String> mimes) {
+        String first = mimes.get(0);
+        String kind = first.substring(0, first.indexOf('/') + 1);
+        boolean same = true;
+        boolean sameKind = true;
+        for (String mime : mimes) {
+            same &= mime.equals(first);
+            sameKind &= mime.startsWith(kind);
+        }
+        return same ? first : sameKind ? kind + "*" : "*/*";
+    }
+
+    // The chosen-target broadcast: the share went out.
+    private void watchShareChosen() {
+        shareChosen = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                long id = intent.getLongExtra(SHARE_ID_EXTRA, 0);
+                if (id != 0 && id == pendingShareId) {
+                    pendingShareId = 0;
+                    nativeShareResult(id, true);
+                }
+            }
+        };
+        IntentFilter filter = new IntentFilter(SHARE_CHOSEN_ACTION);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(shareChosen, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(shareChosen, filter);
+        }
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == SHARE_REQUEST_CODE) {
+            long id = pendingShareId;
+            pendingShareId = 0;
+            if (id != 0) {
+                nativeShareResult(id, resultCode == RESULT_OK);
+            }
+            return;
+        }
         if (requestCode != DIALOG_REQUEST_CODE) {
             super.onActivityResult(requestCode, resultCode, data);
             return;
@@ -537,6 +693,10 @@ public class SolidRTActivity extends SDLActivity {
     protected void onDestroy() {
         DisplayManager dm = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
         dm.unregisterDisplayListener(displayListener);
+        if (shareChosen != null) {
+            unregisterReceiver(shareChosen);
+            shareChosen = null;
+        }
         super.onDestroy();
     }
 
@@ -592,6 +752,7 @@ public class SolidRTActivity extends SDLActivity {
         nativeHardwareKeyboard(hasHardwareKeyboard());
         watchInputDevices();
         watchDisplay();
+        watchShareChosen();
 
         // Report the IME inset to native whenever insets change (keyboard
         // show/hide). Listens on the content view so it sees the insets before

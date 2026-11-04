@@ -135,6 +135,7 @@ const QUERY_KINDS: &[&str] = &[
   "dialog",
   "dialog_answer",
   "requested_links",
+  "requested_shares",
 ];
 
 #[cfg(not(target_os = "android"))]
@@ -1099,6 +1100,23 @@ async fn try_serve(
                   }
                 }
               }
+              Some("requested_shares") => {
+                // The shares the app asked for (navigator.share), oldest
+                // first: a dev client shows each sheet and records the
+                // share, so an agent reads back what a tap handed out.
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(requested_shares_reply(&ctx, id));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
               Some("dialog_answer") => {
                 // Answer the waiting file dialog, or queue the answer for
                 // the next one: the paths (in the client's own file system)
@@ -1538,6 +1556,12 @@ fn link_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, link: String) -> String {
 fn requested_links_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
   let links = flux::link::session(ctx).map(|session| session.requested()).unwrap_or_default();
   serde_json::json!({"type": "result", "id": id, "data": {"links": links}}).to_string()
+}
+
+/// The shares the app asked for (the engine's `ore::share::Session`, as
+/// share.rs spells them). Runs on the JS thread.
+fn requested_shares_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
+  serde_json::json!({"type": "result", "id": id, "data": {"shares": crate::share::requested_json(ctx)}}).to_string()
 }
 
 /// The file dialog state (the engine's `alloy::Dialogs` session, as

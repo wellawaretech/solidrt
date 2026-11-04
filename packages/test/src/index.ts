@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { camera as installCamera, capture, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, requestedLinks, microphone as installMicrophone, painted as paintFrame, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowReady } from "sol:test"
+import { camera as installCamera, capture, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, requestedLinks, requestedShares, microphone as installMicrophone, painted as paintFrame, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
@@ -182,6 +182,14 @@ export type DialogAnswer =
   | { directory: string }
   | { cancel: true }
 
+/** A share the app asked for (`navigator.share`), as it passed it. */
+export type RequestedShare = {
+  title: string | null
+  text: string | null
+  url: string | null
+  files: { path: string; name: string }[]
+}
+
 /** A file dialog request the app made: which function, with which options. */
 export type DialogRequest =
   | { kind: "openFiles"; multiple: boolean; types: { description: string; extensions: string[] }[]; startIn: string | null }
@@ -232,6 +240,19 @@ export interface TestApp {
    * expect(app.requestedLinks()).toEqual(["https://example.com/credits"])
    */
   requestedLinks(): string[]
+  /**
+   * The shares the app asked for (`navigator.share`), oldest first, the
+   * last 64, each as the app passed it: `title`, `text` and `url` (null
+   * when unset) and the `files`' `{ path, name }`. Under test no sheet
+   * shows: each share is recorded and the app's call resolves at once, so
+   * a test asserts what a Share button hands out.
+   *
+   * @example
+   * await app.input([{ type: "pointer", action: "tap", x: 100, y: 40 }])
+   * await app.settle()
+   * expect(app.requestedShares()).toEqual([{ title: null, text: "My board", url: null, files: [{ path: "share/board.png", name: "board.png" }] }])
+   */
+  requestedShares(): RequestedShare[]
   /**
    * Makes `image` what the camera sees: every camera the app opens from
    * now on shows it (a `createCamera` or `open` resolves at once, no device
@@ -640,6 +661,7 @@ let app: TestApp = {
     await app.frame()
   },
   requestedLinks: () => requestedLinks(),
+  requestedShares: () => JSON.parse(requestedShares()) as RequestedShare[],
   async camera(image) {
     let ok = image !== null && typeof image === "object" && image.data instanceof Uint8Array
     if (!ok) throw new TypeError("camera: pass { width, height, data }, with data a Uint8Array of RGBA8 (what decodeImage returns)")

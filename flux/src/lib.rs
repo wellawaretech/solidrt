@@ -37,6 +37,7 @@ pub use pending::{describe_in_flight, hold_engine, in_flight, settled, Hold};
 pub use plugins::add_capability;
 pub use plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
 pub use plugins::js_error::JsResult;
+pub use standards_plugins::share;
 // The marshalling toolkit a module over flux uses as its plugins do (a
 // custom runtime's `runtime:*` module, docs/runtime "Native code"): the
 // promise-with-hold shape of every async binding, the bytes of a JS buffer,
