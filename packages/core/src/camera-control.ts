@@ -433,3 +433,48 @@ export function createShotBlend<C extends object>(push: (camera: C) => void, mix
 }
 
 export type ShotBlend<C extends object> = ReturnType<typeof createShotBlend<C>>
+
+/** What shots drive: anything with a camera to write, read and size (a
+ * 2d view, a 3d scene or view). The blender writes full cameras. */
+export type ShotsOwner<C> = { setCamera(camera: C): void; camera(): C; size(): { width: number; height: number } }
+
+/** A shot's target as createShots returns it: the recording half plus
+ * the owner's size, so a control drives it exactly like the owner. */
+export type SizedShotTarget<C> = ShotTarget<C> & { size(): { width: number; height: number } }
+
+export type ShotsHandle<C extends object> = Omit<ShotBlend<C>, "shot"> & { shot(name: string, opts?: { priority?: number }): SizedShotTarget<C> }
+
+/**
+ * Shots over an owner, or several sharing one camera (a 2d scene's
+ * layers): createShotBlend whose output every owner receives, `mix` the
+ * package's interpolation. `shot(name, { priority? })` returns the
+ * target a control drives (its `camera()` the shot's own, its `size()`
+ * the first owner's); `activate`, `deactivate`, `remove`, `live`,
+ * `camera`, `active` and `update(dt)` are the blender's. Every shot
+ * starts from the first owner's camera at creation.
+ */
+export function createShots<C extends object>(owner: ShotsOwner<C> | ShotsOwner<C>[], mix: (a: C, b: C, t: number) => C, options: ShotBlendOptions = {}): ShotsHandle<C> {
+  let owners = Array.isArray(owner) ? owner : [owner]
+  if (owners.length === 0) throw new Error("createShots: needs at least one owner (a view or a scene)")
+  for (let o of owners) {
+    if (!o || typeof o.setCamera !== "function" || typeof o.camera !== "function" || typeof o.size !== "function") {
+      throw new Error("createShots: every owner needs setCamera(), camera() and size() (a view or a scene)")
+    }
+  }
+  let first = owners[0]!
+  let blend = createShotBlend<C>(
+    camera => {
+      for (let o of owners) o.setCamera(camera)
+    },
+    mix,
+    first.camera(),
+    options,
+  )
+  return {
+    ...blend,
+    shot(name, opts) {
+      let rec = blend.shot(name, opts)
+      return { setCamera: rec.setCamera, camera: rec.camera, size: () => first.size() }
+    },
+  }
+}

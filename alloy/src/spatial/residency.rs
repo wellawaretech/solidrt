@@ -28,9 +28,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::bvh::Box3;
-use super::cull::Frustum;
-use super::math::invert;
-use super::{top_of, LodView, Mat4, Node, NodeId};
+use super::cull::{world_box, Frustum};
+use super::math::{invert, transform_point};
+use super::{top_of, LodView, Mat4, Node, NodeId, IDENTITY};
 
 /// A grid handle (`create_grid`), counted from 1.
 pub type GridId = u64;
@@ -126,7 +126,9 @@ impl RegionSpec {
 /// 0 = free under every limit; a measured weight per cell overrides it),
 /// `limit` the grid's own cap on resident weight, `priority` the order
 /// among grids and regions (higher enters first, evicted last), `label`
-/// the name the stats group the grid's footprint under.
+/// the name the stats group the grid's footprint under, `node` the node
+/// that places the grid (its `origin`, `cell` and `bounds` then in that
+/// node's space; `root` and `node` are exclusive).
 #[derive(Clone, Debug, PartialEq)]
 pub struct GridSpec {
   pub origin: [f64; 3],
@@ -144,6 +146,12 @@ pub struct GridSpec {
   /// none wants every world's and a grid with none is wanted by every
   /// viewer. The spatial arena is one; worlds are its roots.
   pub root: Option<u64>,
+  /// The node the grid is PLACED by: the grid lives in the node's space
+  /// and moves with it, the way an explicit region's box does, and its
+  /// world is the node's top ancestor (none for a root node), as a
+  /// region's is. `enter` and `leave` stay world distances. Freeing the
+  /// node ends the grid (`destroy_grid`'s leaves).
+  pub node: Option<NodeId>,
 }
 
 /// Whether a viewer scoped to `viewer_root` tests a region or grid of
@@ -200,6 +208,9 @@ impl GridSpec {
       if w.iter().any(|p| *p < 0) {
         return Err("wrap periods must not be negative (0 = none)".to_string());
       }
+    }
+    if self.node.is_some() && self.root.is_some() {
+      return Err("a grid placed by a node takes its world from the node: pass node or root, not both".to_string());
     }
     Ok(())
   }
@@ -322,8 +333,20 @@ impl Region {
   }
 }
 
+/// Where a grid placed by a node sits (GridSpec::node), as of the last
+/// pass: the node's arena index, its world matrix, the inverse (None for
+/// a degenerate matrix: the grid then wants nothing) and the world its
+/// top ancestor names.
+struct Placement {
+  index: u32,
+  world: Mat4,
+  inverse: Option<Mat4>,
+  root: Option<u64>,
+}
+
 struct Grid {
   spec: GridSpec,
+  place: Option<Placement>,
   /// Only the wanted cells: a cell nobody wants has no state at all.
   cells: HashMap<[i32; 3], Wanted>,
   /// The measured weights of cells that left, the last REMEMBERED_CELLS
@@ -341,6 +364,25 @@ fn remember(remembered: &mut HashMap<[i32; 3], f64>, order: &mut VecDeque<[i32; 
     if let Some(oldest) = order.pop_front() {
       remembered.remove(&oldest);
     }
+  }
+}
+
+/// The world a grid lives in: its placement node's, else its spec's root.
+fn grid_root(spec: &GridSpec, place: &Option<Placement>) -> Option<u64> {
+  match place {
+    Some(p) => p.root,
+    None => spec.root,
+  }
+}
+
+/// The world center of a grid's canonical cell (GridSpec::cell_center),
+/// a placed grid's computed in its node's space with the eye mapped in.
+fn grid_cell_center(spec: &GridSpec, place: &Option<Placement>, cell: [i32; 3], eye: [f64; 3]) -> [f64; 3] {
+  match place {
+    Some(Placement { world, inverse: Some(inverse), .. }) => {
+      transform_point(world, spec.cell_center(cell, transform_point(inverse, eye)))
+    }
+    _ => spec.cell_center(cell, eye),
   }
 }
 
@@ -618,20 +660,25 @@ impl Residency {
     }
   }
 
-  pub(super) fn create_grid(&mut self, spec: GridSpec) -> Result<GridId, String> {
+  /// A new grid; `place` the arena index of its placement node (the
+  /// caller resolved GridSpec::node), whose matrices the next pass reads.
+  pub(super) fn create_grid(&mut self, spec: GridSpec, place: Option<u32>) -> Result<GridId, String> {
     spec.validate()?;
     let id = self.next_grid;
     self.next_grid += 1;
-    self
-      .grids
-      .insert(id, Grid { spec, cells: HashMap::new(), remembered: HashMap::new(), remembered_order: VecDeque::new() });
+    let place = place.map(|index| Placement { index, world: IDENTITY, inverse: Some(IDENTITY), root: None });
+    self.grids.insert(
+      id,
+      Grid { spec, place, cells: HashMap::new(), remembered: HashMap::new(), remembered_order: VecDeque::new() },
+    );
     // Every viewer enumerates the new grid at the next pass.
     self.mark_all_dirty();
     Ok(id)
   }
 
   /// End a grid: every resident cell leaves, every pending one is dropped.
-  pub(super) fn destroy_grid(&mut self, id: GridId) -> Result<(), String> {
+  /// Returns the arena index of its placement node, if any.
+  pub(super) fn destroy_grid(&mut self, id: GridId) -> Result<Option<u32>, String> {
     let grid = self.grids.remove(&id).ok_or_else(|| format!("grid {id} not found"))?;
     for (cell, state) in grid.cells {
       if state.resident {
@@ -641,7 +688,18 @@ impl Residency {
         self.forget_pending(&state);
       }
     }
-    Ok(())
+    Ok(grid.place.map(|p| p.index))
+  }
+
+  /// The node at arena index `i` is freed: every grid it places ends as
+  /// `destroy_grid` ends one.
+  pub(super) fn end_placed_grids(&mut self, i: u32) {
+    let placed: Vec<GridId> =
+      self.grids.iter().filter(|(_, g)| g.place.as_ref().is_some_and(|p| p.index == i)).map(|(&id, _)| id).collect();
+    for id in placed {
+      // Listed just above: the grid exists.
+      let _ = self.destroy_grid(id);
+    }
   }
 
   /// A pending region stops being wanted: off the pending count, and off
@@ -726,9 +784,10 @@ impl Residency {
     !self.events.is_empty() || self.pending > self.stalled
   }
 
-  /// Whether the pass has anything to do this flush.
-  pub(super) fn needs_pass(&self, regions_moved: bool) -> bool {
-    regions_moved || !self.dirty.is_empty() || self.pending > self.stalled
+  /// Whether the pass has anything to do this flush; `moved` that a
+  /// region or a grid's placement node moved.
+  pub(super) fn needs_pass(&self, moved: bool) -> bool {
+    moved || !self.dirty.is_empty() || self.pending > self.stalled
   }
 
   /// The pass, after the flush's walk (world boxes fresh) and the cull
@@ -741,10 +800,34 @@ impl Residency {
     let dirty = std::mem::take(&mut self.dirty);
     region_nodes.retain(|&i| nodes[i as usize].alive && nodes[i as usize].region.is_some());
     self.test_regions(nodes, region_nodes, &dirty);
-    if !dirty.is_empty() {
-      self.enumerate_grids(&dirty);
+    let moved = self.place_grids(nodes);
+    if !dirty.is_empty() || !moved.is_empty() {
+      self.enumerate_grids(&dirty, &moved);
     }
     self.pace_enters(nodes, region_nodes);
+  }
+
+  /// Read every placed grid's matrices and world off its node (the walk
+  /// just refreshed them); returns the grids whose placement changed,
+  /// which re-enumerate under every viewer.
+  fn place_grids(&mut self, nodes: &[Node]) -> Vec<GridId> {
+    let mut moved = Vec::new();
+    for (&id, grid) in self.grids.iter_mut() {
+      let Some(place) = grid.place.as_mut() else {
+        continue;
+      };
+      let i = place.index;
+      let top = top_of(nodes, i);
+      let root = if top == i { None } else { Some(node_id(top, &nodes[top as usize])) };
+      let world = nodes[i as usize].world;
+      if world != place.world || root != place.root {
+        place.world = world;
+        place.inverse = invert(&world);
+        place.root = root;
+        moved.push(id);
+      }
+    }
+    moved
   }
 
   fn test_regions(&mut self, nodes: &mut [Node], region_nodes: &[u32], dirty: &[u64]) {
@@ -795,10 +878,17 @@ impl Residency {
     }
   }
 
-  fn enumerate_grids(&mut self, dirty: &[u64]) {
+  /// Re-enumerate every grid under the viewers in `dirty`, and the grids
+  /// in `moved` under every viewer.
+  fn enumerate_grids(&mut self, dirty: &[u64], moved: &[GridId]) {
     let Residency { viewers, viewer_roots, grids, events, pending, stalled, leaves_total, .. } = self;
+    // Every viewer, and the dirty ones that went (their wants still fall
+    // out below).
+    let mut all: Vec<u64> = viewers.keys().copied().collect();
+    all.extend(dirty.iter().filter(|v| !viewers.contains_key(v)));
     for (&gid, grid) in grids.iter_mut() {
-      for &v in dirty {
+      let tested: &[u64] = if moved.contains(&gid) { &all } else { dirty };
+      for &v in tested {
         // Forget the viewer everywhere first, remembering where it was:
         // a cell it still reaches with `leave` keeps it below, the rest
         // fall out in the sweep.
@@ -812,12 +902,21 @@ impl Residency {
         let Some(viewer) = viewers.get(&v) else {
           continue;
         };
-        if !in_scope(viewer_roots.get(&v).copied(), grid.spec.root) {
+        let Grid { spec, place, cells, remembered, .. } = grid;
+        if !in_scope(viewer_roots.get(&v).copied(), grid_root(spec, place)) {
           continue;
         }
-        let Grid { spec, cells, remembered, .. } = grid;
         let Some(reach) = viewer.reach(spec.margins.leave) else {
           continue;
+        };
+        // A placed grid enumerates in its node's space: the reach maps in
+        // and every cell box back out, each as the box bounding its
+        // transformed corners (loose under rotation, never missing a
+        // cell; the margins absorb the slack).
+        let (reach, to_world) = match place {
+          Some(Placement { world, inverse: Some(inverse), .. }) => (world_box(&reach, inverse), Some(*world)),
+          Some(Placement { inverse: None, .. }) => continue,
+          None => (reach, None),
         };
         let mut lo = [0i64; 3];
         let mut hi = [0i64; 3];
@@ -836,6 +935,10 @@ impl Residency {
                 continue;
               }
               let b = spec.cell_box(raw, &reach);
+              let b = match &to_world {
+                Some(m) => world_box(&b, m),
+                None => b,
+              };
               let margin = spec.margins.margin(had.contains(&cell));
               if !viewer.frustum.reaches_sides(&b, margin) || viewer.depth_of(&b) > margin {
                 continue;
@@ -922,9 +1025,11 @@ impl Residency {
     }
     for (&gid, grid) in self.grids.iter_mut() {
       let spec = &grid.spec;
+      let place = &grid.place;
       for (&cell, state) in grid.cells.iter_mut() {
         state.stalled = false;
-        let urgency = spec.margins.urgency(nearest(viewers, &state.wanted_by, |eye| spec.cell_center(cell, eye)));
+        let urgency =
+          spec.margins.urgency(nearest(viewers, &state.wanted_by, |eye| grid_cell_center(spec, place, cell, eye)));
         let need = Need { priority: spec.priority, urgency };
         if state.resident {
           let weight = state.measured.unwrap_or(spec.weight);

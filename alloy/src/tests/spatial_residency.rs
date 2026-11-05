@@ -133,6 +133,7 @@ fn plane_grid(enter: f64, leave: f64) -> GridSpec {
     priority: 0,
     label: None,
     root: None,
+    node: None,
   }
 }
 
@@ -324,6 +325,7 @@ fn grid_cells_beyond_the_depth_reach_stay_out_under_a_perspective_view() {
       priority: 0,
       label: None,
       root: None,
+      node: None,
     })
     .expect("grid");
   // Eye at z = 100 looking down -z with a far plane at 1000: the frustum
@@ -802,4 +804,117 @@ fn a_cell_approached_again_is_admitted_by_what_it_measured_last_time() {
   let events = step(&mut s);
   assert!(events.iter().any(|e| matches!(e, Enter(Cell { .. }))), "admitted at 40 under 50: {events:?}");
   assert_eq!(s.residency_stats().weight, 40.0);
+}
+
+/// The plane grid placed by `node`.
+fn placed_grid(node: u64) -> GridSpec {
+  GridSpec { node: Some(node), ..plane_grid(0.0, 0.0) }
+}
+
+/// A quarter turn about z: grid x along world +y, grid y along world -x.
+const QUARTER_Z: [f64; 4] = [0.0, 0.0, std::f64::consts::FRAC_1_SQRT_2, std::f64::consts::FRAC_1_SQRT_2];
+
+#[test]
+fn a_placed_grid_lives_in_its_nodes_space() {
+  // Each view is a 6 x 6 rect well inside one cell, so no cell is met
+  // at an edge by rounding.
+  let cases: [([f64; 3], [f64; 4], [f64; 3], (f64, f64), [i32; 3]); 3] = [
+    // Translated: the world rect at x 102..108 is the node's 2..8.
+    ([100.0, 0.0, 0.0], Q, ONE, (102.0, 2.0), [0, 0, 0]),
+    // Rotated: world (2..8, 2..8) is grid (2..8, -8..-2).
+    ([0.0; 3], QUARTER_Z, ONE, (2.0, 2.0), [0, -1, 0]),
+    // Scaled twice: world 22..28 is grid 11..14, cell 1, not 2.
+    ([0.0; 3], Q, [2.0, 2.0, 1.0], (22.0, 2.0), [1, 0, 0]),
+  ];
+  for (position, rotation, scale, (x, y), want) in cases {
+    let mut s = Spatial::new();
+    let node = s.create(position, rotation, scale, true);
+    let g = s.create_grid(placed_grid(node)).expect("grid");
+    s.set_view(1, camera_2d(x, y, 6.0, 6.0));
+    let events = step(&mut s);
+    assert_eq!(cells(&events, g, true), vec![want], "{position:?} {rotation:?} {scale:?}");
+  }
+}
+
+#[test]
+fn a_placed_grid_follows_its_node_and_its_parent_under_a_still_viewer() {
+  let mut s = Spatial::new();
+  let parent = s.create([0.0; 3], Q, ONE, true);
+  let node = s.create([0.0; 3], Q, ONE, true);
+  s.set_parent(node, Some(parent)).expect("parent");
+  let g = s.create_grid(placed_grid(node)).expect("grid");
+  s.set_view(1, camera_2d(2.0, 2.0, 6.0, 6.0));
+  assert_eq!(cells(&step(&mut s), g, true), vec![[0, 0, 0]]);
+  // The node moves 10 right: the view is now the grid's -8..-2.
+  s.set_transform(node, [10.0, 0.0, 0.0], Q, ONE).expect("move");
+  let events = step(&mut s);
+  assert_eq!(cells(&events, g, false), vec![[0, 0, 0]]);
+  assert_eq!(cells(&events, g, true), vec![[-1, 0, 0]]);
+  // The parent moves 10 more: -18..-12.
+  s.set_transform(parent, [10.0, 0.0, 0.0], Q, ONE).expect("move parent");
+  let events = step(&mut s);
+  assert_eq!(cells(&events, g, false), vec![[-1, 0, 0]]);
+  assert_eq!(cells(&events, g, true), vec![[-2, 0, 0]]);
+  // Still: nothing.
+  assert!(step(&mut s).is_empty());
+}
+
+#[test]
+fn a_placed_grids_world_is_its_nodes_top_ancestor() {
+  let mut s = Spatial::new();
+  let world_a = s.create([0.0; 3], Q, ONE, true);
+  let world_b = s.create([0.0; 3], Q, ONE, true);
+  let node = s.create([0.0; 3], Q, ONE, true);
+  s.set_parent(node, Some(world_a)).expect("parent");
+  let g = s.create_grid(placed_grid(node)).expect("grid");
+  s.set_view(1, camera_2d(2.0, 2.0, 6.0, 6.0));
+  s.set_view_root(1, Some(world_b));
+  assert!(cells(&step(&mut s), g, true).is_empty(), "b's viewer");
+  s.set_view_root(1, Some(world_a));
+  assert_eq!(cells(&step(&mut s), g, true), vec![[0, 0, 0]], "a's viewer");
+  // Moved under world b: the cell leaves a's viewer.
+  s.set_parent(node, Some(world_b)).expect("reparent");
+  assert_eq!(cells(&step(&mut s), g, false), vec![[0, 0, 0]], "now b's");
+  // `node` and `root` together are refused, as is an unknown node.
+  assert!(s.create_grid(GridSpec { root: Some(world_a), ..placed_grid(node) }).is_err());
+  assert!(s.create_grid(placed_grid(world_a + 99)).is_err());
+}
+
+#[test]
+fn freeing_a_placement_node_ends_its_grid() {
+  let mut s = Spatial::new();
+  let node = s.create([0.0; 3], Q, ONE, true);
+  let g = s.create_grid(placed_grid(node)).expect("grid");
+  // Four cells wanted, one enter per delivery: one resident, three
+  // pending.
+  s.set_residency_budget(1);
+  s.set_view(1, camera_2d(0.0, 0.0, 20.0, 20.0));
+  let events = step(&mut s);
+  assert_eq!(cells(&events, g, true).len(), 1);
+  assert_eq!(s.residency_stats().pending, 3);
+  s.destroy(node).expect("destroy");
+  // The resident cell leaves; the pending ones are dropped uncounted.
+  let events = s.take_region_events();
+  assert_eq!(cells(&events, g, false).len(), 1);
+  assert_eq!(s.residency_stats().pending, 0);
+  assert!(s.destroy_grid(g).is_err(), "gone with its node");
+  assert!(step(&mut s).is_empty());
+}
+
+#[test]
+fn destroying_a_placed_grid_first_leaves_its_node_alone() {
+  let mut s = Spatial::new();
+  let node = s.create([0.0; 3], Q, ONE, true);
+  let g = s.create_grid(placed_grid(node)).expect("grid");
+  let h = s.create_grid(placed_grid(node)).expect("second grid");
+  s.set_view(1, camera_2d(2.0, 2.0, 6.0, 6.0));
+  step(&mut s);
+  s.destroy_grid(g).expect("destroy grid");
+  s.take_region_events();
+  // The node still places the other grid, which keeps following it.
+  s.set_transform(node, [10.0, 0.0, 0.0], Q, ONE).expect("move");
+  let events = step(&mut s);
+  assert_eq!(cells(&events, h, true), vec![[-1, 0, 0]]);
+  s.destroy(node).expect("destroy");
+  assert_eq!(cells(&s.take_region_events(), h, false), vec![[-1, 0, 0]]);
 }

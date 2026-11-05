@@ -9,7 +9,7 @@ export { windowSize, safeArea, displayScale, windowFocused, keyboardHeight, lock
 export { slice, setSliceBudget, sliceBudget, slicesQueued, sliceStats } from "./slice"
 export type { SliceOptions, Sliced } from "./slice"
 export { createRegion, createRegionGrid, createStreamingSource, setResidencyBudget, setResidencyLimit } from "./residency"
-export type { Region, RegionCell, RegionGrid, RegionGridOptions, RegionHandler, RegionHooks, RegionOptions, RegionState, StreamingSource } from "./residency"
+export type { Region, RegionCell, RegionGrid, RegionGridOptions, RegionHandle, RegionHandler, RegionHooks, RegionOptions, RegionState, StreamingSource } from "./residency"
 export { env } from "./environment"
 export { quality, setQuality, QUALITIES } from "./quality"
 export type { Quality } from "./quality"

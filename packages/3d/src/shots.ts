@@ -6,9 +6,9 @@
 // extents blend too, a perspective-to-ortho switch cuts at the midpoint
 // (there is no in-between projection).
 
-import { createShotBlend } from "@solidrt/core/camera-control"
-import type { ShotBlend, ShotBlendOptions, ShotTarget as RecordingTarget } from "@solidrt/core/camera-control"
-import type { CameraState, CameraUpdate } from "./camera.ts"
+import { createShots as createCoreShots } from "@solidrt/core/camera-control"
+import type { ShotBlend, ShotBlendOptions, ShotsOwner as CoreShotsOwner, ShotTarget as RecordingTarget } from "@solidrt/core/camera-control"
+import type { CameraState } from "./camera.ts"
 import type { Vec3 } from "./math.ts"
 
 let lerp = (a: number, b: number, t: number) => a + (b - a) * t
@@ -31,7 +31,7 @@ export let mixCamera = (a: CameraState, b: CameraState, t: number): CameraState 
 })
 
 /** What shots drive: a Scene, or one of its Views. */
-export type ShotsOwner = { setCamera(update: CameraUpdate): void; camera(): CameraState; size(): { width: number; height: number } }
+export type ShotsOwner = CoreShotsOwner<CameraState>
 
 /** A shot's target: the recording half plus the owner's size, so an
  * orbit or first-person control drives it exactly like the scene. */
@@ -48,16 +48,5 @@ export type ShotsHandle = Omit<ShotBlend<CameraState>, "shot"> & { shot(name: st
  * `active()`. Every shot starts from the owner's camera at creation.
  */
 export function createShots(owner: ShotsOwner, options: ShotBlendOptions = {}): ShotsHandle {
-  if (!owner || typeof owner.setCamera !== "function" || typeof owner.camera !== "function" || typeof owner.size !== "function") {
-    throw new Error("createShots: the owner needs setCamera(), camera() and size() (a Scene or a View)")
-  }
-  let initial = owner.camera()
-  let blend = createShotBlend<CameraState>(camera => owner.setCamera(camera), mixCamera, initial, options)
-  return {
-    ...blend,
-    shot(name, opts) {
-      let rec = blend.shot(name, opts)
-      return { setCamera: rec.setCamera, camera: rec.camera, size: () => owner.size() }
-    },
-  }
+  return createCoreShots<CameraState>(owner, mixCamera, options)
 }

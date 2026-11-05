@@ -7,8 +7,10 @@
 // buildModel builds a model across steps and the model's bytes count; an
 // explicit region declares itself while in a scene and leaves when removed;
 // a streaming source wants cells no camera sees; the components mount their
-// JSX per cell. The gate and the content are GPU state over live scene
-// nodes, so these are app tests.
+// JSX per cell; a grid under a moved node lives in the node's space and
+// follows it, and takes its band from its cell size when none is given.
+// The gate and the content are GPU state over live scene nodes, so these
+// are app tests.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
@@ -279,6 +281,29 @@ test("an explicit region declares itself while in a scene, keeps its proxy until
   expect(region._destroyed).toBe(true)
   expect(() => createRegion({ bounds: [0, 0, 0, 1, 1], enter: 1, leave: 2, build: () => {} })).toThrow()
   expect(() => createRegion({ bounds: [1, 0, 0, 0, 1, 1], enter: 1, leave: 2, build: () => {} })).toThrow()
+})
+
+test("a grid under a moved node builds its cells where the gate tests them, and follows the node", async app => {
+  let scene = await mounted(app)
+  let grid = createRegionGrid<undefined>({ cell: [CELL, CELL, DEPTH], bounds: ONE_LAYER, enter: ENTER, leave: LEAVE, build: () => {} })
+  // One cell left: the camera over the world's cell (0, 0, 0) is over
+  // the grid's cell (1, 0, 0).
+  setTransform(grid, { position: [-CELL, 0, 0] })
+  add(scene.root, grid)
+  await app.settle()
+  expect(grid.cells().map(c => c.cell!.join(","))).toEqual(["1,0,0"])
+  expect(grid.cellAt(1, 0, 0)!.position).toEqual([CELL, 0, 0])
+  setTransform(grid, { position: [0, 0, 0] })
+  await app.settle()
+  expect(grid.cells().map(c => c.cell!.join(","))).toEqual(["0,0,0"])
+  grid.dispose()
+  // No band given: core's default (half the largest cell side) wants the
+  // cell under the camera.
+  let defaulted = createRegionGrid<undefined>({ cell: [CELL, CELL, DEPTH], bounds: ONE_LAYER, build: () => {} })
+  add(scene.root, defaulted)
+  await app.settle()
+  expect(defaulted.cellAt(0, 0, 0) !== null).toBe(true)
+  defaulted.dispose()
 })
 
 test("a streaming source wants the cells around it that no camera sees", async app => {

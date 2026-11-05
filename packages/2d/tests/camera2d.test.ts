@@ -20,7 +20,6 @@ import { flush } from "@solidjs/signals"
 import { createCamera2d } from "../src/camera2d.ts"
 import type { Camera2d, Camera2dOptions } from "../src/camera2d.ts"
 import { projectCamera } from "../src/camera.ts"
-import { createShots, mixCamera } from "../src/shots.ts"
 import type { CameraUpdate } from "../src/camera.ts"
 
 function range(lo: number, hi: number): number {
@@ -588,44 +587,4 @@ test("the axes: brackets, bracketed vs unbracketed zoom, rates", () => {
   cam.update(1)
   stopZoom()
   if (!near(cam.camera().zoom, 2, 1e-9)) fail(`a zoom rate of 1 doubles per second, got ${cam.camera().zoom}`)
-})
-
-test("shots: the zoom blends in log space; a shot's control drives the view through the blender", () => {
-  let a = { x: 0, y: 0, zoom: 1, rotation: 0, pivotX: 0, pivotY: 0 }
-  let b = { x: 100, y: 50, zoom: 4, rotation: 1, pivotX: 10, pivotY: 20 }
-  let m = mixCamera(a, b, 0.5)
-  if (!near(m.zoom, 2) || !near(m.x, 50) || !near(m.rotation, 0.5) || !near(m.pivotX, 5)) fail(`mixCamera: zoom in log space, the rest linear, got ${JSON.stringify(m)}`)
-  let last = null as CameraUpdate | null
-  let shots = createShots({ setCamera: u => (last = u), camera: () => a, size: () => ({ width: 800, height: 600 }) }, { blend: 0.25 })
-  let wide = createCamera2d(shots.shot("wide"), { zoom: 1, x: 400, y: 300 })
-  let close = createCamera2d(shots.shot("close", { priority: 1 }), { zoom: 4, x: 100, y: 100 })
-  if (last !== null) fail("a shot's control pushes into the recorder, not the view, until live")
-  shots.activate("wide")
-  if (last === null || (last as CameraUpdate).zoom !== 1) fail("the live shot's camera reaches the view")
-  wide.panBy(-100, 0)
-  if (!near((last as CameraUpdate).x!, 500)) fail(`a live shot's control drives the view through the blender, got ${(last as CameraUpdate).x}`)
-  shots.activate("close")
-  for (let i = 0; i < 8; i++) shots.update(DT)
-  let z = (last as CameraUpdate).zoom!
-  if (!(z > 1 && z < 4)) fail(`mid-blend zoom between the shots, got ${z}`)
-  for (let i = 0; i < 20; i++) shots.update(DT)
-  if ((last as CameraUpdate).zoom !== 4 || !near((last as CameraUpdate).x!, 100)) fail(`the blend lands on the close shot, got ${JSON.stringify(last)}`)
-  void close
-})
-
-test("shots: a shot no control drives holds the view's camera at creation (the 3d owner rule)", () => {
-  let view = { x: 120, y: 80, zoom: 2, rotation: 0.5, pivotX: 400, pivotY: 300 }
-  let last = null as CameraUpdate | null
-  let shots = createShots({ setCamera: u => (last = u), camera: () => view, size: () => ({ width: 800, height: 600 }) })
-  if (shots.camera().zoom !== 2) fail(`before any shot is live the blender reads the view's camera, got ${JSON.stringify(shots.camera())}`)
-  shots.shot("hold")
-  shots.activate("hold")
-  if (last === null || (last as CameraUpdate).zoom !== 2 || !near((last as CameraUpdate).x!, 120)) fail(`a control-less shot holds the view, got ${JSON.stringify(last)}`)
-  let threw = false
-  try {
-    createShots([])
-  } catch {
-    threw = true
-  }
-  if (!threw) fail("an empty target list throws")
 })

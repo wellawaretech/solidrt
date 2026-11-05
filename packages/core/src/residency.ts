@@ -21,8 +21,9 @@
 // empty, the error on the handle and reported once; the next enter
 // retries. The gate's own states (pending, stalled) show through the
 // handle's `state` while the handler holds nothing. The package hooks
-// (`spawn`, `shown`, `teardown`) are what a node form adds; an app with
-// no node form passes none.
+// (`spawn`, `shown`, `teardown`) are what a node form adds, and its
+// `handle` is what every callback receives in place of the core region;
+// an app with no node form passes neither.
 import * as spatial from "flux:spatial"
 import type { GridId, NodeId, RegionSpec, ViewKey } from "flux:spatial"
 import { on } from "sol:events"
@@ -91,7 +92,23 @@ export type RegionHooks<R> = {
   teardown?: (region: R) => void
 }
 
-export type Region<T> = {
+/** What a region's handler, hooks and listeners receive: the package's
+ * handle `R` (made by the options' `handle`), or the core region itself
+ * when the caller has none (`R` left unknown). */
+export type RegionHandle<T, R> = unknown extends R ? Region<T, R> : R
+
+/** The package handle option: `handle` required with an `R`, absent
+ * without one. */
+type HandleOption<T, R> = unknown extends R
+  ? { handle?: undefined }
+  : {
+      /** Make the package's handle, what every handler call, hook and
+       * listener receives from then on: once as an explicit region is
+       * created, as a grid cell enters (before `spawn`). */
+      handle: (region: Region<T, R>) => R
+    }
+
+export type Region<T, R = unknown> = {
   /** The region's state (RegionState). */
   readonly state: RegionState
   /** The loaded data while the region holds any (from `load` on, until
@@ -102,7 +119,7 @@ export type Region<T> = {
   /** The cell index of a grid region; null for an explicit one. */
   readonly cell: RegionCell | null
   /** The handle the grid form was created by; null for an explicit region. */
-  readonly grid: RegionGrid<T> | null
+  readonly grid: RegionGrid<T, R> | null
   readonly label: string | undefined
   /** The core node an explicit region is attached to (attach), or null. */
   readonly node: NodeId | null
@@ -118,17 +135,17 @@ export type Region<T> = {
    * now (unload, teardown), since the gate's own leave would arrive too
    * late to name this handler. */
   detach(): void
-  /** Assignable: called after every state change. */
-  onStateChange?: (region: Region<T>, state: RegionState) => void
+  /** Assignable: called after every state change, with the handle. */
+  onStateChange?: (region: RegionHandle<T, R>, state: RegionState) => void
   /** Assignable: called with what a load or build threw (the region is
-   * then "failed"; the error is reported to the console when no
-   * listener is set). */
-  onError?: (region: Region<T>, error: unknown) => void
+   * then "failed"; the error goes to the grid's listener when no
+   * listener is set here, else to the console). */
+  onError?: (region: RegionHandle<T, R>, error: unknown) => void
   /** @internal */
-  _lifecycle: Lifecycle<T>
+  _lifecycle: Lifecycle<T, any>
 }
 
-export type RegionOptions<T> = RegionHandler<T, Region<T>> & {
+type RegionFields<T, R> = {
   /** Wanted within this distance of a viewer's view volume. */
   enter: number
   /** Kept until beyond this distance (at least `enter`). */
@@ -143,16 +160,30 @@ export type RegionOptions<T> = RegionHandler<T, Region<T>> & {
    * (default false). */
   retain?: boolean
   label?: string
-  hooks?: RegionHooks<Region<T>>
+  hooks?: RegionHooks<RegionHandle<T, R>>
 }
 
-export type RegionGridOptions<T> = RegionHandler<T, Region<T>> & {
-  /** The world corner of cell [0, 0, 0]. */
+export type RegionOptions<T, R = unknown> = RegionHandler<T, RegionHandle<T, R>> & RegionFields<T, R> & HandleOption<T, R>
+
+/** A grid's default residency band in cells of its largest finite axis:
+ * wanted within half a cell of a view, kept until one and a half cells
+ * away (the 2d tile layer's band). */
+const DEFAULT_ENTER_CELLS = 0.5
+const DEFAULT_LEAVE_CELLS = 1.5
+
+type RegionGridFields<T, R> = {
+  /** The corner of cell [0, 0, 0]: in the world, or in the placement
+   * node's space (`node`). */
   origin: [number, number, number]
-  /** The cell size per axis; 0 = unbounded along that axis. */
+  /** The cell size per axis; 0 = unbounded along that axis, not along
+   * every one. */
   cell: [number, number, number]
-  enter: number
-  leave: number
+  /** Wanted within this distance of a viewer's view volume (default
+   * half the largest finite cell side). */
+  enter?: number
+  /** Kept until beyond this distance (at least `enter`; default one and
+   * a half times the largest finite cell side, at least `enter`). */
+  leave?: number
   /** An inclusive cell-index box outside which no cell exists. */
   bounds?: [number, number, number, number, number, number]
   /** A period in cells per axis (0 = none): a torus, the canonical cell
@@ -173,33 +204,45 @@ export type RegionGridOptions<T> = RegionHandler<T, Region<T>> & {
    * (flux:spatial GridSpec.root); none, every viewer's. `start` may
    * name it instead, where it is known only then. */
   root?: NodeId
-  hooks?: RegionHooks<Region<T>>
+  /** The node that places the grid (flux:spatial GridSpec.node): the
+   * grid lives in its space, moves with it, and lives in its world, so
+   * `root` and `node` are exclusive. `start` may name it instead. */
+  node?: NodeId
+  hooks?: RegionHooks<RegionHandle<T, R>>
 }
 
-export type RegionGrid<T> = {
+export type RegionGridOptions<T, R = unknown> = RegionHandler<T, RegionHandle<T, R>> & RegionGridFields<T, R> & HandleOption<T, R>
+
+export type RegionGrid<T, R = unknown> = {
   /** Declare the grid to the gate (cells enter from the next flush);
-   * `root` names the world when the options did not. */
-  start(root?: NodeId): void
+   * `root` or `node` place it when the options did not. */
+  start(place?: { root?: NodeId; node?: NodeId }): void
   /** End the grid: every held cell leaves now (unload, teardown). */
   stop(): void
   /** The gate's id while started, else null. */
   readonly grid: GridId | null
   readonly label: string | undefined
   /** The cells the handler holds (from enter to leave), fresh array. */
-  cells(): Region<T>[]
+  cells(): RegionHandle<T, R>[]
   /** The held cell at an index, or null. */
-  cellAt(i: number, j: number, k: number): Region<T> | null
+  cellAt(i: number, j: number, k: number): RegionHandle<T, R> | null
   /** Re-cap the grid's own limit (null = none) or its estimate per cell. */
   setLimit(limit: number | null): void
   setWeight(weight: number): void
   /** Drop the retained data. */
   forget(): void
   /** Assignable: called after every cell's state change. */
-  onStateChange?: (region: Region<T>, state: RegionState) => void
-  onError?: (region: Region<T>, error: unknown) => void
+  onStateChange?: (region: RegionHandle<T, R>, state: RegionState) => void
+  onError?: (region: RegionHandle<T, R>, error: unknown) => void
   /** Stop and release everything. */
   dispose(): void
 }
+
+// The options as the implementation reads them: `R` erased, `handle`
+// optional either way, a grid's band resolved.
+type AnyRegionOptions<T> = RegionHandler<T, any> & RegionFields<T, any> & { handle?: (region: Region<T, any>) => unknown }
+type AnyGridOptions<T> = RegionHandler<T, any> &
+  RegionGridFields<T, any> & { enter: number; leave: number; handle?: (region: Region<T, any>) => unknown }
 
 // A retained-data store: the last `cap` entries by key, oldest dropped.
 class Retainer<T> {
@@ -225,11 +268,13 @@ class Retainer<T> {
   }
 }
 
-// What every region form shares: the enter-to-leave machine.
-type Lifecycle<T> = {
-  region: Region<T>
-  handler: RegionHandler<T, Region<T>>
-  hooks: RegionHooks<Region<T>> | undefined
+// What every region form shares: the enter-to-leave machine. `H` is the
+// handle every callback receives.
+type Lifecycle<T, H> = {
+  region: Region<T, any>
+  handle: H
+  handler: RegionHandler<T, H>
+  hooks: RegionHooks<H> | undefined
   retainer: Retainer<T>
   key: string
   /** Bumped by every enter and leave: a settled load or build from an
@@ -241,14 +286,14 @@ type Lifecycle<T> = {
   error: unknown
   abort: AbortController | null
   job: Sliced | null
-  notify: ((region: Region<T>, state: RegionState) => void) | undefined
-  report: ((region: Region<T>, error: unknown) => void) | undefined
+  notify: (state: RegionState) => void
+  report: (error: unknown) => void
 }
 
 // The handlers the gate's events reach: explicit regions by node, grids
 // by id. One subscription, installed at the first region.
-let byNode = new Map<NodeId, Lifecycle<unknown>>()
-let byGrid = new Map<GridId, GridImpl<unknown>>()
+let byNode = new Map<NodeId, Lifecycle<unknown, unknown>>()
+let byGrid = new Map<GridId, GridImpl<unknown, unknown>>()
 let subscribed = false
 type RegionEvent = { node?: NodeId; grid?: GridId; cell?: RegionCell }
 
@@ -276,27 +321,27 @@ registerStat("regionsBuilding", () => counts.building)
 registerStat("regionsShown", () => counts.shown)
 registerStat("regionsFailed", () => counts.failed)
 
-function setHeld<T>(life: Lifecycle<T>, state: RegionState): void {
+function setHeld<T, H>(life: Lifecycle<T, H>, state: RegionState): void {
   let was = life.held
   if (was in counts) counts[was as keyof typeof counts]--
   life.held = state
   if (state in counts) counts[state as keyof typeof counts]++
-  life.notify?.(life.region, life.region.state)
+  life.notify(life.region.state)
 }
 
-function fail<T>(life: Lifecycle<T>, error: unknown): void {
+function fail<T, H>(life: Lifecycle<T, H>, error: unknown): void {
   life.error = error
   life.abort = null
   life.job = null
   setHeld(life, "failed")
-  life.report?.(life.region, error)
+  life.report(error)
 }
 
-function enter<T>(life: Lifecycle<T>): void {
+function enter<T, H>(life: Lifecycle<T, H>): void {
   if (life.held !== "unwanted") return
   life.generation++
   life.error = undefined
-  life.hooks?.spawn?.(life.region)
+  life.hooks?.spawn?.(life.handle)
   let retained = life.retainer.take(life.key)
   if (retained !== undefined) {
     build(life, retained.data)
@@ -311,7 +356,7 @@ function enter<T>(life: Lifecycle<T>): void {
   life.abort = abort
   setHeld(life, "loading")
   Promise.resolve()
-    .then(() => life.handler.load!(life.region, abort.signal))
+    .then(() => life.handler.load!(life.handle, abort.signal))
     .then(
       data => {
         if (generation !== life.generation) return
@@ -325,17 +370,18 @@ function enter<T>(life: Lifecycle<T>): void {
     )
 }
 
-function build<T>(life: Lifecycle<T>, data: T): void {
+function build<T, H>(life: Lifecycle<T, H>, data: T): void {
   let generation = life.generation
   life.data = data
   life.hasData = true
   setHeld(life, "building")
   let handler = life.handler
   let region = life.region
+  let handle = life.handle
   // One job whatever the build returns: a plain build is one step, run
   // in the frame's slice slot in queue order like the rest.
   let steps = (function* () {
-    let made = handler.build(region, data)
+    let made = handler.build(handle, data)
     if (made !== undefined && made !== null && typeof (made as Iterator<void>).next === "function") yield* made as Iterable<void> & Iterator<void>
   })()
   // Settled inside the frame's drain, so the content shows in the frame
@@ -347,7 +393,7 @@ function build<T>(life: Lifecycle<T>, data: T): void {
       if (state === "done") {
         life.job = null
         setHeld(life, "shown")
-        life.hooks?.shown?.(region)
+        life.hooks?.shown?.(handle)
       } else if (state === "failed") fail(life, error)
     },
   })
@@ -355,7 +401,7 @@ function build<T>(life: Lifecycle<T>, data: T): void {
   job.done.catch(() => {})
 }
 
-function leave<T>(life: Lifecycle<T>): void {
+function leave<T, H>(life: Lifecycle<T, H>): void {
   if (life.held === "unwanted") return
   life.generation++
   life.abort?.abort()
@@ -364,12 +410,12 @@ function leave<T>(life: Lifecycle<T>): void {
   life.job = null
   if (life.hasData) {
     try {
-      life.handler.unload?.(life.region, life.data as T)
+      life.handler.unload?.(life.handle, life.data as T)
     } catch (error) {
       console.error("A region's unload threw" + (life.region.label !== undefined ? ` (${life.region.label})` : "") + ":", error)
     }
   }
-  life.hooks?.teardown?.(life.region)
+  life.hooks?.teardown?.(life.handle)
   if (life.hasData) life.retainer.keep(life.key, life.data as T)
   life.data = undefined
   life.hasData = false
@@ -389,20 +435,20 @@ function gateState(read: () => spatial.RegionState | null): RegionState {
 }
 
 function makeLifecycle<T>(
-  handler: RegionHandler<T, Region<T>>,
-  hooks: RegionHooks<Region<T>> | undefined,
+  opts: AnyRegionOptions<T> | AnyGridOptions<T>,
   retainer: Retainer<T>,
   key: string,
-  shape: { cell: RegionCell | null; grid: RegionGrid<T> | null; label: string | undefined },
+  shape: { cell: RegionCell | null; grid: GridImpl<T, unknown> | null; label: string | undefined },
   gate: () => spatial.RegionState | null,
   measure: (weight: number) => void,
   attach: (node: NodeId) => void,
   detach: (node: NodeId) => void,
-): Lifecycle<T> {
-  let life: Lifecycle<T> = {
+): Lifecycle<T, any> {
+  let life: Lifecycle<T, any> = {
     region: null!,
-    handler,
-    hooks,
+    handle: null,
+    handler: opts,
+    hooks: opts.hooks,
     retainer,
     key,
     generation: 0,
@@ -412,11 +458,11 @@ function makeLifecycle<T>(
     error: undefined,
     abort: null,
     job: null,
-    notify: undefined,
-    report: undefined,
+    notify: () => {},
+    report: () => {},
   }
   let attached: NodeId | null = null
-  let region: Region<T> = {
+  let region: Region<T, any> = {
     get state() {
       return life.held !== "unwanted" ? life.held : gateState(gate)
     },
@@ -459,16 +505,17 @@ function makeLifecycle<T>(
     _lifecycle: life,
   }
   life.region = region
-  life.notify = (r, s) => {
-    region.onStateChange?.(r, s)
-    ;(shape.grid as GridImpl<T> | null)?.notifyCell(r, s)
+  life.handle = opts.handle !== undefined ? opts.handle(region) : region
+  life.notify = s => {
+    region.onStateChange?.(life.handle, s)
+    shape.grid?.onStateChange?.(life.handle, s)
   }
   // The error goes to the region's listener, else its grid's, else the
   // console - resolved at the failure, so a listener set later counts.
-  life.report = (r, e) => {
-    let listener = region.onError ?? (shape.grid as GridImpl<T> | null)?.onError
-    if (listener !== undefined) listener(r, e)
-    else console.error("A region's load or build failed" + (r.label !== undefined ? ` (${r.label})` : "") + ":", e)
+  life.report = e => {
+    let listener = region.onError ?? shape.grid?.onError
+    if (listener !== undefined) listener(life.handle, e)
+    else console.error("A region's load or build failed" + (region.label !== undefined ? ` (${region.label})` : "") + ":", e)
   }
   return life
 }
@@ -481,12 +528,12 @@ function makeLifecycle<T>(
  * directly over a bounded node of its own. Its data is kept between
  * visits under `retain`.
  */
-export function createRegion<T = undefined>(opts: RegionOptions<T>): Region<T> {
+export function createRegion<T = undefined, R = unknown>(options: RegionOptions<T, R>): Region<T, R> {
+  let opts = options as AnyRegionOptions<T>
   checkMargins(opts, "createRegion")
   let spec: RegionSpec = { enter: opts.enter, leave: opts.leave, weight: opts.weight, priority: opts.priority }
-  let life: Lifecycle<T> = makeLifecycle<T>(
+  let life: Lifecycle<T, any> = makeLifecycle<T>(
     opts,
-    opts.hooks,
     new Retainer<T>(opts.retain === true ? 1 : 0),
     "region",
     { cell: null, grid: null, label: opts.label },
@@ -497,7 +544,7 @@ export function createRegion<T = undefined>(opts: RegionOptions<T>): Region<T> {
     node => {
       subscribe()
       spatial.setRegion(node, spec)
-      byNode.set(node, life as Lifecycle<unknown>)
+      byNode.set(node, life as Lifecycle<unknown, unknown>)
       // The declaration asks for the flush that first tests it.
       requestFrame()
     },
@@ -521,26 +568,27 @@ function checkMargins(opts: { enter: number; leave: number; weight?: number; pri
   if (opts.priority !== undefined && !Number.isInteger(opts.priority)) throw new Error(`${api}: priority must be an integer, got ${opts.priority}`)
 }
 
-class GridImpl<T> implements RegionGrid<T> {
+class GridImpl<T, R> implements RegionGrid<T, R> {
   grid: GridId | null = null
   label: string | undefined
-  onStateChange?: (region: Region<T>, state: RegionState) => void
-  onError?: (region: Region<T>, error: unknown) => void
-  private held = new Map<string, Lifecycle<T>>()
+  onStateChange?: (region: RegionHandle<T, R>, state: RegionState) => void
+  onError?: (region: RegionHandle<T, R>, error: unknown) => void
+  private held = new Map<string, Lifecycle<T, any>>()
   private retainer: Retainer<T>
   private disposed = false
-  constructor(private opts: RegionGridOptions<T>) {
+  constructor(private opts: AnyGridOptions<T>) {
     this.label = opts.label
     this.retainer = new Retainer<T>(opts.retain ?? 0)
   }
 
-  start(root?: NodeId): void {
+  start(place?: { root?: NodeId; node?: NodeId }): void {
     if (this.disposed) throw new Error("start: the grid was disposed")
     if (this.grid !== null) return
     subscribe()
     let o = this.opts
     this.grid = spatial.createGrid({
-      root: root ?? o.root,
+      root: place?.root ?? o.root,
+      node: place?.node ?? o.node,
       origin: o.origin,
       cell: o.cell,
       enter: o.enter,
@@ -552,7 +600,7 @@ class GridImpl<T> implements RegionGrid<T> {
       priority: o.priority,
       label: o.label,
     })
-    byGrid.set(this.grid, this as GridImpl<unknown>)
+    byGrid.set(this.grid, this as GridImpl<unknown, unknown>)
     requestFrame()
   }
 
@@ -560,16 +608,21 @@ class GridImpl<T> implements RegionGrid<T> {
     if (this.grid === null) return
     for (let life of [...this.held.values()]) this.leaveLife(life)
     byGrid.delete(this.grid)
-    spatial.destroyGrid(this.grid)
+    try {
+      spatial.destroyGrid(this.grid)
+    } catch {
+      // The placement node went before the stop: the gate ended the grid
+      // with it.
+    }
     this.grid = null
   }
 
-  cells(): Region<T>[] {
-    return [...this.held.values()].map(l => l.region)
+  cells(): RegionHandle<T, R>[] {
+    return [...this.held.values()].map(l => l.handle)
   }
 
-  cellAt(i: number, j: number, k: number): Region<T> | null {
-    return this.held.get(cellKey([i, j, k]))?.region ?? null
+  cellAt(i: number, j: number, k: number): RegionHandle<T, R> | null {
+    return this.held.get(cellKey([i, j, k]))?.handle ?? null
   }
 
   setLimit(limit: number | null): void {
@@ -602,10 +655,6 @@ class GridImpl<T> implements RegionGrid<T> {
     this.disposed = true
   }
 
-  notifyCell(region: Region<T>, state: RegionState): void {
-    this.onStateChange?.(region, state)
-  }
-
   enterCell(cell: RegionCell): void {
     let key = cellKey(cell)
     if (this.held.has(key)) return
@@ -613,10 +662,9 @@ class GridImpl<T> implements RegionGrid<T> {
     if (grid === null) return
     let life = makeLifecycle<T>(
       this.opts,
-      this.opts.hooks,
       this.retainer,
       key,
-      { cell, grid: this, label: this.opts.label },
+      { cell, grid: this as GridImpl<T, unknown>, label: this.opts.label },
       () => (this.grid === null ? null : spatial.cellState(this.grid, cell)),
       weight => {
         if (this.grid !== null) spatial.setCellWeight(this.grid, cell, weight)
@@ -635,7 +683,7 @@ class GridImpl<T> implements RegionGrid<T> {
     if (life !== undefined) this.leaveLife(life)
   }
 
-  private leaveLife(life: Lifecycle<T>): void {
+  private leaveLife(life: Lifecycle<T, unknown>): void {
     leave(life)
     this.held.delete(life.key)
   }
@@ -647,15 +695,29 @@ function cellKey(cell: RegionCell): string {
 
 /**
  * A grid of region handlers: the lifecycle above for every cell the gate
- * wants (flux:spatial createGrid), one Region handle per held cell from
- * its enter to its leave, `cell` carrying the index. `start` declares
- * the grid, `stop` ends it (every held cell leaves). The 3d package's
- * createRegionGrid wraps this with a group node per cell.
+ * wants (flux:spatial createGrid), one handle per held cell from its
+ * enter to its leave, `cell` carrying the index. `start` declares the
+ * grid, `stop` ends it (every held cell leaves). The 2d and 3d packages'
+ * createRegionGrid wrap this with a group node per cell, placing the
+ * grid by their grid node.
  */
-export function createRegionGrid<T = undefined>(opts: RegionGridOptions<T>): RegionGrid<T> {
-  checkMargins(opts, "createRegionGrid")
+export function createRegionGrid<T = undefined, R = unknown>(options: RegionGridOptions<T, R>): RegionGrid<T, R> {
+  let opts = options as AnyRegionOptions<T> & RegionGridFields<T, any>
+  let cell = opts.cell
+  if (cell.length !== 3 || cell.some(v => !(Number.isFinite(v) && v >= 0))) throw new Error(`createRegionGrid: cell must be 3 sizes, finite and not negative (0 = unbounded), got ${cell.join(" x ")}`)
+  if (cell.every(v => v === 0)) throw new Error("createRegionGrid: a cell unbounded on every axis is one cell, not a grid")
+  if (opts.origin.length !== 3 || opts.origin.some(v => !Number.isFinite(v))) throw new Error(`createRegionGrid: origin must be 3 finite coordinates, got ${opts.origin.join(", ")}`)
+  if (opts.bounds !== undefined && (opts.bounds.length !== 6 || opts.bounds.some(v => !Number.isInteger(v)))) {
+    throw new Error("createRegionGrid: bounds must be the integer cell-index box [minI, minJ, minK, maxI, maxJ, maxK]")
+  }
+  if (opts.root !== undefined && opts.node !== undefined) throw new Error("createRegionGrid: a grid placed by a node lives in the node's world; pass root or node, not both")
+  let largest = Math.max(cell[0], cell[1], cell[2])
+  let enter = opts.enter ?? DEFAULT_ENTER_CELLS * largest
+  let leave = opts.leave ?? Math.max(enter, DEFAULT_LEAVE_CELLS * largest)
+  let resolved: AnyGridOptions<T> = { ...opts, enter, leave }
+  checkMargins(resolved, "createRegionGrid")
   if (opts.retain !== undefined && !(Number.isInteger(opts.retain) && opts.retain >= 0)) throw new Error(`createRegionGrid: retain must be a count >= 0, got ${opts.retain}`)
-  return new GridImpl<T>(opts)
+  return new GridImpl<T, R>(resolved)
 }
 
 /**

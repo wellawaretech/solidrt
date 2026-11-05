@@ -4,7 +4,7 @@
 // region.ts is the same shape one dimension up). A region is a sprite
 // GROUP whose CONTENT exists while a viewer wants it: an explicit region
 // is a bounded group you place in the layer (a level section, a boss
-// room; Unreal's level streaming volume), a region grid a root group
+// room; Unreal's level streaming volume), a region grid a group
 // whose every wanted cell becomes a child region at the cell's corner
 // (Unreal's World Partition, Minecraft's chunk columns), so a cell's
 // sprites are cell-local and float precision is per cell - a city's cars
@@ -26,7 +26,7 @@
 // entity between chunks; a handle kept to a sprite the region destroyed
 // is inert (`layer` null), never a dangling reference.
 import { createRegion as createCoreRegion, createRegionGrid as createCoreGrid, createStreamingSource as createCoreStreamingSource } from "@solidrt/core"
-import type { Region as CoreRegion, RegionGrid as CoreGrid, RegionHandler, RegionState } from "@solidrt/core"
+import type { Region as CoreRegion, RegionGrid as CoreGrid, RegionState } from "@solidrt/core"
 import * as spatial from "flux:spatial"
 import { addGroup, destroy, POSE_FLOATS, setGroup, setParent, SPRITE_FLOATS } from "./layer.ts"
 import type { GroupState, Sprite, SpriteGroup, SpriteLayer } from "./layer.ts"
@@ -37,11 +37,6 @@ export type { RegionState } from "@solidrt/core"
  * normal, always 0 here). */
 export type RegionCell = [number, number]
 
-/** The default residency band of a grid in cells of the largest finite
- * axis: wanted within half a cell of a view, kept until one and a half
- * cells away - the tile layer's defaults, one rule for the package. */
-export const DEFAULT_ENTER_CELLS = 0.5
-export const DEFAULT_LEAVE_CELLS = 1.5
 /** Half depth of an explicit region's box along the plane's normal: the
  * viewers are orthographic views of the plane (a unit deep) and
  * streaming sources cubes about z = 0, so any slab across the plane is
@@ -110,7 +105,7 @@ export type Region<T = unknown> = {
    * then "failed"; reported to the console when no listener is set). */
   onError?: (region: Region<T>, error: unknown) => void
   /** @internal */
-  _core: CoreRegion<T>
+  _core: CoreRegion<T, Region<T>>
 }
 
 export type RegionOptions<T> = RegionContent<T> & {
@@ -143,10 +138,12 @@ export type RegionOptions<T> = RegionContent<T> & {
 }
 
 export type RegionGridOptions<T> = RegionContent<T> & {
-  /** The cell size per axis in layer pixels; 0 = unbounded along that
-   * axis (`[512, 0]` streams a side-scroller by column). Not both 0. */
+  /** The cell size per axis in the grid group's frame (layer pixels at
+   * the root); 0 = unbounded along that axis (`[512, 0]` streams a
+   * side-scroller by column). Not both 0. */
   cell: [number, number]
-  /** The layer-pixel corner of cell [0, 0] (default the origin). */
+  /** The corner of cell [0, 0] in the grid group's frame (default the
+   * origin). */
   origin?: [number, number]
   /** The residency band in layer pixels: a cell enters while within
    * `enter` of a view and stays until beyond `leave` (`leave >=
@@ -170,14 +167,17 @@ export type RegionGridOptions<T> = RegionContent<T> & {
   /** How many left cells' data to keep (LRU) so a re-enter skips `load`
    * (default 0). */
   retain?: number
+  /** The group the grid's group mounts under (null, the default: the
+   * layer root). The grid lives in its group's frame, so a moving parent
+   * carries the cells and the gate tests them where they are drawn. */
+  parent?: SpriteGroup | null
   label?: string
 }
 
 /**
- * A region grid: a root group of the layer (the gate's grid lives in
- * layer space, so the group sits at the root, at identity); every cell a
- * viewer wants is a child Region at the cell's corner for as long as it
- * is held. A sprite grid has no `wrap`: the layer draws no seam copies
+ * A region grid: a group of the layer, the grid placed in its frame;
+ * every cell a viewer wants is a child Region at the cell's corner for
+ * as long as it is held. A sprite grid has no `wrap`: the layer draws no seam copies
  * of a cell (okf/done/2d-wrap-around.md has the recipe), so a wanted cell
  * could only ever be drawn at its canonical place.
  */
@@ -188,7 +188,7 @@ export type RegionGrid<T = unknown> = {
   /** The held cells (from enter to leave), fresh array. */
   cells(): Region<T>[]
   cellAt(i: number, j: number): Region<T> | null
-  /** The layer-pixel corner of a cell. */
+  /** The corner of a cell in the grid group's frame. */
   cellOrigin(cell: RegionCell): [number, number]
   /** Re-cap the grid's own byte limit (null = none). */
   setLimit(limit: number | null): void
@@ -203,13 +203,8 @@ export type RegionGrid<T = unknown> = {
   /** End the grid (every held cell leaves) and destroy the group. */
   dispose(): void
   /** @internal */
-  _core: CoreGrid<T>
+  _core: CoreGrid<T, Region<T>>
 }
-
-// The 2d handle behind a core region: made at spawn (a grid cell) or at
-// creation (an explicit region), looked up from the core handle in the
-// handler's calls.
-let handleOf = new WeakMap<CoreRegion<unknown>, Region<unknown>>()
 
 // The handle's 2d half: the groups, the proxy, the proxy maker.
 type HandleState<T> = {
@@ -223,7 +218,11 @@ type HandleState<T> = {
 
 let stateOf = new WeakMap<Region<unknown>, HandleState<unknown>>()
 
-function makeHandle<T>(layer: SpriteLayer, core: CoreRegion<T>, group: SpriteGroup, cell: RegionCell | null, label: string | undefined, makeProxy: RegionContent<T>["proxy"], grid: RegionGrid<T> | null): Region<T> {
+// The 2d handle over a core region, what core hands every callback: made
+// as the core region is created (an explicit region) or as a cell
+// enters. Its listeners are core's own slots, so core's fall-through (the
+// region's, the grid's, the console) is the only one.
+function makeHandle<T>(layer: SpriteLayer, core: CoreRegion<T, Region<T>>, group: SpriteGroup, cell: RegionCell | null, label: string | undefined, makeProxy: RegionContent<T>["proxy"]): Region<T> {
   let content = addGroup(layer, { parent: group, visible: false })
   let state: HandleState<T> = { region: null!, layer, group, content, proxy: null, makeProxy }
   let region: Region<T> = {
@@ -249,21 +248,21 @@ function makeHandle<T>(layer: SpriteLayer, core: CoreRegion<T>, group: SpriteGro
       core.measure(bytes)
       return bytes
     },
-    onStateChange: undefined,
-    onError: undefined,
+    get onStateChange() {
+      return core.onStateChange
+    },
+    set onStateChange(listener) {
+      core.onStateChange = listener
+    },
+    get onError() {
+      return core.onError
+    },
+    set onError(listener) {
+      core.onError = listener
+    },
     _core: core,
   }
   state.region = region
-  core.onStateChange = (_, s) => region.onStateChange?.(region, s)
-  // The error goes to the region's listener, else its grid's, else the
-  // console (core would fall through the same way, but sees only this
-  // forwarder); resolved at the failure, so a listener set later counts.
-  core.onError = (_, e) => {
-    let listener = region.onError ?? grid?.onError
-    if (listener !== undefined) listener(region, e)
-    else console.error("A region's load or build failed" + (label !== undefined ? ` (${label})` : "") + ":", e)
-  }
-  handleOf.set(core as CoreRegion<unknown>, region as Region<unknown>)
   stateOf.set(region as Region<unknown>, state as HandleState<unknown>)
   if (makeProxy !== undefined) showProxy(state)
   return region
@@ -287,12 +286,10 @@ function hideProxy<T>(state: HandleState<T>): void {
 }
 
 // The content shows: visible, measured, the proxy gone.
-function shown<T>(core: CoreRegion<T>): void {
-  let region = handleOf.get(core as CoreRegion<unknown>) as Region<T> | undefined
-  if (region === undefined) return
+function shown<T>(region: Region<T>): void {
   let state = stateOf.get(region as Region<unknown>) as HandleState<T>
   setGroup(state.content, { visible: true })
-  core.measure(contentBytes(state))
+  region._core.measure(contentBytes(state))
   hideProxy(state)
 }
 
@@ -300,9 +297,7 @@ function shown<T>(core: CoreRegion<T>): void {
 // animate to nobody and hold the slots). An explicit region keeps its
 // groups and gets its proxy back; a grid cell's group goes with it,
 // proxy included.
-function teardown<T>(core: CoreRegion<T>, keep: boolean): void {
-  let region = handleOf.get(core as CoreRegion<unknown>) as Region<T> | undefined
-  if (region === undefined) return
+function teardown<T>(region: Region<T>, keep: boolean): void {
   let state = stateOf.get(region as Region<unknown>) as HandleState<T>
   if (keep) {
     for (let child of [...(state.content as GroupState)._children]) destroy(child, { snap: true })
@@ -336,17 +331,6 @@ function contentBytes<T>(state: HandleState<T>): number {
   return count * per
 }
 
-// The core handler over the handle: every call reaches the app with the
-// 2d handle, not the core one.
-function coreHandler<T>(content: RegionContent<T>): RegionHandler<T, CoreRegion<T>> {
-  let handle = (core: CoreRegion<T>) => handleOf.get(core as CoreRegion<unknown>) as Region<T>
-  return {
-    load: content.load === undefined ? undefined : (core, signal) => content.load!(handle(core), signal),
-    build: (core, data) => content.build(handle(core), data),
-    unload: content.unload === undefined ? undefined : (core, data) => content.unload!(handle(core), data),
-  }
-}
-
 function checkFinite(api: string, name: string, value: number): void {
   if (!Number.isFinite(value)) throw new Error(`${api}: ${name} must be finite, got ${value}`)
 }
@@ -366,21 +350,30 @@ export function createRegion<T = undefined>(layer: SpriteLayer, opts: RegionOpti
     throw new Error(`createRegion: width and height must be finite and not negative, got ${opts.width} x ${opts.height}`)
   }
   if (opts.parent && opts.parent.layer !== layer) throw new Error("createRegion: parent group belongs to another layer")
-  let core = createCoreRegion<T>({
-    ...coreHandler(opts),
+  let group: SpriteGroup = null!
+  let region: Region<T> & { dispose(): void } = null!
+  let core = createCoreRegion<T, Region<T>>({
+    load: opts.load,
+    build: opts.build,
+    unload: opts.unload,
     enter: opts.enter,
     leave: opts.leave,
     weight: opts.weight,
     priority: opts.priority,
     retain: opts.retain,
     label: opts.label,
-    hooks: { shown, teardown: core => teardown(core, true) },
+    // Made once core validated the options, so a refused region leaves
+    // no group behind.
+    handle: core => {
+      group = addGroup(layer, { x: opts.x, y: opts.y, parent: opts.parent ?? null })
+      // A cull-only box: a group is never picked, and the gate reads the
+      // cull box first.
+      spatial.setCullBounds(group.node, new Float32Array([0, 0, -REGION_HALF_DEPTH, opts.width, opts.height, REGION_HALF_DEPTH]))
+      region = makeHandle(layer, core, group, null, opts.label, opts.proxy) as Region<T> & { dispose(): void }
+      return region
+    },
+    hooks: { shown, teardown: region => teardown(region, true) },
   })
-  let group = addGroup(layer, { x: opts.x, y: opts.y, parent: opts.parent ?? null })
-  // A cull-only box: a group is never picked, and the gate reads the
-  // cull box first.
-  spatial.setCullBounds(group.node, new Float32Array([0, 0, -REGION_HALF_DEPTH, opts.width, opts.height, REGION_HALF_DEPTH]))
-  let region = makeHandle(layer, core, group, null, opts.label, opts.proxy, null) as Region<T> & { dispose(): void }
   core.attach(group.node)
   let disposed = false
   region.dispose = () => {
@@ -396,77 +389,76 @@ export function createRegion<T = undefined>(layer: SpriteLayer, opts: RegionOpti
 
 /**
  * A region grid (Unreal's World Partition grid, Minecraft's chunks, for
- * sprite populations): a root group of the layer; every cell a viewer
- * wants within `enter` of its view (kept until beyond `leave`) becomes
- * a child Region at the cell's corner, its content loaded and built
- * there, and leaves when no viewer wants it or a limit evicts it for a
- * nearer cell. Declared to the gate from creation; `dispose` ends it.
+ * sprite populations): a group of the layer (under `parent`, else at the
+ * root) the grid is placed in; every cell a viewer wants within `enter`
+ * of its view (kept until beyond `leave`) becomes a child Region at the
+ * cell's corner, its content loaded and built there, and leaves when no
+ * viewer wants it or a limit evicts it for a nearer cell. Declared to
+ * the gate from creation; `dispose` ends it.
  */
 export function createRegionGrid<T = undefined>(layer: SpriteLayer, opts: RegionGridOptions<T>): RegionGrid<T> {
-  let size: [number, number] = [opts.cell[0], opts.cell[1]]
-  if (size.some(v => !(Number.isFinite(v) && v >= 0))) throw new Error(`createRegionGrid: cell sizes must be finite and not negative (0 = unbounded), got ${size.join(" x ")}`)
-  if (size[0] === 0 && size[1] === 0) throw new Error("createRegionGrid: a cell unbounded on both axes is one cell, not a grid")
-  let origin: [number, number] = opts.origin === undefined ? [0, 0] : [opts.origin[0], opts.origin[1]]
-  if (origin.some(v => !Number.isFinite(v))) throw new Error(`createRegionGrid: origin must be finite, got ${origin.join(", ")}`)
+  // The 2d shapes; core checks the values.
+  if (opts.cell.length !== 2) throw new Error(`createRegionGrid: cell must be two sizes [width, height], got ${opts.cell.length}`)
   if (opts.bounds !== undefined && (opts.bounds.length !== 4 || opts.bounds.some(v => !Number.isInteger(v)))) {
     throw new Error("createRegionGrid: bounds must be the integer cell-index box [minI, minJ, maxI, maxJ]")
   }
-  let largest = Math.max(size[0], size[1])
-  let enter = opts.enter ?? DEFAULT_ENTER_CELLS * largest
-  let leave = opts.leave ?? Math.max(enter, DEFAULT_LEAVE_CELLS * largest)
-  let group = addGroup(layer, {})
+  if (opts.parent && opts.parent.layer !== layer) throw new Error("createRegionGrid: parent group belongs to another layer")
+  let size: [number, number] = [opts.cell[0], opts.cell[1]]
+  let origin: [number, number] = opts.origin === undefined ? [0, 0] : [opts.origin[0], opts.origin[1]]
   let cellOrigin = (cell: RegionCell): [number, number] => [size[0] > 0 ? origin[0] + cell[0] * size[0] : origin[0], size[1] > 0 ? origin[1] + cell[1] * size[1] : origin[1]]
-  let grid: RegionGrid<T> = null!
-  let core = createCoreGrid<T>({
-    ...coreHandler(opts),
-    root: layer._root,
+  let group: SpriteGroup = null!
+  let core = createCoreGrid<T, Region<T>>({
+    load: opts.load,
+    build: opts.build,
+    unload: opts.unload,
     origin: [origin[0], origin[1], 0],
     cell: [size[0], size[1], 0],
-    enter,
-    leave,
+    enter: opts.enter,
+    leave: opts.leave,
     bounds: opts.bounds === undefined ? undefined : [opts.bounds[0], opts.bounds[1], 0, opts.bounds[2], opts.bounds[3], 0],
     weight: opts.weight,
     limit: opts.limit,
     priority: opts.priority,
     retain: opts.retain,
     label: opts.label,
-    hooks: {
-      spawn(region) {
-        let cell: RegionCell = [region.cell![0], region.cell![1]]
-        let [x, y] = cellOrigin(cell)
-        let child = addGroup(layer, { x, y, parent: group })
-        makeHandle(layer, region, child, cell, opts.label, opts.proxy, grid)
-      },
-      shown,
-      teardown: region => teardown(region, false),
+    handle: region => {
+      let cell: RegionCell = [region.cell![0], region.cell![1]]
+      let [x, y] = cellOrigin(cell)
+      return makeHandle(layer, region, addGroup(layer, { x, y, parent: group }), cell, opts.label, opts.proxy)
     },
+    hooks: { shown, teardown: region => teardown(region, false) },
   })
-  grid = {
+  group = addGroup(layer, { parent: opts.parent ?? null })
+  let grid: RegionGrid<T> = {
     layer,
     group,
-    cells: () => core.cells().map(r => handleOf.get(r as CoreRegion<unknown>) as Region<T>),
-    cellAt(i, j) {
-      let r = core.cellAt(i, j, 0)
-      return r === null ? null : (handleOf.get(r as CoreRegion<unknown>) as Region<T>)
-    },
+    cells: () => core.cells(),
+    cellAt: (i, j) => core.cellAt(i, j, 0),
     cellOrigin,
     setLimit: limit => core.setLimit(limit),
     setWeight: weight => core.setWeight(weight),
     forget: () => core.forget(),
     label: opts.label,
-    onStateChange: undefined,
-    onError: undefined,
+    get onStateChange() {
+      return core.onStateChange
+    },
+    set onStateChange(listener) {
+      core.onStateChange = listener
+    },
+    get onError() {
+      return core.onError
+    },
+    set onError(listener) {
+      core.onError = listener
+    },
     dispose() {
       core.dispose()
       destroy(group, { snap: true })
     },
     _core: core,
   }
-  core.onStateChange = (region, s) => {
-    let child = handleOf.get(region as CoreRegion<unknown>) as Region<T> | undefined
-    if (child !== undefined) grid.onStateChange?.(child, s)
-  }
-  core.start()
+  // The grid lives in its group's frame and its world (the layer's).
+  core.start({ node: group.node })
   return grid
 }
 

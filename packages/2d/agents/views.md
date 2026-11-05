@@ -224,9 +224,10 @@ A sprite layer STREAMS by the spatial core's residency gate the way the
 tile layer does (Residency in tiles.md; the contract in
 the Residency section of @solidrt/3d's agents/large-worlds.md, which this mirrors
 one dimension down): `createRegionGrid(layer, { cell: [w, h], enter?,
-leave?, origin?, bounds?, weight?, limit?, priority?, retain?,
-...content })` / `<RegionGrid>` is a root group of the layer whose
-every cell a viewer wants within `enter` of its view (kept until beyond
+leave?, origin?, bounds?, weight?, limit?, priority?, retain?, parent?,
+...content })` / `<RegionGrid>` is a group of the layer (under
+`parent`, or the enclosing `<Group>`, else at the root) whose every
+cell a viewer wants within `enter` of its view (kept until beyond
 `leave`; defaults half a cell and one and a half, the tile layer's)
 becomes a child Region at the cell's corner - Unreal's World Partition,
 Minecraft's chunks, for POPULATIONS: a city's cars by block, a
@@ -242,12 +243,15 @@ split-screen pane - scoped to the layer's WORLD, its root node, so a
 cells) and `createStreamingSource(layer, { x, y, radius })` beyond them
 (a cut-scene's look-ahead, a second player on a server, a teleport
 destination loaded before the cut; moved with `setPosition`).
-Cells are `[w, h]` in layer pixels, 0 unbounded along an axis (`[512,
-0]` streams a side-scroller by column); `bounds` is an inclusive
-cell-index box; a sprite grid has no `wrap` (the layer draws no seam
-copies of a cell; okf/done/2d-wrap-around.md has the recipe); a
-`<RegionGrid>` under a `<Group>` throws, since the gate's grid is layer
-space.
+Cells are `[w, h]` and `origin` the corner of cell (0, 0), both in the
+grid group's frame (layer pixels at the root), 0 unbounded along an
+axis (`[512, 0]` streams a side-scroller by column); the grid lives in
+that frame, so a moved, rotated or scaled parent carries the cells and
+the gate tests them where they are drawn, as @solidrt/3d's grid lives
+in its node's space; `enter` and `leave` stay layer-pixel distances.
+`bounds` is an inclusive cell-index box; a sprite grid has no `wrap`
+(the layer draws no seam copies of a cell; okf/done/2d-wrap-around.md
+has the recipe).
 
 What a region HOLDS is the app's, through core's lifecycle: `load(region,
 signal)` prepares the data off the thread (a file read, a decode, a

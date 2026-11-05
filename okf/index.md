@@ -802,13 +802,6 @@ Shaped, not started.
   the OS "reduce motion" accessibility setting, so users who asked their
   system for less motion still get springs and slides unless the app calls
   setPolicy by hand.
-- **[One region adapter and one shots adapter in core for 2d and 3d](backlog/region-shots-adapters-core.md)** [2026-11-05]
-  @solidrt/2d and @solidrt/3d each wrap core's region gate and shot blender in
-  their own adapter - the same control flow written twice, about 250 lines a
-  side - and the copies have already drifted (enter/leave defaults, grid
-  validation, grid placement, the shot's start camera); move the
-  dimension-free half into core behind a small bag of node operations, as
-  core's grid hooks and shot blender already do.
 - **[Guard that every referenced example ships](backlog/release-example-parity-check.md)** [2026-07-29]
   A committed examples README can name an example file that is untracked, so
   the doc ships and the file does not; a release-time parity check would catch
@@ -2608,6 +2601,14 @@ Finished, kept for the reasoning.
   The video and audio feeder threads of `record` (flux:video) are pump logic
   in a plugin; move them to forge's recorder over a plain value the alloy taps
   hand over.
+- **[Region and shots - put each generic piece at the layer that owns it](done/region-shots-adapters-core.md)** [2026-11-05]
+  @solidrt/2d and @solidrt/3d each wrap core's region gate and shot blender in
+  an adapter of their own, written twice and already drifted (enter/leave
+  defaults, grid validation, grid placement, the shot's start camera); move
+  each generic piece down to the lowest layer that owns it - grid placement
+  into the Rust spatial core, defaults and the package handle into core TS,
+  shots into core camera-control - and leave the packages only what touches
+  their own representation.
 - **[Relative mouse input (mouse look)](done/relative-mouse-input.md)** [2026-07-31]
   No pointer-lock / relative-motion path exists anywhere in the surface, so
   first-person control is impossible however good the GPU gets; SDL already

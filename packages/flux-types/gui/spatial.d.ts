@@ -455,6 +455,12 @@ declare module "flux:spatial" {
     /** The world the grid lives in: the id of a root node (see setView's
      * `root`). A grid with none is wanted by every viewer. */
     root?: NodeId
+    /** The node that places the grid: `origin`, `cell` and `bounds` are
+     * then in the node's space and the grid moves with it, the way an
+     * explicit region's box does (`enter` and `leave` stay world
+     * distances). Its world is the node's top ancestor, so `root` and
+     * `node` are exclusive. Destroying the node ends the grid. */
+    node?: NodeId
   }
   /**
    * Create a grid of regions (GridSpec); returns its id. A cell is wanted

@@ -34,7 +34,7 @@ export type RegionProps<T = undefined> = ContentProps<T> &
   }
 
 export type RegionGridProps<T = undefined> = ContentProps<T> &
-  Omit<RegionGridOptions<T>, "build" | "proxy" | "load" | "unload"> & {
+  Omit<RegionGridOptions<T>, "build" | "proxy" | "load" | "unload" | "parent"> & {
     ref?: (grid: RegionGridHandle<T>) => void
   }
 
@@ -125,12 +125,12 @@ export function Region<T = undefined>(props: RegionProps<T>): Element {
 /**
  * A region grid (createRegionGrid as a component): every cell a viewer
  * wants mounts its `build` JSX under a child region at the cell's
- * corner, and unmounts it at leave. The gate's grid is layer space, so
- * the component mounts at the layer root: inside a `<Group>` it throws.
+ * corner, and unmounts it at leave. The grid lives in the enclosing
+ * `<Group>`'s frame (or the layer root's) and moves with it.
  */
 export function RegionGrid<T = undefined>(props: RegionGridProps<T>): Element {
   let layer = useContext(LayerContext)
-  if (useContext(GroupContext) !== null) throw new Error("RegionGrid: a region grid is layer space; mount it at the layer root, not inside a <Group>")
+  let parent = useContext(GroupContext)
   let [cells, setCells] = createSignal<Held<T>[]>([])
   let byRegion = new Map<RegionHandle<T>, Held<T>>()
   // A cell's reactive half exists from its first state on (loading, or
@@ -156,6 +156,7 @@ export function RegionGrid<T = undefined>(props: RegionGridProps<T>): Element {
       priority: props.priority,
       retain: props.retain,
       label: props.label,
+      parent,
       load: props.load === undefined ? undefined : (r, signal) => props.load!(r, signal),
       build: (r, data) => ensure(r).setData({ value: data }),
       unload: props.unload === undefined ? undefined : (r, data) => props.unload!(r, data),

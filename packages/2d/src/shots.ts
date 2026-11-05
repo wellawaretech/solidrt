@@ -5,7 +5,7 @@
 // linearly and the zoom in log space (a zoom blend in linear space
 // races in and crawls out).
 
-import { createShotBlend } from "@solidrt/core/camera-control"
+import { createShots as createCoreShots } from "@solidrt/core/camera-control"
 import type { ShotBlend, ShotBlendOptions, ShotTarget as RecordingTarget } from "@solidrt/core/camera-control"
 import type { CameraState } from "./camera.ts"
 import type { Camera2dTarget } from "./camera2d.ts"
@@ -38,27 +38,5 @@ export type ShotsHandle = Omit<ShotBlend<CameraState>, "shot"> & { shot(name: st
  * at creation.
  */
 export function createShots(target: Camera2dTarget | Camera2dTarget[], options: ShotBlendOptions = {}): ShotsHandle {
-  let targets = Array.isArray(target) ? target : [target]
-  if (targets.length === 0) throw new Error("createShots: needs at least one target (a view)")
-  for (let t of targets) {
-    if (!t || typeof t.setCamera !== "function" || typeof t.camera !== "function" || typeof t.size !== "function") {
-      throw new Error("createShots: every target needs setCamera(), camera() and size() (a view)")
-    }
-  }
-  let first = targets[0]!
-  let blend = createShotBlend<CameraState>(
-    camera => {
-      for (let t of targets) t.setCamera(camera)
-    },
-    mixCamera,
-    first.camera(),
-    options,
-  )
-  return {
-    ...blend,
-    shot(name, opts) {
-      let rec = blend.shot(name, opts)
-      return { setCamera: rec.setCamera, camera: rec.camera, size: () => first.size() }
-    },
-  }
+  return createCoreShots<CameraState>(target, mixCamera, options)
 }

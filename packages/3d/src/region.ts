@@ -3,8 +3,8 @@
 // the contract in okf/done/spatial-residency-gate.md). A region is a
 // group node whose CONTENT exists while a viewer wants it: an explicit
 // region is a bounded group you place in the scene (a level section, a
-// building interior), a region grid a root group whose every wanted cell
-// becomes a child region at the cell's world corner (Unreal's World
+// building interior), a region grid a group whose every wanted cell
+// becomes a child region at the cell's corner (Unreal's World
 // Partition, Minecraft's chunk columns), so a cell's content is cell-local
 // and float precision is per cell. The gate decides and paces (every
 // camera is a viewer, a createStreamingSource is one too); core's
@@ -15,7 +15,7 @@
 // measured GPU bytes reported to the gate's limits, and the resource
 // pool the freed buffers and textures wait in.
 import { createRegion as createCoreRegion, createRegionGrid as createCoreGrid, createStreamingSource as createCoreStreamingSource } from "@solidrt/core"
-import type { Region as CoreRegion, RegionCell, RegionGrid as CoreGrid, RegionHandler, RegionState, StreamingSource } from "@solidrt/core"
+import type { Region as CoreRegion, RegionCell, RegionGrid as CoreGrid, RegionState, StreamingSource } from "@solidrt/core"
 import type { Scene } from "./scene.ts"
 import { ensureResourcePool } from "./resource-pool.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
@@ -97,7 +97,7 @@ export type RegionNode<T = unknown> = SceneNode & {
   /** Assignable: called with what a load or build threw. */
   onError?: (region: RegionNode<T>, error: unknown) => void
   /** @internal */
-  _core: CoreRegion<T>
+  _core: CoreRegion<T, RegionNode<T>>
 }
 
 export type RegionOptions<T> = RegionContent<T> & {
@@ -121,13 +121,19 @@ export type RegionOptions<T> = RegionContent<T> & {
 }
 
 export type RegionGridOptions<T> = RegionContent<T> & {
-  /** The world corner of cell [0, 0, 0], in the grid node's space. */
+  /** The corner of cell [0, 0, 0] in the grid node's space (default the
+   * origin). */
   origin?: Vec3
-  /** The cell size per axis; 0 = unbounded along that axis (`[32, 0,
-   * 32]` is a column grid over XZ, `[32, 32, 32]` a voxel world). */
+  /** The cell size per axis in the grid node's space; 0 = unbounded
+   * along that axis (`[32, 0, 32]` is a column grid over XZ, `[32, 32,
+   * 32]` a voxel world), not along every one. */
   cell: Vec3
-  enter: number
-  leave: number
+  /** The residency band in world units: a cell enters while within
+   * `enter` of a camera's view volume and stays until beyond `leave`
+   * (`leave >= enter`). Defaults: half a cell and one and a half cells
+   * (of the largest finite axis). */
+  enter?: number
+  leave?: number
   /** An inclusive cell-index box outside which no cell exists. */
   bounds?: [number, number, number, number, number, number]
   /** The estimated GPU bytes of one cell until its content is measured
@@ -156,7 +162,7 @@ export type RegionGridNode<T = unknown> = SceneNode & {
   /** The held cells (from enter to leave), fresh array. */
   cells(): RegionNode<T>[]
   cellAt(i: number, j: number, k: number): RegionNode<T> | null
-  /** The world corner of a cell, in the grid node's space. */
+  /** The corner of a cell in the grid node's space. */
   cellOrigin(cell: RegionCell, out?: Vec3): Vec3
   /** Re-cap the grid's own byte limit (null = none). */
   setLimit(limit: number | null): void
@@ -171,13 +177,8 @@ export type RegionGridNode<T = unknown> = SceneNode & {
   /** End the grid (every held cell leaves) and destroy the node. */
   dispose(): void
   /** @internal */
-  _core: CoreGrid<T>
+  _core: CoreGrid<T, RegionNode<T>>
 }
-
-// The 3d node behind a core region: made at spawn (a grid cell) or at
-// creation (an explicit region), looked up from the core handle in the
-// handler's calls.
-let nodeOf = new WeakMap<CoreRegion<unknown>, RegionNode<unknown>>()
 
 function checkBounds(bounds: ArrayLike<number>, api: string): Float32Array {
   if (bounds.length !== 6) throw new Error(api + ": bounds must be [minX, minY, minZ, maxX, maxY, maxZ]")
@@ -201,7 +202,11 @@ type NodeState<T> = {
 
 let stateOf = new WeakMap<RegionNode<unknown>, NodeState<unknown>>()
 
-function makeRegionNode<T>(core: CoreRegion<T>, cell: RegionCell | null, label: string | undefined, makeProxy: RegionContent<T>["proxy"], grid: RegionGridNode<T> | null): RegionNode<T> {
+// The 3d node over a core region, what core hands every callback: made
+// as the core region is created (an explicit region) or as a cell
+// enters. Its listeners are core's own slots, so core's fall-through (the
+// region's, the grid's, the console) is the only one.
+function makeRegionNode<T>(core: CoreRegion<T, RegionNode<T>>, cell: RegionCell | null, label: string | undefined, makeProxy: RegionContent<T>["proxy"]): RegionNode<T> {
   let node = createGroup() as RegionNode<T>
   let content = createGroup()
   setVisible(content, false)
@@ -215,6 +220,8 @@ function makeRegionNode<T>(core: CoreRegion<T>, cell: RegionCell | null, label: 
     error: { get: () => core.error, enumerable: true },
     cell: { value: cell, enumerable: true },
     label: { value: label, enumerable: true },
+    onStateChange: { get: () => core.onStateChange, set: listener => (core.onStateChange = listener), enumerable: true },
+    onError: { get: () => core.onError, set: listener => (core.onError = listener), enumerable: true },
     _core: { value: core },
   })
   node.warm = geometry => {
@@ -228,16 +235,6 @@ function makeRegionNode<T>(core: CoreRegion<T>, cell: RegionCell | null, label: 
     core.measure(bytes)
     return bytes
   }
-  core.onStateChange = (_, s) => node.onStateChange?.(node, s)
-  // The error goes to the region's listener, else its grid's, else the
-  // console (core would fall through the same way, but sees only this
-  // forwarder); resolved at the failure, so a listener set later counts.
-  core.onError = (_, e) => {
-    let listener = node.onError ?? grid?.onError
-    if (listener !== undefined) listener(node, e)
-    else console.error("A region's load or build failed" + (label !== undefined ? ` (${label})` : "") + ":", e)
-  }
-  nodeOf.set(core as CoreRegion<unknown>, node as RegionNode<unknown>)
   stateOf.set(node as RegionNode<unknown>, state as NodeState<unknown>)
   if (makeProxy !== undefined) showProxy(state)
   return node
@@ -263,12 +260,10 @@ function releaseHolds<T>(state: NodeState<T>): void {
 
 // The content shows: measure it, let the holds go (the content's
 // entries hold the buffers now), drop the proxy.
-function shown<T>(core: CoreRegion<T>): void {
-  let node = nodeOf.get(core as CoreRegion<unknown>) as RegionNode<T> | undefined
-  if (node === undefined) return
+function shown<T>(node: RegionNode<T>): void {
   let state = stateOf.get(node as RegionNode<unknown>) as NodeState<T>
   setVisible(state.content, true)
-  core.measure(contentBytes(state))
+  node._core.measure(contentBytes(state))
   releaseHolds(state)
   hideProxy(state)
 }
@@ -276,9 +271,7 @@ function shown<T>(core: CoreRegion<T>): void {
 // The content goes: removed and disposed (never destroyed with an exit),
 // the holds released, the proxy back (an explicit region stays; a grid
 // cell's node goes with it, proxy included).
-function teardown<T>(core: CoreRegion<T>, keep: boolean): void {
-  let node = nodeOf.get(core as CoreRegion<unknown>) as RegionNode<T> | undefined
-  if (node === undefined) return
+function teardown<T>(node: RegionNode<T>, keep: boolean): void {
   let state = stateOf.get(node as RegionNode<unknown>) as NodeState<T>
   for (let child of state.content.children.slice()) {
     remove(child)
@@ -332,17 +325,6 @@ export function geometryBytes(geometry: Geometry): number {
   return bytes
 }
 
-// The core handler over the node: every call reaches the app with the
-// node, not the core handle.
-function coreHandler<T>(content: RegionContent<T>): RegionHandler<T, CoreRegion<T>> {
-  let node = (core: CoreRegion<T>) => nodeOf.get(core as CoreRegion<unknown>) as RegionNode<T>
-  return {
-    load: content.load === undefined ? undefined : (core, signal) => content.load!(node(core), signal),
-    build: (core, data) => content.build(node(core), data),
-    unload: content.unload === undefined ? undefined : (core, data) => content.unload!(node(core), data),
-  }
-}
-
 /**
  * An explicit region (Unreal's level streaming volume, a level section):
  * a group node with `bounds` the gate tests through its world matrix,
@@ -354,17 +336,20 @@ function coreHandler<T>(content: RegionContent<T>): RegionHandler<T, CoreRegion<
 export function createRegion<T = undefined>(opts: RegionOptions<T>): RegionNode<T> & { dispose(): void } {
   let bounds = checkBounds(opts.bounds, "createRegion")
   ensureResourcePool()
-  let core = createCoreRegion<T>({
-    ...coreHandler(opts),
+  let node: RegionNode<T> & { dispose(): void } = null!
+  let core = createCoreRegion<T, RegionNode<T>>({
+    load: opts.load,
+    build: opts.build,
+    unload: opts.unload,
     enter: opts.enter,
     leave: opts.leave,
     weight: opts.weight,
     priority: opts.priority,
     retain: opts.retain,
     label: opts.label,
-    hooks: { shown, teardown: core => teardown(core, true) },
+    handle: core => (node = makeRegionNode(core, null, opts.label, opts.proxy) as RegionNode<T> & { dispose(): void }),
+    hooks: { shown, teardown: node => teardown(node, true) },
   })
-  let node = makeRegionNode(core, null, opts.label, opts.proxy, null) as RegionNode<T> & { dispose(): void }
   node._cullBounds = bounds
   let binding: SubtreeBinding = {
     enter() {
@@ -384,25 +369,26 @@ export function createRegion<T = undefined>(opts: RegionOptions<T>): RegionNode<
 
 /**
  * A region grid (Unreal's World Partition grid): a group node to add
- * once; while it is in a scene every cell a viewer wants within `enter`
- * of its view volume (kept until beyond `leave`, the far plane ignored:
- * load distances) becomes a child RegionNode at the cell's corner, its
- * content loaded and built there, and leaves when no viewer wants it or
- * a limit evicts it for a nearer cell.
+ * once, the grid placed in its space; while it is in a scene every cell
+ * a viewer wants within `enter` of its view volume (kept until beyond
+ * `leave`, the far plane ignored: load distances) becomes a child
+ * RegionNode at the cell's corner, its content loaded and built there,
+ * and leaves when no viewer wants it or a limit evicts it for a nearer
+ * cell.
  */
 export function createRegionGrid<T = undefined>(opts: RegionGridOptions<T>): RegionGridNode<T> {
   let origin: Vec3 = opts.origin === undefined ? [0, 0, 0] : [opts.origin[0], opts.origin[1], opts.origin[2]]
   let size: Vec3 = [opts.cell[0], opts.cell[1], opts.cell[2]]
-  if (size.some(v => !(Number.isFinite(v) && v >= 0))) throw new Error("createRegionGrid: cell sizes must be finite and not negative (0 = unbounded)")
-  if (origin.some(v => !Number.isFinite(v))) throw new Error("createRegionGrid: origin must be finite")
   ensureResourcePool()
-  let node = createGroup() as RegionGridNode<T>
   let cellOrigin = (cell: RegionCell, out: Vec3 = [0, 0, 0]): Vec3 => {
     for (let a = 0; a < 3; a++) out[a] = size[a]! > 0 ? origin[a]! + cell[a]! * size[a]! : origin[a]!
     return out
   }
-  let core = createCoreGrid<T>({
-    ...coreHandler(opts),
+  let node: RegionGridNode<T> = null!
+  let core = createCoreGrid<T, RegionNode<T>>({
+    load: opts.load,
+    build: opts.build,
+    unload: opts.unload,
     origin: [origin[0], origin[1], origin[2]],
     cell: [size[0], size[1], size[2]],
     enter: opts.enter,
@@ -413,48 +399,36 @@ export function createRegionGrid<T = undefined>(opts: RegionGridOptions<T>): Reg
     priority: opts.priority,
     retain: opts.retain,
     label: opts.label,
-    hooks: {
-      spawn(region) {
-        let child = makeRegionNode(region, region.cell, opts.label, opts.proxy, node)
-        setTransform(child, { position: cellOrigin(region.cell!) })
-        add(node, child)
-      },
-      shown,
-      teardown: region => teardown(region, false),
+    handle: region => {
+      let child = makeRegionNode(region, region.cell, opts.label, opts.proxy)
+      setTransform(child, { position: cellOrigin(region.cell!) })
+      add(node, child)
+      return child
     },
+    hooks: { shown, teardown: region => teardown(region, false) },
   })
-  // Declared while in a scene: the gate's grid lives in world space, and
-  // the cell nodes under this one carry the content. The node's own
-  // transform is not folded into the gate's origin (a grid is placed at
-  // identity, or `origin` says where it sits).
-  // Declared under the scene's world (its root node, the top of the
-  // grid's ancestry here), so only that scene's cameras and sources
-  // want the cells.
+  node = createGroup() as RegionGridNode<T>
+  // Declared while in a scene, placed by this node: the gate tests the
+  // cells in its space and its world (the scene's), so only that scene's
+  // cameras and sources want them.
   node._bindings = [
     {
       enter() {
-        let top: SceneNode = node
-        while (top.parent !== null) top = top.parent
-        core.start(top._node!)
+        core.start({ node: node._node! })
       },
       leave() {
         core.stop()
       },
     },
   ]
-  core.onStateChange = (region, s) => {
-    let child = nodeOf.get(region as CoreRegion<unknown>) as RegionNode<T> | undefined
-    if (child !== undefined) node.onStateChange?.(child, s)
-  }
   Object.defineProperties(node, {
     label: { value: opts.label, enumerable: true },
+    onStateChange: { get: () => core.onStateChange, set: listener => (core.onStateChange = listener), enumerable: true },
+    onError: { get: () => core.onError, set: listener => (core.onError = listener), enumerable: true },
     _core: { value: core },
   })
-  node.cells = () => core.cells().map(r => nodeOf.get(r as CoreRegion<unknown>) as RegionNode<T>)
-  node.cellAt = (i, j, k) => {
-    let r = core.cellAt(i, j, k)
-    return r === null ? null : (nodeOf.get(r as CoreRegion<unknown>) as RegionNode<T>)
-  }
+  node.cells = () => core.cells()
+  node.cellAt = (i, j, k) => core.cellAt(i, j, k)
   node.cellOrigin = cellOrigin
   node.setLimit = limit => core.setLimit(limit)
   node.setWeight = weight => core.setWeight(weight)

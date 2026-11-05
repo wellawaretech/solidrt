@@ -212,15 +212,19 @@ in `onFrame`. Two region forms, both group nodes. EXPLICIT:
 bounded group you place like any node (a level section, a building
 interior; Unreal's level streaming volume), its content loaded and
 built while a viewer is within `enter` of its box and kept until beyond
-`leave`. GRID: `createRegionGrid({ cell, enter, leave, origin?, bounds?,
-...content })` / `<RegionGrid>` is a root group you add once; every
-cell the gate wants becomes a child RegionNode at the cell's world
-corner for as long as it is held (Unreal's World Partition, Minecraft's
-chunk columns), so a cell's content is cell-local and float precision
-is per cell; `cell` is `[w, h, d]` with 0 meaning unbounded along that
-axis (`[64, 0, 64]` a column grid over XZ, `[32, 32, 32]` a voxel
-world), `bounds` an optional cell-index box outside which no cell
-exists. A load distance is a RADIUS around the view volume, not a view
+`leave`. GRID: `createRegionGrid({ cell, enter?, leave?, origin?,
+bounds?, ...content })` / `<RegionGrid>` is a group you add once; every
+cell the gate wants becomes a child RegionNode at the cell's corner for
+as long as it is held (Unreal's World Partition, Minecraft's chunk
+columns), so a cell's content is cell-local and float precision is per
+cell; `cell` is `[w, h, d]` with 0 meaning unbounded along that axis
+(`[64, 0, 64]` a column grid over XZ, `[32, 32, 32]` a voxel world),
+`bounds` an optional cell-index box outside which no cell exists, and
+`enter`/`leave` default to half a cell and one and a half (of the
+largest finite axis). The grid lives in its node's space: `origin` and
+`cell` are in that space, and a moved, rotated or scaled grid node (or
+an ancestor) carries the cells, the gate testing them where they are
+drawn; `enter` and `leave` stay world distances. A load distance is a RADIUS around the view volume, not a view
 (Unreal's streaming sources load a sphere): the cells behind and beside
 a viewer within `enter` are wanted too, so the world is there when the
 camera turns. A world of one layer is the column grid (0 on the up

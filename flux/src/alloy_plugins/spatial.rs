@@ -1011,7 +1011,7 @@ fn array_field<T: for<'a> FromJs<'a> + Copy + Default, const N: usize>(
 }
 
 /// A grid of regions from `{ origin, cell, enter, leave, bounds?, wrap?,
-/// weight?, limit?, priority?, label?, root? }`; returns its id.
+/// weight?, limit?, priority?, label?, root?, node? }`; returns its id.
 fn create_grid<'js>(ctx: Ctx<'js>, spec: Object<'js>) -> rquickjs::Result<u64> {
   let origin = array_field::<f64, 3>(&ctx, &spec, "origin", "createGrid")?
     .ok_or_else(|| throw_str(&ctx, "createGrid: origin is required"))?;
@@ -1025,6 +1025,7 @@ fn create_grid<'js>(ctx: Ctx<'js>, spec: Object<'js>) -> rquickjs::Result<u64> {
   let priority = priority_arg(&ctx, &spec, "createGrid")?;
   let label: Option<String> = spec.get("label")?;
   let root: Option<u64> = spec.get("root")?;
+  let node: Option<u64> = spec.get("node")?;
   super::gui(&ctx)
     .alloy
     .spatial()
@@ -1039,6 +1040,7 @@ fn create_grid<'js>(ctx: Ctx<'js>, spec: Object<'js>) -> rquickjs::Result<u64> {
       priority,
       label,
       root,
+      node,
     })
     .map_err(|e| throw_str(&ctx, &format!("createGrid: {e}")))
 }

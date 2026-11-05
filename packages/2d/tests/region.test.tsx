@@ -9,8 +9,9 @@
 // does not fit; priority orders two grids under a budget of one enter per
 // frame; an explicit region moves with its group and keeps its data under
 // retain; a streaming source wants cells no view sees; the components mount
-// their JSX per cell. The gate and the content are live spatial nodes, so
-// these are app tests.
+// their JSX per cell; a grid inside a group lives in the group's frame and
+// follows it. The gate and the content are live spatial nodes, so these
+// are app tests.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
@@ -432,29 +433,47 @@ test("the components mount their build JSX per cell under the cell's content and
   expect(stats(app).residentWeight).toBe(2 * SPRITE_BYTES)
 })
 
-test("a region grid inside a group throws", async app => {
-  let threw = ""
-  // A component body under the <Group>, calling the grid component as
-  // the plain function it is, so the throw lands where it can be caught.
-  let Probe = () => {
-    try {
-      RegionGrid({ cell: [CELL, CELL], enter: 0, leave: CELL, build: () => <></> })
-    } catch (error) {
-      threw = String(error)
-    }
-    return <></>
-  }
+test("a region grid inside a moved group builds its cells where the gate tests them, and follows the group", async app => {
+  let { layer } = await mounted(app)
+  // The group one cell left: the view over the layer's origin is over
+  // the grid's cell (1, 0).
+  let parent = addGroup(layer, { x: -CELL, y: 0 })
+  let grid = createRegionGrid<undefined>(layer, { cell: [CELL, CELL], bounds: BOUNDS, ...BAND, parent, build: () => {} })
+  await app.settle()
+  expect(grid.group._parent).toBe(parent)
+  expect(cellsOf(grid.cells())).toEqual(["1,0"])
+  expect([grid.cellAt(1, 0)!.group._x, grid.cellAt(1, 0)!.group._y]).toEqual([CELL, 0])
+  // The group moves back: the view is over cell (0, 0) again, and (1,
+  // 0) is kept, within `leave` of it.
+  setGroup(parent, { x: 0 })
+  await app.settle()
+  expect(cellsOf(grid.cells())).toEqual(["0,0", "1,0"])
+  grid.dispose()
+})
+
+test("the grid component places its grid in the enclosing group's frame", async app => {
+  let built: string[] = []
   await app.mount(() => {
     let atlas = createAtlas(ATLAS, { label: "region-atlas" })
     return (
       <SpriteLayer atlases={[atlas]} width={VIEW} height={VIEW}>
-        <Group>
-          <Probe />
+        <Group x={-CELL}>
+          <RegionGrid
+            cell={[CELL, CELL]}
+            bounds={BOUNDS}
+            enter={BAND.enter}
+            leave={BAND.leave}
+            build={r => {
+              built.push(r.cell!.join(","))
+              return <></>
+            }}
+          />
         </Group>
       </SpriteLayer>
     )
   })
-  expect(threw).toContain("layer root")
+  await app.settle()
+  expect(built).toEqual(["1,0"])
 })
 
 test("a view wants only its own layer's regions: two layers over the same coordinates stream apart", async app => {

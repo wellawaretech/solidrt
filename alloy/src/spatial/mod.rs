@@ -1020,6 +1020,9 @@ struct Node {
   /// The residency region this node is (`set_region`): wanted while
   /// within its margins of a viewer's view volume.
   region: Option<Box<residency::Region>>,
+  /// The residency grids this node places (GridSpec::node): while any,
+  /// a move sets `grids_moved` for the residency pass.
+  placed_grids: u32,
   /// The occluder this node carries (`set_occluder`): its triangles in
   /// node space, rasterized under the node's world matrix while shown.
   occluder: Option<Box<Occluder>>,
@@ -1114,6 +1117,9 @@ pub struct Spatial {
   /// A region moved or was declared this flush: the pass re-tests it
   /// against every viewer.
   regions_moved: bool,
+  /// A node placing a grid moved this flush: the pass re-reads the
+  /// placements and re-enumerates the moved grids under every viewer.
+  grids_moved: bool,
   /// Per target with occlusion on (`set_occlusion`): its depth buffer.
   occlusion: HashMap<u64, OcclusionTarget>,
   /// Per target with a view: its view-projection and projection, what an
@@ -1226,6 +1232,7 @@ impl Spatial {
       lod_scope: None,
       lod_check: false,
       region: None,
+      placed_grids: 0,
       occluder: None,
       audio_refs: 0,
       audio_moved: false,
@@ -1305,6 +1312,10 @@ impl Spatial {
     }
     self.clear_lod(i);
     self.residency.end_region(i, &mut self.nodes[i as usize]);
+    if self.nodes[i as usize].placed_grids > 0 {
+      self.residency.end_placed_grids(i);
+      self.nodes[i as usize].placed_grids = 0;
+    }
     self.transitions.configs.remove(&id);
     self.transitions.cancel_node(id);
     let n = &mut self.nodes[i as usize];
@@ -1865,14 +1876,28 @@ impl Spatial {
   /// not consulted, so the margins read as load distances in 3d and as
   /// margins around an orthographic 2d view. Cells have no state until
   /// approached; an unbounded or procedural world costs what it has
-  /// near a viewer. Returns the grid's id.
+  /// near a viewer. A grid placed by a node (`GridSpec::node`) lives in
+  /// that node's space and ends when the node is freed. Returns the
+  /// grid's id.
   pub fn create_grid(&mut self, spec: GridSpec) -> Result<GridId, String> {
-    self.residency.create_grid(spec)
+    let place = match spec.node {
+      Some(node) => Some(self.resolve(node)?),
+      None => None,
+    };
+    let id = self.residency.create_grid(spec, place)?;
+    if let Some(i) = place {
+      self.nodes[i as usize].placed_grids += 1;
+    }
+    Ok(id)
   }
 
   /// End a grid: every cell whose enter went out leaves.
   pub fn destroy_grid(&mut self, id: GridId) -> Result<(), String> {
-    self.residency.destroy_grid(id)
+    if let Some(i) = self.residency.destroy_grid(id)? {
+      let n = &mut self.nodes[i as usize];
+      n.placed_grids = n.placed_grids.saturating_sub(1);
+    }
+    Ok(())
   }
 
   /// The enters delivered per frame scene-wide (default
@@ -4412,8 +4437,9 @@ impl Spatial {
     if !self.touched.is_empty() || !self.frustum_dirty.is_empty() || !self.occlusion_retest.is_empty() {
       self.cull_pass(out);
     }
-    if self.residency.needs_pass(self.regions_moved) {
+    if self.residency.needs_pass(self.regions_moved || self.grids_moved) {
       self.regions_moved = false;
+      self.grids_moved = false;
       self.residency.pass(&mut self.nodes, &mut self.region_nodes);
     }
     // After the walk (worlds fresh) and unconditionally: the feed reacts
@@ -4520,6 +4546,9 @@ impl Spatial {
       if let Some(r) = n.region.as_mut() {
         r.moved = true;
         self.regions_moved = true;
+      }
+      if n.placed_grids > 0 {
+        self.grids_moved = true;
       }
     }
     if changed && !n.lod_check && (n.lod.is_some() || n.records.len() > 1) {
