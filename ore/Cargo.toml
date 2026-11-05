@@ -34,3 +34,8 @@ tokio = { workspace = true, features = ["io-util"] }
 # Windows DNS config).
 [target.'cfg(windows)'.dependencies]
 windows-registry = "=0.6.1"
+
+[build-dependencies]
+# Locates the target C compiler so the macOS build can link
+# libclang_rt.osx.a; see build.rs. forge's pin, already in the tree.
+cc = "=1.10.0"

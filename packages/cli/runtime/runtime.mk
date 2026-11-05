@@ -144,16 +144,9 @@ RUNTIME_ANDROID_TARGET_DIR ?= target/runtime-android
 # -- Host ------------------------------------------------------------------
 
 ifeq ($(findstring apple-darwin,$(HOST_TARGET)),apple-darwin)
-# Statically linked SDL contains @available checks that compile to
-# ___isPlatformVersionAtLeast calls. That symbol lives in clang's compiler-rt
-# builtins, which rustc's -nodefaultlibs link never pulls in; plain release
-# builds get it from Rust's compiler-builtins instead, but fat LTO
-# (release-opt) internalizes it away since no Rust code references it. Link
-# the archive explicitly so both profiles resolve it. RUSTFLAGS replaces
-# the target rustflags of config.toml entirely, so the @executable_path
-# rpath from there is repeated here.
-CLANG_RT_OSX := $(shell clang -print-resource-dir)/lib/darwin/libclang_rt.osx.a
-HOST_ENV = RUSTFLAGS="-C link-arg=-Wl,-rpath,@executable_path -C link-arg=$(CLANG_RT_OSX)"
+# The @executable_path rpath comes from config.toml; ore's build script links
+# the compiler-rt builtins the static SDL needs (ore/build.rs).
+HOST_ENV =
 # Impeller is linked statically on macOS, so the only dylibs beside the
 # binary are ANGLE's (GL_LIBS below). Ad-hoc signed, like every local build.
 # $(1) = target dir, $(2) = binary name
