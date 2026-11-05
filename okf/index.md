@@ -1130,6 +1130,12 @@ Finished, kept for the reasoning.
   scene.createView contract on the sprite and tile layers - same world, its
   own camera and size - with the layers bitmask from the 3d view work when the
   second view needs a different mesh set (markers only).
+- **[The 2d auto oversample picks at a step, an eighth by default, not a whole number](done/2d-oversample-step.md)** [2026-11-05]
+  The view oversample auto-pick rounded the display scale up to a whole
+  number, so a 1.5x display shaded 1.78x its pixels; it now rounds to a
+  multiple of an explicit `oversampleStep` (default 1/8, which every common
+  display scale is), explicit oversample takes any positive number, pixel art
+  sets the step to 1, and the tile bake density stays whole.
 - **[The 2d package streams only tiles; sprite populations, priorities and measured chunk weights still wait on the core region lifecycle](done/2d-region-handlers.md)** [2026-10-20]
   The 3d residency item put the handler lifecycle (load, sliced build, unload,
   retain, proxy, measured bytes, streaming sources, priority) in core and a

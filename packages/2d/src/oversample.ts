@@ -1,37 +1,58 @@
 // The layer oversample: how many target texels one layer pixel is drawn
 // as. A layer renders at `oversample` times its size and is composited down
-// to its box, so a fractional or HiDPI display scale resamples properly: the
-// atlas is still sampled nearest inside (texels stay square blocks), the
-// composite samples linear (each block edge softens over one device pixel
-// instead of snapping to uneven widths). okf/backlog/2d-layer-display-scale.md.
-// The pure math lives in oversample-math.ts (checkable headless); this
-// module binds it to the device limits and adds the thrash sentinel.
+// to its box, so a fractional or HiDPI display scale resamples properly: at
+// the display's own scale the composite is 1:1, and anywhere else it
+// samples linear. The auto pick rounds the scale up to a multiple of
+// `oversampleStep` (an eighth by default); pixel art over a nearest atlas
+// sets the step to 1, so each atlas texel covers a whole number of target
+// texels and blocks stay square, and the linear composite softens each
+// block edge over one device pixel instead of snapping to uneven widths.
+// okf/done/2d-layer-display-scale.md. The pure math lives in
+// oversample-math.ts (checkable headless); this module binds it to the
+// device limits and adds the thrash sentinel.
 import { frameTime } from "@solidrt/core"
 import { limits } from "@solidrt/core/gpu"
-import { fitOversampleWithin } from "./oversample-math.ts"
+import { DEFAULT_OVERSAMPLE_STEP, fitOversampleWithin, scaledSize } from "./oversample-math.ts"
 
-/** Validate an oversample (or the tile layer's bake density, `name`)
- * against the target it scales; throws (dev policy). */
-export function checkOversample(verb: string, n: number, width: number, height: number, name = "oversample"): void {
-  if (!(Number.isInteger(n) && n >= 1)) {
-    throw new Error(`${verb}: ${name} must be a positive integer, got ${n}`)
+/** Validate a view's oversample against the target it scales; throws (dev
+ * policy). */
+export function checkOversample(verb: string, n: number, width: number, height: number): void {
+  if (!(Number.isFinite(n) && n > 0)) {
+    throw new Error(`${verb}: oversample must be a positive number, got ${n}`)
   }
+  checkScaledSize(verb, "oversample", n, width, height)
+}
+
+/** Validate the tile layer's bake density: a whole number, so every tile
+ * and chunk edge lands on a whole texel (at a fractional density an edge
+ * texel is half covered by two tiles, the classic tilemap seam) and a
+ * nearest tileset bakes square blocks; throws (dev policy). */
+export function checkDensity(verb: string, n: number, width: number, height: number): void {
+  if (!(Number.isInteger(n) && n >= 1)) {
+    throw new Error(`${verb}: density must be a positive integer, got ${n}`)
+  }
+  checkScaledSize(verb, "density", n, width, height)
+}
+
+function checkScaledSize(verb: string, name: string, n: number, width: number, height: number): void {
   let max = limits.maxTextureSize
-  if (width * n > max || height * n > max) {
+  if (scaledSize(width, n) > max || scaledSize(height, n) > max) {
     throw new Error(`${verb}: ${width} x ${height} at ${name} ${n} exceeds maxTextureSize ${max}`)
   }
 }
 
 /**
  * The oversample for a layer shown at `scale` device pixels per layer pixel:
- * the ceiling of the scale, so no device pixel goes without a target texel.
- * Bounded by `budget` texels for the `targetW x targetH` target (the
- * window's own device pixel count: a target beyond it buys nothing on
- * screen, and a layer stretched far past the window inside a scroller must
- * not ask for one) and by what the target can grow to on this device.
+ * the scale rounded up to a multiple of `step` (default an eighth, which
+ * every common display scale is; 1 for a nearest atlas), so no device
+ * pixel goes without a target texel. Bounded by `budget` texels for the
+ * `targetW x targetH` target (the window's own device pixel count: a
+ * target beyond it buys nothing on screen, and a layer stretched far past
+ * the window inside a scroller must not ask for one) and by what the
+ * target can grow to on this device.
  */
-export function fitOversample(scale: number, targetW: number, targetH: number, budget: number): number {
-  return fitOversampleWithin(scale, targetW, targetH, budget, limits.maxTextureSize)
+export function fitOversample(scale: number, targetW: number, targetH: number, budget: number, step = DEFAULT_OVERSAMPLE_STEP): number {
+  return fitOversampleWithin(scale, targetW, targetH, budget, limits.maxTextureSize, step)
 }
 
 /** Oversample changes inside the window before the thrash warning fires. A
@@ -46,14 +67,14 @@ const THRASH_WINDOW_MS = 1000
 /**
  * The thrash sentinel: each layer calls the returned hook on every ACTUAL
  * oversample change (`knob` names it: the tile layer's bake density is
- * `density`, capped by `maxDensity`), and bunched changes warn once per
- * layer. Every change resizes and redraws the layer's targets (a tile
- * layer re-bakes every resident chunk), so a scale sweeping an integer
- * boundary every frame is this package's most expensive silent mistake -
- * worth a console line the moment it happens rather than a profiling
- * session later.
+ * `density`, capped by `maxDensity`, with no step to coarsen), and
+ * bunched changes warn once per layer. Every change resizes and redraws
+ * the layer's targets (a tile layer re-bakes every resident chunk), so a
+ * scale sweeping the pick's steps every frame is this package's most
+ * expensive silent mistake - worth a console line the moment it happens
+ * rather than a profiling session later.
  */
-export function thrashSentinel(what: string, knob = "oversample", cap = "maxOversample"): () => void {
+export function thrashSentinel(what: string, knob = "oversample", cap = "maxOversample", step: string | null = "oversampleStep"): () => void {
   let stamps: number[] = []
   let warned = false
   return () => {
@@ -67,8 +88,8 @@ export function thrashSentinel(what: string, knob = "oversample", cap = "maxOver
       `Oversample thrash: ${what} changed ${knob} ${THRASH_CHANGES} times within a second. ` +
         `Every change resizes and redraws the layer's targets (a tile layer re-bakes every ` +
         `resident chunk). The usual cause is an animated transform or camera sweeping the ` +
-        `measured scale across integer boundaries; pin \`${knob}\`, or bound the sweep ` +
-        `with \`${cap}\`. Warned once per layer.`,
+        `measured scale across the pick's steps; pin \`${knob}\`, ` +
+        `${step === null ? "" : `coarsen \`${step}\`, `}or bound the sweep with \`${cap}\`. Warned once per layer.`,
     )
   }
 }

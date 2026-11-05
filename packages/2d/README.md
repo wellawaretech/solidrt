@@ -16,13 +16,17 @@ let frames = grid(atlas, 4, 4)
 
 render(() => (
   <window>
-    <SpriteLayer width={720} height={480} atlases={[atlas]}>
+    <SpriteLayer width={720} height={480} atlases={[atlas]} oversampleStep={1}>
       <Sprite x={100} y={120} w={32} h={32} frame={frames[0]} />
       <Sprite x={200} y={160} w={32} h={32} frame={frames[5]} rotation={0.4} />
     </SpriteLayer>
   </window>
 ))
 ```
+
+Pixel art pairs the nearest atlas with `oversampleStep={1}`, so each sheet
+texel stays a square block at any display scale (the default step matches
+the display exactly, which suits smooth art).
 
 A frame knows the sheet it is cut from, so a layer declaring several
 atlases draws sprites from any of them in the same draw (the multi-texture
@@ -55,8 +59,9 @@ hit-test exact rotated rects, topmost first, with pointer capture.
 A layer shows only through its views, each a target with a camera of its
 own: by default `<SpriteLayer>` composites one as a plain `<texture>` leaf
 that fills its parent's box, rendered at the leaf's on-screen size times an
-integer `oversample` the layer picks from the display density (give
-`width`/`height` for a fixed view instead, `maxPixels` for a budget); the
+`oversample` the layer picks from the display density (`oversampleStep={1}`
+for pixel art; give `width`/`height` for a fixed view instead, `maxPixels`
+for a budget); the
 `output` prop receives the texture id and replaces that leaf, and `<View2d>`
 children add more views (a minimap, a split screen). Camera control is
 `<Camera2d>` (or `createCamera2d`): pan, zoom and roll from an input map

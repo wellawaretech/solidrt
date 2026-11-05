@@ -183,8 +183,9 @@ a chunk acquires its target and goes when it releases it, synced at the
 layer's flush. The view is the gate's viewer too (Residency above).
 One layer has ONE bake density (`density`, texels per world pixel):
 every view asks for its oversample times its camera zoom and the layer
-bakes at the largest wish, rounded up with the shrink hysteresis and
-bounded by `maxDensity` and `maxTexels` (a chunk must fit the budget,
+bakes at the largest wish, rounded up to a whole number (tile edges on
+whole texels) with the shrink hysteresis and bounded by `maxDensity`
+and `maxTexels` (a chunk must fit the budget,
 so the pick is clamped, never thrown; only a pin past the budget
 throws). `density` pins it, and `setDensity(null)` hands it back to the
 views. A view below the density minifies the bake through the chunks'

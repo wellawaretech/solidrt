@@ -126,8 +126,9 @@ export type SpriteLayerProps = LayerPointerProps &
    * own - the layer shows only through its `<View2d>` children, each a
    * full view with its own camera (split-screen: two side by side, a
    * game with its minimap and nothing else). The view props (width,
-   * height, camera, clearColor, oversample, maxOversample, events,
-   * viewRef, the pointer props) then have nothing to apply to and throw.
+   * height, camera, clearColor, oversample, oversampleStep,
+   * maxOversample, events, viewRef, the pointer props) then have nothing
+   * to apply to and throw.
    */
   output?: ((texture: TextureId, leaf: OutputLeaf) => Element) | false
   /**
@@ -161,6 +162,7 @@ const VIEW_PROPS = [
   "camera",
   "clearColor",
   "oversample",
+  "oversampleStep",
   "maxOversample",
   "maxPixels",
   "events",
@@ -330,7 +332,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     view,
     () => leafNode,
     fill ? null : () => ({ width: props.width!, height: props.height! }),
-    () => ({ oversample: props.oversample, maxOversample: props.maxOversample, maxPixels: props.maxPixels }),
+    () => ({ oversample: props.oversample, oversampleStep: props.oversampleStep, maxOversample: props.maxOversample, maxPixels: props.maxPixels }),
     output !== undefined,
   )
   // Sprite events on the leaf: the built-in fixed leaf is laid out at the

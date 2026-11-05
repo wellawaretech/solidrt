@@ -326,8 +326,8 @@ only the app knows its scene's cost. Neither knob
 touches the leaf's layout, pointer events or the camera controls:
 `handlersFor` scales events by target over layout box and the orbit
 control divides by `size().height`, both invariant under the scale. The
-2d packages' knobs are `oversample` (an integer, so the resample stays
-clean) and the same `maxPixels`.
+2d packages' knobs are `oversample` (texels per view pixel, auto-picked
+at `oversampleStep`, 1 for pixel art) and the same `maxPixels`.
 
 With `output`, the target follows the leaf you `ref` (Output composition
 above); without a ref it stays at its creation size and the first

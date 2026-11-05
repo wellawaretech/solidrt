@@ -323,7 +323,7 @@ export let TileLayer: ParentComponent<TileLayerProps> = props => {
     view,
     () => leafNode,
     fill ? null : () => ({ width: props.width!, height: props.height! }),
-    () => ({ oversample: props.oversample, maxOversample: props.maxOversample, maxPixels: props.maxPixels }),
+    () => ({ oversample: props.oversample, oversampleStep: props.oversampleStep, maxOversample: props.maxOversample, maxPixels: props.maxPixels }),
     output !== undefined,
   )
   let viewHandlers = fill || output ? view.handlersFor(follow.layout) : view.handlers

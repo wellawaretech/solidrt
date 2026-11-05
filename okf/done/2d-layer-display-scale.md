@@ -151,3 +151,9 @@ device-pixel size (the auto default, decided once with the same
 getBoundingBoxViewport x displayScale measurement the 2d pick uses); the
 explicit knob became the `resolution` multiplier shaped in
 [scene-fill-extensions](../backlog/scene-fill-extensions.md).
+
+Superseded in part 2026-11-05: the whole-number oversample is now only
+the pixel-art case. The auto-pick rounds to `oversampleStep` (default an
+eighth, so a 1.5x display picks 1.5), and explicit oversample takes any
+positive number; the tile bake density stays whole. See
+[2d-oversample-step](2d-oversample-step.md).

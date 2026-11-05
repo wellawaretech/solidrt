@@ -101,7 +101,7 @@ import { checkParams, checkTint } from "./layer.ts"
 import { materialBlank, materialSamplers, unlit } from "./material.ts"
 import type { Material } from "./material.ts"
 import { pickOversample } from "./oversample-math.ts"
-import { checkOversample, thrashSentinel } from "./oversample.ts"
+import { checkDensity, thrashSentinel } from "./oversample.ts"
 import { INSTANCE_FLOATS } from "./records.ts"
 import { CHUNK_SAMPLER, tileCameraParams, tilePipeline } from "./tile-pipeline.ts"
 import { cellSymmetry, checkCell, checkRect, checkTileRect, chunkKey, eachChunkSlice, flagsOf, floorDiv, footprint, indexOf, isClearIndex, mod, slotOf } from "./tiles-math.ts"
@@ -130,6 +130,15 @@ const MIP_CHAIN_FACTOR = 4 / 3
 // in BYTES, so a tile layer and a 3d grid share one scene limit; the
 // layer's own `maxTexels` stays in texels, its unit, and converts here.
 const CHUNK_TEXEL_BYTES = 4
+// The step the bake density picks at: a whole number (checkDensity says
+// why), where a view's oversample picks at its own `oversampleStep`.
+const DENSITY_STEP = 1
+// How far under the next whole number down the views' wish must fall
+// before the density shrinks (growth is immediate). The wish is oversample
+// times camera zoom, a live input: a pinch or a zoom ease hovering at a
+// whole number would otherwise re-bake every resident chunk on each
+// crossing. The view's own oversample follow holds no such margin.
+const DENSITY_SHRINK_MARGIN = 0.25
 // The identity node transform [x, y, z, qx, qy, qz, qw, sx, sy, sz] the
 // layer's world root is created with.
 const WORLD_TRANSFORM = new Float64Array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1])
@@ -169,7 +178,8 @@ export type TileLayerOptions = {
    * Pin the bake density: target texels per world pixel in the chunks
    * (positive integer). Absent (the default), the layer picks it from its
    * VIEWS: the largest target texels per world pixel any view asks for
-   * (its oversample times its camera zoom), rounded up, with a shrink
+   * (its oversample times its camera zoom), rounded up to a whole number
+   * (so tile edges land on whole texels), with a shrink
    * hysteresis, bounded by `maxDensity`, by the window's own pixel count
    * per chunk, and by `maxTexels` (a chunk must fit the budget). One
    * density serves every view of the layer; a view below it minifies the
@@ -811,7 +821,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     throw new Error(`createTileLayer: chunk target ${targetW} x ${targetH} exceeds maxTextureSize ${limits.maxTextureSize}; lower chunkTiles`)
   }
   let density = opts?.density ?? 1
-  checkOversample("createTileLayer", density, targetW, targetH, "density")
+  checkDensity("createTileLayer", density, targetW, targetH)
   // Pinned by the option (and by setDensity), else the views' pick.
   let pinned = opts?.density !== undefined
   let maxDensity = opts?.maxDensity
@@ -819,7 +829,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     throw new Error(`createTileLayer: maxDensity must be a positive integer, got ${maxDensity}`)
   }
   let mipmap = opts?.mipmap ?? true
-  let thrash = thrashSentinel(`tile layer "${label}"`, "density", "maxDensity")
+  let thrash = thrashSentinel(`tile layer "${label}"`, "density", "maxDensity", null)
   let enter = opts?.enter ?? DEFAULT_ENTER_CHUNKS * Math.max(chunkW, chunkH)
   let leave = opts?.leave ?? Math.max(enter, DEFAULT_LEAVE_CHUNKS * Math.max(chunkW, chunkH))
   if (!(Number.isFinite(enter) && enter >= 0 && Number.isFinite(leave) && leave >= enter)) {
@@ -1380,8 +1390,8 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
   // (oversample times zoom).
   let wishes = new Map<TileView, number>()
   // The views' pick: the largest wish, rounded up, bounded by the cap
-  // and the window's pixel count per chunk, with the shrink hysteresis
-  // (oversample-math.ts); under `maxTexels` the pick is clamped so a
+  // and the window's pixel count per chunk, with the shrink margin
+  // (DENSITY_SHRINK_MARGIN); under `maxTexels` the pick is clamped so a
   // chunk always fits the budget (the fit rounds up and could not
   // otherwise). Nothing to pick from before the first view reports.
   let resolve = () => {
@@ -1394,7 +1404,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     let ds = untrack(displayScale)
     let budget = win.width * ds * (win.height * ds)
     if (maxTexels !== undefined) budget = Math.min(budget, maxTexels)
-    let n = pickOversample(density, scale, targetW, targetH, budget, limits.maxTextureSize, maxDensity)
+    let n = pickOversample(density, scale, targetW, targetH, budget, limits.maxTextureSize, maxDensity, DENSITY_STEP, DENSITY_SHRINK_MARGIN)
     if (n === null) return
     if (maxTexels !== undefined) n = Math.max(1, Math.min(n, Math.floor(Math.sqrt(maxTexels / chunkTexels(1)))))
     applyDensity(n)
@@ -1438,7 +1448,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
         resolve()
         return
       }
-      checkOversample("setDensity", n, targetW, targetH, "density")
+      checkDensity("setDensity", n, targetW, targetH)
       if (maxTexels !== undefined && maxTexels < chunkTexels(n)) {
         throw new Error(`setDensity: maxTexels ${maxTexels} holds no chunk at density ${n} (${chunkTexels(n)} texels); raise it or pin lower`)
       }

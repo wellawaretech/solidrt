@@ -51,6 +51,7 @@ import type { CameraState, CameraUpdate } from "./camera.ts"
 import { spriteDispatch } from "./dispatch.ts"
 import type { PointerFeed } from "@solidrt/core"
 import type { LayerPointerListener, Sprite, LayerHandlers } from "./layer.ts"
+import { scaledSize } from "./oversample-math.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 
 // The sprite layer's render origin cell, in SCREEN pixels of the primary
@@ -67,7 +68,8 @@ export type ViewOptions = {
   height: number
   /** The camera to start from (a setCamera update); default the identity. */
   camera?: CameraUpdate
-  /** Target texels per view pixel (see ViewHandle.setOversample); default 1. */
+  /** Target texels per view pixel, a positive number (see
+   * ViewHandle.setOversample); default 1. */
   oversample?: number
   clearColor?: [number, number, number, number]
   label?: string
@@ -107,11 +109,15 @@ export type ViewHandle = {
   /** Target texels per view pixel; see setOversample. */
   readonly oversample: number
   /**
-   * Re-render at `n` target texels per view pixel (positive integer): the
-   * target resizes in place at its stable id; view pixels, records, camera
-   * and picking are untouched. Pick `n` as the ceiling of the device pixels
-   * one view pixel covers on screen (display scale times any designSize
-   * fit or layout scaling), which the components do in onLayout.
+   * Re-render at `n` target texels per view pixel (positive number; the
+   * target is the view size times `n`, rounded): the target resizes in
+   * place at its stable id; view pixels, records, camera and picking are
+   * untouched. Pick `n` as the device pixels one view pixel covers on
+   * screen (display scale times any designSize fit or layout scaling),
+   * rounded up to a step, which the components do in onLayout
+   * (fitOversample): an eighth matches every common display, and pixel
+   * art over a nearest atlas wants a whole number, so each atlas texel
+   * stays a square block.
    */
   setOversample(n: number): void
   setCamera(update: CameraUpdate): void
@@ -193,7 +199,7 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
     checkCamera(opts.camera)
     applyCamera(cam, opts.camera)
   }
-  let texture = deps.createTarget(width * oversample, height * oversample, { uViewport: [width, height], ...deps.cameraParams(cam) }, { clearColor: opts.clearColor ?? [0, 0, 0, 0], label })
+  let texture = deps.createTarget(scaledSize(width, oversample), scaledSize(height, oversample), { uViewport: [width, height], ...deps.cameraParams(cam) }, { clearColor: opts.clearColor ?? [0, 0, 0, 0], label })
   let thrash = thrashSentinel(`view "${label}"`)
   let disposed = false
   let listeners = new Set<LayerPointerListener>()
@@ -226,7 +232,7 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
       checkOversample("setSize", oversample, w, h)
       width = w
       height = h
-      setTargetSize(texture, w * oversample, h * oversample)
+      setTargetSize(texture, scaledSize(w, oversample), scaledSize(h, oversample))
       setTargetParams(texture, { uViewport: [w, h] })
       pushViewer()
       deps.changed?.(view)
@@ -245,7 +251,7 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
       checkOversample("setOversample", n, width, height)
       thrash()
       oversample = n
-      setTargetSize(texture, width * n, height * n)
+      setTargetSize(texture, scaledSize(width, n), scaledSize(height, n))
       deps.changed?.(view)
     },
     setCamera(update) {

@@ -92,7 +92,7 @@ let atlas = createAtlas(decodeImage(sheet), { filter: "nearest" })
 let frames = grid(atlas, 4, 4)
 
 <window>
-  <SpriteLayer width={720} height={480} atlases={[atlas]}>
+  <SpriteLayer width={720} height={480} atlases={[atlas]} oversampleStep={1}>
     <Sprite x={100} y={120} w={32} h={32} frame={frames[0]} />
     <Sprite x={200} y={160} w={32} h={32} frame={frames[5]} rotation={0.4} />
   </SpriteLayer>
@@ -102,6 +102,9 @@ let frames = grid(atlas, 4, 4)
 A layer declares the atlases that it uses and binds them as one draw. Thus,
 sprites from different sheets can mix in any order. Each frame keeps a
 reference to its sheet.
+
+Pixel art uses a "nearest" atlas and `oversampleStep={1}`. Then each
+texel of the sheet stays a square block at any display scale.
 
 To use it, select it in the scaffolder, or use `bun add @solidrt/2d`. For an
 overview and the export surface, see [@solidrt/2d](/extensions/2d/).

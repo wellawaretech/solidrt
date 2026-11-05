@@ -2,12 +2,12 @@
 // (okf/done/scene-fill-extensions.md), one dimension down from
 // packages/3d/tests/fill-knobs.test.tsx: a fill view sizes to the leaf it
 // follows - the built-in one, or the `output` leaf that refs itself - a
-// `<View2d>` without sizes fills its box by the same rule, and `maxPixels`
-// bounds the auto-picked oversample below what the on-screen scale asks.
-// View pixels are the leaf's layout units, so the expectations are boxes
-// read off the tree and no display scale enters; the budget case
+// `<View2d>` without sizes fills its box by the same rule, `maxPixels`
+// bounds the auto-picked oversample below what the on-screen scale asks,
+// and `oversampleStep` rounds the pick. View pixels are the leaf's layout
+// units, so the expectations are boxes read off the tree; the budget case
 // measures through a designSize fit, where the leaf is shown at four times
-// its layout size.
+// its layout size, and the step case runs on a 1.5x display.
 
 import { test, expect } from "@solidrt/test"
 import { createEffect, createSignal, displayScale, pct } from "@solidrt/core"
@@ -62,7 +62,7 @@ test("an output leaf that refs itself is followed by the view", async app => {
   expect(typeof leaf.handlers.onPointerDown).toBe("function")
   // The target is the view times its oversample; the device size is the
   // leaf's box at the display scale.
-  let texels = () => ({ width: WIDTH * view.oversample, height: view.size().height * view.oversample })
+  let texels = () => ({ width: Math.round(WIDTH * view.oversample), height: Math.round(view.size().height * view.oversample) })
   expect(leaf.size()).toEqual(texels())
   expect(seen[seen.length - 1]).toEqual(texels())
   expect(leaf.deviceSize()).toEqual({ width: Math.round(WIDTH * displayScale()), height: Math.round(HEIGHT * displayScale()) })
@@ -115,3 +115,46 @@ test("maxPixels bounds the auto-picked oversample", async app => {
   expect(Math.ceil((SHOWN / DESIGN) * displayScale())).toBeGreaterThan(CAPPED)
   expect(view.oversample).toBe(CAPPED)
 })
+
+// The step case: a fill view on a 1.5x display. The default step (an
+// eighth) picks the display scale itself, so the target is the device
+// pixels; pixel art's step of 1 rounds it up to 2.
+const STEP_SCALE = 1.5
+const WHOLE = 2
+
+test("oversampleStep rounds the auto pick: the display scale at the default, a whole number at 1", async app => {
+  let view!: ViewHandle
+  let leaf!: OutputLeaf
+  let [step, setStep] = createSignal<number | undefined>(undefined)
+  await app.mount(() => {
+    let atlas = createAtlas(ATLAS, { label: "knobs-step-atlas" })
+    return (
+      <view width={WIDTH} height={HEIGHT}>
+        <SpriteLayer
+          atlases={[atlas]}
+          label="knobs-step"
+          oversampleStep={step()}
+          viewRef={v => (view = v)}
+          output={(texture, l) => {
+            leaf = l
+            return <texture ref={l.ref} src={texture} width={pct(100)} height={pct(100)} contain="size" />
+          }}
+        />
+      </view>
+    )
+  })
+  await app.settle()
+  expect(displayScale()).toBe(STEP_SCALE)
+  expect(view.oversample).toBe(STEP_SCALE)
+  expect(leaf.size()).toEqual(leaf.deviceSize())
+  // Pixel art: whole texels per view pixel.
+  setStep(1)
+  await app.settle()
+  expect(view.oversample).toBe(WHOLE)
+  expect(leaf.size()).toEqual({ width: WIDTH * WHOLE, height: HEIGHT * WHOLE })
+  // Back to the default: the follow holds no shrink margin, so the pick
+  // returns to the display scale.
+  setStep(undefined)
+  await app.settle()
+  expect(view.oversample).toBe(STEP_SCALE)
+}, { scale: STEP_SCALE })

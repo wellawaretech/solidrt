@@ -5,27 +5,40 @@
 // built-in <texture>, or the one an `output` callback refs; core's
 // followBox measures it after every layout (before any paint) and on
 // display-scale changes. The 3d packages' fill.ts is the same shape one
-// dimension up, with a fractional render scale where 2d keeps the integer
-// oversample.
+// dimension up, with a render scale over the device size where 2d picks
+// an oversample over the view size at a step.
 import { createSignal, followBox, getLayoutBox } from "@solidrt/core"
 import type { LayerHandlers } from "../layer.ts"
-import { applyOversample } from "./auto-oversample.ts"
+import { scaledSize } from "../oversample-math.ts"
+import { followOversample } from "./follow-oversample.ts"
 
 /** The density knobs a `<SpriteLayer>`, a `<View2d>` and a `<TileLayer>`
- * take: texels per view pixel, as an integer oversample, a cap on it and a
- * budget. The 3d packages' DensityProps are the same knobs with a
- * fractional scale (Godot's integer-2d, fractional-3d split). */
+ * take: texels per view pixel, as an oversample, the step its auto pick
+ * rounds to, a cap on it and a budget. The 3d packages' DensityProps are
+ * the same knobs as a render scale over the device size. */
 export type DensityProps = {
   /**
    * Target texels per view pixel. Absent, the component picks it every
    * layout from the built-in leaf's on-screen size (display scale, any
    * designSize fit, layout scaling), so the view resamples properly at any
    * scale; with a function `output` there is no built-in leaf, so set it
-   * yourself. Reactive.
+   * yourself (fitOversample). A positive number: the target is the view
+   * size times it, rounded. Reactive.
    */
   oversample?: number
   /**
-   * Cap on the auto-picked oversample (integer >= 1): the view stays
+   * The step the auto pick rounds the on-screen scale up to (default 1/8):
+   * every common display scale (1.25, 1.5, 1.75, 2.625, 2.75, 3.5) is a
+   * multiple of an eighth, so the target matches the display. Pixel art
+   * over a nearest atlas sets 1: each atlas texel then covers a whole
+   * number of target texels and stays a square block, where a fractional
+   * pick draws blocks of uneven widths. A coarser step also re-picks less
+   * often while a measured scale animates. Ignored when `oversample` is
+   * set. Reactive.
+   */
+  oversampleStep?: number
+  /**
+   * Cap on the auto-picked oversample (a positive number): the view stays
    * adaptive up to it, never above - the lever that bounds target memory on
    * high-scale displays without giving up adaptivity. Ignored when
    * `oversample` is set (explicit already opts out of the pick).
@@ -33,11 +46,13 @@ export type DensityProps = {
   maxOversample?: number
   /**
    * Cap on the view's target texel count under the auto pick, the budget
-   * form of `maxOversample`: one cost across devices, where an integer cap
-   * means a different cost on every panel (the window's own pixel count
-   * caps the pick always). Ignored when `oversample` is set. The same name
-   * and meaning as the 3d `<Scene>`'s `maxPixels`, which caps a fractional
-   * render scale where 2d keeps the integer oversample.
+   * form of `maxOversample`: one cost across devices, where a factor cap
+   * means a different cost on every panel. The window's own device pixel
+   * count always bounds the pick, with or without `maxPixels` (a target
+   * beyond the window buys nothing on screen); `maxPixels` can only lower
+   * it. Ignored when `oversample` is set. The same name
+   * and meaning as the 3d `<Scene>`'s `maxPixels`, which caps its render
+   * scale.
    */
   maxPixels?: number
 }
@@ -59,7 +74,8 @@ export type OutputLeaf = {
    * and its pointer feed. Without a ref they assume a leaf laid out at
    * the view size (`view.handlers`). */
   handlers: LayerHandlers
-  /** The view target's size in texels (view pixels times the oversample),
+  /** The view target's size in texels (view pixels times the oversample,
+   * rounded),
    * reactive: a post chain over the texture sizes its own targets from it
    * (`createShaderTextureMemo` takes the read directly and resizes in
    * place), applied before the frame that follows a resize or a re-pick
@@ -115,7 +131,7 @@ export function createViewFill(
 ): ViewFill {
   let sameSize = (a: { width: number; height: number }, b: { width: number; height: number }) => a.width === b.width && a.height === b.height
   let initial = view.size()
-  let [size, setSize] = createSignal({ width: initial.width * view.oversample, height: initial.height * view.oversample }, { equals: sameSize })
+  let [size, setSize] = createSignal({ width: scaledSize(initial.width, view.oversample), height: scaledSize(initial.height, view.oversample) }, { equals: sameSize })
   let [deviceSize, setDeviceSize] = createSignal({ width: initial.width, height: initial.height }, { equals: sameSize })
   let [viewportSize, setViewportSize] = createSignal({ width: initial.width, height: initial.height }, { equals: sameSize })
   // The layout box the handlers scale against (getLayoutBox, the
@@ -140,16 +156,16 @@ export function createViewFill(
       // Auto oversample: device pixels per view pixel.
       if (p.oversample === undefined) {
         let scale = Math.max(box.device.width / current.width, box.device.height / current.height)
-        applyOversample(what, view, scale, current.width, current.height, p.maxOversample, p.maxPixels)
+        followOversample(what, view, scale, current.width, current.height, p.maxOversample, p.maxPixels, p.oversampleStep)
       }
       setViewportSize({ width: current.width, height: current.height })
-      setSize({ width: current.width * view.oversample, height: current.height * view.oversample })
+      setSize({ width: scaledSize(current.width, view.oversample), height: scaledSize(current.height, view.oversample) })
       setDeviceSize({ width: Math.max(1, Math.round(box.device.width)), height: Math.max(1, Math.round(box.device.height)) })
     },
     {
       deps: () => {
         let p = props()
-        return [p.maxOversample, p.maxPixels]
+        return [p.maxOversample, p.maxPixels, p.oversampleStep]
       },
       missing: output && !fixed ? "fill with output follows the leaf you ref, and none arrived - put ref={leaf.ref} on the leaf your output returns, or give width and height." : undefined,
     },

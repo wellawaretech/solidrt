@@ -5,7 +5,8 @@
 
 /** The density knobs a `<Scene>` and a `<View3d>` take: texels per
  * on-screen pixel, as a scale and a budget. The 2d packages' DensityProps
- * are the same knobs with an integer oversample. */
+ * are the same knobs as an oversample over the view size, picked at a
+ * step. */
 export type DensityProps = {
   /**
    * Render scale over the tracked device-pixel size (default 1): 2 renders
