@@ -54,6 +54,7 @@ function make(opts: Partial<Camera2dOptions> = {}, view = { width: 800, height: 
   let cam = createCamera2d(
     {
       size: () => view,
+      camera: () => ({ x: 0, y: 0, zoom: 1, rotation: 0, pivotX: 0, pivotY: 0 }),
       setCamera: (u) => {
         last = u
         writes++
@@ -595,7 +596,7 @@ test("shots: the zoom blends in log space; a shot's control drives the view thro
   let m = mixCamera(a, b, 0.5)
   if (!near(m.zoom, 2) || !near(m.x, 50) || !near(m.rotation, 0.5) || !near(m.pivotX, 5)) fail(`mixCamera: zoom in log space, the rest linear, got ${JSON.stringify(m)}`)
   let last = null as CameraUpdate | null
-  let shots = createShots({ setCamera: u => (last = u), size: () => ({ width: 800, height: 600 }) }, { blend: 0.25 })
+  let shots = createShots({ setCamera: u => (last = u), camera: () => a, size: () => ({ width: 800, height: 600 }) }, { blend: 0.25 })
   let wide = createCamera2d(shots.shot("wide"), { zoom: 1, x: 400, y: 300 })
   let close = createCamera2d(shots.shot("close", { priority: 1 }), { zoom: 4, x: 100, y: 100 })
   if (last !== null) fail("a shot's control pushes into the recorder, not the view, until live")
@@ -610,4 +611,21 @@ test("shots: the zoom blends in log space; a shot's control drives the view thro
   for (let i = 0; i < 20; i++) shots.update(DT)
   if ((last as CameraUpdate).zoom !== 4 || !near((last as CameraUpdate).x!, 100)) fail(`the blend lands on the close shot, got ${JSON.stringify(last)}`)
   void close
+})
+
+test("shots: a shot no control drives holds the view's camera at creation (the 3d owner rule)", () => {
+  let view = { x: 120, y: 80, zoom: 2, rotation: 0.5, pivotX: 400, pivotY: 300 }
+  let last = null as CameraUpdate | null
+  let shots = createShots({ setCamera: u => (last = u), camera: () => view, size: () => ({ width: 800, height: 600 }) })
+  if (shots.camera().zoom !== 2) fail(`before any shot is live the blender reads the view's camera, got ${JSON.stringify(shots.camera())}`)
+  shots.shot("hold")
+  shots.activate("hold")
+  if (last === null || (last as CameraUpdate).zoom !== 2 || !near((last as CameraUpdate).x!, 120)) fail(`a control-less shot holds the view, got ${JSON.stringify(last)}`)
+  let threw = false
+  try {
+    createShots([])
+  } catch {
+    threw = true
+  }
+  if (!threw) fail("an empty target list throws")
 })

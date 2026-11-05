@@ -110,9 +110,8 @@ their own disposers (`disposeGeometry`, `disposeInstances`,
 animating out on the spot. An instance node (addInstance on an instanced
 mesh) is slot-bound to its mesh: `destroy` frees it (the slot recycles at
 the free) and the generic add/remove throw on it. (@solidrt/2d has no
-detach - a sprite cannot exist outside its layer - so `destroySprite` /
-`destroyGroup` are its only removal, and a sprite that should come back
-is hidden.)
+detach - a sprite cannot exist outside its layer - so its `destroy` is
+its only removal, and a sprite that should come back is hidden.)
 
 ### Rendering is the runtime's
 

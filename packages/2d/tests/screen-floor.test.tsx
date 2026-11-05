@@ -15,7 +15,7 @@ import type { TestApp } from "@solidrt/test"
 import { readTexture } from "@solidrt/core/gpu"
 import type { BlendMode, TextureId } from "@solidrt/core/gpu"
 import type { TileLayerHandle } from "../src/index.ts"
-import { addGroup, addSprite, createAtlas, createRecordLayer, createSpriteLayer, createTileLayer, destroySprite, fullFrame, getSprite, setSprite, unlit } from "../src/index.ts"
+import { addGroup, addSprite, createAtlas, createRecordLayer, createSpriteLayer, createTileLayer, destroy, fullFrame, getSprite, setSprite, unlit } from "../src/index.ts"
 
 const SIZE = 64
 // The atlas: one opaque white texel, tinted per sprite.
@@ -196,7 +196,7 @@ test("a floored sprite destroyed, or its floor cleared, lets the search bound sh
   let dot = addSprite(layer, { x: 32, y: 32, w: SPRITE, h: SPRITE, minScreenPx: FLOOR })
   expect(layer.pick(32 + 100, 32)).toEqual([pin])
   expect(layer.pick(38, 32)).toEqual([dot, pin])
-  destroySprite(pin)
+  destroy(pin)
   expect(layer.pick(32 + 100, 32)).toEqual([])
   expect(layer.pick(38, 32)).toEqual([dot])
   // Clearing the last floor returns the layer to world-size picking.

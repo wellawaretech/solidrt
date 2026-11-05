@@ -1,6 +1,6 @@
 import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
-import { addSprite, destroySprite, setSprite, setSpriteTimeScale, setSpriteTransition } from "../layer.ts"
+import { addSprite, destroy, setSprite, setTimeScale, setTransition } from "../layer.ts"
 import { setInstanceStyle } from "../records.ts"
 import type { Sprite as SpriteHandle, SpriteOptions, SpritePointerEvent, SpriteTapEvent, SpriteWheelEvent, TransitionEndEvent } from "../layer.ts"
 import type { SpriteTransition } from "../layer.ts"
@@ -39,13 +39,13 @@ export type BubblingSpritePointerProps = {
 
 export type SpriteProps = SpriteOptions &
   SpritePointerProps & {
-    /** How pose-prop changes animate (see setSpriteTransition). The mount
+    /** How pose-prop changes animate (see setTransition). The mount
      * pose snaps, unless a component's `from` animates it in from there. */
     transition?: SpriteTransition | string | null
     /** A declared transition settled on one component. */
     onTransitionEnd?: (event: TransitionEndEvent) => void
     /** The rate this sprite's native motion runs at (see
-     * setSpriteTimeScale): 0 freezes it, 1 is app time, overriding the
+     * setTimeScale): 0 freezes it, 1 is app time, overriding the
      * layer's and the enclosing groups'. Undefined or null inherits. Node
      * layers only. */
     timeScale?: number | null
@@ -71,7 +71,7 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
   // After the pose effect, so the mount pose snaps before writes animate.
   createEffect(
     () => props.transition,
-    transition => setSpriteTransition(sprite, transition ?? null),
+    transition => setTransition(sprite, transition ?? null),
   )
   // Built only when the prop is present (the compiler emits the getter
   // only then): a plain sprite pays no effect, and a record layer's
@@ -79,7 +79,7 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
   if ("timeScale" in props) {
     createEffect(
       () => props.timeScale,
-      scale => setSpriteTimeScale(sprite, scale ?? null),
+      scale => setTimeScale(sprite, scale ?? null),
     )
   }
   if ("style" in props) {
@@ -105,6 +105,6 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
     },
   )
   callRef(() => props.ref, sprite)
-  onCleanup(() => destroySprite(sprite))
+  onCleanup(() => destroy(sprite))
   return null
 }

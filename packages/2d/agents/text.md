@@ -8,7 +8,7 @@ this file builds on.
 Text IN the layer's world - a label under a sprite, a name on a map, a
 damage number - is a text run: a group of glyph sprites drawn from a
 SPRITE FONT's atlas (`createSpriteFont`, `addText`/`setText`/
-`destroyText`, `<Text2d>`; `examples/text.tsx`). The font is the
+`destroy(run)`, `<Text2d>`; `examples/text.tsx`). The font is the
 runtime's own glyph engine (`flux:font`): it shapes the text (kerning is
 the engine's, carets are one pass), makes glyph cells on a worker thread
 and packs them into one atlas texture that grows as glyphs arrive. The

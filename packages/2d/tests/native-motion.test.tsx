@@ -13,7 +13,7 @@ import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
 import type { TextureId } from "@solidrt/core/gpu"
 import { onBeforeRender, onFrame } from "@solidrt/core"
-import { addSprite, createAtlas, createSpriteLayer, setSprite, setSpriteTransition, worldPosition } from "../src/index.ts"
+import { addSprite, createAtlas, createSpriteLayer, setSprite, setTransition, worldPosition } from "../src/index.ts"
 import type { Sprite, SpriteLayer } from "../src/layer.ts"
 
 const SIZE = 64
@@ -45,7 +45,7 @@ function world() {
 /** A sprite whose position tweens linearly, sent to x = 100. */
 function mover(layer: SpriteLayer, duration = DURATION): Sprite {
   let sprite = addSprite(layer, { x: 0, y: 0, w: 4, h: 4 })
-  setSpriteTransition(sprite, { position: { duration, curve: "linear" } })
+  setTransition(sprite, { position: { duration, curve: "linear" } })
   setSprite(sprite, { x: TARGET_X })
   return sprite
 }
@@ -88,7 +88,7 @@ test("a sprite added with from starts after the frame's callbacks: the late pass
   // The declaration lands in the tick that added the sprite, so `from`
   // is its enter value.
   sprite = addSprite(layer, { x: TARGET_X, y: 0, w: 4, h: 4 })
-  setSpriteTransition(sprite, { position: { duration: DURATION, curve: "linear", from: [-TARGET_X, 0] } })
+  setTransition(sprite, { position: { duration: DURATION, curve: "linear", from: [-TARGET_X, 0] } })
   await app.frame()
   stopFrame()
   stopLate()

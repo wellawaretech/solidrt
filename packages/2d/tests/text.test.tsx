@@ -2,7 +2,9 @@
 // a sprite font over the engine's mask cells draws its glyphs where the
 // layout puts them (ink in the glyph's box, nothing beside it), a run is a
 // group of reused sprites that moves and re-lays out, a glyph the atlas
-// lacks draws nothing at its advance until the cell lands, and an atlas
+// lacks draws nothing at its advance until the cell lands, a run whose
+// group died without destroy leaves its font and writes nothing into
+// its recycled slots, and an atlas
 // declared `sdf` decodes a synthetic field: a disc's edge is sharp at 2x
 // magnification and an outline paints its colour in a ring. GPU state
 // throughout, so this is an app test.
@@ -13,7 +15,7 @@ import { createSignal, Show } from "@solidrt/core"
 import type { DecodedImage } from "@solidrt/core"
 import { readTexture } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
-import { addText, createAtlas, createSpriteFont, createSpriteLayer, destroyText, fullFrame, addSprite, getSprite, setText, SpriteLayer, Text2d, worldPosition } from "../src/index.ts"
+import { addGroup, addText, createAtlas, createSpriteFont, createSpriteLayer, destroy, fullFrame, addSprite, getSprite, setText, SpriteLayer, Text2d, worldPosition } from "../src/index.ts"
 import type { SpriteFont, SpriteLayerHandle, TextRun } from "../src/index.ts"
 
 const SIZE = 128
@@ -72,7 +74,7 @@ function disc(): DecodedImage {
 }
 
 test("a text run draws its glyphs from the engine's cells where the layout puts them", async app => {
-  let { view, run, layer } = await mounted(app, () => {
+  let { view, run, layer, font } = await mounted(app, () => {
     let font = createSpriteFont({ fontFamily: "sans", fontSize: FONT_PX, fontWeight: 700 }, { cells: "mask", chars: false, label: "text-mask" })
     let layer = createSpriteLayer([font.atlas], { capacity: 32, label: "text" })
     let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 0], label: "text" })
@@ -111,9 +113,10 @@ test("a text run draws its glyphs from the engine's cells where the layout puts 
   setText(run, { text: "H" })
   expect(run.sprites.length).toBe(1)
   expect(layer.count).toBe(1)
-  destroyText(run)
+  destroy(run)
   expect(layer.count).toBe(0)
   expect(run.group.layer).toBe(null)
+  expect(font._listeners.has(run)).toBe(false)
 })
 
 test("a run's pose is its group's, and a run anchors, spaces and wraps as laid out", async app => {
@@ -349,4 +352,38 @@ test("a text run over msdf cells is sharp at twice the face size and wears its o
     longest = Math.max(longest, streak)
   }
   expect(longest).toBeLessThanOrEqual(EDGE_SPREAD)
+})
+
+test("a run whose group died another way leaves its font, and its cells landing write nothing", async app => {
+  let { view, layer, font, frame, field } = await mounted(app, () => {
+    let font = createSpriteFont({ fontFamily: "sans", fontSize: FONT_PX }, { cells: "msdf", chars: false, label: "text-dead" })
+    let field = createAtlas(disc(), { label: "text-dead-field" })
+    field.sdf = { range: RANGE }
+    let layer = createSpriteLayer([font.atlas, field], { capacity: 4, label: "text-dead" })
+    let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 0], label: "text-dead" })
+    let frame = addGroup(layer)
+    return { layer, view, font, frame, field, texture: view.texture }
+  })
+  // The run's cell is still in the making when its enclosing group goes:
+  // the glyph sprite dies with the group and its slot recycles at once.
+  let run = addText(layer, { font, text: "H", parent: frame })
+  let slot = run.sprites[0]!._slot
+  destroy(frame, { snap: true })
+  expect(font._listeners.has(run)).toBe(true)
+  // A live sprite takes the slot and wears an outline ring.
+  let sprite = addSprite(layer, { x: SIZE / 2, y: SIZE / 2, w: FIELD * ZOOM, h: FIELD * ZOOM, frame: fullFrame(field), tint: [0, 0, 1, 1] })
+  expect(sprite._slot).toBe(slot)
+  layer._outline(sprite, 1, 0, 0, OUTLINE_PX)
+  let ringAt = SIZE / 2 + RADIUS * ZOOM + OUTLINE_PX / 2
+  await app.frame()
+  expect(font.glyph(run._layout.glyphs[0]!.id)).toBe(null)
+  expect(pixel(view.texture, ringAt, SIZE / 2)[0]).toBeGreaterThanOrEqual(255 - CHANNEL_SLACK)
+  // The cell lands: the slot's outline is the live sprite's still, and
+  // the dead run has left its font.
+  await app.settle()
+  await app.frame()
+  let ring = pixel(view.texture, ringAt, SIZE / 2)
+  expect(ring[0]).toBeGreaterThanOrEqual(255 - CHANNEL_SLACK)
+  expect(ring[3]).toBeGreaterThanOrEqual(255 - CHANNEL_SLACK)
+  expect(font._listeners.has(run)).toBe(false)
 })

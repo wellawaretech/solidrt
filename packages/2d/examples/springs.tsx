@@ -14,13 +14,13 @@
 // its velocity when a shuffle lands mid-flight - retarget as fast as you
 // like, the motion stays continuous.
 //
-// Tap a sprite and it LEAVES: destroySprite lets go of the handle, and the
+// Tap a sprite and it LEAVES: destroy lets go of the handle, and the
 // `exit` on its scale entry shrinks it away on an ease-in of its own while
 // the sprite is a ghost - drawn, but no tap or pick reaches it - then the
 // core frees it. A fresh sprite pops into the empty slot a moment later,
 // entering from scale zero (`from`); no settle callback, no bookkeeping.
 import { decodeImage, render } from "@solidrt/core"
-import { addSprite, createAtlas, createSpriteLayer, destroySprite, grid, setSprite, setSpriteTransition } from "@solidrt/2d"
+import { addSprite, createAtlas, createSpriteLayer, destroy, grid, setSprite, setTransition } from "@solidrt/2d"
 import type { SpriteHandle, SpriteTransition } from "@solidrt/2d"
 import logoBytes from "./logo.png" with { type: "binary" }
 
@@ -55,9 +55,9 @@ function App() {
   let spawn = (k: number): SpriteHandle => {
     let sprite = addSprite(layer, { x: slotX(slots[k]!), y: slotY(slots[k]!), w: SPRITE, h: SPRITE, frame: frames[k % 4] })
     // Declared in the adding tick, so the `from` plays: the sprite pops in.
-    setSpriteTransition(sprite, TRANSITION)
+    setTransition(sprite, TRANSITION)
     sprite.onTap = () => {
-      destroySprite(sprite)
+      destroy(sprite)
       setTimeout(() => (sprites[k] = spawn(k)), RESPAWN_MS)
     }
     return sprite

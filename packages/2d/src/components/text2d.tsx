@@ -1,8 +1,8 @@
 import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
-import { setGroupTransition } from "../layer.ts"
+import { destroy, setTransition } from "../layer.ts"
 import type { SpritePointerEvent, SpriteTapEvent, SpriteTransition, SpriteWheelEvent, TransitionEndEvent } from "../layer.ts"
-import { addText, destroyText, setText } from "../text.ts"
+import { addText, setText } from "../text.ts"
 import type { AddTextOptions, TextRun } from "../text.ts"
 import { GroupContext, LayerContext } from "./context.ts"
 
@@ -16,7 +16,7 @@ export type Text2dProps = Omit<AddTextOptions, "parent"> & {
   onWheel?: (event: SpriteWheelEvent) => void
   onTap?: (event: SpriteTapEvent) => void
   /** How pose-prop changes animate (the run's group; see
-   * setGroupTransition). The mount pose snaps. */
+   * setTransition). The mount pose snaps. */
   transition?: SpriteTransition | string | null
   onTransitionEnd?: (event: TransitionEndEvent) => void
   ref?: (run: TextRun) => void
@@ -57,7 +57,7 @@ export let Text2d: VoidComponent<Text2dProps> = props => {
   // After the pose effect, so the mount pose snaps before writes animate.
   createEffect(
     () => props.transition,
-    transition => setGroupTransition(run.group, transition ?? null),
+    transition => setTransition(run.group, transition ?? null),
   )
   createEffect(
     () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerCancel, props.onWheel, props.onTap, props.onTransitionEnd] as const,
@@ -72,6 +72,6 @@ export let Text2d: VoidComponent<Text2dProps> = props => {
     },
   )
   callRef(() => props.ref, run)
-  onCleanup(() => destroyText(run))
+  onCleanup(() => destroy(run))
   return null
 }

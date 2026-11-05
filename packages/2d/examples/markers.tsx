@@ -21,7 +21,7 @@
 // pixels) and the ring's; `pick` ({ x, y }) returns
 // what the world view hits at those VIEW pixels, as marker kinds.
 import { createEffect, createInputMap, createPointerFeed, decodeImage, displayScale, onFrame, render, windowSize } from "@solidrt/core"
-import { addSprite, camera2dActions, camera2dBindings, createAtlas, createCamera2d, createSpriteLayer, feedPointer, fitOversample, grid, setSprite, setSpriteTransition, unlit } from "@solidrt/2d"
+import { addSprite, camera2dActions, camera2dBindings, createAtlas, createCamera2d, createSpriteLayer, feedPointer, fitOversample, grid, setSprite, setTransition, unlit } from "@solidrt/2d"
 import type { Camera2dHandle, SpriteHandle, ViewHandle } from "@solidrt/2d"
 import { registerDebug } from "sol:dev"
 import logoBytes from "./logo.png" with { type: "binary" }
@@ -103,7 +103,7 @@ function App() {
   }
   // The ring: added last so it draws over everything, hidden until a tap.
   ring = addSprite(layer, { x: 0, y: 0, w: RING, h: RING, frame: frames[0], tint: RING_TINT, minScreenPx: RING_MIN_PX, visible: false })
-  setSpriteTransition(ring, { position: RING_GLIDE })
+  setTransition(ring, { position: RING_GLIDE })
   kinds.set(ring, { kind: "ring", index: -1 })
 
   // One camera, both views: the glow follows the world exactly.

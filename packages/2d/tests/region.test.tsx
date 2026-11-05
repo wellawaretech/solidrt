@@ -28,8 +28,8 @@ import {
   Region,
   RegionGrid,
   setGroup,
-  setSpriteParent,
-  setSpriteTransition,
+  setParent,
+  setTransition,
   Sprite,
   SpriteLayer,
   worldPosition,
@@ -97,7 +97,7 @@ test("a grid cell under the view loads, builds hidden behind its proxy, shows an
       log.push("build " + data.cell + " " + r.state + " " + r.content._visible + " " + (r.proxy !== null && r.proxy._parent === r.group))
       for (let i = 0; i < 2; i++) {
         let s = addSprite(layer, { parent: r.content, x: AT + i * SIZE, y: AT, w: SIZE, h: SIZE })
-        setSpriteTransition(s, { position: { duration: EXIT_MS, exit: [0, 0] } })
+        setTransition(s, { position: { duration: EXIT_MS, exit: [0, 0] } })
         sprites.push(s)
         yield
       }
@@ -161,7 +161,7 @@ test("a sprite re-homed in unload with keepWorld outlives its cell at the same w
     },
     unload: () => {
       world = worldPosition(kept!)
-      setSpriteParent(kept!, null, { keepWorld: true })
+      setParent(kept!, null, { keepWorld: true })
     },
   })
   await app.settle()
@@ -183,7 +183,7 @@ test("keepWorld composes the pose through a rotated, scaled group; the default k
   let inner = addGroup(layer, { x: 10, y: 5, rotation: 0.1, parent: frame })
   let sprite = addSprite(layer, { parent: inner, x: 3, y: 4, rotation: 0.2, w: SIZE, h: SIZE })
   let before = worldPosition(sprite)!
-  setSpriteParent(sprite, null, { keepWorld: true })
+  setParent(sprite, null, { keepWorld: true })
   let after = worldPosition(sprite)!
   expect(after[0]).toBeCloseTo(before[0], DIGITS)
   expect(after[1]).toBeCloseTo(before[1], DIGITS)
@@ -192,19 +192,19 @@ test("keepWorld composes the pose through a rotated, scaled group; the default k
   expect(sprite._h).toBeCloseTo(2 * SIZE, DIGITS)
   // Back under the inner group, world kept: the local pose is the
   // original again.
-  setSpriteParent(sprite, inner, { keepWorld: true })
+  setParent(sprite, inner, { keepWorld: true })
   expect(sprite._x).toBeCloseTo(3, DIGITS)
   expect(sprite._y).toBeCloseTo(4, DIGITS)
   expect(sprite._rot).toBeCloseTo(0.2, DIGITS)
   expect(sprite._w).toBeCloseTo(SIZE, DIGITS)
   // A group too, and the plain re-parent keeps the LOCAL fields.
   let groupBefore = worldPosition(inner)!
-  setGroup(inner, { parent: null, keepWorld: true })
+  setParent(inner, null, { keepWorld: true })
   expect(worldPosition(inner)![0]).toBeCloseTo(groupBefore[0], DIGITS)
   expect(worldPosition(inner)![1]).toBeCloseTo(groupBefore[1], DIGITS)
   expect(inner._scale).toBeCloseTo(2, DIGITS)
   expect(inner._rot).toBeCloseTo(0.4, DIGITS)
-  setGroup(inner, { parent: frame })
+  setParent(inner, frame)
   expect(worldPosition(inner)![0]).not.toBeCloseTo(groupBefore[0], DIGITS)
   expect(inner._scale).toBeCloseTo(2, DIGITS)
 })

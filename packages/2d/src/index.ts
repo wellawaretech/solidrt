@@ -28,7 +28,7 @@
 // first (extrudeGrid/extrudeRects). See AGENTS.md for the model and the
 // traps.
 
-export { addGroup, addSprite, createSpriteLayer, getSprite, destroyGroup, destroySprite, setGroup, setGroupTimeScale, setGroupTransition, setSprite, setSpriteParent, setSpriteTimeScale, setSpriteTransition, timeRate, worldPosition, POSE_FLOATS, SPRITE_FLOATS } from "./layer.ts"
+export { addGroup, addSprite, createSpriteLayer, destroy, getSprite, setGroup, setParent, setSprite, setTimeScale, setTransition, timeRate, worldPosition, POSE_FLOATS, SPRITE_FLOATS } from "./layer.ts"
 export { createRecordLayer, instanceAttribute, records, setInstanceStyle, setRecordCount, updateRecords, INSTANCE_FLOATS } from "./records.ts"
 export type { RecordLayer as RecordLayerHandle, RecordLayerOptions, UpdateRecordsOptions } from "./records.ts"
 export { shaderMaterial, shaderMaterialClass, unlit } from "./material.ts"
@@ -43,6 +43,7 @@ export type { ShotTarget, ShotsHandle } from "./shots.ts"
 export { camera2dActions, camera2dBindings } from "./input.ts"
 export type { CameraDevices } from "./input.ts"
 export type {
+  AddGroupOptions,
   AddSpriteOptions,
   Capsule,
   Circle,
@@ -83,6 +84,7 @@ export type { ViewHandle, ViewOptions } from "./views.ts"
 export { createTileLayer, setBakeBudget, TILE_FLIP_X, TILE_FLIP_Y, TILE_TRANSPOSE } from "./tiles.ts"
 export type { TileCellOptions, TileChunk, TileLayer as TileLayerHandle, TileLayerOptions, TileRect } from "./tiles.ts"
 export { createRegion, createRegionGrid, createStreamingSource } from "./region.ts"
+export { setResidencyBudget, setResidencyLimit } from "@solidrt/core"
 export type { Region as RegionHandle, RegionCell, RegionContent, RegionGrid as RegionGridHandle, RegionGridOptions, RegionOptions, RegionState, StreamingSource } from "./region.ts"
 
 export type { NodeMotionSpec, NodeTransitionSpec } from "flux:spatial"
@@ -101,7 +103,7 @@ export { createSpriteFont } from "./font.ts"
 export type { FontListener, Glyph, SpriteFont, SpriteFontOptions } from "./font.ts"
 export { layoutText } from "./text-layout.ts"
 export type { GlyphPlacement, TextAlign, TextAnchor, TextAnchorY, TextLayout, TextLayoutOptions, TextLine } from "./text-layout.ts"
-export { addText, destroyText, setText } from "./text.ts"
+export { addText, setText } from "./text.ts"
 export type { AddTextOptions, TextPose, TextRun, TextStyle } from "./text.ts"
 export { Camera2d, Group, Region, RegionGrid, Sprite, SpriteLayer, Text2d, TileLayer, View2d, useSpriteLayer, Shot, Shots } from "./components/index.ts"
-export type { BubblingSpritePointerProps, Camera2dProps, GroupProps, LayerPointerProps, RegionGridProps, RegionProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps, View2dProps, DensityProps, OutputLeaf, ShotProps, ShotsProps } from "./components/index.ts"
+export type { BubblingSpritePointerProps, Camera2dProps, GroupProps, LayerPointerProps, RegionGridProps, RegionProps, SpriteLayerProps, SpritePointerProps, SpriteProps, Text2dProps, TileCamera, TileLayerProps, View2dProps, DensityProps, OutputLeaf, ShotProps, ShotsProps } from "./components/index.ts"

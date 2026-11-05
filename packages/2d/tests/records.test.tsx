@@ -13,7 +13,7 @@ import { test, expect } from "@solidrt/test"
 import type { Pixels, RefLocator, TestApp } from "@solidrt/test"
 import { onFrame } from "@solidrt/core"
 import type { TextureId } from "@solidrt/core/gpu"
-import { addSprite, createAtlas, createRecordLayer, createSpriteLayer, destroySprite, records, setRecordCount, updateRecords, INSTANCE_FLOATS, SPRITE_FLOATS } from "../src/index.ts"
+import { addSprite, createAtlas, createRecordLayer, createSpriteLayer, destroy, records, setRecordCount, updateRecords, INSTANCE_FLOATS, SPRITE_FLOATS } from "../src/index.ts"
 import type { RecordLayerHandle, RecordLayerOptions, SpriteLayerHandle, SpriteLayerOptions } from "../src/index.ts"
 
 const SIZE = 64
@@ -118,12 +118,12 @@ test("setRecordCount draws the first n sprites and pick ignores the rest; the di
   expect(() => setRecordCount(layer, -1)).toThrow()
 })
 
-test("destroySprite shifts the later records down and publishes them", async app => {
+test("destroy shifts the later records down and publishes them", async app => {
   let { layer, leaf } = await mounted(app, { capacity: 4 })
   let a = addSprite(layer, square(LEFT))
   addSprite(layer, square(MID))
   addSprite(layer, square(RIGHT))
-  let frame = await painted(app, leaf, () => destroySprite(a))
+  let frame = await painted(app, leaf, () => destroy(a))
   expect(at(frame, LEFT, MID)).toEqual(CLEAR)
   expect(at(frame, MID, MID)).toEqual(WHITE)
   expect(at(frame, RIGHT, MID)).toEqual(WHITE)

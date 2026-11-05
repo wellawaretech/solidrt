@@ -33,10 +33,12 @@ fill layer that wants world = screen at rest takes `pivot: { x: 0, y:
 0 }`). The pivot is the point the control zooms and rolls about - the
 3d orbit control's target, which that control holds at the view centre
 and re-seats in world space (`setPivot`); this one places it on screen.
-The first argument is anything with a view's `setCamera` and `size()`
-(a view of a sprite layer, of a record layer, several at once - one
-camera over a scene's layers, the FIRST one's size the viewport - or a
-`{ setCamera, size }` pair over a signal feeding `<TileLayer camera>`).
+The first argument is anything with a view's `setCamera`, `camera()`
+and `size()` (a view of a sprite layer, of a record layer, several at
+once - one camera over a scene's layers, the FIRST one's size the
+viewport - or a `{ setCamera, camera, size }` triple over a signal of
+the full `CameraState` feeding `<TileLayer camera>`, setCamera merging
+the update in). It is @solidrt/3d's ShotsOwner contract.
 
 **Follow.** `follow(x, y)` chases a world point through the framing in
 `follow` (core's camera-control, shared with the 3d orbit camera):
@@ -74,7 +76,8 @@ space, `mixCamera`); `deactivate` falls back by priority. A live
 shot's pushes reach the view at once; a blend needs `update(dt)` while
 `active()`, the controls' rule. `live()` and `camera()` read the state.
 A switch mid-blend starts from the output of that moment, so a quick
-back-and-forth never jumps. The component form: `<Shots blend? ref?>`
+back-and-forth never jumps. Every shot starts from the first view's
+camera at creation. The component form: `<Shots blend? ref?>`
 under `<SpriteLayer>` (or `<View2d>`) with `<Shot name priority?
 active? blend?>` children, each providing the view with its camera
 redirected to the shot, so a `<Camera2d>` inside a `<Shot>` drives that
@@ -264,12 +267,13 @@ skip it), shown in the frame the last step ran in, and MEASURED then:
 the record bytes of every sprite under it (pose, sprite and style
 records; `region.measure()` after content added later) are what the
 gate's limits weigh the cell by in place of the estimate, so a grid
-`limit` or the scene-wide `setResidencyLimit` counts what is there.
+`limit` or the scene-wide `setResidencyLimit` (from @solidrt/core or
+@solidrt/2d) counts what is there.
 `priority` orders grids and layers when the enter budget is short
 (`setResidencyBudget`): the ground tile layer before its decoration
 layer before the populations. A leave aborts a load in flight, cancels
 a build under way (the generator's `finally` runs), runs `unload`, and
-SNAPS the teardown (`destroyGroup` with `snap`: no exit plays, the
+SNAPS the teardown (`destroy` with `snap`: no exit plays, the
 slots recycle this flush - a region leaves off screen); a failed load
 or build is fail-soft (`state` "failed", `onError`, the next enter
 retries). `region.state` is the gate's "pending"/"stalled" until the
@@ -284,7 +288,7 @@ OWNERSHIP, the rule every streamed world needs: a region owns what sits
 under its content and destroys it at leave, and a handle kept to one of
 those sprites is inert from then on (`layer` null). A sprite that must
 outlive its cell - an enemy chasing the player across the border, a
-projectile - is re-homed by the app, `setSpriteParent(sprite, elsewhere,
+projectile - is re-homed by the app, `setParent(sprite, elsewhere,
 { keepWorld: true })` as it crosses or in `unload` at the latest, the
 way Minecraft moves an entity between chunks. Two more rules from the
 engines that got them wrong: draw order across cells is slot order (a

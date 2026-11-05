@@ -87,11 +87,13 @@ const PAN_RATE = 1
 const ZOOM_RATE = 1
 const ROLL_RATE = 0.5
 
-/** What a 2d camera drives: anything with the layers' `setCamera` and a
- * `size()` (the viewport in layer pixels, read whenever the camera needs
- * it - a resize re-clamps at the next update; zeros while unknown, and
- * clamping and fitting wait for a real size). A view is one. */
-export type Camera2dTarget = { setCamera(update: CameraUpdate): void; size(): { width: number; height: number } }
+/** What a 2d camera drives: anything with the layers' `setCamera`, its
+ * current `camera()` (where shots start), and a `size()` (the viewport
+ * in layer pixels, read whenever the camera needs it - a resize
+ * re-clamps at the next update; zeros while unknown, and clamping and
+ * fitting wait for a real size). A view is one; @solidrt/3d's
+ * ShotsOwner is the same contract. */
+export type Camera2dTarget = { setCamera(update: CameraUpdate): void; camera(): CameraState; size(): { width: number; height: number } }
 
 /** The control's parameters, filled: what pose() returns (the 3d
  * controls' OrbitPoseState and FirstPersonPoseState). */

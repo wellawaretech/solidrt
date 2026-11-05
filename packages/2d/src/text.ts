@@ -8,11 +8,12 @@
 // when the cell lands (or every run when the atlas grew).
 //
 // The node layer only: a run is a group. Three verbs like the sprites':
-// addText, setText (re-laid out, the sprite pool reused), destroyText.
+// addText, setText (re-laid out, the sprite pool reused), and the shared
+// destroy.
 // A setText that changes only the paint (tint, outline, renderOrder)
 // re-writes the glyph sprites without shaping: a fade is sprite writes,
 // not an engine call per frame.
-import { addGroup, addSprite, destroyGroup, destroySprite, setGroup, setSprite } from "./layer.ts"
+import { addGroup, addSprite, destroy, setGroup, setSprite } from "./layer.ts"
 import type { Sprite, SpriteGroup, SpriteLayer } from "./layer.ts"
 import type { SpriteFont } from "./font.ts"
 import { layoutText } from "./text-layout.ts"
@@ -85,6 +86,9 @@ export type TextRun = {
   /** Glyph ids with no cell yet: what a landing re-frames. */
   _pending: Set<number>
   _reframe(grew: boolean, arrived: ReadonlySet<number>): void
+  /** Leave the font and drop the glyph handles: destroy's text half, the
+   * group going separately. */
+  _release(): void
 }
 
 /** The internal mutable view (the readonly fields are the public face). */
@@ -112,8 +116,19 @@ export function addText(layer: SpriteLayer, opts: AddTextOptions): TextRun {
     _layout: { glyphs: [], lines: [], width: 0, height: 0, ascent: 0 },
     _pending: new Set(),
     _reframe(grew, arrived) {
+      // The group died without destroy(run) (an enclosing group's or a
+      // region's teardown): the glyph sprites went with it, the run goes
+      // here.
+      if (group.layer === null) {
+        run._release()
+        return
+      }
       if (!grew && ![...run._pending].some(id => arrived.has(id))) return
       place(run)
+    },
+    _release() {
+      font._listeners.delete(run)
+      run.sprites = []
     },
   }
   relayout(run, style)
@@ -170,13 +185,6 @@ function sameStyleValue(key: keyof TextStyle, a: unknown, b: unknown): boolean {
   return false
 }
 
-/** Remove the run: its group and every glyph sprite. */
-export function destroyText(run: TextRun): void {
-  let state = run as RunState
-  state.font._listeners.delete(state)
-  if (state.group.layer !== null) destroyGroup(state.group)
-  state.sprites = []
-}
 
 // Shape, break and place: the layout from the style, then the sprites.
 function relayout(run: RunState, style: TextStyle): void {
@@ -267,7 +275,7 @@ function place(run: RunState): void {
     writeOutline(layer, sprite, outline)
     used++
   }
-  for (let i = used; i < sprites.length; i++) destroySprite(sprites[i]!)
+  for (let i = used; i < sprites.length; i++) destroy(sprites[i]!)
   sprites.length = used
   if (missing.length > 0) font.request(missing)
 }

@@ -23,7 +23,7 @@ import {
   createRecordLayer,
   createSpriteLayer,
   createTileLayer,
-  destroySprite,
+  destroy,
   fullFrame,
   instanceAttribute,
   records,
@@ -127,7 +127,7 @@ test("a per-sprite style record reaches the surface: set per sprite, blank from 
   // blank again.
   expect(instanceAttribute(layer, "iPalette")!.get(b._slot, 0)).toBe(1)
   expect(instanceAttribute(layer, "iMissing")).toBe(null)
-  destroySprite(b)
+  destroy(b)
   let d = addSprite(layer, square(MID))
   expect(d._slot).toBe(b._slot)
   await app.frame()
@@ -181,7 +181,7 @@ test("a records layer shifts its style records with its sprites on destroy", asy
   await app.frame()
   expectPixel(pixel(view.texture, LEFT, MID), WHITE)
   expectPixel(pixel(view.texture, MID, MID), GREEN)
-  destroySprite(a)
+  destroy(a)
   await app.frame()
   expect(b._slot).toBe(0)
   expectPixel(pixel(view.texture, LEFT, MID), CLEAR)

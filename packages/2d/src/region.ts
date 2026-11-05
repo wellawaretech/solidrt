@@ -21,14 +21,14 @@
 // Ownership: a region owns what sits under its content and destroys it
 // at leave. A sprite that must outlive its cell (an enemy chasing the
 // player across the border, a projectile) is re-homed by the app -
-// `setSpriteParent(sprite, elsewhere, { keepWorld: true })` as it
+// `setParent(sprite, elsewhere, { keepWorld: true })` as it
 // crosses, or in `unload` at the latest - the way Minecraft moves an
 // entity between chunks; a handle kept to a sprite the region destroyed
 // is inert (`layer` null), never a dangling reference.
 import { createRegion as createCoreRegion, createRegionGrid as createCoreGrid, createStreamingSource as createCoreStreamingSource } from "@solidrt/core"
 import type { Region as CoreRegion, RegionGrid as CoreGrid, RegionHandler, RegionState } from "@solidrt/core"
 import * as spatial from "flux:spatial"
-import { addGroup, destroyGroup, destroySprite, POSE_FLOATS, setGroup, setSpriteParent, SPRITE_FLOATS } from "./layer.ts"
+import { addGroup, destroy, POSE_FLOATS, setGroup, setParent, SPRITE_FLOATS } from "./layer.ts"
 import type { GroupState, Sprite, SpriteGroup, SpriteLayer } from "./layer.ts"
 
 export type { RegionState } from "@solidrt/core"
@@ -275,10 +275,7 @@ function showProxy<T>(state: HandleState<T>): void {
   if (proxy.layer !== state.layer) throw new Error("proxy: the stand-in belongs to another layer")
   // The maker may have mounted it anywhere: it sits under the region's
   // group, where it moves with the region and dies with it.
-  if (proxy._parent !== state.group) {
-    if ("_children" in proxy) setGroup(proxy, { parent: state.group })
-    else setSpriteParent(proxy, state.group)
-  }
+  if (proxy._parent !== state.group) setParent(proxy, state.group)
   state.proxy = proxy
 }
 
@@ -286,8 +283,7 @@ function hideProxy<T>(state: HandleState<T>): void {
   if (state.proxy === null) return
   let proxy = state.proxy
   state.proxy = null
-  if ("_children" in proxy) destroyGroup(proxy, { snap: true })
-  else destroySprite(proxy, { snap: true })
+  destroy(proxy, { snap: true })
 }
 
 // The content shows: visible, measured, the proxy gone.
@@ -309,15 +305,12 @@ function teardown<T>(core: CoreRegion<T>, keep: boolean): void {
   if (region === undefined) return
   let state = stateOf.get(region as Region<unknown>) as HandleState<T>
   if (keep) {
-    for (let child of [...(state.content as GroupState)._children]) {
-      if ("_children" in child) destroyGroup(child, { snap: true })
-      else destroySprite(child, { snap: true })
-    }
+    for (let child of [...(state.content as GroupState)._children]) destroy(child, { snap: true })
     setGroup(state.content, { visible: false })
     showProxy(state)
   } else {
     hideProxy(state)
-    destroyGroup(state.group, { snap: true })
+    destroy(state.group, { snap: true })
   }
 }
 
@@ -396,7 +389,7 @@ export function createRegion<T = undefined>(layer: SpriteLayer, opts: RegionOpti
     // The leave would stand the proxy up again; nothing is left to show.
     ;(stateOf.get(region as Region<unknown>) as HandleState<T>).makeProxy = undefined
     core.detach()
-    destroyGroup(group, { snap: true })
+    destroy(group, { snap: true })
   }
   return region
 }
@@ -465,7 +458,7 @@ export function createRegionGrid<T = undefined>(layer: SpriteLayer, opts: Region
     onError: undefined,
     dispose() {
       core.dispose()
-      destroyGroup(group, { snap: true })
+      destroy(group, { snap: true })
     },
     _core: core,
   }

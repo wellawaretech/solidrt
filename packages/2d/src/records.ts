@@ -22,7 +22,7 @@
 // and `instanceAttribute(layer, name)` write the material's per-sprite
 // style record (style.ts). The POPULATION differs by kind and keeps its
 // own verbs - a record mesh's records are opaque data (setRecords), a
-// record layer's are sprites (addSprite/destroySprite) - so the copy-in
+// record layer's are sprites (addSprite/destroy) - so the copy-in
 // here is `records(layer).set(src)` followed by updateRecords.
 //
 // This is NOT the default live layer - that is layer.ts, where sprites are
@@ -82,7 +82,7 @@ export type RecordLayerOptions = Omit<SpriteLayerOptions, "orderBy"> & {
    * further up the screen = drawn first); or an explicit `{ field,
    * descending? }` float offset into the record for a custom sort key.
    * Record slots stay stable - record i keeps meaning sprite i, and
-   * destroySprite still shifts - only the draw order changes. Ties keep
+   * destroy still shifts - only the draw order changes. Ties keep
    * record order, so an unset key draws exactly as before. Known
    * limitation: pick() resolves overlapping sprites by record order, not
    * visual order, when a key is set.
@@ -120,7 +120,7 @@ export type UpdateRecordsOptions = { stream?: number; first?: number; count?: nu
  * distance-field atlas (see `Atlas.sdf`): rgb in 0..1 and a width in
  * world pixels, zero for none. Record order is draw order - unless the
  * layer was created with `orderBy`, which draws in key order while record
- * i keeps meaning sprite i. Do not cache indices across destroySprite -
+ * i keeps meaning sprite i. Do not cache indices across destroy -
  * records shift.
  *
  * On a node layer (createSpriteLayer) the records are its STYLE records,

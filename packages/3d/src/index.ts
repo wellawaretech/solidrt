@@ -53,7 +53,7 @@ export type { Profile, ProfilePoint } from "./profile.ts"
 export { extrude, lathe, pathFrames, polygon, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
 export { phong, shaderMaterial, shaderMaterialClass, sprite, standard, unlit } from "./material.ts"
-export type { LitOptions, Material, PhongOptions, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, StandardOptions, UnlitOptions } from "./material.ts"
+export type { LitOptions, Material, PhongOptions, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteMaterialOptions, StandardOptions, UnlitOptions } from "./material.ts"
 export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedLod, InstancedMesh, Lod, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Region, RegionGrid, Scene, SplatMesh, SpotLight, Sprite, View3d, useScene, Shot, Shots } from "./components/index.ts"
 export type {
   CameraTarget,

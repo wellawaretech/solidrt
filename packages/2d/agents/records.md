@@ -27,7 +27,7 @@ after; `layer.count` is the live total regardless). The sprite verbs
 mark their own record, so a `setSprite` here publishes one record, not
 the prefix. The POPULATION verbs differ by kind and stay so: a record
 mesh's records are opaque data (`setRecords` copies in and grows), a
-record layer's are sprites (`addSprite`/`destroySprite`), so the copy-in
+record layer's are sprites (`addSprite`/`destroy`), so the copy-in
 here is `records(layer).set(src)` then `updateRecords(layer)`. The
 publish itself is the core's record stream (`createRecordStream` in
 `@solidrt/core/gpu`: the GPU buffer, the byte mirror, the dirty range,
@@ -52,7 +52,7 @@ the WRITE path only - whatever computes the motion is excluded and is
 usually the dominant cost, e.g. a 24k-particle sim measured ~25ms with
 a near-free publish) - the axis is
 WHERE MOTION IS COMPUTED, not retained-vs-dynamic. The sprite functions
-(addSprite/setSprite/getSprite/destroySprite) work on both layer kinds;
+(addSprite/setSprite/getSprite/destroy) work on both layer kinds;
 record sprites have `node: null` and no groups. `tests/records.test.tsx`
 pins the range, the dial, growth and the ordered publish on painted
 frames.

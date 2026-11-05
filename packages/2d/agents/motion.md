@@ -5,7 +5,7 @@ Retargeted (native) motion, frame-rate motion and frame animation. Read
 
 ## Retargeted motion
 
-Retargeted motion is NATIVE: `setSpriteTransition(sprite, { position:
+Retargeted motion is NATIVE: `setTransition(sprite, { position:
 { duration: 700, bounce: 0.3 }, ... })` (or the `transition` prop) makes
 setSprite writes TARGETS the core animates toward - position/scale
 (w/h) on the shared spring/tween math, rotation along the quaternion
@@ -22,9 +22,9 @@ unless a component's `from` (2d units: `position: { from: [x, y] }`,
 `rotation: { from: angle }`, `scale: { from: [w, h] }`, a group's
 `from: s`) animates the sprite in from there - once, and only when the
 declaration lands in the tick that added the sprite (the `<Sprite>` prop
-or a setSpriteTransition right after addSprite; a later one animates
+or a setTransition right after addSprite; a later one animates
 writes only). A component's `exit` (same units) is where it animates to
-when destroySprite/destroyGroup lets go of it: the sprite stays drawn
+when destroy lets go of it: the sprite stays drawn
 while it leaves and is a GHOST meanwhile - no pick, raycast, overlap,
 sweep or pointer event sees it - then frees when the last exit settles
 (a bullet never hits a corpse; an entering sprite is live from its
@@ -33,7 +33,7 @@ the object form `{ value, duration?, curve?, bounce?, delay? }` to own
 its direction's motion (an ease-out enter, an ease-in exit), and `delay`
 on an entry holds its writes that long on the animation clock (a late
 frame catches up, so a hitch never shifts a held start). `stagger` (ms)
-goes on a GROUP's declaration (`setGroupTransition` / `<Group
+goes on a GROUP's declaration (`setTransition(group, ...)` / `<Group
 transition>`), never on the sprites: it spaces the enters and exits of
 everything under the group that begin in one frame by `index * stagger`
 (add order in, tree order out whatever the destroy order; nearest
@@ -52,9 +52,9 @@ PAUSE and time scale are declarations on the same nodes:
 `layer.setTimeScale(scale)` / `<SpriteLayer timeScale>` sets the rate
 every sprite and group transition in the layer runs at - with their
 delays, enters, exits and stagger slots - 0 a pause that leaves the
-app's UI moving, 1 app time, 0.5 slow motion; `setGroupTimeScale` /
-`<Group timeScale>` and `setSpriteTimeScale` / `<Sprite timeScale>`
-declare it for a subtree or one sprite. The NEAREST declaring node wins,
+app's UI moving, 1 app time, 0.5 slow motion; `setTimeScale(group |
+sprite, scale)` / `<Group timeScale>` / `<Sprite timeScale>` declare it
+for a subtree or one sprite. The NEAREST declaring node wins,
 never a product (Godot's process_mode shape): a frozen layer with a
 `<Group timeScale={1}>` inside keeps that group running. A frozen layer
 asks for no frames (the write that resumes it brings the frame), writes

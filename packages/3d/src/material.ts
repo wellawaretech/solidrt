@@ -971,11 +971,11 @@ function unlitShadowMaterial(flags: UnlitShadowFlags, uColor: number[], uAlphaTe
   return cls.instance({ params, textures: flags.map ? { uMap: uMap! } : undefined })
 }
 
-/** A sprite's options: unlit's, minus instancing (the billboard stage
+/** The sprite material's options: unlit's, minus instancing (the billboard stage
  * places one quad per mesh; an instanced billboard field is a custom
  * class's vertex stage) and minus vertexColors (the quad is the stage's
  * own, with no color channel). */
-export type SpriteOptions = Omit<UnlitOptions, "instanced" | "instanceColors" | "vertexColors"> & {
+export type SpriteMaterialOptions = Omit<UnlitOptions, "instanced" | "instanceColors" | "vertexColors"> & {
   /** Which way the quad turns to face the camera. `"full"` (default,
    * Three's Sprite): both axes follow the view, the quad is always flat
    * to the screen. `"fixed-y"` (Godot's BILLBOARD_FIXED_Y): only the yaw
@@ -1111,7 +1111,7 @@ let spriteClasses = new Map<string, ShaderMaterialClass>()
  * scene's pick tests the drawn quad, and a floored sprite's mesh is never
  * frustum-culled.
  */
-export function sprite(opts: SpriteOptions = {}): Material {
+export function sprite(opts: SpriteMaterialOptions = {}): Material {
   // Excluded by the type and checked for a JS caller: the billboard stage
   // has no instance placement and no vertex channel, so the flags would
   // otherwise be ignored.

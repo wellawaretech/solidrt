@@ -496,7 +496,7 @@ export function remove(child: SceneNode): void {
 
 /**
  * Destroy a node and everything under it - Unity's Destroy, Godot's
- * queue_free, @solidrt/2d's destroySprite/destroyGroup one dimension up:
+ * queue_free, @solidrt/2d's destroy one dimension up:
  * the subtree is gone for good and every handle in it goes inert (writes
  * are no-ops, add throws, remove skips). This is the removal an `exit`
  * rides on: a node whose transition declares one animates each such

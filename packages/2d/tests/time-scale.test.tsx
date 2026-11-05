@@ -8,7 +8,7 @@
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
 import type { TextureId } from "@solidrt/core/gpu"
-import { addGroup, addSprite, createAnimation, createAtlas, createSpriteLayer, fullFrame, setGroupTimeScale, setSprite, setSpriteTransition, timeRate, worldPosition } from "../src/index.ts"
+import { addGroup, addSprite, createAnimation, createAtlas, createSpriteLayer, fullFrame, setTimeScale, setSprite, setTransition, timeRate, worldPosition } from "../src/index.ts"
 import type { Sprite, SpriteGroup, SpriteLayer } from "../src/layer.ts"
 
 const SIZE = 64
@@ -43,7 +43,7 @@ function world() {
 /** A sprite under `parent` whose position tweens linearly, sent to x = 100. */
 function mover(layer: SpriteLayer, parent: SpriteGroup | null = null): Sprite {
   let sprite = addSprite(layer, { x: 0, y: 0, w: 4, h: 4, parent })
-  setSpriteTransition(sprite, { position: { duration: DURATION, curve: "linear" } })
+  setTransition(sprite, { position: { duration: DURATION, curve: "linear" } })
   setSprite(sprite, { x: TARGET_X })
   return sprite
 }
@@ -77,7 +77,7 @@ test("a group declaring its own rate keeps running inside a frozen layer", async
   let { layer } = await mounted(app, world)
   let frozen = mover(layer)
   let preview = addGroup(layer)
-  setGroupTimeScale(preview, 1)
+  setTimeScale(preview, 1)
   let spinning = mover(layer, preview)
   layer.setTimeScale(0)
   expect(timeRate(frozen)).toBe(0)

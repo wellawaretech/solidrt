@@ -802,6 +802,13 @@ Shaped, not started.
   the OS "reduce motion" accessibility setting, so users who asked their
   system for less motion still get springs and slides unless the app calls
   setPolicy by hand.
+- **[One region adapter and one shots adapter in core for 2d and 3d](backlog/region-shots-adapters-core.md)** [2026-11-05]
+  @solidrt/2d and @solidrt/3d each wrap core's region gate and shot blender in
+  their own adapter - the same control flow written twice, about 250 lines a
+  side - and the copies have already drifted (enter/leave defaults, grid
+  validation, grid placement, the shot's start camera); move the
+  dimension-free half into core behind a small bag of node operations, as
+  core's grid hooks and shot blender already do.
 - **[Guard that every referenced example ships](backlog/release-example-parity-check.md)** [2026-07-29]
   A committed examples README can name an example file that is untracked, so
   the doc ships and the file does not; a release-time parity check would catch
@@ -1130,6 +1137,14 @@ Finished, kept for the reasoning.
   scene.createView contract on the sprite and tile layers - same world, its
   own camera and size - with the layers bitmask from the 3d view work when the
   second view needs a different mesh set (markers only).
+- **[One 2d verb per act over sprites and groups - setTransition, setTimeScale, setParent, destroy](done/2d-node-verbs-one-per-act.md)** [2026-11-05]
+  @solidrt/2d names its node verbs per handle kind
+  (setSpriteTransition/setGroupTransition,
+  setSpriteTimeScale/setGroupTimeScale,
+  destroySprite/destroyGroup/destroyText, setSpriteParent against setGroup's
+  parent), where its own worldPosition and timeRate already take Sprite |
+  SpriteGroup and @solidrt/3d has one verb per act; the split costs the
+  package its own code.
 - **[The 2d auto oversample picks at a step, an eighth by default, not a whole number](done/2d-oversample-step.md)** [2026-11-05]
   The view oversample auto-pick rounded the display scale up to a whole
   number, so a 1.5x display shaded 1.78x its pixels; it now rounds to a

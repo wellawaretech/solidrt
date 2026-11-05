@@ -62,11 +62,12 @@ Contents:
 ### Three faces
 
 THREE faces, layered: the node-backed live layer (layer.ts:
-`createSpriteLayer`/`addSprite`/`setSprite`/`destroySprite` plus
-`addGroup`/`setGroup`/`setSpriteParent`/`setSpriteTransition`/
-`setGroupTransition` - plain objects, no signals, usable without
-components), the records layer (records.ts: `createRecordLayer` - the
-raw escape hatch, agents/records.md), and the component face (components/:
+`createSpriteLayer`/`addSprite`/`setSprite` plus `addGroup`/`setGroup`,
+and one verb per act over sprites and groups alike: `destroy`,
+`setParent`, `setTransition`, `setTimeScale` - plain objects, no
+signals, usable without components), the records layer (records.ts:
+`createRecordLayer` - the raw escape hatch, agents/records.md), and the
+component face (components/:
 `SpriteLayer`/`Sprite`/`Group`/`View2d`/`Camera2d` over context).
 
 ### A layer renders through its views
@@ -207,16 +208,17 @@ the mover stay in the plane with no 2d narrowphase of their own.
 Groups (`addGroup`/`<Group>`) are plain arena nodes (x, y, rotation,
 UNIFORM scale - a group is a frame, never a sprite size; sprite w/h
 lives in the sprite node's scale, which is why sprites cannot parent
-sprites). Child sprite pose fields are local to the group. `destroyGroup`
-destroys the SUBTREE: child sprites and groups die with it (re-parent a
-child out first to keep it), children first so each plays its own
-`exit` and the group stays their frame until the last has settled. One
-removal verb, the same word with the same meaning as @solidrt/3d's
-`destroy`: a sprite cannot exist outside its layer, so there is no
-detach here (3d's `remove`), and a sprite that should come back is
-hidden (`visible: false`). `destroySprite(sprite, { snap: true })` /
-`destroyGroup(group, { snap: true })` free NOW, playing no declared
-exit (the declaration is cleared first, so the core frees at once and
+sprites). Child sprite pose fields are local to the group. `destroy` on
+a group destroys the SUBTREE: child sprites and groups die with it
+(re-parent a child out first to keep it), children first so each plays
+its own `exit` and the group stays their frame until the last has
+settled. One
+removal verb for whatever `addSprite`, `addGroup` or `addText` made, the
+same word with the same meaning as @solidrt/3d's `destroy`: a sprite
+cannot exist outside its layer, so there is no detach here (3d's
+`remove`), and a sprite that should come back is hidden (`visible:
+false`). `destroy(handle, { snap: true })` frees NOW, playing no
+declared exit (the declaration is cleared first, so the core frees at once and
 the slot recycles this flush): a region's teardown, a level reset,
 anything torn down off screen - Unity's deferred Destroy under an exit
 animation is how streamed objects outlive their cell.
@@ -224,9 +226,10 @@ A handle's x/y are local to its group; `worldPosition(sprite | group)`
 reads the layer-pixel position composed through every enclosing group
 from the core's world matrix (@solidrt/3d's worldPosition) - under a
 transition the pose of this frame, since native motion steps before the
-frame's JS. A re-parent (`setSpriteParent`, `setGroup`'s `parent`)
-keeps the LOCAL fields by default, so the handle moves with the frame
-change; `{ keepWorld: true }` keeps the WORLD pose instead (Unity's
+frame's JS. A re-parent (`setParent(handle, group | null)`; `parent`
+in an add bag is where a handle is born, not a move) keeps the LOCAL
+fields by default, so the handle moves with the frame change;
+`{ keepWorld: true }` keeps the WORLD pose instead (Unity's
 SetParent with worldPositionStays), rewriting x, y, rotation and w/h
 (a group's scale) in the new frame from the core's world matrices as
 the tree stands now - a passenger stepping off a moving platform, a
@@ -546,7 +549,7 @@ hover, wheel and tap rules headless.
   cache `records(layer)` across addSprite - growth replaces the array and
   a hoisted reference becomes a dead copy whose writes publish nothing;
   read it at use time (the top of the frame's step is the place).
-- Records layer: record order is draw order: `destroySprite` shifts every
+- Records layer: record order is draw order: `destroy` shifts every
   later sprite down one slot (copyWithin + index fixup, O(later
   sprites)) and marks the shifted records dirty. The flush publishes the
   DIRTY record range (one buffer write at its byte offset, clipped to
@@ -587,7 +590,7 @@ hover, wheel and tap rules headless.
 ### Nodes, transitions and queries
 
 - Node layer: `sprite.node` is public FOR BINDING PRODUCERS, not for
-  lifecycle - never destroyNode it yourself (destroySprite owns that), and
+  lifecycle - never destroyNode it yourself (`destroy` owns that), and
   a transform written through flux:spatial directly bypasses the sprite's
   pose mirror, so a later setSprite with the old x wins (its compare sees
   no change to skip, but partial writes compose from the mirror).
@@ -608,7 +611,7 @@ hover, wheel and tap rules headless.
   The push-out depth carries the whole volume clear; a body teleported
   deep into a wide sprite comes out of the nearest side, which may not
   be the side it came from.
-- `destroySprite`/`destroyGroup` play a declared `exit` unless told
+- `destroy` plays a declared `exit` unless told
   `{ snap: true }`: a leaving node keeps its slot until the exit
   settles, so a subtree torn down off screen (a region, a level reset)
   without `snap` holds its slots for the exit's duration.

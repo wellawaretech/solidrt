@@ -1,6 +1,6 @@
 import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { ParentComponent } from "@solidrt/core"
-import { addGroup, destroyGroup, setGroup, setGroupTimeScale, setGroupTransition } from "../layer.ts"
+import { addGroup, destroy, setGroup, setTimeScale, setTransition } from "../layer.ts"
 import type { SpriteGroup, TransitionEndEvent } from "../layer.ts"
 import type { SpriteTransition } from "../layer.ts"
 import { GroupContext, LayerContext } from "./context.ts"
@@ -19,13 +19,13 @@ export type GroupProps = BubblingSpritePointerProps & {
   /** Show or hide the whole subtree (default true); see
    * GroupOptions.visible. */
   visible?: boolean
-  /** How pose-prop changes animate (see setGroupTransition). The mount
+  /** How pose-prop changes animate (see setTransition). The mount
    * pose snaps, unless a component's `from` animates it in from there. */
   transition?: SpriteTransition | string | null
   /** A declared transition settled on one component. */
   onTransitionEnd?: (event: TransitionEndEvent) => void
   /** The rate the native motion under this group runs at (see
-   * setGroupTimeScale): 0 freezes the subtree, 1 is app time; the nearest
+   * setTimeScale): 0 freezes the subtree, 1 is app time; the nearest
    * declaring node wins. Undefined or null inherits. */
   timeScale?: number | null
   ref?: (group: SpriteGroup) => void
@@ -49,14 +49,14 @@ export let Group: ParentComponent<GroupProps> = props => {
   // After the pose effect, so the mount pose snaps before writes animate.
   createEffect(
     () => props.transition,
-    transition => setGroupTransition(group, transition ?? null),
+    transition => setTransition(group, transition ?? null),
   )
   // Built only when the prop is present (the compiler emits the getter
   // only then), so a plain group pays no effect for it.
   if ("timeScale" in props) {
     createEffect(
       () => props.timeScale,
-      scale => setGroupTimeScale(group, scale ?? null),
+      scale => setTimeScale(group, scale ?? null),
     )
   }
   createEffect(
@@ -72,6 +72,6 @@ export let Group: ParentComponent<GroupProps> = props => {
     },
   )
   callRef(() => props.ref, group)
-  onCleanup(() => destroyGroup(group))
+  onCleanup(() => destroy(group))
   return <GroupContext value={group}>{props.children}</GroupContext>
 }

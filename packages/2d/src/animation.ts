@@ -9,7 +9,7 @@
 // due in; with a `clock` it runs at that layer's, group's or sprite's
 // time rate instead, so one setTimeScale pauses the walk cycles with the
 // world. The clip
-// does not own its sprites (destroySprite prunes lazily on the next step),
+// does not own its sprites (destroy prunes lazily on the next step),
 // and a sprite belongs to at most one animation. Plain JS over setSprite,
 // so it works on both layer kinds and composes with <Sprite> via ref (leave
 // the frame prop off - the clip owns that field).
