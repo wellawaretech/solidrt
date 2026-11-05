@@ -55,6 +55,29 @@ export function fitOversample(scale: number, targetW: number, targetH: number, b
   return fitOversampleWithin(scale, targetW, targetH, budget, limits.maxTextureSize, step)
 }
 
+/**
+ * The uneven-blocks sentinel: a sprite or record layer over a nearest
+ * atlas calls the returned hook with every oversample one of its views
+ * takes (creation included), and a fractional one warns once per layer.
+ * Each atlas texel then covers a fractional number of target texels, so
+ * blocks come out of uneven widths: the shimmer whole-number oversample
+ * exists to prevent. A diagnostic only: the oversample is the app's, and
+ * stays as set.
+ */
+export function unevenSentinel(what: string): (n: number) => void {
+  let warned = false
+  return n => {
+    if (warned || Number.isInteger(n)) return
+    warned = true
+    console.warn(
+      `Uneven pixel art: ${what} draws a "nearest" atlas at oversample ${n}, a fractional ` +
+        `factor, so its texels come out of uneven widths. For square blocks set ` +
+        `\`oversampleStep={1}\` on the component, or give the view a whole oversample ` +
+        `(\`fitOversample(..., 1)\`). Warned once per layer.`,
+    )
+  }
+}
+
 /** Oversample changes inside the window before the thrash warning fires. A
  * healthy layer settles in a change or two (mount, then the post-resize
  * scale); reaching this count means something re-picks every frame. */

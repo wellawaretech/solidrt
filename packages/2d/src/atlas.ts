@@ -7,7 +7,7 @@
 import { createTexture } from "@solidrt/core"
 import type { DecodedImage } from "@solidrt/core"
 import { limits } from "@solidrt/core/gpu"
-import type { SamplerOptions, TextureId } from "@solidrt/core/gpu"
+import type { FilterMode, SamplerOptions, TextureId } from "@solidrt/core/gpu"
 import type { Frame } from "./frames.ts"
 
 /**
@@ -35,6 +35,15 @@ export type Atlas = {
    * itself: the fragment stage is generated per layer.
    */
   sdf?: { range: number }
+  /**
+   * The sampler filter the texture was created with, as a plain fact:
+   * createAtlas records it, and nothing renders from it (the texture
+   * carries its own sampler). A view of a sprite or record layer over a
+   * "nearest" atlas warns once when its oversample is fractional, since
+   * the texels then come out of uneven widths (set `oversampleStep={1}`).
+   * A literal states it to get the same check; absent, no check.
+   */
+  filter?: FilterMode
 }
 
 /**
@@ -68,7 +77,15 @@ export function createAtlas(image: DecodedImage, opts?: AtlasOptions): Atlas {
     filter: opts?.filter ?? "linear",
     label: opts?.label ?? "atlas",
   })
-  return { texture, width, height }
+  return { texture, width, height, filter: opts?.filter ?? "linear" }
+}
+
+/** Whether a layer over `atlases` samples any of them nearest (the
+ * recorded `filter`), which a fractional view oversample draws as blocks
+ * of uneven widths. Internal - the sprite and record layers hand it to
+ * their views. */
+export function hasNearestAtlas(atlases: readonly Atlas[]): boolean {
+  return atlases.some(a => a.filter === "nearest")
 }
 
 /** Whether a value is an atlas record: a non-negative integer texture id
@@ -101,6 +118,9 @@ export function checkAtlases(verb: string, atlases: readonly Atlas[], samplers =
   atlases.forEach((atlas, i) => {
     if (!isAtlas(atlas)) throw new Error(`${verb}: atlases[${i}] is not an atlas record, got ${JSON.stringify(atlas)}`)
     if (index.has(atlas.texture)) throw new Error(`${verb}: atlases[${i}] declares texture ${atlas.texture} a second time`)
+    if (atlas.filter !== undefined && atlas.filter !== "linear" && atlas.filter !== "nearest") {
+      throw new Error(`${verb}: atlases[${i}].filter must be "linear" or "nearest", got ${JSON.stringify(atlas.filter)}`)
+    }
     index.set(atlas.texture, i)
   })
   return index

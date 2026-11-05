@@ -52,7 +52,7 @@ import { spriteDispatch } from "./dispatch.ts"
 import type { PointerFeed } from "@solidrt/core"
 import type { LayerPointerListener, Sprite, LayerHandlers } from "./layer.ts"
 import { scaledSize } from "./oversample-math.ts"
-import { checkOversample, thrashSentinel } from "./oversample.ts"
+import { checkOversample, thrashSentinel, unevenSentinel } from "./oversample.ts"
 
 // The sprite layer's render origin cell, in SCREEN pixels of the primary
 // view (world pixels = this over the zoom): how far that view's camera
@@ -173,6 +173,9 @@ export type ViewShellDeps = {
    * regions (flux:spatial setView `root`); null for a layer with no
    * regions to want (the record layer), whose views push no viewer. */
   root: NodeId | null
+  /** With every oversample the view takes, at creation and on each
+   * change (the sprite and record layers' uneven-blocks check). */
+  oversampled?: (n: number) => void
   /** After the camera, the size or the oversample changed (the tile
    * layer takes its density wish here). */
   changed?: (view: ViewHandle) => void
@@ -193,6 +196,7 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
   }
   let oversample = opts.oversample ?? 1
   checkOversample("createView", oversample, width, height)
+  deps.oversampled?.(oversample)
   let label = opts.label ?? `${deps.label}-view`
   let cam = defaultCamera()
   if (opts.camera) {
@@ -250,6 +254,7 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
       if (disposed || n === oversample) return
       checkOversample("setOversample", n, width, height)
       thrash()
+      deps.oversampled?.(n)
       oversample = n
       setTargetSize(texture, scaledSize(width, n), scaledSize(height, n))
       deps.changed?.(view)
@@ -339,6 +344,9 @@ export type ViewDeps = {
   pick: (x: number, y: number, zoom: number) => Sprite[]
   /** The layer's key order (`orderBy`), declared by ONE live entry. */
   order?: InstanceOrder
+  /** Whether any of the layer's atlases samples nearest (hasNearestAtlas):
+   * its views then warn once at a fractional oversample. */
+  nearest: boolean
   /** The layer's root node, the world its views are viewers of (see
    * ViewShellDeps.root); null for a layer with no regions. */
   root: NodeId | null
@@ -368,6 +376,8 @@ type ViewRecord = { view: ViewHandle; entry: DrawId }
  * instance buffers per view, the key order on one of them. */
 export function createViews(deps: ViewDeps): Views {
   let views = new Set<ViewRecord>()
+  // One uneven-blocks warning per layer, whichever view trips it.
+  let uneven = deps.nearest ? unevenSentinel(`layer "${deps.label}"`) : undefined
   // The one entry declaring the key order (null until a view exists, or
   // while the layer has no order).
   let ordered: ViewRecord | null = null
@@ -419,6 +429,7 @@ export function createViews(deps: ViewDeps): Views {
         root: deps.root,
         pick: deps.pick,
         cameraParams: cam => paramsFor(record, cam),
+        oversampled: uneven,
         createTarget: (w, h, params, o) => createDrawTarget(w, h, { ...params, uTint: deps.tint(), ...deps.params() }, { textures: deps.textures, clearColor: o.clearColor, label: o.label, autoFree: false }),
         disposing() {
           views.delete(record)

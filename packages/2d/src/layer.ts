@@ -57,7 +57,7 @@ import type {
   QueryFilter,
 } from "flux:spatial"
 import { on } from "sol:events"
-import { checkAtlases, frameIndex } from "./atlas.ts"
+import { checkAtlases, frameIndex, hasNearestAtlas } from "./atlas.ts"
 import type { Atlas } from "./atlas.ts"
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import type { Frame } from "./frames.ts"
@@ -1173,6 +1173,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     tint: () => tint,
     params: () => params,
     pick: (x, y, zoom) => layer.pick(x, y, zoom),
+    nearest: hasNearestAtlas(atlases),
     // The order key one view entry declares: "y" on world y in the pose
     // record (slot 0), "renderOrder" on the app-owned key in the sprite
     // record (slot 1); either way the core gathers BOTH buffers under the

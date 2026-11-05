@@ -40,7 +40,7 @@ import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core
 import { checkScreenSize, createRecordStream, destroyBuffer, screenSizeScale } from "@solidrt/core/gpu"
 import type { BufferId } from "@solidrt/core/gpu"
 import type { AttributeAccess, ShaderParams } from "@solidrt/core/gpu"
-import { checkAtlases, frameIndex } from "./atlas.ts"
+import { checkAtlases, frameIndex, hasNearestAtlas } from "./atlas.ts"
 import type { Atlas } from "./atlas.ts"
 import { fullFrame, isFrame, writeFrame } from "./frames.ts"
 import { atlasBindings, RECORD_ATTRIBUTES } from "./glsl.ts"
@@ -419,6 +419,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     params: () => params,
     pick: (x, y, zoom) => layer.pick(x, y, zoom),
     order: instanceOrder,
+    nearest: hasNearestAtlas(atlases),
   })
 
   let layer: RecordLayer = {

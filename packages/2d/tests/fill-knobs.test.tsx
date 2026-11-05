@@ -4,10 +4,11 @@
 // follows - the built-in one, or the `output` leaf that refs itself - a
 // `<View2d>` without sizes fills its box by the same rule, `maxPixels`
 // bounds the auto-picked oversample below what the on-screen scale asks,
-// and `oversampleStep` rounds the pick. View pixels are the leaf's layout
-// units, so the expectations are boxes read off the tree; the budget case
-// measures through a designSize fit, where the leaf is shown at four times
-// its layout size, and the step case runs on a 1.5x display.
+// `oversampleStep` rounds the pick, and a nearest atlas at a fractional
+// pick warns. View pixels are the leaf's layout units, so the expectations
+// are boxes read off the tree; the budget case measures through a
+// designSize fit, where the leaf is shown at four times its layout size,
+// and the step cases run on a 1.5x display.
 
 import { test, expect } from "@solidrt/test"
 import { createEffect, createSignal, displayScale, pct } from "@solidrt/core"
@@ -157,4 +158,50 @@ test("oversampleStep rounds the auto pick: the display scale at the default, a w
   setStep(undefined)
   await app.settle()
   expect(view.oversample).toBe(STEP_SCALE)
+}, { scale: STEP_SCALE })
+
+// The uneven-blocks warning's opening, which the console line starts with.
+const UNEVEN = "Uneven pixel art"
+
+test("a nearest atlas at a fractional oversample warns once per layer; a whole step or a linear atlas does not", async app => {
+  let warnings: string[] = []
+  let warn = console.warn
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "))
+  }
+  try {
+    let [step, setStep] = createSignal<number | undefined>(1)
+    await app.mount(() => {
+      let pixel = createAtlas(ATLAS, { filter: "nearest", label: "knobs-uneven-pixel" })
+      let smooth = createAtlas(ATLAS, { label: "knobs-uneven-smooth" })
+      return (
+        <view width={WIDTH} height={HEIGHT} flexDirection="row">
+          <view width={WIDTH / 2} height={HEIGHT}>
+            <SpriteLayer atlases={[pixel]} label="knobs-pixel" oversampleStep={step()} />
+          </view>
+          <view width={WIDTH / 2} height={HEIGHT}>
+            <SpriteLayer atlases={[smooth]} label="knobs-smooth" />
+          </view>
+        </view>
+      )
+    })
+    await app.settle()
+    // The pixel layer at a whole 2, the smooth one at a fractional 1.5
+    // over a linear atlas: nothing to warn about.
+    let uneven = () => warnings.filter(w => w.startsWith(UNEVEN))
+    expect(uneven()).toEqual([])
+    // The pixel layer at the default step: 1.5 over a nearest atlas.
+    setStep(undefined)
+    await app.settle()
+    expect(uneven().length).toBe(1)
+    expect(uneven()[0]).toContain('layer "knobs-pixel"')
+    // Once per layer: going whole and fractional again stays quiet.
+    setStep(1)
+    await app.settle()
+    setStep(undefined)
+    await app.settle()
+    expect(uneven().length).toBe(1)
+  } finally {
+    console.warn = warn
+  }
 }, { scale: STEP_SCALE })

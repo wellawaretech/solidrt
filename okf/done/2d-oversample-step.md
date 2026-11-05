@@ -75,6 +75,13 @@ Rejected:
   rather than a shared constant: its wish is oversample times camera
   zoom, a live input, and a pinch hovering at a whole number would
   otherwise re-bake every resident chunk on each crossing.
+- A dev diagnostic guards the default: `createAtlas` records `filter` on
+  the Atlas (a plain fact, a literal may state it), and a sprite or
+  record layer over a "nearest" atlas warns once ("Uneven pixel art")
+  when one of its views takes a fractional oversample, naming
+  `oversampleStep={1}`. It never changes the pick, the same pattern as
+  the thrash sentinel. A tile layer does not warn: its bake density is
+  whole, and its views sample the bake linear.
 - A bound now overrides the margin, as the cap already did: lowering
   `maxPixels` or shrinking the window lowered the fit but not the
   measured scale, so the margin held the old factor until the scale

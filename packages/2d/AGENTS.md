@@ -510,9 +510,13 @@ hover, wheel and tap rules headless.
   covers a whole number of target texels and stays a square block, and
   the linear composite spreads the fraction over one device pixel at
   block edges. At a fractional step a nearest atlas draws blocks of
-  uneven widths, the shimmer this section opened with. The cost of
-  step 1 on a fractional display: a 1.5x panel picks 2 and shades 1.78x
-  the device pixels.
+  uneven widths, the shimmer this section opened with, and the layer
+  warns once in the console ("Uneven pixel art") when a view over an
+  atlas created `filter: "nearest"` takes a fractional oversample. The
+  warning only reports; the oversample stays as set. An atlas literal
+  states `filter` to get the same check. The cost of step 1 on a
+  fractional display: a 1.5x panel picks 2 and shades 1.78x the device
+  pixels.
 - The tile layer's bake has the same pick one level down, always at
   whole numbers (tile edges land on whole texels, and a nearest tileset
   bakes square blocks): its `density` follows the views' oversample
