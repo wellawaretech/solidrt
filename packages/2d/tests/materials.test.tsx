@@ -111,7 +111,7 @@ test("a per-sprite style record reaches the surface: set per sprite, blank from 
   })
   let a = addSprite(layer, square(LEFT))
   let b = addSprite(layer, square(MID))
-  setInstanceStyle(layer, b, [1])
+  setInstanceStyle(b, [1])
   let c = addSprite(layer, square(RIGHT))
   // The bulk path: stream 1 is the material's record, a Float32Array
   // over an all-float layout, slot-indexed like the layer's own.
@@ -132,7 +132,7 @@ test("a per-sprite style record reaches the surface: set per sprite, blank from 
   expect(d._slot).toBe(b._slot)
   await app.frame()
   expectPixel(pixel(view.texture, MID, MID), WHITE)
-  expect(() => setInstanceStyle(layer, a, [1, 2])).toThrow()
+  expect(() => setInstanceStyle(a, [1, 2])).toThrow()
   expect(() => records(layer, 2)).toThrow()
   expect(() => updateRecords(layer, { stream: 2 })).toThrow()
 })
@@ -177,7 +177,7 @@ test("a records layer shifts its style records with its sprites on destroy", asy
   })
   let a = addSprite(layer, square(LEFT))
   let b = addSprite(layer, square(MID))
-  setInstanceStyle(layer, b, [1])
+  setInstanceStyle(b, [1])
   await app.frame()
   expectPixel(pixel(view.texture, LEFT, MID), WHITE)
   expectPixel(pixel(view.texture, MID, MID), GREEN)
@@ -377,7 +377,7 @@ test("creation throws name the mistake: the camera contract, reserved names, the
     expect(() => createRecordLayer([atlas], { material: hungry, label: "over-budget-records" })).toThrow()
     expect(() => createTileLayer(8, 8, [atlas], { material: hungry, label: "over-budget-tiles" })).toThrow()
     // No instance buffer, no style record.
-    expect(() => setInstanceStyle(layer, addSprite(layer, square(MID)), [1])).toThrow()
+    expect(() => setInstanceStyle(addSprite(layer, square(MID)), [1])).toThrow()
     let view = layer.createView({ width: SIZE, height: SIZE, label: "throws" })
     return { texture: view.texture }
   })

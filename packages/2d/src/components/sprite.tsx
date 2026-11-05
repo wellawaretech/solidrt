@@ -86,7 +86,7 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
     createEffect(
       () => props.style,
       style => {
-        if (style !== undefined) setInstanceStyle(layer, sprite, style)
+        if (style !== undefined) setInstanceStyle(sprite, style)
       },
     )
   }

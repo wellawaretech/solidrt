@@ -52,8 +52,8 @@ order, so nothing sorts.
   `iPalette` reaches the prelude and the surface as `vPalette`
   (`forwardedName`; names follow the layer's own `i` + capital
   convention) - so a palette swap is one attribute, one surface line
-  and a `setInstanceStyle(layer, sprite, [row])` per sprite. Writes:
-  `setInstanceStyle(layer, sprite, values)` (the first buffer, one
+  and a `setInstanceStyle(sprite, [row])` per sprite. Writes:
+  `setInstanceStyle(sprite, values)` (the first buffer, one
   value per component as the shader sees them; marks the slot like
   setSprite), `instanceAttribute(layer, name)` (the accessor: slot in,
   component values out and in through the format's codec; valid

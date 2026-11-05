@@ -18,7 +18,7 @@
 // down: `records(layer, stream?)` is the mirror (stream 0 the layer's
 // own record, 1.. the material's style streams), `updateRecords(layer, {
 // stream?, first?, count? })` publishes a range, `setRecordCount(layer,
-// n)` dials the drawn prefix, `setInstanceStyle(layer, sprite, values)`
+// n)` dials the drawn prefix, `setInstanceStyle(sprite, values)`
 // and `instanceAttribute(layer, name)` write the material's per-sprite
 // style record (style.ts). The POPULATION differs by kind and keeps its
 // own verbs - a record mesh's records are opaque data (setRecords), a
@@ -167,11 +167,9 @@ function styleStream(verb: string, layer: RecordLayer | SpriteLayer, stream: num
  * write by attribute name, and the only way into a second stream.
  * @solidrt/3d's setInstanceStyle(instance, values).
  */
-export function setInstanceStyle(layer: RecordLayer | SpriteLayer, sprite: Sprite, values: ArrayLike<number>): void {
-  if (sprite.layer !== layer) {
-    if (sprite.layer === null) return
-    throw new Error("setInstanceStyle: the sprite belongs to another layer")
-  }
+export function setInstanceStyle(sprite: Sprite, values: ArrayLike<number>): void {
+  let layer = sprite.layer
+  if (layer === null) return
   let style = layer._styles[0]
   if (style === undefined) throw new Error("setInstanceStyle: the layer's material declares no instance buffer (no style record)")
   writeStyle(style, sprite._slot, values, "setInstanceStyle")
