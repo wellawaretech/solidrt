@@ -100,12 +100,13 @@ today ([presentation-feedback]).
 ## Related
 
 - `okf/design/frame-timing.md` D9 (this record is listed there).
-- okf/plans/cadence-hold.md, the controller and the TV-box reading of the
-  same artifact.
+- okf/done/cadence-hold.md, the controller, and
+  okf/notes/cadence-hold-measurements.md, the TV-box reading of the same
+  artifact.
 - okf/done/gpu-timer-attribution.md, the offscreen self-test this span
   escapes.
 - okf/backlog/android-main-loop-rarely-sleeps.md, the second finding of
   the same measurement (SDLThread at 98% while idle), still open.
 
-[cadence-hold]: ../plans/cadence-hold.md
+[cadence-hold]: ../done/cadence-hold.md
 [presentation-feedback]: ../backlog/presentation-feedback.md

@@ -1,3 +1,4 @@
+mod cadence;
 #[cfg(any(feature = "go", feature = "test"))]
 mod dialog;
 mod fonts;

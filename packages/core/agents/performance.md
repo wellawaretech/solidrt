@@ -350,3 +350,30 @@ visibly doing, ground truth on Android is
 `adb shell dumpsys SurfaceFlinger --latency <layer>` for real present
 timestamps - engine-reported phase timings can each be honest and still not add
 up to the frame period, because work outside the frame call is not in them.
+
+## The cadence hold
+
+A frame that misses the display's refresh is shown for two refreshes, the
+next one maybe for one: 40 to 60 fps, uneven, which reads as judder. The
+cadence hold shows every frame for the same whole number of refreshes
+instead (30 fps steady on a 60 Hz panel), trading frames at the boundary for
+a steady cadence. Touch and remote (TV) clients run it automatically by
+default; a client with a mouse does not.
+
+- The automatic hold rises only on a sustained need (a third of the recent
+  frames late), so a startup burst or one heavy mount does not hold the app.
+  It steps down only when it can prove the shorter interval fits, and under a
+  hold the device slows down (the GPU clocks down, the frame's threads move
+  to the slower cores), so a hold an earlier, heavier phase raised often
+  stays at two refreshes. Call `resetCadenceHold()` at a phase start, after
+  the phase has loaded, not before its mount.
+- Choose the policy when the app knows itself: `setCadenceHold("off")` for
+  interactive gameplay that makes the refresh rate, `"auto"` or a fixed
+  number of refreshes for continuous motion (a cutscene, a video),
+  `"default"` to hand the choice back. A game sets `"off"` when gameplay
+  starts and `"default"` back on its menu. The choice survives input device
+  changes and ends with the app: a reload starts at the default.
+- `cadenceHold()` reads the policy in force and the hold, reactively: for a
+  debug HUD, or to lower a phase's work when the hold rises.
+- `SOLIDRT_CADENCE_HOLD` (`sol android --env SOLIDRT_CADENCE_HOLD=off`)
+  overrides the app's choice for a measurement.

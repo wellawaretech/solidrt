@@ -87,3 +87,11 @@ test (alloy/src/tests/cadence.rs) covers the timed try and its revert.
 
 `alloy/src/cadence.rs` (the step-down rule), its test, and
 `okf/design/frame-timing.md` (D9) for the decision.
+
+## Resolved
+
+By [cadence-hold-app-control](cadence-hold-app-control.md), 2026-11-05: the
+hold rises only on a sustained share of long intervals, so the startup burst
+no longer raises it. Lead 1 found no hold-caused wait to take out (the held
+readings are honest work at a capacity the hold lowers); lead 2, the timed
+try, was rejected (no stutter the developer did not choose).

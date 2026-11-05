@@ -39,13 +39,14 @@ The architecture of an area and the decisions behind it, kept current. Read befo
   Where OS integration lives - our own OS layer (`ore`) that wraps SDL where
   SDL reaches and our native code where it stops (SDL is the OS abstraction,
   decided 2026-11-04), with alloy reduced to the window's scene, rendering and
-  frame policy and forge to portable capabilities; the main loop's split along
-  the existing SDL pump, the facts that constrain it (SDL's thread rules, its
-  activity-bound Android helpers, the headless link cost), the test set of
-  platform features an app platform needs (push, alarms, background sync,
-  secure storage, printing and more), the alternatives rejected, and the
-  landing zone that makes new work land right before any existing code moves.
-  Read before placing any platform or OS feature.
+  frame timing (facts-based; policy stays lattice's) and forge to portable
+  capabilities; the main loop's split along the existing SDL pump, the facts
+  that constrain it (SDL's thread rules, its activity-bound Android helpers,
+  the headless link cost), the test set of platform features an app platform
+  needs (push, alarms, background sync, secure storage, printing and more),
+  the alternatives rejected, and the landing zone that makes new work land
+  right before any existing code moves. Read before placing any platform or OS
+  feature.
 - **[Gaussian splats](design/splats.md)** [2026-10-18]
   The splat viewer in one place - the .sol3s bake and its chunked 16-bit
   record, the data textures and the one-texel vertex decode, the packed depth
@@ -83,15 +84,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   unloaded (HLOD), streaming sources beyond cameras, and the handler lifecycle
   (load, abort, sliced build, unload, retain, state) in core so a 2d
   population handler is the same machinery one dimension down.
-- **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
-  An app that cannot make the refresh rate is shown for an alternating number
-  of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
-  reads as judder even though the timeline is now honest; hold the frame
-  interval at a whole number of refreshes chosen from the measured frame work
-  time with hysteresis, the way Android's Frame Pacing library does, trading
-  frames at the boundary for a metronomic cadence. Tier 3 of
-  okf/design/frame-timing.md; alloy measures and enforces, lattice decides
-  when.
 - **[Camera and controls extensions](plans/camera-and-controls-extensions.md)** [2026-09-17]
   The orbit control's gap against the reference set, shaped under
   okf/design/camera-controls.md - a push through a model (the fly demo's ask,
@@ -435,15 +427,6 @@ Shaped, not started.
   on a half pixel and reads as a soft second row whatever the box does;
   browsers snap border widths to whole device pixels (at least one), and the
   box kinds' strokes should too.
-- **[The cadence hold locks in above 1 on Android because the step-down predicts from a CPU term the hold itself inflates](backlog/cadence-hold-dvfs-lock-in.md)** [2026-10-16]
-  The tiles example's startup burst raises the hold (SM-T500 to 3, Pixel 7 to
-  4 then 3) and it stays there for minutes of flight the device could run at
-  full rate (the Pixel at 30 fps with a 1.3 ms GPU frame); under the hold the
-  controller's CPU term reads 9 to 25 ms against 3 to 5 at hold 1 because the
-  span it measures (signal to swap call) holds the buffer-queue wait a held
-  display causes, so the step-down prediction never fits; a step down tried on
-  a timeout, reverted by the measured rule as today, would break the lock-in
-  at one hitch per try.
 - **[Native modules cannot read camera frames](backlog/camera-frame-tap.md)** [2026-10-08]
   alloy's camera pump holds every frame as upright RGBA on the CPU and hands
   it only to the texture upload and the QR decoder, so a custom runtime module
@@ -1635,6 +1618,24 @@ Finished, kept for the reasoning.
   content sizing, so in a row it squeezes its sibling labels until they wrap;
   done means code and docs agree, on content sizing unless a consumer shows
   why not.
+- **[Cadence hold without stutters - raised only by sustained need, lowered only by proof or by the app](done/cadence-hold-app-control.md)** [2026-11-05]
+  The automatic hold locks in on Android (a startup burst sets hold 3 on the
+  SM-T500, 20 fps for the whole session, reloads included) because two slow
+  frames raise it and its step-down predicts from work the hold itself
+  inflates; raise it only when a share of the last presents needed it, lower
+  it only on a measured fit (which reaches hold 1 only when forced, since the
+  hold lowers the capacity it measures), never by a blind try, and give the
+  app the say - set the policy, force a reset at a phase start and read the
+  hold in force - at runtime, not through an environment variable.
+- **[The cadence hold locks in above 1 on Android because the step-down predicts from a CPU term the hold itself inflates](done/cadence-hold-dvfs-lock-in.md)** [2026-10-16]
+  The tiles example's startup burst raises the hold (SM-T500 to 3, Pixel 7 to
+  4 then 3) and it stays there for minutes of flight the device could run at
+  full rate (the Pixel at 30 fps with a 1.3 ms GPU frame); under the hold the
+  controller's CPU term reads 9 to 25 ms against 3 to 5 at hold 1 because the
+  span it measures (signal to swap call) holds the buffer-queue wait a held
+  display causes, so the step-down prediction never fits; a step down tried on
+  a timeout, reverted by the measured rule as today, would break the lock-in
+  at one hitch per try.
 - **[The cadence hold never steps down on Android and reads the held interval as GPU time](done/cadence-hold-sticky-android.md)** [2026-09-23]
   Fixed 2026-09-23: the frame's GPU term from the EGL frame timestamps started
   at the frame's first GPU command, so under a hold the buffer dequeue's wait
@@ -1642,6 +1643,15 @@ Finished, kept for the reasoning.
   step-down prediction never fit; it now starts at the instant the swap queued
   the buffer, the census's own queue column, and the tablet reads 23.7 ms
   against a census span of 24.3 ms. The idle reset landed 2026-09-22.
+- **[Cadence hold - a steady whole-refresh present interval below the refresh rate](done/cadence-hold.md)** [2026-11-05]
+  An app that cannot make the refresh rate is shown for an alternating number
+  of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
+  reads as judder even though the timeline is now honest; hold the frame
+  interval at a whole number of refreshes chosen from the measured frame work
+  time with hysteresis, the way Android's Frame Pacing library does, trading
+  frames at the boundary for a metronomic cadence. Tier 3 of
+  okf/design/frame-timing.md; alloy measures and enforces, lattice decides
+  when.
 - **[A bare string argument to call_debug arrives JSON-quoted](done/call-debug-string-arg-encoding.md)** [2026-09-03]
   Calling a debug command with a bare string argument delivers it to the
   handler with literal quote characters, so a membership guard rejects it and
@@ -3270,6 +3280,21 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   frame - one panel holds the refresh everywhere (TV 3 to 13 ms GPU per
   frame), four panels drop the tablet and the TV to 22 fps with hundreds of
   missed presents.
+- **[The cadence hold under a lowered capacity, measured](notes/cadence-hold-capacity.md)** [2026-11-05]
+  What the second cadence-hold controller was measured against on the SM-T500,
+  the Pixel 7, the 50 Hz TV box and the desktop - the held readings are honest
+  work at a capacity the hold itself lowers (the A7's GPU clock, the Pixel's
+  little cores), the chain overlaps under VsyncLocked, the pacing delay is
+  latency and not slot use, the startup lock-in and its end, and Sponza past
+  the 50 ms maximum at medium quality.
+- **[The cadence hold, measured](notes/cadence-hold-measurements.md)** [2026-11-05]
+  What the first cadence-hold controller was measured against on the Pixel 7,
+  the SM-T500 tablet, the 50 Hz TV box and the laptop - the probe tables per
+  busy level, why the up rule is measured and the step down predicted, the
+  pacing-delay offset, the busy flag and standing-demand fixes, the pipelined
+  estimate and its settle and miss-memory rules, Sponza on each device, and
+  the measuring traps (census layer names, debug-command bodies, thermal
+  drift).
 - **[Concurrency mechanisms](notes/channels-concurrency.md)** [2026-07-15]
   Survey of CSP, actor and shared-memory models plus TC39 status; the
   conclusion is isolates and ports for parallelism, with engine-free

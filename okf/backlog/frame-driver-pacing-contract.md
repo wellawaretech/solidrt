@@ -69,7 +69,7 @@ that genuinely need hardware.
 
 ## Stage 2: deadline-scheduled frames
 
-Built as [cadence-hold](../plans/cadence-hold.md) (2026-09-21), which
+Built as [cadence-hold](../done/cadence-hold.md) (2026-09-21), which
 holds the frame interval at a whole number of refreshes chosen from the
 measured interval and the frame work time; the text below is the framing
 it grew out of. What remains of this item is stage 1, the harness.

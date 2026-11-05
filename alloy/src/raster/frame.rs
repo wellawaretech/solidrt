@@ -128,6 +128,7 @@ impl RasterState {
     }
     // The frame's GPU span starts here, ahead of the pass flush: on a tiler
     // the passes execute in the same submission as the window draw.
+    let prep_start = std::time::Instant::now();
     self.frame_timestamps.frame_begin();
     // The video frames due for this present go into their textures first,
     // so the flush below converts them and the frame samples the result.
@@ -173,6 +174,7 @@ impl RasterState {
     let patch_barred = self.sink.headless() || self.window_shader.is_some();
     let mut route = self.damage.route(own_damage, size, fast_path, patch_barred);
     let wait_start = std::time::Instant::now();
+    let prep_ms = wait_start.duration_since(prep_start).as_secs_f32() * 1000.0;
     self.await_present_fence()?;
     let wait_ms = wait_start.elapsed().as_secs_f32() * 1000.0;
     let draw_start = std::time::Instant::now();
@@ -248,7 +250,7 @@ impl RasterState {
       }
       let presented_at = std::time::Instant::now();
       let present_ms = presented_at.duration_since(present_start).as_secs_f32() * 1000.0;
-      self.timing.record(wait_ms, draw_ms, present_ms);
+      self.timing.record(prep_ms, wait_ms, draw_ms, present_ms, || self.frame_timestamps.take_split());
       let demanded = self.demand_at_present(drawn);
       // A frame's native cost beyond ~2 vsync periods means this thread is
       // being stalled in the driver; log which step, rate-limited to one line

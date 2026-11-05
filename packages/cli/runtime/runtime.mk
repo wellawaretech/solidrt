@@ -40,6 +40,10 @@
 #                                                 --engine`), written by the
 #                                                 host goals; sol pack checks
 #                                                 its compiler against it
+#   <each staged folder>/version.txt              the VERSION it was built
+#                                                 at; sol refuses a folder
+#                                                 from another release than
+#                                                 its @solidrt packages
 #
 # Variables, all overridable on the command line:
 #   PROFILE      release (default: fast, keeps symbols), debug, or release-opt:
@@ -209,6 +213,7 @@ define host-build
 	$(HOST_ENV) SOLIDRT_VERSION="$(VERSION)" SOLIDRT_PROFILE="$(PROFILE)" cargo build $(CONFIG) $(LOCK_FLAG) $(CARGO_PROFILE_FLAG) $(3) --bin $(2) --target-dir $(4)
 	$(call stage-host,$(4),$(2))
 	$(if $(GL_LIBS),@cp $(GL_LIBS) $(HOST_DIST)/)
+	@echo "$(VERSION)" > $(HOST_DIST)/version.txt
 	@$(HOST_DIST)/$(2)$(HOST_EXT) --fonts > $(DIST_DIR)/fonts.txt
 	@$(HOST_DIST)/$(2)$(HOST_EXT) --engine > $(DIST_DIR)/engine.txt
 	@echo "Listed the program's fonts in $(DIST_DIR)/fonts.txt and its engine in $(DIST_DIR)/engine.txt"
@@ -288,6 +293,7 @@ define ndk-build
 	  rm -f $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libc++_shared.so; \
 	fi
 	$(call check-elf-align,$(DIST_DIR)/$(4)/$(ANDROID_ABI))
+	@echo "$(VERSION)" > $(DIST_DIR)/$(4)/$(ANDROID_ABI)/version.txt
 	@echo "Staged the $(ANDROID_ABI) libs into $(DIST_DIR)/$(4)/$(ANDROID_ABI)/"
 endef
 

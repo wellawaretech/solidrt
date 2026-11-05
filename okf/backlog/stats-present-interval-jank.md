@@ -75,7 +75,7 @@ Two design points that settled the shape:
   declared by its sources (core's `requestFrame` export, the rAF queue,
   running transitions) and re-latched past the gate, so the latch is set
   at present time mid-animation and clear after a one-shot frame by
-  construction (okf/plans/cadence-hold.md, Findings).
+  construction (okf/notes/cadence-hold-measurements.md).
 - RUN-BASED COUNTING, not a per-interval threshold: swap-return
   timestamps jitter by more than half a refresh period under
   mailbox/triple-buffered compositors - the documented reason the

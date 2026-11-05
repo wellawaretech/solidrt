@@ -62,20 +62,24 @@ fn player_tree_has_no_client_level() {
   let _ = std::fs::remove_dir_all(&root);
 }
 
-// The run marker warns about, but does not prevent, a second live client on
-// the same tree; dropping the first (its lock dies with the process) frees
-// the tree for the next claim.
+// A second live client of one app on one dev tree is refused; another app
+// on the same tree is free (two projects on client 0). A claim is let go
+// when the client moves to another app or back to the player's home, which
+// frees the app for the next client.
 #[test]
-fn second_client_on_one_tree_is_detected() {
-  let root = temp_root("marker");
+fn second_client_of_one_app_is_refused() {
+  let root = temp_root("claim");
   let spec = StorageSpec { data_root: Some(root.clone()), client: None, app_id: None };
   let first = resolve(&spec).expect("resolves");
-  assert!(first.run_marker.is_some());
-  let second = resolve(&spec).expect("a warning, not a lock: still resolves");
-  assert!(second.run_marker.is_none());
-  drop(first);
-  let third = resolve(&spec).expect("resolves");
-  assert!(third.run_marker.is_some());
+  let second = resolve(&spec).expect("resolves");
+  first.claim_app("com.example.a").expect("first claim");
+  first.claim_app("com.example.a").expect("reclaiming the held app is a no-op");
+  let refused = second.claim_app("com.example.a").expect_err("same app refused");
+  assert!(refused.contains(&format!("(pid {})", std::process::id())), "{refused}");
+  second.claim_app("com.example.b").expect("another app on the same tree");
+  first.claim_app("default").expect("the player's home claims nothing");
+  second.claim_app("com.example.a").expect("free once let go");
+  first.claim_app("com.example.b").expect("free once the holder moved on");
   let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -126,7 +130,13 @@ fn anchor_dir_recovers_from_deleted_cwd() {
 #[test]
 fn flat_app_dir_is_the_root() {
   let root = std::path::PathBuf::from("/packed-app");
-  let store = Storage { client_dir: root.clone(), data_dir: root.join("data"), flat: true, run_marker: None };
+  let store = Storage {
+    client_dir: root.clone(),
+    data_dir: root.join("data"),
+    flat: true,
+    dev: false,
+    claim: std::sync::Mutex::new(None),
+  };
   assert_eq!(store.app_dir("com.example.app"), root);
   assert_eq!(store.app_dir("anything-else"), root);
   // The single app's cache sits at the root, like every other app dir.

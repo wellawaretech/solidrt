@@ -647,8 +647,17 @@ async fn try_serve(
               // the app appears in the player's list and launches offline.
               // The reload itself applies the in-memory code either way - a
               // failed install degrades to an ephemeral push.
+              // A push of an app another live client runs on this dev tree
+              // is refused whole: installing would corrupt the app's
+              // versions, and the ephemeral run would land in the wrong
+              // sandbox.
+              let manifest = json.get("manifest").and_then(|m| m.as_str());
+              if let Some(Err(e)) = manifest.map(super::store::claim_push) {
+                log::error!("[sgo] {e}");
+                continue;
+              }
               let mut app_id = None;
-              if let Some(manifest) = json.get("manifest").and_then(|m| m.as_str()) {
+              if let Some(manifest) = manifest {
                 flags.installing.store(true, Ordering::Relaxed);
                 flags.frame_requested.store(true, Ordering::Relaxed);
                 match install_push(addr, manifest, code, flags.wasm.as_ref()).await {

@@ -227,6 +227,33 @@ fn apply_main_thread_effects(event: &AlloyEvent, surface_size: &Arc<AtomicU64>) 
   }
 }
 
+// After a cadence command moved the policy or the controller: a hold
+// change reaches the release chain (from the next frame signal), the miss
+// accounting and the stats, and any change of the policy in force or the
+// hold is reported (AlloyEvent::CadenceHold).
+fn cadence_moved(
+  before: (crate::cadence::CadenceHold, u32),
+  cadence: &crate::cadence::CadenceController,
+  release: &mut crate::vsync::FrameRelease,
+  refreshes: &mut crate::present::RefreshCounting,
+  stats: &crate::raster::RasterStats,
+  event_tx: &crate::EventSender,
+  period: Duration,
+) {
+  let (policy, hold) = (cadence.policy(), cadence.hold());
+  if policy != before.0 {
+    log::info!("[alloy] cadence hold policy: {policy:?}");
+  }
+  if hold != before.1 {
+    release.set_hold(hold, period);
+    refreshes.set_hold(hold);
+    stats.cadence_hold.store(hold, Ordering::Relaxed);
+  }
+  if (policy, hold) != before {
+    event_tx.send(AlloyEvent::CadenceHold { policy, hold }).ok();
+  }
+}
+
 // Refresh rate in Hz of the window's current display, with a 60Hz fallback.
 fn display_refresh_rate(window: &sdl3::video::Window) -> f32 {
   let hz =
@@ -604,8 +631,8 @@ impl App {
       |counted: crate::present::Counted| start_time + Duration::from_secs_f64(counted.grid_ms.max(0.0) / 1000.0);
     let mut refreshes = crate::present::RefreshCounting::new();
     // The cadence hold (see cadence.rs): the controller reads each present's
-    // work time and sets the hold FrameRelease enforces; the policy comes
-    // from the embedder (SetCadenceHold), Off until it arrives.
+    // work time and sets the hold FrameRelease enforces; the policy in force
+    // comes from the embedder (SetCadenceHold), Off until it arrives.
     let mut cadence = crate::cadence::CadenceController::new();
     // The UI thread's busy flag (SetUiBusyFlag), read by the idle-tick gate;
     // None until the embedder registers it, and the gate ignores it then.
@@ -614,6 +641,9 @@ impl App {
     // the start of the frame it triggers; with the swap-call instant the
     // raster thread reports, the CPU side of that frame's work time.
     let mut last_emission = Instant::now();
+    // The presents' CPU and GPU terms summed over the second, and their
+    // count, for the 1/s cadence line (the work mean split in two).
+    let mut work_split: (f32, f32, u32) = (0.0, 0.0, 0);
     // Demand flag and work time of the presents whose frame signal is
     // deferred (FrameRelease keeps only their number), in present order, so
     // a release hands each signal its own present's facts.
@@ -649,19 +679,13 @@ impl App {
         return;
       }
       let period_ms = period.as_secs_f64() * 1000.0;
-      let change = cadence.on_present(
-        counted.interval,
-        cpu_ms,
-        gpu_ms,
-        release.slot_offset_ms(),
-        release.pipelined(),
-        ms_since_start(at),
-        period_ms,
-      );
+      let change =
+        cadence.on_present(counted.interval, cpu_ms, gpu_ms, release.pipelined(), ms_since_start(at), period_ms);
       if let Some(change) = change {
         release.set_hold(change.to, period);
         refreshes.set_hold(change.to);
         stats.cadence_hold.store(change.to, Ordering::Relaxed);
+        event_tx.send(AlloyEvent::CadenceHold { policy: cadence.policy(), hold: change.to }).ok();
         log::info!(
           "[alloy] cadence hold: {} -> {} refreshes (interval {}, work {:.1}ms) [{}]",
           change.from,
@@ -757,6 +781,7 @@ impl App {
             // delays the next emission.
             let cpu_ms = ready_at.saturating_duration_since(last_emission).as_secs_f32() * 1000.0;
             let gpu_ms = gpu_micros.map_or(0.0, |us| us as f32 / 1000.0);
+            work_split = (work_split.0 + cpu_ms, work_split.1 + gpu_ms, work_split.2 + 1);
             let work = (cpu_ms, gpu_ms);
             let work_ms = cpu_ms + gpu_ms;
             match release.on_present(at, tick_period) {
@@ -887,7 +912,14 @@ impl App {
             work_mean,
             t.work_max_ms
           );
-          log::debug!("[alloy] cadence: {}", cadence.diagnostics(ms_since_start(Instant::now())));
+          let (cpu_sum, gpu_sum, n) = std::mem::take(&mut work_split);
+          let n = n.max(1) as f32;
+          log::debug!(
+            "[alloy] cadence: cpu mean {:.1}ms, gpu mean {:.1}ms, {}",
+            cpu_sum / n,
+            gpu_sum / n,
+            cadence.diagnostics(ms_since_start(Instant::now()))
+          );
         }
       }
 
@@ -1132,6 +1164,7 @@ impl App {
             // Pointer lock survives an engine reload (window state); the new
             // engine must observe it.
             event_tx.send(AlloyEvent::PointerLock { locked: sdl_context.mouse().relative_mouse_mode(&window) }).ok();
+            event_tx.send(AlloyEvent::CadenceHold { policy: cadence.policy(), hold: cadence.hold() }).ok();
           }
           AlloyCommand::SetFrameRequestLatch(latch) => {
             // The raster thread samples the same latch at present time for
@@ -1178,12 +1211,14 @@ impl App {
             ui_busy = Some(flag);
           }
           AlloyCommand::SetCadenceHold(p) => {
-            log::info!("[alloy] cadence hold policy: {p:?}");
-            if let Some(hold) = cadence.set_policy(p) {
-              release.set_hold(hold, tick_period);
-              refreshes.set_hold(hold);
-              stats.cadence_hold.store(hold, Ordering::Relaxed);
-            }
+            let before = (cadence.policy(), cadence.hold());
+            cadence.set_policy(p);
+            cadence_moved(before, &cadence, &mut release, &mut refreshes, &stats, &event_tx, tick_period);
+          }
+          AlloyCommand::ResetCadenceHold => {
+            let before = (cadence.policy(), cadence.hold());
+            cadence.reset();
+            cadence_moved(before, &cadence, &mut release, &mut refreshes, &stats, &event_tx, tick_period);
           }
           AlloyCommand::SetTitle(t) => {
             if let Err(e) = window.set_title(&t) {

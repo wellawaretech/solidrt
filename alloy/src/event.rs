@@ -34,11 +34,15 @@ pub enum AlloyCommand {
   // the loop applies it immediately, releasing any vsync-deferred presents
   // when leaving VsyncLocked.
   SetFramePacing(crate::vsync::FramePacing),
-  // Cadence-hold policy (see cadence::CadenceHold): whether frame intervals
-  // below the refresh rate are held to a whole number of refreshes. The
-  // embedder derives it from the input-modality facts like the pacing
-  // policy; the loop applies it at the next present.
+  // Cadence-hold policy in force (see cadence::CadenceHold): whether frame
+  // intervals below the refresh rate are held to a whole number of
+  // refreshes. The embedder chooses it (the layers of default, app choice
+  // and override are its own) and sends it when it changes; each send
+  // restarts the controller, unheld under Auto. The reset ends a learned
+  // hold and keeps the policy. Each change answers with
+  // AlloyEvent::CadenceHold.
   SetCadenceHold(crate::cadence::CadenceHold),
+  ResetCadenceHold,
   // The mouse cursor to show (see Cursor). The loop keeps every cursor it
   // has created alive for as long as SDL may show it (cursor.rs).
   SetCursor(Cursor),
@@ -426,6 +430,13 @@ pub enum AlloyEvent {
   // one ever surfaces. Sticky window fact downstream.
   PointerLock {
     locked: bool,
+  },
+  // The cadence-hold policy in force and the hold (refreshes per frame, 1 =
+  // none), whenever either changes; replayed by EmitInitEvents. Sticky
+  // fact downstream.
+  CadenceHold {
+    policy: crate::cadence::CadenceHold,
+    hold: u32,
   },
   // The window surface needs a repaint without any visibility change: SDL
   // WINDOW_EXPOSED (damage, or a recreated swapchain surface whose contents

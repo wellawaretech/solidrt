@@ -43,7 +43,7 @@ same on the tablet (60 Hz).
 
 ## Resolution (2026-09-21)
 
-Fixed as stage 0 of [cadence-hold](../plans/cadence-hold.md). The missing
+Fixed as stage 0 of [cadence-hold](../done/cadence-hold.md). The missing
 fact is whether the JS executor is running a closure: the flux engine sets
 a busy flag around each one (`FluxEngineBuilder::busy_flag`), lattice
 hands it to alloy (`AlloyCommand::SetUiBusyFlag`), and the idle-tick gate

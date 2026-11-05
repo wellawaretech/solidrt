@@ -41,8 +41,8 @@
 // the client process runs on; remote dev clients resolve their own local
 // root, never the dev server's project dir.
 //
-// Each client tree also carries run.pid, a marker claiming the tree for one
-// live client process (see claim_run_marker).
+// Under a dev tree each app dir also carries run.pid, a marker claiming the
+// app for one live client process (see Storage::claim_app).
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -64,12 +64,13 @@ pub struct Storage {
   pub data_dir: PathBuf,
   // Packed flat layout: the root is the single app's dir, no apps/ level.
   pub(crate) flat: bool,
-  // The claimed run marker: holding the file keeps its OS lock for the life
-  // of the process (a keep-alive, only ever read by tests). None when
-  // another live client owns the tree (warned at resolve) or the marker
-  // could not be opened.
-  #[cfg_attr(not(test), allow(dead_code))]
-  pub(crate) run_marker: Option<std::fs::File>,
+  // A dev tree (--data-root), where numbered clients share one root and
+  // apps are claimed (see claim_app); the pref-path layouts have one client
+  // per install by construction and claim nothing.
+  pub(crate) dev: bool,
+  // The app this process holds, with its locked run marker: holding the
+  // file keeps its OS lock until the claim moves or the process exits.
+  pub(crate) claim: std::sync::Mutex<Option<(String, std::fs::File)>>,
 }
 
 /// The cache subdirectory of an app dir (see `Storage::cache_dir`).
@@ -92,6 +93,65 @@ impl Storage {
   /// app on remove. Created lazily by a cache on first write.
   pub fn cache_dir(&self, app_id: &str) -> PathBuf {
     self.app_dir(app_id).join(CACHE_DIR)
+  }
+
+  /// Claim `app_id` for this process on a dev tree: a second live client of
+  /// the same app on the same tree is refused, since the two would corrupt
+  /// its installed versions and its data. Clients of different apps share a
+  /// tree freely (two projects on client 0). One claim at a time: the new
+  /// app is locked before the old one is let go, and reclaiming the held app
+  /// is a no-op. The player's own "default" home is never claimed, so idle
+  /// players coexist: claiming it lets go of the held app. Liveness is the OS file lock itself, released on any
+  /// exit including kill -9, so a marker is never stale; the pid written
+  /// inside only names the holder in the refusal.
+  pub fn claim_app(&self, app_id: &str) -> Result<(), String> {
+    let id = checked_component(Some(app_id), "app id");
+    if !self.dev {
+      return Ok(());
+    }
+    let mut held = self.claim.lock().expect("app claim lock poisoned");
+    if id == "default" {
+      *held = None;
+      return Ok(());
+    }
+    if held.as_ref().is_some_and(|(held_id, _)| *held_id == id) {
+      return Ok(());
+    }
+    let dir = self.app_dir(&id);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+      log::warn!("[sol] cannot create app dir {}: {e}", dir.display());
+      return Ok(());
+    }
+    let path = dir.join("run.pid");
+    let mut file = match std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path) {
+      Ok(file) => file,
+      Err(e) => {
+        log::warn!("[sol] cannot open run marker {}: {e}", path.display());
+        return Ok(());
+      }
+    };
+    match file.try_lock() {
+      Ok(()) => {
+        let _ = file.set_len(0);
+        let _ = file.write_all(std::process::id().to_string().as_bytes());
+        *held = Some((id, file));
+        Ok(())
+      }
+      Err(std::fs::TryLockError::WouldBlock) => {
+        let mut holder = String::new();
+        let _ = file.read_to_string(&mut holder);
+        let holder = holder.trim();
+        let holder = if holder.is_empty() { String::new() } else { format!(" (pid {holder})") };
+        Err(format!(
+          "Another client{holder} is running {id} in {}; two clients of one app on one data tree corrupt its versions and data, so give this one its own --client number",
+          self.client_dir.display()
+        ))
+      }
+      Err(std::fs::TryLockError::Error(e)) => {
+        log::warn!("[sol] cannot lock run marker {}: {e}", path.display());
+        Ok(())
+      }
+    }
   }
 
   /// `<client_dir>/identity` - persisted client identity (p2p key).
@@ -182,52 +242,8 @@ pub(crate) fn resolve(spec: &StorageSpec) -> Option<Storage> {
       return None;
     }
   }
-  // Dev trees only: the pref-path layouts (packed app, player, Android)
-  // have one client per install by construction, so no marker is claimed and
-  // nothing dev-shaped is written there.
-  let run_marker = if spec.data_root.is_some() { claim_run_marker(&client_dir) } else { None };
-  Some(Storage { data_dir, client_dir, flat, run_marker })
-}
-
-// Two live clients on one tree share one identity key and one data sandbox
-// per app, and corrupt them silently; claim a marker so the second one warns
-// loudly instead. Liveness is the OS file lock itself, held for the life of
-// the process and released by the OS on any exit including kill -9, so a
-// marker is never stale; the pid written inside only names the holder in the
-// warning. A warning, not a lock: the client still runs
-// (okf/plans/client-storage-updates.md deliberately dropped the
-// running-instance lock).
-fn claim_run_marker(client_dir: &PathBuf) -> Option<std::fs::File> {
-  let path = client_dir.join("run.pid");
-  let mut file = match std::fs::OpenOptions::new().read(true).write(true).create(true).open(&path) {
-    Ok(file) => file,
-    Err(e) => {
-      log::warn!("[sol] cannot open run marker {}: {e}", path.display());
-      return None;
-    }
-  };
-  match file.try_lock() {
-    Ok(()) => {
-      let _ = file.set_len(0);
-      let _ = file.write_all(std::process::id().to_string().as_bytes());
-      Some(file)
-    }
-    Err(std::fs::TryLockError::WouldBlock) => {
-      let mut holder = String::new();
-      let _ = file.read_to_string(&mut holder);
-      let holder = holder.trim();
-      let holder = if holder.is_empty() { String::new() } else { format!(" (pid {holder})") };
-      log::warn!(
-        "[sol] another client{holder} is already using {}; two clients on one tree corrupt each other's data - give each its own --client number",
-        client_dir.display()
-      );
-      None
-    }
-    Err(std::fs::TryLockError::Error(e)) => {
-      log::warn!("[sol] cannot lock run marker {}: {e}", path.display());
-      None
-    }
-  }
+  let dev = spec.data_root.is_some();
+  Some(Storage { data_dir, client_dir, flat, dev, claim: std::sync::Mutex::new(None) })
 }
 
 static STORAGE: std::sync::OnceLock<Option<Storage>> = std::sync::OnceLock::new();
@@ -243,4 +259,9 @@ pub fn init(spec: &StorageSpec) {
 /// config - same behavior as a failed pref path before).
 pub fn get() -> Option<&'static Storage> {
   STORAGE.get().and_then(|storage| storage.as_ref())
+}
+
+/// `Storage::claim_app` on the process's storage; nothing to claim without one.
+pub fn claim_app(app_id: &str) -> Result<(), String> {
+  get().map_or(Ok(()), |store| store.claim_app(app_id))
 }

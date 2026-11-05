@@ -1,6 +1,6 @@
 ---
 title: Platform layering
-description: Where OS integration lives - our own OS layer (`ore`) that wraps SDL where SDL reaches and our native code where it stops (SDL is the OS abstraction, decided 2026-11-04), with alloy reduced to the window's scene, rendering and frame policy and forge to portable capabilities; the main loop's split along the existing SDL pump, the facts that constrain it (SDL's thread rules, its activity-bound Android helpers, the headless link cost), the test set of platform features an app platform needs (push, alarms, background sync, secure storage, printing and more), the alternatives rejected, and the landing zone that makes new work land right before any existing code moves. Read before placing any platform or OS feature.
+description: Where OS integration lives - our own OS layer (`ore`) that wraps SDL where SDL reaches and our native code where it stops (SDL is the OS abstraction, decided 2026-11-04), with alloy reduced to the window's scene, rendering and frame timing (facts-based; policy stays lattice's) and forge to portable capabilities; the main loop's split along the existing SDL pump, the facts that constrain it (SDL's thread rules, its activity-bound Android helpers, the headless link cost), the test set of platform features an app platform needs (push, alarms, background sync, secure storage, printing and more), the alternatives rejected, and the landing zone that makes new work land right before any existing code moves. Read before placing any platform or OS feature.
 created: 2026-11-04
 ---
 
@@ -43,8 +43,9 @@ crate; no other crate names it.
   Depends on SDL, libc, ndk, jni, windows-sys, objc2; on nothing of ours.
 - **alloy**: the window's scene and its rendering. The renderer and raster
   thread, the rendertree (layout, hit testing, pointer routing, damage,
-  compositing), the spatial core, and frame timing policy (`FrameRelease`,
-  cadence, refresh counting, liveness). Uses the OS layer's window, GL
+  compositing), the spatial core, and frame timing (`FrameRelease`,
+  cadence, refresh counting, liveness), facts-based: it carries out what
+  lattice chooses. Uses the OS layer's window, GL
   surface and vsync source; names no SDL type.
 - **forge**: portable capabilities. Codecs, sqlite, http, p2p, compression,
   crypto, image, svg, wasm, the audio mixer. Calls the OS layer where a
@@ -113,9 +114,11 @@ Placement, in order:
 
 1. Does it reach the OS or SDL - anything per platform, any
    `cfg(target_os)`? OS layer.
-2. Is it the scene, rendering, or frame timing policy? alloy.
+2. Is it the scene, rendering, or frame timing? alloy: the facts and
+   their execution, never the policy choice.
 3. Is it the same code on every platform? forge.
-4. Is it how an app is hosted? lattice.
+4. Is it how an app is hosted, or a policy choice over alloy's facts?
+   lattice.
 
 That makes rule 2 of the platform-layering memory enforceable: platform
 differences are normalized at the platform boundary, and a
@@ -196,12 +199,13 @@ with five jobs:
 |---|---|---|
 | Wait and drain: `wait_event_timeout_ms`, `poll_iter`, `translate_event`, the Android touch side channel, the background event watch, the `PlatformWatch` polls (keyboard, power, refresh rate), gamepads | raw SDL in the loop | OS |
 | Wake: `FrameReady` pushed by the raster and vsync threads | SDL custom event | OS (mechanism) |
-| Frame signals: `FrameRelease`, vsync arming, refresh counting, cadence, idle tick, `FrameRendered`, liveness, redraw | alloy policy | alloy |
+| Frame signals: `FrameRelease`, vsync arming, refresh counting, cadence, idle tick, `FrameRendered`, liveness, redraw | alloy | alloy |
 | Raster results: presents, context loss (`recover_gl` rebuilds the window and GL) | mixed | alloy, calling the OS layer for the rebuild |
 | Commands: window operations (title, icon, fullscreen, cursor, pointer lock, text input, minimize), clipboard, dialog | SDL calls in the loop | OS; the pacing commands stay alloy |
 
 The split stays on the existing SDL pump. The OS layer is the pump, as a
-plain function; alloy keeps its loop and every pacing decision. No
+plain function; alloy keeps its loop and carries out the pacing lattice
+chooses. No
 inverted callback framework:
 
 ```rust
@@ -232,16 +236,17 @@ are.
   sources (`vsync.rs` backends, `display_link.rs`), window and GL setup
   (`setup_video`, `recover_gl`'s SDL half).
 - Stays in alloy: `FrameRelease`, cadence, refresh counting, the idle
-  tick, liveness, redraw, the input mute and the resampler (the input
-  pipeline's policy), the stepped loop.
+  tick, liveness, redraw, the input mute and the resampler, the stepped
+  loop.
 - Gone from alloy: every `sdl3::` type, and the `cfg(target_os =
   "android")` lines in the loop. The audio device hooks on background and
   foreground become the OS layer's own business, since the audio device
   lives there.
 
-This is rule 5 of the platform-layering memory as written: facts below
-the boundary, timeline and policy above. The vsync source is a fact,
-`FrameRelease` is policy.
+This is rule 5 of the platform-layering memory: alloy is facts-based,
+policy is lattice's. The vsync source and `FrameRelease` are alloy's; the
+pacing mode and the cadence-hold policy `FrameRelease` carries out are
+lattice's choice.
 
 The main-thread bridge comes with the pump, in the GUI host and in
 headless `flux` alike (`ore::main_thread`, confirmed 2026-11-04 in the SDL

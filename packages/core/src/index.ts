@@ -13,6 +13,8 @@ export type { Region, RegionCell, RegionGrid, RegionGridOptions, RegionHandle, R
 export { env } from "./environment"
 export { quality, setQuality, QUALITIES } from "./quality"
 export type { Quality } from "./quality"
+export { setCadenceHold, resetCadenceHold, cadenceHold } from "./cadence"
+export type { CadenceHoldPolicy, CadenceHoldState } from "./cadence"
 export type { InputDevices, SystemTheme, Orientation, Visibility, Launch } from "./environment"
 export { gamepads } from "./gamepad"
 export type { GamepadState } from "./gamepad"

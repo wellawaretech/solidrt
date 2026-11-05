@@ -75,6 +75,16 @@ one).
 (the adaptive icon's background layer behind `assets/icon.png`), and the
 color of the Android 12+ splash, which shows the icon on it until the
 app's first frame.
+
+`assets/icon.png` is the Android launcher icon's foreground. Draw the art
+edge to edge: do not pad it for the adaptive icon's safe zone. The APK
+insets the file by 22.5% on each side, so its side becomes 59.4dp of the
+108dp icon. The 66dp circle that every launcher mask keeps has a radius of
+0.555 of the file's side, so art inside that circle is never cut, and the
+file's corners can be. A file padded to the 108/66dp rule gets the padding
+twice and shows at about half the size. Use at least 238 px square (59.4dp
+at xxxhdpi). The Play Console store listing needs its own 512x512 PNG icon;
+pack does not make it.
 `capabilities` is what the app may ask the user for, in platform-neutral
 names. All are on unless switched off, so a packed app can do what it did
 in the player; the scaffold lists them all, and `"camera": false` (or

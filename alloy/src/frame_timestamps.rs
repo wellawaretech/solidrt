@@ -131,6 +131,23 @@ pub(crate) struct FrameTimestamps {
   /// did (see UNANSWERED_LIMIT), and whether any frame ever completed.
   unanswered: u32,
   answered: bool,
+  /// The completed frames' shape since the last `take_split`, for the
+  /// raster thread's 1/s line.
+  split: Split,
+}
+
+/// How completed frames ran against the pipeline (okf/plans/cadence-hold-
+/// app-control.md, stage 1): the GPU span the controller is fed, the
+/// latency from the frame's first command to its completion, and whether
+/// the next frame's first command came before the completion (the GPU
+/// work overlapped the next frame's CPU side) and by how much.
+#[derive(Clone, Copy, Default)]
+struct Split {
+  frames: u32,
+  gpu_ns: i64,
+  latency_ns: i64,
+  overlapped: u32,
+  overlap_ns: i64,
 }
 
 impl FrameTimestamps {
@@ -143,7 +160,27 @@ impl FrameTimestamps {
       last_complete_ns: None,
       unanswered: 0,
       answered: false,
+      split: Split::default(),
     }
+  }
+
+  /// The completed frames' split since the last call, as a tail for the
+  /// raster line; empty where nothing completed (or the source is not
+  /// armed).
+  pub(crate) fn take_split(&mut self) -> String {
+    let s = std::mem::take(&mut self.split);
+    if s.frames == 0 {
+      return String::new();
+    }
+    let ms = |ns: i64, n: u32| ns as f64 / n.max(1) as f64 / 1e6;
+    format!(
+      ", gpu {:.1}ms, latency {:.1}ms, overlapped {}/{} by {:.1}ms",
+      ms(s.gpu_ns, s.frames),
+      ms(s.latency_ns, s.frames),
+      s.overlapped,
+      s.frames,
+      ms(s.overlap_ns, s.overlapped)
+    )
   }
 
   /// Whether frames are measured here (and the frame timer query is not
@@ -209,7 +246,12 @@ impl FrameTimestamps {
   pub(crate) fn harvest(&mut self) -> Option<u64> {
     let State::Armed(armed) = &self.state else { return None };
     let mut last_error = None;
-    let poll = |frame_id: u64| -> Poll {
+    // The frames awaited before the sweep, oldest first, and the ones it
+    // completed, for the split: a completed frame's successor in the ring is
+    // the next frame, already begun.
+    let awaited: Vec<Entry> = self.pending.iter().copied().collect();
+    let mut completed: Vec<(u64, i64, Option<i64>)> = Vec::new();
+    let mut poll = |frame_id: u64| -> Poll {
       let names: &[i32] = if armed.queued {
         &[EGL_RENDERING_COMPLETE_TIME_ANDROID, EGL_REQUESTED_PRESENT_TIME_ANDROID]
       } else {
@@ -237,11 +279,28 @@ impl FrameTimestamps {
           // A completed frame's queue instant is settled; a stack that still
           // answers invalid or pending for it leaves the floor to `begin`.
           let queued_ns = (armed.queued && values[1] >= 0).then_some(values[1]);
+          completed.push((frame_id, complete_ns, queued_ns));
           Poll::Complete { complete_ns, queued_ns }
         }
       }
     };
-    let swept = sweep(&mut self.pending, &mut self.last_complete_ns, poll);
+    let floor_ns = self.last_complete_ns;
+    let swept = sweep(&mut self.pending, &mut self.last_complete_ns, &mut poll);
+    let mut previous_ns = floor_ns;
+    for (frame_id, complete_ns, queued_ns) in completed {
+      let Some(i) = awaited.iter().position(|e| e.frame_id == frame_id) else { continue };
+      let begin_ns = awaited[i].begin_ns;
+      if let Some(micros) = span_micros(complete_ns, begin_ns, queued_ns, previous_ns) {
+        self.split.frames += 1;
+        self.split.gpu_ns += micros as i64 * 1000;
+        self.split.latency_ns += complete_ns - begin_ns;
+        if let Some(next) = awaited.get(i + 1).filter(|next| next.begin_ns < complete_ns) {
+          self.split.overlapped += 1;
+          self.split.overlap_ns += complete_ns - next.begin_ns;
+        }
+      }
+      previous_ns = Some(complete_ns);
+    }
     if let Some(micros) = swept.latest_micros {
       if !self.answered {
         self.answered = true;

@@ -26,10 +26,10 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "
 import { join, resolve } from "node:path"
 import { swapLibs } from "../pack/android/apk"
 import { elfLoadAlignment, MIN_LOAD_ALIGN } from "../pack/android/elf"
-import { missingRuntimeBinary, noRuntimeDeclared, stockRuntimeNotice } from "../server/runtime-messages"
+import { missingRuntimeBinary, noRuntimeDeclared, staleRuntime, stockRuntimeNotice, unversionedRuntime } from "../server/runtime-messages"
 import { fail } from "./fail"
 import { projectEntry } from "./mode"
-import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, loadAppIdentity, loadProject, runtimeEngine, runtimeFontAliases, type AppIdentity } from "./project"
+import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, CLI_VERSION, loadAppIdentity, loadProject, runtimeEngine, runtimeFontAliases, type AppIdentity } from "./project"
 
 /** The application id and launcher label of the Player of the app `identity`, a custom runtime's. */
 export function playerIdentity(identity: AppIdentity): { appId: string; label: string } {
@@ -59,6 +59,8 @@ export type ProjectRuntime = {
 }
 
 const PLAYER_APK = "solidrt-go.apk"
+// A published release's version; a checkout's git describe is not one.
+const RELEASE_VERSION = /^\d+\.\d+\.\d+$/
 const RUNNER_APK = "solidrt.apk"
 
 let resolved: ProjectRuntime | null | undefined
@@ -99,19 +101,41 @@ function load(): ProjectRuntime | null {
     }
     return null
   }
+  // A staged folder must be at the release of the @solidrt packages: the
+  // stock APK its libs are swapped into and the bundles it embeds come with
+  // them, and a library from another release fails only on the device (an
+  // UnsatisfiedLinkError at the first native method it lacks). runtime.mk
+  // stamps each folder it stages; a checkout stamps a git describe, which
+  // is not a release and is not compared, as runtime.mk does not compare it.
+  let checked = new Set<string>()
+  let checkVersion = (folder: string) => {
+    if (checked.has(folder) || !RELEASE_VERSION.test(CLI_VERSION)) return
+    checked.add(folder)
+    let path = join(folder, "version.txt")
+    if (!existsSync(path)) {
+      console.log(unversionedRuntime(folder, declared))
+      return
+    }
+    let staged = readFileSync(path, "utf8").trim()
+    if (RELEASE_VERSION.test(staged) && staged !== CLI_VERSION) fail(staleRuntime(folder, staged, CLI_VERSION, declared))
+  }
   return {
     dir,
     binary(name, triple, ext, needed) {
       let path = join(dir, triple, name + ext)
-      return existsSync(path) ? path : missing(`${name} for ${triple}`, path, needed, true)
+      if (!existsSync(path)) return missing(`${name} for ${triple}`, path, needed, true)
+      checkVersion(join(dir, triple))
+      return path
     },
     apk(abi, base, needed) {
       let libDir = join(dir, "android", abi)
       if (libNames(libDir).length === 0) return missing(`Player libs for ${abi}`, libDir, needed, base !== null)
+      checkVersion(libDir)
       return derive("Player", libDir, PLAYER_APK, abi, base, player())
     },
     runnerApk(abi, base, needed) {
       let libDir = join(dir, "android-runtime", abi)
+      if (libNames(libDir).length > 0) checkVersion(libDir)
       return derive("runner", libDir, RUNNER_APK, abi, base, null) ?? missing(`runner libs for ${abi}`, libDir, needed, base !== null)
     },
     hasLibs(abi) {

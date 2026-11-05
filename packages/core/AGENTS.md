@@ -14,7 +14,8 @@ matches the work before starting it:
   an effect, vector art, a chart.
 - agents/performance.md - the performance model, in order of leverage. Read
   before writing any per-frame code, any animation, or anything that writes
-  properties in a loop.
+  properties in a loop, and before choosing a frame-rate policy (the
+  cadence hold).
 
 When SolidRT itself gets in the way (a bug, a missing export, a doc that
 misled you, a trap nothing warned about), append it to SOLIDRT-FEEDBACK.md

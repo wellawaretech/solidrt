@@ -3,15 +3,18 @@ the renderer seam in `src/renderer/` (the one module that names the
 `impellers` crate, see okf/plans/renderer-seam.md); glow as the single
 trusted GL path; the rendertree - Alloy's own scene graph with taffy-based
 layout (cached), hit testing and pointer routing, damage tracking, and
-compositing; and the frame timing policy. It still drives SDL3 for the
+compositing; and frame timing. It still drives SDL3 for the
 window, input and the audio and camera devices; that moves to ore, the OS
 layer, as features touch it. Target is cross-platform (Linux, Android, Windows, macOS, iOS), OpenGL ES 3.0 minimum.
 GLES is the single backend by design, translated per platform by ANGLE where
 no native GL exists; native Vulkan/Metal backends are deliberately out (see
 okf/research/graphics-backend-strategy.md before proposing one).
 
-What belongs here is the scene, its rendering and the frame timing policy
-(`FrameRelease`, cadence, refresh counting, liveness). Anything that reaches
+What belongs here is the scene, its rendering and frame timing
+(`FrameRelease`, cadence, refresh counting, liveness). Alloy is
+facts-based: it reports facts and carries out what the embedder chooses.
+Policy is lattice's: the pacing mode, the cadence-hold policy and its
+defaults, any choice an embedder could make differently. Anything that reaches
 the OS or SDL belongs in ore, even when it serves the window: new SDL calls,
 new `sdl_utils.rs` wrappers and new `cfg(target_os)` code go there, not here
 (the root CLAUDE.md, Projects, has the rule; okf/design/platform-layering.md

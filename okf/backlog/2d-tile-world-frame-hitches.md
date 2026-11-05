@@ -83,7 +83,7 @@ a 1.3 ms GPU frame on the fixed build the same day, while a relaunch
 that never tripped the rise ran at 90 fps; the tablet's Auto run on the
 fixed build locked in 150 s after launch, past a two-minute reading. The controller's CPU term
 under the hold holds the buffer-queue wait the held display causes, so
-the step-down prediction never fits: okf/backlog/cadence-hold-dvfs-lock-in.md
+the step-down prediction never fits: okf/done/cadence-hold-dvfs-lock-in.md
 (the diagnostics, the mechanism, two leads; the DVFS reading there was
 the first guess).
 
@@ -223,7 +223,7 @@ The first "done looks like" line holds.
 
 Pixel 7 at the default: GPU 1.5 to 1.8 ms per frame, 0 to 4 missed
 presents, no pacing pressure; it sits at hold 2 (45 fps at 90 Hz), the
-cadence lock-in of okf/backlog/cadence-hold-dvfs-lock-in.md, not this
+cadence lock-in of okf/done/cadence-hold-dvfs-lock-in.md, not this
 item. Tablet relaunched with the hold on Auto: hold 1 through the first
 50 s (6 missed presents in the first window, the startup burst, then 0
 to 2), 60 fps; the earlier lock-in came 150 s after launch, so a longer

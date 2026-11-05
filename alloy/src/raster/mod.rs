@@ -674,12 +674,15 @@ fn ensure_copy_program(gl: &glow::Context, slot: &mut Option<Rc<ShaderProgram>>)
 }
 
 /// Rolling once-per-second trace of the interactive frame's native phases
-/// (drag latency diagnostics): average fence wait, draw, and present (swap
-/// block) times, plus the worst present. Logs only in seconds where frames
-/// were drawn, so an idle app stays silent. A present averaging near a full
-/// refresh period means swaps block on a saturated present queue.
+/// (drag latency diagnostics): average prep (the frame's start to the fence
+/// wait: video latch, offscreen pass flush), fence wait, draw, and present
+/// (swap block) times, plus the worst present, and the frame timestamps'
+/// tail where they are armed. Logs only in seconds where frames were drawn,
+/// so an idle app stays silent. A present averaging near a full refresh
+/// period means swaps block on a saturated present queue.
 struct FrameTiming {
   since: std::time::Instant,
+  prep: f32,
   wait: f32,
   draw: f32,
   present: f32,
@@ -689,10 +692,19 @@ struct FrameTiming {
 
 impl FrameTiming {
   fn new() -> Self {
-    FrameTiming { since: std::time::Instant::now(), wait: 0.0, draw: 0.0, present: 0.0, present_max: 0.0, frames: 0 }
+    FrameTiming {
+      since: std::time::Instant::now(),
+      prep: 0.0,
+      wait: 0.0,
+      draw: 0.0,
+      present: 0.0,
+      present_max: 0.0,
+      frames: 0,
+    }
   }
 
-  fn record(&mut self, wait_ms: f32, draw_ms: f32, present_ms: f32) {
+  fn record(&mut self, prep_ms: f32, wait_ms: f32, draw_ms: f32, present_ms: f32, tail: impl FnOnce() -> String) {
+    self.prep += prep_ms;
     self.wait += wait_ms;
     self.draw += draw_ms;
     self.present += present_ms;
@@ -701,12 +713,14 @@ impl FrameTiming {
     if self.since.elapsed().as_secs_f32() >= 1.0 {
       let n = self.frames as f32;
       log::debug!(
-        "[alloy] raster: {} frames/s, wait {:.1}ms, draw {:.1}ms, present {:.1}ms (max {:.1}ms)",
+        "[alloy] raster: {} frames/s, prep {:.1}ms, wait {:.1}ms, draw {:.1}ms, present {:.1}ms (max {:.1}ms){}",
         self.frames,
+        self.prep / n,
         self.wait / n,
         self.draw / n,
         self.present / n,
-        self.present_max
+        self.present_max,
+        tail()
       );
       *self = FrameTiming::new();
     }

@@ -53,7 +53,7 @@ SDL is the OS abstraction library, and `ore` is the one crate that names it for 
 # Projects
 ## Rust
 - `ore` the OS layer, the platform boundary: every OS facility, one contract each (today the main-thread bridge, opening a link and the locale). It wraps SDL where SDL reaches and our own native code (JNI, Win32, Objective-C, D-Bus) where it stops, and depends on nothing of ours. Read okf/design/platform-layering.md before placing any platform or OS feature
-- `alloy` the window's scene and its rendering: the renderer and raster thread, GL (glow) and Impeller, the rendertree (layout, hit testing, compositing), the spatial core and the frame timing policy. It still holds the SDL window, the event pump and the device subsystems (audio device, camera, clipboard, file dialogs) and the Android glue; they move to ore as features touch them
+- `alloy` the window's scene and its rendering: the renderer and raster thread, GL (glow) and Impeller, the rendertree (layout, hit testing, compositing), the spatial core and frame timing (`FrameRelease`, cadence, refresh counting, liveness). alloy is facts-based: it reports facts and carries out what lattice chooses; policy is lattice's. It still holds the SDL window, the event pump and the device subsystems (audio device, camera, clipboard, file dialogs) and the Android glue; they move to ore as features touch them
 - `forge` portable capabilities, the same code on every platform (HTTP, fs, sqlite, subprocess, p2p, decoders, ...): it calls ore where a capability touches the OS, and names no scripting-engine types. Its existing OS code (content providers, the AMediaCodec decoder's JNI side, the tty) moves to ore as features touch it
 - `flux` embeds a JavaScript runtime built on QuickJS; its plugins marshal the forge cores, the ore facilities and the alloy GUI
 - `lattice` the SolidRT runtime: binds alloy, forge, ore and flux and drives the event loop; it reaches ore for host concerns only (init order, app identity, storage roots, the windowless host), never for app features
@@ -62,9 +62,9 @@ SDL is the OS abstraction library, and `ore` is the one crate that names it for 
 Placement, in order (okf/design/platform-layering.md):
 
 1. Does it reach the OS or SDL - anything per platform, any `cfg(target_os)`? ore.
-2. Is it the scene, rendering, or frame timing policy? alloy.
+2. Is it the scene, rendering, or frame timing? alloy: the facts and their execution, never the policy choice.
 3. Is it the same code on every platform? forge.
-4. Is it how an app is hosted? lattice.
+4. Is it how an app is hosted, or a policy choice over alloy's facts? lattice.
 
 New work that reaches SDL or the OS goes into ore; nothing new of that kind
 lands in alloy, forge or lattice, and their existing OS code moves to ore

@@ -118,7 +118,12 @@ predictable client<N> names cannot collide with server-side files). A
 packed app has exactly one client, so there `--client` is warned and
 ignored. No running-instance check or lock: multiple instances of one
 client (or one packed app) may run concurrently; not overwriting its own
-files is the app's responsibility. Caveat: instances of the same client
+files is the app's responsibility. Revised 2026-11-05 for dev trees: a
+second live client of the same app on one tree is refused (a per-app
+`run.pid` lock, `Storage::claim_app`), because two dev clients of one app
+installed one version at once and truncated a hard-linked font in every
+held version; the store, not the app, owned what broke. Clients of
+different apps still share a tree. Caveat: instances of the same client
 share identity/p2p.key, so concurrent tunnel binds fight over one iroh
 identity - the answer is --client 1. `.sol-tunnel-key` stays at the
 project root. An old `./.sol-cache.db` is stale and can be deleted.

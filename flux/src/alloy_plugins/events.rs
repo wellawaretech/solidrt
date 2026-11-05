@@ -122,6 +122,23 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent, time_stamp_ms: f64) -> boo
         emit_sticky(&ctx, "pointerLock", obj);
       });
     }
+    // The cadence-hold policy in force and the hold, whenever either changes.
+    // Sticky: a reload's init events replay the state, and a late reader
+    // sees it.
+    AlloyEvent::CadenceHold { policy, hold } => {
+      let (policy, hold) = (*policy, *hold);
+      exec.exec(move |ctx| {
+        let obj = Object::new(ctx.clone()).expect("create object");
+        match policy {
+          alloy::CadenceHold::Off => obj.set("policy", "off"),
+          alloy::CadenceHold::Auto { .. } => obj.set("policy", "auto"),
+          alloy::CadenceHold::Fixed(k) => obj.set("policy", k),
+        }
+        .expect("set policy");
+        obj.set("hold", hold).expect("set hold");
+        emit_sticky(&ctx, "cadenceHold", obj);
+      });
+    }
     AlloyEvent::Key { down, key, code, modifiers, repeat } => {
       emit_key(exec, if *down { "keydown" } else { "keyup" }, key.clone(), code, *modifiers, *repeat, time_stamp_ms)
     }

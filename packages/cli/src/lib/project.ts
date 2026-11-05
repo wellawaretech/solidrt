@@ -18,7 +18,9 @@ import { iconBackgroundRgb } from "./icon-background"
 //                                   // an undeclared assets/icon.svg is picked
 //                                   // up by convention. assets/icon.png beside
 //                                   // it is the Android launcher icon (pack
-//                                   // --apk)
+//                                   // --apk), art edge to edge: the APK
+//                                   // insets it 22.5% for the safe zone
+//                                   // (pack/docs.md)
 //     "iconBackground": "#ffffff",  // the ground behind the icon's transparent
 //                                   // foreground (Android adaptive icon and
 //                                   // splash; other packers as they compose

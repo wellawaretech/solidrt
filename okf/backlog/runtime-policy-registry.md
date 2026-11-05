@@ -31,6 +31,14 @@ should be
   ~1-2 frames extra input latency) vs VsyncLocked (input-to-glass
   latency). The first policy with a measured, user-visible consequence in
   both directions - the natural first candidate for an override surface.
+- **Cadence hold** (lattice's default from the mouse fact: Auto on touch
+  and remote clients, Off with a mouse): the first policy with the whole
+  surface. Readable through `cadenceHold()` (the policy in force and the
+  hold), overridable at runtime through `setCadenceHold` (imperative, a
+  top-level call applies before the first frame; it survives device
+  changes and ends with the app), forced through `resetCadenceHold()`,
+  and `SOLIDRT_CADENCE_HOLD` over both for measurements
+  ([[cadence-hold-app-control]], 2026-11-05).
 - **Dev/prod validation** ([[dev-prod-validation-policy]]): throw in dev,
   warn in prod; the signal itself is still missing.
 - **Superseded-frame load shedding**: interactive mode drops stale frame

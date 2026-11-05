@@ -1,3 +1,4 @@
+mod cadence;
 mod entry;
 pub mod fonts;
 mod frame;
@@ -562,6 +563,16 @@ fn ensure_anchored(app_id: &str) {
   }
 }
 
+// Back to the startup app: its claim replaces the stopped app's (the
+// player's "default" home holds none), so another client may take the
+// stopped app from here.
+#[cfg(feature = "go")]
+fn release_to_default(default_app_id: &str) {
+  if let Err(e) = storage::claim_app(default_app_id) {
+    log::error!("[sol] {e}");
+  }
+}
+
 // Re-anchor into `app_id`'s data sandbox and record it as the app the process
 // should be anchored to. `current` is intent, not observed state: if the
 // anchor fails here, the loop-top ensure_anchored retries every engine spin
@@ -596,40 +607,6 @@ fn own_scheme(app_id: Option<&str>, display_name: Option<&str>) -> ore::link::Ow
 // (see the reload re-entry state in the engine loop).
 fn reentry_link(last_location: &Option<(Option<String>, String)>, run_id: &Option<String>) -> Option<String> {
   last_location.as_ref().filter(|(id, _)| id == run_id).map(|(_, location)| location.clone())
-}
-
-// The longest frame slot the automatic cadence hold may choose, ms: no hold
-// slower than 20 fps (Android's Frame Pacing library's default too); a
-// workload that needs more is held at this slot and its longer intervals
-// count as misses.
-const CADENCE_HOLD_MAX_MS: u32 = 50;
-
-// The cadence-hold policy (tier 3 of okf/design/frame-timing.md, plan
-// okf/plans/cadence-hold.md) from the input-modality fact: held where
-// fluency beats frame rate - touch clients, which run one frame in flight
-// anyway, and remote-driven clients (no touch, no mouse) - and off where a
-// mouse is present, because a pointer-driven client pipelines under swap
-// pacing and pays more than the boundary rounding for a hold, and cursor
-// motion reads better at a higher uneven rate. `SOLIDRT_CADENCE_HOLD`
-// (`off`, `auto` or a whole number of refreshes) overrides it for probes and
-// censuses until the runtime policy registry gives apps the knob
-// (okf/backlog/runtime-policy-registry.md).
-fn cadence_hold_policy(mouse: bool) -> alloy::CadenceHold {
-  if let Ok(v) = std::env::var("SOLIDRT_CADENCE_HOLD") {
-    match v.trim() {
-      "off" => return alloy::CadenceHold::Off,
-      "auto" => return alloy::CadenceHold::Auto { max_ms: CADENCE_HOLD_MAX_MS },
-      s => match s.parse::<u32>() {
-        Ok(k) if k >= 1 => return alloy::CadenceHold::Fixed(k),
-        _ => log::warn!("[sol] SOLIDRT_CADENCE_HOLD={v}: expected off, auto or a whole number of refreshes; ignored"),
-      },
-    }
-  }
-  if mouse {
-    alloy::CadenceHold::Off
-  } else {
-    alloy::CadenceHold::Auto { max_ms: CADENCE_HOLD_MAX_MS }
-  }
 }
 
 fn ui_thread(
@@ -675,6 +652,14 @@ fn ui_thread(
   // wherever the client was spawned. The dev server is a separate process
   // and unaffected.
   storage::init(&storage_spec);
+  // A client started on an app (a render) claims it like a push does: a
+  // second live client of the app on this dev tree is refused at once.
+  if let Some(app_id) = &storage_spec.app_id {
+    if let Err(e) = storage::claim_app(app_id) {
+      log::error!("[sol] {e}");
+      std::process::exit(1);
+    }
+  }
   match storage::get() {
     Some(store) => match std::env::set_current_dir(&store.data_dir) {
       Ok(()) => log::info!("[sol] working directory set to {}", store.data_dir.display()),
@@ -714,6 +699,14 @@ fn ui_thread(
   // AlloyCommand::SetUiBusyFlag).
   let ui_busy = Arc::new(AtomicBool::new(false));
   alloy_cmd_tx.send(alloy::AlloyCommand::SetUiBusyFlag(ui_busy.clone())).ok();
+  // The cadence-hold policy layers (cadence.rs), shared by the input-device
+  // arm, the engine loop and every engine's sol:app. The measurement
+  // override goes in for the process's whole life, ahead of the first
+  // default (InputDevices) and every app's choice.
+  let cadence = Arc::new(Mutex::new(cadence::CadencePolicy::new(alloy_cmd_tx.clone())));
+  if let Some(hold) = cadence::env_override() {
+    cadence.lock().expect("cadence policy lock poisoned").set_override(hold);
+  }
   platform.set_stats_enabled(stats);
   let input_state = Arc::new(InputState::new());
   // The go client's boot rule: no app source means the player, always,
@@ -896,6 +889,7 @@ fn ui_thread(
     // Pacing policy sender for the event loop below (see the InputDevices
     // arm); the original stays with this thread for later commands.
     let alloy_cmd_events = alloy_cmd_tx.clone();
+    let cadence_events = cadence.clone();
     local.spawn_local(async move {
       loop {
         // One batch per cycle: block for the first event, then drain whatever
@@ -1012,12 +1006,12 @@ fn ui_thread(
             // ~1.4 percent on a 50Hz Android TV).
             AlloyEvent::InputDevices { keyboard, mouse, touch, screen_keyboard } => {
               let pacing = if *touch { alloy::FramePacing::VsyncLocked } else { alloy::FramePacing::SwapPaced };
-              let hold = cadence_hold_policy(*mouse);
+              let hold = cadence::default_for(*mouse);
               log::info!(
-                "[sol] input devices: keyboard={keyboard} mouse={mouse} touch={touch} screen_keyboard={screen_keyboard} -> pacing {pacing:?}, cadence hold {hold:?}"
+                "[sol] input devices: keyboard={keyboard} mouse={mouse} touch={touch} screen_keyboard={screen_keyboard} -> pacing {pacing:?}, cadence hold default {hold:?}"
               );
               alloy_cmd_events.send(alloy::AlloyCommand::SetFramePacing(pacing)).ok();
-              alloy_cmd_events.send(alloy::AlloyCommand::SetCadenceHold(hold)).ok();
+              cadence_events.lock().expect("cadence policy lock poisoned").set_default(hold);
             }
             _ => {}
           }
@@ -1360,6 +1354,8 @@ fn ui_thread(
       let builder = {
         let exit_policy_exit = exit_policy.clone();
         let exit_policy_background = exit_policy.clone();
+        let cadence_app = cadence.clone();
+        let cadence_reset = cadence.clone();
         let own = own_scheme(storage_spec.app_id.as_deref(), display_name.as_deref());
         builder.plugin(move |ctx| {
           plugins::app::install(
@@ -1367,6 +1363,10 @@ fn ui_thread(
             plugins::app::AppControl::new(plugins::app::AppControlInner {
               exit: Box::new(move || exit_policy_exit.exit()),
               background: Box::new(move || exit_policy_background.background()),
+              set_cadence_hold: Box::new(move |policy| {
+                cadence_app.lock().expect("cadence policy lock poisoned").set_app(policy)
+              }),
+              reset_cadence_hold: Box::new(move || cadence_reset.lock().expect("cadence policy lock poisoned").reset()),
             }),
           );
           flux::link::set_own_scheme(&ctx, own);
@@ -1436,6 +1436,13 @@ fn ui_thread(
         Ordering::Relaxed,
       );
       *query_exec.lock().expect("query exec lock poisoned") = Some(engine.exec_handle());
+      // A new app starts clean: under the default policy, unheld. The
+      // previous app's choice and the hold it learned were its own.
+      {
+        let mut cadence = cadence.lock().expect("cadence policy lock poisoned");
+        cadence.set_app(None);
+        cadence.reset();
+      }
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
       // The window icon and title follow the app like the sandbox and fonts
       // do: the installed manifest's icon and displayName, or the client's
@@ -1540,6 +1547,7 @@ fn ui_thread(
                   // guard) holding its data dir alive. Its fonts go with it -
                   // the player runs on the base set alone.
                   current_app_id = Some(default_app_id.clone());
+                  release_to_default(&default_app_id);
                   reset_fonts(&platform, base_fonts.clone());
                 }
                 EngineCmd::Quit => quit = true,
@@ -1614,8 +1622,9 @@ fn ui_thread(
             run_id = Some(default_app_id.clone());
             next_link = None;
             showing_bsod = false;
-            // Same sandbox and font release as the in-loop Stop arm above.
+            // Same sandbox, claim and font release as the in-loop Stop arm above.
             current_app_id = Some(default_app_id.clone());
+            release_to_default(&default_app_id);
             reset_fonts(&platform, base_fonts.clone());
           }
           Some(EngineCmd::Quit) | None => break,

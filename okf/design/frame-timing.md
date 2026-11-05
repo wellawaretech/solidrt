@@ -408,42 +408,67 @@ GPU time of the last retired window draw: on Android the compositor's
 rendering-complete timestamp for the frame, `alloy/src/frame_timestamps.rs`,
 because the timer query around the window draw reads the frame interval
 on Adreno, [android-frame-gpu-time-from-egl-timestamps]; elsewhere that
-query). Up and down use different
-evidence on purpose. A hold that is too short shows itself as an interval
-longer than the hold, so it rises on two consecutive measured intervals,
-to the worst of them, with no prediction and no margin; the first three
-presents after any change are not evidence, because they show the
-pipeline re-forming. Under an unheld swap-paced chain the pipeline hides
-the work (a 21 ms frame shows 1,1,2 at 60 Hz and never two long intervals
-in a row), so there the pipelined estimate `max(cpu, gpu)` also counts as
-evidence for a rise, as in the Frame Pacing library, but only within
-thirty presents of a measured long interval: a pipelined chain's CPU and
-GPU readings are stretched by its own fence and buffer waits (the 50 Hz
-TV read 19 and 20 ms for a 7 ms frame at a clean 50 fps), so without a
-long interval they prove nothing. A hold that is too long shows nothing, so the step
-down is a prediction, `offset + cpu + gpu + 2 ms` fitting one slot fewer
-for a whole second of presents (an isolated non-fit is a spike and is
-tolerated, two in a row close the window, mirroring the up rule), where
-the offset is the pacing delay after the vsync under VsyncLocked; a
-wrong step is reverted by the measured rule as soon as two long
-intervals coincide and each reverted step doubles the wait before the
-next try (to 32 s). The first controller predicted both
-directions with a quarter-period margin and held an empty full-rate
-frame at half rate on the Pixel, because 6.7 ms of pacing delay plus the
-margin leave 1.6 ms of a 90 Hz period; the fit boundary under
-VsyncLocked is device-specific, which is why prediction only proposes.
+query). Up and down use different evidence on purpose. A hold that is
+too short shows itself as an interval longer than the hold, so it rises on
+measured intervals, with no prediction and no margin - but only on a
+sustained need: a third of the last 30 presents longer than the hold, to
+the median of those, so a startup burst or one heavy mount (a 453 ms
+first frame and four slow ones on the A7) does not hold the app for the
+rest of its run ([cadence-hold-app-control]). The first three presents
+after any change are not evidence, because they show the pipeline
+re-forming. Under an unheld swap-paced chain the pipeline hides the work
+(a 21 ms frame shows 1,1,2 at 60 Hz), so there the pipelined estimate
+`max(cpu, gpu)` also counts as evidence for a rise, as in the Frame
+Pacing library, but only within thirty presents of a measured long
+interval: a pipelined chain's CPU and GPU readings are stretched by its
+own fence and buffer waits (the 50 Hz TV read 19 and 20 ms for a 7 ms
+frame at a clean 50 fps), so without a long interval they prove nothing.
 
-Policy is the embedder's (`AlloyCommand::SetCadenceHold`: Off, Auto with
-a maximum slot length, Fixed), chosen in lattice from the input-modality
-fact beside the pacing policy: Auto where fluency beats frame rate, touch
-clients and clients with neither touch nor mouse; Off where a mouse is
-present, because a pointer-driven client pipelines and a sequential hold
-costs it more than the boundary rounding. The maximum is 50 ms (no hold
-slower than 20 fps; a workload that needs more is held at the maximum
-and its longer intervals are misses, Swappy's rule; dropping to unheld
-beyond it flapped on a workload sitting on the maximum).
-`SOLIDRT_CADENCE_HOLD=off|auto|<k>` overrides it until the policy registry
-exists ([runtime-policy-registry]). The expected interval for the miss
+A hold that is too long shows nothing, so the step down is a prediction:
+`max(cpu, gpu) + 2 ms` fitting one slot fewer for a whole second of
+presents (an isolated non-fit is a spike and is tolerated, two in a row
+close the window). It reads the frame as the pipeline runs it, not the
+sum, and the pacing delay a vsync-locked frame starts after is latency,
+not slot use (every frame starts at the same phase; the Pixel made 1896
+of 1897 refreshes at 90 Hz with 3.9 ms of CPU from 6.7 ms into the
+period, where counting the delay held it at 45 fps): the swap returns at the queue and the GPU finishes while the
+next frame's CPU side runs, under VsyncLocked too (the A7 completed 96%
+of its frames after the next had begun, every refresh made with 21 ms of
+summed work at 60 Hz). Down only on proof, unless forced: the prediction
+stays pessimistic because the device lowers the capacity it measures
+under a hold (the A7's governor clocks the GPU down, 13.1 ms busy per
+frame at hold 1 against 29.4 at hold 3; the Pixel's scheduler moves the
+frame's threads to the little cores, a 6.0 ms CPU term against 12.8), so
+it steps down as far as it can prove, which for a heavy frame is often
+hold 2, and never on a guess. A wrong step stutters once: inside its
+revert span two consecutive long intervals revert it without waiting for
+the share, and a reverted step sets a floor the step down does not cross
+again until an idle gap, a reset or a policy change. The rest is the
+app's: `resetCadenceHold()` at a phase start, after it has loaded. The
+first controller predicted both directions with a quarter-period margin
+and counted the pacing delay as slot use, and held an empty full-rate
+frame at half rate on the Pixel (6.7 ms of delay plus the margin leave
+1.6 ms of a 90 Hz period); the rise is measured since, and the step down
+no longer counts the delay.
+
+The policy is lattice's, in three layers (`lattice/src/cadence.rs`,
+`CadencePolicy`); alloy is told the policy in force
+(`AlloyCommand::SetCadenceHold`: Off, Auto with a maximum slot length,
+Fixed) and carries it out. The runtime default is chosen from the
+input-modality fact beside the pacing policy: Auto where fluency beats
+frame rate, touch clients and clients with neither touch nor mouse; Off
+where a mouse is present, because a pointer-driven client pipelines and
+a sequential hold costs it more than the boundary rounding. The app's
+choice goes over it (`setCadenceHold("off" | "auto" | n | "default")` in
+core, over `sol:app`): it applies at once, starting unheld, survives an
+input device change, and ends with the app (lattice clears it and resets
+the hold for every new engine). `SOLIDRT_CADENCE_HOLD=off|auto|<k>` goes
+over both, for measurements. The app reads the policy in force and the
+hold through `cadenceHold()` (the sticky `cadenceHold` event,
+`AlloyEvent::CadenceHold`). The maximum is 50 ms, lattice's (no hold slower than 20
+fps; a workload that needs more is held at the maximum and its longer
+intervals are misses, Swappy's rule; dropping to unheld beyond it flapped
+on a workload sitting on the maximum). The expected interval for the miss
 accounting is the hold: a held interval is not a miss.
 
 Two facts had to be made true for the controller to see anything, and
@@ -551,6 +576,7 @@ Open: listed above.
 [runtime-policy-registry]: ../backlog/runtime-policy-registry.md
 [video-playback]: ../backlog/video-playback.md
 [frame-signal-refresh-count]: ../done/frame-signal-refresh-count.md
-[cadence-hold]: ../plans/cadence-hold.md
+[cadence-hold]: ../done/cadence-hold.md
+[cadence-hold-app-control]: ../done/cadence-hold-app-control.md
 [vsync-locked-js-bound-double-signal]: ../done/vsync-locked-js-bound-double-signal.md
 [before-render-phase]: ../done/before-render-phase.md

@@ -534,17 +534,6 @@ impl FrameRelease {
     self.budget.current_ms()
   }
 
-  /// How far into its slot a released frame starts, ms: the signal delay
-  /// after the vsync under VsyncLocked (the cadence controller counts it as
-  /// slot use), zero under SwapPaced, where the slot starts at the emission.
-  pub fn slot_offset_ms(&self) -> f32 {
-    if self.vsync_locked() {
-      self.budget.current_ms()
-    } else {
-      0.0
-    }
-  }
-
   /// Whether an unheld chain pipelines: under present-return pacing the
   /// next frame's signal follows the swap's return, so its CPU work overlaps
   /// this frame's GPU work and the throughput is the larger of the two,

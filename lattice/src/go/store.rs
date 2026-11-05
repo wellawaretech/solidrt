@@ -73,6 +73,16 @@ pub fn missing_assets(manifest: &str) -> Result<(String, Vec<AssetEntry>), Strin
   Ok((parsed.app_id, missing))
 }
 
+/// Claim the app a push names for this process (`storage::claim_app`):
+/// refused while another live client runs it on this dev tree. A manifest
+/// that does not parse claims nothing; the install reports it.
+pub fn claim_push(manifest: &str) -> Result<(), String> {
+  match Manifest::parse(manifest) {
+    Ok(parsed) => crate::storage::claim_app(&parsed.app_id),
+    Err(_) => Ok(()),
+  }
+}
+
 /// Install a pushed version into the client store: the bundle from the push,
 /// assets from `fetched` (keyed by manifest path) or hardlinked from the
 /// versions already held. Returns the app id the version was installed under.
@@ -482,8 +492,12 @@ pub(crate) fn install_at(
   if !version_dir.is_dir() {
     // Stage the version dir next to its final name, then rename: a crash
     // mid-write leaves only a .tmp- leftover (cleaned by the next prune),
-    // never a half-written version state.json could point at.
-    let tmp = app_dir.join("versions").join(format!(".tmp-{version}"));
+    // never a half-written version state.json could point at. The staging
+    // dir is this process's own, beside the per-app claim that keeps a
+    // second client of the app off this tree (storage::claim_app): a write
+    // into a shared stage over another install's hard-linked asset would
+    // truncate the shared inode in every held version.
+    let tmp = app_dir.join("versions").join(format!(".tmp-{version}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| format!("create version dir: {e}"))?;
     std::fs::write(tmp.join("manifest.json"), manifest).map_err(|e| format!("write manifest: {e}"))?;
@@ -512,7 +526,14 @@ pub(crate) fn install_at(
         return Err(format!("asset {} was neither fetched nor held", asset.path));
       }
     }
-    std::fs::rename(&tmp, &version_dir).map_err(|e| format!("commit version dir: {e}"))?;
+    if let Err(e) = std::fs::rename(&tmp, &version_dir) {
+      // Another client committed the same version first: its content is
+      // ours (the dir name is the manifest's hash), so drop the stage.
+      let _ = std::fs::remove_dir_all(&tmp);
+      if !version_dir.is_dir() {
+        return Err(format!("commit version dir: {e}"));
+      }
+    }
     // Only now: every hash above has been checked and the dir is committed.
     if let Some(wasm) = wasm {
       prewarm_wasm(app_dir, &version_dir, &parsed, wasm);
@@ -612,7 +633,9 @@ fn load_state(app_dir: &Path) -> Option<State> {
 fn save_state(app_dir: &Path, state: &State) -> Result<(), String> {
   let json = serde_json::to_vec_pretty(state).map_err(|e| format!("state serialize: {e}"))?;
   let path = app_dir.join("state.json");
-  let tmp = app_dir.join("state.json.tmp");
+  // Per process, like a version's stage: a shared temp name lets one
+  // client rename another's half-written state into place.
+  let tmp = app_dir.join(format!("state.json.tmp-{}", std::process::id()));
   std::fs::write(&tmp, &json).map_err(|e| format!("state write: {e}"))?;
   std::fs::rename(&tmp, &path).map_err(|e| format!("state rename: {e}"))?;
   Ok(())
