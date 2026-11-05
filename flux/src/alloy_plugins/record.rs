@@ -1,11 +1,12 @@
 //! JS bindings for recording, `record` of `flux:video`: a thin layer over
 //! forge::video::record (the encoders, the WebM writer, the recorder's
-//! thread) and alloy's taps (the camera's frames, the window tap's frames,
-//! the microphone's ring). Two feeder threads per recording carry the taps'
-//! plain values (an RGBA frame with its SDL tick timestamp, a block of PCM
-//! with the time of its first sample on the same ticks) to the recorder's
-//! channel; the JS thread only opens, pauses, resumes and stops. A
-//! recording is standing work in flight until the app stops it. Engine
+//! threads) and alloy's taps (the camera's frames, the window tap's frames,
+//! the microphone's ring). The taps are the recorder's live inputs through
+//! two one-line adapters (`TapInput`, `MicInput`): the recorder's pumps pull
+//! an RGBA frame with its SDL tick timestamp, a block of PCM with the time
+//! of its first sample on the same ticks; the JS thread only opens, pauses,
+//! resumes and stops. A recording is standing work in flight until the app
+//! stops it. Engine
 //! teardown stops every recording the app left open and hands the join to
 //! the host.
 //!
@@ -20,20 +21,18 @@
 //! instead of a file, in the writer's stream form under the live encoder
 //! settings, and the handle's `readable` pulls it chunk by chunk (one per
 //! block). A consumer that stops pulling blocks the recorder within the
-//! channel, and the feeders drop frames meanwhile; a consumer that goes
+//! channel, and the video pump drops frames meanwhile; a consumer that goes
 //! away fails the recorder's next write, which ends the recording.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::JoinHandle;
 use std::time::Duration;
 
 use alloy::camera::{CameraFrame, FrameTap, TapWait};
 use alloy::microphone::{MicWait, MicrophoneTap};
-use alloy::rendertree::{ElementKind, RenderTree};
+use alloy::rendertree::ElementKind;
 use alloy::{TapRect, TapSize};
 use forge::audio::OpusApplication;
 use forge::stream::ByteStream;
@@ -41,8 +40,8 @@ use forge::video::record::{
   default_video_bitrate, DEFAULT_AUDIO_BITRATE_BPS, DEFAULT_FRAME_RATE, KEYFRAME_INTERVAL_US,
 };
 use forge::video::{
-  live_sink, AudioConfig, EncodeMode, EncoderConfig, Feeder, LiveSink, Push, Recorder, RecorderConfig, RecorderShared,
-  StreamError, WebmSink,
+  live_sink, AudioBlock, AudioConfig, AudioInput, EncodeMode, EncoderConfig, Inputs, LiveSink, Next, Recorder,
+  RecorderConfig, RecorderShared, StreamError, VideoFrame, VideoInput, WebmSink,
 };
 use rquickjs::promise::Promise;
 use rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Value};
@@ -51,17 +50,6 @@ use super::video::video_error;
 use crate::pending::{Hold, PendingOps};
 use crate::plugins::marshal::OptArg;
 use crate::standards_plugins::body::byte_stream_readable;
-
-// How long a feeder waits on its tap before looking at the stop flag.
-const FEEDER_WAIT: Duration = Duration::from_millis(100);
-// How long a feeder waits at the stop for the frame still in flight: a
-// window tap's last readback lands at the next frame (or after the raster
-// loop's idle timeout) and is delivered before the tap closes.
-const STOP_DRAIN: Duration = Duration::from_millis(100);
-// The audio feeder forwards once this much is buffered: one Opus frame,
-// so the recorder never waits on a half frame.
-const AUDIO_BLOCK_MS: u32 = 20;
-const NS_PER_S: u64 = 1_000_000_000;
 
 /// A recording's window tap: the tap's id, the node whose box it cuts out
 /// (None for the window node: the whole window, never moved) and the rect
@@ -74,8 +62,6 @@ struct Screen {
 
 struct Entry {
   recorder: Option<Recorder>,
-  stop: Arc<AtomicBool>,
-  feeders: Vec<JoinHandle<()>>,
   paused: bool,
   screen: Option<Screen>,
   // The live form's sink, closed ahead of the stop so a recorder blocked
@@ -97,21 +83,19 @@ struct Inner {
 
 impl Drop for Inner {
   // Engine teardown: stop every recording the app left open; the join (the
-  // feeders, the encoder flush, the file's close) is the host's to await,
+  // pumps, the encoder flush, the file's close) is the host's to await,
   // bounded, before the next engine.
   fn drop(&mut self) {
     for (_, mut entry) in self.recordings.get_mut().drain() {
-      entry.stop.store(true, Ordering::Relaxed);
       if let Some(live) = entry.live.take() {
         live.close();
       }
       if let Some(screen) = entry.screen.take() {
         self.gui.alloy.close_window_tap(screen.tap);
       }
-      let feeders = std::mem::take(&mut entry.feeders);
-      let recorder = entry.recorder.take();
+      let Some(recorder) = entry.recorder.take() else { continue };
       self.gui.teardown.defer(async move {
-        let _ = tokio::task::spawn_blocking(move || end(feeders, recorder)).await;
+        let _ = tokio::task::spawn_blocking(move || recorder.stop()).await;
       });
     }
   }
@@ -126,25 +110,11 @@ enum VideoSource {
   Node(u64),
 }
 
-/// The rect of `node`'s painted box in device pixels (the box in window
-/// points times the display scale, outset to whole pixels), or an empty
-/// rect when the node has no box now (hidden, or not laid out), which
-/// records nothing until it has one.
-fn node_rect(tree: &RenderTree, node: u64, scale: f32) -> TapRect {
-  let Some(bbox) = tree.bounding_box_viewport(node) else {
-    return TapRect { x: 0, y: 0, width: 0, height: 0 };
-  };
-  let x0 = (bbox.origin.x * scale).floor().max(0.0);
-  let y0 = (bbox.origin.y * scale).floor().max(0.0);
-  let x1 = ((bbox.origin.x + bbox.size.width) * scale).ceil().max(x0);
-  let y1 = ((bbox.origin.y + bbox.size.height) * scale).ceil().max(y0);
-  TapRect { x: x0 as u32, y: y0 as u32, width: (x1 - x0) as u32, height: (y1 - y0) as u32 }
-}
-
 /// The per-frame tracking of every cut-out recording's box: run in
 /// `frame::advance`, so a box that moved last frame moves the cut-out for
-/// this frame's readback. Never asks for a frame: a window at rest records
-/// nothing, by design.
+/// this frame's readback. A node with no box now (hidden, not laid out)
+/// gets the empty rect, which records nothing until it has one. Never asks
+/// for a frame: a window at rest records nothing, by design.
 fn track_rects(ctx: &Ctx<'_>) {
   let state = state(ctx);
   let Some(tree_state) = super::tree::try_state(ctx) else { return };
@@ -153,7 +123,7 @@ fn track_rects(ctx: &Ctx<'_>) {
   for entry in state.0.recordings.borrow_mut().values_mut() {
     let Some(screen) = entry.screen.as_mut() else { continue };
     let Some(node) = screen.node else { continue };
-    let rect = Some(node_rect(&tree, node, scale));
+    let rect = Some(tree.device_box(node, scale).map_or(TapRect::EMPTY, TapRect::within_window));
     if rect != screen.rect {
       screen.rect = rect;
       state.0.gui.alloy.set_window_tap_rect(screen.tap, rect);
@@ -179,18 +149,6 @@ pub(crate) fn store_state(ctx: &Ctx<'_>) {
 
 fn state(ctx: &Ctx<'_>) -> RecordPluginState {
   ctx.userdata::<RecordPluginState>().expect("record state").clone()
-}
-
-/// Join the feeders and stop the recorder: the blocking end of a
-/// recording, run off the JS thread.
-fn end(feeders: Vec<JoinHandle<()>>, recorder: Option<Recorder>) -> Result<(), StreamError> {
-  for feeder in feeders {
-    let _ = feeder.join();
-  }
-  match recorder {
-    Some(recorder) => recorder.stop(),
-    None => Ok(()),
-  }
 }
 
 /// A positive finite number option, or its default.
@@ -326,8 +284,18 @@ pub(super) fn record_impl<'js>(
     application: if live { OpusApplication::Voip } else { OpusApplication::Audio },
   });
 
-  // The open off the JS thread: the file and the encoders. The live form's
-  // output stream is made here and handed to the recording's object.
+  let (video_tap, screen) = match video {
+    Some((tap, _, _, screen)) => (Some(tap), screen),
+    None => (None, None),
+  };
+  let inputs = Inputs {
+    video: video_tap.map(|tap| Box::new(TapInput(tap)) as Box<dyn VideoInput>),
+    audio: audio.map(|tap| Box::new(MicInput(tap)) as Box<dyn AudioInput>),
+  };
+
+  // The open off the JS thread: the file, the encoders and the pumps over
+  // the taps. The live form's output stream is made here and handed to the
+  // recording's object.
   let (sink, output): (Option<WebmSink>, Option<(ByteStream, LiveSink)>) = match &destination {
     Destination::File(_) => (None, None),
     Destination::Live => {
@@ -346,18 +314,16 @@ pub(super) fn record_impl<'js>(
         (Destination::Live, Some(sink)) => sink,
         (Destination::Live, None) => return Err(StreamError::decode("the live sink was not made")),
       };
-      Recorder::open(RecorderConfig { video: video_config, audio: audio_config, sink })
+      let mut recorder = Recorder::open(RecorderConfig { video: video_config, audio: audio_config, sink })?;
+      recorder.attach(inputs)?;
+      Ok(recorder)
     })
     .await
     .unwrap_or_else(|e| Err(StreamError::decode(format!("the open task failed: {e}"))));
     drop(hold);
     let ctx = task_ctx;
-    let (video_tap, screen) = match video {
-      Some((tap, _, _, screen)) => (Some(tap), screen),
-      None => (None, None),
-    };
     let settled = match opened {
-      Ok(recorder) => match start(ctx.clone(), &state, recorder, video_tap, screen, audio, output) {
+      Ok(recorder) => match start(ctx.clone(), &state, recorder, screen, output) {
         Ok(obj) => resolve.call::<_, ()>((obj,)),
         Err(e) => video_error(&ctx, &e, "record: ").and_then(|err| reject.call::<_, ()>((err,))),
       },
@@ -393,8 +359,9 @@ fn open_screen(
   let rect = if is_window {
     None
   } else {
-    let rect = node_rect(&tree, node, state.0.gui.platform.display_scale());
-    if rect.width == 0 || rect.height == 0 {
+    let rect =
+      tree.device_box(node, state.0.gui.platform.display_scale()).map_or(TapRect::EMPTY, TapRect::within_window);
+    if rect.is_empty() {
       return Err(StreamError::unsupported(format!("node {node} has no painted box (not laid out, or hidden)")));
     }
     Some(rect)
@@ -423,26 +390,14 @@ fn read_dimension<'js>(ctx: &Ctx<'js>, opts: &Object<'js>, key: &str) -> rquickj
   }
 }
 
-/// The feeders over the taps, the entry, and the bound handle.
+/// The entry and the bound handle of an open recording.
 fn start<'js>(
   ctx: Ctx<'js>,
   state: &RecordPluginState,
   recorder: Recorder,
-  video: Option<FrameTap>,
   screen: Option<Screen>,
-  audio: Option<MicrophoneTap>,
   output: Option<(ByteStream, LiveSink)>,
 ) -> Result<Object<'js>, StreamError> {
-  let stop = Arc::new(AtomicBool::new(false));
-  let mut feeders = Vec::new();
-  if let Some(tap) = video {
-    let (feeder, stop) = (recorder.feeder(), stop.clone());
-    feeders.push(spawn_feeder("sol-record-video", move || video_feeder(tap, feeder, stop))?);
-  }
-  if let Some(tap) = audio {
-    let (feeder, stop) = (recorder.feeder(), stop.clone());
-    feeders.push(spawn_feeder("sol-record-audio", move || audio_feeder(tap, feeder, stop))?);
-  }
   let shared = recorder.shared();
   let hold = PendingOps::of(&ctx).standing("video record");
   let id = state.0.next_id.get() + 1;
@@ -451,8 +406,6 @@ fn start<'js>(
     id,
     Entry {
       recorder: Some(recorder),
-      stop,
-      feeders,
       paused: false,
       screen,
       live: output.as_ref().map(|(_, live)| live.clone()),
@@ -461,13 +414,6 @@ fn start<'js>(
   );
   build_object(ctx, id, shared, output.map(|(stream, _)| stream))
     .map_err(|e| StreamError::decode(format!("build recording object: {e}")))
-}
-
-fn spawn_feeder(name: &str, body: impl FnOnce() + Send + 'static) -> Result<JoinHandle<()>, StreamError> {
-  std::thread::Builder::new()
-    .name(name.to_string())
-    .spawn(body)
-    .map_err(|e| StreamError::unsupported(format!("spawn {name}: {e}")))
 }
 
 /// The tap's frame handed to the recorder as it is: the pixels stay in the
@@ -482,72 +428,40 @@ impl AsRef<[u8]> for TapFrame {
   }
 }
 
-/// Every frame the tap (a camera's, or the window's) publishes, newest
-/// first, until the tap closes or the recording stops, plus the one frame
-/// in flight at the stop (a window tap delivers its last readback before
-/// it closes; a camera may publish once more), so the clip ends on the
-/// last frame drawn. A frame the recorder has no room for is lost, not
-/// queued (the clip keeps real time).
-fn video_feeder(tap: FrameTap, feeder: Feeder, stop: Arc<AtomicBool>) {
-  // Taken and dropped counts, and the newest seq seen.
-  struct Counts {
-    after: u64,
-    taken: u64,
-    dropped: u64,
-  }
-  // Hand a frame to the recorder; false once the recorder is closed.
-  fn take(frame: Arc<CameraFrame>, feeder: &Feeder, counts: &mut Counts) -> bool {
-    counts.after = frame.seq;
-    let (width, height, timestamp_ns) = (frame.width, frame.height, frame.timestamp_ns);
-    match feeder.push_video(TapFrame(frame), width, height, timestamp_ns) {
-      Push::Queued => counts.taken += 1,
-      Push::Dropped => counts.dropped += 1,
-      Push::Closed => return false,
+/// A camera's or the window's frame tap as the recorder's video input.
+struct TapInput(FrameTap);
+
+impl VideoInput for TapInput {
+  fn next(&self, after: u64, timeout: Duration) -> Next<VideoFrame> {
+    match self.0.wait_newer(after, timeout) {
+      TapWait::Frame(frame) => Next::Item(VideoFrame {
+        seq: frame.seq,
+        width: frame.width,
+        height: frame.height,
+        timestamp_ns: frame.timestamp_ns,
+        rgba: Box::new(TapFrame(frame)),
+      }),
+      TapWait::Timeout => Next::Timeout,
+      TapWait::Closed => Next::Closed,
     }
-    true
-  }
-  let mut counts = Counts { after: 0, taken: 0, dropped: 0 };
-  let mut open = true;
-  while open && !stop.load(Ordering::Relaxed) {
-    match tap.wait_newer(counts.after, FEEDER_WAIT) {
-      TapWait::Frame(frame) => open = take(frame, &feeder, &mut counts),
-      TapWait::Timeout => {}
-      TapWait::Closed => open = false,
-    }
-  }
-  if open {
-    if let TapWait::Frame(frame) = tap.wait_newer(counts.after, STOP_DRAIN) {
-      take(frame, &feeder, &mut counts);
-    }
-  }
-  let (taken, dropped) = (counts.taken, counts.dropped);
-  if dropped > 0 {
-    log::warn!("[video] recording dropped {dropped} of {} frames (the encoder fell behind)", taken + dropped);
   }
 }
 
-/// The ring's samples in blocks of one Opus frame, each stamped with its
-/// first sample's time on the SDL ticks (the open plus the position).
-fn audio_feeder(mut tap: MicrophoneTap, feeder: Feeder, stop: Arc<AtomicBool>) {
-  let rate = tap.sample_rate().max(1);
-  let block = (rate * AUDIO_BLOCK_MS / 1000) as usize;
-  let opened_ns = tap.opened_ns();
-  let mut buf = Vec::new();
-  while !stop.load(Ordering::Relaxed) {
-    match tap.wait(block, FEEDER_WAIT) {
-      MicWait::Samples(_) => {
-        buf.clear();
-        let Ok(read) = tap.read_into(&mut buf) else { break };
-        if read.dropped > 0 {
-          log::warn!("[video] recording lost {} microphone samples (the recorder fell behind)", read.dropped);
-        }
-        let timestamp_ns = opened_ns + read.position * NS_PER_S / rate as u64;
-        if feeder.push_audio(buf.clone(), timestamp_ns).is_err() {
-          break;
+/// A microphone's ring as the recorder's audio input.
+struct MicInput(MicrophoneTap);
+
+impl AudioInput for MicInput {
+  fn next(&mut self, min_samples: usize, timeout: Duration) -> Next<AudioBlock> {
+    match self.0.wait(min_samples, timeout) {
+      MicWait::Samples(count) => {
+        let mut samples = Vec::with_capacity(count);
+        match self.0.read_into(&mut samples) {
+          Ok(read) => Next::Item(AudioBlock { samples, timestamp_ns: read.timestamp_ns, dropped: read.dropped }),
+          Err(_) => Next::Closed,
         }
       }
-      MicWait::Timeout => {}
-      MicWait::Closed => break,
+      MicWait::Timeout => Next::Timeout,
+      MicWait::Closed => Next::Closed,
     }
   }
 }
@@ -616,7 +530,7 @@ fn set_paused_impl(ctx: Ctx<'_>, id: u64, paused: bool) {
   }
 }
 
-/// stop(): the feeders end, the recorder flushes and the file is finished,
+/// stop(): the pumps end, the recorder flushes and the file is finished,
 /// off the JS thread; resolves when the file is final, rejects with the
 /// failure that stopped the recording. A second stop resolves at once.
 fn stop_impl<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Promise<'js>> {
@@ -626,7 +540,6 @@ fn stop_impl<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Promise<'js>> {
     resolve.call::<_, ()>((Value::new_undefined(ctx.clone()),))?;
     return Ok(promise);
   };
-  entry.stop.store(true, Ordering::Relaxed);
   if let Some(live) = entry.live.take() {
     live.close();
   }
@@ -635,13 +548,12 @@ fn stop_impl<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Promise<'js>> {
   if let Some(screen) = entry.screen.take() {
     state.0.gui.alloy.close_window_tap(screen.tap);
   }
-  let feeders = std::mem::take(&mut entry.feeders);
   let recorder = entry.recorder.take();
   drop(entry);
   let hold = PendingOps::of(&ctx).in_flight("video record stop");
   let task_ctx = ctx.clone();
   ctx.spawn(async move {
-    let ended = tokio::task::spawn_blocking(move || end(feeders, recorder))
+    let ended = tokio::task::spawn_blocking(move || recorder.map_or(Ok(()), Recorder::stop))
       .await
       .unwrap_or_else(|e| Err(StreamError::decode(format!("the stop task failed: {e}"))));
     drop(hold);

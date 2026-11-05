@@ -1,7 +1,10 @@
 // The recorder: one thread owning a VP9 encoder, an Opus encoder and the
 // WebM writer, fed plain values over a bounded channel: RGBA frames with
 // their capture timestamps and PCM blocks with theirs, on one timeline the
-// feeder chooses (the plugin's feeders put both on SDL's ticks). The
+// sources choose (alloy's taps put both on SDL's ticks). Live sources are
+// `VideoInput`s and `AudioInput`s the recorder pulls from with a pump
+// thread each (`attach`); a producer that must lose nothing (a transcode)
+// pushes through a `Feeder` instead. The
 // thread anchors media time on the first input, converts frames to I420,
 // cuts the audio into Opus frames and muxes; the caller's thread never
 // encodes. A pause is two times on the same timeline: inputs stamped inside
@@ -11,12 +14,13 @@
 // a video frame (a camera faster than the encoder: the clip keeps real time
 // with fewer frames) and never an audio block. A failure mid-clip is kept
 // for `stop` and the shared state, and the rest of the inputs are drained
-// unencoded, so a feeder never blocks on a dead recorder.
+// unencoded, so a feeder or a pump never blocks on a dead recorder.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use super::encode::{open_encoder, rgba_to_i420, EncodedFrame, EncoderConfig, VideoEncoder};
 use super::webm::{WebmAudioTrack, WebmSink, WebmVideoTrack, WebmWriter};
@@ -108,6 +112,13 @@ pub const KEYFRAME_INTERVAL_US: i64 = 2_000_000;
 pub const DEFAULT_FRAME_RATE: u32 = 30;
 const NS_PER_US: u64 = 1000;
 const US_PER_S: u64 = 1_000_000;
+// How long a pump waits on its input before looking at the stop flag.
+const PUMP_WAIT: Duration = Duration::from_millis(100);
+// How long the video pump waits at the stop for the frame still in flight:
+// a source may deliver one more (a window tap's last readback lands at the
+// next frame, a camera may publish once more), so the clip ends on the
+// last frame the source produced.
+const STOP_DRAIN: Duration = Duration::from_millis(100);
 
 /// The video bitrate for a frame size and rate under the default budget.
 pub fn default_video_bitrate(width: u32, height: u32, frame_rate: u32) -> u32 {
@@ -131,6 +142,58 @@ pub struct RecorderConfig {
 /// handle on the source's own buffer (the camera tap's frame, shared with
 /// the raster upload), so a frame is not copied to be encoded.
 pub type FrameBytes = Box<dyn AsRef<[u8]> + Send>;
+
+/// What a wait on a live input ended with.
+pub enum Next<T> {
+  Item(T),
+  Timeout,
+  /// The source closed; nothing will follow.
+  Closed,
+}
+
+/// A frame of a live video source.
+pub struct VideoFrame {
+  /// Increases by one per frame the source produced; the pump asks for a
+  /// frame past the last it took.
+  pub seq: u64,
+  pub rgba: FrameBytes,
+  pub width: u32,
+  pub height: u32,
+  /// On the recorder's timeline.
+  pub timestamp_ns: u64,
+}
+
+/// A block of samples of a live audio source.
+pub struct AudioBlock {
+  /// Interleaved f32 at the configured rate and channel count.
+  pub samples: Vec<f32>,
+  /// The first sample's time on the recorder's timeline.
+  pub timestamp_ns: u64,
+  /// Samples the source lost before this block: the pump fell behind.
+  pub dropped: u64,
+}
+
+/// A live video source (a camera, the window) the recorder pulls from on a
+/// thread of its own.
+pub trait VideoInput: Send {
+  /// The newest frame numbered past `after`, waiting up to `timeout`.
+  fn next(&self, after: u64, timeout: Duration) -> Next<VideoFrame>;
+}
+
+/// A live audio source (a microphone) the recorder pulls from on a thread
+/// of its own.
+pub trait AudioInput: Send {
+  /// Everything buffered once at least `min_samples` are, waiting up to
+  /// `timeout`.
+  fn next(&mut self, min_samples: usize, timeout: Duration) -> Next<AudioBlock>;
+}
+
+/// The live sources a recording pulls from (`Recorder::attach`).
+#[derive(Default)]
+pub struct Inputs {
+  pub video: Option<Box<dyn VideoInput>>,
+  pub audio: Option<Box<dyn AudioInput>>,
+}
 
 /// One input on the recorder's timeline (nanoseconds, any epoch; both
 /// tracks on the same one).
@@ -204,7 +267,10 @@ impl Feeder {
     height: u32,
     timestamp_ns: u64,
   ) -> Push {
-    let rgba: FrameBytes = Box::new(rgba);
+    self.push_frame(Box::new(rgba), width, height, timestamp_ns)
+  }
+
+  fn push_frame(&self, rgba: FrameBytes, width: u32, height: u32, timestamp_ns: u64) -> Push {
     match self.0.try_send(Message::Input(Input::Video { rgba, width, height, timestamp_ns })) {
       Ok(()) => Push::Queued,
       Err(TrySendError::Full(_)) => Push::Dropped,
@@ -240,6 +306,20 @@ pub struct Recorder {
   tx: SyncSender<Message>,
   thread: Option<JoinHandle<Result<(), StreamError>>>,
   shared: Arc<RecorderShared>,
+  tracks: Opened,
+  /// Raised at the stop (or the drop): the pumps end within `PUMP_WAIT`.
+  stop_pumps: Arc<AtomicBool>,
+  pumps: Vec<JoinHandle<()>>,
+}
+
+/// What the recorder thread opened, for `attach` to check its inputs
+/// against.
+#[derive(Clone, Copy)]
+struct Opened {
+  video: bool,
+  /// Samples in one Opus frame, all channels: the block the audio pump
+  /// waits for, so the encoder never waits on a half frame.
+  audio_block: Option<usize>,
 }
 
 impl Recorder {
@@ -259,7 +339,14 @@ impl Recorder {
       .spawn(move || run(config, ready_tx, rx, thread_shared))
       .map_err(|e| StreamError::unsupported(format!("spawn the recorder thread: {e}")))?;
     match ready_rx.recv() {
-      Ok(Ok(())) => Ok(Recorder { tx, thread: Some(thread), shared }),
+      Ok(Ok(tracks)) => Ok(Recorder {
+        tx,
+        thread: Some(thread),
+        shared,
+        tracks,
+        stop_pumps: Arc::new(AtomicBool::new(false)),
+        pumps: Vec::new(),
+      }),
       Ok(Err(e)) => {
         let _ = thread.join();
         Err(e)
@@ -273,6 +360,29 @@ impl Recorder {
 
   pub fn feeder(&self) -> Feeder {
     Feeder(self.tx.clone())
+  }
+
+  /// Pull from live sources until the stop, each on a thread of its own:
+  /// every frame the video source publishes (one the encoder has no room
+  /// for is lost, so the clip keeps real time) and every sample of the
+  /// audio source, in blocks of one Opus frame. Err for an input with no
+  /// track to take it, or when a thread cannot start.
+  pub fn attach(&mut self, inputs: Inputs) -> Result<(), StreamError> {
+    if let Some(video) = inputs.video {
+      if !self.tracks.video {
+        return Err(StreamError::unsupported("a video input on a recording without video"));
+      }
+      let (feeder, stop) = (self.feeder(), self.stop_pumps.clone());
+      self.pumps.push(spawn_pump("sol-record-video", move || pump_video(video, feeder, stop))?);
+    }
+    if let Some(audio) = inputs.audio {
+      let Some(block) = self.tracks.audio_block else {
+        return Err(StreamError::unsupported("an audio input on a recording without audio"));
+      };
+      let (feeder, stop) = (self.feeder(), self.stop_pumps.clone());
+      self.pumps.push(spawn_pump("sol-record-audio", move || pump_audio(audio, block, feeder, stop))?);
+    }
+    Ok(())
   }
 
   pub fn shared(&self) -> Arc<RecorderShared> {
@@ -291,9 +401,14 @@ impl Recorder {
     let _ = self.tx.send(Message::Resume { at_ns });
   }
 
-  /// End the recording: flush the encoders, finish the container, join the
-  /// thread. Returns the failure that stopped it, if one did.
+  /// End the recording: stop the pumps (the video pump takes the frame in
+  /// flight first), flush the encoders, finish the container, join the
+  /// threads. Returns the failure that stopped it, if one did.
   pub fn stop(mut self) -> Result<(), StreamError> {
+    self.stop_pumps.store(true, Ordering::Relaxed);
+    for pump in std::mem::take(&mut self.pumps) {
+      let _ = pump.join();
+    }
     let _ = self.tx.send(Message::Stop);
     self.join()
   }
@@ -307,11 +422,86 @@ impl Recorder {
 }
 
 impl Drop for Recorder {
-  // A handle dropped without `stop` still ends the thread, which finishes
-  // the container on its way out; nothing waits here.
+  // A handle dropped without `stop` still ends the threads (the pumps at
+  // their next look at the flag), and the recorder finishes the container
+  // on its way out; nothing waits here.
   fn drop(&mut self) {
+    self.stop_pumps.store(true, Ordering::Relaxed);
     if self.thread.is_some() {
       let _ = self.tx.send(Message::Stop);
+    }
+  }
+}
+
+fn spawn_pump(name: &str, body: impl FnOnce() + Send + 'static) -> Result<JoinHandle<()>, StreamError> {
+  std::thread::Builder::new()
+    .name(name.to_string())
+    .spawn(body)
+    .map_err(|e| StreamError::unsupported(format!("spawn {name}: {e}")))
+}
+
+/// The video pump's cursor and its counts: frames taken and dropped.
+#[derive(Default)]
+struct VideoCounts {
+  after: u64,
+  taken: u64,
+  dropped: u64,
+}
+
+impl VideoCounts {
+  /// Hand a frame to the recorder; false once the recorder is closed.
+  fn take(&mut self, frame: VideoFrame, feeder: &Feeder) -> bool {
+    self.after = frame.seq;
+    match feeder.push_frame(frame.rgba, frame.width, frame.height, frame.timestamp_ns) {
+      Push::Queued => self.taken += 1,
+      Push::Dropped => self.dropped += 1,
+      Push::Closed => return false,
+    }
+    true
+  }
+}
+
+/// Every frame the source publishes, newest first, until it closes or the
+/// stop, plus the one frame in flight at the stop.
+fn pump_video(input: Box<dyn VideoInput>, feeder: Feeder, stop: Arc<AtomicBool>) {
+  let mut counts = VideoCounts::default();
+  let mut open = true;
+  while open && !stop.load(Ordering::Relaxed) {
+    match input.next(counts.after, PUMP_WAIT) {
+      Next::Item(frame) => open = counts.take(frame, &feeder),
+      Next::Timeout => {}
+      Next::Closed => open = false,
+    }
+  }
+  if open {
+    if let Next::Item(frame) = input.next(counts.after, STOP_DRAIN) {
+      counts.take(frame, &feeder);
+    }
+  }
+  if counts.dropped > 0 {
+    log::warn!(
+      "[video] recording dropped {} of {} frames (the encoder fell behind)",
+      counts.dropped,
+      counts.taken + counts.dropped
+    );
+  }
+}
+
+/// Every sample of the source, in blocks of at least `block` samples,
+/// until it closes or the stop.
+fn pump_audio(mut input: Box<dyn AudioInput>, block: usize, feeder: Feeder, stop: Arc<AtomicBool>) {
+  while !stop.load(Ordering::Relaxed) {
+    match input.next(block, PUMP_WAIT) {
+      Next::Item(audio) => {
+        if audio.dropped > 0 {
+          log::warn!("[video] recording lost {} microphone samples (the recorder fell behind)", audio.dropped);
+        }
+        if feeder.push_audio(audio.samples, audio.timestamp_ns).is_err() {
+          break;
+        }
+      }
+      Next::Timeout => {}
+      Next::Closed => break,
     }
   }
 }
@@ -390,13 +580,16 @@ struct AudioTrack {
 
 fn run(
   config: RecorderConfig,
-  ready: mpsc::Sender<Result<(), StreamError>>,
+  ready: mpsc::Sender<Result<Opened, StreamError>>,
   rx: Receiver<Message>,
   shared: Arc<RecorderShared>,
 ) -> Result<(), StreamError> {
   let mut tracks = match open_tracks(config) {
     Ok(tracks) => {
-      let _ = ready.send(Ok(()));
+      let _ = ready.send(Ok(Opened {
+        video: tracks.video.is_some(),
+        audio_block: tracks.audio.as_ref().map(|a| a.encoder.frame_samples() * a.channels as usize),
+      }));
       tracks
     }
     Err(e) => {

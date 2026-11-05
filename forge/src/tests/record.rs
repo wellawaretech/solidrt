@@ -5,13 +5,16 @@
 // every sample.
 
 use std::io::Cursor;
+use std::sync::mpsc;
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use super::sink::SharedSink;
 use crate::audio::OpusApplication;
 use crate::source::Facts;
 use crate::video::{
-  AudioConfig, Demuxer, EncodeMode, EncoderConfig, ErrorKind, Packet, Push, Recorder, RecorderConfig, WebmDemuxer,
-  WebmSink,
+  AudioBlock, AudioConfig, AudioInput, Demuxer, EncodeMode, EncoderConfig, ErrorKind, Inputs, Next, Packet, Push,
+  Recorder, RecorderConfig, VideoFrame, VideoInput, WebmDemuxer, WebmSink,
 };
 
 const WIDTH: u32 = 160;
@@ -34,6 +37,13 @@ const PAUSE_NS: u64 = 3_000_000_000;
 const PAUSE_AFTER: usize = 10;
 // Rounding to the millisecond tick on each frame.
 const PTS_TOLERANCE_US: i64 = 1_000;
+// Frames a pumped test publishes: fewer than the recorder's queue holds,
+// so none is dropped however slow the encoder runs.
+const PUMPED_FRAMES: usize = 5;
+// One Opus frame at RATE: 20 ms.
+const OPUS_FRAME_SAMPLES: usize = 320;
+// A wait long enough that a pump's step always lands inside it.
+const WAIT: Duration = Duration::from_secs(5);
 
 fn video_config() -> EncoderConfig {
   EncoderConfig {
@@ -222,4 +232,157 @@ fn open_refuses_what_it_cannot_record() {
   .expect("a rate Opus does not take");
   assert_eq!(err.kind, ErrorKind::Unsupported);
   assert!(err.message.contains("48 kHz"), "{}", err.message);
+}
+
+/// A live video source the test publishes into, like a tap: frames in
+/// order, the cursor the pump last asked past, and a close.
+#[derive(Clone, Default)]
+struct FakeVideo(Arc<(Mutex<FakeVideoState>, Condvar)>);
+
+#[derive(Default)]
+struct FakeVideoState {
+  published: u64,
+  asked_after: u64,
+  closed: bool,
+}
+
+impl FakeVideo {
+  fn update(&self, f: impl FnOnce(&mut FakeVideoState)) {
+    f(&mut self.0 .0.lock().unwrap_or_else(PoisonError::into_inner));
+    self.0 .1.notify_all();
+  }
+
+  fn publish(&self) {
+    self.update(|state| state.published += 1);
+  }
+
+  fn close(&self) {
+    self.update(|state| state.closed = true);
+  }
+
+  /// Block until the pump asks past frame `seq`: it took every frame up to
+  /// it.
+  fn wait_taken(&self, seq: u64) {
+    let deadline = Instant::now() + WAIT;
+    let mut state = self.0 .0.lock().unwrap_or_else(PoisonError::into_inner);
+    while state.asked_after < seq {
+      let now = Instant::now();
+      assert!(now < deadline, "the pump never took frame {seq}");
+      state = self.0 .1.wait_timeout(state, deadline - now).unwrap_or_else(PoisonError::into_inner).0;
+    }
+  }
+}
+
+impl VideoInput for FakeVideo {
+  fn next(&self, after: u64, timeout: Duration) -> Next<VideoFrame> {
+    let deadline = Instant::now() + timeout;
+    let mut state = self.0 .0.lock().unwrap_or_else(PoisonError::into_inner);
+    state.asked_after = state.asked_after.max(after);
+    self.0 .1.notify_all();
+    loop {
+      if state.closed {
+        return Next::Closed;
+      }
+      if state.published > after {
+        let index = after as usize;
+        return Next::Item(VideoFrame {
+          seq: after + 1,
+          rgba: Box::new(frame(index)),
+          width: WIDTH,
+          height: HEIGHT,
+          timestamp_ns: EPOCH_NS + index as u64 * FRAME_NS,
+        });
+      }
+      let now = Instant::now();
+      if now >= deadline {
+        return Next::Timeout;
+      }
+      state = self.0 .1.wait_timeout(state, deadline - now).unwrap_or_else(PoisonError::into_inner).0;
+    }
+  }
+}
+
+/// A live audio source with `AUDIO_SECONDS` buffered: it hands them out in
+/// `AUDIO_BLOCK`s, then closes, reporting the block size the pump asked for.
+struct FakeAudio {
+  samples: Vec<f32>,
+  at: usize,
+  asked: mpsc::Sender<usize>,
+}
+
+impl AudioInput for FakeAudio {
+  fn next(&mut self, min_samples: usize, _timeout: Duration) -> Next<AudioBlock> {
+    if self.at == self.samples.len() {
+      let _ = self.asked.send(min_samples);
+      return Next::Closed;
+    }
+    let end = (self.at + AUDIO_BLOCK).min(self.samples.len());
+    let block = AudioBlock {
+      samples: self.samples[self.at..end].to_vec(),
+      timestamp_ns: EPOCH_NS + self.at as u64 * 1_000_000_000 / RATE as u64,
+      dropped: 0,
+    };
+    self.at = end;
+    Next::Item(block)
+  }
+}
+
+#[test]
+fn an_attached_source_is_pumped_through_the_stop() {
+  let sink = SharedSink::default();
+  let mut recorder = open(&sink, true, false);
+  let source = FakeVideo::default();
+  recorder.attach(Inputs { video: Some(Box::new(source.clone())), audio: None }).expect("attach");
+  for seq in 1..=PUMPED_FRAMES as u64 {
+    source.publish();
+    source.wait_taken(seq);
+  }
+  // One more frame lands as the stop begins: the clip ends on it.
+  source.publish();
+  recorder.stop().expect("stop");
+  let (video, _) = read_all(&mut demux(&sink));
+  assert_spacing(&video, PUMPED_FRAMES + 1, (FRAME_NS / 1000) as i64);
+}
+
+#[test]
+fn a_closed_source_ends_its_pump() {
+  let sink = SharedSink::default();
+  let mut recorder = open(&sink, true, false);
+  let source = FakeVideo::default();
+  recorder.attach(Inputs { video: Some(Box::new(source.clone())), audio: None }).expect("attach");
+  source.publish();
+  source.wait_taken(1);
+  source.close();
+  source.publish();
+  recorder.stop().expect("stop");
+  let (video, _) = read_all(&mut demux(&sink));
+  assert_eq!(video.len(), 1, "nothing is taken past the close");
+}
+
+#[test]
+fn an_attached_microphone_is_pumped_in_opus_frames() {
+  let sink = SharedSink::default();
+  // A video track with one frame: the demuxer reads clips with a keyframe.
+  let mut recorder = open(&sink, true, true);
+  recorder.feeder().send_video(frame(0), WIDTH, HEIGHT, EPOCH_NS).expect("frame queued");
+  let (asked, asked_rx) = mpsc::channel();
+  let samples: Vec<f32> = (0..RATE as usize * AUDIO_SECONDS).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
+  let source = FakeAudio { samples, at: 0, asked };
+  recorder.attach(Inputs { video: None, audio: Some(Box::new(source)) }).expect("attach");
+  let min_samples = asked_rx.recv_timeout(WAIT).expect("the pump drained the source");
+  assert_eq!(min_samples, OPUS_FRAME_SAMPLES);
+  recorder.stop().expect("stop");
+  let (_, audio) = read_all(&mut demux(&sink));
+  assert_eq!(audio.len(), RATE as usize * AUDIO_SECONDS / OPUS_FRAME_SAMPLES);
+  assert_spacing(&audio, audio.len(), 20_000);
+}
+
+#[test]
+fn attach_refuses_an_input_without_a_track() {
+  let sink = SharedSink::default();
+  let mut recorder = open(&sink, false, true);
+  let err =
+    recorder.attach(Inputs { video: Some(Box::new(FakeVideo::default())), audio: None }).expect_err("no video track");
+  assert_eq!(err.kind, ErrorKind::Unsupported);
+  recorder.stop().expect("stop");
 }

@@ -52,6 +52,19 @@ fn a_read_drains_what_came_since_the_last() {
 }
 
 #[test]
+fn a_read_is_stamped_on_the_open_timeline() {
+  let opened_ns = 5_000_000_000;
+  let ring = SampleRing::new(16_000, opened_ns);
+  let mut reader = ring.reader();
+  ring.push(&run(0, 8_000));
+  let mut got = Vec::new();
+  assert_eq!(reader.read_into(&mut got).expect("open").timestamp_ns, opened_ns);
+  ring.push(&run(8_000, 8_100));
+  // 8000 samples at 16 kHz are half a second past the open.
+  assert_eq!(reader.read_into(&mut got).expect("open").timestamp_ns, opened_ns + 500_000_000);
+}
+
+#[test]
 fn every_reader_hears_every_sample() {
   let ring = SampleRing::new(16_000, 0);
   let mut first = ring.reader();

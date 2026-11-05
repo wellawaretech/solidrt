@@ -118,8 +118,10 @@ rec.error()                  // VideoError | null, like a player's
 Layering by the usual question: a flux CLI with no window could encode a
 file's frames, so the encoders and the writer are forge. The taps are
 alloy. They meet on plain values (an RGBA frame with its timestamp, a block
-of PCM with its sample position), carried by two feeder threads in the
-plugin.
+of PCM with the time of its first sample): the recorder pulls them through
+its input contracts (`VideoInput`, `AudioInput`) with a pump thread each,
+and the plugin adapts the taps to those contracts in one line each, as
+playback adapts alloy's sinks to `FrameSink` and `AudioSink`.
 
 ### forge
 
@@ -148,13 +150,19 @@ plugin.
   writer, fed over a bounded channel of plain values. It anchors time on
   the first input, subtracts accumulated pause time, cuts audio into 20 ms
   frames and muxes. A full channel drops a video frame and never an audio
-  block. `stop` joins and finalizes.
+  block. `attach(Inputs)` starts the pumps over live sources: the video
+  pump takes every frame published past the last it took (and the one in
+  flight at the stop), the audio pump forwards blocks of one Opus frame;
+  `Feeder` stays for a producer that must lose nothing. `stop` ends the
+  pumps, joins and finalizes.
 
 ### The pipe and the plugin
 
-`flux/src/alloy_plugins/video.rs` exports `record`: two feeder threads per
-recording, one on `FrameTap::wait_newer`, one on `MicrophoneTap::wait`,
-forwarding to the recorder. Engine teardown stops every open recording
+`flux/src/alloy_plugins/record.rs` exports `record`: `TapInput` adapts
+`FrameTap::wait_newer`, `MicInput` adapts `MicrophoneTap::wait` and
+`read_into` (whose `MicRead::timestamp_ns` places the block on the SDL
+ticks), and the recorder attaches both. A cut-out's box in device pixels is
+the rendertree's `device_box` (the pixels the paint covers). Engine teardown stops every open recording
 with a bounded join and the writer closes the file; nothing outlives the
 engine. Types in `gui/video.d.ts`, `"video-encode"` in the gui
 capabilities.
@@ -336,8 +344,8 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   stamp anchors the track; every packet after it is `emitted / rate`
   later, so Opus frames stay contiguous whatever the blocks' sizes, and a
   pause (the recorder drops the samples inside it) leaves no gap.
-- **The feeder hands the tap's frame through, no copy.** The recorder's
-  video input is a boxed `AsRef<[u8]>`, so the plugin passes the
+- **The pump hands the tap's frame through, no copy.** The recorder's
+  video input is a boxed `AsRef<[u8]>`, so the plugin's adapter passes the
   `Arc<CameraFrame>` itself and the pixels stay in the tap's buffer, shared
   with the raster upload. The tap allocates the next frame only while the
   recorder still holds this one (one encode, a few ms, against a camera

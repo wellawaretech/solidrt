@@ -59,7 +59,8 @@ pub use mediacodec::encode::MediaCodecEncoder;
 pub use plane::open as open_plane;
 #[cfg(feature = "video-encode")]
 pub use record::{
-  live_sink, AudioConfig, Feeder, FrameBytes, LiveSink, Push, Recorder, RecorderConfig, RecorderShared,
+  live_sink, AudioBlock, AudioConfig, AudioInput, Feeder, FrameBytes, Inputs, LiveSink, Next, Push, Recorder,
+  RecorderConfig, RecorderShared, VideoFrame, VideoInput,
 };
 pub use texture::open as open_texture;
 pub use transport::{AudioSink, Clock, FrameSink};

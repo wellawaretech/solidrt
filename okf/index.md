@@ -2583,6 +2583,10 @@ Finished, kept for the reasoning.
   kept answering, because the render subscription lives in onSettled and a
   halted mount never settles; closed by render()'s root error boundary, which
   settles the mount and shows the error window instead of halting.
+- **[Move the recording feeder loops out of the flux plugin](done/record-feeders-out-of-flux.md)** [2026-11-05]
+  The video and audio feeder threads of `record` (flux:video) are pump logic
+  in a plugin; move them to forge's recorder over a plain value the alloy taps
+  hand over.
 - **[Relative mouse input (mouse look)](done/relative-mouse-input.md)** [2026-07-31]
   No pointer-lock / relative-motion path exists anywhere in the surface, so
   first-person control is impossible however good the GPU gets; SDL already

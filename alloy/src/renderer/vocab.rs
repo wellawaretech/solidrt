@@ -13,6 +13,8 @@ pub type Vector = euclid::Vector2D<f32, euclid::UnknownUnit>;
 pub type Size = euclid::Size2D<f32, euclid::UnknownUnit>;
 /// An extent in whole pixels: a texture, a framebuffer, a window.
 pub type ISize = euclid::Size2D<i64, euclid::UnknownUnit>;
+/// A rectangle in whole pixels, origin top-left, y down.
+pub type IRect = euclid::Rect<i64, euclid::UnknownUnit>;
 /// A transform in euclid's row-vector convention: `p' = p * m`, so
 /// `a.then(&b)` applies `a` first. A builder's `transform` composes it onto
 /// the current one the same way.

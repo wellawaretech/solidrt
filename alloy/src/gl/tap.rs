@@ -18,6 +18,7 @@ use glow::HasContext;
 
 use super::prev_buffer;
 use super::rig::{prev_framebuffer, prev_renderbuffer};
+use crate::renderer::IRect;
 
 /// Pack buffers in the ring: one the GPU reads into while the previous one
 /// is mapped, and a spare so a frame issued right after an idle completion
@@ -38,6 +39,26 @@ pub struct TapRect {
   pub y: u32,
   pub width: u32,
   pub height: u32,
+}
+
+impl TapRect {
+  /// The rect that cuts out nothing: a tap at it records no frame.
+  pub const EMPTY: TapRect = TapRect { x: 0, y: 0, width: 0, height: 0 };
+
+  /// The part of `rect` (window device pixels, as
+  /// `RenderTree::device_box` gives it) from the window's top-left on: a
+  /// cut-out cannot start before the window. The far side is the
+  /// surface's to cut (`clamp_rect`).
+  pub fn within_window(rect: IRect) -> TapRect {
+    let pixel = |v: i64| u32::try_from(v.max(0)).unwrap_or(u32::MAX);
+    let (x0, y0) = (pixel(rect.min_x()), pixel(rect.min_y()));
+    let (x1, y1) = (pixel(rect.max_x()).max(x0), pixel(rect.max_y()).max(y0));
+    TapRect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.width == 0 || self.height == 0
+  }
 }
 
 /// One tap's GL objects, at a fixed output size.

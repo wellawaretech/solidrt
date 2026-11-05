@@ -549,6 +549,52 @@ fn bounding_box_own_scale() {
   assert_box(b, -25.0, -25.0, 100.0, 100.0);
 }
 
+fn device_box_of(tree: &RenderTree, id: u64, scale: f32) -> (i64, i64, i64, i64) {
+  let b = tree.device_box(id, scale).expect("laid out");
+  (b.origin.x, b.origin.y, b.size.width, b.size.height)
+}
+
+#[test]
+fn device_box_snaps_as_the_paint_does() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.insert_node(1, 2, None).expect("insert");
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 10.25, 0.4, 10.0, 1.0);
+  // At 2x the box spans device x 20.5..40.5 and y 0.8..2.8: each edge
+  // rounds to the nearest pixel, as grid::snap_box lands the paint, and
+  // no pixel of a neighbour comes along (an outset would give 20..41).
+  assert_eq!(device_box_of(&tree, 2, 2.0), (21, 1, 20, 2));
+  assert_eq!(device_box_of(&tree, 1, 1.5), (0, 0, 300, 300));
+}
+
+#[test]
+fn device_box_outsets_a_rotated_box() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_rotate(Some(std::f32::consts::FRAC_PI_4));
+  tree.create_node(2, v.with_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 50.0, 50.0, 20.0, 20.0);
+  // An eighth turn around the center (60, 60): the bounds reach 14.14 to
+  // each side, nothing snaps, and every touched pixel is in.
+  assert_eq!(device_box_of(&tree, 2, 1.0), (45, 45, 30, 30));
+}
+
+#[test]
+fn device_box_keeps_a_box_past_the_top_left() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.insert_node(1, 2, None).expect("insert");
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, -5.0, -5.0, 10.0, 10.0);
+  assert_eq!(device_box_of(&tree, 2, 1.0), (-5, -5, 10, 10));
+}
+
 fn assert_point(p: Point, x: f32, y: f32) {
   let eps = 1e-3;
   assert!((p.x - x).abs() < eps && (p.y - y).abs() < eps, "expected ({x}, {y}), got ({}, {})", p.x, p.y);

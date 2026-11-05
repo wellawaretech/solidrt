@@ -3,7 +3,8 @@
 //! read-only geometry surface inspection and hit consumers ask of the tree.
 
 use super::RenderTree;
-use crate::renderer::Matrix;
+use crate::renderer::{IRect, Matrix};
+use crate::rendertree::grid;
 use crate::rendertree::{ElementKind, Point, Rect, Size, Vector};
 
 impl RenderTree {
@@ -21,6 +22,29 @@ impl RenderTree {
   /// semantics), for callers that want absolute coordinates (e.g. snapshot).
   pub fn bounding_box_viewport(&self, id: u64) -> Option<Rect> {
     self.compute_bounding_box(id, false)
+  }
+
+  /// The window's device pixels at display `scale` that the node's box
+  /// paints: the box `bounding_box_viewport` gives, landed as the paint
+  /// walk lands it. When the chain keeps the box axis-aligned, the box snaps
+  /// by the paint's own rule (`grid::snap_box`: origin and far edges each to
+  /// the nearest whole pixel), so the result is the pixels the paint covers
+  /// and none of a neighbour's. Under a rotation, a flip or a 3D transform
+  /// nothing snaps, and the bounds are outset to every pixel they touch,
+  /// anti-aliased edges included. Window-relative, so a box past the
+  /// window's top-left has a negative origin. None when
+  /// `bounding_box_viewport` is.
+  pub fn device_box(&self, id: u64, scale: f32) -> Option<IRect> {
+    let Quad { corners, shift } = self.compute_corners(id, false)?;
+    let bounds = Rect::from_points(corners).translate(shift);
+    let (near, far) = if is_upright_box(&corners) {
+      let (origin, size) = grid::snap_box(&grid::at_scale(scale), bounds.origin, bounds.size);
+      ((origin.to_vector() * scale).round(), ((origin + size).to_vector() * scale).round())
+    } else {
+      ((bounds.min().to_vector() * scale).floor(), (bounds.max().to_vector() * scale).ceil())
+    };
+    let origin = euclid::point2(near.x as i64, near.y as i64);
+    Some(IRect::new(origin, euclid::size2(far.x as i64 - origin.x, far.y as i64 - origin.y)))
   }
 
   /// The node's laid-out box in its parent's frame: layout output before any
@@ -195,6 +219,13 @@ struct Quad {
 }
 
 // The four corners of a rectangle, clockwise from top-left.
+/// Whether a quad of `rect_corners` order is still an upright box: every
+/// edge on an axis, none mirrored, not empty. The paint snaps only such a
+/// box (the grid's own test is the same on the matrix).
+fn is_upright_box(q: &[Point; 4]) -> bool {
+  q[0].y == q[1].y && q[1].x == q[2].x && q[2].y == q[3].y && q[3].x == q[0].x && q[1].x > q[0].x && q[3].y > q[0].y
+}
+
 fn rect_corners(r: &Rect) -> [Point; 4] {
   let (min, max) = (r.origin, r.origin + r.size);
   [min, Point::new(max.x, min.y), max, Point::new(min.x, max.y)]

@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 /// 1.9 MB at 48 kHz.
 pub const RING_SECONDS: u32 = 10;
 
+const NS_PER_S: u64 = 1_000_000_000;
+
 /// What a wait on the ring ended with.
 pub enum MicWait {
   /// At least the asked-for samples are buffered past the reader's cursor
@@ -31,6 +33,9 @@ pub enum MicWait {
 pub struct MicRead {
   /// Position of the first sample read, in samples since the open.
   pub position: u64,
+  /// The first sample's time on the SDL tick timeline: the open plus the
+  /// position at the ring's rate.
+  pub timestamp_ns: u64,
   /// Samples the reader lost to the window before this read: 0 when it
   /// kept up.
   pub dropped: u64,
@@ -243,6 +248,7 @@ impl MicrophoneTap {
     dst.extend_from_slice(&state.buf[at..at + first]);
     dst.extend_from_slice(&state.buf[..count - first]);
     self.cursor = state.produced;
-    Ok(MicRead { position: start, dropped, count })
+    let timestamp_ns = self.ring.opened_ns + start * NS_PER_S / self.ring.sample_rate.max(1) as u64;
+    Ok(MicRead { position: start, timestamp_ns, dropped, count })
   }
 }

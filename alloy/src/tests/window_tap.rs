@@ -5,6 +5,7 @@
 use crate::gl::TapRect;
 use crate::raster::window_tap::{clamp_rect, resolve_size};
 use crate::raster::TapSize;
+use crate::renderer::IRect;
 
 fn size(width: Option<u32>, height: Option<u32>) -> TapSize {
   TapSize { width, height }
@@ -45,4 +46,14 @@ fn a_rect_is_cut_to_the_surface() {
   assert_eq!(clamp_rect(rect, 100, 1000), None);
   assert_eq!(clamp_rect(rect, 1000, 50), None);
   assert_eq!(clamp_rect(TapRect { x: u32::MAX, y: 0, width: 10, height: 10 }, 1000, 1000), None);
+}
+
+#[test]
+fn a_cut_out_starts_at_the_window() {
+  let rect = |x, y, w, h| IRect::new(euclid::point2(x, y), euclid::size2(w, h));
+  assert_eq!(TapRect::within_window(rect(20, 40, 60, 80)), TapRect { x: 20, y: 40, width: 60, height: 80 });
+  // A box past the top-left keeps only its part inside the window.
+  assert_eq!(TapRect::within_window(rect(-5, -5, 10, 10)), TapRect { x: 0, y: 0, width: 5, height: 5 });
+  assert!(TapRect::within_window(rect(-20, 0, 10, 10)).is_empty());
+  assert!(TapRect::EMPTY.is_empty());
 }
