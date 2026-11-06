@@ -606,6 +606,13 @@ Shaped, not started.
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an sol doctor helper
   rather than an engine feature.
+- **[Declared damage for flush-rendered draw targets](backlog/gpu-target-damage.md)** [2026-11-05]
+  A flush-rendered target re-renders in full when any of its inputs changes,
+  however small the area the change affects, because dirtiness is tracked per
+  input and nothing can say where on the target a change lands; the sub-target
+  partial path already renders rectangles and keeps the rest, so the missing
+  piece is one core primitive that declares the damaged rectangles of a
+  target.
 - **[Animate gradient colors](backlog/gradient-color-transition.md)** [2026-09-27]
   A gradient-valued `color` never animates (the color lane reads a gradient as
   not animatable), so a lit fill snaps on a theme switch where a solid fill

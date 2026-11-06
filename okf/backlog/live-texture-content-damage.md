@@ -75,4 +75,6 @@ measurement that found this (raster phase trace at SOLIDRT_LOG=debug, plus
 `damagePx`/`partialPresents` in get_stats) is the check.
 
 Related: [[video-playback]], [[partial-repaint]], [[content-damage-perf]],
-[[frame-driver-pacing-contract]].
+[[frame-driver-pacing-contract]], and
+[gpu-target-damage](gpu-target-damage.md): a target with declared damage
+knows the rectangle this item is missing, so the two share one design.
