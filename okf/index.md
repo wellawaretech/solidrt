@@ -438,11 +438,6 @@ Shaped, not started.
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
   either not found or checked against the wrong file.
-- **[Move CI to the macos-15 runner](backlog/ci-macos-15-runner.md)** [2026-11-04]
-  On the macos-15 GitHub runner the flux:mdns browse and services tests fail
-  with "No route to host (os error 65)" on the multicast send, most likely
-  macOS 15 Local Network privacy, so CI and release stay on macos-14 until the
-  darwin mDNS tests are handled.
 - **[Copy an image to the clipboard](backlog/clipboard-image.md)** [2026-11-03]
   "navigator.clipboard is text only; wanted an image write (image/png) on
   desktop through SDL_SetClipboardData, listed as \"clipboard-image\" in
@@ -1687,6 +1682,11 @@ Finished, kept for the reasoning.
   because a Choreographer frame time is the app's target wake-up time and not
   the vsync it is waking for. Everything that snaps to the grid is off by that
   much.
+- **[CI and release run on the macos-15 runner](done/ci-macos-15-runner.md)** [2026-11-06]
+  CI and the release workflow moved from macos-14 to macos-15; the flux:mdns
+  browse and services tests, which fail there with "No route to host (os error
+  65)" on the multicast send (most likely macOS Local Network privacy), are
+  registered off darwin.
 - **[Move the sol dev flow into flux and make ports an output](done/cli-flux-migration.md)** [2026-08-26]
   Landed 2026-08-25/26: one flux process hosts the dev server (port
   remembered, else the first free from 34884, or --port; loopback by default,
