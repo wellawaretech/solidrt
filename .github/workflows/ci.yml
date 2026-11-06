@@ -111,7 +111,7 @@ jobs:
           - platform: linux-arm
             runner: ubuntu-22.04-arm
           - platform: darwin
-            runner: macos-14
+            runner: macos-15
             # The live floor tests feed and play frames on the wall clock with
             # ~15 ms of slack for thread wakeups, which this runner misses
             # (they pass on Mac hardware): okf/backlog/live-player-tests-virtual-clock.md.
@@ -171,7 +171,7 @@ jobs:
           - platform: linux-arm
             runner: ubuntu-22.04-arm
           - platform: darwin
-            runner: macos-14
+            runner: macos-15
           - platform: windows
             runner: windows-latest
     steps:
@@ -217,7 +217,7 @@ jobs:
           - platform: linux-arm
             runner: ubuntu-22.04-arm
           - platform: darwin
-            runner: macos-14
+            runner: macos-15
           - platform: windows
             runner: windows-latest
     defaults:
