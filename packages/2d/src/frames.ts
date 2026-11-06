@@ -1,9 +1,12 @@
 // Atlas frame math, pure: names and grid coordinates to normalized UV rects,
-// each stamped with the texture it is cut from. No GPU or GUI imports (the
-// Atlas and TextureId imports are types), so its test
-// (tests/frames.test.ts) exercises this module headless on the flux binary.
+// each stamped with the texture it is cut from, and with its mesh when the
+// atlas keeps one (sprite-mesh.ts). No GPU or GUI imports (the Atlas and
+// TextureId imports are types), so its test (tests/frames.test.ts)
+// exercises this module headless on the flux binary.
 import type { TextureId } from "@solidrt/core/gpu"
 import type { Atlas } from "./atlas.ts"
+import { hullMesh, MESH_FLOATS } from "./sprite-mesh.ts"
+import type { FrameMesh } from "./sprite-mesh.ts"
 
 /**
  * One atlas frame: the texture it is cut from plus the rect [u0, v0] to
@@ -13,11 +16,16 @@ import type { Atlas } from "./atlas.ts"
  * pair the texture with the rect - so the same frame draws in every layer
  * that declares its atlas, and a layer that does not rejects it at the
  * write (the wrong-sheet bug, caught instead of drawn).
+ *
+ * `mesh` is the tight polygon a hull layer draws instead of the frame's
+ * quad (FrameMesh): the slicers fill it over an atlas created with `mesh:
+ * "hull"`, and a frame without one draws its quad.
  */
-export type Frame = { texture: TextureId; u0: number; v0: number; u1: number; v1: number }
+export type Frame = { texture: TextureId; u0: number; v0: number; u1: number; v1: number; mesh?: FrameMesh }
 
-/** Whether a value is a frame: a non-negative integer texture id and four
- * numeric UVs (what the layers check before touching a record). */
+/** Whether a value is a frame: a non-negative integer texture id, four
+ * numeric UVs and, when present, a mesh with its packed field (what the
+ * layers check before touching a record). */
 export function isFrame(f: unknown): f is Frame {
   let o = f as Frame | null
   return (
@@ -28,7 +36,8 @@ export function isFrame(f: unknown): f is Frame {
     typeof o.u0 === "number" &&
     typeof o.v0 === "number" &&
     typeof o.u1 === "number" &&
-    typeof o.v1 === "number"
+    typeof o.v1 === "number" &&
+    (o.mesh === undefined || (o.mesh.packed instanceof Float32Array && o.mesh.packed.length === MESH_FLOATS))
   )
 }
 
@@ -57,6 +66,20 @@ export function writeFrame(
 }
 
 /**
+ * Write a frame's mesh field (MESH_FLOATS floats) at `at`: the packed
+ * mesh, or zeros for a frame without one, which draws its full quad. The
+ * raw path's partner of writeFrame on a hull layer, whose records carry
+ * the field after the layer's own (records(layer) documents the offset).
+ * The mesh is flip-independent: the vertex stage mirrors it with the
+ * stored UVs, so a flip never rewrites it.
+ */
+export function writeMesh(data: Float32Array, at: number, frame: Frame): void {
+  let packed = frame.mesh?.packed
+  if (packed === undefined) data.fill(0, at, at + MESH_FLOATS)
+  else data.set(packed, at)
+}
+
+/**
  * The geometry of a uniform sheet: what `grid` reads to place cells, and
  * what `extrudeGrid` returns for the sheet it repacks.
  */
@@ -82,10 +105,14 @@ function checkAtlas(what: string, atlas: Atlas): void {
   }
 }
 
-/** A pixel rect of `atlas` to a frame over its texture. */
+/** A pixel rect of `atlas` to a frame over its texture, with its mesh
+ * when the atlas keeps a coverage mask. */
 function frameOf(atlas: Atlas, x: number, y: number, w: number, h: number): Frame {
   let { width, height, texture } = atlas
-  return { texture, u0: x / width, v0: y / height, u1: (x + w) / width, v1: (y + h) / height }
+  let frame: Frame = { texture, u0: x / width, v0: y / height, u1: (x + w) / width, v1: (y + h) / height }
+  let mesh = atlas.mesh === undefined ? undefined : hullMesh(atlas.mesh.coverage, width, height, x, y, w, h)
+  if (mesh !== undefined) frame.mesh = mesh
+  return frame
 }
 
 /**
@@ -156,5 +183,5 @@ export function namedFrames<K extends string>(atlas: Atlas, rects: Record<K, [nu
  * render target shown by a sprite). */
 export function fullFrame(atlas: Atlas): Frame {
   checkAtlas("fullFrame", atlas)
-  return { texture: atlas.texture, u0: 0, v0: 0, u1: 1, v1: 1 }
+  return frameOf(atlas, 0, 0, atlas.width, atlas.height)
 }

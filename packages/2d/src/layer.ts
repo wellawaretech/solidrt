@@ -57,21 +57,22 @@ import type {
   QueryFilter,
 } from "flux:spatial"
 import { on } from "sol:events"
-import { checkAtlases, frameIndex, hasNearestAtlas } from "./atlas.ts"
+import { checkAtlases, frameIndex, hasMeshAtlas, hasNearestAtlas } from "./atlas.ts"
 import type { TextRun } from "./text.ts"
 import type { Atlas } from "./atlas.ts"
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import type { Frame } from "./frames.ts"
-import { fullFrame, isFrame, writeFrame } from "./frames.ts"
+import { fullFrame, isFrame, writeFrame, writeMesh } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
 import { floorReach, pointInSprite } from "./pick.ts"
-import { atlasBindings, POSE_ATTRIBUTES, SPRITE_ATTRIBUTES } from "./glsl.ts"
+import { atlasBindings, MESH_ATTRIBUTES, POSE_ATTRIBUTES, SPRITE_ATTRIBUTES } from "./glsl.ts"
 import { materialSamplers, unlit } from "./material.ts"
 import type { Material } from "./material.ts"
 import { blankStyle, createStyleStreams, growStyle } from "./style.ts"
 import type { StyleStream } from "./style.ts"
 import { createViews } from "./views.ts"
 import type { ViewHandle, ViewOptions } from "./views.ts"
+import { MESH_FLOATS, readMesh } from "./sprite-mesh.ts"
 
 /** Floats per pose record (the core's Pose2D projection). */
 export const POSE_FLOATS = 5
@@ -80,7 +81,8 @@ export const POSE_FLOATS = 5
 const POSE_Y_FIELD = 1
 /** Floats per sprite record (the node layer's slot 1, SPRITE_ATTRIBUTES):
  * [u0, v0, u1, v1, tintR, tintG, tintB, tintA, renderOrder, minScreenPx,
- * maxScreenPx, atlas, outlineR, outlineG, outlineB, outlineWidth]. */
+ * maxScreenPx, atlas, outlineR, outlineG, outlineB, outlineWidth]; a hull
+ * layer's carries MESH_FLOATS more, the frame's mesh, after these. */
 export const SPRITE_FLOATS = 16
 
 // Float offset of renderOrder in a sprite record - what `orderBy: "renderOrder"`
@@ -879,13 +881,19 @@ export type SpriteLayer = LayerBase & {
 }
 
 /** The stored UVs at `at` un-mirrored by the sprite's flags, over the
- * texture the record's atlas index resolved to: the frame as the caller
- * gave it. Internal - records.ts reads through it too. */
-export function readFrame(data: Float32Array, at: number, sprite: Sprite, texture: TextureId): Frame {
+ * texture the record's atlas index resolved to, with a hull layer's mesh
+ * field at `meshAt` (-1 on a quad layer): the frame as the caller gave
+ * it, so a frame read back writes back whole. Internal - records.ts
+ * reads through it too. */
+export function readFrame(data: Float32Array, at: number, sprite: Sprite, texture: TextureId, meshAt: number): Frame {
   let u0 = data[at]!, v0 = data[at + 1]!, u1 = data[at + 2]!, v1 = data[at + 3]!
-  return sprite._flipX || sprite._flipY
-    ? { texture, u0: sprite._flipX ? u1 : u0, v0: sprite._flipY ? v1 : v0, u1: sprite._flipX ? u0 : u1, v1: sprite._flipY ? v0 : v1 }
-    : { texture, u0, v0, u1, v1 }
+  let frame: Frame =
+    sprite._flipX || sprite._flipY
+      ? { texture, u0: sprite._flipX ? u1 : u0, v0: sprite._flipY ? v1 : v0, u1: sprite._flipX ? u0 : u1, v1: sprite._flipY ? v0 : v1 }
+      : { texture, u0, v0, u1, v1 }
+  let mesh = meshAt < 0 ? undefined : readMesh(data, meshAt)
+  if (mesh !== undefined) frame.mesh = mesh
+  return frame
 }
 
 /** Fill the shared transform scratch: xy translation, z rotation, xy scale
@@ -985,12 +993,19 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   // records()/updateRecords for a bulk restyle, published by the flush as
   // the dirty slot range, or the used prefix whole under an order (the
   // core gathers every instance buffer under the one permutation).
-  let sprites = createRecordStream(SPRITE_FLOATS * 4, capacity, { label: `${label}-sprites`, autoFree: false })
+  // A hull layer appends the frame's mesh field to every sprite record.
+  let hull = hasMeshAtlas(atlases)
+  // The frame a sprite added without one shows, cut once: over a hull
+  // atlas it carries the whole sheet's mesh, which costs a scan.
+  let wholeSheet: Frame | undefined
+  let defaultFrame = (): Frame => (wholeSheet ??= fullFrame(atlases[0]!))
+  let stride = SPRITE_FLOATS + (hull ? MESH_FLOATS : 0)
+  let sprites = createRecordStream(stride * Float32Array.BYTES_PER_ELEMENT, capacity, { label: `${label}-sprites`, autoFree: false })
   // The material's style streams, after the layer's own: the same
   // publish, the same growth.
   let styles = createStyleStreams(material, capacity, label)
   let ordered = opts?.orderBy !== undefined
-  let gpu = material.pipeline(atlases, [POSE_ATTRIBUTES, SPRITE_ATTRIBUTES], label)
+  let gpu = material.pipeline(atlases, [POSE_ATTRIBUTES, hull ? [...SPRITE_ATTRIBUTES, ...MESH_ATTRIBUTES] : SPRITE_ATTRIBUTES], label, hull)
   // The sprites with a screen-size clamp (either bound on), and the
   // furthest any of them reaches from its center at its floor (floorReach,
   // view pixels): the candidate box a pick searches around the pointer. A
@@ -1009,7 +1024,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   // ceiling set alone must not drop below the floor already there.
   let checkClamp = (verb: string, sprite: SpriteState, opts: SpriteOptions): void => {
     if (opts.minScreenPx === undefined && opts.maxScreenPx === undefined) return
-    let at = sprite._slot * SPRITE_FLOATS
+    let at = sprite._slot * stride
     checkScreenSize(verb, opts.minScreenPx ?? spriteData[at + SPRITE_MIN_PX_FIELD]!, opts.maxScreenPx ?? spriteData[at + SPRITE_MAX_PX_FIELD]!)
   }
 
@@ -1082,7 +1097,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     spatial.flush()
   }
 
-  // The instance buffers in pipeline order after the quad: the pose, the
+  // The instance buffers in pipeline order after the corners: the pose, the
   // sprite records, the material's style streams.
   let buffers = (): BufferId[] => [pose, sprites.buffer, ...styles.map(s => s.stream.buffer)]
   // Grow every instance buffer to `next` slots: the pose sinks move in one
@@ -1114,7 +1129,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   }
 
   let writeSprite = (sprite: SpriteState, opts: SpriteOptions, atlas: number) => {
-    let at = sprite._slot * SPRITE_FLOATS
+    let at = sprite._slot * stride
     let changed = false
     let flipX = opts.flipX !== undefined && opts.flipX !== sprite._flipX
     let flipY = opts.flipY !== undefined && opts.flipY !== sprite._flipY
@@ -1124,6 +1139,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       let f = opts.frame
       writeFrame(spriteData, at, f.u0, f.v0, f.u1, f.v1, sprite._flipX, sprite._flipY)
       spriteData[at + SPRITE_ATLAS_FIELD] = atlas
+      if (hull) writeMesh(spriteData, at + SPRITE_FLOATS, f)
       changed = true
     } else if (flipX || flipY) {
       // No new frame: toggle the changed axes on the stored UVs.
@@ -1166,7 +1182,8 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     root,
     pose: () => pose,
     pipeline: gpu.pipeline,
-    quad: gpu.quad,
+    corners: gpu.corners,
+    vertexCount: gpu.vertexCount,
     textures: { ...atlasBindings(atlases.map(a => a.texture)), ...material.textures },
     buffers,
     count: () => published,
@@ -1240,7 +1257,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
         // the vertex stage draws.
         if (reachDirty) {
           reach = 0
-          for (let s of clamped) reach = Math.max(reach, floorReach(s._w, s._h, spriteData[s._slot * SPRITE_FLOATS + SPRITE_MIN_PX_FIELD]!))
+          for (let s of clamped) reach = Math.max(reach, floorReach(s._w, s._h, spriteData[s._slot * stride + SPRITE_MIN_PX_FIELD]!))
           reachDirty = false
         }
         let candidates = new Set<NodeId>()
@@ -1256,7 +1273,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
           spatial.worldMatrix(sprite.node!, WORLD)
           let w = Math.hypot(WORLD[0]!, WORLD[1]!)
           let h = Math.hypot(WORLD[4]!, WORLD[5]!)
-          let at = sprite._slot * SPRITE_FLOATS
+          let at = sprite._slot * stride
           let scale = screenSizeScale(w, h, zoom, spriteData[at + SPRITE_MIN_PX_FIELD]!, spriteData[at + SPRITE_MAX_PX_FIELD]!)
           if (pointInSprite(x, y, WORLD[12]!, WORLD[13]!, w * scale, h * scale, Math.atan2(WORLD[1]!, WORLD[0]!))) out.push(sprite)
         }
@@ -1380,7 +1397,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       // everywhere; a plain spread would let undefined win).
       let fields: SpriteOptions = {
         ...opts,
-        frame: opts?.frame ?? fullFrame(atlases[0]!),
+        frame: opts?.frame ?? defaultFrame(),
         tint: opts?.tint ?? [1, 1, 1, 1],
         renderOrder: opts?.renderOrder ?? 0,
         minScreenPx: opts?.minScreenPx ?? 0,
@@ -1421,7 +1438,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       // No outline until a text run sets one: a recycled slot would
       // otherwise leak the previous occupant's. The material's sprites
       // slots start over for the same reason.
-      spriteData.fill(0, slot * SPRITE_FLOATS + SPRITE_OUTLINE_FIELD, slot * SPRITE_FLOATS + SPRITE_OUTLINE_FIELD + 4)
+      spriteData.fill(0, slot * stride + SPRITE_OUTLINE_FIELD, slot * stride + SPRITE_OUTLINE_FIELD + 4)
       for (let style of styles) blankStyle(style, slot)
       layer._schedule()
       return sprite
@@ -1429,7 +1446,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     _outline(sprite, r, g, b, width) {
       // A dead handle's slot may be another sprite's now.
       if (sprite.layer === null) return
-      let at = sprite._slot * SPRITE_FLOATS + SPRITE_OUTLINE_FIELD
+      let at = sprite._slot * stride + SPRITE_OUTLINE_FIELD
       spriteData[at] = r
       spriteData[at + 1] = g
       spriteData[at + 2] = b
@@ -1467,13 +1484,13 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       if (moved || sprites.dirty) layer._schedule()
     },
     _read(sprite) {
-      let at = sprite._slot * SPRITE_FLOATS
+      let at = sprite._slot * stride
       return {
         x: sprite._x,
         y: sprite._y,
         w: sprite._w,
         h: sprite._h,
-        frame: readFrame(spriteData, at, sprite, atlases[spriteData[at + SPRITE_ATLAS_FIELD]!]!.texture),
+        frame: readFrame(spriteData, at, sprite, atlases[spriteData[at + SPRITE_ATLAS_FIELD]!]!.texture, hull ? at + SPRITE_FLOATS : -1),
         flipX: sprite._flipX,
         flipY: sprite._flipY,
         rotation: sprite._rot,

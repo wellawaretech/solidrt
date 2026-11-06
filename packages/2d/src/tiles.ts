@@ -1129,7 +1129,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     for (let style of chunk.styles) {
       style.buffer = (pool.take(bufferClass(style.bytes.byteLength)) as BufferId | undefined) ?? createBuffer(style.bytes.byteLength, { label, autoFree: false })
     }
-    let buffers = [gpu.quad, buffer, ...chunk.styles.map(s => s.buffer!)]
+    let buffers = [gpu.corners, buffer, ...chunk.styles.map(s => s.buffer!)]
     let w = targetW * density
     let h = targetH * density
     let texture = pool.take(targetClass) as TextureId | undefined
@@ -1143,7 +1143,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
       texture = createShaderTarget(gpu.pipeline, w, h, targetParams(), {
         label,
         buffers,
-        vertexCount: 4,
+        vertexCount: gpu.vertexCount,
         instanceCount: perChunk,
         textures,
         clearColor: opts?.chunkClearColor ?? [0, 0, 0, 0],

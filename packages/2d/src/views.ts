@@ -319,19 +319,23 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
   return view
 }
 
-// What a sprite or record layer hands its views: the pipeline and quad
-// every entry draws with, the atlases, the key order one entry declares,
+// What a sprite or record layer hands its views: the pipeline and corner
+// buffer every entry draws with, the atlases, the key order one entry declares,
 // and live reads of the state the layer fans out.
 export type ViewDeps = {
   label: string
   pipeline: RenderPipelineId
-  quad: BufferId
+  /** The per-vertex corner buffer and the vertices one instance draws
+   * from it (SpritePipeline: the unit quad's 4, a hull layer's mesh
+   * strip's 8). */
+  corners: BufferId
+  vertexCount: number
   /** The sampler bindings every view binds: the layer's atlases by
    * sampler index (the pipeline was compiled for exactly those) and the
    * material's own textures. */
   textures: TextureBindings
   /** The layer's current instance buffers, in the pipeline's layout order
-   * after the quad (the pose and sprite pair on the node layer, the one
+   * after the corners (the pose and sprite pair on the node layer, the one
    * record buffer on records, the material's style buffers after them). */
   buffers: () => BufferId[]
   /** The instance count as last published. */
@@ -406,8 +410,8 @@ export function createViews(deps: ViewDeps): Views {
   }
   let entryFor = (texture: TextureId, order: InstanceOrder | undefined): DrawId =>
     addDraw(texture, deps.pipeline, null, {
-      buffers: [deps.quad, ...deps.buffers()],
-      vertexCount: 4,
+      buffers: [deps.corners, ...deps.buffers()],
+      vertexCount: deps.vertexCount,
       instanceOrder: order,
       instanceCount: deps.count(),
     })
@@ -448,7 +452,7 @@ export function createViews(deps: ViewDeps): Views {
       return view
     },
     setBuffers(instanceBuffers) {
-      for (let v of views) setDrawBuffers(v.view.texture, v.entry, { buffers: [deps.quad, ...instanceBuffers] })
+      for (let v of views) setDrawBuffers(v.view.texture, v.entry, { buffers: [deps.corners, ...instanceBuffers] })
     },
     setCount(count) {
       for (let v of views) setDrawRange(v.view.texture, v.entry, { instanceCount: count })

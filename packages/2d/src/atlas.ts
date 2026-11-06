@@ -9,6 +9,8 @@ import type { DecodedImage } from "@solidrt/core"
 import { limits } from "@solidrt/core/gpu"
 import type { FilterMode, SamplerOptions, TextureId } from "@solidrt/core/gpu"
 import type { Frame } from "./frames.ts"
+import { coverageMask } from "./sprite-mesh.ts"
+import type { AtlasMesh } from "./sprite-mesh.ts"
 
 /**
  * A texture with its pixel size: what `grid`, `namedFrames` and
@@ -44,6 +46,21 @@ export type Atlas = {
    * A literal states it to get the same check; absent, no check.
    */
   filter?: FilterMode
+  /** Whether the texture has a mip chain, as a plain fact: createAtlas
+   * records it, and a hull layer over it pushes its meshes further out,
+   * since a minified tap blurs past the shape (MESH_MIP_EDGE_PX). A
+   * literal states it for the same; absent, no chain. */
+  mipmap?: boolean
+  /**
+   * The sheet's mesh source (`createAtlas(image, { mesh: "hull" })`): the
+   * coverage of its texels, kept for the atlas's life so the slicers fill
+   * `Frame.mesh` whenever frames are cut. A sprite or record layer
+   * declaring such an atlas is a HULL layer: it draws each sprite as its
+   * frame's mesh instead of the quad (a frame without a mesh still draws
+   * its quad). A tile layer bakes quads either way. Fixed at the layer's
+   * creation like the list itself.
+   */
+  mesh?: AtlasMesh
 }
 
 /**
@@ -55,6 +72,19 @@ export type Atlas = {
  */
 export type AtlasOptions = SamplerOptions & {
   label?: string
+  /**
+   * `"hull"`: keep the sheet's coverage (one bit per texel, 512 KiB for a
+   * 2048 x 2048 sheet) so every frame cut from it carries a tight convex
+   * mesh, and a layer declaring it shades the shape instead of its whole
+   * frame quad - a sheet of irregular shapes spends about half its
+   * fragments on transparent corners otherwise. Opt-in: a material that
+   * draws outside the shape (a glow, a bevel, a drop shadow inside the
+   * frame) would be cut, and a rectangular sprite gains nothing.
+   */
+  mesh?: "hull"
+  /** The sheet is a distance field (see `Atlas.sdf`). With `mesh` the
+   * coverage is the field's edge, not alpha above zero. */
+  sdf?: { range: number }
   /** Skip the owner-scoped auto-free (the core createTexture contract). */
   autoFree?: boolean
 }
@@ -72,12 +102,27 @@ export type AtlasOptions = SamplerOptions & {
  */
 export function createAtlas(image: DecodedImage, opts?: AtlasOptions): Atlas {
   let { data, width, height } = image
+  let { mesh, sdf, ...sampler } = opts ?? {}
+  if (mesh !== undefined && mesh !== "hull") throw new Error(`createAtlas: mesh must be "hull", got ${JSON.stringify(mesh)}`)
+  if (sdf !== undefined && !(typeof sdf.range === "number" && sdf.range > 0 && Number.isFinite(sdf.range))) {
+    throw new Error(`createAtlas: sdf.range must be a positive number, got ${JSON.stringify(sdf.range)}`)
+  }
   let texture = createTexture(data, width, height, {
-    ...opts,
+    ...sampler,
     filter: opts?.filter ?? "linear",
     label: opts?.label ?? "atlas",
   })
-  return { texture, width, height, filter: opts?.filter ?? "linear" }
+  let atlas: Atlas = { texture, width, height, filter: opts?.filter ?? "linear", mipmap: opts?.mipmap === true }
+  if (sdf !== undefined) atlas.sdf = { range: sdf.range }
+  if (mesh !== undefined) atlas.mesh = { kind: mesh, coverage: coverageMask(data, width, height, sdf !== undefined) }
+  return atlas
+}
+
+/** Whether a layer over `atlases` draws meshes (a HULL layer): any of
+ * them keeps a mesh source. Internal - the sprite and record layers pick
+ * their record layout and pipeline by it. */
+export function hasMeshAtlas(atlases: readonly Atlas[]): boolean {
+  return atlases.some(a => a.mesh !== undefined)
 }
 
 /** Whether a layer over `atlases` samples any of them nearest (the
@@ -120,6 +165,10 @@ export function checkAtlases(verb: string, atlases: readonly Atlas[], samplers =
     if (index.has(atlas.texture)) throw new Error(`${verb}: atlases[${i}] declares texture ${atlas.texture} a second time`)
     if (atlas.filter !== undefined && atlas.filter !== "linear" && atlas.filter !== "nearest") {
       throw new Error(`${verb}: atlases[${i}].filter must be "linear" or "nearest", got ${JSON.stringify(atlas.filter)}`)
+    }
+    let mesh = atlas.mesh
+    if (mesh !== undefined && !(mesh.kind === "hull" && mesh.coverage instanceof Uint32Array && mesh.coverage.length * 32 >= atlas.width * atlas.height)) {
+      throw new Error(`${verb}: atlases[${i}].mesh is not a coverage mask of the atlas's texels (createAtlas with mesh: "hull")`)
     }
     index.set(atlas.texture, i)
   })

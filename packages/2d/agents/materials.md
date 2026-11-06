@@ -77,8 +77,9 @@ order, so nothing sorts.
   (`shaderMaterial(opts)` is a class with one instance): TIER 1 pairs
   a vertex stage of your own with `unlitFragment(options)` from
   `@solidrt/2d/glsl` - compose `SPRITE_VARYINGS`, core's
-  `SCREEN_SIZE_GLSL`, your placement into `corner`/`center`/`rot`/
-  `clampScale`, then `SPRITE_VERTEX_BODY`; `SPRITE_VERTEX` is the
+  `SCREEN_SIZE_GLSL`, your placement into `unit`/`corner`/`center`/
+  `rot`/`clampScale` (`unit` from `spriteCorner`, see Traps), then
+  `SPRITE_VERTEX_BODY`; `SPRITE_VERTEX` is the
   stock stage, `unlitVertex(forwards)` the stock stage forwarding
   attributes - and TIER 3 writes a `main` of its own over the layer's
   SET, which the layer prepends (the varyings, `uAtlasN`, `uTint`, the
@@ -99,6 +100,24 @@ order, so nothing sorts.
   the tile bake and the throws.
 
 ## Traps
+
+- A custom vertex stage never declares or reads `aPos` (a throw at
+  `shaderMaterialClass`): the layer prepends the corner input and
+  `vec2 spriteCorner(vec2 size, float zoom, float outlinePx, vec4 uv)`,
+  the vertex in unit-quad space (-0.5..0.5 over the frame). Call it with
+  the drawn world size (`iScale * clampScale`), `uCamera.z`, the outline
+  in screen pixels (`iOutline.a * uCamera.z * clampScale`, 0 without
+  one) and `iUv`, then place `corner = unit * size` and map the uv
+  through `unit` (SPRITE_VERTEX_BODY reads it): on a quad layer it is
+  the quad's corner, on a hull layer (an atlas with `mesh: "hull"`) the
+  frame's mesh point pushed out and mirrored, so one stage serves both.
+- A `surface` pays its work in every fragment its quad covers, the
+  transparent corners included: a surface that samples or takes
+  derivatives before it returns on a transparent pixel (derivatives want
+  uniform control flow, so the early return comes after them) costs that
+  work in every empty corner. Over a sheet of irregular shapes, a hull
+  atlas (`mesh: "hull"`) removes most of those fragments; returning
+  early does not.
 
 - A `surface` reads the struct, never a local of the generated program:
   `s.color` is premultiplied and BEFORE the layer tint (`uTint`

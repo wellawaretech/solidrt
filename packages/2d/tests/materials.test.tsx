@@ -235,7 +235,6 @@ test("a custom vertex stage under the stock fragment, and a fragment of its own 
   // Tier 1: the stock placement shifted a quarter view to the right.
   let shifted = shaderMaterialClass({
     vertex: glsl`
-      in vec2 aPos;
       in vec2 iPos;
       in float iRot;
       in vec2 iScale;
@@ -248,7 +247,9 @@ test("a custom vertex stage under the stock fragment, and a fragment of its own 
       ${SCREEN_SIZE_GLSL}
       void main() {
         float clampScale = screenSizeScale(iScale, uCamera.z, iScreenPx);
-        vec2 corner = aPos * iScale * clampScale;
+        vec2 size = iScale * clampScale;
+        vec2 unit = spriteCorner(size, uCamera.z, iOutline.a * uCamera.z * clampScale, iUv);
+        vec2 corner = unit * size;
         vec2 center = iPos + vec2(${(SIZE / 4).toFixed(1)}, 0.0);
         float rot = iRot;
         ${SPRITE_VERTEX_BODY}

@@ -54,6 +54,15 @@ tools stay, as the primitive under the stage and the way to not use it.
   (and, today, only under `@solidrt/*`: see the plan's "Tools of
   third-party extensions"). A tool needs a declared contract: which
   files it takes, what it writes.
+- **Atlas meshes, a third consumer.** A tight mesh per atlas frame
+  ([2d-sprite-hull-meshes](../done/2d-sprite-hull-meshes.md)) is built at
+  runtime today, when frames are cut; Unity and TexturePacker build it
+  at import. The runtime cost is real: on an Adreno 610 tablet a
+  2048-square sheet takes about a second for the coverage mask and
+  another for 256 frames. Baking it needs the frame rects as well as the image: a
+  sheet with an exported frame table (TexturePacker JSON) has them, a
+  sheet cut by a `grid` call in app code does not. So a tool's declared
+  inputs may be more than files.
 - **Where it runs.** Every bake that encodes textures runs under flux
   (the encoder is the runtime's), and so does everything that matches
   the patterns of `solidrt.textures.files`: bun's matcher and ours

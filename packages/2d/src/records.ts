@@ -40,10 +40,12 @@ import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core
 import { checkScreenSize, createRecordStream, destroyBuffer, screenSizeScale } from "@solidrt/core/gpu"
 import type { BufferId } from "@solidrt/core/gpu"
 import type { AttributeAccess, ShaderParams } from "@solidrt/core/gpu"
-import { checkAtlases, frameIndex, hasNearestAtlas } from "./atlas.ts"
+import { checkAtlases, frameIndex, hasMeshAtlas, hasNearestAtlas } from "./atlas.ts"
 import type { Atlas } from "./atlas.ts"
-import { fullFrame, isFrame, writeFrame } from "./frames.ts"
-import { atlasBindings, RECORD_ATTRIBUTES } from "./glsl.ts"
+import { fullFrame, isFrame, writeFrame, writeMesh } from "./frames.ts"
+import type { Frame } from "./frames.ts"
+import { atlasBindings, MESH_ATTRIBUTES, RECORD_ATTRIBUTES } from "./glsl.ts"
+import { MESH_FLOATS } from "./sprite-mesh.ts"
 import { checkParams, checkTint, readFrame } from "./layer.ts"
 import type { LayerBase, Sprite, SpriteLayer, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
 import { materialSamplers, unlit } from "./material.ts"
@@ -54,10 +56,9 @@ import { createViews } from "./views.ts"
 // Floats per instance record:
 // [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA,
 //  minScreenPx, maxScreenPx, atlas, outlineR, outlineG, outlineB,
-//  outlineWidth]
+//  outlineWidth]; a hull layer's record carries MESH_FLOATS more, the
+// frame's mesh, after these.
 export const INSTANCE_FLOATS = 20
-// Bytes per record: the stride of the GPU buffer and the mirror alike.
-const RECORD_BYTES = INSTANCE_FLOATS * Float32Array.BYTES_PER_ELEMENT
 
 // Float offset of cy in a record - what `orderBy: "y"` keys on.
 const Y_FIELD_OFFSET = 1
@@ -118,7 +119,11 @@ export type UpdateRecordsOptions = { stream?: number; first?: number; count?: nu
  * INSTANCE_FLOATS; `atlas` is the frame's texture as its index in the
  * layer's `atlases` list, and the outline is read only by a
  * distance-field atlas (see `Atlas.sdf`): rgb in 0..1 and a width in
- * world pixels, zero for none. Record order is draw order - unless the
+ * world pixels, zero for none. On a HULL layer (an atlas with a mesh,
+ * see `Atlas.mesh`) each record is INSTANCE_FLOATS + MESH_FLOATS floats,
+ * the frame's mesh field after the twenty: write it with `writeMesh(data,
+ * at + INSTANCE_FLOATS, frame)` beside the UVs (zeros draw the full
+ * quad). Record order is draw order - unless the
  * layer was created with `orderBy`, which draws in key order while record
  * i keeps meaning sprite i. Do not cache indices across destroy -
  * records shift.
@@ -127,7 +132,9 @@ export type UpdateRecordsOptions = { stream?: number; first?: number; count?: nu
  * SPRITE_FLOATS floats per sprite slot: [u0, v0, u1, v1, tintR, tintG,
  * tintB, tintA, renderOrder, minScreenPx, maxScreenPx, atlas, outlineR,
  * outlineG, outlineB, outlineWidth], slot i at i * SPRITE_FLOATS (a
- * sprite's slot is fixed for its life; a freed slot recycles) - the pose
+ * sprite's slot is fixed for its life; a freed slot recycles), and on a
+ * hull layer SPRITE_FLOATS + MESH_FLOATS with the mesh field at
+ * SPRITE_FLOATS - the pose
  * lives in the core and is written through setSprite. The 3d
  * `records(instancedMesh)`, one dimension down: a bulk restyle (a palette
  * cycle over thousands of sprites) is one loop over this and one
@@ -258,7 +265,14 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     throw new Error(`createRecordLayer: capacity must be a positive integer, got ${capacity}`)
   }
   let label = opts?.label ?? "sprites"
-  let stream = createRecordStream(RECORD_BYTES, capacity, { label: `${label}-records`, autoFree: false })
+  // A hull layer appends the frame's mesh field to every record.
+  let hull = hasMeshAtlas(atlases)
+  // The frame a sprite added without one shows, cut once: over a hull
+  // atlas it carries the whole sheet's mesh, which costs a scan.
+  let wholeSheet: Frame | undefined
+  let defaultFrame = (): Frame => (wholeSheet ??= fullFrame(atlases[0]!))
+  let stride = INSTANCE_FLOATS + (hull ? MESH_FLOATS : 0)
+  let stream = createRecordStream(stride * Float32Array.BYTES_PER_ELEMENT, capacity, { label: `${label}-records`, autoFree: false })
   let tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createRecordLayer", tint)
   let material = opts?.material ?? unlit()
@@ -275,8 +289,8 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
         ? { field: Y_FIELD_OFFSET }
         : { field: orderBy.field, descending: orderBy.descending }
   let ordered = instanceOrder !== undefined
-  let gpu = material.pipeline(atlases, [RECORD_ATTRIBUTES], label)
-  // The instance buffers in pipeline order after the quad.
+  let gpu = material.pipeline(atlases, [hull ? [...RECORD_ATTRIBUTES, ...MESH_ATTRIBUTES] : RECORD_ATTRIBUTES], label, hull)
+  // The instance buffers in pipeline order after the corners.
   let buffers = () => [stream.buffer, ...styles.map(s => s.stream.buffer)]
 
   let disposed = false
@@ -369,9 +383,10 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     return frameIndex(verb, atlasIndex, opts.frame)
   }
   // Record layout: [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB,
-  // tintA, minScreenPx, maxScreenPx, atlas, outline rgb + width]
+  // tintA, minScreenPx, maxScreenPx, atlas, outline rgb + width], then the
+  // mesh on a hull layer.
   let writeRecord = (sprite: SpriteState, opts: SpriteOptions, atlas: number) => {
-    let at = sprite._slot * INSTANCE_FLOATS
+    let at = sprite._slot * stride
     let r = layer._records
     if (opts.x !== undefined) r[at] = opts.x
     if (opts.y !== undefined) r[at + 1] = opts.y
@@ -385,6 +400,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       let f = opts.frame
       writeFrame(r, at + 4, f.u0, f.v0, f.u1, f.v1, sprite._flipX, sprite._flipY)
       r[at + ATLAS_FIELD_OFFSET] = atlas
+      if (hull) writeMesh(r, at + INSTANCE_FLOATS, f)
     } else if (flipX || flipY) {
       // No new frame: toggle the changed axes on the stored UVs.
       writeFrame(r, at + 4, r[at + 4]!, r[at + 5]!, r[at + 6]!, r[at + 7]!, flipX, flipY)
@@ -402,7 +418,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
   // The clamp pair against the STORED bounds, before any write lands.
   let checkClamp = (verb: string, sprite: SpriteState, opts: SpriteOptions): void => {
     if (opts.minScreenPx === undefined && opts.maxScreenPx === undefined) return
-    let at = sprite._slot * INSTANCE_FLOATS
+    let at = sprite._slot * stride
     let r = layer._records
     checkScreenSize(verb, opts.minScreenPx ?? r[at + MIN_PX_FIELD_OFFSET]!, opts.maxScreenPx ?? r[at + MAX_PX_FIELD_OFFSET]!)
   }
@@ -411,7 +427,8 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     label,
     root: null,
     pipeline: gpu.pipeline,
-    quad: gpu.quad,
+    corners: gpu.corners,
+    vertexCount: gpu.vertexCount,
     textures: { ...atlasBindings(atlases.map(a => a.texture)), ...material.textures },
     buffers,
     count: () => published,
@@ -453,7 +470,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       let out: Sprite[] = []
       let r = layer._records
       for (let i = drawn() - 1; i >= 0; i--) {
-        let at = i * INSTANCE_FLOATS
+        let at = i * stride
         let w = r[at + 2]!
         let h = r[at + 3]!
         let scale = screenSizeScale(w, h, zoom, r[at + MIN_PX_FIELD_OFFSET]!, r[at + MAX_PX_FIELD_OFFSET]!)
@@ -488,7 +505,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
         y: opts?.y ?? 0,
         w: opts?.w ?? 0,
         h: opts?.h ?? 0,
-        frame: opts?.frame ?? fullFrame(atlases[0]!),
+        frame: opts?.frame ?? defaultFrame(),
         rotation: opts?.rotation ?? 0,
         tint: opts?.tint ?? [1, 1, 1, 1],
         minScreenPx: opts?.minScreenPx ?? 0,
@@ -509,7 +526,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       writeRecord(sprite, record, atlas)
       // No outline until a raw writer sets one: the slot may hold a
       // shifted-out sprite's record otherwise.
-      layer._records.fill(0, index * INSTANCE_FLOATS + OUTLINE_FIELD_OFFSET, index * INSTANCE_FLOATS + OUTLINE_FIELD_OFFSET + 4)
+      layer._records.fill(0, index * stride + OUTLINE_FIELD_OFFSET, index * stride + OUTLINE_FIELD_OFFSET + 4)
       // The material's style slot starts blank for the same reason.
       for (let s of styles) blankStyle(s, index)
       markRecords(layer, index, index + 1)
@@ -522,14 +539,14 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       markRecords(layer, sprite._slot, sprite._slot + 1)
     },
     _read(sprite) {
-      let at = sprite._slot * INSTANCE_FLOATS
+      let at = sprite._slot * stride
       let r = layer._records
       return {
         x: r[at]!,
         y: r[at + 1]!,
         w: r[at + 2]!,
         h: r[at + 3]!,
-        frame: readFrame(r, at + 4, sprite, atlases[r[at + ATLAS_FIELD_OFFSET]!]!.texture),
+        frame: readFrame(r, at + 4, sprite, atlases[r[at + ATLAS_FIELD_OFFSET]!]!.texture, hull ? at + INSTANCE_FLOATS : -1),
         flipX: sprite._flipX,
         flipY: sprite._flipY,
         rotation: r[at + 8]!,
@@ -550,7 +567,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       let order = layer._order
       let r = layer._records
       let last = order.length - 1
-      r.copyWithin(index * INSTANCE_FLOATS, (index + 1) * INSTANCE_FLOATS, order.length * INSTANCE_FLOATS)
+      r.copyWithin(index * stride, (index + 1) * stride, order.length * stride)
       if (index < last) for (let s of styles) shiftStyle(s, index + 1, order.length)
       order.splice(index, 1)
       for (let i = index; i < order.length; i++) order[i]!._slot = i

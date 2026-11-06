@@ -2,8 +2,9 @@
 // compiles over, and what an app composes its own stages from
 // (`@solidrt/2d/glsl`, the twin of `@solidrt/3d/glsl`).
 //
-// The VERTEX side is one stage for every layer kind: a unit quad
-// instanced over the layer's records, mapped world -> clip through
+// The VERTEX side is one stage for every layer kind: a unit quad (on a
+// HULL layer the frame's mesh, see spriteCornerSource) instanced over the
+// layer's records, mapped world -> clip through
 // uCamera (offset + zoom), uCameraRot ([cos, sin, pivotX, pivotY]: the
 // camera rotation about the pivot, identity [1, 0, 0, 0]) and uViewport -
 // the projectCamera mapping (camera.ts) spelled in GLSL; the two must
@@ -45,11 +46,13 @@
 // shaders - if you touch one rotation, touch all.
 import { glsl, SCREEN_SIZE_GLSL, VERTEX_FORMATS } from "@solidrt/core/gpu"
 import type { TextureBindings, TextureId, VertexAttribute, VertexFormat } from "@solidrt/core/gpu"
+import { MESH_FLOATS, MESH_LATTICE, MESH_VERTICES } from "./sprite-mesh.ts"
 
-/** What the fragment set reads of a declared atlas: whether it is a
- * distance field, and its range (see `Atlas.sdf`). An Atlas record is
- * one. */
-export type AtlasShading = { sdf?: { range: number } }
+/** What a layer's generated GLSL reads of a declared atlas: whether it is
+ * a distance field and its range (see `Atlas.sdf`), for the fragment set,
+ * and whether it samples a mip chain (`Atlas.mipmap`), for a hull layer's
+ * push. An Atlas record is one. */
+export type AtlasShading = { sdf?: { range: number }; mipmap?: boolean }
 
 /** The core-written pose record of the node layer (slot 0): the Pose2D
  * projection [x, y, angle, sx, sy]. */
@@ -86,9 +89,127 @@ export const RECORD_ATTRIBUTES: VertexAttribute[] = [
   { name: "iOutline", format: "float32x4" },
 ]
 
-/** The attribute names the layers' own records and the unit quad take:
- * what a material's instance buffers may not reuse. */
-export const LAYER_ATTRIBUTE_NAMES: readonly string[] = ["aPos", ...[...POSE_ATTRIBUTES, ...SPRITE_ATTRIBUTES, ...RECORD_ATTRIBUTES].map(a => a.name)]
+/** The mesh field a HULL layer appends to its record (MESH_FLOATS
+ * floats, the packed ring of sprite-mesh.ts): read by spriteCorner, never
+ * by a stage itself. */
+export const MESH_ATTRIBUTES: VertexAttribute[] = [
+  { name: "iMesh0", format: "float32x4" },
+  { name: "iMesh1", format: "float32x2" },
+]
+
+/** The attribute names the layers' own records and the per-vertex corner
+ * buffers take: what a material's instance buffers may not reuse. */
+export const LAYER_ATTRIBUTE_NAMES: readonly string[] = ["aPos", "aCorner", ...[...POSE_ATTRIBUTES, ...SPRITE_ATTRIBUTES, ...RECORD_ATTRIBUTES, ...MESH_ATTRIBUTES].map(a => a.name)]
+
+/** How far, in screen pixels, a hull layer's vertex stage pushes each mesh
+ * point out beyond the shape: about a pixel, what the distance-field
+ * decode's half-pixel edge reaches past the covered texels (the mesh's
+ * half-texel padding already holds a level-0 bilinear tap). */
+export const MESH_EDGE_PX = 1
+/** The push over a layer with a mipmapped atlas: a minified tap reads a
+ * coarser level, whose texels average up to twice the screen footprint
+ * and whose bilinear reach is one and a half of them, so blurred colour
+ * lands up to about three screen pixels past the shape. */
+export const MESH_MIP_EDGE_PX = 3
+// The floor of a miter's denominator (1 + cos of the turn): only a
+// zero-angle tip reaches it, which the pure mesh never makes.
+const MITER_EPSILON = 1e-6
+
+/**
+ * The corner source a layer PREPENDS to its material's vertex stage (as
+ * it prepends spriteSource to the fragment): the per-vertex corner input
+ * and `vec2 spriteCorner(vec2 size, float zoom, float outlinePx, vec4
+ * uv)`, the vertex's position in unit-quad space (-0.5..0.5 over the
+ * frame, u right, v down) - what a stage places and maps its uv through.
+ * `size` is the drawn world size (iScale times the screen-size clamp),
+ * `zoom` the camera zoom (uCamera.z), `outlinePx` the outline in screen
+ * pixels (zero without one), `uv` the record's iUv.
+ *
+ * On a quad layer it is the unit quad's corner (`aPos`) and the arguments
+ * go unused. On a HULL layer (an atlas with a mesh, see Atlas.mesh) it is
+ * the mesh ring's point `aCorner` (the strip order, MESH_STRIP) of the
+ * record's mesh field, pushed out along its miter by MESH_EDGE_PX (or
+ * MESH_MIP_EDGE_PX over a mipmapped atlas) plus the outline, in screen
+ * pixels, plus half a lattice cell diagonal (what keeps
+ * the packed, rounded points conservative), then mirrored on each axis
+ * where the record's UV rect is reversed (a flip is stored as swapped
+ * UVs, and the mesh is flip-independent). The neighbours for the miter
+ * come from the same record, so the push costs no fetch. A record whose
+ * mesh field is zero draws the full quad, as a quad layer does. The push
+ * may leave the frame quad; the hull fragment set discards outside the
+ * frame rect, so a hull layer never draws a pixel the quad would not.
+ */
+export function spriteCornerSource(atlases: readonly AtlasShading[], hull: boolean): string {
+  if (!hull) {
+    return glsl`
+  in vec2 aPos;
+  vec2 spriteCorner(vec2 size, float zoom, float outlinePx, vec4 uv) {
+    return aPos;
+  }
+`
+  }
+  let edgePx = atlases.some(a => a.mipmap === true) ? MESH_MIP_EDGE_PX : MESH_EDGE_PX
+  let words = ""
+  for (let i = 0; i < MESH_FLOATS; i++) words += `${i > 0 ? ", " : ""}uint(${i < 4 ? "iMesh0" : "iMesh1"}.${"xyzw"[i % 4]})`
+  let n = MESH_VERTICES
+  return glsl`
+  in float aCorner;
+  in vec4 iMesh0;
+  in vec2 iMesh1;
+  vec2 spriteCorner(vec2 size, float zoom, float outlinePx, vec4 uv) {
+    uint words[${MESH_FLOATS}] = uint[${MESH_FLOATS}](${words});
+    vec2 points[${n}];
+    bool meshed = false;
+    for (int i = 0; i < ${n}; i++) {
+      int bx = i * 2;
+      int by = bx + 1;
+      uint x = (words[bx / 3] >> uint(8 * (bx % 3))) & 255u;
+      uint y = (words[by / 3] >> uint(8 * (by % 3))) & 255u;
+      points[i] = vec2(float(x), float(y)) / ${MESH_LATTICE.toFixed(1)};
+      meshed = meshed || x != 0u || y != 0u;
+    }
+    int k = int(aCorner);
+    vec2 extent = abs(size);
+    if (!meshed || extent.x == 0.0 || extent.y == 0.0) {
+      // No mesh: the full quad, its last corner repeated over the strip's
+      // padding (and a zero-size sprite collapses either way).
+      vec2 quad = k == 0 ? vec2(0.0) : k == 1 ? vec2(1.0, 0.0) : k == 2 ? vec2(1.0) : vec2(0.0, 1.0);
+      return quad - 0.5;
+    }
+    vec2 p = (points[k] - 0.5) * extent;
+    vec2 a = p;
+    vec2 b = p;
+    for (int j = 1; j < ${n}; j++) {
+      int i = (k + ${n} - j) % ${n};
+      if (points[i] != points[k]) {
+        a = (points[i] - 0.5) * extent;
+        break;
+      }
+    }
+    for (int j = 1; j < ${n}; j++) {
+      int i = (k + j) % ${n};
+      if (points[i] != points[k]) {
+        b = (points[i] - 0.5) * extent;
+        break;
+      }
+    }
+    if (a != p) {
+      // The ring turns with a positive cross product, so (e.y, -e.x) is
+      // each edge's outward normal; the miter offsets both edges by push.
+      float push = (${edgePx.toFixed(1)} + outlinePx) / zoom + 0.5 * length(extent) / ${MESH_LATTICE.toFixed(1)};
+      vec2 e1 = normalize(p - a);
+      vec2 e2 = normalize(b - p);
+      vec2 n1 = vec2(e1.y, -e1.x);
+      vec2 n2 = vec2(e2.y, -e2.x);
+      p += push * (n1 + n2) / max(1.0 + dot(n1, n2), ${MITER_EPSILON.toExponential()});
+    }
+    vec2 unit = p / extent;
+    if (uv.z < uv.x) unit.x = -unit.x;
+    if (uv.w < uv.y) unit.y = -unit.y;
+    return unit;
+  }
+`
+}
 
 /** The uniforms every 2d vertex stage must declare and use: the camera
  * mapping is theirs (see SPRITE_VERTEX_BODY), and a stage without them
@@ -117,11 +238,12 @@ export const SPRITE_VARYINGS = glsl`
 
 /**
  * The world -> clip mapping and the varying writes, the tail of every
- * vertex stage: expects `corner` (the quad corner in world pixels,
- * after the screen-size clamp), `center` (the sprite's world position),
- * `rot` (its rotation) and `clampScale` (the clamp's scale, 1 without
- * one) as locals, and the record's iUv, iTint, iAtlas and iOutline as
- * `in`s. Compose it after your own placement.
+ * vertex stage: expects `unit` (the vertex in unit-quad space, what
+ * spriteCorner returned: the uv maps through it), `corner` (that vertex
+ * in world pixels, after the screen-size clamp), `center` (the sprite's
+ * world position), `rot` (its rotation) and `clampScale` (the clamp's
+ * scale, 1 without one) as locals, and the record's iUv, iTint, iAtlas
+ * and iOutline as `in`s. Compose it after your own placement.
  */
 export const SPRITE_VERTEX_BODY = glsl`
     float c = cos(rot), s = sin(rot);
@@ -130,7 +252,7 @@ export const SPRITE_VERTEX_BODY = glsl`
     vec2 screen = uCameraRot.zw + vec2(view.x * uCameraRot.x - view.y * uCameraRot.y, view.x * uCameraRot.y + view.y * uCameraRot.x);
     // World and clip are both y-down, so the mapping carries no flip.
     gl_Position = vec4(screen / uViewport * 2.0 - 1.0, 0.0, 1.0);
-    vUv = mix(iUv.xy, iUv.zw, aPos + 0.5);
+    vUv = mix(iUv.xy, iUv.zw, unit + 0.5);
     vFrame = iUv;
     vTint = iTint;
     vAtlas = int(iAtlas);
@@ -162,8 +284,9 @@ export function forwardedName(name: string): string {
 /**
  * The stock vertex stage, for every layer kind: the record's pose
  * (iPos, iRot, iScale - the core's pose record or the records layer's
- * fields, by name) placing the unit quad under the screen-size clamp,
- * then SPRITE_VERTEX_BODY. `forwards` are a material's own instance
+ * fields, by name) placing spriteCorner's vertex (the unit quad's corner,
+ * or a hull layer's pushed mesh point) under the screen-size clamp, then
+ * SPRITE_VERTEX_BODY. `forwards` are a material's own instance
  * attributes (its instanceBuffers'), each declared as an `in` and
  * forwarded unchanged as a flat varying (forwardedName: `iPalette` ->
  * `vPalette`), which is how the stock material's `surface` reads a
@@ -183,7 +306,6 @@ export function unlitVertex(forwards: readonly VertexAttribute[] = []): string {
     writes += `${varying} = ${attr.name};\n    `
   }
   return glsl`
-  in vec2 aPos;
   in vec2 iPos;
   in float iRot;
   in vec2 iScale;
@@ -196,7 +318,9 @@ export function unlitVertex(forwards: readonly VertexAttribute[] = []): string {
   ${SCREEN_SIZE_GLSL}
   void main() {
     float clampScale = screenSizeScale(iScale, uCamera.z, iScreenPx);
-    vec2 corner = aPos * iScale * clampScale;
+    vec2 size = iScale * clampScale;
+    vec2 unit = spriteCorner(size, uCamera.z, iOutline.a * uCamera.z * clampScale, iUv);
+    vec2 corner = unit * size;
     vec2 center = iPos;
     float rot = iRot;
     ${writes}${SPRITE_VERTEX_BODY}
@@ -271,8 +395,14 @@ export function atlasBindings(atlases: readonly TextureId[]): TextureBindings {
  * vanishing), the median of rgb is the edge, and when the instance
  * carries an outline the true field in alpha, pushed out by the
  * outline's screen pixels, paints the outline colour under the fill.
+ *
+ * On a HULL layer (`hull`) spriteOf also discards a fragment outside the
+ * frame rect: the vertex stage's push may leave the frame quad
+ * (spriteCornerSource), and clamping the vertices instead could cut a
+ * corner the unclamped polygon covered. The discard follows the
+ * derivatives, so they stay in uniform control flow.
  */
-export function spriteSource(atlases: readonly AtlasShading[]): string {
+export function spriteSource(atlases: readonly AtlasShading[], hull = false): string {
   if (!Array.isArray(atlases) || atlases.length === 0) throw new Error(`spriteSource: atlases must be a non-empty list, got ${JSON.stringify(atlases)}`)
   let samplers = ""
   atlases.forEach((_, i) => (samplers += `uniform sampler2D ${atlasUniform(i)};\n  `))
@@ -356,6 +486,7 @@ export function spriteSource(atlases: readonly AtlasShading[]): string {
   Sprite spriteOf() {
     spriteDx = dFdx(vUv);
     spriteDy = dFdy(vUv);
+    ${hull ? "if (any(lessThan(vUv, min(vFrame.xy, vFrame.zw))) || any(greaterThan(vUv, max(vFrame.xy, vFrame.zw)))) discard;" : ""}
     return Sprite(spriteSample(vUv), vUv, vFrame, vTint, vAtlas);
   }
 `

@@ -56,3 +56,15 @@ WHERE MOTION IS COMPUTED, not retained-vs-dynamic. The sprite functions
 record sprites have `node: null` and no groups. `tests/records.test.tsx`
 pins the range, the dial, growth and the ordered publish on painted
 frames.
+
+A HULL layer (an atlas with `mesh: "hull"`, see Atlases and frames in
+../AGENTS.md) appends the frame's mesh field to every record:
+`INSTANCE_FLOATS + MESH_FLOATS` floats per record on a records layer,
+`SPRITE_FLOATS + MESH_FLOATS` per slot on a node layer, the mesh after
+the layer's own floats. A raw writer that writes a frame writes its mesh
+beside the UVs: `writeMesh(records(layer), at + INSTANCE_FLOATS, frame)`
+(`SPRITE_FLOATS` on a node layer), which writes the packed mesh or zeros.
+A zero field draws the full quad, so a writer that never touches it draws
+as on a quad layer, only without the saving. The field is six
+integer-valued floats, safe to copy as floats (the `orderBy` gather and
+`records(layer).set(src)` alike); flips do not touch it.

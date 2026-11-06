@@ -28,7 +28,7 @@
 import { createRegion as createCoreRegion, createRegionGrid as createCoreGrid, createStreamingSource as createCoreStreamingSource } from "@solidrt/core"
 import type { Region as CoreRegion, RegionGrid as CoreGrid, RegionState } from "@solidrt/core"
 import * as spatial from "flux:spatial"
-import { addGroup, destroy, POSE_FLOATS, setGroup, setParent, SPRITE_FLOATS } from "./layer.ts"
+import { addGroup, destroy, POSE_FLOATS, setGroup, setParent } from "./layer.ts"
 import type { GroupState, Sprite, SpriteGroup, SpriteLayer } from "./layer.ts"
 
 export type { RegionState } from "@solidrt/core"
@@ -310,9 +310,10 @@ function teardown<T>(region: Region<T>, keep: boolean): void {
 }
 
 /** The record bytes of one sprite on the layer: its pose and sprite
- * records plus the material's style records. */
+ * records (the sprite record's stride, a hull layer's mesh included) plus
+ * the material's style records. */
 function spriteBytes(layer: SpriteLayer): number {
-  let bytes = (POSE_FLOATS + SPRITE_FLOATS) * Float32Array.BYTES_PER_ELEMENT
+  let bytes = POSE_FLOATS * Float32Array.BYTES_PER_ELEMENT + layer._stream.stride
   for (let style of layer._styles) bytes += style.stream.stride
   return bytes
 }

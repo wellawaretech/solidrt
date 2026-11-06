@@ -15,10 +15,15 @@ every write costs a full pass.
 
 The case that shows it: a 2d record layer of about 600 sprites in a
 full-window view on an Adreno 610 (SM-T500, display scale 1.5, target
-2000x1200) costs about 34 ms of GPU per pass. A press that animates one
-sprite, under 1% of the target, pays the whole pass on every frame of
-the animation: about 29 fps for a 60 fps animation, where more than 99%
-of each pass redraws pixels that did not change.
+2000x1200 `rgba8`, single-sampled, no depth). The view pass costs 35.5 ms
+of GPU with a material that does real work per pixel, and 17.5 ms with
+the same records under a stock `unlit()`; the window composite after it
+adds about 4.3 ms a frame. A press that animates one sprite, under 1% of
+the target, pays the whole pass on every frame of the animation: about
+40 ms a frame (26 fps) with the real material, and 21.8 ms with the stock
+one, still over a 60 Hz budget. More than 99% of each pass redraws pixels
+that did not change, and no cheaper material brings it into budget on
+this device.
 
 ## What exists
 
@@ -97,6 +102,10 @@ Each one is its own decision; none is implied by the primitive.
 - Many rectangles. Merging into a coarse cell grid (a ring-shaped reveal
   should not dirty its empty middle) against one rectangle per change:
   where the merge lives, and the threshold for the full fallback.
+- The composite. A damaged target saves its pass, not the window repaint
+  of the leaf that shows it (4.3 ms a frame in the case above, a fifth of
+  the stock-material frame); that share is saved only together with
+  [live-texture-content-damage](live-texture-content-damage.md).
 - The verb's shape: a call on the target (`damageTarget(id, rects)`) or a
   rectangle carried by the write that causes it. The first keeps every
   write verb as it is.

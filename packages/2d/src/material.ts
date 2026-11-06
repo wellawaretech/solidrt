@@ -29,13 +29,16 @@
 // order, so nothing sorts.
 import { compileShader, createBuffer, createRenderPipeline, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyShader, encodeRecord, checkLayout, layoutComponents, layoutKey, linkProgram } from "@solidrt/core/gpu"
 import type { BlendMode, BufferId, ProgramId, RenderPipelineId, ShaderParams, TextureBindings, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
-import { forwardedName, LAYER_ATTRIBUTE_NAMES, spriteSource, unlitFragment, unlitVertex, VERTEX_UNIFORMS } from "./glsl.ts"
+import { forwardedName, LAYER_ATTRIBUTE_NAMES, spriteCornerSource, spriteSource, unlitFragment, unlitVertex, VERTEX_UNIFORMS } from "./glsl.ts"
 import type { AtlasShading, UnlitSourceOptions } from "./glsl.ts"
+import { MESH_STRIP } from "./sprite-mesh.ts"
 
 /** What a layer draws with once its material met its atlases and its
- * instance layouts: the pipeline and the unit quad every instance
- * reuses (the class's, shared by every layer of the class). */
-export type SpritePipeline = { pipeline: RenderPipelineId; quad: BufferId }
+ * instance layouts: the pipeline, the per-vertex corner buffer every
+ * instance reuses (the class's, shared by every layer of the class: the
+ * unit quad, or a hull layer's mesh ring indices in strip order) and the
+ * vertices one instance draws from it. */
+export type SpritePipeline = { pipeline: RenderPipelineId; corners: BufferId; vertexCount: number }
 
 export type Material = {
   /**
@@ -44,9 +47,13 @@ export type Material = {
    * atlas, the distance-field decodes) and its instance layouts (the
    * layer's own records, the material's instance buffers after them) -
    * lazily created, one program per atlas list and one pipeline per
-   * layout list met. The layers call it at creation.
+   * layout list met. `hull` is a HULL layer's variant (an atlas with a
+   * mesh): its vertex stage pulls the frame's mesh from the record
+   * (spriteCornerSource), its fragment set discards outside the frame,
+   * and its layouts carry the record's mesh field. The layers call it at
+   * creation.
    */
-  pipeline(atlases: readonly AtlasShading[], layouts: readonly VertexAttribute[][], label: string): SpritePipeline
+  pipeline(atlases: readonly AtlasShading[], layouts: readonly VertexAttribute[][], label: string, hull?: boolean): SpritePipeline
   /** The uniform values this material seeds on every target of its
    * layer (a view, a tile chunk); the layer's own params apply over them. */
   params: ShaderParams
@@ -79,7 +86,11 @@ export type ShaderMaterialClassOptions = {
    * writes them). Declare any of the layer's record attributes by name
    * (iPos, iRot, iScale, iUv, iTint, iScreenPx, iAtlas, iOutline - the
    * same names on every layer kind) and your own instance buffers';
-   * undeclared ones are skipped. SPRITE_VERTEX is the stock stage.
+   * undeclared ones are skipped. The vertex itself comes from
+   * `spriteCorner(size, zoom, outlinePx, iUv)`, which the layer prepends
+   * (the quad's corner, or a hull layer's mesh point): a stage never
+   * declares or reads the corner input `aPos` (a throw right here).
+   * SPRITE_VERTEX is the stock stage.
    */
   vertex: string
   /**
@@ -186,6 +197,11 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
       throw new Error(`shaderMaterial vertex stage must declare and use '${name}' (the camera mapping; see SPRITE_VARYINGS in @solidrt/2d/glsl)`)
     }
   }
+  // The corner input is the layer's (a hull layer has no aPos at all), so
+  // a stage reading it would compile on quad layers only.
+  if (/\baPos\b/.test(opts.vertex)) {
+    throw new Error("shaderMaterial vertex stage must not declare or read 'aPos': the layer prepends the corner; place the vertex with spriteCorner(size, zoom, outlinePx, iUv) (see SPRITE_VERTEX_BODY in @solidrt/2d/glsl)")
+  }
   // Records are tightly packed like the layer's own; explicit strides and
   // offsets are the engine's, reachable through core's own pipeline API.
   // An unknown format would otherwise make a NaN stride at the layer.
@@ -210,20 +226,28 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   let blend = opts.blend ?? "alpha"
   let label = opts.label ?? "shader-material"
   let quad: BufferId | undefined
+  let ring: BufferId | undefined
   let programs = new Map<string, ProgramId>()
   let pipelines = new Map<string, RenderPipelineId>()
-  let quadFor = (): BufferId => {
-    // One unit quad (triangle strip), reused by every instance of every
-    // layer of the class.
+  let cornersFor = (hull: boolean): BufferId => {
+    // One corner buffer per variant, reused by every instance of every
+    // layer of the class: the unit quad (triangle strip), or the mesh
+    // ring's indices in strip order.
+    if (hull) {
+      if (ring === undefined) ring = createBuffer(new Float32Array(MESH_STRIP), { label: `${label}-ring`, autoFree: false })
+      return ring
+    }
     if (quad === undefined) quad = createBuffer(new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), { label: `${label}-quad`, autoFree: false })
     return quad
   }
-  let programFor = (atlases: readonly AtlasShading[]): ProgramId => {
-    let key = atlasKey(atlases)
+  // The hull variant's key: its push also varies on the mip chains.
+  let hullKey = (atlases: readonly AtlasShading[], hull: boolean): string => (hull ? (atlases.some(a => a.mipmap === true) ? "|hull-mip" : "|hull") : "")
+  let programFor = (atlases: readonly AtlasShading[], hull: boolean): ProgramId => {
+    let key = atlasKey(atlases) + hullKey(atlases, hull)
     let program = programs.get(key)
     if (program === undefined) {
-      let vs = compileShader("vertex", opts.vertex, { header: true })
-      let fs = compileShader("fragment", spriteSource(atlases) + opts.fragment, { header: true })
+      let vs = compileShader("vertex", spriteCornerSource(atlases, hull) + opts.vertex, { header: true })
+      let fs = compileShader("fragment", spriteSource(atlases, hull) + opts.fragment, { header: true })
       program = linkProgram(vs, fs, { label })
       destroyShader(vs)
       destroyShader(fs)
@@ -231,19 +255,20 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
     }
     return program
   }
-  let pipelineFor = (atlases: readonly AtlasShading[], layouts: readonly VertexAttribute[][], layerLabel: string): SpritePipeline => {
-    let key = atlasKey(atlases) + "|" + layouts.map(l => layoutKey(l)).join("|")
+  let pipelineFor = (atlases: readonly AtlasShading[], layouts: readonly VertexAttribute[][], layerLabel: string, hull = false): SpritePipeline => {
+    let key = atlasKey(atlases) + hullKey(atlases, hull) + "|" + layouts.map(l => layoutKey(l)).join("|")
     let pipeline = pipelines.get(key)
     if (pipeline === undefined) {
-      pipeline = createRenderPipeline(programFor(atlases), {
+      let corner: VertexAttribute = hull ? { name: "aCorner", format: "float32" } : { name: "aPos", format: "float32x2" }
+      pipeline = createRenderPipeline(programFor(atlases, hull), {
         label: `${label}-${layerLabel}`,
         topology: "triangle-strip",
-        buffers: [{ attributes: [{ name: "aPos", format: "float32x2" }] }, ...layouts.map(attributes => ({ stepMode: "instance" as const, attributes })), ...(instanceBuffers ?? [])],
+        buffers: [{ attributes: [corner] }, ...layouts.map(attributes => ({ stepMode: "instance" as const, attributes })), ...(instanceBuffers ?? [])],
         blend,
       })
       pipelines.set(key, pipeline)
     }
-    return { pipeline, quad: quadFor() }
+    return { pipeline, corners: cornersFor(hull), vertexCount: hull ? MESH_STRIP.length : 4 }
   }
   return {
     instance(inst = {}) {
@@ -265,6 +290,10 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
       if (quad !== undefined) {
         destroyBuffer(quad)
         quad = undefined
+      }
+      if (ring !== undefined) {
+        destroyBuffer(ring)
+        ring = undefined
       }
     },
   }

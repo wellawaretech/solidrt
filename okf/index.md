@@ -1162,6 +1162,13 @@ Finished, kept for the reasoning.
   a rotating tile map cannot follow - rotation must go in-shader with the
   inverse in pick and the handlers, keeping one camera vocabulary across both
   layers.
+- **[2d sprites shade their whole frame quad, half of it empty for an irregular shape](done/2d-sprite-hull-meshes.md)** [2026-11-06]
+  Every sprite draws as the unit quad over its atlas frame, so a
+  non-rectangular shape shades its transparent corners; a measured fill-bound
+  pass spends about twice the shape's fragments, and a convex mesh per frame
+  (8 vertices packed into the record, pulled by gl_VertexID in the layer's one
+  instanced draw) would cut them by about a third - opt-in per atlas, pushed
+  out in screen pixels for antialiasing and distance-field outlines.
 - **[A <Sprite> outside a <Group> halts the app at mount](done/2d-sprite-layer-context-halt.md)** [2026-08-24]
   The unchanged packages/2d/examples/pick.tsx (a <Sprite> directly under
   <SpriteLayer>) threw "Context must either be created with a default value or

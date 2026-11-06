@@ -113,6 +113,24 @@ the edge, anti-aliased over one screen pixel at whatever zoom, the true
 field in alpha grows a per-sprite outline (text runs set it; a colour
 atlas ignores the field). Fixed at creation like the list itself.
 
+A sheet of irregular shapes opts into tight geometry with
+`createAtlas(image, { mesh: "hull" })`: the atlas keeps a coverage mask
+of its texels, every frame `grid`/`namedFrames`/`fullFrame` cut from it
+carries `frame.mesh` (the convex hull of its covered texels, simplified
+outward to 8 points), and a sprite or record layer declaring such an
+atlas is a HULL layer that draws each sprite as its frame's mesh instead
+of the whole frame quad - Unity's "Tight" sprite mesh and Paper2D's
+"Shrink Wrapped", made when frames are cut and drawn in the layer's one
+instanced draw. The picture is the quad's: the vertex stage pushes the
+mesh out by the antialiasing margin and the sprite's outline and
+mirrors it with the flips, and nothing draws outside the frame. What it
+saves is fragments: a quad around an irregular shape shades its
+transparent corners, and a fill-bound board of such shapes shades its
+screen about twice (measured on an Adreno 610, a Spectre-tile board went
+from 25.3 to 18.3 ms of GPU per frame with `unlit()`, 59.5 to 42.0 ms
+with a `surface`). A frame without a mesh draws its quad on any layer;
+a tile layer bakes quads either way; picking stays the frame rect.
+
 ### Pose, sprite and style slots
 
 Node layer ownership split, instance-buffer slots on one pipeline (the
@@ -316,7 +334,9 @@ takes.
 
 ### Pure pieces
 
-frames.ts, extrude.ts (the mip-gutter repack, tests/extrude.test.ts),
+frames.ts, sprite-mesh.ts (the coverage mask and the hull meshes,
+tests/sprite-mesh.test.ts), extrude.ts (the mip-gutter repack,
+tests/extrude.test.ts),
 pack.ts (the shelf packer, tests/pack.test.ts), pick.ts, camera.ts,
 dispatch.ts, oversample-math.ts, tiles-math.ts (the
 tile grid's chunk and slot math, tests/tiles.test.ts) and text-layout.ts
@@ -468,6 +488,20 @@ hover, wheel and tap rules headless.
   smallest scale the sheet is drawn at (gutter 4 covers down to a
   quarter). Load-time CPU work, a few milliseconds for a 1024-square
   sheet.
+- `mesh: "hull"` is opt-in for a reason: a material that draws OUTSIDE
+  the shape inside its frame (a glow, a bevel, a drop shadow baked or
+  computed around the sprite) is cut at the mesh, and a rectangular
+  sprite gains nothing while paying four more vertices. Opt in for
+  irregular shapes drawn large or in numbers, where fill is the cost.
+  The mask is taken at `createAtlas` from alpha; a distance-field sheet
+  passes `sdf: { range }` to `createAtlas` so the coverage is the
+  field's edge (alpha above zero would cover the whole frame). It is a
+  load cost in JS: on an Adreno 610 tablet a 2048-square sheet takes
+  about a second for the mask and the upload and another for 256 frames
+  of 128 px (a 343 x 281 sheet: 21 ms and 5 ms); cut frames once, not
+  per sprite. A hull layer's records are `MESH_FLOATS` (6) floats
+  longer (agents/records.md for raw writers), and a custom vertex stage
+  places through `spriteCorner` (agents/materials.md).
 - The colour contract: tint multiplies the atlas texel as stored -
   premultiplied sRGB, no decode - and the layer tint multiplies over
   that, so a tint of `[0.5, 0.5, 0.5, 1]` halves the ENCODED value (about
