@@ -2,8 +2,9 @@
 // `mesh: "hull"` draws each sprite as its frame's mesh, and must render the
 // same image as a quad layer over the same texture with the stock
 // material - for flipped sprites, rotated and screen-clamped ones, a
-// distance-field sprite with an outline, a mipmapped sheet drawn small and
-// a nearest sheet drawn large, on the node layer and the record layer. A
+// distance-field sprite with an outline, a mipmapped sheet drawn small, a
+// nearest sheet drawn large and a mesh that pads its ring, on the node
+// layer and the record layer. A
 // solid material (which ignores coverage) shows the mesh itself: fewer
 // pixels than the quad, and the full quad again for a record whose mesh
 // field is zero. GPU state throughout, so this is an app test.
@@ -16,6 +17,7 @@ import type { TextureId } from "@solidrt/core/gpu"
 import { addSprite, createAtlas, createRecordLayer, createSpriteLayer, extrudeGrid, getSprite, grid, INSTANCE_FLOATS, MESH_FLOATS, records, setSprite, shaderMaterial, shaderMaterialClass, updateRecords } from "../src/index.ts"
 import type { Atlas, AtlasOptions, Frame, GridOptions, Material, SpriteOptions } from "../src/index.ts"
 import { SPRITE_VARYINGS, SPRITE_VERTEX, unlitFragment } from "../src/glsl.ts"
+import { coverageMask, hullMesh, MESH_VERTICES } from "../src/sprite-mesh.ts"
 
 const SIZE = 128
 // The sheet's cells: two 32 px cells side by side.
@@ -65,6 +67,17 @@ function shapes(): DecodedImage {
     }
   }
   return { width, height: CELL, data }
+}
+
+/** One 32 px cell of premultiplied RGBA8: an off-centre rectangle on
+ * whole texels with a colour gradient, whose hull is 4 points, so its
+ * mesh field pads the ring past them. */
+function box(): DecodedImage {
+  let data = new Uint8Array(CELL * CELL * 4)
+  for (let y = 5; y < 22; y++) {
+    for (let x = 7; x < 25; x++) data.set([x * 8, y * 8, 128, 255], (y * CELL + x) * 4)
+  }
+  return { width: CELL, height: CELL, data }
 }
 
 /** A distance field of a disc, radius 9 in a 32 px cell, the same value
@@ -229,6 +242,22 @@ test("a nearest sheet drawn large: the same image", async app => {
     ],
   })
   expectSame("nearest large", hull, quad)
+})
+
+test("a mesh of fewer than 8 points (a padded ring): the same image", async app => {
+  let image = box()
+  let mesh = hullMesh(coverageMask(image.data, CELL, CELL, false), CELL, CELL, 0, 0, CELL, CELL)!
+  expect(mesh.points.length / 2 < MESH_VERTICES).toBe(true)
+  let { hull, quad } = await drawBoth(app, {
+    image,
+    kind: "record",
+    sprites: [
+      { frame: 0, x: 34.3, y: 33.6, w: 56, h: 50, rotation: 0.5 },
+      { frame: 0, x: 92.7, y: 36.2, w: 48, h: 48, flipX: true, rotation: -0.8 },
+      { frame: 0, x: 60.4, y: 94.1, w: 60, h: 44, flipX: true, flipY: true, rotation: 2.1 },
+    ],
+  })
+  expectSame("padded ring", hull, quad)
 })
 
 // A solid fill that ignores coverage: what it paints is the drawn

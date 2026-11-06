@@ -59,6 +59,17 @@ resize, context loss, a change no damage was declared for (a params
 write, an input written without damage), or damage covering more than a
 threshold of the target.
 
+This is a load on a flush-rendered target, which
+[gpu-purity-decision](../done/gpu-purity-decision.md) gates: output must
+not depend on how many times the flush ran. The sub-target partial path
+passes that gate because a clean tile's pixels equal what re-rendering it
+would produce, and declared damage passes it on the same argument, as
+long as the claim is correct: the pixels outside the damage equal a full
+render's, and rendering again after a render gives the same pixels. The
+full-render fallbacks are the cases where no previous pixels exist to
+keep. A wrong claim is the one way to break the invariant, and it is the
+app's to make.
+
 The term has a standard precedent: a Wayland surface's `damage_buffer`
 and EGL's `swap_buffers_with_damage` declare which rectangles of a
 surface's contents changed, the same claim one level down. Alloy's window

@@ -111,6 +111,13 @@ order, so nothing sorts.
   through `unit` (SPRITE_VERTEX_BODY reads it): on a quad layer it is
   the quad's corner, on a hull layer (an atlas with `mesh: "hull"`) the
   frame's mesh point pushed out and mirrored, so one stage serves both.
+- A custom vertex stage tests the size first, as the stock one does:
+  right after `vec2 size = iScale * clampScale;`, write
+  `if (spriteDrawsNothing(size)) { gl_Position = SPRITE_NOWHERE;
+  return; }` (both prepended with `spriteCorner`). A zero-size record
+  is how a slot stays free (a reserved capacity, a particle pool at
+  rest), and without the test each of its vertices still unpacks the
+  mesh and goes through the camera to draw nothing.
 - A `surface` pays its work in every fragment its quad covers, the
   transparent corners included: a surface that samples or takes
   derivatives before it returns on a transparent pixel (derivatives want

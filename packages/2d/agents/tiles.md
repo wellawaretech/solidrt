@@ -264,9 +264,9 @@ but it does re-render every resident chunk: drive it from slow state,
 not per frame. `setParams` (a material prelude's uniforms) and a cell's
 `style` (the material's per-cell record, `setTile`/`setTiles` `{ style
 }`) are the same two levels for a custom look, see materials.md. Not
-built: record compaction for the live sprite layer (a gather restricted
-to the records the views see; okf/backlog/2d-sprite-record-compaction.md
-holds the design and the condition it waits on).
+built: view culling for the sprite and record layers (each view drawing
+only the cells of records its camera meets;
+okf/backlog/2d-sprite-view-culling.md holds the design).
 
 ## Traps
 

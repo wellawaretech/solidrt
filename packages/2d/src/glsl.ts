@@ -46,7 +46,7 @@
 // shaders - if you touch one rotation, touch all.
 import { glsl, SCREEN_SIZE_GLSL, VERTEX_FORMATS } from "@solidrt/core/gpu"
 import type { TextureBindings, TextureId, VertexAttribute, VertexFormat } from "@solidrt/core/gpu"
-import { MESH_FLOATS, MESH_LATTICE, MESH_VERTICES } from "./sprite-mesh.ts"
+import { MESH_COUNT_BYTE, MESH_FLOATS, MESH_LATTICE } from "./sprite-mesh.ts"
 
 /** What a layer's generated GLSL reads of a declared atlas: whether it is
  * a distance field and its range (see `Atlas.sdf`), for the fragment set,
@@ -117,13 +117,26 @@ const MITER_EPSILON = 1e-6
 
 /**
  * The corner source a layer PREPENDS to its material's vertex stage (as
- * it prepends spriteSource to the fragment): the per-vertex corner input
- * and `vec2 spriteCorner(vec2 size, float zoom, float outlinePx, vec4
- * uv)`, the vertex's position in unit-quad space (-0.5..0.5 over the
- * frame, u right, v down) - what a stage places and maps its uv through.
- * `size` is the drawn world size (iScale times the screen-size clamp),
- * `zoom` the camera zoom (uCamera.z), `outlinePx` the outline in screen
- * pixels (zero without one), `uv` the record's iUv.
+ * it prepends spriteSource to the fragment): the per-vertex corner input,
+ * `bool spriteDrawsNothing(vec2 size)` and `vec2 spriteCorner(vec2 size,
+ * float zoom, float outlinePx, vec4 uv)`, and the position
+ * `SPRITE_NOWHERE`.
+ *
+ * `spriteDrawsNothing` is true for a sprite of zero drawn size on either
+ * axis, the normal way to keep a slot free (a reserved capacity, a
+ * particle pool at rest). A stage calls it first, before spriteCorner
+ * and the camera mapping, and for such a sprite writes `gl_Position =
+ * SPRITE_NOWHERE` and returns: every vertex lands on the same point past
+ * the far plane, the primitive draws no fragment, and the vertex does
+ * none of the work. It needs only the size, so none of the uniforms a
+ * stage declares after this source; the size after the screen-size clamp
+ * is safe to test, as screenSizeScale is 1 for a collapsed sprite.
+ *
+ * `spriteCorner` is the vertex's position in unit-quad space (-0.5..0.5
+ * over the frame, u right, v down) - what a stage places and maps its uv
+ * through. `size` is the drawn world size (iScale times the screen-size
+ * clamp), `zoom` the camera zoom (uCamera.z), `outlinePx` the outline in
+ * screen pixels (zero without one), `uv` the record's iUv.
  *
  * On a quad layer it is the unit quad's corner (`aPos`) and the arguments
  * go unused. On a HULL layer (an atlas with a mesh, see Atlas.mesh) it is
@@ -133,16 +146,31 @@ const MITER_EPSILON = 1e-6
  * pixels, plus half a lattice cell diagonal (what keeps
  * the packed, rounded points conservative), then mirrored on each axis
  * where the record's UV rect is reversed (a flip is stored as swapped
- * UVs, and the mesh is flip-independent). The neighbours for the miter
- * come from the same record, so the push costs no fetch. A record whose
- * mesh field is zero draws the full quad, as a quad layer does. The push
- * may leave the frame quad; the hull fragment set discards outside the
- * frame rect, so a hull layer never draws a pixel the quad would not.
+ * UVs, and the mesh is flip-independent). The miter's neighbours come
+ * from the same record, so the push costs no fetch: a vertex reads the
+ * ring's point count (MESH_COUNT_BYTE), its own point (a strip slot past
+ * the ring is its last point, as the packed padding is) and the two ring
+ * points beside it, three points and not the whole ring. The words are
+ * picked by plain selects, never a local array indexed at run time,
+ * which a driver may spill to scratch memory. A record whose mesh field
+ * is zero draws the full quad, as a quad layer does, and so does a
+ * zero-size one, for a stage that skips spriteDrawsNothing. The push may
+ * leave the frame quad; the hull fragment set discards outside the frame
+ * rect, so a hull layer never draws a pixel the quad would not.
  */
 export function spriteCornerSource(atlases: readonly AtlasShading[], hull: boolean): string {
+  let drawsNothing = glsl`
+  // Where a sprite that draws nothing puts every vertex: past the far
+  // plane (z > w), so its collapsed primitive is clipped whole.
+  const vec4 SPRITE_NOWHERE = vec4(0.0, 0.0, 2.0, 1.0);
+  bool spriteDrawsNothing(vec2 size) {
+    return size.x == 0.0 || size.y == 0.0;
+  }
+`
   if (!hull) {
     return glsl`
   in vec2 aPos;
+  ${drawsNothing}
   vec2 spriteCorner(vec2 size, float zoom, float outlinePx, vec4 uv) {
     return aPos;
   }
@@ -150,59 +178,46 @@ export function spriteCornerSource(atlases: readonly AtlasShading[], hull: boole
   }
   let edgePx = atlases.some(a => a.mipmap === true) ? MESH_MIP_EDGE_PX : MESH_EDGE_PX
   let words = ""
-  for (let i = 0; i < MESH_FLOATS; i++) words += `${i > 0 ? ", " : ""}uint(${i < 4 ? "iMesh0" : "iMesh1"}.${"xyzw"[i % 4]})`
-  let n = MESH_VERTICES
+  for (let i = 0; i < MESH_FLOATS - 1; i++) words += `w == ${i} ? ${i < 4 ? "iMesh0" : "iMesh1"}.${"xyzw"[i % 4]} : `
+  words += `iMesh1.${"xyzw"[(MESH_FLOATS - 1) % 4]}`
   return glsl`
   in float aCorner;
   in vec4 iMesh0;
   in vec2 iMesh1;
+  ${drawsNothing}
+  // Byte b of the mesh field: 3 bytes to an integer-valued float.
+  uint spriteMeshByte(int b) {
+    int w = b / 3;
+    float word = ${words};
+    return (uint(word) >> uint(8 * (b % 3))) & 255u;
+  }
+  // Ring point i of the mesh field, in unit-quad space over extent.
+  vec2 spriteMeshPoint(int i, vec2 extent) {
+    vec2 p = vec2(float(spriteMeshByte(2 * i)), float(spriteMeshByte(2 * i + 1))) / ${MESH_LATTICE.toFixed(1)};
+    return (p - 0.5) * extent;
+  }
   vec2 spriteCorner(vec2 size, float zoom, float outlinePx, vec4 uv) {
-    uint words[${MESH_FLOATS}] = uint[${MESH_FLOATS}](${words});
-    vec2 points[${n}];
-    bool meshed = false;
-    for (int i = 0; i < ${n}; i++) {
-      int bx = i * 2;
-      int by = bx + 1;
-      uint x = (words[bx / 3] >> uint(8 * (bx % 3))) & 255u;
-      uint y = (words[by / 3] >> uint(8 * (by % 3))) & 255u;
-      points[i] = vec2(float(x), float(y)) / ${MESH_LATTICE.toFixed(1)};
-      meshed = meshed || x != 0u || y != 0u;
-    }
     int k = int(aCorner);
-    vec2 extent = abs(size);
-    if (!meshed || extent.x == 0.0 || extent.y == 0.0) {
+    int count = int(spriteMeshByte(${MESH_COUNT_BYTE}));
+    if (spriteDrawsNothing(size) || count == 0) {
       // No mesh: the full quad, its last corner repeated over the strip's
       // padding (and a zero-size sprite collapses either way).
       vec2 quad = k == 0 ? vec2(0.0) : k == 1 ? vec2(1.0, 0.0) : k == 2 ? vec2(1.0) : vec2(0.0, 1.0);
       return quad - 0.5;
     }
-    vec2 p = (points[k] - 0.5) * extent;
-    vec2 a = p;
-    vec2 b = p;
-    for (int j = 1; j < ${n}; j++) {
-      int i = (k + ${n} - j) % ${n};
-      if (points[i] != points[k]) {
-        a = (points[i] - 0.5) * extent;
-        break;
-      }
-    }
-    for (int j = 1; j < ${n}; j++) {
-      int i = (k + j) % ${n};
-      if (points[i] != points[k]) {
-        b = (points[i] - 0.5) * extent;
-        break;
-      }
-    }
-    if (a != p) {
-      // The ring turns with a positive cross product, so (e.y, -e.x) is
-      // each edge's outward normal; the miter offsets both edges by push.
-      float push = (${edgePx.toFixed(1)} + outlinePx) / zoom + 0.5 * length(extent) / ${MESH_LATTICE.toFixed(1)};
-      vec2 e1 = normalize(p - a);
-      vec2 e2 = normalize(b - p);
-      vec2 n1 = vec2(e1.y, -e1.x);
-      vec2 n2 = vec2(e2.y, -e2.x);
-      p += push * (n1 + n2) / max(1.0 + dot(n1, n2), ${MITER_EPSILON.toExponential()});
-    }
+    vec2 extent = abs(size);
+    int i = min(k, count - 1);
+    vec2 p = spriteMeshPoint(i, extent);
+    vec2 a = spriteMeshPoint((i + count - 1) % count, extent);
+    vec2 b = spriteMeshPoint((i + 1) % count, extent);
+    // The ring turns with a positive cross product, so (e.y, -e.x) is
+    // each edge's outward normal; the miter offsets both edges by push.
+    float push = (${edgePx.toFixed(1)} + outlinePx) / zoom + 0.5 * length(extent) / ${MESH_LATTICE.toFixed(1)};
+    vec2 e1 = normalize(p - a);
+    vec2 e2 = normalize(b - p);
+    vec2 n1 = vec2(e1.y, -e1.x);
+    vec2 n2 = vec2(e2.y, -e2.x);
+    p += push * (n1 + n2) / max(1.0 + dot(n1, n2), ${MITER_EPSILON.toExponential()});
     vec2 unit = p / extent;
     if (uv.z < uv.x) unit.x = -unit.x;
     if (uv.w < uv.y) unit.y = -unit.y;
@@ -286,7 +301,8 @@ export function forwardedName(name: string): string {
  * (iPos, iRot, iScale - the core's pose record or the records layer's
  * fields, by name) placing spriteCorner's vertex (the unit quad's corner,
  * or a hull layer's pushed mesh point) under the screen-size clamp, then
- * SPRITE_VERTEX_BODY. `forwards` are a material's own instance
+ * SPRITE_VERTEX_BODY; a zero-size sprite leaves first, at
+ * SPRITE_NOWHERE (spriteDrawsNothing). `forwards` are a material's own instance
  * attributes (its instanceBuffers'), each declared as an `in` and
  * forwarded unchanged as a flat varying (forwardedName: `iPalette` ->
  * `vPalette`), which is how the stock material's `surface` reads a
@@ -319,6 +335,10 @@ export function unlitVertex(forwards: readonly VertexAttribute[] = []): string {
   void main() {
     float clampScale = screenSizeScale(iScale, uCamera.z, iScreenPx);
     vec2 size = iScale * clampScale;
+    if (spriteDrawsNothing(size)) {
+      gl_Position = SPRITE_NOWHERE;
+      return;
+    }
     vec2 unit = spriteCorner(size, uCamera.z, iOutline.a * uCamera.z * clampScale, iUv);
     vec2 corner = unit * size;
     vec2 center = iPos;

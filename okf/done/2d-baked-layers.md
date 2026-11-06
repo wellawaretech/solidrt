@@ -326,7 +326,7 @@ per-frame create count under the budget from `/stats`.
 
 Landed 2026-10-14 over the shared gate ([spatial-residency-gate](spatial-residency-gate.md),
 whose Findings hold the gate-side decisions). Parts 1-6 built; part 7
-split out to okf/backlog/2d-sprite-record-compaction.md, since its
+split out to okf/backlog/2d-sprite-view-culling.md, since its
 one-query-per-camera-move premise does not hold for moving sprites and
 its threshold is unmeasured.
 

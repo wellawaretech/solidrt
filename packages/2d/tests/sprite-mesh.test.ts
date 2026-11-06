@@ -12,7 +12,7 @@
 import { test } from "flux:test"
 import type { TextureId } from "@solidrt/core/gpu"
 import { fullFrame, grid, namedFrames, writeMesh } from "../src/frames.ts"
-import { coverageMask, hullMesh, MESH_FLOATS, MESH_LATTICE, MESH_VERTICES, unpackPoints } from "../src/sprite-mesh.ts"
+import { coverageMask, hullMesh, MESH_COUNT_BYTE, MESH_FLOATS, MESH_LATTICE, MESH_VERTICES, unpackPoints } from "../src/sprite-mesh.ts"
 
 // Slack on a containment test, in frame pixels: float error only.
 const CONTAIN_EPSILON = 1e-6
@@ -38,37 +38,24 @@ function sheet(width: number, height: number, inside: (x: number, y: number) => 
   return data
 }
 
-/** The ring's 8 points from a packed field, in frame fractions. */
+/** The ring from a packed field, its point count's worth (the count
+ * byte), in frame fractions. */
 function ringOf(packed: ArrayLike<number>): Point[] {
   let ring: Point[] = []
   let byte = (i: number) => Math.floor(packed[Math.floor(i / 3)]! / 256 ** (i % 3)) % 256
-  for (let i = 0; i < MESH_VERTICES; i++) ring.push([byte(i * 2) / MESH_LATTICE, byte(i * 2 + 1) / MESH_LATTICE])
+  for (let i = 0; i < byte(MESH_COUNT_BYTE); i++) ring.push([byte(i * 2) / MESH_LATTICE, byte(i * 2 + 1) / MESH_LATTICE])
   return ring
 }
 
 /** The vertex stage's push, in JS: each ring point (scaled to `w` x `h`
- * frame pixels) moved along its miter by `push`, its neighbours the
- * nearest distinct points either way round. */
+ * frame pixels) moved along its miter by `push`, its neighbours the ring
+ * points either side of it. */
 function pushed(ring: Point[], w: number, h: number, push: number): Point[] {
   let n = ring.length
   let px = ring.map(([x, y]): Point => [(x - 0.5) * w, (y - 0.5) * h])
-  let same = (a: Point, b: Point) => a[0] === b[0] && a[1] === b[1]
   return px.map((p, k) => {
-    let a = p
-    let b = p
-    for (let j = 1; j < n; j++) {
-      if (!same(ring[(k + n - j) % n]!, ring[k]!)) {
-        a = px[(k + n - j) % n]!
-        break
-      }
-    }
-    for (let j = 1; j < n; j++) {
-      if (!same(ring[(k + j) % n]!, ring[k]!)) {
-        b = px[(k + j) % n]!
-        break
-      }
-    }
-    if (same(a, p)) return p
+    let a = px[(k + n - 1) % n]!
+    let b = px[(k + 1) % n]!
     let unit = (v: Point): Point => {
       let l = Math.hypot(v[0], v[1])
       return [v[0] / l, v[1] / l]
@@ -126,7 +113,22 @@ function checkContains(what: string, data: Uint8Array, bits: Uint32Array, width:
   for (let v of points) if (!(v >= 0 && v <= 1)) fail(`${what}: mesh point coordinate ${v} outside the frame`)
   let decoded = unpackPoints(mesh.packed)
   if (decoded.length !== points.length || decoded.some((v, i) => v !== points[i])) fail(`${what}: points are not the packed field decoded`)
-  let polygon = pushed(ringOf(mesh.packed), w, h, (0.5 * Math.hypot(w, h)) / MESH_LATTICE)
+  let ring = ringOf(mesh.packed)
+  if (ring.length !== points.length / 2) fail(`${what}: the count byte says ${ring.length} points, the ring has ${points.length / 2}`)
+  // Each point distinct from its ring neighbours: the miter the vertex
+  // stage takes from them needs two edges of length.
+  ring.forEach((p, k) => {
+    let q = ring[(k + 1) % ring.length]!
+    if (p[0] === q[0] && p[1] === q[1]) fail(`${what}: ring points ${k} and ${(k + 1) % ring.length} coincide`)
+  })
+  // The padding slots repeat the last ring point, which a vertex past
+  // the ring reads in its place.
+  let last = ring[ring.length - 1]!
+  let byte = (i: number) => Math.floor(mesh.packed[Math.floor(i / 3)]! / 256 ** (i % 3)) % 256
+  for (let i = ring.length; i < MESH_VERTICES; i++) {
+    if (byte(i * 2) / MESH_LATTICE !== last[0] || byte(i * 2 + 1) / MESH_LATTICE !== last[1]) fail(`${what}: padding slot ${i} is not the last ring point`)
+  }
+  let polygon = pushed(ring, w, h, (0.5 * Math.hypot(w, h)) / MESH_LATTICE)
   for (let ty = Math.max(0, Math.floor(y)); ty < Math.min(height, Math.ceil(y + h)); ty++) {
     for (let tx = Math.max(0, Math.floor(x)); tx < Math.min(width, Math.ceil(x + w)); tx++) {
       if (data[(ty * width + tx) * 4 + 3]! < alphaMin) continue

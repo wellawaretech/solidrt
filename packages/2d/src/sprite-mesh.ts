@@ -20,10 +20,15 @@ export const MESH_VERTICES = 8
  * is a byte b at b / MESH_LATTICE of the frame. */
 export const MESH_LATTICE = 255
 /** Floats of a record's mesh field: the 16 bytes of 8 points (x then y,
- * ring order) as integer-valued floats of 3 bytes each, so a plain float
- * copy of a record keeps it (no bit pattern to canonicalize). All zero
- * means no mesh: the sprite draws its full frame quad. */
+ * ring order) and the ring's point count (byte MESH_COUNT_BYTE) as
+ * integer-valued floats of 3 bytes each, so a plain float copy of a
+ * record keeps it (no bit pattern to canonicalize). All zero means no
+ * mesh: the sprite draws its full frame quad. */
 export const MESH_FLOATS = 6
+/** The byte of the mesh field holding the ring's distinct point count
+ * (3 to MESH_VERTICES), after the points: a vertex reads its own point
+ * and its two ring neighbours by it, not the whole ring. */
+export const MESH_COUNT_BYTE = MESH_VERTICES * 2
 // Bytes one mesh float holds: integers below 2^24 are exact in float32.
 const BYTES_PER_FLOAT = 3
 const BYTE = 256
@@ -336,8 +341,9 @@ function boundingBox(polygon: Polygon): Polygon {
  * its mesh: each point rounded to the lattice, the hull of the rounded
  * points taken again (rounding may leave a point reflex, and the strip
  * fans a convex ring only), padded to the budget by repeating the last
- * point, and packed 3 bytes per float. Undefined when it packs to all
- * zeros, which reads as no mesh. */
+ * point, and packed 3 bytes per float with the point count after the
+ * points. Undefined when the points pack to all zeros, which reads as no
+ * mesh. */
 function packMesh(polygon: Polygon): FrameMesh | undefined {
   let lattice = (v: number) => Math.min(MESH_LATTICE, Math.max(0, Math.round(v * MESH_LATTICE)))
   let ring = convexHull({ x: polygon.x.map(lattice), y: polygon.y.map(lattice) })
@@ -363,23 +369,19 @@ function packMesh(polygon: Polygon): FrameMesh | undefined {
     packed[k] = packed[k]! + byte * BYTE ** (i % BYTES_PER_FLOAT)
   }
   if (packed.every(f => f === 0)) return undefined
+  let at = Math.floor(MESH_COUNT_BYTE / BYTES_PER_FLOAT)
+  packed[at] = packed[at]! + ring.x.length * BYTE ** (MESH_COUNT_BYTE % BYTES_PER_FLOAT)
   return { points: unpackPoints(packed), packed }
 }
 
 /** The distinct ring points of a packed mesh field, in frame fractions
- * (the padding repeats dropped): what `FrameMesh.points` holds. */
+ * (its point count's worth, the padding left out): what
+ * `FrameMesh.points` holds. */
 export function unpackPoints(packed: ArrayLike<number>): Float32Array {
-  let out: number[] = []
-  for (let i = 0; i < MESH_VERTICES; i++) {
-    let x = meshByte(packed, i * 2) / MESH_LATTICE
-    let y = meshByte(packed, i * 2 + 1) / MESH_LATTICE
-    let n = out.length
-    if (n >= 2 && out[n - 2] === x && out[n - 1] === y) continue
-    out.push(x, y)
-  }
-  // A ring padded with its first point closes on it.
-  while (out.length > 2 && out[out.length - 2] === out[0] && out[out.length - 1] === out[1]) out.length -= 2
-  return new Float32Array(out)
+  let count = Math.min(MESH_VERTICES, meshByte(packed, MESH_COUNT_BYTE))
+  let out = new Float32Array(count * 2)
+  for (let i = 0; i < count * 2; i++) out[i] = meshByte(packed, i) / MESH_LATTICE
+  return out
 }
 
 function meshByte(packed: ArrayLike<number>, i: number): number {

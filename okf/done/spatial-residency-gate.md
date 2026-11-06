@@ -195,4 +195,4 @@ first handler, then memory legible and bounded).
   test runs on bare flux); core's gpu module registers its counters.
 - **Not built**: the sprite layer's record compaction (part 7 of the 2d
   note) - its "one query per camera move" premise fails for moving
-  sprites; shaped in okf/backlog/2d-sprite-record-compaction.md.
+  sprites; shaped in okf/backlog/2d-sprite-view-culling.md.

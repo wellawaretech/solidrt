@@ -221,13 +221,13 @@ Shaped, not started.
   quantized to whole pixels, since no single origin serves both; the fix is
   records local to region cells, each cell its own buffer and draw, the tile
   layer's chunking applied to populations.
-- **[Record compaction for the live sprite layer, a view mask on the ordered gather](backlog/2d-sprite-record-compaction.md)** [2026-10-14]
-  A sprite layer draws every record whether or not any view sees it (an
-  off-screen record is one degenerate quad in the vertex stage), which stops
-  being free at hundreds of thousands of records; the fix is a mask on the
-  core's ordered gather so instanceCount shrinks to the visible prefix,
-  re-evaluated whenever the camera or any pose moved, switched on past a
-  measured record count
+- **[A sprite layer draws every sprite, on screen or not](backlog/2d-sprite-view-culling.md)** [2026-10-14]
+  A sprite or record layer is one instanced draw over all its records, so its
+  vertex cost follows the size of the world, not what a view shows (19.5 ms of
+  a 46.6 ms drag frame on an Adreno 610 for 30,703 records with about 650 on
+  screen); the fix is view culling per cell in the core - records gathered in
+  cell order, each view drawing only the cells its camera meets - on the
+  selection path packed populations already use.
 - **[A streaming tile world hitches on the tablet whenever a RESIDENT chunk re-bakes, a write into a texture the frames in flight still sample](backlog/2d-tile-world-frame-hitches.md)** [2026-10-16]
   The tiles example on the SM-T500 shows 50 to 67 ms gaps a few times a
   second; measured 2026-10-16 with a probe matrix and a sched/gfx trace, the
@@ -1181,6 +1181,14 @@ Finished, kept for the reasoning.
   sprite or depth-sorting a population by y - the ordinary case for a dense 2D
   scene - costs a record shift and an index fixup per element instead of a
   sort of an index array.
+- **[The 2d sprite vertex stage does its full work for sprites that draw nothing](done/2d-sprite-vertex-early-out.md)** [2026-11-06]
+  The stock sprite vertex stage unpacks a hull layer's whole mesh before its
+  zero-size check and places a zero-size sprite through the camera in full,
+  and every one of a hull sprite's 8 vertices unpacks all 8 mesh points; on a
+  record layer that keeps empty slots this turns hulls into a net loss (46.6
+  ms a drag frame against 42.9 with quads, 30,703 records on an Adreno 610) -
+  wanted a zero-size early-out and three points per vertex, the cost view
+  culling leaves.
 - **[Seeding a tile world is one setTile call per cell](done/2d-tile-bulk-writes.md)** [2026-09-07]
   There was no bulk write, so an 18k-cell seed was 18k setTile calls each
   paying locate() and a frame copy; setTiles now writes a rect from a
