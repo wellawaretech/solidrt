@@ -11,11 +11,9 @@
 // and the pointer dispatch with the view as the root of the walk. What
 // a view DRAWS is the kind's: a sprite or record layer draws ONE entry
 // over the layer's pipeline and instance buffers per view (createViews
-// below: the core's key-order gather happens in the buffers at publish,
-// ONE entry per buffer declares the order - the first live view's,
-// re-homed to the next when that view goes - and every other entry reads
-// the buffers already sorted; the layer fans buffer swaps, the instance
-// count and the tint out to every view), while a tile layer draws one
+// below: every entry declares the layer's order and culling, and the core
+// builds each view's draw list on its own; the layer fans buffer swaps,
+// the instance count and the tint out to every view), while a tile layer draws one
 // entry per resident chunk image (tiles.ts). The camera and the viewport
 // are each view's own params, so a view costs no per-frame JS beyond its
 // camera writes. Pointer events run the layer's dispatch (dispatch.ts)
@@ -33,29 +31,27 @@
 // sprite layer (region.ts) and a tile layer's chunks (tiles.ts) are
 // wanted by whatever shows that world, the main view, a minimap, a
 // split-screen pane, with no viewer bookkeeping in the layer kinds - and
-// what the order feed derives a cell-culled layer's selection from. The
-// record layer has no regions; its views push none unless the layer
-// culls by cells.
+// what a culled layer's cells are tested against. The record layer has
+// no regions; its views push none unless the layer culls.
 //
-// A layer created with `cells` (layer.ts, records.ts) culls its records
-// per cell in the core: the one ordered entry declares the cells, the
-// gather keeps the buffers in cell order, and every view's entry draws
-// only the instance spans of the cells its camera meets. Each view's
-// entry is a draw sink of the layer's FRAME node - the node at the
+// A layer created with `cull` (layer.ts, records.ts) culls its records
+// in the core: every view's entry declares the cells, and the core draws
+// each view from a draw list of the records its camera meets, in the
+// layer's order. Each view's entry is a draw sink of the layer's FRAME node - the node at the
 // layer's render origin, whose model frame the records are in - with the
-// cell feed on, so the core writes the entry its model-to-clip matrix on
-// every camera move and re-selects; this module computes nothing per
-// move. The sink's count is the instance count (setDrawCount fans it
-// out), and the view's size is the entry's orderViewport, the pixels a
-// screen-size floor's reach is measured in.
+// cull feed on, so the core writes the entry its model-to-clip matrix on
+// every camera move and re-culls; this module computes nothing per move.
+// The sink's count is the instance count (setDrawCount fans it out), and
+// the view's size is the entry's viewport, the pixels a screen-size
+// floor's reach is measured in.
 //
 // The same viewer is what a POSITIONAL SOUND is heard from: `listener()`
 // makes the view's flux:audio listener over its key, so a sound placed at
 // a sprite's node (core's `emitter` option with `{ node: sprite.node }`)
 // pans and fades as the camera moves, with no per-frame JS. The record
 // layer's sprites have no nodes, so its views have no listener.
-import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawBuffers, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
-import type { BufferId, DrawId, InstanceOrder, RenderPipelineId, ShaderParams, TextureBindings, TextureId } from "@solidrt/core/gpu"
+import { addDraw, createDrawTarget, destroyTexture, setDrawBuffers, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
+import type { BufferId, DrawId, InstanceCells, InstanceOrder, RenderPipelineId, ShaderParams, TextureBindings, TextureId } from "@solidrt/core/gpu"
 import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera, viewMatrices } from "./camera.ts"
 import { originCell, requestFrame, snapOrigin } from "@solidrt/core"
 import { createListener } from "flux:audio"
@@ -190,7 +186,7 @@ export type ViewShellDeps = {
   /** The world the view is a spatial view of: the layer's root node,
    * which scopes the residency gate to the layer's own regions
    * (flux:spatial setView `root`); null for a layer with no world (a
-   * record layer without cells), whose views push no view. */
+   * record layer without cull), whose views push no view. */
   root: NodeId | null
   /** The render origin the view's spatial view is relative to, in layer
    * pixels: the layer's, where its records are (views.ts); absent = the
@@ -353,7 +349,7 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
 }
 
 // What a sprite or record layer hands its views: the pipeline and corner
-// buffer every entry draws with, the atlases, the key order one entry declares,
+// buffer every entry draws with, the atlases, the order every entry declares,
 // and live reads of the state the layer fans out.
 export type ViewDeps = {
   label: string
@@ -379,18 +375,19 @@ export type ViewDeps = {
   params: () => ShaderParams
   /** The layer's pick, `zoom` the camera zoom its floors are measured at. */
   pick: (x: number, y: number, zoom: number) => Sprite[]
-  /** The layer's key order (`orderBy`), declared by ONE live entry. */
-  order?: InstanceOrder
+  /** The layer's key order (`orderBy`) and cells, declared by every
+   * view's entry. */
+  order?: ViewOrder
   /** Whether any of the layer's atlases samples nearest (hasNearestAtlas):
    * its views then warn once at a fractional oversample. */
   nearest: boolean
   /** The layer's root node, the world its views are spatial views of
    * (see ViewShellDeps.root); null for a layer with no regions, whose
-   * views push a view only under `cells` (scoped to the frame node). */
+   * views push a view only under `cull` (scoped to the frame node). */
   root: NodeId | null
-  /** Whether the key order (`order`) culls by cells: every view's entry
-   * then draws only the cells its camera meets (see the module comment). */
-  cells: boolean
+  /** Whether the layer culls (`order` carries its cells): every view's
+   * entry is then fed its view (see the module comment). */
+  culls: boolean
   /** The layer's pose buffer, whose core-written records the render
    * origin re-bases (flux:spatial setInstanceOrigin); absent for a layer
    * whose records are its own (the record layer, world f32 as written),
@@ -411,24 +408,25 @@ export type Views = {
   dispose(): void
 }
 
-// A view, its entry, the re-push of its spatial view, and (cells) the
-// view size its entry's orderViewport was last given.
+// A view, its entry, the re-push of its spatial view, and (cull) the
+// view size its entry's viewport was last given.
 type ViewRecord = { view: ViewHandle; entry: DrawId; push: () => void; width: number; height: number }
 
+/** A layer's order, as the entry declaring it takes it: the key
+ * (`instanceOrder`) and the cells beside it. */
+export type ViewOrder = { instanceOrder?: InstanceOrder; cells?: InstanceCells }
+
 /** The sprite and record layers' views: one entry over the layer's
- * instance buffers per view, the key order on one of them. */
+ * instance buffers per view, each declaring the layer's order. */
 export function createViews(deps: ViewDeps): Views {
   let views = new Set<ViewRecord>()
   // One uneven-blocks warning per layer, whichever view trips it.
   let uneven = deps.nearest ? unevenSentinel(`layer "${deps.label}"`) : undefined
-  // The one entry declaring the key order (null until a view exists, or
-  // while the layer has no order).
-  let ordered: ViewRecord | null = null
   // The layer's render origin: the point its pose records and every
   // view's uCamera are relative to, so a population a million pixels out
   // keeps sub-pixel records (the arena holds the world in f64; the
   // buffer is f32). Snapped from the PRIMARY view's camera - the first
-  // live one, the key order's view - on a power-of-two cell of
+  // live one - on a power-of-two cell of
   // ORIGIN_CELL_SCREEN_PX of its pixels; the other views subtract the
   // same point, exact while they stay within f32 reach of it (about
   // 10^5 px at sub-pixel precision; views further apart than that over
@@ -436,9 +434,9 @@ export function createViews(deps: ViewDeps): Views {
   // (one coalesced write) and rewrites every view's camera params.
   let origin: [number, number] = [0, 0]
   let originArray = new Float64Array(3)
-  // The frame node of a cells layer: at the render origin, so its model
+  // The frame node of a culled layer: at the render origin, so its model
   // frame is the records' and the matrix the core feeds each view's entry
-  // maps them; null without cells.
+  // maps them; null without culling.
   let frame: NodeId | null = null
   let placeFrame = () => {
     FRAME_TRANSFORM[0] = origin[0]
@@ -446,7 +444,7 @@ export function createViews(deps: ViewDeps): Views {
     if (frame === null) frame = spatial.createNode(FRAME_TRANSFORM, true)
     else spatial.setTransform(frame, FRAME_TRANSFORM)
   }
-  if (deps.cells) placeFrame()
+  if (deps.culls) placeFrame()
   let primary = (): ViewRecord | null => views.values().next().value ?? null
   let paramsFor = (record: ViewRecord, cam: CameraState): ShaderParams => {
     let isPrimary = views.size === 0 || primary() === record
@@ -465,34 +463,24 @@ export function createViews(deps: ViewDeps): Views {
     }
     return cameraParams(cam, origin)
   }
-  let entryFor = (view: ViewHandle, order: InstanceOrder | undefined): DrawId => {
+  let entryFor = (view: ViewHandle): DrawId => {
     let entry = addDraw(view.texture, deps.pipeline, null, {
       buffers: [deps.corners, ...deps.buffers()],
       vertexCount: deps.vertexCount,
-      instanceOrder: order,
+      ...deps.order,
       instanceCount: deps.count(),
     })
     if (frame !== null) {
       // The entry's view feeds from the frame node's sink; its screen
       // reach is measured in view pixels.
-      spatial.bindDraw(frame, view.texture, entry, { params: false, count: deps.count(), orderFeed: "cells" })
+      spatial.bindDraw(frame, view.texture, entry, { params: false, count: deps.count(), viewFeed: "cull" })
       setViewport(view, entry)
     }
     return entry
   }
   let setViewport = (view: ViewHandle, entry: DrawId) => {
     let size = view.size()
-    setDrawRange(view.texture, entry, { orderViewport: [size.width, size.height] })
-  }
-  // The ordered view went: the next live view re-adds its entry with the
-  // order, so key order survives any one view's lifetime.
-  let rehome = () => {
-    if (deps.order === undefined) return
-    let next = views.values().next().value
-    if (!next) return
-    removeDraw(next.view.texture, next.entry)
-    next.entry = entryFor(next.view, deps.order)
-    ordered = next
+    setDrawRange(view.texture, entry, { viewport: [size.width, size.height] })
   }
   return {
     create(opts) {
@@ -517,19 +505,10 @@ export function createViews(deps: ViewDeps): Views {
         disposing() {
           views.delete(record)
           if (frame !== null) spatial.unbindDraw(frame, view.texture)
-          // The ordered entry goes first, releasing the buffers' order for
-          // the next view (the target, and its other state, dies after).
-          if (ordered === record) {
-            ordered = null
-            removeDraw(view.texture, record.entry)
-            rehome()
-          }
         },
       })
-      let order = ordered === null ? deps.order : undefined
       record.view = view
-      record.entry = entryFor(view, order)
-      if (order !== undefined) ordered = record
+      record.entry = entryFor(view)
       views.add(record)
       return view
     },
@@ -537,10 +516,12 @@ export function createViews(deps: ViewDeps): Views {
       for (let v of views) setDrawBuffers(v.view.texture, v.entry, { buffers: [deps.corners, ...instanceBuffers] })
     },
     setCount(count) {
-      // A cells layer's entries are its frame sink's: the count is the
-      // sink's "on" count.
-      if (frame !== null) spatial.setDrawCount(frame, count)
-      else for (let v of views) setDrawRange(v.view.texture, v.entry, { instanceCount: count })
+      // A culled layer's entries are its frame sink's: the count is the
+      // sink's "on" count. Without a view there is no sink to tell; a view
+      // made later binds with the count as published.
+      if (frame !== null) {
+        if (views.size > 0) spatial.setDrawCount(frame, count)
+      } else for (let v of views) setDrawRange(v.view.texture, v.entry, { instanceCount: count })
     },
     setTint(tint) {
       for (let v of views) setTargetParams(v.view.texture, { uTint: tint })

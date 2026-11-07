@@ -122,6 +122,19 @@ pub struct GpuRegionInfo {
   pub height: u32,
 }
 
+/// What a draw list did, as the inventory reports it per entry: the
+/// population it draws from, the records its view last drew, how often it
+/// rebuilt, how often a write patched it in place, and what its last
+/// rebuild cost (cull, sort and gather) in milliseconds.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DrawListFacts {
+  pub population: usize,
+  pub visible: usize,
+  pub rebuilds: u64,
+  pub patches: u64,
+  pub build_ms: f32,
+}
+
 /// One entry of a draw target's ordered list, as reported in
 /// `GpuPipelineInfo::draws`.
 pub struct GpuDrawInfo {
@@ -147,10 +160,10 @@ pub struct GpuDrawInfo {
   pub first_vertex: i32,
   pub vertex_count: i32,
   pub instance_count: i32,
-  /// The instance spans the entry draws of its range, (first, count) cut
-  /// to the instance count: a cell-culled population's selection under
-  /// the entry's view. None draws the range whole.
-  pub instance_spans: Option<Vec<(u32, u32)>>,
+  /// The entry's draw list, when it draws one (an entry with an instance
+  /// order over records the app writes); its `instance_count` is then the
+  /// list's visible count.
+  pub list: Option<DrawListFacts>,
   /// The float uniforms applied on the entry's most recent render.
   pub params: Vec<(String, ParamValue)>,
   /// sampler2D uniform name -> source texture id.
@@ -222,6 +235,9 @@ pub struct GpuPipelineInfo {
   /// A draw target's ordered entry list (kind "draws"); empty for the fixed
   /// kinds, whose one pass lives in the flat fields above.
   pub draws: Vec<GpuDrawInfo>,
+  /// The one pass's draw list, on a fixed kind whose entry draws one (see
+  /// `GpuDrawInfo::list`).
+  pub list: Option<DrawListFacts>,
   /// Manual render mode: rendered only by an explicit render, never by the
   /// dirty flush (see `TargetSpec::manual`).
   pub manual: bool,

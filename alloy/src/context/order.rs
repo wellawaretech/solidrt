@@ -1,14 +1,16 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::gpu::{
-  gather_ordered, gather_permuted, materialize_indices, materialize_indices_through, order_cells, order_packed,
-  order_permutation, select_cells, BufferIds, BufferStride, DrawRange, InstanceOrder, KeyColumn, OrderCounters,
-  OrderScratch, OrderView, OrderWorker, PackedJob, RunTable, Selection, SortJob, StepMode, MAX_BUFFERS,
+  materialize_indices, materialize_indices_through, order_packed, order_permutation, BufferIds, BufferStride,
+  DrawRange, InstanceOrder, KeyColumn, OrderCounters, OrderScratch, OrderView, OrderWorker, PackedJob, RecordExtent,
+  RunTable, Selection, SortJob, StepMode, MAX_BUFFERS,
 };
 use crate::raster::RasterCmd;
 
+use super::draw_list::ListEntry;
 use super::Context;
 
 // Above this many keys an index-materialized re-sort goes to the sort
@@ -17,28 +19,40 @@ use super::Context;
 // a few milliseconds on a phone core, less than a frame of lag is worth.
 const SYNC_SORT_MAX_KEYS: usize = 16384;
 
-// The instance-order registry (see gpu/order.rs for the primitive): which
-// draw entries declared an instance order, and - derived - which buffers are
-// ordered, for the publish hooks. Entirely UI-side state: the raster thread
-// receives already-gathered blocks and never learns ordering exists.
+// The instance-order registry (see gpu/order.rs for the primitive). Two
+// forms, by who writes the records (okf/design/draw-order-and-culling.md,
+// D4): an INDEXED order sorts a handed-off population's key column and
+// writes the sorted ids into its one instance buffer (this file); a DRAW
+// LIST draws a population the app writes, per view, from the records in
+// slot order (context/draw_list.rs). Both keep their records in the
+// buffer mirrors. Entirely UI-side state: the raster thread receives
+// finished blocks and never learns ordering exists.
 pub(super) struct InstanceOrders {
-  // (target, draw) -> the entry's declared order. Draw 0 is a fixed-kind
-  // target's single entry (draw-target entry ids start at 1, so 0 is
-  // unambiguous).
-  entries: HashMap<(u64, u64), OrderedEntry>,
-  // Instance buffer id -> the one entry ordering it (one ordered entry per
-  // buffer; the publish hooks resolve through this). Every instance-step
-  // buffer of an ordered entry appears here.
-  by_buffer: HashMap<u64, (u64, u64)>,
+  // (target, draw) -> an indexed order. Draw 0 is a fixed-kind target's
+  // single entry (draw-target entry ids start at 1, so 0 is unambiguous).
+  pub(super) entries: HashMap<(u64, u64), OrderedEntry>,
+  // Id buffer -> the one indexed order writing it.
+  pub(super) by_buffer: HashMap<u64, (u64, u64)>,
+  // (target, draw) -> the entry's draw list.
+  pub(super) lists: HashMap<(u64, u64), ListEntry>,
+  // Buffer id -> the draw lists reading it: every buffer here writes into
+  // its mirror, not the GPU.
+  pub(super) list_buffers: HashMap<u64, Vec<(u64, u64)>>,
+  // The list buffers some entry also draws directly (an entry with no
+  // list over them, a shadow pass): their writes go to the GPU as well.
+  // Recomputed at the rebuild point when `direct_stale`.
+  pub(super) direct: HashSet<u64>,
+  pub(super) direct_stale: bool,
   // Buffer id -> the slot-order copy of its records. BUFFER-lifetime, not
   // entry-lifetime: it survives remove_draw (freed with the buffer), so a
-  // re-attached ordered entry re-sorts from it with no republish from the
+  // re-attached indexed entry re-sorts from it with no hand-off from the
   // app, and a handed-off population (instance_order_records) needs no
-  // app-side copy at all.
-  mirrors: HashMap<u64, Mirror>,
-  // The sort's reusable working memory, shared by every ordered entry (the
-  // UI thread publishes one buffer at a time).
-  scratch: OrderScratch,
+  // app-side copy at all. A list buffer's mirror goes when its last list
+  // does, unless it was handed off.
+  pub(super) mirrors: HashMap<u64, Mirror>,
+  // The sort's reusable working memory, shared by every order (the UI
+  // thread sorts one at a time).
+  pub(super) scratch: OrderScratch,
   // The sort thread, started at the first re-sort that leaves the UI
   // thread; None until then, and None after a spawn failure (the registry
   // then sorts in place).
@@ -47,49 +61,12 @@ pub(super) struct InstanceOrders {
   // The frame-request latch a finished job sets before waking the loop,
   // installed by the embedder (`Context::set_frame_request_latch`).
   latch: Option<Arc<AtomicBool>>,
-  counters: OrderCounters,
-  // (target, draw) -> an entry drawing a cell-culled population under a
-  // view of its own: the ordering entry, or any entry over its buffers (a
-  // second view of one layer). Keyed by entry, the population resolved
-  // through the entry's buffers at every selection, so a re-homed order
-  // or a buffer swap needs no bookkeeping here.
-  readers: HashMap<(u64, u64), CellReader>,
+  pub(super) counters: OrderCounters,
 }
 
-// One entry's view of a cell-culled population (`InstanceOrders::readers`).
-#[derive(Default)]
-struct CellReader {
-  // The view its cells are selected under (None until fed: every cell).
-  view: Option<OrderView>,
-  // The pixels a screen reach is measured in (`orderViewport`); None =
-  // the target's size.
-  viewport: Option<[f32; 2]>,
-  // The spans last sent to the raster thread (None = the range whole).
-  sent: Option<Vec<(u32, u32)>>,
-}
-
-// Which readers a re-selection visits.
-#[derive(Clone, Copy)]
-enum Reselect {
-  // Every reader of the population ordered by this entry.
-  Population((u64, u64)),
-  // This one reader.
-  Reader((u64, u64)),
-}
-
-/// What a view update did to an ordered entry's inputs
-/// (`Context::set_instance_order_view`).
-#[derive(Clone, Copy, Default)]
-pub(super) struct ViewChange {
-  /// The retained order re-sorts (`rematerialize_retained_order`).
-  pub(super) reorder: bool,
-  /// The entry draws cells: its spans re-select (`reselect_reader`).
-  pub(super) reselect: bool,
-}
-
-struct OrderedEntry {
+pub(super) struct OrderedEntry {
   order: InstanceOrder,
-  // The pipeline buffer index holding the key (the declared one, or the
+  // The pipeline buffer index holding the ids (the declared one, or the
   // first instance-step buffer), resolved at registration.
   key: usize,
   // Per-index record strides in bytes of the entry's INSTANCE-step buffers
@@ -99,18 +76,13 @@ struct OrderedEntry {
   // The currently ordered buffer per index (0 after a destroy with no
   // swap, and at every vertex-step index).
   buffers: [u64; MAX_BUFFERS],
-  // The retained permutation (perm[i] = the slot drawn i-th) from the key
-  // buffer's last publish. Retained only where `retains()` says so: with
-  // several instance-step buffers the siblings must gather under the key
-  // buffer's permutation, and a `retain: true` entry keeps it to re-sort
-  // on a direction change; a single-buffer gather entry recomputes at
-  // each publish and retains nothing (stage 1's contract, unchanged).
+  // The permutation (perm[i] = the slot drawn i-th) of the last sort.
   perm: Vec<u32>,
-  // The asynchronous re-sort (index entries above SYNC_SORT_MAX_KEYS):
-  // the submit counter, the generation in flight (one job at a time per
-  // entry), whether a newer re-sort was asked for while it ran (the
-  // result's landing resubmits: the newest direction wins, nothing
-  // queues up), and the permutation vector the next job fills.
+  // The asynchronous re-sort (above SYNC_SORT_MAX_KEYS): the submit
+  // counter, the generation in flight (one job at a time per entry),
+  // whether a newer re-sort was asked for while it ran (the result's
+  // landing resubmits: the newest direction wins, nothing queues up), and
+  // the permutation vector the next job fills.
   generation: u64,
   in_flight: Option<u64>,
   wanted: bool,
@@ -129,34 +101,66 @@ struct OrderedEntry {
   ids: Vec<u32>,
   spare_ids: Vec<u32>,
   drawn: Option<usize>,
-  // A cell-culled population's cells as of its last gather
-  // (`order_cells`): the runs over the drawn prefix, and how many records
-  // that prefix holds (None before the first gather: every reader draws
-  // the range whole).
-  cells: RunTable,
-  cell_drawn: Option<usize>,
+}
+
+/// The slots of a list buffer changed since the last rebuild point, each
+/// once, in the order they were marked.
+#[derive(Default)]
+pub(super) struct ChangedSlots {
+  slots: Vec<u32>,
+  // One bit per slot: whether it is in `slots`.
+  seen: Vec<u64>,
+}
+
+// Bits per word of a `ChangedSlots` set.
+const SEEN_BITS: usize = 64;
+
+impl ChangedSlots {
+  pub(super) fn mark(&mut self, slot: usize) {
+    let (w, bit) = (slot / SEEN_BITS, 1u64 << (slot % SEEN_BITS));
+    if self.seen.len() <= w {
+      self.seen.resize(w + 1, 0);
+    }
+    if self.seen[w] & bit == 0 {
+      self.seen[w] |= bit;
+      self.slots.push(slot as u32);
+    }
+  }
+
+  pub(super) fn slots(&self) -> &[u32] {
+    &self.slots
+  }
+
+  pub(super) fn is_empty(&self) -> bool {
+    self.slots.is_empty()
+  }
+
+  pub(super) fn clear(&mut self) {
+    for &slot in &self.slots {
+      self.seen[slot as usize / SEEN_BITS] = 0;
+    }
+    self.slots.clear();
+  }
 }
 
 #[derive(Default)]
-struct Mirror {
+pub(super) struct Mirror {
   // Shared with a sort job in flight (an index mirror never changes after
-  // its hand-off; a publish onto a gathered mirror makes its own copy).
-  data: Arc<Vec<u8>>,
-  // Record bytes held. A hand-off may hold more records than draw; a
-  // publish holds exactly what it published.
-  held: usize,
-  // The published prefix in bytes - the sorted population, what a
-  // re-sort re-gathers and republishes. Equal to `held` on the publish
-  // paths; on an owned mirror the entry's instance count picks it.
+  // its hand-off; a write onto a list mirror makes its own copy).
+  pub(super) data: Arc<Vec<u8>>,
+  // Record bytes held. A hand-off may hold more records than draw.
+  pub(super) held: usize,
+  // The published prefix in bytes - the sorted population of an indexed
+  // order. Equal to `held` on a list mirror; on a handed-off mirror the
+  // entry's instance count picks it.
   published: usize,
   // True when the records were handed off (instance_order_records): the
-  // core owns the full record set and the entry's instance count decides
-  // the published prefix. False when the app's publishes write it.
-  owned: bool,
+  // core owns the full record set. A write from the app takes them back.
+  pub(super) owned: bool,
   // Some when the hand-off declared a key column: the mirror holds that
   // column only (`len` bytes per record, the key at offset 0), for an
   // index-materialized entry whose attach must declare the same column.
-  // None holds whole records, what a gathered entry republishes.
+  // None holds whole records.
   column: Option<KeyColumn>,
   // The run table of a packed column (shared with a sort job in flight);
   // None otherwise. With one the mirror holds the packed words in
@@ -169,11 +173,18 @@ struct Mirror {
   ids_written: bool,
   // Whether that seed is the only id write so far (see `seeded_only`).
   seeded: bool,
-  // The slot-order cull boxes of a cell-culled population's key buffer
-  // (`CELL_BOX_FLOATS` per record): what the spatial record sinks staged
-  // beside the records, or the order's extent read off them. Kept with
-  // the records, so a re-sort from the mirror culls as the publish did.
-  boxes: Vec<f32>,
+  // A list buffer's record stride in bytes (its instance layout's).
+  pub(super) stride: usize,
+  // A list buffer's records changed since the last rebuild point: those a
+  // write left different, not every record it covered.
+  pub(super) changed: ChangedSlots,
+  // A list buffer's slot-order cull boxes (`CELL_BOX_FLOATS` per record):
+  // what the spatial record sinks staged beside the records, or `extent`
+  // read off them.
+  pub(super) boxes: Vec<f32>,
+  // Where a list buffer's boxes are read from its own records (a record
+  // layer); None when a sink stages them, or nothing culls.
+  pub(super) extent: Option<RecordExtent>,
 }
 
 impl Mirror {
@@ -185,40 +196,14 @@ impl Mirror {
   fn seeded_only(&mut self) -> bool {
     std::mem::replace(&mut self.seeded, false)
   }
-}
 
-impl OrderedEntry {
-  fn slots(&self) -> usize {
-    self.strides.iter().filter(|&&s| s > 0).count()
-  }
-
-  fn slot_of(&self, buffer: u64) -> Option<usize> {
-    self.buffers.iter().position(|&b| b != 0 && b == buffer)
-  }
-
-  // Whether the entry keeps the permutation between publishes (and so
-  // re-sorts from the buffer mirrors): multi-buffer coherence needs it,
-  // `retain: true` opts a single-buffer entry in (the write-once
-  // strategy), and an index stream has nothing but the mirror to sort.
-  fn retains(&self) -> bool {
-    self.order.retain || self.slots() > 1 || self.order.indices.is_some() || self.order.cells.is_some()
-  }
-
-  // The published prefix in bytes for an instance count over an owned
-  // mirror (see `published_prefix`).
-  fn published_for(&self, instances: usize, mirror: &Mirror) -> usize {
-    published_prefix(&self.order, self.strides[self.key], instances, mirror)
-  }
-}
-
-impl Mirror {
   // The byte stride of the records the sort reads off this mirror: the
-  // key column's record (a key, or a packed pair) under the index
-  // materialization, the key buffer's instance record otherwise.
+  // key column's record (a key, or a packed pair), the key buffer's
+  // instance record otherwise.
   fn record_len(&self, entry: &OrderedEntry) -> usize {
     match self.column {
       Some(column) => column.mirror_len(),
-      None => entry.strides[entry.key],
+      None => entry.order.mirror_stride(entry.strides[entry.key]),
     }
   }
 
@@ -237,18 +222,45 @@ impl Mirror {
       self.held / len
     }
   }
+
+  /// The records are the app's again after a write: a hand-off's
+  /// ownership ends, and the whole of what is held is the population.
+  pub(super) fn take_back(&mut self) {
+    self.published = self.held;
+    self.owned = false;
+    self.column = None;
+  }
+
+  /// Mark every record `bytes` covers changed since the last rebuild
+  /// point, whatever it holds: a seed, a hand-off, a new box source.
+  pub(super) fn mark(&mut self, bytes: Range<usize>) {
+    if self.stride == 0 || bytes.is_empty() {
+      return;
+    }
+    for slot in bytes.start / self.stride..bytes.end.div_ceil(self.stride) {
+      self.changed.mark(slot);
+    }
+  }
+
+  /// Seed a list mirror with the buffer's current contents, every record
+  /// changed.
+  pub(super) fn seeded(data: Vec<u8>, stride: usize) -> Mirror {
+    let held = data.len();
+    let mut mirror = Mirror { data: Arc::new(data), held, published: held, stride, ..Mirror::default() };
+    mirror.mark(0..held);
+    mirror
+  }
 }
 
 // The published prefix of a handed-off mirror for an instance count: the
-// first count records - count x K under the index materialization, whose
-// instance record is K u32 ids and whose mirror record is the key column -
-// capped at what was handed off. A packed mirror publishes whole: its
-// count is a budget (`record_budget`).
+// first count records - count x K, the instance record being K u32 ids
+// and the mirror record the key column - capped at what was handed off. A
+// packed mirror publishes whole: its count is a budget (`record_budget`).
 fn published_prefix(order: &InstanceOrder, instance_stride: usize, instances: usize, mirror: &Mirror) -> usize {
   if mirror.packed() {
     return mirror.held;
   }
-  let per_instance = if order.indices.is_some() { instance_stride / 4 } else { 1 };
+  let per_instance = instance_stride / 4;
   let record = match mirror.column {
     Some(column) => column.mirror_len(),
     None => order.mirror_stride(instance_stride),
@@ -262,60 +274,31 @@ fn record_budget(instance_stride: usize, instances: usize, records: usize) -> us
   instances.saturating_mul(instance_stride / 4).min(records)
 }
 
-// Order the key buffer's records `src` for `entry`, leaving the
-// permutation in `scratch.perm`: a cell-culled population through
-// `order_cells` over its boxes - those the publish brought (`published`,
-// a record sink's), else the order's extent read off the records, else
-// the ones kept from before - and every other order by its key.
-fn order_key(
-  entry: &mut OrderedEntry,
-  stride: usize,
-  src: &[u8],
-  boxes: &mut Vec<f32>,
-  published: Option<&[f32]>,
-  scratch: &mut OrderScratch,
-) {
-  let Some(cells) = entry.order.cells else {
-    order_permutation(&entry.order, stride, src, scratch);
-    return;
-  };
-  match (published, cells.extent) {
-    (Some(published), _) => {
-      boxes.clear();
-      boxes.extend_from_slice(published);
-    }
-    (None, Some(extent)) => extent.boxes(stride, src, boxes),
-    (None, None) => {}
-  }
-  entry.cell_drawn = Some(order_cells(&entry.order, stride, src, boxes, scratch, &mut entry.cells));
-}
-
-// The ordering entry of the cell-culled population entry (`target`,
-// `draw`) draws: itself when its order has cells, else the entry ordering
-// one of its buffers (`ids`) when that order has cells.
-fn population_of(orders: &InstanceOrders, target: u64, draw: u64, ids: &BufferIds) -> Option<(u64, u64)> {
-  let has_cells = |key: &(u64, u64)| orders.entries.get(key).is_some_and(|e| e.order.cells.is_some());
-  if has_cells(&(target, draw)) {
-    return Some((target, draw));
-  }
-  ids.buffers.iter().filter(|&&b| b != 0).find_map(|b| orders.by_buffer.get(b).copied().filter(has_cells))
-}
-
-impl Context {
-  /// The buffers entry (`target`, `draw`) reads (`draw` 0: a single-draw
-  /// target's one pass); None for an unknown entry.
-  pub(super) fn entry_buffer_ids(&self, target: u64, draw: u64) -> Option<BufferIds> {
-    entry_ids(&self.targets.borrow(), target, draw)
-  }
-}
-
 // The buffers entry (`target`, `draw`) reads: a draw target's entry, or
 // with `draw` 0 a single-draw target's one pass.
-fn entry_ids(targets: &HashMap<u64, super::mirror::TargetMirror>, target: u64, draw: u64) -> Option<BufferIds> {
+pub(super) fn entry_ids(
+  targets: &HashMap<u64, super::mirror::TargetMirror>,
+  target: u64,
+  draw: u64,
+) -> Option<BufferIds> {
   let mirror = targets.get(&target)?;
   match (draw, mirror.entries.as_ref()) {
     (0, None) => Some(mirror.buffers),
     (d, Some(list)) => list.entries.get(&d).map(|e| e.buffers),
+    _ => None,
+  }
+}
+
+// The range entry (`target`, `draw`) holds in the target mirror.
+pub(super) fn entry_range(
+  targets: &HashMap<u64, super::mirror::TargetMirror>,
+  target: u64,
+  draw: u64,
+) -> Option<DrawRange> {
+  let mirror = targets.get(&target)?;
+  match (draw, mirror.entries.as_ref()) {
+    (0, None) => mirror.draw,
+    (d, Some(list)) => list.entries.get(&d).map(|e| e.draw),
     _ => None,
   }
 }
@@ -333,7 +316,7 @@ fn materialize(entry: &OrderedEntry, mirror: &Mirror, dst: &mut [u8]) {
 // The instance-step strides of a pipeline's buffers by index (0 at a
 // vertex-step index or past the declared layouts): the order registry's
 // view of a layout.
-fn instance_strides(strides: [BufferStride; MAX_BUFFERS]) -> [usize; MAX_BUFFERS] {
+pub(super) fn instance_strides(strides: [BufferStride; MAX_BUFFERS]) -> [usize; MAX_BUFFERS] {
   let mut out = [0usize; MAX_BUFFERS];
   for (i, s) in strides.iter().enumerate() {
     if s.step == StepMode::Instance {
@@ -348,13 +331,16 @@ impl InstanceOrders {
     Self {
       entries: HashMap::new(),
       by_buffer: HashMap::new(),
+      lists: HashMap::new(),
+      list_buffers: HashMap::new(),
+      direct: HashSet::new(),
+      direct_stale: false,
       mirrors: HashMap::new(),
       scratch: OrderScratch::default(),
       worker: None,
       worker_failed: false,
       latch: None,
       counters: OrderCounters::default(),
-      readers: HashMap::new(),
     }
   }
 
@@ -374,20 +360,26 @@ impl InstanceOrders {
   }
 }
 
+/// An entry's instance order between its check and its commit
+/// (`Context::begin_entry_order`).
+pub(super) enum EntryOrder {
+  Indexed { order: InstanceOrder, key: usize, strides: [BufferStride; MAX_BUFFERS], ids: BufferIds, instances: usize },
+  List(ListEntry),
+}
+
 impl Context {
   /// Validate an entry's declared instance order against its pipeline layout
   /// and buffers - the setup half, pure so creates can check before their
-  /// RPC and commit with `insert_instance_order` after it succeeds. The
-  /// contract: the key reads from an instance-step buffer's records, every
-  /// instance-step buffer is ordered by exactly one entry, and each is
+  /// RPC and commit after it succeeds. The contract: the key reads from an
+  /// instance-step buffer's records, and each instance-step buffer is
   /// distinct from every other buffer the entry binds (a buffer read at
   /// two places, or as the index buffer, cannot hold instance records
-  /// only). A handed-off key buffer must hold whole records of the key's
-  /// stride. An index-materialized order takes exactly one instance-step
-  /// buffer whose record is whole u32 ids, over a handed-off key column
-  /// declared as the order's own (stride and key offset); a gathered
-  /// order over a hand-off needs whole records. Returns the resolved key
-  /// buffer index.
+  /// only). An index-materialized order takes exactly one instance-step
+  /// buffer whose record is whole u32 ids, written by that order alone,
+  /// over a handed-off key column declared as the order's own (stride and
+  /// key offset). A draw list reads no buffer an indexed order writes, and
+  /// over a hand-off needs whole records. Returns the resolved key buffer
+  /// index.
   pub(super) fn check_instance_order(
     &self,
     order: &InstanceOrder,
@@ -419,6 +411,12 @@ impl Context {
         ));
       }
       let orders = self.orders.borrow();
+      if orders.list_buffers.contains_key(&ids.buffers[key]) {
+        return Err(format!(
+          "buffer {} holds records a draw list reads; an indexed instanceOrder's buffer holds its sorted ids",
+          ids.buffers[key]
+        ));
+      }
       if let Some(mirror) = orders.mirrors.get(&ids.buffers[key]) {
         if !mirror.owned {
           return Err(format!(
@@ -482,26 +480,19 @@ impl Context {
       }
       if let Some((t, d)) = orders.by_buffer.get(&buffer) {
         return Err(format!(
-          "buffer {buffer} is already ordered by draw {d} of target {t}; one ordered entry per buffer"
+          "buffer {buffer} holds the sorted ids of draw {d} of target {t}'s indexed instanceOrder; one indexed order writes a buffer"
         ));
       }
       if let Some(mirror) = orders.mirrors.get(&buffer) {
         if mirror.owned && order.indices.is_none() {
           if mirror.column.is_some() {
             return Err(format!(
-              "buffer {buffer} holds a handed-off key column; a gathered instanceOrder republishes whole records, so hand them off without a key"
+              "buffer {buffer} holds a handed-off key column; a draw list reads whole records, so hand them off without a key"
             ));
           }
           if mirror.held % stride != 0 {
             return Err(format!(
               "buffer {buffer} holds {} handed-off bytes, not a whole number of {stride}-byte instance records",
-              mirror.held
-            ));
-          }
-          let size = self.gpu_buffer_len(buffer)?;
-          if mirror.held > size {
-            return Err(format!(
-              "buffer {buffer} is {size} bytes; its {} handed-off record bytes do not fit",
               mirror.held
             ));
           }
@@ -511,16 +502,65 @@ impl Context {
     Ok(key)
   }
 
-  /// Commit a checked instance order for entry (`target`, `draw`).
-  /// `instances` is the entry's resolved instance count: on a handed-off
-  /// key buffer it picks the published prefix (the first `instances`
-  /// records of the mirror). Returns whether the entry should SEED - sort
-  /// and publish from a surviving mirror, with no publish from the app:
-  /// a handed-off one, or the published records of a retaining order an
-  /// earlier entry left (an order re-homed to another entry over the same
-  /// buffers draws, and culls, at once) - which the caller runs as
-  /// `rematerialize_retained_order` once its target borrow dropped.
-  pub(super) fn insert_instance_order(
+  /// The order half of an entry's create or add, ahead of its RPC: the
+  /// declaration (taken off the spec, the raster thread never sees it)
+  /// checked against the pipeline layout and the entry's `declared`
+  /// buffers; for a draw list its own buffers created and the spec pointed
+  /// at them, drawing nothing until the list's first rebuild. Committed
+  /// with `commit_entry_order` once the create succeeded, or undone with
+  /// `abandon_entry_order`.
+  pub(super) fn begin_entry_order(
+    &self,
+    strides: [BufferStride; MAX_BUFFERS],
+    entry: &mut crate::gpu::DrawSpec,
+    declared: BufferIds,
+  ) -> Result<Option<EntryOrder>, String> {
+    let Some(order) = entry.order.take() else {
+      return Ok(None);
+    };
+    let key = self.check_instance_order(&order, strides, declared)?;
+    let instances = entry.draw.instance_count.max(0) as usize;
+    if order.indices.is_some() {
+      return Ok(Some(EntryOrder::Indexed { order, key, strides, ids: declared, instances }));
+    }
+    // Neither ordered nor culled: the entry draws its buffers directly.
+    if order.key.is_none() && !order.culls() {
+      return Ok(None);
+    }
+    let list = self.open_list(&order, key, strides, declared, instances)?;
+    list.point(entry);
+    Ok(Some(EntryOrder::List(list)))
+  }
+
+  /// Commit an entry's order (`begin_entry_order`) for entry (`target`,
+  /// `draw`): an indexed order seeds its first sort from a handed-off
+  /// mirror, a list registers. Runs with no target borrow held.
+  pub(super) fn commit_entry_order(&self, target: u64, draw: u64, order: EntryOrder) {
+    match order {
+      EntryOrder::Indexed { order, key, strides, ids, instances } => {
+        if self.insert_instance_order(target, draw, order, key, strides, ids, instances) {
+          self.rematerialize_retained_order(target, draw);
+        }
+      }
+      EntryOrder::List(list) => self.commit_list(target, draw, list),
+    }
+  }
+
+  /// Undo `begin_entry_order` after a failed create: a list's buffers go.
+  pub(super) fn abandon_entry_order(&self, order: EntryOrder) {
+    if let EntryOrder::List(list) = order {
+      self.discard_list(list);
+    }
+  }
+
+  // Commit a checked indexed order for entry (`target`, `draw`).
+  // `instances` is the entry's resolved instance count: it picks the
+  // published prefix of a handed-off mirror (the first `instances`
+  // records). Returns whether the entry should SEED - sort and publish
+  // from the mirror, with no publish from the app - which the caller runs
+  // as `rematerialize_retained_order` once its target borrow dropped.
+  #[allow(clippy::too_many_arguments)]
+  fn insert_instance_order(
     &self,
     target: u64,
     draw: u64,
@@ -554,13 +594,11 @@ impl Context {
       ids: Vec::new(),
       spare_ids: Vec::new(),
       drawn: None,
-      cells: RunTable::default(),
-      cell_drawn: None,
     };
     let mut seed = false;
     if let Some(mirror) = orders.mirrors.get_mut(&buffers[key]) {
       if mirror.owned {
-        mirror.published = entry.published_for(instances, mirror);
+        mirror.published = published_prefix(&entry.order, strides[key], instances, mirror);
         if mirror.packed() {
           entry.budget =
             record_budget(strides[key], instances, mirror.held / mirror.column.map_or(1, |c| c.mirror_len()));
@@ -568,20 +606,19 @@ impl Context {
         } else {
           seed = mirror.published > 0;
         }
-      } else {
-        seed = entry.retains() && mirror.column.is_none() && mirror.published > 0;
       }
     }
     orders.entries.insert((target, draw), entry);
     seed
   }
 
-  /// Drop one entry's order (remove_draw). The buffer mirrors STAY - they
-  /// are buffer-lifetime, so a re-created entry over the same buffers
-  /// re-sorts from them (see `insert_instance_order`'s seed).
+  /// Drop one entry's order (remove_draw), indexed or list. An indexed
+  /// order's mirror STAYS - it is buffer-lifetime, so a re-created entry
+  /// over the same buffers re-sorts from it.
   pub(super) fn unregister_instance_order(&self, target: u64, draw: u64) {
+    self.unregister_list(target, draw);
     let mut orders = self.orders.borrow_mut();
-    orders.readers.remove(&(target, draw));
+    orders.direct_stale = true;
     if let Some(entry) = orders.entries.remove(&(target, draw)) {
       for &buffer in entry.buffers.iter().filter(|&&b| b != 0) {
         orders.by_buffer.remove(&buffer);
@@ -591,27 +628,26 @@ impl Context {
 
   /// Drop every order of a reclaimed target.
   pub(super) fn unregister_target_orders(&self, target: u64) {
-    self.orders.borrow_mut().readers.retain(|(t, _), _| *t != target);
-    let removed: Vec<(u64, u64)> = self.orders.borrow().entries.keys().filter(|(t, _)| *t == target).copied().collect();
+    let removed: Vec<(u64, u64)> = {
+      let orders = self.orders.borrow();
+      orders.entries.keys().chain(orders.lists.keys()).filter(|(t, _)| *t == target).copied().collect()
+    };
     for (t, d) in removed {
       self.unregister_instance_order(t, d);
     }
   }
 
   /// Hand a buffer's full record set to the core (the app-side `transfer`
-  /// form): the mirror takes ownership of a copy, so the app keeps none,
-  /// partial rewrites are off the table, and the ordered entry - attached
-  /// now or later - sorts and republishes from here. With a `key` the
-  /// mirror keeps the records' key column only (the index materialization:
-  /// the sort reads nothing else and a re-sort writes ids), so a 1M-record
-  /// hand-off is resident as 12 MB of positions, not the record block;
-  /// without one it keeps the whole records a gathered order republishes.
-  /// Hand off before the entry attaches; the attach seeds the first publish
-  /// from this mirror (nothing draws until then) and checks the hand-off
-  /// against the order's form (gathered records must fit the buffer; an
-  /// index stream must hold their ids and its order must declare the
-  /// handed-off key column). A second hand-off replaces the records
-  /// wholesale.
+  /// form): the mirror takes ownership of a copy, so the app keeps none
+  /// and the ordered entry - attached now or later - sorts or draws from
+  /// here. With a `key` the mirror keeps the records' key column only (the
+  /// index materialization: the sort reads nothing else and a re-sort
+  /// writes ids), so a 1M-record hand-off is resident as 12 MB of
+  /// positions, not the record block; without one it keeps the whole
+  /// records a draw list gathers from. Hand off before the entry attaches;
+  /// the attach checks the hand-off against the order's form (an index
+  /// stream must hold their ids and its order must declare the handed-off
+  /// key column). A second hand-off replaces the records wholesale.
   pub fn instance_order_records(
     &self,
     id: u64,
@@ -646,13 +682,18 @@ impl Context {
       (None, None) => held.extend_from_slice(data),
     }
     let mut orders = self.orders.borrow_mut();
+    let listed = orders.list_buffers.contains_key(&id);
     let mirror = orders.mirrors.entry(id).or_default();
     mirror.held = held.len();
     mirror.data = Arc::new(held);
-    mirror.published = if table.is_some() { mirror.held } else { mirror.published.min(mirror.held) };
+    mirror.published = if table.is_some() || listed { mirror.held } else { mirror.published.min(mirror.held) };
     mirror.owned = true;
     mirror.column = key;
     mirror.runs = table;
+    if listed {
+      let held = mirror.held;
+      mirror.mark(0..held);
+    }
     Ok(())
   }
 
@@ -663,12 +704,17 @@ impl Context {
     self.orders.borrow_mut().latch = Some(latch);
   }
 
-  /// The sort worker's counters: jobs pending, of them the jobs still
-  /// sorting (what the settle gate waits out on the wall; the rest land in
-  /// the next frame), and the drained jobs' timing.
+  /// The orders' counters: the sort worker's jobs pending, of them the
+  /// jobs still sorting (what the settle gate waits out on the wall; the
+  /// rest land in the next frame), the drained jobs' timing, and the draw
+  /// lists' rebuilds.
   pub fn order_counters(&self) -> OrderCounters {
     let orders = self.orders.borrow();
-    OrderCounters { running: orders.worker.as_ref().map_or(0, |worker| worker.running()), ..orders.counters }
+    OrderCounters {
+      running: orders.worker.as_ref().map_or(0, |worker| worker.running()),
+      lists: orders.lists.len(),
+      ..orders.counters
+    }
   }
 
   /// Land the sort thread's finished jobs: a changed permutation becomes
@@ -778,20 +824,17 @@ impl Context {
       let per_instance = (entry.strides[entry.key] / 4).max(1);
       entry.drawn = Some(records);
       let instances = records.div_ceil(per_instance) as i32;
-      let targets = self.targets.borrow();
-      let Some(mirror) = targets.get(&target) else {
-        return;
-      };
-      let current = match (draw, mirror.entries.as_ref()) {
-        (0, None) => mirror.draw,
-        (d, Some(list)) => list.entries.get(&d).map(|e| e.draw),
-        _ => None,
-      };
-      let Some(current) = current else {
+      let Some(current) = entry_range(&self.targets.borrow(), target, draw) else {
         return;
       };
       DrawRange { instance_count: instances.min(current.instance_count.max(0)), ..current }
     };
+    self.send_entry_range(target, draw, range);
+  }
+
+  /// Send entry (`target`, `draw`)'s range to the raster thread as it
+  /// draws it, and note the target's content.
+  pub(super) fn send_entry_range(&self, target: u64, draw: u64, range: DrawRange) {
     match draw {
       0 => self.send(RasterCmd::SetDraw { id: target, range }),
       d => self.send(RasterCmd::SetDrawRange { target, draw: d, range }),
@@ -801,10 +844,13 @@ impl Context {
 
   /// `range` as the raster thread should hold it for entry (`target`,
   /// `draw`): a packed entry draws its last selection, never more than the
-  /// range's own instance count (the budget); any other entry draws the
-  /// range as given.
+  /// range's own instance count (the budget); a draw list draws its
+  /// visible records; any other entry draws the range as given.
   pub(super) fn drawn_range(&self, target: u64, draw: u64, range: DrawRange) -> DrawRange {
     let orders = self.orders.borrow();
+    if let Some(list) = orders.lists.get(&(target, draw)) {
+      return DrawRange { instance_count: list.drawn() as i32, ..range };
+    }
     let Some(entry) = orders.entries.get(&(target, draw)) else {
       return range;
     };
@@ -816,20 +862,27 @@ impl Context {
     DrawRange { instance_count: instances.min(range.instance_count.max(0)), ..range }
   }
 
-  // A target's size in pixels, the unit a selection's contribution is
-  // measured in: a sub-target's rectangle, a texture target's own size.
-  fn target_viewport(&self, target: u64) -> Option<[f32; 2]> {
+  // A target's size in pixels, the unit a selection's contribution and a
+  // list's screen reach are measured in: a sub-target's rectangle, a
+  // texture target's own size.
+  pub(super) fn target_viewport(&self, target: u64) -> Option<[f32; 2]> {
     if let Some(tile) = self.sub_targets.borrow().get(&target) {
       return Some([tile.width as f32, tile.height as f32]);
     }
     self.textures.get(target).map(|e| [e.width as f32, e.height as f32])
   }
 
-  /// Re-select every packed entry of `target` (its size changed: the
-  /// contribution's unit moved). Runs with no target borrow held.
+  /// Re-select every packed entry of `target`, and rebuild every draw list
+  /// measuring its reach in the target's pixels (its size changed: the
+  /// unit moved). Runs with no target borrow held.
   pub(super) fn reselect_target_orders(&self, target: u64) {
     let entries: Vec<(u64, u64)> = {
-      let orders = self.orders.borrow();
+      let mut orders = self.orders.borrow_mut();
+      for ((t, _), list) in orders.lists.iter_mut() {
+        if *t == target {
+          list.target_resized();
+        }
+      }
       orders
         .entries
         .iter()
@@ -843,7 +896,7 @@ impl Context {
   }
 
   // A block back to its buffer's pool (dropped when the buffer is gone).
-  fn recycle_block(&self, buffer: u64, block: Vec<u8>) {
+  pub(super) fn recycle_block(&self, buffer: u64, block: Vec<u8>) {
     let sizes = self.buffer_sizes.borrow();
     self.write_leases.borrow_mut().recycle(buffer, block, |i| sizes.contains_key(&i));
   }
@@ -919,23 +972,22 @@ impl Context {
     true
   }
 
-  /// Follow an ordered entry's instance count into the published prefix of
-  /// its handed-off records: the first `instances` records of the mirror
-  /// become the sorted population. Returns whether the prefix changed -
-  /// the caller follows up with `rematerialize_retained_order` once its
-  /// target borrow dropped (same two-step as a direction change). A no-op
-  /// on entries without an order, without a handed-off key mirror (the
-  /// app's own republish carries a count change there), or at the same
-  /// prefix.
+  /// Follow an ordered entry's instance count: a draw list draws the
+  /// first `instances` slots from its next rebuild; an indexed order over
+  /// handed-off records takes the first `instances` records of the mirror
+  /// as its sorted population. Returns whether an indexed order's prefix
+  /// changed - the caller follows up with `rematerialize_retained_order`
+  /// once its target borrow dropped.
   pub(super) fn set_instance_order_count(&self, target: u64, draw: u64, instances: usize) -> bool {
     let mut orders = self.orders.borrow_mut();
     let orders = &mut *orders;
+    if let Some(list) = orders.lists.get_mut(&(target, draw)) {
+      list.set_instances(instances);
+      return false;
+    }
     let Some(entry) = orders.entries.get(&(target, draw)) else {
       return false;
     };
-    if !entry.retains() {
-      return false;
-    }
     let key_buffer = entry.buffers[entry.key];
     if key_buffer == 0 {
       return false;
@@ -955,7 +1007,7 @@ impl Context {
       entry.budget = budget;
       return true;
     }
-    let published = entry.published_for(instances, mirror);
+    let published = published_prefix(&entry.order, entry.strides[entry.key], instances, mirror);
     if published == mirror.published {
       return false;
     }
@@ -963,132 +1015,55 @@ impl Context {
     true
   }
 
-  /// Set an entry's view (the `orderView` update, the feed's form): on an
-  /// order with a position key the key's direction follows the matrix,
-  /// and a packed entry keeps the view to select its runs under; an entry
-  /// drawing a cell-culled population (its ordering entry, or any entry
-  /// over its buffers, `ids`) keeps it to select its cells under. Returns
-  /// what changed - a direction the matrix did not turn, on an entry with
-  /// no runs to select, is nothing to re-sort for. Errs on an entry with
-  /// neither an instance order nor cells to draw, on a field-key order
-  /// without cells, and on a matrix without a depth direction.
-  pub(super) fn set_instance_order_view(
-    &self,
-    target: u64,
-    draw: u64,
-    view: OrderView,
-    ids: &BufferIds,
-  ) -> Result<ViewChange, String> {
+  /// Set an entry's view (the `view` update, the feed's form): a draw
+  /// list keeps it to cull and, on a position key, to order by; an indexed
+  /// order with a position key follows its direction, and a packed one
+  /// keeps the view to select its runs under. Returns whether an indexed
+  /// order re-sorts - a direction the matrix did not turn, on an entry with
+  /// no runs to select, is nothing to re-sort for. Errs on an entry with no
+  /// instance order, and on a position key under a matrix without a depth
+  /// direction.
+  pub(super) fn set_instance_order_view(&self, target: u64, draw: u64, view: OrderView) -> Result<bool, String> {
     let mut orders = self.orders.borrow_mut();
     let orders = &mut *orders;
-    if population_of(orders, target, draw, ids).is_some() {
-      orders.readers.entry((target, draw)).or_default().view = Some(view);
-      return Ok(ViewChange { reorder: false, reselect: true });
+    if let Some(list) = orders.lists.get_mut(&(target, draw)) {
+      list.set_view(view)?;
+      return Ok(false);
     }
     let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
-      return Err(
-        "the entry has no instance order (declare instanceOrder at creation) and draws no cell-culled records"
-          .to_string(),
-      );
+      return Err("the entry has no instance order (declare instanceOrder at creation)".to_string());
     };
     let Some(direction) = view.direction() else {
-      return Err("orderView has no depth direction (its w and z rows are zero or not finite)".to_string());
+      return Err("The view has no depth direction (its w and z rows are zero or not finite)".to_string());
     };
     let before = entry.order.key;
     entry.order.set_direction(direction)?;
     let packed = orders.mirrors.get(&entry.buffers[entry.key]).is_some_and(Mirror::packed);
     entry.view = Some(view);
-    Ok(ViewChange { reorder: packed || entry.order.key != before, reselect: false })
+    Ok(packed || entry.order.key != before)
   }
 
-  /// Set the pixels an entry's cell selection measures screen reach in
-  /// (the `orderViewport` update): the view's own pixels where they are not
-  /// the target's (a target rendered at an oversample). Returns whether the
-  /// entry draws cells (its spans then re-select); a viewport on any
-  /// other entry is kept for when it does.
-  pub(super) fn set_instance_order_viewport(
-    &self,
-    target: u64,
-    draw: u64,
-    viewport: [f32; 2],
-    ids: &BufferIds,
-  ) -> Result<bool, String> {
+  /// Set the pixels a draw list measures screen reach in (the
+  /// `viewport` update): the view's own pixels where they are not the
+  /// target's (a target rendered at an oversample). On an entry without a
+  /// draw list nothing measures a reach, and the viewport is ignored.
+  pub(super) fn set_instance_order_viewport(&self, target: u64, draw: u64, viewport: [f32; 2]) -> Result<(), String> {
     if !viewport.iter().all(|v| v.is_finite() && *v > 0.0) {
-      return Err(format!("orderViewport must be two finite positive sizes in pixels, got {viewport:?}"));
+      return Err(format!("The viewport must be two finite positive sizes in pixels, got {viewport:?}"));
     }
-    let mut orders = self.orders.borrow_mut();
-    let orders = &mut *orders;
-    orders.readers.entry((target, draw)).or_default().viewport = Some(viewport);
-    Ok(population_of(orders, target, draw, ids).is_some())
+    if let Some(list) = self.orders.borrow_mut().lists.get_mut(&(target, draw)) {
+      list.set_viewport(viewport);
+    }
+    Ok(())
   }
 
-  /// Re-select one entry's cells under its view (`select_cells`) and send
-  /// its spans when they changed. Runs with no target borrow held.
-  pub(super) fn reselect_reader(&self, target: u64, draw: u64) {
-    self.reselect(Reselect::Reader((target, draw)));
-  }
-
-  // Re-select the cells of the readers `scope` names, each under its own
-  // view over its population's runs, and send the spans that changed: a
-  // camera move costs a box test per cell and, when a cell entered or
-  // left, one spans write per entry - no record moves. A reader whose
-  // population has not gathered yet, or is gone, draws its range whole.
-  // Runs with no target borrow held.
-  fn reselect(&self, scope: Reselect) {
-    let mut sends: Vec<(u64, u64, Option<Vec<(u32, u32)>>)> = Vec::new();
-    {
-      let targets = self.targets.borrow();
-      let mut orders = self.orders.borrow_mut();
-      let orders = &mut *orders;
-      let keys: Vec<(u64, u64)> = match scope {
-        Reselect::Reader(key) => vec![key],
-        Reselect::Population(_) => orders.readers.keys().copied().collect(),
-      };
-      for key in keys {
-        let Some(ids) = entry_ids(&targets, key.0, key.1) else {
-          continue;
-        };
-        let population = population_of(orders, key.0, key.1, &ids);
-        if let Reselect::Population(p) = scope {
-          if population != Some(p) {
-            continue;
-          }
-        }
-        let viewport = self.target_viewport(key.0);
-        let Some(reader) = orders.readers.get_mut(&key) else {
-          continue;
-        };
-        let spans = match population.and_then(|p| orders.entries.get(&p)) {
-          Some(entry) => match (entry.cell_drawn, reader.view) {
-            (Some(drawn), Some(view)) => {
-              let mut spans = Vec::new();
-              let viewport = reader.viewport.or(viewport).unwrap_or([1.0, 1.0]);
-              select_cells(&entry.cells, drawn, Some(&view), viewport, &mut spans);
-              Some(spans)
-            }
-            _ => None,
-          },
-          None => None,
-        };
-        if spans != reader.sent {
-          reader.sent = spans.clone();
-          sends.push((key.0, key.1, spans));
-        }
-      }
-    }
-    for (target, draw, spans) in sends {
-      self.send(RasterCmd::SetDrawSpans { target, draw, spans });
-      self.note_target_content(target);
-    }
-  }
-
-  /// Replace an ordered entry's LOD threshold (the `orderLod` update).
+  /// Replace an indexed order's LOD threshold (the `orderLod` update).
   /// Returns whether a selection depends on it (a packed entry).
   pub(super) fn set_instance_order_lod(&self, target: u64, draw: u64, threshold: f64) -> Result<bool, String> {
     let mut orders = self.orders.borrow_mut();
     let orders = &mut *orders;
     let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
-      return Err("the entry has no instance order (declare instanceOrder at creation)".to_string());
+      return Err("orderLod applies to an indexed instance order (the runs of a packed hand-off)".to_string());
     };
     entry.order.set_lod(threshold)?;
     Ok(orders.mirrors.get(&entry.buffers[entry.key]).is_some_and(Mirror::packed))
@@ -1100,10 +1075,12 @@ impl Context {
   /// buffers, every swapped instance-step buffer at once.
   pub(super) fn check_order_swap(&self, target: u64, draw: u64, ids: BufferIds) -> Result<(), String> {
     let orders = self.orders.borrow();
-    let Some(entry) = orders.entries.get(&(target, draw)) else {
-      return Ok(());
+    let (strides, current, indexed) = match (orders.entries.get(&(target, draw)), orders.lists.get(&(target, draw))) {
+      (Some(entry), _) => (entry.strides, entry.buffers, true),
+      (None, Some(list)) => (list.strides(), list.sources(), false),
+      (None, None) => return Ok(()),
     };
-    for (index, &stride) in entry.strides.iter().enumerate() {
+    for (index, &stride) in strides.iter().enumerate() {
       if stride == 0 {
         continue;
       }
@@ -1118,12 +1095,17 @@ impl Context {
           "buffer {new_buffer} is also the entry's index buffer; an ordered buffer holds instance records only"
         ));
       }
-      if new_buffer == entry.buffers[index] {
+      if new_buffer == current[index] {
         continue;
       }
       if let Some((t, d)) = orders.by_buffer.get(&new_buffer) {
         return Err(format!(
-          "buffer {new_buffer} is already ordered by draw {d} of target {t}; one ordered entry per buffer"
+          "buffer {new_buffer} holds the sorted ids of draw {d} of target {t}'s indexed instanceOrder; one indexed order writes a buffer"
+        ));
+      }
+      if indexed && orders.list_buffers.contains_key(&new_buffer) {
+        return Err(format!(
+          "buffer {new_buffer} holds records a draw list reads; an indexed instanceOrder's buffer holds its sorted ids"
         ));
       }
     }
@@ -1131,6 +1113,10 @@ impl Context {
   }
 
   pub(super) fn commit_order_swap(&self, target: u64, draw: u64, ids: BufferIds) {
+    if self.orders.borrow().lists.contains_key(&(target, draw)) {
+      self.swap_list_sources(target, draw, ids);
+      return;
+    }
     let mut orders = self.orders.borrow_mut();
     let orders = &mut *orders;
     let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
@@ -1153,44 +1139,42 @@ impl Context {
     }
   }
 
-  /// Replace an ordered entry's projected-key direction (the `orderDirection`
-  /// update). On a gather entry it takes effect at the entry's next publish;
-  /// on a retained one `update_draw` follows up with
-  /// `rematerialize_retained_order` once its target borrow drops. Errs on an
-  /// entry with no instance order, or one whose key is a field.
+  /// Replace an ordered entry's projected-key direction (the
+  /// `orderDirection` update): a draw list re-sorts at its next rebuild; an
+  /// indexed order re-sorts once `update_draw` calls
+  /// `rematerialize_retained_order` after its target borrow drops. Errs on
+  /// an entry with no instance order, or one whose key is not a position.
   pub(super) fn set_instance_order_direction(&self, target: u64, draw: u64, direction: [f32; 3]) -> Result<(), String> {
     let mut orders = self.orders.borrow_mut();
+    if let Some(list) = orders.lists.get_mut(&(target, draw)) {
+      return list.set_direction(direction);
+    }
     let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
       return Err("the entry has no instance order (declare instanceOrder at creation)".to_string());
     };
     entry.order.set_direction(direction)
   }
 
-  /// The retained re-sort path: re-order the entry's retained copy under
-  /// its current key state and, when the permutation actually changed,
-  /// republish every slot from its mirror - no publish from the app
-  /// anywhere. Reached from a direction change, from a count change on a
-  /// handed-off mirror, and from an attach over a surviving mirror (the
-  /// seed - a fresh entry's empty permutation always differs). A no-op on
-  /// a gather entry (direction takes effect at its next publish), on a
-  /// retained entry with nothing published, and on an unchanged
-  /// permutation - the parked-camera gate: same order, no upload. Runs
-  /// after the caller drops its target borrow, because the republish
-  /// notes content on the reading targets.
+  /// The indexed re-sort path: re-order the entry's key column under its
+  /// current key state and, when the permutation actually changed, write
+  /// the ids from it - no publish from the app anywhere. Reached from a
+  /// direction change, from a count change on a handed-off mirror, and from
+  /// an attach over a surviving mirror (the seed - a fresh entry's empty
+  /// permutation always differs). A no-op on a draw list (it rebuilds at
+  /// the rebuild point), on an entry with nothing published, and on an
+  /// unchanged permutation - the parked-camera gate: same order, no
+  /// upload. Runs after the caller drops its target borrow, because the
+  /// write notes content on the reading targets.
   pub(super) fn rematerialize_retained_order(&self, target: u64, draw: u64) {
-    // The republish takes pooled blocks; give it the raster thread's
-    // returns first, or a camera-driven re-sort stream (no lease call
-    // anywhere) mints a fresh block per re-sort while the returns pile up
-    // unread - the leak that killed a phone at splat scale. A finished
-    // sort lands first too, so a resubmit compares against the newest
-    // permutation.
+    // The write takes pooled blocks; give it the raster thread's returns
+    // first, or a camera-driven re-sort stream (no lease call anywhere)
+    // mints a fresh block per re-sort while the returns pile up unread -
+    // the leak that killed a phone at splat scale. A finished sort lands
+    // first too, so a resubmit compares against the newest permutation.
     self.drain_recycled_blocks();
     self.drain_order_results();
     if let Some(records) = self.rematerialize_in_flush(target, draw) {
       self.apply_drawn(target, draw, records);
-    }
-    if self.orders.borrow().entries.get(&(target, draw)).is_some_and(|e| e.order.cells.is_some()) {
-      self.reselect(Reselect::Population((target, draw)));
     }
   }
 
@@ -1201,9 +1185,6 @@ impl Context {
     let mut orders = self.orders.borrow_mut();
     let orders = &mut *orders;
     let entry = orders.entries.get_mut(&(target, draw))?;
-    if !entry.retains() {
-      return None;
-    }
     let key_buffer = entry.buffers[entry.key];
     if key_buffer == 0 {
       return None;
@@ -1214,7 +1195,7 @@ impl Context {
       return None;
     }
     let keys = len / mirror.record_len(entry);
-    if entry.order.indices.is_some() && keys > SYNC_SORT_MAX_KEYS && self.submit_order_sort(orders, target, draw) {
+    if keys > SYNC_SORT_MAX_KEYS && self.submit_order_sort(orders, target, draw) {
       return None;
     }
     let entry = orders.entries.get_mut(&(target, draw)).expect("resolved above");
@@ -1224,13 +1205,6 @@ impl Context {
         let selection = self.selection_of(target, entry);
         order_packed(&entry.order.mirror_order(), key, &mirror.data[..len], table, &selection, &mut orders.scratch);
         true
-      }
-      _ if entry.order.cells.is_some() => {
-        let stride = mirror.record_len(entry);
-        let drawn =
-          order_cells(&entry.order, stride, &mirror.data[..len], &mirror.boxes, &mut orders.scratch, &mut entry.cells);
-        entry.cell_drawn = Some(drawn);
-        false
       }
       _ => {
         order_permutation(
@@ -1251,14 +1225,11 @@ impl Context {
       entry.ids.clear();
       entry.ids.extend_from_slice(orders.scratch.ids());
     }
-    let indexed = entry.order.indices.is_some();
-    self.republish_slots(entry, &orders.mirrors, None);
-    if indexed {
-      if let Some(mirror) = orders.mirrors.get_mut(&key_buffer) {
-        mirror.ids_written = true;
-        if mirror.seeded_only() {
-          self.send(RasterCmd::ResetDrawGauge { target, draw });
-        }
+    self.write_ids(entry, &orders.mirrors);
+    if let Some(mirror) = orders.mirrors.get_mut(&key_buffer) {
+      mirror.ids_written = true;
+      if mirror.seeded_only() {
+        self.send(RasterCmd::ResetDrawGauge { target, draw });
       }
     }
     if packed {
@@ -1269,12 +1240,15 @@ impl Context {
   }
 
   /// A destroyed buffer stops resolving as ordered (its id is retired), and
-  /// its mirror goes with it - the mirror is buffer-lifetime. The entry
-  /// keeps its declaration: the growth pattern destroys the old buffer
-  /// right after the swap, and the swap already re-keyed the order.
+  /// its mirror goes with it - the mirror is buffer-lifetime. An indexed
+  /// entry keeps its declaration (the growth pattern destroys the old
+  /// buffer right after the swap, and the swap already re-keyed the
+  /// order); a draw list still naming it reads no records there.
   pub(super) fn drop_order_buffer(&self, id: u64) {
     let mut orders = self.orders.borrow_mut();
     orders.mirrors.remove(&id);
+    orders.list_buffers.remove(&id);
+    orders.direct.remove(&id);
     if let Some(key) = orders.by_buffer.remove(&id) {
       // Only clear the back-pointer when it still names this id (a swap
       // that already moved the entry to a new buffer leaves it alone).
@@ -1288,209 +1262,40 @@ impl Context {
     }
   }
 
-  /// Whether buffer `id` is some entry's ordered instance buffer - the
-  /// `write_gpu_buffer` guard: a partial byte-offset write would land on
-  /// gathered, not slot, positions.
-  pub(super) fn buffer_has_order(&self, id: u64) -> bool {
-    self.orders.borrow().by_buffer.contains_key(&id)
+  /// An entry came, went or swapped its buffers: which list buffers an
+  /// entry draws directly is decided again at the next rebuild point.
+  pub(super) fn note_entry_buffers(&self) {
+    self.orders.borrow_mut().direct_stale = true;
   }
 
-  /// The lease publish hook (see `end_buffer_write`): when `id` is ordered,
-  /// gather the block's records into key order via a second pooled block and
-  /// return that; an unordered `id` returns the block untouched. On an error
-  /// the block is already cancelled back to the pool - the lease is closed
-  /// either way, matching end_buffer_write's contract.
-  ///
-  /// A single-slot gather entry computes its permutation from this very
-  /// block and retains nothing. A retaining entry (multi-slot, or
-  /// `retain: true`) mirrors: the block is copied in slot order, the key
-  /// slot's publish recomputes the shared permutation, and when it changed
-  /// the sibling slots republish from their mirrors in the same frame -
-  /// every buffer always describes the same draw order. A publish onto a
-  /// handed-off mirror takes the records back to the app's cadence
-  /// (`owned` drops).
-  pub(super) fn gather_for_publish(&self, id: u64, block: Vec<u8>, len: usize) -> Result<Vec<u8>, String> {
-    let mut guard = self.orders.borrow_mut();
-    let Some(&key) = guard.by_buffer.get(&id) else {
-      return Ok(block);
-    };
-    let orders = &mut *guard;
-    let entry = orders.entries.get_mut(&key).expect("by_buffer names a registered entry");
-    if entry.order.indices.is_some() {
-      self.write_leases.borrow_mut().cancel(id, block);
+  /// Refuse a publish onto an indexed order's id buffer: its contents are
+  /// the sorted ids the order writes, its records handed off.
+  pub(super) fn check_indexed_publish(&self, id: u64) -> Result<(), String> {
+    if self.orders.borrow().by_buffer.contains_key(&id) {
       return Err(format!(
         "buffer {id} holds an indexed instance order's sorted ids; its records are handed off (transferRecords), not published"
       ));
-    }
-    let slot = entry.slot_of(id).expect("an ordered buffer resolves to its slot");
-    let stride = entry.strides[slot];
-    if len % stride != 0 {
-      self.write_leases.borrow_mut().cancel(id, block);
-      return Err(format!(
-        "publish of {len} bytes is not a whole number of {stride}-byte instance records (the buffer has an instance order)"
-      ));
-    }
-    if !entry.retains() {
-      let mut dst = self.write_leases.borrow_mut().take_free(id, block.len());
-      gather_ordered(&entry.order, stride, &block[..len], &mut dst[..len], &mut orders.scratch);
-      self.write_leases.borrow_mut().cancel(id, block);
-      return Ok(dst);
-    }
-    let mirror = orders.mirrors.entry(id).or_default();
-    let data = Arc::make_mut(&mut mirror.data);
-    data.resize(len.max(data.len()), 0);
-    data[..len].copy_from_slice(&block[..len]);
-    mirror.held = len;
-    mirror.published = len;
-    mirror.owned = false;
-    mirror.column = None;
-    let mut changed = false;
-    let keyed = slot == entry.key;
-    if keyed {
-      order_key(entry, stride, &block[..len], &mut mirror.boxes, None, &mut orders.scratch);
-      changed = orders.scratch.perm() != entry.perm.as_slice();
-      if changed {
-        entry.perm.clear();
-        entry.perm.extend_from_slice(orders.scratch.perm());
-      }
-    }
-    let mut dst = self.write_leases.borrow_mut().take_free(id, block.len());
-    gather_permuted(&entry.perm, stride, &block[..len], &mut dst[..len]);
-    self.write_leases.borrow_mut().cancel(id, block);
-    if changed {
-      self.republish_slots(entry, &orders.mirrors, Some(slot));
-    }
-    let cells = keyed && entry.order.cells.is_some();
-    drop(guard);
-    if cells {
-      self.reselect(Reselect::Population(key));
-    }
-    Ok(dst)
-  }
-
-  /// The spatial-sink publish path: `values` is the whole staging mirror of
-  /// an ordered instance buffer (the core's slot-order truth), published as
-  /// one full gathered write - a partial range cannot land on gathered
-  /// positions, which is exactly why `write_gpu_buffer` rejects ordered
-  /// buffers. Same retention and sibling-republish contract as the lease
-  /// hook above. `boxes` are the slots' cull boxes the record sinks staged
-  /// beside them (`CELL_BOX_FLOATS` per slot), which a cell-culled order
-  /// keyed on this buffer culls by.
-  pub(super) fn ordered_instance_publish(&self, id: u64, values: &[f32], boxes: Option<&[f32]>) -> Result<(), String> {
-    self.drain_recycled_blocks();
-    let mut guard = self.orders.borrow_mut();
-    let Some(&key) = guard.by_buffer.get(&id) else {
-      return Err(format!("buffer {id} has no instance order"));
-    };
-    let orders = &mut *guard;
-    let entry = orders.entries.get_mut(&key).expect("by_buffer names a registered entry");
-    if entry.order.indices.is_some() {
-      return Err(format!(
-        "buffer {id} holds an indexed instance order's sorted ids; its records are handed off (transferRecords), not published"
-      ));
-    }
-    let slot = entry.slot_of(id).expect("an ordered buffer resolves to its slot");
-    let stride = entry.strides[slot];
-    let len = values.len() * 4;
-    if len == 0 {
-      return Ok(());
-    }
-    if len % stride != 0 {
-      return Err(format!(
-        "instance publish of {len} bytes is not a whole number of {stride}-byte records on buffer {id}"
-      ));
-    }
-    let size = self.gpu_buffer_len(id)?;
-    if len > size {
-      return Err(format!("instance publish of {len} bytes exceeds buffer {id} size {size}"));
-    }
-    // The mirror doubles as the byte staging for the f32 values.
-    let mirror = orders.mirrors.entry(id).or_default();
-    let data = Arc::make_mut(&mut mirror.data);
-    data.resize(len.max(data.len()), 0);
-    for (v, out) in values.iter().zip(data.chunks_exact_mut(4)) {
-      out.copy_from_slice(&v.to_ne_bytes());
-    }
-    mirror.held = len;
-    mirror.published = len;
-    mirror.owned = false;
-    mirror.column = None;
-    let mut changed = false;
-    let keyed = slot == entry.key;
-    if keyed {
-      let mirror = orders.mirrors.get_mut(&id).expect("just inserted");
-      order_key(entry, stride, &mirror.data[..len], &mut mirror.boxes, boxes, &mut orders.scratch);
-    }
-    let mirror = orders.mirrors.get(&id).expect("just inserted");
-    let perm: &[u32] = if keyed {
-      if entry.retains() {
-        changed = orders.scratch.perm() != entry.perm.as_slice();
-        if changed {
-          entry.perm.clear();
-          entry.perm.extend_from_slice(orders.scratch.perm());
-        }
-        &entry.perm
-      } else {
-        orders.scratch.perm()
-      }
-    } else {
-      &entry.perm
-    };
-    let mut dst = self.write_leases.borrow_mut().take_free(id, size);
-    gather_permuted(perm, stride, &mirror.data[..len], &mut dst[..len]);
-    self.send(RasterCmd::WriteBufferLease { id, block: dst, len, recycle: self.block_recycle_tx.clone() });
-    self.note_buffer_content(id);
-    if changed {
-      self.republish_slots(entry, &orders.mirrors, Some(slot));
-    }
-    let cells = keyed && entry.order.cells.is_some();
-    drop(guard);
-    if cells {
-      self.reselect(Reselect::Population(key));
     }
     Ok(())
   }
 
-  /// Republish every slot but `skip` from its mirror under the entry's
-  /// retained permutation - the coherence half of a permutation change: the
-  /// key buffer just published in a new order, so every other buffer's GPU
-  /// contents must follow in the same frame. `skip` is the slot whose
-  /// publish triggered this (already sent); `None` republishes everything -
-  /// the retained re-sort path, where no slot published at all. A slot
-  /// that never published (empty mirror) or whose buffer is gone
-  /// publishes nothing. An index stream (one slot by contract) is written
-  /// WHOLE: the sorted ids, then the sentinel to the end of the buffer.
-  fn republish_slots(&self, entry: &OrderedEntry, mirrors: &HashMap<u64, Mirror>, skip: Option<usize>) {
-    for (slot, &stride) in entry.strides.iter().enumerate() {
-      if skip == Some(slot) || stride == 0 || entry.buffers[slot] == 0 {
-        continue;
+  // Write an indexed entry's ids into its buffer WHOLE: the sorted ids,
+  // then the sentinel to the end of the buffer.
+  fn write_ids(&self, entry: &OrderedEntry, mirrors: &HashMap<u64, Mirror>) {
+    let id = entry.buffers[entry.key];
+    let Some(mirror) = mirrors.get(&id) else {
+      return;
+    };
+    let size = match self.gpu_buffer_len(id) {
+      Ok(size) if entry.perm.len() * 4 <= size => size,
+      _ => {
+        log::warn!("[gpu] indexed order write skipped: buffer {id} missing or smaller than its ids");
+        return;
       }
-      let id = entry.buffers[slot];
-      let Some(mirror) = mirrors.get(&id) else {
-        continue;
-      };
-      if mirror.published == 0 {
-        continue;
-      }
-      let indexed = entry.order.indices.is_some();
-      let len = if indexed { entry.perm.len() * 4 } else { mirror.published };
-      let size = match self.gpu_buffer_len(id) {
-        Ok(size) if len <= size => size,
-        _ => {
-          log::warn!("[gpu] ordered sibling republish skipped: buffer {id} missing or smaller than its mirror");
-          continue;
-        }
-      };
-      let mut dst = self.write_leases.borrow_mut().take_free(id, size);
-      let len = if indexed {
-        materialize(entry, mirror, &mut dst[..size]);
-        size
-      } else {
-        gather_permuted(&entry.perm, stride, &mirror.data[..len], &mut dst[..len]);
-        len
-      };
-      self.send(RasterCmd::WriteBufferLease { id, block: dst, len, recycle: self.block_recycle_tx.clone() });
-      self.note_buffer_content(id);
-    }
+    };
+    let mut dst = self.write_leases.borrow_mut().take_free(id, size);
+    materialize(entry, mirror, &mut dst[..size]);
+    self.send(RasterCmd::WriteBufferLease { id, block: dst, len: size, recycle: self.block_recycle_tx.clone() });
+    self.note_buffer_content(id);
   }
 }

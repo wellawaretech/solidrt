@@ -1,8 +1,8 @@
 use crate::gpu::{
-  gather_ordered, gather_permuted, materialize_indices, materialize_indices_through, order_cells, order_packed,
-  order_permutation, select_cells, CellBox, CellOptions, CellSize, InstanceOrder, KeyColumn, OrderKey, OrderOptions,
-  OrderScratch, OrderView, OrderWorker, PackedFormat, PackedJob, PackedKey, RecordExtent, RunTable, Selection, SortJob,
-  CELL_BOX_FLOATS, INDEX_NONE, RUN_RAMP_SAMPLES,
+  gather_list, materialize_indices, materialize_indices_through, order_packed, order_permutation, CellBox, CellOptions,
+  CellSize, InstanceOrder, KeyColumn, KeyOptions, OrderKey, OrderOptions, OrderScratch, OrderView, OrderWorker,
+  PackedFormat, PackedJob, PackedKey, RecordExtent, RunTable, Selection, SortJob, CELL_BOX_FLOATS, INDEX_NONE,
+  RUN_RAMP_SAMPLES,
 };
 use crate::spatial::Lattice;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,10 +22,9 @@ fn record_float(block: &[u8], stride: usize, i: usize, at: usize) -> f32 {
 
 fn field_order(offset_floats: usize) -> InstanceOrder {
   InstanceOrder {
-    key: OrderKey::Field { offset: offset_floats * 4 },
+    key: Some(OrderKey::Field { offset: offset_floats * 4 }),
     descending: false,
     key_buffer: None,
-    retain: false,
     indices: None,
     lod_threshold: 0.0,
     cells: None,
@@ -34,43 +33,36 @@ fn field_order(offset_floats: usize) -> InstanceOrder {
 
 #[test]
 fn parse_validates_the_key_shape() {
-  let both = InstanceOrder::parse(Some(0.0), Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false, None);
+  let both = InstanceOrder::parse(Some(0.0), Some(0.0), Some([0.0, 0.0, 1.0]), false, None, None);
   assert!(both.expect_err("both keys").contains("not both"));
-  let neither = InstanceOrder::parse(None, None, None, false, None, false, None);
+  let neither = InstanceOrder::parse(None, None, None, false, None, None);
   assert!(neither.expect_err("no key").contains("needs a key"));
-  let dir_with_field = InstanceOrder::parse(Some(1.0), None, Some([0.0, 0.0, 1.0]), false, None, false, None);
+  let dir_with_field = InstanceOrder::parse(Some(1.0), None, Some([0.0, 0.0, 1.0]), false, None, None);
   assert!(dir_with_field.expect_err("direction with field").contains("field key has none"));
-  let no_dir = InstanceOrder::parse(None, Some(0.0), None, false, None, false, None);
+  let no_dir = InstanceOrder::parse(None, Some(0.0), None, false, None, None);
   assert!(no_dir.expect_err("position without direction").contains("needs a direction"));
-  let fractional = InstanceOrder::parse(Some(1.5), None, None, false, None, false, None);
+  let fractional = InstanceOrder::parse(Some(1.5), None, None, false, None, None);
   assert!(fractional.expect_err("fractional offset").contains("non-negative integer"));
-  let negative = InstanceOrder::parse(Some(-1.0), None, None, false, None, false, None);
+  let negative = InstanceOrder::parse(Some(-1.0), None, None, false, None, None);
   assert!(negative.expect_err("negative offset").contains("non-negative integer"));
-  let zero_dir = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 0.0]), false, None, false, None);
+  let zero_dir = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 0.0]), false, None, None);
   assert!(zero_dir.expect_err("zero direction").contains("zero vector"));
-  let nan_dir = InstanceOrder::parse(None, Some(0.0), Some([f32::NAN, 0.0, 1.0]), false, None, false, None);
+  let nan_dir = InstanceOrder::parse(None, Some(0.0), Some([f32::NAN, 0.0, 1.0]), false, None, None);
   assert!(nan_dir.expect_err("nan direction").contains("finite"));
   // Float offsets store as bytes.
-  let ok = InstanceOrder::parse(Some(2.0), None, None, true, None, false, None).expect("field key parses");
-  assert_eq!(ok.key, OrderKey::Field { offset: 8 });
+  let ok = InstanceOrder::parse(Some(2.0), None, None, true, None, None).expect("field key parses");
+  assert_eq!(ok.key, Some(OrderKey::Field { offset: 8 }));
   assert!(ok.descending);
   assert_eq!(ok.key_buffer, None, "the key buffer defaults to the first instance-step one");
   // The key buffer: a pipeline buffer index, bounds-checked at parse.
-  let slotted = InstanceOrder::parse(Some(0.0), None, None, false, Some(1.0), false, None).expect("buffer 1 parses");
+  let slotted = InstanceOrder::parse(Some(0.0), None, None, false, Some(1.0), None).expect("buffer 1 parses");
   assert_eq!(slotted.key_buffer, Some(1));
-  let big = InstanceOrder::parse(Some(0.0), None, None, false, Some(8.0), false, None);
+  let big = InstanceOrder::parse(Some(0.0), None, None, false, Some(8.0), None);
   assert!(big.expect_err("buffer past the last").contains("integer 0.."));
-  let fractional_slot = InstanceOrder::parse(Some(0.0), None, None, false, Some(0.5), false, None);
+  let fractional_slot = InstanceOrder::parse(Some(0.0), None, None, false, Some(0.5), None);
   assert!(fractional_slot.expect_err("fractional slot").contains("integer 0.."));
-  let negative_slot = InstanceOrder::parse(Some(0.0), None, None, false, Some(-1.0), false, None);
+  let negative_slot = InstanceOrder::parse(Some(0.0), None, None, false, Some(-1.0), None);
   assert!(negative_slot.expect_err("negative slot").contains("integer 0.."));
-  // The retained-copy strategy: position keys only (a field key re-orders
-  // when its records republish, so retaining buys nothing).
-  let retained = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, true, None)
-    .expect("retain with a position key parses");
-  assert!(retained.retain);
-  let retained_field = InstanceOrder::parse(Some(0.0), None, None, false, None, true, None);
-  assert!(retained_field.expect_err("retain with a field key").contains("retain applies to a position key"));
 }
 
 #[test]
@@ -79,10 +71,9 @@ fn check_stride_bounds_the_key_bytes() {
   field_order(3).check_stride(16).expect("last float fits");
   assert!(field_order(4).check_stride(16).expect_err("one past").contains("does not fit"));
   let projected = InstanceOrder {
-    key: OrderKey::Projected { offset: 4, direction: [0.0, 0.0, 1.0] },
+    key: Some(OrderKey::Projected { offset: 4, direction: [0.0, 0.0, 1.0] }),
     descending: false,
     key_buffer: None,
-    retain: false,
     indices: None,
     lod_threshold: 0.0,
     cells: None,
@@ -96,49 +87,47 @@ fn set_direction_is_projected_only() {
   let mut f = field_order(0);
   assert!(f.set_direction([0.0, 1.0, 0.0]).expect_err("field key").contains("no position key"));
   let mut p = InstanceOrder {
-    key: OrderKey::Projected { offset: 0, direction: [1.0, 0.0, 0.0] },
+    key: Some(OrderKey::Projected { offset: 0, direction: [1.0, 0.0, 0.0] }),
     descending: false,
     key_buffer: None,
-    retain: false,
     indices: None,
     lod_threshold: 0.0,
     cells: None,
   };
   assert!(p.set_direction([0.0, 0.0, 0.0]).expect_err("zero direction").contains("zero vector"));
   p.set_direction([0.0, 2.0, 0.0]).expect("replace");
-  assert_eq!(p.key, OrderKey::Projected { offset: 0, direction: [0.0, 2.0, 0.0] });
+  assert_eq!(p.key, Some(OrderKey::Projected { offset: 0, direction: [0.0, 2.0, 0.0] }));
+}
+
+// The records of `src` (`stride`-byte records) in the order
+// `order_permutation` sorts them into.
+fn sorted(order: &InstanceOrder, stride: usize, src: &[u8], scratch: &mut OrderScratch) -> Vec<u8> {
+  order_permutation(order, stride, src, scratch);
+  let mut dst = vec![0u8; src.len()];
+  gather_list(scratch.perm(), stride, src, &mut dst);
+  dst
 }
 
 #[test]
-fn gather_sorts_ascending_and_keeps_ties_stable() {
+fn the_sort_is_ascending_and_keeps_ties_stable() {
   // Two floats per record: [key, slot marker]. Keys cover negatives, a tie,
   // and NaN (which sorts last ascending).
   let src = bytes(&[3.0, 0.0, -1.0, 1.0, 3.0, 2.0, f32::NAN, 3.0, 0.0, 4.0]);
   let stride = 8;
-  let mut dst = vec![0u8; src.len()];
   let mut scratch = OrderScratch::default();
-  gather_ordered(&field_order(0), stride, &src, &mut dst, &mut scratch);
+  let dst = sorted(&field_order(0), stride, &src, &mut scratch);
   let order: Vec<f32> = (0..5).map(|i| record_float(&dst, stride, i, 1)).collect();
   // -1 first, then 0, then the two 3.0 records in slot order (stable), NaN last.
   assert_eq!(order, vec![1.0, 4.0, 0.0, 2.0, 3.0]);
 }
 
 #[test]
-fn gather_descending_reverses() {
+fn a_descending_sort_reverses() {
   let src = bytes(&[1.0, 0.0, 3.0, 1.0, 2.0, 2.0]);
   let stride = 8;
-  let mut dst = vec![0u8; src.len()];
   let mut scratch = OrderScratch::default();
-  let order = InstanceOrder {
-    key: OrderKey::Field { offset: 0 },
-    descending: true,
-    key_buffer: None,
-    retain: false,
-    indices: None,
-    lod_threshold: 0.0,
-    cells: None,
-  };
-  gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
+  let order = InstanceOrder { descending: true, ..field_order(0) };
+  let dst = sorted(&order, stride, &src, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 1)).collect();
   assert_eq!(got, vec![1.0, 2.0, 0.0]);
 }
@@ -148,29 +137,21 @@ fn projected_key_follows_the_direction() {
   // Records: [x, y, z, slot marker]; three positions along +z.
   let src = bytes(&[0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 3.0, 1.0, 0.0, 0.0, 2.0, 2.0]);
   let stride = 16;
-  let mut dst = vec![0u8; src.len()];
   let mut scratch = OrderScratch::default();
-  let mut order = InstanceOrder {
-    key: OrderKey::Projected { offset: 0, direction: [0.0, 0.0, 1.0] },
-    descending: false,
-    key_buffer: None,
-    retain: false,
-    indices: None,
-    lod_threshold: 0.0,
-    cells: None,
-  };
-  gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
+  let mut order =
+    InstanceOrder { key: Some(OrderKey::Projected { offset: 0, direction: [0.0, 0.0, 1.0] }), ..field_order(0) };
+  let dst = sorted(&order, stride, &src, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 3)).collect();
   assert_eq!(got, vec![0.0, 2.0, 1.0], "depth ascending along +z");
   // The per-camera-move update: flip the direction, the order flips.
   order.set_direction([0.0, 0.0, -1.0]).expect("replace direction");
-  gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
+  let dst = sorted(&order, stride, &src, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 3)).collect();
   assert_eq!(got, vec![1.0, 2.0, 0.0], "depth ascending along -z");
 }
 
 #[test]
-fn gather_round_trips_a_large_shuffled_population() {
+fn the_sort_round_trips_a_large_shuffled_population() {
   // Sprite-shaped records (13 floats), 30k of them, keys from a simple LCG:
   // the radix path must produce a sorted permutation of exactly the input.
   const COUNT: usize = 30_000;
@@ -186,9 +167,8 @@ fn gather_round_trips_a_large_shuffled_population() {
   }
   let src = bytes(&floats);
   let stride = stride_floats * 4;
-  let mut dst = vec![0u8; src.len()];
   let mut scratch = OrderScratch::default();
-  gather_ordered(&field_order(1), stride, &src, &mut dst, &mut scratch);
+  let dst = sorted(&field_order(1), stride, &src, &mut scratch);
   let mut seen = vec![false; COUNT];
   let mut last = f32::NEG_INFINITY;
   for i in 0..COUNT {
@@ -196,78 +176,19 @@ fn gather_round_trips_a_large_shuffled_population() {
     assert!(key >= last, "keys must be non-decreasing at record {i}");
     last = key;
     let marker = record_float(&dst, stride, i, 2) as usize;
-    assert!(!seen[marker], "record {marker} gathered twice");
+    assert!(!seen[marker], "record {marker} sorted twice");
     seen[marker] = true;
   }
-  // Scratch reuse: a second gather over the same population is identical.
-  let mut dst2 = vec![0u8; src.len()];
-  gather_ordered(&field_order(1), stride, &src, &mut dst2, &mut scratch);
-  assert_eq!(dst, dst2, "reused scratch must not change the result");
+  // Scratch reuse: a second sort over the same population is identical.
+  assert_eq!(dst, sorted(&field_order(1), stride, &src, &mut scratch), "reused scratch must not change the result");
 }
 
 #[test]
-fn permutation_plus_permuted_gather_equals_gather_ordered() {
-  // The multi-buffer split: computing the permutation from a key buffer and
-  // applying it must reproduce the one-shot gather exactly.
-  let src = bytes(&[3.0, 0.0, -1.0, 1.0, 3.0, 2.0, 0.0, 3.0]);
-  let stride = 8;
+fn the_sort_handles_the_trivial_populations() {
   let mut scratch = OrderScratch::default();
-  let mut one_shot = vec![0u8; src.len()];
-  gather_ordered(&field_order(0), stride, &src, &mut one_shot, &mut scratch);
-  order_permutation(&field_order(0), stride, &src, &mut scratch);
-  let mut split = vec![0u8; src.len()];
-  gather_permuted(scratch.perm(), stride, &src, &mut split);
-  assert_eq!(one_shot, split);
-}
-
-#[test]
-fn permuted_gather_follows_a_sibling_stride() {
-  // The key buffer's permutation applied to a sibling buffer with a
-  // DIFFERENT record stride - the pose/style split. Keys [2, 0, 1] order
-  // slots 1, 2, 0; the one-float sibling records follow.
-  let keys = bytes(&[2.0, 9.0, 0.0, 9.0, 1.0, 9.0]);
-  let mut scratch = OrderScratch::default();
-  order_permutation(&field_order(0), 8, &keys, &mut scratch);
-  let sibling = bytes(&[10.0, 11.0, 12.0]);
-  let mut dst = vec![0u8; sibling.len()];
-  gather_permuted(scratch.perm(), 4, &sibling, &mut dst);
-  let got: Vec<f32> = (0..3).map(|i| record_float(&dst, 4, i, 0)).collect();
-  assert_eq!(got, vec![11.0, 12.0, 10.0]);
-}
-
-#[test]
-fn permuted_gather_reconciles_count_mismatches() {
-  // perm [2, 0, 1] over a 2-record publish: slot 2 is out of range and
-  // skipped, the rest keep permutation order.
-  let src = bytes(&[10.0, 11.0]);
-  let mut dst = vec![0u8; src.len()];
-  gather_permuted(&[2, 0, 1], 4, &src, &mut dst);
-  let got: Vec<f32> = (0..2).map(|i| record_float(&dst, 4, i, 0)).collect();
-  assert_eq!(got, vec![10.0, 11.0], "out-of-range perm entries are skipped");
-  // perm [1, 0] over a 4-record publish: the unpermuted tail appends in
-  // slot order.
-  let src = bytes(&[10.0, 11.0, 12.0, 13.0]);
-  let mut dst = vec![0u8; src.len()];
-  gather_permuted(&[1, 0], 4, &src, &mut dst);
-  let got: Vec<f32> = (0..4).map(|i| record_float(&dst, 4, i, 0)).collect();
-  assert_eq!(got, vec![11.0, 10.0, 12.0, 13.0], "records past the permutation append in slot order");
-  // An empty permutation is the identity.
-  let mut dst = vec![0u8; src.len()];
-  gather_permuted(&[], 4, &src, &mut dst);
-  assert_eq!(src, dst);
-}
-
-#[test]
-fn gather_handles_the_trivial_populations() {
-  let mut scratch = OrderScratch::default();
-  // Zero records.
-  let mut empty: Vec<u8> = Vec::new();
-  gather_ordered(&field_order(0), 8, &[], &mut empty, &mut scratch);
-  // One record copies through.
+  assert!(sorted(&field_order(0), 8, &[], &mut scratch).is_empty());
   let src = bytes(&[5.0, 7.0]);
-  let mut dst = vec![0u8; src.len()];
-  gather_ordered(&field_order(0), 8, &src, &mut dst, &mut scratch);
-  assert_eq!(src, dst);
+  assert_eq!(sorted(&field_order(0), 8, &src, &mut scratch), src, "one record copies through");
 }
 
 // The index materialization: `indices.stride` is the handed-off record's
@@ -276,16 +197,16 @@ fn gather_handles_the_trivial_populations() {
 // rest of the buffer, so no stale id survives a shrink.
 #[test]
 fn parse_and_materialize_indices() {
-  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(32.0))
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, Some(32.0))
     .expect("an indexed position order parses");
   assert_eq!(indexed.indices, Some(32));
   assert_eq!(indexed.mirror_stride(64), 12, "the mirror holds the key column, not the id stream or the record");
   assert_eq!(field_order(0).mirror_stride(52), 52, "without indices the instance record is the record");
-  let odd = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false, Some(30.0));
+  let odd = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, Some(30.0));
   assert!(odd.expect_err("a stride off the float grid").contains("multiple of 4"));
-  let zero = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false, Some(0.0));
+  let zero = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, Some(0.0));
   assert!(zero.expect_err("a zero stride").contains("positive"));
-  let tight = InstanceOrder::parse(None, Some(2.0), Some([0.0, 0.0, 1.0]), false, None, false, Some(16.0));
+  let tight = InstanceOrder::parse(None, Some(2.0), Some([0.0, 0.0, 1.0]), false, None, Some(16.0));
   assert!(tight.expect_err("a vec3 at float 2 of a 16-byte record").contains("does not fit"));
 
   // Three sorted slots into a buffer of six id slots: ids, then sentinels.
@@ -310,12 +231,11 @@ fn key_column_parses_and_matches_the_order() {
   assert_eq!(column, KeyColumn { stride: 32, offset: 0, len: 12, packed: None });
   let field_column = KeyColumn::parse(16.0, Some(3.0), None, None).expect("a field key at float 3 of 16-byte records");
   assert_eq!(field_column, KeyColumn { stride: 16, offset: 12, len: 4, packed: None });
-  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(32.0))
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, Some(32.0))
     .expect("an indexed position order parses");
   assert_eq!(indexed.key_column(), Some(column), "the order expects the column the hand-off declared");
   assert_eq!(field_order(0).key_column(), None, "a gathered order keeps whole records");
-  let shifted =
-    InstanceOrder::parse(None, Some(1.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(32.0)).expect("parses");
+  let shifted = InstanceOrder::parse(None, Some(1.0), Some([0.0, 0.0, 1.0]), true, None, Some(32.0)).expect("parses");
   assert_ne!(shifted.key_column(), Some(column), "a different offset is a different column");
 
   let both = KeyColumn::parse(32.0, Some(0.0), Some(0.0), None);
@@ -345,8 +265,7 @@ fn key_column_extracts_what_the_sort_reads() {
   assert_eq!(keys, bytes(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]), "the column replaces the vector");
 
   // Depth along +z, descending: slot 2 (z = 9) first.
-  let order =
-    InstanceOrder::parse(None, Some(1.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0)).expect("parses");
+  let order = InstanceOrder::parse(None, Some(1.0), Some([0.0, 0.0, 1.0]), true, None, Some(16.0)).expect("parses");
   let mut scratch = OrderScratch::default();
   order_permutation(&order.mirror_order(), order.mirror_stride(64), &keys, &mut scratch);
   assert_eq!(scratch.perm(), &[2, 1, 0]);
@@ -363,7 +282,7 @@ fn key_column_extracts_what_the_sort_reads() {
 #[test]
 fn sort_worker_round_trips_a_job() {
   let keys = Arc::new(bytes(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]));
-  let order = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(12.0))
+  let order = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, Some(12.0))
     .expect("parses")
     .mirror_order();
   let worker = OrderWorker::spawn().expect("a sort thread");
@@ -409,11 +328,10 @@ fn packed_key_column_parses_and_matches_the_order() {
   let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("a packed position at float 0");
   assert_eq!(column, KeyColumn { stride: 16, offset: 0, len: 8, packed: Some(packed) });
   assert_eq!(column.mirror_len(), 8, "the mirror holds the two words alone");
-  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0))
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, Some(16.0))
     .expect("an indexed position order over 16-byte records");
   assert!(column.accepts(indexed.key_column().expect("indexed")), "a position key reads the packed column");
-  let shifted =
-    InstanceOrder::parse(None, Some(1.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0)).expect("parses");
+  let shifted = InstanceOrder::parse(None, Some(1.0), Some([0.0, 0.0, 1.0]), true, None, Some(16.0)).expect("parses");
   assert!(!column.accepts(shifted.key_column().expect("indexed")), "a different offset is a different column");
   let float = KeyColumn::parse(16.0, None, Some(0.0), None).expect("a float position");
   assert!(!float.accepts(column), "a float hand-off is not read as packed");
@@ -454,7 +372,7 @@ fn packed_cloud(count: usize, run_len: usize) -> (Vec<u8>, RunTable, Vec<f32>) {
   let (records, zs) = packed_records(count, &bounds, run_len);
   let starts: Vec<u32> = (0..runs).map(|c| (c * run_len) as u32).collect();
   let ramp = falling_ramp(count, &starts);
-  (records, RunTable { bounds, starts, ramp, px: vec![] }, zs)
+  (records, RunTable { bounds, starts, ramp }, zs)
 }
 
 // `count` packed records at random grid positions inside the box of their
@@ -514,7 +432,7 @@ fn packed_key_sorts_as_the_float_key_does() {
   column.extract(&records, &mut words);
   assert_eq!(words.len(), count * 8);
 
-  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0))
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, Some(16.0))
     .expect("parses")
     .mirror_order();
   let mut scratch = OrderScratch::default();
@@ -569,7 +487,7 @@ fn packed_hand_off_is_validated() {
   nan.ramp[0] = f32::NAN;
   assert!(column.check_packed(records.len(), &nan).expect_err("a NaN sample").contains("finite"));
   // No records: no runs.
-  let empty = RunTable { bounds: vec![], starts: vec![], ramp: vec![], px: vec![] };
+  let empty = RunTable { bounds: vec![], starts: vec![], ramp: vec![] };
   assert!(empty.check(0).is_ok());
   assert!(table.check(0).expect_err("runs for nothing").contains("no records"));
   assert!(empty.check(5).expect_err("records with no runs").contains("no runs"));
@@ -586,7 +504,7 @@ fn a_budget_without_a_view_is_an_importance_prefix() {
   let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("parses");
   let mut words = Vec::new();
   column.extract(&records, &mut words);
-  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0))
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, Some(16.0))
     .expect("parses")
     .mirror_order();
   let mut scratch = OrderScratch::default();
@@ -640,7 +558,7 @@ fn placed_cloud() -> (Vec<u8>, RunTable) {
   let starts = vec![0, 100, 200];
   // Importance (len - rank) / len: 1 down to 0.01.
   let ramp = falling_ramp(300, &starts).iter().map(|v| v / 100.0).collect();
-  (records, RunTable { bounds, starts, ramp, px: vec![] })
+  (records, RunTable { bounds, starts, ramp })
 }
 
 // The view culls the run behind the eye whole and cuts the visible runs
@@ -654,7 +572,7 @@ fn a_view_culls_and_thins_the_runs_by_projected_scale() {
   let column = KeyColumn::parse(16.0, None, Some(0.0), Some(packed)).expect("parses");
   let mut words = Vec::new();
   column.extract(&records, &mut words);
-  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, false, Some(16.0))
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, Some(16.0))
     .expect("parses")
     .mirror_order();
   let mut scratch = OrderScratch::default();
@@ -727,7 +645,7 @@ fn sort_worker_sorts_a_packed_job() {
   let mut words = Vec::new();
   column.extract(&records, &mut words);
   let keys = Arc::new(words);
-  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false, Some(16.0))
+  let indexed = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, Some(16.0))
     .expect("parses")
     .mirror_order();
   let worker = OrderWorker::spawn().expect("a sort thread");
@@ -785,69 +703,74 @@ fn boxes_of(src: &[u8]) -> Vec<f32> {
 }
 
 // A 2d lattice of 10-unit cells over x and y.
-fn grid_order() -> InstanceOrder {
-  let lattice = Lattice { origin: [0.0; 3], cell: [10.0, 10.0, 0.0] };
-  InstanceOrder::cell_grid(lattice, None, Some(CELL_EXTENT)).expect("cell order")
-}
-
-// The y-down orthographic view of the 2d views over a `w` x `h` world
-// rectangle at (x, y), zoom 1: clip x = 2 (p.x - x) / w - 1, clip y =
-// 1 - 2 (p.y - y) / h.
-fn view_rect(x: f32, y: f32, w: f32, h: f32) -> OrderView {
-  let mut m = [0.0f32; 16];
-  m[0] = 2.0 / w;
-  m[5] = -2.0 / h;
-  m[10] = -1.0;
-  m[12] = -2.0 * x / w - 1.0;
-  m[13] = 2.0 * y / h + 1.0;
-  m[15] = 1.0;
-  OrderView { clip: m }
-}
+const GRID: Lattice = Lattice { origin: [0.0; 3], cell: [10.0, 10.0, 0.0] };
 
 #[test]
-fn a_cell_order_takes_a_lattice_and_bands_take_a_field_key() {
+fn cells_combine_with_any_key_or_none() {
   let none = Lattice { origin: [0.0; 3], cell: [0.0; 3] };
-  assert!(InstanceOrder::cell_grid(none, None, None).expect_err("no cut axis").contains("positive"));
+  assert!(field_order(1).with_cells(none, None, None).expect_err("no cut axis").contains("positive"));
   let bad = Lattice { origin: [0.0; 3], cell: [-1.0, 1.0, 0.0] };
-  assert!(InstanceOrder::cell_grid(bad, None, None).is_err());
-  let y = field_order(1);
-  assert_eq!(y.with_bands(16.0, None).expect("bands").cells.and_then(|c| c.band), Some(16.0));
-  assert!(y.with_bands(0.0, None).expect_err("zero band").contains("band"));
+  assert!(field_order(1).with_cells(bad, None, None).is_err());
+  let culled = field_order(1).with_cells(GRID, Some(CELL_EXTENT), Some(true)).expect("cells over a field key");
+  assert_eq!(culled.cells.map(|c| c.lattice), Some(GRID));
+  assert!(culled.culls());
+  // The switch decides whether the cells cull; absent is off.
+  assert!(!field_order(1).with_cells(GRID, None, None).expect("cells, no switch").culls());
+  assert!(!field_order(1).with_cells(GRID, None, Some(false)).expect("cells, switched off").culls());
   let position =
-    InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false, None).expect("position order");
-  assert!(position.with_bands(16.0, None).is_err(), "a position key has no bands");
+    InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, None).expect("position order");
+  assert!(position.with_cells(GRID, None, Some(true)).is_ok(), "a position key culls too");
+  let indexed =
+    InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, Some(16.0)).expect("an indexed order");
+  assert!(indexed.with_cells(GRID, None, Some(true)).expect_err("cells on an indexed order").contains("runs"));
+  let margined = culled.with_cull_margin(12.0).expect("a margin on cells");
+  assert_eq!(margined.cells.map(|c| c.margin), Some(12.0));
+  assert!(culled.with_cull_margin(-1.0).expect_err("a negative margin").contains("non-negative"));
+  assert!(culled.with_cull_margin(f64::NAN).is_err());
+  assert!(field_order(1).with_cull_margin(1.0).expect_err("no cells").contains("cells"));
   // The extent's fields must fit the record.
-  assert!(grid_order().check_stride(CELL_RECORD).is_ok());
-  assert!(grid_order().check_stride(20).expect_err("minScreenPx past the record").contains("minScreenPx"));
+  assert!(culled.check_stride(CELL_RECORD).is_ok());
+  assert!(culled.check_stride(20).expect_err("minScreenPx past the record").contains("minScreenPx"));
 }
 
 #[test]
-fn order_options_take_cells_as_a_lattice_without_a_key_and_bands_over_one() {
-  let cells = |size| Some(CellOptions { size, origin: None, extent: None });
-  let lattice = Some(CellSize::Lattice([10.0, 10.0, 0.0]));
-  let grid = InstanceOrder::from_options(OrderOptions { cells: cells(lattice), ..Default::default() })
-    .expect("a keyless cell order");
-  assert!(matches!(grid.key, OrderKey::Cell { .. }));
-  let banded = InstanceOrder::from_options(OrderOptions {
-    field: Some(1.0),
-    cells: cells(Some(CellSize::Band(16.0))),
-    ..Default::default()
-  })
-  .expect("bands over a field key");
-  assert_eq!(banded.cells.and_then(|c| c.band), Some(16.0));
-  // Without a key: a lattice size, and none of the key's options.
-  let lod = OrderOptions { lod: Some(1.0), cells: cells(lattice), ..Default::default() };
-  assert!(InstanceOrder::from_options(lod).expect_err("keyless lod").contains("without a key"));
-  let band = OrderOptions { cells: cells(Some(CellSize::Band(16.0))), ..Default::default() };
-  assert!(InstanceOrder::from_options(band).expect_err("keyless band").contains("[x, y, z]"));
-  // Over a key: a band width, no origin, and the key's own rules (lod on
-  // an indexed order only, which bands are not).
-  let field = |cells| OrderOptions { field: Some(1.0), cells, ..Default::default() };
-  assert!(InstanceOrder::from_options(field(cells(lattice))).expect_err("lattice over a key").contains("band width"));
-  let origin = Some(CellOptions { size: Some(CellSize::Band(16.0)), origin: Some([0.0; 3]), extent: None });
-  assert!(InstanceOrder::from_options(field(origin)).expect_err("origin over a key").contains("origin"));
-  let lod = OrderOptions { lod: Some(1.0), ..field(cells(Some(CellSize::Band(16.0)))) };
-  assert!(InstanceOrder::from_options(lod).expect_err("lod over bands").contains("indexed"));
+fn order_options_take_cells_beside_the_key() {
+  let cells = |size| Some(CellOptions { size, origin: None, extent: None, cull: None, margin: None });
+  let key = |field| Some(KeyOptions { field: Some(field), ..Default::default() });
+  // Nothing declared: no order.
+  assert_eq!(InstanceOrder::from_options(OrderOptions::default()).expect("nothing"), None);
+  // Cells alone: slot order, culled under the switch.
+  let culled = |size| Some(CellOptions { size, origin: None, extent: None, cull: Some(true), margin: None });
+  let alone = OrderOptions { cells: culled(Some(CellSize::Lattice([10.0, 10.0, 0.0]))), ..Default::default() };
+  let grid = InstanceOrder::from_options(alone).expect("cells alone").expect("an order");
+  assert_eq!(grid.key, None);
+  assert_eq!(grid.cells.map(|c| c.lattice), Some(GRID));
+  assert!(grid.culls());
+  // One number is square cells in x and y, under a key as without one.
+  let square = OrderOptions { key: key(1.0), cells: cells(Some(CellSize::Square(16.0))), ..Default::default() };
+  let square = InstanceOrder::from_options(square).expect("cells beside a field key").expect("an order");
+  assert_eq!(square.key, Some(OrderKey::Field { offset: 4 }));
+  assert_eq!(square.cells.map(|c| c.lattice.cell), Some([16.0, 16.0, 0.0]));
+  assert!(!square.culls(), "cells without the switch cull nothing");
+  let origin = Some(CellOptions {
+    size: Some(CellSize::Square(16.0)),
+    origin: Some([5.0, 0.0, 0.0]),
+    extent: None,
+    cull: None,
+    margin: None,
+  });
+  let placed = InstanceOrder::from_options(OrderOptions { key: key(1.0), cells: origin, ..Default::default() })
+    .expect("an origin")
+    .expect("an order");
+  assert_eq!(placed.cells.map(|c| c.lattice.origin), Some([5.0, 0.0, 0.0]));
+  // Cells need a size.
+  let sizeless = OrderOptions { cells: cells(None), ..Default::default() };
+  assert!(InstanceOrder::from_options(sizeless).expect_err("no size").contains("size"));
+  // A key object without a key, and lod off an indexed order, throw.
+  let keyless = OrderOptions { key: Some(KeyOptions::default()), ..Default::default() };
+  assert!(InstanceOrder::from_options(keyless).expect_err("no key").contains("needs a key"));
+  let lod = OrderOptions { key: Some(KeyOptions { lod: Some(1.0), ..key(1.0).expect("key") }), ..Default::default() };
+  assert!(InstanceOrder::from_options(lod).expect_err("lod on a field key").contains("indexed"));
 }
 
 #[test]
@@ -872,91 +795,4 @@ fn an_extent_reads_a_rotated_box_and_the_screen_floor_reach() {
   assert!((CellBox::read(&boxes, 2).px - 8.0 * 5.0f32.sqrt() / 2.0).abs() < 1e-4);
   // Past the column's end, the empty box.
   assert!(CellBox::read(&boxes, 3).is_empty());
-}
-
-#[test]
-fn a_cell_order_gathers_row_major_and_sorts_empty_records_last() {
-  // Cells (column, row): a (2, 0), b (0, 1), c (0, 0), d empty, e (2, 0).
-  let src = cell_records(&[
-    [25.0, 5.0, 2.0, 2.0, 0.0, 0.0],
-    [5.0, 15.0, 2.0, 2.0, 0.0, 0.0],
-    [3.0, 3.0, 2.0, 2.0, 0.0, 0.0],
-    [4.0, 4.0, 0.0, 0.0, 0.0, 0.0],
-    [21.0, 6.0, 2.0, 2.0, 0.0, 6.0],
-  ]);
-  let boxes = boxes_of(&src);
-  let mut scratch = OrderScratch::default();
-  let mut table = RunTable::default();
-  let drawn = order_cells(&grid_order(), CELL_RECORD, &src, &boxes, &mut scratch, &mut table);
-  assert_eq!(drawn, 4);
-  // Row 0 (c, then a and e in slot order), row 1 (b), the empty record last.
-  assert_eq!(scratch.perm(), &[2, 0, 4, 1, 3]);
-  assert_eq!(table.starts, vec![0, 1, 3]);
-  assert!(table.ramp.is_empty());
-  // A run's box is the union of its records' boxes, its px their largest.
-  assert_eq!(table.bounds[1], [20.0, 4.0, 0.0, 26.0, 7.0, 0.0]);
-  assert_eq!(table.px[1], 6.0 * 2.0f32.sqrt() / 2.0);
-  assert_eq!(table.span(2, drawn), (3, 1));
-}
-
-#[test]
-fn bands_cut_the_sorted_key_and_keep_its_order() {
-  // Keyed on cy (float 1) in bands of 10.
-  let order = field_order(1).with_bands(10.0, Some(CELL_EXTENT)).expect("bands");
-  let src = cell_records(&[
-    [0.0, 25.0, 2.0, 2.0, 0.0, 0.0],
-    [0.0, 3.0, 2.0, 2.0, 0.0, 0.0],
-    [0.0, 14.0, 0.0, 2.0, 0.0, 0.0],
-    [0.0, 7.0, 2.0, 2.0, 0.0, 0.0],
-    [0.0, 12.0, 2.0, 2.0, 0.0, 0.0],
-  ]);
-  let boxes = boxes_of(&src);
-  let mut scratch = OrderScratch::default();
-  let mut table = RunTable::default();
-  let drawn = order_cells(&order, CELL_RECORD, &src, &boxes, &mut scratch, &mut table);
-  assert_eq!(drawn, 4);
-  // y order exactly (3, 7, 12, 25), the empty record (14) last.
-  assert_eq!(scratch.perm(), &[1, 3, 4, 0, 2]);
-  assert_eq!(table.starts, vec![0, 2, 3]);
-}
-
-#[test]
-fn a_view_draws_the_spans_of_the_cells_it_meets() {
-  // Runs of 10 records over x: [0, 10], [10, 20], [40, 50]; the third
-  // reaches 15 px beyond its box.
-  let table = RunTable {
-    bounds: vec![
-      [0.0, 0.0, 0.0, 10.0, 10.0, 0.0],
-      [10.0, 0.0, 0.0, 20.0, 10.0, 0.0],
-      [40.0, 0.0, 0.0, 50.0, 10.0, 0.0],
-    ],
-    starts: vec![0, 10, 20],
-    ramp: vec![],
-    px: vec![0.0, 0.0, 15.0],
-  };
-  let mut spans = Vec::new();
-  // No view: the drawn prefix whole.
-  select_cells(&table, 30, None, [1.0, 1.0], &mut spans);
-  assert_eq!(spans, vec![(0, 30)]);
-  // A view over [0, 30] x [0, 20] at two pixels per unit meets the first
-  // two runs: one span (the third's reach is 7.5 units, to 32.5).
-  let view = view_rect(0.0, 0.0, 30.0, 20.0);
-  select_cells(&table, 30, Some(&view), [60.0, 40.0], &mut spans);
-  assert_eq!(spans, vec![(0, 20)]);
-  // Over [12, 32] at one pixel per unit: the second run, and the third
-  // through its 15 px of reach (its box grown to [25, 65]); the first is
-  // out. Adjacent runs draw as one span.
-  let view = view_rect(12.0, 0.0, 20.0, 20.0);
-  select_cells(&table, 30, Some(&view), [20.0, 20.0], &mut spans);
-  assert_eq!(spans, vec![(10, 20)]);
-  // The same rectangle over twice the pixels: the reach is 7.5 units
-  // ([32.5, 57.5]), short of the view.
-  select_cells(&table, 30, Some(&view), [40.0, 40.0], &mut spans);
-  assert_eq!(spans, vec![(10, 10)]);
-  // Runs on both sides of a culled one: two spans.
-  let view = view_rect(-5.0, 0.0, 60.0, 20.0);
-  let gapped =
-    RunTable { bounds: vec![table.bounds[0], [100.0, 0.0, 0.0, 110.0, 10.0, 0.0], table.bounds[2]], ..table.clone() };
-  select_cells(&gapped, 30, Some(&view), [60.0, 20.0], &mut spans);
-  assert_eq!(spans, vec![(0, 10), (20, 10)]);
 }

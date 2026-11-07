@@ -414,6 +414,9 @@ pub fn gpu_record(
       if let Some(instance_count) = p.instance_count.filter(|v| *v != 1) {
         map.insert("instanceCount".into(), instance_count.into());
       }
+      if let Some(list) = &p.list {
+        map.insert("list".into(), list_facts(list));
+      }
       if p.depth {
         map.insert("depth".into(), true.into());
       }
@@ -484,12 +487,10 @@ pub fn gpu_record(
             if d.instance_count != 1 {
               map.insert("instanceCount".into(), d.instance_count.into());
             }
-            // A cell-culled population's selection under the entry's
-            // view: the spans drawn, and the instances they submit.
-            if let Some(spans) = &d.instance_spans {
-              let list: Vec<serde_json::Value> = spans.iter().map(|&(first, count)| serde_json::json!([first, count])).collect();
-              map.insert("instanceSpans".into(), list.into());
-              map.insert("instancesDrawn".into(), spans.iter().map(|&(_, n)| n as u64).sum::<u64>().into());
+            // An entry drawing a draw list: what its view drew of the
+            // population (its instanceCount), and its rebuilds.
+            if let Some(list) = &d.list {
+              map.insert("list".into(), list_facts(list));
             }
             // The submission budget's figures (alloy gl::slicing): the
             // slice count of the entry's last render when it was cut, and
@@ -577,4 +578,18 @@ pub fn gpu_record(
   }
 
   Ok(data)
+}
+
+// A draw list's facts as the inventory reports them: the population it
+// draws from, the records its view drew, its rebuilds and in-place
+// patches, and the last rebuild's cull, sort and gather time in
+// milliseconds.
+fn list_facts(list: &alloy::DrawListFacts) -> serde_json::Value {
+  serde_json::json!({
+    "population": list.population,
+    "visible": list.visible,
+    "rebuilds": list.rebuilds,
+    "patches": list.patches,
+    "buildMs": round2(list.build_ms),
+  })
 }

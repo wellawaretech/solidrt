@@ -136,24 +136,23 @@ components) and `examples/instanced.tsx` (records) are the live proofs.
 
 `instanceOrder` on either create (and the components) draws a
 population's records in key order, decided core-side; slots as you write
-them never move. `{ position: "iCenter", retain: true, descending: true
-}` names a float32x3/x4 attribute holding a local-space position: records
-draw by their depth along the scene camera's view direction, which the
-SCENE feeds the core whenever the camera or the mesh turns meaningfully
-(mapped through the mesh's rotation; an epsilon gate meters the
-re-sorts) - back-to-front transparency over 100k+ records with zero
-per-frame JS, and with `retain` a camera turn re-sorts and republishes
-core-side while a parked camera uploads nothing. `{ field: "age" }`
-names a float32 attribute and draws by its value, re-ordered when the
-records publish. The costs, by design: an ordered mesh publishes the
-LIVE record set whole on any write (a byte range has no stable position
-under a permutation; `count` defines the sorted population), and one
-buffer holds ONE order - the scene target's entry owns it, views and
-shadow passes draw the same gathered buffers, and a mesh layered out of
-the scene target keeps its last order. Where the key sits decides
-nothing else: raw instancing stays buffer-order everywhere (Three,
-Unity, Godot), so this knob has no engine counterpart to compare
-against; the core primitive is okf/done/gpu-instance-order.md.
+them never move. `{ position: "iCenter", descending: true }` names a
+float32x3/x4 attribute holding a local-space position: records draw by
+their depth along the view's camera direction, which the scene feeds
+the core whenever the camera or the mesh turns meaningfully (mapped
+through the mesh's rotation; an epsilon gate meters the re-sorts) -
+back-to-front transparency over 100k+ records with zero per-frame JS,
+and a parked camera costs nothing. `{ field: "age" }` names a float32
+attribute and draws by its value. A write publishes its dirty range, as
+on an unordered mesh. Every camera view (the scene's own, each
+`scene.createView`, an override view) draws its own draw list, sorted
+under its own camera; a shadow view draws unordered, as depth decides
+there. Where the key sits decides nothing else: raw instancing stays
+buffer-order everywhere (Three, Unity, Godot), so this knob has no
+engine counterpart to compare against; the design is
+okf/design/draw-order-and-culling.md. The indexed form (splats) keeps
+one id stream sorted for the scene's camera, which other views read as
+it is.
 
 `transfer: true` (createRecordMesh only) is the write-once form for a
 large population: the records go to the ENGINE at creation and the mesh
@@ -162,14 +161,12 @@ keeps no JS mirror, so the record bytes are resident once CPU-side
 plus the creation bytes the app would keep). The contract is loud:
 setRecords, updateRecords, instanceAttribute and growth throw naming
 the transfer; setRecordCount still works (with an instanceOrder the
-engine re-sorts and republishes the first n records of ITS copy),
+engine re-sorts the first n records of ITS copy),
 and so do setVisible, transforms, re-attach and disposeInstances (which
-frees the engine copy with the buffer). Takes a single-stream material;
-with an instanceOrder the engine's retained copy is implied. The engine
-mirror is BUFFER-lifetime, so a detached-and-re-attached ordered entry
-(setLayers re-admission included) seeds its order from it with no
-publish from JS - true for every retained ordered mesh since this
-landed, transfer or not.
+frees the engine copy with the buffer). Takes a single-stream material.
+The engine mirror is BUFFER-lifetime, so a detached-and-re-attached
+ordered entry (setLayers re-admission included) seeds its order from it
+with no publish from JS, transfer or not.
 
 The INDEXED form, `instanceOrder: { position: "iCenter", records:
 LAYOUT, descending: true }` (createRecordMesh only), is for a population

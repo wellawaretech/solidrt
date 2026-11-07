@@ -79,17 +79,17 @@ pub use event::{
 pub use gamepad::{synthetic_axis_name, synthetic_button_name, GamepadCommand, Gamepads};
 pub use gl::TapRect;
 pub use gpu::{
-  check_cube_faces, mip_levels, mip_size, GpuBufferLayoutInfo, GpuResources, LostContent, SamplerFilter,
+  check_cube_faces, mip_levels, mip_size, DrawListFacts, GpuBufferLayoutInfo, GpuResources, LostContent, SamplerFilter,
   SamplerOptions, SamplerOverride, SamplerState, SamplerUpdate, SamplerWrap, TextureBox, TextureEntry, TextureFormat,
   TextureRect, TextureRegistry, TextureShape, CUBE_FACES, MIN_ANISOTROPY,
 };
 pub use gpu::{
   parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferLayout, BufferUpdate, CellOptions, CellSize,
   CullMode, DepthState, DepthStorage, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat,
-  InstanceOrder, KeyColumn, NodeShader, OrderCounters, OrderKey, OrderOptions, OrderView, PackedFormat, PackedKey,
-  ParamValue, PipelineDesc, PipelineSpec, RecordExtent, RunTable, Selection, ShaderStage, StepMode, TargetSpec,
-  TextureBinding, Topology, UniformKind, UniformSlot, UniformTable, VertexAttr, WindowShader, CELL_BOX_FLOATS,
-  INDEX_NONE, MAX_BUFFERS, RUN_RAMP_SAMPLES,
+  InstanceOrder, KeyColumn, KeyOptions, NodeShader, OrderCounters, OrderKey, OrderOptions, OrderView, PackedFormat,
+  PackedKey, ParamValue, PipelineDesc, PipelineSpec, RecordExtent, RunTable, Selection, ShaderStage, StepMode,
+  TargetSpec, TextureBinding, Topology, UniformKind, UniformSlot, UniformTable, VertexAttr, WindowShader,
+  CELL_BOX_FLOATS, INDEX_NONE, MAX_BUFFERS, RUN_RAMP_SAMPLES,
 };
 pub use gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use input::InputState;

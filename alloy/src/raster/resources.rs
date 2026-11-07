@@ -443,6 +443,7 @@ impl RasterState {
           textures: if flat { shader.sampler_bindings().to_vec() } else { shader.shared_bindings().to_vec() },
           params: if flat { shader.last_params() } else { shader.shared_params().to_vec() },
           draws: if flat { Vec::new() } else { shader.draw_infos() },
+          list: None,
           manual: shader.manual(),
           load: shader.load(),
           passes,

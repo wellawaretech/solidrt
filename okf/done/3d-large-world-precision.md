@@ -210,7 +210,7 @@ target where the f32 is made.
   flux-types header, `material.ts` and `camera.ts` doc comments.
 
 Not done, on purpose: the 2d sprite layer serves views far apart from
-each other with ONE origin (okf/backlog/2d-sprite-layer-chunked-records.md
+each other with ONE origin (okf/backlog/2d-sprite-layer-view-relative-records.md
 is the chunked-records follow-up); the record layer (JS-written world
 f32) keeps the origin at zero and says so; instance populations stay
 local to their mesh. The "sprite layer takes the origin for free" claim

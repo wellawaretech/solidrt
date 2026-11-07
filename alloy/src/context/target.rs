@@ -148,19 +148,24 @@ impl Context {
     // The instance order is UI-side state: checked before the create RPC (so
     // a bad declaration throws with nothing created), taken off the spec (the
     // raster thread never sees it), committed only once the create succeeds.
-    let order = spec.entry.order.take();
-    let key = match &order {
-      Some(order) => self.check_instance_order(order, strides, spec.entry.buffer_ids())?,
-      None => 0,
-    };
+    let draw = spec.entry.draw;
+    let buffers = spec.entry.buffer_ids();
+    let order = self.begin_entry_order(strides, &mut spec.entry, buffers)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.target.width, spec.target.height, spec.target.sampler);
     let manual = spec.target.manual;
-    let draw = spec.entry.draw;
-    let buffers = spec.entry.buffer_ids();
     let sources: HashMap<(u64, String), u64> =
       spec.entry.textures.iter().map(|b| ((0, b.name.clone()), self.source_of(b.id))).collect();
-    let (impeller, uniforms) = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply })??;
+    let created = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply }).and_then(|r| r);
+    let (impeller, uniforms) = match created {
+      Ok(created) => created,
+      Err(e) => {
+        if let Some(order) = order {
+          self.abandon_entry_order(order);
+        }
+        return Err(e);
+      }
+    };
     self.textures.insert(id, TextureEntry::d2(impeller, width, height, sampler, TextureFormat::Rgba8));
     self
       .targets
@@ -171,13 +176,10 @@ impl Context {
       self.manual_targets.borrow_mut().insert(id);
     }
     if let Some(order) = order {
-      // A handed-off mirror seeds the first ordered publish here, with no
-      // publish from the app (borrow-free: the targets borrow is a
-      // per-statement temporary above).
-      if self.insert_instance_order(id, 0, order, key, strides, buffers, draw.instance_count.max(0) as usize) {
-        self.rematerialize_retained_order(id, 0);
-      }
+      // Borrow-free: the targets borrow is a per-statement temporary above.
+      self.commit_entry_order(id, 0, order);
     }
+    self.note_entry_buffers();
     Ok(id)
   }
 
@@ -245,19 +247,23 @@ impl Context {
     let bounds = self.resolve_entry_range(&mut entry, strides)?;
     // Same order handling as create_pipeline_texture: check before the RPC,
     // take off the spec, commit after success.
-    let order = entry.order.take();
-    let key = match &order {
-      Some(order) => self.check_instance_order(order, strides, entry.buffer_ids())?,
-      None => 0,
-    };
+    let draw = entry.draw;
+    let buffers = entry.buffer_ids();
+    let order = self.begin_entry_order(strides, &mut entry, buffers)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
-    let draw = entry.draw;
-    let buffers = entry.buffer_ids();
     let sources: HashMap<(u64, String), u64> =
       entry.textures.iter().map(|b| ((0, b.name.clone()), self.source_of(b.id))).collect();
-    let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, spec, entry, reply })??;
+    let impeller = match self.rpc(|reply| RasterCmd::CreateShaderTarget { id, spec, entry, reply }).and_then(|r| r) {
+      Ok(impeller) => impeller,
+      Err(e) => {
+        if let Some(order) = order {
+          self.abandon_entry_order(order);
+        }
+        return Err(e);
+      }
+    };
     self.textures.insert(id, TextureEntry::d2(impeller, width, height, sampler, TextureFormat::Rgba8));
     self.targets.borrow_mut().insert(id, TargetMirror { uniforms, draw: Some(draw), bounds, buffers, entries: None });
     self.shader_sources.borrow_mut().insert(id, sources);
@@ -265,13 +271,10 @@ impl Context {
       self.manual_targets.borrow_mut().insert(id);
     }
     if let Some(order) = order {
-      // A handed-off mirror seeds the first ordered publish here, with no
-      // publish from the app (borrow-free: the targets borrow is a
-      // per-statement temporary above).
-      if self.insert_instance_order(id, 0, order, key, strides, buffers, draw.instance_count.max(0) as usize) {
-        self.rematerialize_retained_order(id, 0);
-      }
+      // Borrow-free: the targets borrow is a per-statement temporary above.
+      self.commit_entry_order(id, 0, order);
     }
+    self.note_entry_buffers();
     Ok(id)
   }
 
@@ -583,33 +586,19 @@ impl Context {
     // The instance order is UI-side state: checked last (so a bad
     // declaration commits nothing), taken off the spec before it crosses
     // the channel, registered with the mirror insert.
-    let order = entry.order.take();
-    let key = match &order {
-      Some(order) => self.check_instance_order(order, strides, entry.buffer_ids())?,
-      None => 0,
-    };
+    let (declared, draw) = (entry.buffer_ids(), entry.draw);
+    let order = self.begin_entry_order(strides, &mut entry, declared)?;
     list.next_draw += 1;
-    list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, bounds, buffers: entry.buffer_ids() });
+    list.entries.insert(draw_id, EntryMirror { uniforms, draw, bounds, buffers: declared });
     match before.and_then(|b| list.order.iter().position(|&d| d == b)) {
       Some(at) => list.order.insert(at, draw_id),
       None => list.order.push(draw_id),
     }
     drop(targets);
     if let Some(order) = order {
-      // A handed-off mirror seeds the first ordered publish here, with no
-      // publish from the app - the transfer form's attach, and the
-      // re-attach over a buffer whose mirror survived.
-      if self.insert_instance_order(
-        target,
-        draw_id,
-        order,
-        key,
-        strides,
-        entry.buffer_ids(),
-        entry.draw.instance_count.max(0) as usize,
-      ) {
-        self.rematerialize_retained_order(target, draw_id);
-      }
+      // A handed-off mirror seeds the first indexed sort here, with no
+      // publish from the app; a draw list registers its buffers.
+      self.commit_entry_order(target, draw_id, order);
     }
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
@@ -618,6 +607,7 @@ impl Context {
     }
     drop(sources);
     self.send(RasterCmd::AddDraw { target, draw: draw_id, entry, before });
+    self.note_entry_buffers();
     self.note_target_content(target);
     Ok(draw_id)
   }
@@ -945,39 +935,39 @@ impl Context {
       self.set_instance_order_direction(target, entry_key, direction)?;
     }
     let mut reorder = update.order_direction.is_some();
-    let mut reselect = false;
-    if let Some(view) = update.order_view {
-      let change = self.set_instance_order_view(target, entry_key, view, &next_ids)?;
-      reorder |= change.reorder;
-      reselect |= change.reselect;
+    if let Some(view) = update.view {
+      reorder |= self.set_instance_order_view(target, entry_key, view)?;
     }
-    if let Some(viewport) = update.order_viewport {
-      reselect |= self.set_instance_order_viewport(target, entry_key, viewport, &next_ids)?;
+    if let Some(viewport) = update.viewport {
+      self.set_instance_order_viewport(target, entry_key, viewport)?;
     }
     if let Some(threshold) = update.order_lod {
       reorder |= self.set_instance_order_lod(target, entry_key, threshold)?;
     }
     let order_only = update.order_direction.is_some()
-      || update.order_view.is_some()
+      || update.view.is_some()
       || update.order_lod.is_some()
-      || update.order_viewport.is_some();
-    if instance_swap {
-      self.commit_order_swap(target, entry_key, next_ids);
-    }
+      || update.viewport.is_some();
     let range_changed = next_range != *range;
     let instances_changed = next_range.instance_count != range.instance_count;
     *ids = next_ids;
     *bounds = next_bounds;
     *range = next_range;
     drop(targets);
-    if swapped {
-      self.send(RasterCmd::SetDrawBuffers { target, draw, ids: next_ids });
+    if instance_swap {
+      self.commit_order_swap(target, entry_key, next_ids);
     }
-    // An order-only update stages UI-side sort state for the next publish
-    // and renders nothing now; every other update keeps the send-always
-    // behavior it had before orderDirection existed. The range sent is
-    // what the entry draws: a packed population's last selection, never
-    // more than the range's count (`drawn_range`).
+    if swapped {
+      let ids = self.listed_ids(target, entry_key, next_ids);
+      self.send(RasterCmd::SetDrawBuffers { target, draw, ids });
+      self.note_entry_buffers();
+    }
+    // An order-only update stages UI-side sort state for the next sort or
+    // rebuild and renders nothing now; every other update keeps the
+    // send-always behavior it had before orderDirection existed. The range
+    // sent is what the entry draws: a packed population's last selection,
+    // never more than the range's count, or a draw list's visible records
+    // (`drawn_range`).
     if !order_only || swapped || range_changed {
       let sent = self.drawn_range(target, entry_key, next_range);
       match draw {
@@ -986,24 +976,18 @@ impl Context {
       }
       self.note_target_content(target);
     }
-    // On a RETAINED entry a direction, view or LOD change re-materializes
-    // right here: core re-sorts its copy and republishes the buffers when
-    // the order changed (the republish notes content on the reading
-    // targets, which is why this runs after the targets borrow dropped).
-    // Gather entries re-order at their next publish, as above.
+    // On an indexed entry a direction, view or LOD change re-sorts right
+    // here: core re-sorts its key column and writes the ids when the order
+    // changed (the write notes content on the reading targets, which is
+    // why this runs after the targets borrow dropped). A draw list
+    // rebuilds at the rebuild point.
     if reorder {
       self.rematerialize_retained_order(target, entry_key);
     }
-    // An entry drawing cells re-selects them under its new view or
-    // viewport: spans only, no record moves.
-    if reselect {
-      self.reselect_reader(target, entry_key);
-    }
-    // An instance-count change on an entry over HANDED-OFF records moves
-    // the published prefix of the core's mirror: the first n records
-    // become the sorted population, re-sorted and republished here - the
-    // count dial with no records on the app side. Entries whose records
-    // the app publishes carry a count change in their own republish.
+    // An instance-count change moves the population: a draw list draws the
+    // first n slots from its next rebuild, and on an indexed entry over
+    // HANDED-OFF records the first n records become the sorted population,
+    // re-sorted here - the count dial with no records on the app side.
     if instances_changed && self.set_instance_order_count(target, entry_key, next_range.instance_count.max(0) as usize)
     {
       self.rematerialize_retained_order(target, entry_key);
@@ -1091,6 +1075,8 @@ impl Context {
         ));
       }
     }
+    // The target draws its lists as they stand after this frame's writes.
+    self.flush_draw_lists();
     self.send(RasterCmd::RenderTarget { id, face, level });
     // A manual target's pixels change exactly here (and at copy_texture), so
     // this notes directly - note_target_content's manual skip is for the
@@ -1147,6 +1133,7 @@ impl Context {
   pub(super) fn remove_target_records(&self, id: u64) {
     self.targets.borrow_mut().remove(&id);
     self.unregister_target_orders(id);
+    self.note_entry_buffers();
     self.shader_sources.borrow_mut().remove(&id);
     self.manual_targets.borrow_mut().remove(&id);
     self.sub_targets.borrow_mut().remove(&id);

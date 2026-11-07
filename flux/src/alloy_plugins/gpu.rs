@@ -440,66 +440,67 @@ fn collect_entry_half(
   Ok(alloy::DrawSpec { pipeline, buffers, index, draw, params, textures, order, label })
 }
 
-// The instanceOrder option: a field key ({ field }) or a projected key
-// ({ position, direction }), float offsets into one instance record, plus
-// descending, the key slot ({ slot }, default 0), the retained-copy
-// opt-in ({ retain }) and the index materialization ({ indices: { stride }
-// }, the handed-off record's byte stride). Only the object shape is
-// checked here; the order rules (exactly one key, offset values, direction
-// values, buffer index bounds, retain with position only, stride fit, the
-// options cells take with and without a key) are alloy's
-// (`InstanceOrder::from_options`). `cells` adds view culling per cell:
-// with a field key its `size` is the band width along the key, without a
-// key it is the lattice's [x, y, z] cell size (with an `origin`), and
-// `extent` names the record fields the cull boxes are read from.
+// An entry's order options: `instanceOrder`, the key - a field key
+// ({ field }) or a projected key ({ position, direction }), float offsets
+// into one instance record, plus descending, the key's buffer ({ buffer }),
+// the index materialization ({ indices: { stride } }, the handed-off
+// record's byte stride) and its LOD ({ lod: { threshold } }); and `cells`,
+// how the population is cut into cells ({ size } one number or [x, y, z],
+// { origin }, { extent } the record fields the cull boxes are read from,
+// and { margin } the record units every box grows by) with { cull }, the
+// switch that culls by them. Only the object shapes
+// are checked here; the order rules (exactly one key, offset values,
+// direction values, buffer index bounds, stride fit, what combines with
+// what) are alloy's (`InstanceOrder::from_options`).
 fn collect_instance_order(
   ctx: &Ctx<'_>,
   opts: &Option<Object<'_>>,
   api: &str,
 ) -> rquickjs::Result<Option<alloy::InstanceOrder>> {
-  let obj = match opts {
-    Some(o) => o.get::<_, Option<Object>>("instanceOrder")?,
-    None => None,
-  };
-  let Some(o) = obj else {
+  let Some(opts) = opts else {
     return Ok(None);
   };
-  let field = o.get::<_, Option<f64>>("field")?;
-  let position = o.get::<_, Option<f64>>("position")?;
-  let direction = collect_direction(ctx, &o, "direction", api)?;
-  let descending = o.get::<_, Option<bool>>("descending")?.unwrap_or(false);
-  let buffer = o.get::<_, Option<f64>>("buffer")?;
-  let retain = o.get::<_, Option<bool>>("retain")?.unwrap_or(false);
-  let indices = match o.get::<_, Option<Object>>("indices")? {
+  let key = match opts.get::<_, Option<Object>>("instanceOrder")? {
     None => None,
-    Some(i) => match i.get::<_, Option<f64>>("stride")? {
-      Some(stride) => Some(stride),
-      None => {
-        return Err(throw_str(
-          ctx,
-          &format!("{api}: instanceOrder indices needs a stride (bytes per handed-off record)"),
-        ))
-      }
-    },
+    Some(o) => Some(alloy::KeyOptions {
+      field: o.get::<_, Option<f64>>("field")?,
+      position: o.get::<_, Option<f64>>("position")?,
+      direction: collect_direction(ctx, &o, "direction", api)?,
+      descending: o.get::<_, Option<bool>>("descending")?.unwrap_or(false),
+      buffer: o.get::<_, Option<f64>>("buffer")?,
+      indices: match o.get::<_, Option<Object>>("indices")? {
+        None => None,
+        Some(i) => match i.get::<_, Option<f64>>("stride")? {
+          Some(stride) => Some(stride),
+          None => {
+            return Err(throw_str(
+              ctx,
+              &format!("{api}: instanceOrder indices needs a stride (bytes per handed-off record)"),
+            ))
+          }
+        },
+      },
+      lod: collect_lod(ctx, &o, "lod", api)?,
+    }),
   };
-  let lod = collect_lod(ctx, &o, "lod", api)?;
-  let cells = match o.get::<_, Option<Object>>("cells")? {
+  let cells = match opts.get::<_, Option<Object>>("cells")? {
     None => None,
     Some(c) => Some(alloy::CellOptions {
       size: collect_cell_size(ctx, &c, api)?,
       origin: collect_vec3(ctx, &c, "origin", api)?,
       extent: collect_extent(ctx, &c, api)?,
+      cull: c.get::<_, Option<bool>>("cull")?,
+      margin: c.get::<_, Option<f64>>("margin")?,
     }),
   };
-  let options = alloy::OrderOptions { field, position, direction, descending, buffer, retain, indices, lod, cells };
-  alloy::InstanceOrder::from_options(options).map(Some).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
+  alloy::InstanceOrder::from_options(alloy::OrderOptions { key, cells })
+    .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
 }
 
-// The `size` of an instanceOrder's cells: one number or an [x, y, z];
-// which one the order takes is alloy's.
+// The `size` of an entry's cells: one number or an [x, y, z].
 fn collect_cell_size(ctx: &Ctx<'_>, cells: &Object<'_>, api: &str) -> rquickjs::Result<Option<alloy::CellSize>> {
   match cells.get::<_, Value>("size")?.as_number() {
-    Some(band) => Ok(Some(alloy::CellSize::Band(band))),
+    Some(size) => Ok(Some(alloy::CellSize::Square(size))),
     None => Ok(collect_vec3(ctx, cells, "size", api)?.map(alloy::CellSize::Lattice)),
   }
 }
@@ -523,7 +524,7 @@ fn collect_extent(ctx: &Ctx<'_>, cells: &Object<'_>, api: &str) -> rquickjs::Res
     return Ok(None);
   };
   let (Some(position), Some(size)) = (e.get::<_, Option<f64>>("position")?, e.get::<_, Option<f64>>("size")?) else {
-    return Err(throw_str(ctx, &format!("{api}: instanceOrder cells extent needs position and size (float offsets)")));
+    return Err(throw_str(ctx, &format!("{api}: cells extent needs position and size (float offsets)")));
   };
   let rotation = e.get::<_, Option<f64>>("rotation")?;
   let min_screen_px = e.get::<_, Option<f64>>("minScreenPx")?;
@@ -651,9 +652,9 @@ fn collect_draw_update(ctx: &Ctx<'_>, update: &Object<'_>, api: &str) -> rquickj
     instance_count: update.get::<_, Option<i32>>("instanceCount")?,
     buffers: collect_buffer_update(ctx, update, api)?,
     order_direction: collect_direction(ctx, update, "orderDirection", api)?,
-    order_view: collect_matrix(ctx, update, "orderView", api)?.map(|clip| alloy::OrderView { clip }),
+    view: collect_matrix(ctx, update, "view", api)?.map(|clip| alloy::OrderView { clip }),
     order_lod: collect_lod(ctx, update, "orderLod", api)?,
-    order_viewport: collect_size2(ctx, update, "orderViewport", api)?,
+    viewport: collect_size2(ctx, update, "viewport", api)?,
   })
 }
 
@@ -1740,7 +1741,7 @@ fn transfer_records(
           let bounds: Vec<[f32; 6]> = floats.chunks_exact(6).map(|b| [b[0], b[1], b[2], b[3], b[4], b[5]]).collect();
           let starts = elements_of(&ctx, &runs, "transferRecords")?.to_vec();
           let ramp = elements_of(&ctx, &ramp, "transferRecords")?.to_vec();
-          packed = Some(alloy::RunTable { bounds, starts, ramp, px: Vec::new() });
+          packed = Some(alloy::RunTable { bounds, starts, ramp });
           Some(alloy::PackedKey { format })
         }
       };

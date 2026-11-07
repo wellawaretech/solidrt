@@ -347,10 +347,6 @@ pub(crate) enum RasterCmd {
   /// Set one draw entry's range (resolved and validated UI-side) and mark
   /// the target dirty.
   SetDrawRange { target: u64, draw: u64, range: DrawRange },
-  /// Set the instance spans one draw entry draws of its range (`draw` 0 =
-  /// the single-draw kinds' entry; None = the range whole) and mark the
-  /// target dirty: a cell-culled population's selection.
-  SetDrawSpans { target: u64, draw: u64, spans: Option<Vec<(u32, u32)>> },
   /// Swap an entry's buffers for `ids` (validated and bounds-checked
   /// UI-side; `draw` None = the single-draw kinds' entry 0): the VAO is
   /// rebuilt against the new buffers and the replaced ones released. Marks

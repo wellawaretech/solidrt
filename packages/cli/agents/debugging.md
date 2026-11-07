@@ -242,10 +242,12 @@ when exactly one client is connected.
   context, so a heavy draw on a weak GPU shows here as several
   submissions instead of one black screen (`gpuDrawSlices` in `/stats`
   counts them; okf/done/splat-adreno-gpu-fault.md). An entry drawing a
-  cell-culled population (a 2d layer with `cells`, an instance order
-  with `cells`) reports `instanceSpans` (the [first, count] instance
-  ranges its view's cells select) and `instancesDrawn` (their sum, what
-  it submits). `groups` sums the textures and buffers by
+  draw list (records the app writes, culled or ordered: a 2d layer, which
+  culls by default, a 3d record mesh with an order) reports `list`:
+  `population` (the records it draws from), `visible` (what its view
+  drew, also its `instanceCount`), `rebuilds`, `patches` (writes
+  re-gathered in place, the list kept) and `buildMs` (the last
+  rebuild's cull, sort and gather). `groups` sums the textures and buffers by
   exact label (`textures`, `textureBytes`, `buffers`, `bufferBytes`,
   `bytes`): a consumer that labels every resource it creates (a tile
   layer's chunks under the layer's label) reads its footprint as one

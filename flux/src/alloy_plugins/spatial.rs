@@ -22,7 +22,7 @@ use alloy::spatial::{
   NodeTransitionConfig, NodeTransitionEntry, Occluder, OccluderAudio, PlayerSpec, PlayerUpdate, Projection,
   QueryFilter, RegionEvent, RegionMargins, RegionRef, RegionSpec, RegionState, RestPose, RootMotion, Shape,
   SharedSlotSink, SpringCollider, SpringJoint, SpringJointUpdate, SpringShape, SyncMode, TextureSlotSink, TwoBoneSpec,
-  Volume,
+  ViewFeed, Volume,
 };
 
 /// Floats per joint in createSpring's joint payload (see `create_spring`).
@@ -532,14 +532,15 @@ fn bind_draw(ctx: Ctx<'_>, id: u64, target: u64, draw: u64, opts: OptArg<Object<
   let normal = flag("normal", false)?;
   let fade = flag("fade", false)?;
   let params = flag("params", true)?;
-  // orderFeed: true (the gated feed of a depth order) or "cells" (every
-  // view change, for an entry drawing a cell-culled population).
-  let (order_feed, cell_feed) = match field("orderFeed")? {
-    Some(v) if v.as_string().is_some_and(|s| s.to_string().is_ok_and(|s| s == "cells")) => (true, true),
-    Some(v) if !v.is_undefined() => {
-      (v.as_bool().ok_or_else(|| throw_str(&ctx, "bindDraw: orderFeed must be a boolean or \"cells\""))?, false)
-    }
-    _ => (false, false),
+  // viewFeed: "order" (the gated feed of a depth order) or "cull" (every
+  // view change, for an entry culling its records).
+  let view_feed = match field("viewFeed")? {
+    Some(v) if !v.is_undefined() => match v.as_string().and_then(|s| s.to_string().ok()).as_deref() {
+      Some("order") => Some(ViewFeed::Order),
+      Some("cull") => Some(ViewFeed::Cull),
+      _ => return Err(throw_str(&ctx, "bindDraw: viewFeed must be \"order\" or \"cull\"")),
+    },
+    _ => None,
   };
   let count = number("count", 1.0)? as u32;
   let queue = draw_queue(&ctx, number("queue", QUEUE_OPAQUE as f64)? as u32, "bindDraw")?;
@@ -548,17 +549,7 @@ fn bind_draw(ctx: Ctx<'_>, id: u64, target: u64, draw: u64, opts: OptArg<Object<
     .alloy
     .spatial_bind(
       id,
-      DrawSink {
-        target,
-        draw,
-        normal,
-        count,
-        fade,
-        params,
-        order: DrawOrder { queue, render_order },
-        order_feed,
-        cell_feed,
-      },
+      DrawSink { target, draw, normal, count, fade, params, order: DrawOrder { queue, render_order }, view_feed },
     )
     .map_err(|e| throw_str(&ctx, &format!("bindDraw: {e}")))
 }

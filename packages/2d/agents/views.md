@@ -176,11 +176,9 @@ the shell every kind shares: the target, its size and oversample, the
 camera and its params write, projection, the pointer dispatch). What it
 draws is the kind's: a sprite or record layer's view holds one entry
 over the layer's pipeline and instance buffers - no sprite is mirrored,
-no record is written twice, and key order (`orderBy`) comes along,
-since the core gathers the buffers themselves at publish (ONE live
-entry declares the order, the first view's; when that view is disposed
-the next live view re-adds its entry ordered, every other entry reads
-them sorted); growth, the instance count and the layer tint fan out to
+no record is written twice, and key order (`orderBy`) and culling come
+along: every view's entry declares them, and the core draws each view
+from its own draw list (View culling below); growth, the instance count and the layer tint fan out to
 every view. A tile layer's view holds one entry per resident chunk
 image over the chunk-quad pipeline, sampling the bake (the baked tile
 layer, tiles.md). Either way the camera and the viewport are the view's own
@@ -218,51 +216,46 @@ Not yet, all additive: a
 tint, and a viewport over SEVERAL layers under one camera (their
 scene-level camera) - okf/backlog/2d-layer-views-additive.md.
 
-### View culling per cell
+### View culling
 
 Without it a sprite or record layer's view submits EVERY record, on
 screen or not: its vertex work follows the size of the world, not what
 the view shows (a sprite off screen is placed in full and only then
-clipped). `cells: { size }` on `createSpriteLayer`, `createRecordLayer`
-or `<SpriteLayer>` makes each view draw only the sprites in the cells
-its camera meets - Unity's chunked Tilemap and Godot's rendering
-quadrants, per cell rather than per sprite. It is all core work: the
-gather keeps the records in cell order on every publish, and each view's
-entry re-selects its cells on every camera move (a box test per cell,
-no record uploaded, no per-sprite JS); slots, handles, picking and
-queries are untouched. `size` is the cell edge in layer pixels.
+clipped). So the sprite layer culls by default: each view draws only
+the sprites its camera meets, as Unity and Godot cull per renderer.
+`cull: { cellSize }` on `createSpriteLayer` or `<SpriteLayer>` sets the
+cell edge, and `cull: false` turns it off. The record layer does not
+cull unless asked (`cull: true` on `createRecordLayer`): its use is a
+JS loop rewriting every record each frame, where culling saves nothing
+while the records are in view and costs about 6 ms a frame at 30,000
+records on an Adreno 610 tablet. Turn it on for a large record layer
+the camera moves over while its records mostly rest (a board, a map). It is all core work: the core indexes the
+sprites by cell, and each view draws from its own draw list - the
+sprites of the cells it meets, tested by their own boxes in the cells
+its edge crosses - with no per-sprite JS; slots, handles, picking and
+queries are untouched.
 
-- Order. Under `orderBy: "y"` the cells are horizontal bands `size`
-  tall and the y order stays exact. Without `orderBy` they are a square
-  grid drawn row by row, so two sprites that overlap across a cell
-  boundary may draw in either order (Unity's chunk mode makes the same
-  trade); a board or a map whose sprites do not overlap never shows it.
-  `orderBy: "renderOrder"` (a record layer's `{ field }`) is a
-  world-wide order a grid cannot keep, so with `cells` it throws.
-- What is never submitted: hidden, destroyed and zero-size sprites,
-  in any cell.
-- Reach. A cell's box is the union of its sprites' rotated rects; a
-  screen-size floor (`minScreenPx`) widens it by the floor's reach at
-  each view's zoom, so a floored marker just past the edge still draws
-  when zoomed out. Hull meshes and outlines draw inside the rect, so
-  they need no margin.
-- Cost. The option turns on the gather (as `orderBy` does): a plain
-  layer then publishes its records as the whole used prefix instead of
-  the changed range, and the core re-sorts them, on every frame that
-  writes a record. A camera move costs no measurable CPU. Measured on an
-  Adreno 610 tablet with a 30,703-record hull layer, about 650 sprites
-  on screen: a pan went from 41.7 to 36.0 ms of GPU per frame (the
-  off-screen records' vertex work, about 0.19 us each per frame, is
-  gone), but a frame that writes records took about 13 ms more of the JS
-  thread (plain `orderBy: "y"` alone costs most of that). So it pays for
-  a large layer the camera moves over while its records mostly rest (a
-  board, a map, a world of props), and it costs CPU on a layer that
-  rewrites records every frame. A few thousand records off screen save
-  under a millisecond; tens of thousands save several. It is off by
-  default. The cell size hardly matters (256 to 1024 px cells measured
-  the same there): pick a cell of a view width or less.
+- Order. A culled view draws exactly what the unculled view draws, in
+  the same order, minus what is off screen: slot order without
+  `orderBy`, the key with it. Every `orderBy` combines with `cull`.
+- What is never submitted: hidden, destroyed and zero-size sprites.
+- Reach. A sprite's box is its rotated rect; a screen-size floor
+  (`minScreenPx`) widens it by the floor's reach at each view's zoom, so
+  a floored marker just past the edge still draws when zoomed out. Hull
+  meshes and outlines draw inside the rect, so they need no margin. A
+  custom vertex stage that moves geometry beyond the rect declares its
+  material's `cullMargin` (materials.md).
+- Cost. A record write costs its range, as on a plain layer. A write
+  to a sprite that stays drawn, with its `orderBy` key unchanged,
+  rewrites only that sprite in each view's list. A frame where a view
+  moved, or a sprite joined or left a view, or a drawn sprite's key
+  changed, rebuilds that view's list from the visible sprites: its cost
+  follows the screen, not the world. Several views each keep their own
+  list. The cell size hardly matters (256 to 1024 px cells measured the
+  same); the default is 512 px.
 - Check it with the GPU inventory (`get_gpu_resources`): a culled
-  view's entry reports `instanceSpans` and `instancesDrawn`.
+  view's entry reports `list: { population, visible, rebuilds,
+  patches, buildMs }`.
 
 ## Regions
 

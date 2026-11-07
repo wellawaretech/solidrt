@@ -131,12 +131,20 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
     put("rasterCmdMs", (rc.cmd_micros / 1000).into());
   }
   // The instance-order sort thread: jobs not yet landed, jobs landed, and
-  // the last and slowest job's sort-and-materialize time.
+  // the last and slowest job's sort-and-materialize time. The draw lists:
+  // how many, their rebuilds and in-place patches, the records they drew
+  // and the last rebuild point's time.
   if let Some(oc) = r.order {
     put("orderSortsPending", oc.pending.into());
     put("orderSorts", oc.sorts.into());
     put("orderSortMs", round2(oc.last_ms).into());
     put("orderSortMaxMs", round2(oc.max_ms).into());
+    put("drawLists", oc.lists.into());
+    put("drawListRebuilds", oc.list_rebuilds.into());
+    put("drawListPatches", oc.list_patches.into());
+    put("drawListPatchRecords", oc.list_patch_records.into());
+    put("drawListVisible", oc.list_visible.into());
+    put("drawListMs", round2(oc.list_ms).into());
   }
   // The residency gate, read live like the raster counters: the resident
   // set now, and cumulative enters and leaves (the window carries its own

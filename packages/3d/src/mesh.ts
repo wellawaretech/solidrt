@@ -471,29 +471,24 @@ function markRecords(mesh: Mesh, stream: InstanceStream, lo: number, hi: number)
  * Draw a population's records in key order, decided core-side - the
  * engine's instance order riding the mesh's record streams
  * (createInstancedMesh and createRecordMesh both take it). Record slots
- * never move: the app keeps writing slot i forever, and the engine
- * gathers the records into key order as they publish.
+ * never move: the app keeps writing slot i forever, and each view draws
+ * from its own draw list, the records gathered into key order.
  *
  * `position` names an instance attribute (float32x3 or float32x4) whose
  * first three floats are a position in the mesh's local space: records
  * draw by their depth along the scene camera's view direction, which the
  * core feeds itself whenever the camera or the mesh turns meaningfully -
  * zero per-frame JS, and a parked camera costs nothing. `descending:
- * true` draws farthest first, the transparent blend order. The order
- * follows the scene's OWN camera: one buffer holds one order, so views
- * draw the same records in that order, and a mesh masked out of the
- * scene target keeps its last order. `retain: true` opts a write-once
- * population (a splat cloud) into the engine's retained copy: a camera
- * turn re-sorts and republishes core-side with no publish from here, and
- * an order-preserving turn uploads nothing.
+ * true` draws farthest first, the transparent blend order. Each camera
+ * view (the scene's own and every scene.createView) orders by its own
+ * camera; a camera turn re-sorts core-side with no publish from here.
+ * Shadow views draw the records unordered (depth decides there).
  *
  * `field` names a float32 instance attribute: records draw by that value
  * as the app wrote it (an age, an explicit sort key), re-ordered when
  * the records publish.
  *
- * An ordered mesh gives up partial record publishes: any write sends the
- * live record set whole, gathered (a byte range has no stable position
- * under a permutation).
+ * A write publishes its dirty range, as on an unordered mesh.
  *
  * The INDEXED form (`records`) is for a population whose records live in
  * a data texture the shader fetches by record index (a splat cloud):
@@ -503,7 +498,7 @@ function markRecords(mesh: Mesh, stream: InstanceStream, lo: number, hi: number)
  * attributes the engine fills with the sorted record indices, K ids per
  * instance record so one drawn instance covers K records (the
  * geometry repeats K times; `gl_VertexID` picks the id). The records go
- * to the engine at creation (transfer implied, retain by nature) as the
+ * to the engine at creation (transfer implied) as the
  * sort's key source; the app uploads the same bytes as its texture. A
  * re-sort then uploads 4 bytes per record instead of the record, and
  * the last instance's group past `count` carries 0xFFFFFFFF, which the
@@ -519,7 +514,7 @@ function markRecords(mesh: Mesh, stream: InstanceStream, lo: number, hi: number)
  * selection's.
  */
 export type InstanceOrderOptions =
-  | (({ position: string; retain?: boolean } | { field: string }) & {
+  | (({ position: string } | { field: string }) & {
       /** Largest key first - back-to-front for a position key. Default false. */
       descending?: boolean
     })
@@ -553,7 +548,6 @@ export type ResolvedInstanceOrder = {
   floats: number
   position: boolean
   descending: boolean
-  retain: boolean
   /** The index materialization (InstanceOrderOptions' `records` form):
    * the handed-off record's byte stride; null for gathered records. */
   indices: { stride: number } | null
@@ -591,7 +585,7 @@ function resolveInstanceOrder(order: InstanceOrderOptions | undefined, buffers: 
           throw new Error(site + ": instanceOrder position attribute '" + a.name + "' must be float32x3 or float32x4, got " + a.format)
         }
         if (at % 4 !== 0) throw new Error(site + ": instanceOrder key attribute '" + a.name + "' starts at byte " + at + " of its record; the key must start on a 4-byte boundary")
-        return { key: layoutKey(ids), floats: at / 4, position: true, descending: order.descending === true, retain: true, indices: { stride }, lod: order.packed !== undefined ? { threshold } : null }
+        return { key: layoutKey(ids), floats: at / 4, position: true, descending: order.descending === true, indices: { stride }, lod: order.packed !== undefined ? { threshold } : null }
       }
       at += VERTEX_FORMATS[a.format].bytes
     }
@@ -599,9 +593,6 @@ function resolveInstanceOrder(order: InstanceOrderOptions | undefined, buffers: 
   }
   let position = "position" in order
   let name = position ? (order as { position: string }).position : (order as { field: string }).field
-  if (!position && (order as { retain?: boolean }).retain !== undefined) {
-    throw new Error(site + ": instanceOrder retain applies to a position key; a field key re-orders when its records publish")
-  }
   for (let b of buffers) {
     let at = 0
     for (let a of b.attributes) {
@@ -620,7 +611,6 @@ function resolveInstanceOrder(order: InstanceOrderOptions | undefined, buffers: 
           floats: at / 4,
           position,
           descending: order.descending === true,
-          retain: position && (order as { retain?: boolean }).retain === true,
           indices: null,
           lod: null,
         }
@@ -697,11 +687,9 @@ export type RecordMeshOptions = PopulationOptions & {
    * are resident once instead of twice and the creation bytes are free
    * to drop the moment this returns. The population is write-once by
    * contract: setRecords, updateRecords, instanceAttribute and growth
-   * throw; setRecordCount (an ordered mesh republishes the prefix
-   * core-side), setVisible, transforms, re-attach and disposeInstances
-   * all still work. Takes a single-stream material; with an
-   * instanceOrder the engine's retained copy is implied (`retain` is
-   * forced on). Default false. */
+   * throw; setRecordCount, setVisible, transforms, re-attach and
+   * disposeInstances all still work. Takes a single-stream material.
+   * Default false. */
   transfer?: boolean
 }
 
@@ -952,31 +940,15 @@ export function updateRecords(mesh: InstancedMesh | RecordMesh, options: UpdateR
 
 /** Publish a mesh's pending record writes, one buffer write per dirty
  * stream (the scene calls it from its sync): the dirty record range, up
- * to the capacity (a record mesh writes ahead of its count). An ordered
- * mesh publishes the LIVE record set whole through the write lease - the
- * engine gathers it into key order during the copy, and a byte range has
- * no stable position under a permutation (writeBuffer throws on an
- * ordered buffer). */
+ * to the capacity (a record mesh writes ahead of its count), ordered or
+ * not. */
 export function publishRecords(mesh: Mesh): void {
   let inst = mesh._instances
   if (inst === null) return
-  let ordered = inst.order !== null
   for (let s of inst.streams) {
     if (s.stream === null || !s.stream.dirty) continue
-    s.stream.publish(ordered, ordered ? inst.count : inst.capacity)
+    s.stream.publish(false, inst.capacity)
   }
-}
-
-/** @internal Mark every stream's live records dirty, so the next sync
- * republishes the population whole: an ordered mesh (re-)entering a
- * scene seeds the entry's freshly built engine-side order registry from
- * the JS mirrors. */
-export function markLiveRecords(mesh: Mesh): void {
-  let inst = mesh._instances
-  // A transferred mesh has no mirror; the engine's own (buffer-lifetime)
-  // mirror seeds a re-attached entry instead.
-  if (inst === null || inst.count === 0 || inst.transfer) return
-  for (let s of inst.streams) markRecords(mesh, s, 0, inst.count)
 }
 
 /**
@@ -1133,10 +1105,6 @@ export function createRecordMesh(
   } else {
     capacity = recordCount(records, buffers[0]!.attributes, "createRecordMesh")
   }
-  // A transferred order always retains: the engine's mirror is the ONE
-  // record copy, what re-attaches seed from and count changes republish
-  // (a field key gets the same retention, engine-side only).
-  if (transfer && order !== null && !order.retain) order = { ...order, retain: true }
   let mesh = createMesh(geometry, material) as RecordMesh
   let group = indices !== null ? layoutStride(buffers[0]!.attributes) / 4 : 1
   mesh._instances = {
@@ -1228,12 +1196,6 @@ export function setRecordCount(mesh: RecordMesh, count: number): void {
   let n = Math.max(0, Math.min(Math.floor(count), inst.capacity))
   if (n === inst.count) return
   inst.count = n
-  // Ordered records draw the first n GATHERED records, so a count change
-  // republishes the live set - a shrink would otherwise keep drawing the
-  // old population's nearest records, a growth its stale tail. A
-  // transferred mesh has no mirror to publish from; the engine follows
-  // the entry's instance count into its own mirror's prefix instead.
-  if (inst.order !== null && !inst.transfer && n > 0) for (let s of inst.streams) markRecords(mesh, s, 0, n)
   mesh._scene?._setCount(mesh)
 }
 

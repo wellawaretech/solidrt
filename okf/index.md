@@ -21,6 +21,16 @@ The architecture of an area and the decisions behind it, kept current. Read befo
   ArcRotateCamera; which stage each control implements today, what is missing,
   and the open items. Read before touching createCamera2d, createOrbitCamera
   or createFirstPersonCamera.
+- **[Draw order and culling](design/draw-order-and-culling.md)** [2026-11-07]
+  How the core orders what a target draws - the entry order between draw
+  entries (3d's queues), the instance order inside one entry (splats, ordered
+  record populations), and view culling of a population - measured against how
+  Unity and Godot separate storage, visibility and order; the decision that a
+  population the app writes is drawn per view from a draw list built over its
+  visible set, never from a buffer kept in cull or key order; facts in alloy,
+  the culling default in lattice. Read before touching gpu/order.rs,
+  context/order.rs, the spatial order pass or feed, or a 2d layer's orderBy or
+  cells.
 - **[Frame timing](design/frame-timing.md)** [2026-09-21]
   The clocks and cadences of a SolidRT client in one place - how a frame
   signal is produced per platform and pacing mode, how display refreshes are
@@ -214,13 +224,14 @@ Shaped, not started.
   though the core machinery - arena bones, the TextureSlot palette sink, the
   coming native clip evaluator - already exists or is planned with zero
   2d-specific core work.
-- **[Views of one sprite layer far apart from each other see f32 steps in the pose records](backlog/2d-sprite-layer-chunked-records.md)** [2026-10-20]
+- **[Views of one sprite layer far apart from each other see f32 steps in the pose records](backlog/2d-sprite-layer-view-relative-records.md)** [2026-10-20]
   A sprite layer's pose buffer is one f32 record per sprite relative to ONE
   render origin, snapped near the primary view's camera; a second view more
   than about 10^5 px from it (a split screen across a continent) reads records
-  quantized to whole pixels, since no single origin serves both; the fix is
-  records local to region cells, each cell its own buffer and draw, the tile
-  layer's chunking applied to populations.
+  quantized to whole pixels; the fix is a rebase in each view's draw-list
+  gather from f64 positions the record sink stages beside the records, each
+  view relative to its own target's origin (camera-relative rendering), not
+  records chunked per region cell.
 - **[A streaming tile world hitches on the tablet whenever a RESIDENT chunk re-bakes, a write into a texture the frames in flight still sample](backlog/2d-tile-world-frame-hitches.md)** [2026-10-16]
   The tiles example on the SM-T500 shows 50 to 67 ms gaps a few times a
   second; measured 2026-10-16 with a probe matrix and a sched/gfx trace, the
@@ -691,13 +702,6 @@ Shaped, not started.
   frame while the app keeps presenting partial frames, so on screen it reads
   as a logic bug (entities drawn after the throwing line vanish) and the only
   trace is a log line the reader has to think to look for.
-- **[An ordered or cell-culled layer re-gathers its whole population on every record write](backlog/ordered-layer-whole-prefix-publish.md)** [2026-11-06]
-  A record or sprite layer with orderBy or cells publishes its whole used
-  prefix and re-sorts it core-side on every frame that writes any record,
-  about 13 ms of the JS thread per such frame at 30,703 records on an Adreno
-  610 tablet's CPU (1 ms without an order); wanted a publish that costs what
-  changed when the order did not move, and only the moved records' share when
-  it did.
 - **[Coalesce the per-event syncs of writes made outside a frame](backlog/outside-frame-sync-coalescing.md)** [2026-10-06]
   A pointer move handler that moves a sprite or a mesh flushes its layer or
   scene once per dispatched move, because every event is its own JS entry with
@@ -890,6 +894,13 @@ Shaped, not started.
   brightest splats instead of a merged stand-in. The region handlers can
   already host a cloud per cell; the cross-cloud sort is the decision that
   needs discussion first.
+- **[A second camera view of a splat cloud draws in the scene camera's order](backlog/splat-order-per-view.md)** [2026-11-07]
+  An indexed instance order (splats) has one id stream, sorted under the
+  scene's camera, and every other camera view (scene.createView) reads that
+  stream as it is, so its back-to-front order is the scene camera's and blends
+  wrong when the cameras differ; the fix is an id stream per camera view,
+  sorted under that view, as the draw lists already do for app-written
+  populations (okf/design/draw-order-and-culling.md, D3, D4).
 - **[A million splats at phone full resolution spend the frame in fill](backlog/splat-overdraw-fill.md)** [2026-09-27]
   With the instancing frontend gone the Pixel 7 draws 1M splats in ~36 ms at
   1079x2399, of which ~24 ms is fragment work - the gaussian falloff, the
@@ -2559,6 +2570,14 @@ Finished, kept for the reasoning.
   line (kinds/dash.rs), the fill keeps the true curve, the pattern restarts at
   each subpath, and a d-path's bounds count dashes as caps; pathLength (SVG)
   on both kinds makes the pattern fractional for partial draws.
+- **[A culled or ordered population pays its whole size on every record write, and culling changes its paint order](done/per-view-draw-lists.md)** [2026-11-07]
+  A 2d layer with orderBy or cells (and a 3d record mesh with an order) keeps
+  its instance buffer in key or cell order, so a write to one record re-sorts
+  and re-gathers the whole population (14 to 15 ms of JS thread per writing
+  frame at 30,703 records on an Adreno 610 tablet, 1 ms unordered), cells
+  reorder paint across cell boundaries and forbid renderOrder, and pick
+  ignores the order; the fix is a draw list per view over its visible set,
+  records left in slot order (okf/design/draw-order-and-culling.md, D2 to D7).
 - **[Physics core - an embedded engine as a producer into the spatial arena](done/physics-core.md)** [2026-10-13]
   Rigid-body physics is per-body-per-frame and per-contact work, below the
   interpreter line, and nothing provides it, so games needing dynamics are
@@ -3475,6 +3494,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Offscreen MSAA exists for one case - gradient emoji drawn through the svg
   path into a snapshot boundary - so that case is the regression test for any
   sample-count change, not a corner case.
+- **[Per-view draw list measurements and traps](notes/per-view-draw-lists.md)** [2026-11-07]
+  What building per-view draw lists established on the 30,703-record board
+  (Adreno 610 tablet) - the baseline, the cost of the rebuild point and its
+  patch, why a patch follows changed records and is one buffer write, the
+  churn floor of culling, the record layer's cull default, and the Adreno pass
+  timer that attributes rather than totals.
 - **[What cancels a pointer, and what only looks like it does](notes/pointer-cancel-sources.md)** [2026-10-05]
   The platform touch cancels are the only producers of a pointer cancel; a
   desktop focus loss and the dev-tool input mute both deliver the up, so

@@ -72,6 +72,11 @@ export type Material = {
    * component of the FIRST instance buffer's attributes, in order);
    * absent = zeros. */
   instanceStyle?: ArrayLike<number>
+  /** Layer pixels the vertex stage may draw beyond a sprite's rect on
+   * any side (shaderMaterialClass's `cullMargin`): what a culling layer
+   * grows every sprite's cull box by. Absent = 0, the stock stages draw
+   * inside the rect. */
+  cullMargin?: number
   /** Present on materials that own their pipeline (shaderMaterial). */
   dispose?(): void
 }
@@ -128,6 +133,16 @@ export type ShaderMaterialClassOptions = {
    * overwrite.
    */
   blend?: BlendMode
+  /**
+   * Layer pixels the vertex stage moves geometry beyond the sprite's rect,
+   * at most, on any side: a sway, a wobble, a stage that pads the quad. A
+   * culling layer (SpriteLayerOptions.cull) grows every sprite's cull box
+   * by it, so a sprite whose box is just off screen but whose drawn
+   * geometry reaches in still draws (Godot's `extra_cull_margin`). A
+   * finite, non-negative number; default 0. A stage that moves geometry
+   * by an unbounded amount wants `cull: false` on its layer instead.
+   */
+  cullMargin?: number
   label?: string
 }
 
@@ -201,6 +216,10 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // a stage reading it would compile on quad layers only.
   if (/\baPos\b/.test(opts.vertex)) {
     throw new Error("shaderMaterial vertex stage must not declare or read 'aPos': the layer prepends the corner; place the vertex with spriteCorner(size, zoom, outlinePx, iUv) (see SPRITE_VERTEX_BODY in @solidrt/2d/glsl)")
+  }
+  let cullMargin = opts.cullMargin ?? 0
+  if (!(Number.isFinite(cullMargin) && cullMargin >= 0)) {
+    throw new Error(`shaderMaterial cullMargin must be a finite non-negative number of layer pixels, got ${opts.cullMargin}`)
   }
   // Records are tightly packed like the layer's own; explicit strides and
   // offsets are the engine's, reachable through core's own pipeline API.
@@ -280,6 +299,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         blend,
         instanceBuffers,
         instanceStyle: opts.instanceStyle,
+        cullMargin,
       }
     },
     dispose() {

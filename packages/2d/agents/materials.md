@@ -72,7 +72,7 @@ order, so nothing sorts.
   bind beside the atlases and count against the same
   `limits.maxTextureUnits` budget, checked at layer creation.
 - The class form, `shaderMaterialClass({ vertex, fragment,
-  instanceBuffers?, instanceStyle?, blend?, label? })` with
+  instanceBuffers?, instanceStyle?, blend?, cullMargin?, label? })` with
   `instance({ params?, textures? })` and `dispose()` on the class
   (`shaderMaterial(opts)` is a class with one instance): TIER 1 pairs
   a vertex stage of your own with `unlitFragment(options)` from
@@ -95,7 +95,14 @@ order, so nothing sorts.
   `uCamera`, `uCameraRot` and `uViewport` (checked at creation), an
   instance attribute may not reuse a layer name
   (`LAYER_ATTRIBUTE_NAMES`), a texture may not take an atlas sampler's
-  (`uAtlasN`). `tests/materials.test.tsx` pins all three tiers, the
+  (`uAtlasN`). A vertex stage that moves geometry beyond the sprite's
+  rect (a sway, a wobble, a padded quad) declares how far at most, in
+  layer pixels, as `cullMargin`: the layers cull by default, and grow
+  every cull box by it, so a sprite whose rect is just off screen but
+  whose drawn quad reaches in still draws (Godot's
+  `extra_cull_margin`). Without it such a sprite vanishes early at the
+  view's edge; an unbounded move wants `cull: false` on its layer.
+  `tests/materials.test.tsx` pins all three tiers, the
   style streams through growth and shift, the params, the resample,
   the tile bake and the throws.
 

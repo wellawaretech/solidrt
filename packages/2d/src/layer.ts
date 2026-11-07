@@ -552,9 +552,9 @@ export type SpriteLayerOptions = {
   /** Skip the owner-scoped auto-dispose (see createSpriteLayer). */
   autoFree?: boolean
   /**
-   * Draw sprites in KEY order instead of slot order, produced by core at
-   * every publish (the gpu `instanceOrder` primitive across the pose/sprite
-   * buffer pair - no per-sprite JS anywhere): `"y"` keys on the sprite's
+   * Draw sprites in KEY order instead of slot order, produced by core per
+   * view (the gpu `instanceOrder` primitive across the pose/sprite buffer
+   * pair - no per-sprite JS anywhere): `"y"` keys on the sprite's
    * WORLD y, the pose the core itself writes, so a perspective crowd
    * paints back to front (smaller y = further up the screen = drawn
    * first) - and because the key is core-owned, sprites moved by native
@@ -568,42 +568,51 @@ export type SpriteLayerOptions = {
    * raise a dragged piece, click-to-front, hover emphasis - with stable
    * handles and no record churn.
    *
-   * Known limitation for both keys: pick() resolves overlapping sprites by
-   * slot order, not visual order, when a key is set. (The record layer's
+   * pick() follows the key: the topmost hit is the sprite drawn on top,
+   * ties on slot. Either key combines with culling. (The record layer's
    * RecordLayerOptions instead takes `"y"` or a raw `{ field }` offset
    * into its own records; pose records are core-owned, so the node layer
    * names its keys.)
    */
   orderBy?: "y" | "renderOrder"
   /**
-   * View culling per cell: every view draws only the sprites in the cells
-   * its camera meets, so a frame's vertex work follows what the views
-   * show instead of the size of the world. The core keeps the sprites
-   * gathered in cell order (slots, handles, picking and queries stay as
-   * they are) and selects the cells per view on every camera move, with
-   * no per-sprite JS and no record upload. `size` is the cell edge in
-   * layer pixels: under `orderBy: "y"` the cells are horizontal bands
-   * `size` tall and the y order stays exact; without `orderBy` they are a
-   * square grid drawn row by row, so two sprites that overlap across a
-   * cell boundary may draw in either order (Unity's chunked Tilemap makes
-   * the same trade). Hidden and zero-size sprites are never submitted.
-   * With `orderBy: "renderOrder"` (a world-wide order a grid cannot keep)
-   * it throws. Off by default: it costs the core's gather on every
-   * publish, which a layer its views show whole gains nothing from.
+   * View culling, on by default: every view draws only the sprites its
+   * camera meets, so a frame's vertex work follows what the views show
+   * instead of the size of the world (every engine culls its sprites the
+   * same way). The core indexes the sprites by cell and keeps a draw list
+   * per view, rebuilt on a frame where the view or the drawn set changed;
+   * a write to a sprite that stays drawn rewrites only that sprite in each
+   * list. No per-sprite JS; slots, handles, picking and queries stay as
+   * they are. A culled view draws exactly what the unculled view draws,
+   * in the same order, minus what is off screen, under any `orderBy`.
+   * Hidden and zero-size sprites are never submitted. A sprite's cull box
+   * is its rotated rect, widened by a screen-size floor's reach and by
+   * the material's `cullMargin`. `true` (the default) cuts cells of
+   * CULL_CELL_SIZE layer pixels, `{ cellSize }` sets the edge, `false`
+   * draws every sprite in every view (a layer its views always show
+   * whole, or a material whose vertex stage moves geometry by an
+   * unbounded amount). The record layer is the exception: off by
+   * default (RecordLayerOptions.cull).
    */
-  cells?: { size: number }
+  cull?: boolean | { cellSize: number }
 }
 
-/** The cells option's check (createSpriteLayer, createRecordLayer): a
- * finite positive size, and no world-wide order beside it but y. */
-export function checkCells(verb: string, cells: { size: number } | undefined, orderBy: unknown): void {
-  if (cells === undefined) return
-  if (!(Number.isFinite(cells.size) && cells.size > 0)) {
-    throw new Error(`${verb}: cells.size must be a finite positive number of layer pixels, got ${cells.size}`)
+// The cell edge in layer pixels a culling layer indexes its sprites by
+// unless it names one: 256 to 1024 measured the same on a 30k-record
+// board.
+const CULL_CELL_SIZE = 512
+
+/** The cull option's check (createSpriteLayer, createRecordLayer): the
+ * cell edge it culls by, or undefined when it does not cull; an absent
+ * option is the layer kind's default, `byDefault`. */
+export function cullCellSize(verb: string, cull: boolean | { cellSize: number } | undefined, byDefault: boolean): number | undefined {
+  if (cull === undefined) return byDefault ? CULL_CELL_SIZE : undefined
+  if (cull === false) return undefined
+  if (cull === true) return CULL_CELL_SIZE
+  if (!(Number.isFinite(cull.cellSize) && cull.cellSize > 0)) {
+    throw new Error(`${verb}: cull.cellSize must be a finite positive number of layer pixels, got ${cull.cellSize}`)
   }
-  if (orderBy !== undefined && orderBy !== "y") {
-    throw new Error(`${verb}: cells keep the y order only; a world-wide order by ${JSON.stringify(orderBy)} cannot be drawn per cell`)
-  }
+  return cull.cellSize
 }
 
 /**
@@ -719,9 +728,9 @@ export type LayerBase = {
   /** Every shown sprite whose rotated rect contains the layer-pixel point
    * (a hidden sprite or subtree is never hit), topmost first - the
    * all-hits shape of @solidrt/3d's pick; `pick(x, y)[0]` is the topmost.
-   * Topmost means draw order (highest slot on the node layer, last added
-   * on a record layer); an `orderBy` key is not consulted (see
-   * SpriteLayerOptions.orderBy's known limitation). World space: a view
+   * Topmost means draw order: under `orderBy` the key, ties and an
+   * unordered layer by slot (highest slot on the node layer, last added
+   * on a record layer). World space: a view
    * undoes its camera before asking, and passes its camera's `zoom` so a
    * sprite's screen-size floor (SpriteOptions.minScreenPx) is hit at the
    * size it draws; default 1 (the unzoomed world). The pointer walk and
@@ -1009,7 +1018,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   if (!(capacity > 0 && Number.isInteger(capacity))) {
     throw new Error(`createSpriteLayer: capacity must be a positive integer, got ${capacity}`)
   }
-  checkCells("createSpriteLayer", opts?.cells, opts?.orderBy)
+  let cellSize = cullCellSize("createSpriteLayer", opts?.cull, true)
   let label = opts?.label ?? "sprites"
   let tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createSpriteLayer", tint)
@@ -1021,8 +1030,8 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   let pose: BufferId = createBuffer(capacity * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
   // The sprite records: JS-written through the sprite verbs (writeSprite),
   // records()/updateRecords for a bulk restyle, published by the flush as
-  // the dirty slot range, or the used prefix whole under an order (the
-  // core gathers every instance buffer under the one permutation).
+  // the dirty slot range under any order (each view's draw list gathers
+  // from the core's mirror).
   // A hull layer appends the frame's mesh field to every sprite record.
   let hull = hasMeshAtlas(atlases)
   // The frame a sprite added without one shows, cut once: over a hull
@@ -1034,11 +1043,9 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   // The material's style streams, after the layer's own: the same
   // publish, the same growth.
   let styles = createStyleStreams(material, capacity, label)
-  let cells = opts?.cells
-  let ordered = opts?.orderBy !== undefined || cells !== undefined
-  // A cells layer's pose slots carry each sprite's cull box beside its
-  // pose: what the core's cell gather culls by.
-  if (cells !== undefined) spatial.setInstanceBoxes(pose, true)
+  // A culled layer's pose slots carry each sprite's cull box beside its
+  // pose: what the core's cell index culls by.
+  if (cellSize !== undefined) spatial.setInstanceBoxes(pose, true)
   let gpu = material.pipeline(atlases, [POSE_ATTRIBUTES, hull ? [...SPRITE_ATTRIBUTES, ...MESH_ATTRIBUTES] : SPRITE_ATTRIBUTES], label, hull)
   // The sprites with a screen-size clamp (either bound on), and the
   // furthest any of them reaches from its center at its floor (floorReach,
@@ -1120,8 +1127,8 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   let flush = () => {
     scheduled = false
     if (disposed) return
-    if (sprites.dirty) sprites.publish(ordered, highWater)
-    for (let s of styles) if (s.stream.dirty) s.stream.publish(ordered, highWater)
+    if (sprites.dirty) sprites.publish(false, highWater)
+    for (let s of styles) if (s.stream.dirty) s.stream.publish(false, highWater)
     if (published !== highWater) {
       views.setCount(highWater)
       published = highWater
@@ -1213,13 +1220,13 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     }
     // A floored sprite draws beyond its box when zoomed out: its cell
     // carries the reach (in view pixels) so no view culls it early.
-    if (cells !== undefined && (r > 0 || wasClamped)) spatial.setCullPx(sprite.node!, r)
+    if (cellSize !== undefined && (r > 0 || wasClamped)) spatial.setCullPx(sprite.node!, r)
   }
 
   let views = createViews({
     label,
     root,
-    cells: cells !== undefined,
+    culls: cellSize !== undefined,
     pose: () => pose,
     pipeline: gpu.pipeline,
     corners: gpu.corners,
@@ -1231,19 +1238,16 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     params: () => params,
     pick: (x, y, zoom) => layer.pick(x, y, zoom),
     nearest: hasNearestAtlas(atlases),
-    // The order key one view entry declares: "y" on world y in the pose
+    // The order every view entry declares: "y" on world y in the pose
     // record (slot 0), "renderOrder" on the app-owned key in the sprite
-    // record (slot 1); either way the core gathers BOTH buffers under the
-    // one permutation at every publish and republishes the sibling itself
-    // when the key buffer re-orders.
-    // Cells cut the y order into bands, or without one key the sprites
-    // by their grid cell (the pose slots' cull boxes, row-major).
-    order:
-      opts?.orderBy === "y"
-        ? { field: POSE_Y_FIELD, cells: cells && { size: cells.size } }
-        : opts?.orderBy === "renderOrder"
-          ? { field: SPRITE_KEY_FIELD, buffer: 2 }
-          : cells && { cells: { size: [cells.size, cells.size, 0] } },
+    // record (slot 1); either way each view's draw list gathers every
+    // buffer under its one order. The cells index the pose slots' cull
+    // boxes, beside any key.
+    order: {
+      ...(opts?.orderBy === "y" && { instanceOrder: { field: POSE_Y_FIELD } }),
+      ...(opts?.orderBy === "renderOrder" && { instanceOrder: { field: SPRITE_KEY_FIELD, buffer: 2 } }),
+      ...(cellSize !== undefined && { cells: { size: cellSize, margin: material.cullMargin, cull: true } }),
+    },
   })
 
   let layer: SpriteLayer = {
@@ -1320,8 +1324,20 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
           if (pointInSprite(x, y, WORLD[12]!, WORLD[13]!, w * scale, h * scale, Math.atan2(WORLD[1]!, WORLD[0]!))) out.push(sprite)
         }
       }
-      // Topmost first: higher slot = drawn later = on top.
-      return out.sort((a, b) => b._slot - a._slot)
+      // Topmost first: higher slot = drawn later = on top, and under
+      // orderBy the key first (a stable sort over the slot order).
+      out.sort((a, b) => b._slot - a._slot)
+      if (opts?.orderBy === "renderOrder") {
+        out.sort((a, b) => spriteData[b._slot * stride + SPRITE_KEY_FIELD]! - spriteData[a._slot * stride + SPRITE_KEY_FIELD]!)
+      } else if (opts?.orderBy === "y") {
+        let y = new Map<Sprite, number>()
+        for (let sprite of out) {
+          spatial.worldMatrix(sprite.node!, WORLD)
+          y.set(sprite, WORLD[13]!)
+        }
+        out.sort((a, b) => y.get(b)! - y.get(a)!)
+      }
+      return out
     },
     pickRect(x, y, width, height) {
       let out: Sprite[] = []

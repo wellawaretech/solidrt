@@ -351,7 +351,7 @@ that way.
 
 | Component | Props |
 |---|---|
-| `SpriteLayer` | atlases (Atlas[], the sheets bound as one draw; mount-fixed) or layer (an existing createSpriteLayer handle to adopt: the component shows and populates it, keeps only the view and the leaf as its own and leaves the layer's lifetime to its maker, so `<Sprite>`/`<Text2d>` sit over an imperative layer; the creation props atlases/capacity/material/orderBy/cells then throw), capacity?, material? (the layer's material, `unlit()` default, `unlit({ blend: "add" })` for glows; mount-fixed), cells? ({ size }: view culling per cell, mount-fixed; View culling per cell in agents/views.md), params? (layer.setParams as a prop, over the material's own; live, merge semantics), tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, stagger? (ms, the layer root's enter/exit spacing), label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, oversampleStep? (the auto pick's rounding, default 1/8; 1 for pixel art), maxOversample?, maxPixels? (a cap on the view target's texel count under the auto pick, the budget form of maxOversample: one cost on every display; it can only lower the window's own device pixel count, which always bounds the pick; the same name on `<TileLayer>` and the 3d `<Scene>`), viewRef?(view), output? (a function `(texture, leaf)` composes the leaf from the texture id: `ref={leaf.ref}` makes a fill view follow your leaf, `{...leaf.handlers}` routes sprite events through it scaled to its layout, `leaf.size()` (the target's texels, view pixels times oversample) and `leaf.deviceSize()` are reactive reads a post chain sizes from, applied before the paint - the same contract as the 3d `<Scene>`'s; `events` then throws; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
+| `SpriteLayer` | atlases (Atlas[], the sheets bound as one draw; mount-fixed) or layer (an existing createSpriteLayer handle to adopt: the component shows and populates it, keeps only the view and the leaf as its own and leaves the layer's lifetime to its maker, so `<Sprite>`/`<Text2d>` sit over an imperative layer; the creation props atlases/capacity/material/orderBy/cull then throw), capacity?, material? (the layer's material, `unlit()` default, `unlit({ blend: "add" })` for glows; mount-fixed), cull? (view culling, on by default; { cellSize } sets the cell edge, false turns it off; mount-fixed; View culling in agents/views.md), params? (layer.setParams as a prop, over the material's own; live, merge semantics), tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, stagger? (ms, the layer root's enter/exit spacing), label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, oversampleStep? (the auto pick's rounding, default 1/8; 1 for pixel art), maxOversample?, maxPixels? (a cap on the view target's texel count under the auto pick, the budget form of maxOversample: one cost on every display; it can only lower the window's own device pixel count, which always bounds the pick; the same name on `<TileLayer>` and the 3d `<Scene>`), viewRef?(view), output? (a function `(texture, leaf)` composes the leaf from the texture id: `ref={leaf.ref}` makes a fill view follow your leaf, `{...leaf.handlers}` routes sprite events through it scaled to its layout, `leaf.size()` (the target's texels, view pixels times oversample) and `leaf.deviceSize()` are reactive reads a post chain sizes from, applied before the paint - the same contract as the 3d `<Scene>`'s; `events` then throws; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), minScreenPx?, maxScreenPx? (the screen-size clamp on the smaller axis, view pixels; 0 = off; equal = constant size), style? (the sprite's style record under the layer's material, one value per component of its first instance buffer; live), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
 | `Camera2d` | createCamera2d's options (world?, min/maxZoom?, pivot?, follow?, offset?, panSpeed?, zoomSpeed?, rollSpeed?, damping?, inertia?, x?, y?, zoom?, rotation?), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view; its `size()` the viewport) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
@@ -588,16 +588,16 @@ hover, wheel and tap rules headless.
   later sprite down one slot (copyWithin + index fixup, O(later
   sprites)) and marks the shifted records dirty. The flush publishes the
   DIRTY record range (one buffer write at its byte offset, clipped to
-  the live sprites), or under `orderBy` the drawn prefix whole through
-  the lease - so a moved sprite costs its 80 bytes on a plain layer and
-  count x 80 bytes on an ordered one. The node layer's style publish is
+  the live sprites), under `orderBy` and `cull` too - so a moved sprite
+  costs its 80 bytes on every layer. The node layer's style publish is
   still the whole-prefix shape (a boolean dirty flag over the high-water
   mark), the one place a range is not yet tracked.
-- `orderBy` on BOTH layers: the core gathers publishes into key order
-  (gpu `instanceOrder`, radix sort + one extra memcpy, no per-record JS),
-  so a y-sorted crowd costs the same flush as an unsorted one. Records
-  and slots stay stably addressed; ties keep slot order; `pick()` still
-  resolves overlap by slot/record order. Records layer keys: "y" or a raw
+- `orderBy` on BOTH layers: the core sorts each view's draw list by the
+  key (gpu `instanceOrder`, a stable radix sort and one gather, no
+  per-record JS) on a frame where a record or the view changed. Records
+  and slots stay stably addressed; ties keep slot order; `pick()` orders
+  its hits by the same key, so the topmost hit is the sprite drawn on
+  top. Records layer keys: "y" or a raw
   `{ field, descending? }` offset into the 16-float record. Node layer
   keys: `"y"` - WORLD y from the core-written pose buffer, so sprites
   moved by native transitions (or any core producer) re-sort with zero JS
@@ -605,10 +605,8 @@ hover, wheel and tap rules headless.
   field (style record float 8, default 0; @solidrt/3d's name for the same
   knob), the explicit-layering key for painter-order scenes: raise a
   dragged piece with `setSprite(hit, { renderOrder: ++top })`, back to 0
-  to restore. Either way the core gathers
-  pose AND style under ONE permutation and republishes the sibling buffer
-  itself when the key buffer re-orders (the multi-buffer stage of
-  okf/backlog/gpu-instance-order.md). `renderOrder` on a record-layer
+  to restore. Either way the draw list gathers pose AND style in the one
+  order. `renderOrder` on a record-layer
   sprite throws - its 16-float record has no key field.
 - The node layer's STYLE slots are not compacted: a removed sprite leaves
   its style floats in place (invisible - the pose is zeroed) until the

@@ -11,8 +11,8 @@ use std::rc::Rc;
 
 use super::buffer::GpuBuffer;
 use super::entry::{
-  build_vao, check_entry_buffers, clip_spans, merge_record, release_entry_buffers, set_record_array, DrawEntry,
-  DrawList, EntryBuffers, MeshState,
+  build_vao, check_entry_buffers, merge_record, release_entry_buffers, set_record_array, DrawEntry, DrawList,
+  EntryBuffers, MeshState,
 };
 use super::pass::{run_pass, DrawGroup, PassDraw, PassInput, ResolvedDraw};
 use super::prev_framebuffer;
@@ -243,7 +243,6 @@ impl ShaderTexture {
         vao,
         buffers,
         draw,
-        spans: None,
         params: Vec::new(),
         bindings: sampler_bindings,
         gauge: SliceGauge::new(),
@@ -701,19 +700,8 @@ impl ShaderTexture {
       None => None,
     };
     let vao = build_vao(gl, &pipeline.program, &pipeline.desc, &buffers)?;
-    let entry = DrawEntry {
-      id,
-      pipeline,
-      pipeline_id,
-      vao,
-      buffers,
-      draw,
-      spans: None,
-      params,
-      bindings,
-      label,
-      gauge: SliceGauge::new(),
-    };
+    let entry =
+      DrawEntry { id, pipeline, pipeline_id, vao, buffers, draw, params, bindings, label, gauge: SliceGauge::new() };
     match position {
       Some(pos) => mesh.entries.insert(pos, entry),
       None => mesh.entries.push(entry),
@@ -873,20 +861,6 @@ impl ShaderTexture {
   /// Set one entry's draw range (resolved and validated UI-side).
   pub fn set_entry_draw(&mut self, id: u64, range: DrawRange) -> Result<(), String> {
     self.entry_mut(id)?.draw = range;
-    Ok(())
-  }
-
-  /// Set the instance spans one entry draws of its range (see
-  /// `DrawEntry::spans`); `draw` 0 is the single-draw kinds' one entry.
-  pub fn set_entry_spans(&mut self, draw: u64, spans: Option<Vec<(u32, u32)>>) -> Result<(), String> {
-    let entry = match draw {
-      0 => match &mut self.kind {
-        TargetKind::Fragment { .. } => return Err("not a pipeline texture".to_string()),
-        TargetKind::Mesh(mesh) => mesh.entries.first_mut().ok_or_else(|| "target has no draw entries".to_string())?,
-      },
-      id => self.entry_mut(id)?,
-    };
-    entry.spans = spans;
     Ok(())
   }
 
@@ -1237,7 +1211,6 @@ impl ShaderTexture {
           vao,
           buffers,
           draw: entry.draw,
-          spans: entry.spans.clone(),
           params: entry.params.clone(),
           bindings: entry.bindings.clone(),
           label: entry.label.clone(),
@@ -1323,7 +1296,7 @@ impl ShaderTexture {
             first_vertex: e.draw.first_vertex,
             vertex_count: e.draw.vertex_count,
             instance_count: e.draw.instance_count,
-            instance_spans: e.spans.as_ref().map(|spans| clip_spans(spans, e.draw.instance_count).collect()),
+            list: None,
             params: e.params.clone(),
             textures: e.bindings.clone(),
             label: e.label.clone(),

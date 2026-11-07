@@ -3,7 +3,7 @@ use crate::spatial::math;
 use crate::spatial::DrawQueue::{Background, Cutout, Opaque, Transparent};
 use crate::spatial::{
   compose, multiply, narrow, DrawOrder, DrawQueue, DrawSink, Mat4, Mat4f, QueryFilter, SinkWriter, Spatial,
-  TextureSlotSink, Volume, WeightsSlotSink, IDENTITY,
+  TextureSlotSink, ViewFeed, Volume, WeightsSlotSink, IDENTITY,
 };
 
 const Q: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -73,7 +73,7 @@ impl SinkWriter for Recorder {
     self.writes.push(Write::Shift { target, draws: draws.to_vec(), delta });
     self.landed(target)
   }
-  fn write_order_view(&mut self, target: u64, draw: u64, clip: [f32; 16]) -> bool {
+  fn write_view(&mut self, target: u64, draw: u64, clip: [f32; 16]) -> bool {
     self.writes.push(Write::OrderView { target, draw, clip });
     self.landed(target) && !self.dead_directions.contains(&target)
   }
@@ -110,8 +110,7 @@ fn sink(draw: u64) -> DrawSink {
     fade: false,
     params: true,
     order: DrawOrder::default(),
-    order_feed: false,
-    cell_feed: false,
+    view_feed: None,
   }
 }
 
@@ -197,8 +196,7 @@ fn hiding_flips_counts_and_unhide_rewrites_params() {
       fade: false,
       params: true,
       order: DrawOrder::default(),
-      order_feed: false,
-      cell_feed: false,
+      view_feed: None,
     },
   )
   .expect("sink");
@@ -229,8 +227,7 @@ fn sinks_are_per_target_and_one_move_feeds_them_all() {
       fade: false,
       params: true,
       order: DrawOrder::default(),
-      order_feed: false,
-      cell_feed: false,
+      view_feed: None,
     },
   )
   .expect("sink");
@@ -244,8 +241,7 @@ fn sinks_are_per_target_and_one_move_feeds_them_all() {
       fade: false,
       params: true,
       order: DrawOrder::default(),
-      order_feed: false,
-      cell_feed: false,
+      view_feed: None,
     },
   )
   .expect("sink");
@@ -265,8 +261,7 @@ fn sinks_are_per_target_and_one_move_feeds_them_all() {
       fade: false,
       params: true,
       order: DrawOrder::default(),
-      order_feed: false,
-      cell_feed: false,
+      view_feed: None,
     },
   )
   .expect("rebind");
@@ -1203,8 +1198,7 @@ fn culling_is_per_target_and_respects_the_opt_out_and_margin() {
       fade: false,
       params: true,
       order: DrawOrder::default(),
-      order_feed: false,
-      cell_feed: false,
+      view_feed: None,
     },
   )
   .expect("sink");
@@ -1218,8 +1212,7 @@ fn culling_is_per_target_and_respects_the_opt_out_and_margin() {
       fade: false,
       params: true,
       order: DrawOrder::default(),
-      order_feed: false,
-      cell_feed: false,
+      view_feed: None,
     },
   )
   .expect("sink");
@@ -1447,8 +1440,7 @@ fn lod_group(s: &mut Spatial, target: u64, fade: bool) -> (u64, [u64; 3]) {
         fade,
         params: true,
         order: DrawOrder::default(),
-        order_feed: false,
-        cell_feed: false,
+        view_feed: None,
       },
     )
     .expect("sink");
@@ -1591,8 +1583,7 @@ fn levels_are_picked_per_target_and_shadow_targets_follow_the_view_they_are_give
         fade: false,
         params: true,
         order: DrawOrder::default(),
-        order_feed: false,
-        cell_feed: false,
+        view_feed: None,
       },
     )
     .expect("sink");
@@ -1615,8 +1606,7 @@ fn levels_are_picked_per_target_and_shadow_targets_follow_the_view_they_are_give
         fade: false,
         params: true,
         order: DrawOrder::default(),
-        order_feed: false,
-        cell_feed: false,
+        view_feed: None,
       },
     )
     .expect("sink");
@@ -1667,8 +1657,7 @@ fn a_lod_reference_measures_by_the_other_targets_view() {
         fade: false,
         params: true,
         order: DrawOrder::default(),
-        order_feed: false,
-        cell_feed: false,
+        view_feed: None,
       },
     )
     .expect("sink");
@@ -1742,8 +1731,7 @@ fn nested_groups_chain_and_clearing_a_group_draws_everything_again() {
         fade: false,
         params: true,
         order: DrawOrder::default(),
-        order_feed: false,
-        cell_feed: false,
+        view_feed: None,
       },
     )
     .expect("sink");
@@ -1875,8 +1863,7 @@ fn keyed(draw: u64, queue: DrawQueue, render_order: i32) -> DrawSink {
     fade: false,
     params: true,
     order: DrawOrder { queue, render_order },
-    order_feed: false,
-    cell_feed: false,
+    view_feed: None,
   }
 }
 
@@ -2157,8 +2144,7 @@ fn feed_sink(target: u64, draw: u64) -> DrawSink {
     fade: false,
     params: true,
     order: DrawOrder::default(),
-    order_feed: true,
-    cell_feed: false,
+    view_feed: Some(ViewFeed::Order),
   }
 }
 
@@ -2490,10 +2476,10 @@ fn record_declarations_outlive_the_group_until_the_buffer_goes() {
 }
 
 #[test]
-fn a_cell_feed_writes_on_every_view_change() {
+fn a_cull_feed_writes_on_every_view_change() {
   let mut s = Spatial::new();
   let n = s.create([0.0; 3], Q, ONE, true);
-  s.bind_sink(n, DrawSink { cell_feed: true, ..feed_sink(1, 7) }).expect("sink");
+  s.bind_sink(n, DrawSink { view_feed: Some(ViewFeed::Cull), ..feed_sink(1, 7) }).expect("sink");
   s.set_view(1, sort_view([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]));
   assert_eq!(views(&flush(&mut s)).len(), 1);
   // A move far under the depth feed's gates still feeds a cell entry.

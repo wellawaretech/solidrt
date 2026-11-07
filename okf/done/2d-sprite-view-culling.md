@@ -99,7 +99,7 @@ on the tiled-GPU tier.
 - **The cell lattice is the residency grid's.** Cells index the lattice
   of a residency `GridSpec` (origin, cell size, placing node, world),
   the one 2d tile chunks already use and
-  [2d-sprite-layer-chunked-records](../backlog/2d-sprite-layer-chunked-records.md)
+  [2d-sprite-layer-view-relative-records](../backlog/2d-sprite-layer-view-relative-records.md)
   wants to share, not a second grid type.
 - **Order.** A world-wide order and a 2d grid do not mix: in cell order
   a cell's sprites all draw before the next cell's, whatever their keys.
@@ -165,7 +165,7 @@ the ranges), `packages/2d/src/layer.ts`, `records.ts` and `views.ts`
 (the option, the layer node and its sink, the views as spatial views,
 the order rule), `packages/2d/agents/views.md`.
 
-Related: [2d-sprite-layer-chunked-records](../backlog/2d-sprite-layer-chunked-records.md)
+Related: [2d-sprite-layer-view-relative-records](../backlog/2d-sprite-layer-view-relative-records.md)
 splits a node layer's records into per-cell buffers for precision, one
 entry per resident cell per view; each such entry would then be culled
 by the core's frustum gate on its own. It applies to node layers under a
@@ -240,4 +240,4 @@ window and `/gpu`. The runs agreed within 0.2 ms.
   14 ms at p50 (p95 19 ms) there, so most of it is the whole-prefix
   publish and gather the two share, and the cells add 2 to 4 ms (the
   extents and the runs). Open as
-  [ordered-layer-whole-prefix-publish](../backlog/ordered-layer-whole-prefix-publish.md).
+  [per-view-draw-lists](../done/per-view-draw-lists.md).

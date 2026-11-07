@@ -10,6 +10,7 @@
 //! graph. The GL executors these shapes drive - programs, passes, targets,
 //! buffers, the sampler cache - live in `gl/`, raster-thread-only.
 
+mod draw_list;
 mod glyphs;
 mod lease;
 mod limits;
@@ -20,19 +21,20 @@ pub(crate) mod spec;
 pub(crate) mod texture;
 pub(crate) mod vocab;
 
+pub use draw_list::{gather_list, CellIndex, DrawList, ListChange, ListOrder};
 pub use glyphs::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use lease::WriteLeases;
 pub use limits::GpuLimits;
+pub(crate) use order::check_direction;
 pub use order::{
-  gather_ordered, gather_permuted, materialize_indices, materialize_indices_through, order_cells, order_packed,
-  order_permutation, select_cells, CellBox, CellOptions, CellSize, InstanceOrder, KeyColumn, OrderKey, OrderOptions,
-  OrderScratch, OrderView, PackedFormat, PackedKey, RecordExtent, RunTable, Selection, CELL_BOX_FLOATS, INDEX_NONE,
-  RUN_RAMP_SAMPLES,
+  materialize_indices, materialize_indices_through, order_packed, order_permutation, CellBox, CellOptions, CellSize,
+  InstanceOrder, KeyColumn, KeyOptions, OrderKey, OrderOptions, OrderScratch, OrderView, PackedFormat, PackedKey,
+  RecordExtent, RunTable, Selection, CELL_BOX_FLOATS, INDEX_NONE, RUN_RAMP_SAMPLES,
 };
 pub use order_worker::{OrderCounters, OrderWorker, PackedJob, SortJob};
 pub use resources::{
-  GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo,
-  GpuResources, GpuTextureInfo, GpuWindowShaderInfo, LostContent,
+  DrawListFacts, GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo,
+  GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, LostContent,
 };
 pub use spec::{DepthStorage, DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use texture::{

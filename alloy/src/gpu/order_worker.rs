@@ -87,7 +87,8 @@ pub struct SortDone {
   pub work_ms: f32,
 }
 
-/// The sort worker's counters, read by /stats and the settle gate.
+/// The instance orders' counters, read by /stats and the settle gate: the
+/// sort worker's jobs, and the draw lists' rebuilds.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct OrderCounters {
   /// Jobs submitted and not yet drained.
@@ -101,6 +102,20 @@ pub struct OrderCounters {
   pub last_ms: f32,
   /// The slowest drained job's work in milliseconds.
   pub max_ms: f32,
+  /// The draw lists alive (one per entry over records the app writes).
+  pub lists: usize,
+  /// Draw-list rebuilds so far.
+  pub list_rebuilds: u64,
+  /// Draw-list patches so far: writes re-gathered in place, the list kept.
+  pub list_patches: u64,
+  /// The list records the patches re-gathered so far (their spans' length,
+  /// summed): beside the records written, what a patch's span costs.
+  pub list_patch_records: u64,
+  /// The records the draw lists drew at the last rebuild point, summed.
+  pub list_visible: usize,
+  /// The last rebuild point's work over every list (cull, sort and
+  /// gather), in milliseconds.
+  pub list_ms: f32,
 }
 
 pub struct OrderWorker {

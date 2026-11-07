@@ -62,7 +62,7 @@ thread), `alloy/src/context/order.rs` (the registry and the mirrors),
 - **Key.** The depth a record sorts by: dot(decoded position, view
   direction), decoded from the words and the chunk box in the key pass.
 - **View feed.** The mesh's model-to-clip matrix the scene writes to
-  the entry (`orderView`): its w row is the depth direction, its rows
+  the entry (`view`): its w row is the depth direction, its rows
   the frustum planes and the pixel scale the selection uses.
 - **Order gates.** The ~2 degree direction change
   (`ORDER_DIRECTION_EPS_COS`), the eye move past
@@ -283,7 +283,7 @@ contribution - mesh LOD's screen-error metric, what Hierarchical 3DGS
 cuts its tree by. The count is a budget met by raising the threshold
 (geometric bisection over the runs' ramps, under a millisecond at 4k
 runs); without a view the budget alone thins, by importance across the
-cloud, the old prefix. The feed is one matrix (`orderView`, the entry's
+cloud, the old prefix. The feed is one matrix (`view`, the entry's
 model-to-clip) from which the depth direction, the planes and the pixel
 scale all derive, so the core names no camera; the spatial core gates it
 on direction, eye move and projection. Rejected: re-ranking a global

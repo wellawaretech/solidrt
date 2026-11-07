@@ -68,7 +68,7 @@ export type { EnvironmentOptions } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTimeScale, setTransition, timeRate, worldInto } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerListener, CurveBinding, SubtreeBinding } from "./node.ts"
-import { checkInstancePairing, checkMask, checkOrderPairing, drawCount, instanceBinding, localBounds, markLiveRecords, publishRecords, spriteScreenPx } from "./mesh.ts"
+import { checkInstancePairing, checkMask, checkOrderPairing, drawCount, instanceBinding, localBounds, publishRecords, spriteScreenPx } from "./mesh.ts"
 import type { InstancedMesh, InstanceNode, Mesh, MeshInstances, ResolvedInstanceOrder } from "./mesh.ts"
 import type { CullState } from "./occluder.ts"
 import { createListener } from "flux:audio"
@@ -387,24 +387,24 @@ const QUEUE_TRANSPARENT = 3
 let drawQueue = (m: Material): number =>
   m.transparent === true ? QUEUE_TRANSPARENT : m.cutout === true ? QUEUE_CUTOUT : QUEUE_OPAQUE
 // A mesh entry's draw sink: what the core writes into it and where it
-// sorts, from the material the entry draws with. `orderFeed` (the scene
-// entry of a position-ordered population) has the core steer the entry's
-// record order from the target's view.
-let drawBinding = (material: Material, mesh: Mesh, inst: MeshInstances | null, orderFeed = false): BindDrawOptions => ({
+// sorts, from the material the entry draws with. `ordered` (the scene
+// entry of a position-ordered population) has the core feed the entry its
+// view, which steers its record order.
+let drawBinding = (material: Material, mesh: Mesh, inst: MeshInstances | null, ordered = false): BindDrawOptions => ({
   normal: material.normalMatrix === true,
   count: inst !== null ? drawCount(inst) : 1,
   fade: material.lodFade === true,
   queue: drawQueue(material),
   renderOrder: mesh.renderOrder,
-  orderFeed,
+  ...(ordered ? { viewFeed: "order" as const } : {}),
 })
 
-// The engine's instanceOrder for the scene entry of an ordered mesh: the
+// The engine's instanceOrder for a camera entry of an ordered mesh: the
 // key stream resolved to its pipeline buffer index (the geometry's
 // buffers precede the instance buffers, and the material's declaration
 // order is the pipeline's), the float offsets resolved at creation, and
 // for a position key a seed direction the core-side feed (bindDraw
-// orderFeed) replaces at the first flush.
+// viewFeed) replaces at the first flush.
 const ORDER_SEED_DIRECTION: [number, number, number] = [0, 0, 1]
 let entryInstanceOrder = (order: ResolvedInstanceOrder, material: Material, geometryBuffers: number): InstanceOrder => {
   let at = (material.instanceBuffers ?? []).findIndex(b => layoutKey(b.attributes) === order.key)
@@ -413,7 +413,7 @@ let entryInstanceOrder = (order: ResolvedInstanceOrder, material: Material, geom
   let indices = order.indices !== null ? { indices: order.indices } : {}
   let lod = order.lod !== null ? { lod: { threshold: order.lod.threshold } } : {}
   return order.position
-    ? { position: order.floats, direction: ORDER_SEED_DIRECTION, descending: order.descending, buffer, retain: order.retain, ...indices, ...lod }
+    ? { position: order.floats, direction: ORDER_SEED_DIRECTION, descending: order.descending, buffer, ...indices, ...lod }
     : { field: order.floats, descending: order.descending, buffer }
 }
 
@@ -1782,9 +1782,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     if (env !== null) params = { ...env.params, ...params }
     let textures = entryTextures(mesh.material, mesh, morph)
     if (env !== null && env.cube !== null) textures = { ...textures, uEnv: env.cube }
-    // The scene entry is the ONE ordered entry of an ordered population
-    // (one buffer holds one order): views bind the same buffers and draw
-    // them in the order the scene's camera decides.
+    // Every camera entry of an ordered population declares the order and
+    // draws its own draw list, sorted under its own camera.
     let order = inst?.order ?? null
     mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(mesh.material, params, mesh.layers), {
       buffers: [...bufs.buffers, ...(inst !== null ? instanceBinding(mesh.material, inst) : [])],
@@ -1799,10 +1798,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // The core turns the entry on (with the world matrix) at the next
     // flush, and off again whenever the node or an ancestor hides.
     spatial.bindDraw(mesh._node!, texture, mesh._entry, drawBinding(mesh.material, mesh, inst, order !== null && order.position))
-    // An ordered population republishes whole with its fresh entry: the
-    // engine-side order registry was just (re)built empty, and only a
-    // full publish seeds the gathered buffer and the retained copy.
-    if (order !== null) markLiveRecords(mesh)
     if (mesh._entry !== null) applyCurves(mesh, texture, mesh._entry)
   }
   let detachScene = (mesh: Mesh) => {
@@ -1851,6 +1846,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     if (env !== null) params = { ...env.params, ...params }
     let textures = entryTextures(material, mesh, morph)
     if (env !== null && env.cube !== null) textures = { ...textures, uEnv: env.cube }
+    // Every view but a shadow view orders a list-drawn population under
+    // its own camera (a depth-only pass gives the same result in any
+    // order), when its material binds the key stream: an override that
+    // leaves it out has nothing to sort by. The index form (one id stream,
+    // sorted for the scene's camera) is read as it is
+    // (okf/backlog/splat-order-per-view.md).
+    let key = inst?.order ?? null
+    let bindsKey = key !== null && (material.instanceBuffers ?? []).some(b => layoutKey(b.attributes) === key.key)
+    let order = v.shadowFilter === null && bindsKey && key!.indices === null ? key : null
     let entry = addDraw(v.texture, material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(material, params, mesh.layers), {
       buffers: [...bufs.buffers, ...(inst !== null ? instanceBinding(material, inst) : [])],
       indexBuffer: bufs.index,
@@ -1858,9 +1862,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       ...meshRange(mesh),
       textures,
       instanceCount: 0,
+      ...(order !== null ? { instanceOrder: entryInstanceOrder(order, material, bufs.buffers.length) } : {}),
       label: drawLabel(mesh),
     })
-    spatial.bindDraw(mesh._node!, v.texture, entry, drawBinding(material, mesh, inst))
+    spatial.bindDraw(mesh._node!, v.texture, entry, drawBinding(material, mesh, inst, order !== null && order.position))
     v.entries.set(mesh, entry)
     if (v.override === null) applyCurves(mesh, v.texture, entry)
   }

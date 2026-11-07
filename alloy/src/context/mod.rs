@@ -15,6 +15,7 @@ use crate::spatial::Spatial;
 mod buffer;
 mod capture;
 pub(crate) mod content;
+mod draw_list;
 mod mirror;
 mod order;
 mod program;
@@ -129,8 +130,9 @@ pub struct Context {
   write_leases: RefCell<WriteLeases>,
   block_recycle_tx: mpsc::Sender<(u64, Vec<u8>)>,
   block_recycle_rx: mpsc::Receiver<(u64, Vec<u8>)>,
-  // Entries that declared an instance order and the buffers they order (see
-  // context/order.rs); end_buffer_write gathers ordered publishes through it.
+  // Entries that declared an instance order, the buffers they order and
+  // the records those hold (see context/order.rs and context/draw_list.rs);
+  // every write to an ordered buffer lands there.
   orders: RefCell<InstanceOrders>,
   // UI-side cache of the device ceilings (see gpu_limits): fetched over one
   // blocking RPC on first use, then a plain read on every validation site.
@@ -477,13 +479,22 @@ impl Context {
   /// recent writes, which the next flush renders with). Sorted by id for
   /// stable output.
   pub fn gpu_resources(&self) -> GpuResources {
-    self.rpc(|reply| RasterCmd::Resources { reply }).unwrap_or_else(|_| GpuResources {
+    let mut resources = self.rpc(|reply| RasterCmd::Resources { reply }).unwrap_or_else(|_| GpuResources {
       textures: Vec::new(),
       buffers: Vec::new(),
       pipelines: Vec::new(),
       render_pipelines: Vec::new(),
       programs: Vec::new(),
       window_shader: None,
-    })
+    });
+    // The draw lists are UI-side: their facts join the raster thread's
+    // inventory here.
+    for pipeline in &mut resources.pipelines {
+      pipeline.list = self.list_facts(pipeline.texture_id, 0);
+      for draw in &mut pipeline.draws {
+        draw.list = self.list_facts(pipeline.texture_id, draw.id);
+      }
+    }
+    resources
   }
 }

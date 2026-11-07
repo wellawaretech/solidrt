@@ -17,9 +17,9 @@ record-mesh verbs, one dimension down: `records(layer)` is the mirror
 (read it at use time - growth replaces it), `updateRecords(layer, {
 first?, count? })` publishes a RANGE of it at the flush (the whole
 mirror by default; ten moved records of ten thousand cost ten - one
-`writeBuffer` at the range's byte offset, clipped to the live sprites;
-under `orderBy` the drawn prefix whole through the lease instead, since
-the core gathers it into key order during the copy), and
+`writeBuffer` at the range's byte offset, clipped to the live sprites,
+under `orderBy` and `cull` too; the record layer does not cull by
+default, `cull: true` opts in, View culling in views.md), and
 `setRecordCount(layer, n)` dials the drawn prefix - the first n live
 sprites draw and pick, the rest stay live but undrawn and unpicked,
 and the dial stays in force as sprites come and go (write ahead, dial
@@ -66,5 +66,5 @@ beside the UVs: `writeMesh(records(layer), at + INSTANCE_FLOATS, frame)`
 (`SPRITE_FLOATS` on a node layer), which writes the packed mesh or zeros.
 A zero field draws the full quad, so a writer that never touches it draws
 as on a quad layer, only without the saving. The field is six
-integer-valued floats, safe to copy as floats (the `orderBy` gather and
-`records(layer).set(src)` alike); flips do not touch it.
+integer-valued floats, safe to copy as floats (a view's draw list
+gather and `records(layer).set(src)` alike); flips do not touch it.

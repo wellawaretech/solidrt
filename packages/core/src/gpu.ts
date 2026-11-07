@@ -161,7 +161,7 @@ export {
 // GPU-side (exact, same size): seed a loadOp "load" accumulator, snapshot a
 // ping-pong buffer, reset state to a known image.
 export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
-export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceOrder, OrderUpdate, PackedPosition, RecordKey, ShaderParams, Topology, VertexAttribute, VertexBufferLayout, VertexFormat } from "flux:gpu"
+export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceCells, InstanceOrder, OrderUpdate, PackedPosition, RecordKey, ShaderParams, Topology, VertexAttribute, VertexBufferLayout, VertexFormat } from "flux:gpu"
 
 // The vertex vocabulary as data (vertex.ts): the format codecs, the
 // arithmetic over an attribute list and the record accessors that the 3d
@@ -183,10 +183,11 @@ export type { AttributeAccess, FormatCodec, FormatKind } from "./vertex.ts"
 // list order with a full permutation of the live ids - the sorting verb
 // (opaque front-to-back, transparent back-to-front, re-issued when the
 // camera moves). That orders ENTRIES; ordering the instance RECORDS within
-// one entry is the instanceOrder creation option (see InstanceOrder), whose
-// projected-key direction updates ride setDraw/setDrawRange as
-// orderDirection, or as orderView (the model-to-clip matrix the spatial
-// core feeds, which a packed population also culls and thins by).
+// one entry is the instanceOrder creation option (see InstanceOrder), with
+// view culling by the cells option beside it (see InstanceCells); their
+// view updates ride setDraw/setDrawRange as view (the model-to-clip matrix
+// the spatial core feeds: a position key's direction, a culled entry's
+// view, a packed population's culling and thinning) or orderDirection.
 //
 // Heavy draws and the submission budget: the engine keeps every GPU
 // submission under about half a second (a quarter of the hang timeout at
@@ -555,6 +556,9 @@ export function createShaderTarget(
     buffers?: gpu.BufferId[]
     /** Draw the instance records in key order (see InstanceOrder). */
     instanceOrder?: gpu.InstanceOrder
+    /** Cut the instance records into cells and cull by them (see
+     * InstanceCells). */
+    cells?: gpu.InstanceCells
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"
@@ -849,6 +853,9 @@ export function createPipelineTexture(
     buffers?: (gpu.VertexBufferLayout & { buffer: gpu.BufferId })[]
     /** Draw the instance records in key order (see InstanceOrder). */
     instanceOrder?: gpu.InstanceOrder
+    /** Cut the instance records into cells and cull by them (see
+     * InstanceCells). */
+    cells?: gpu.InstanceCells
     topology?: gpu.Topology
     depth?: boolean
     depthWrite?: boolean
@@ -913,10 +920,9 @@ export function writeBuffer(id: gpu.BufferId, data: ArrayBuffer | ArrayBufferVie
  * dirty range: the publish model shared by every JS-stepped population
  * (a 2d sprite layer's records, a 3d mesh's instance streams). Write the
  * mirror, `mark` the records written, then `publish` at the flush: the
- * dirty range goes out as one `writeBuffer` at its byte offset, or the
- * drawn prefix whole through the write lease when the buffer carries an
- * instance order (the engine gathers the copy into key order, and a byte
- * range has no stable position under a permutation). Growth replaces the
+ * dirty range goes out as one `writeBuffer` at its byte offset, also on a
+ * buffer an entry culls or orders (the engine keeps its records in slot
+ * order and draws each view from its own draw list). Growth replaces the
  * buffer and the mirror (never a resize) and marks what the mirror held,
  * so the next publish fills the replacement; the old buffer is the
  * caller's to destroy once nothing binds it. Read `buffer` and `bytes` at
@@ -938,8 +944,8 @@ export type RecordStream = {
   /** Extend the dirty range over records [first, last). */
   mark(first: number, last: number): void
   /** Send what is dirty and clear the mark. `whole`: the first `limit`
-   * records go out through the lease regardless of the range (the
-   * ordered form, and a replacement buffer's first fill); otherwise the
+   * records go out through the lease regardless of the range (a
+   * replacement buffer's first fill); otherwise the
    * dirty range, clipped to `limit` records (the live sprites, or the
    * capacity when records are written ahead of their count). Nothing is
    * sent for an empty range or a zero `limit`. */

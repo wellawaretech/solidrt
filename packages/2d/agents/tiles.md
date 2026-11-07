@@ -264,8 +264,8 @@ but it does re-render every resident chunk: drive it from slow state,
 not per frame. `setParams` (a material prelude's uniforms) and a cell's
 `style` (the material's per-cell record, `setTile`/`setTiles` `{ style
 }`) are the same two levels for a custom look, see materials.md. The
-sprite and record layers cull per cell too (`cells`, each view drawing
-only the cells its camera meets): View culling per cell in views.md.
+sprite and record layers cull too (`cull`, each view drawing only the
+sprites its camera meets): View culling in views.md.
 
 ## Traps
 

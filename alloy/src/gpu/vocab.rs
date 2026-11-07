@@ -1047,21 +1047,21 @@ pub struct DrawUpdate {
   pub buffers: BufferUpdate,
   /// Replace an ordered entry's projected-key direction (the per-camera-move
   /// update; errs on an entry without a position-keyed instance order).
-  /// UI-side state that shapes the NEXT lease publish - alone it sends
-  /// nothing to the raster thread and re-renders nothing.
+  /// UI-side state that shapes the next sort - alone it sends nothing to
+  /// the raster thread and re-renders nothing.
   pub order_direction: Option<[f32; 3]>,
   /// Set an ordered entry's view (the feed's form, `OrderView`): the
-  /// projected key's direction follows the matrix, and a packed
-  /// population re-selects its runs under it. Same staging as
-  /// `order_direction`.
-  pub order_view: Option<super::order::OrderView>,
+  /// projected key's direction follows the matrix, a culled entry culls
+  /// under it, and a packed population re-selects its runs under it. Same
+  /// staging as `order_direction`.
+  pub view: Option<super::order::OrderView>,
   /// Replace a packed population's LOD threshold (`InstanceOrder::
   /// lod_threshold`), re-selecting under it.
   pub order_lod: Option<f64>,
-  /// The pixels the entry's cell selection measures screen reach in (the
-  /// view's own, where the target renders at an oversample); default the
-  /// target's size. For an entry drawing a cell-culled population.
-  pub order_viewport: Option<[f32; 2]>,
+  /// The pixels a culled entry measures screen reach in (the view's own,
+  /// where the target renders at an oversample); default the target's
+  /// size.
+  pub viewport: Option<[f32; 2]>,
 }
 
 /// One draw entry's share of a spatial flush: the fresh value of each of

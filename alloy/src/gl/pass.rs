@@ -7,7 +7,7 @@
 use glow::HasContext;
 use std::time::Instant;
 
-use super::entry::{clip_spans, EntryBuffers};
+use super::entry::EntryBuffers;
 use super::program::ShaderProgram;
 use super::slicing::{
   note_bound, note_slices, Bound, Issue, RateMeter, SliceAxis, SliceGauge, SlicePlan, SLICE_WAIT_LIMIT_SECS,
@@ -87,9 +87,6 @@ pub(super) struct ResolvedDraw<'a> {
   /// the draw is issued in instance slices (see `issue_draw`).
   pub(super) buffers: &'a EntryBuffers,
   pub(super) range: DrawRange,
-  /// The instance spans the entry draws of `range` (`DrawEntry::spans`);
-  /// None draws it whole.
-  pub(super) spans: Option<&'a [(u32, u32)]>,
   /// Present = draw indexed (`range` counts indices): the index buffer is
   /// already captured in `vao`, so the format is all the draw call needs.
   pub(super) index: Option<IndexFormat>,
@@ -629,10 +626,7 @@ pub(super) fn run_pass(
               None => gl.disable(glow::CULL_FACE),
             }
             gl.bind_vertex_array(Some(d.vao));
-            let instances = match d.spans {
-              Some(spans) => clip_spans(spans, d.range.instance_count).map(|(_, n)| n as u64).sum(),
-              None => d.range.instance_count.max(0) as u64,
-            };
+            let instances = d.range.instance_count.max(0) as u64;
             vertices += d.range.vertex_count.max(0) as u64 * instances;
             issue_draw(gl, d);
           }
@@ -748,25 +742,9 @@ unsafe fn draw_range(gl: &glow::Context, d: &ResolvedDraw, range: DrawRange) {
 /// slices, each flushed and waited for, so no submission is predicted to
 /// run past the budget and every slice is measured on the kernel's own
 /// clock. The entry's VAO is bound; the instance-step pointers an instance
-/// slice re-points are restored to the VAO's own before returning. An
-/// entry with instance spans issues each span so, the instance pointers
-/// at the span's first instance (ES 3.0 has no base instance).
+/// slice re-points are restored to the VAO's own before returning.
 unsafe fn issue_draw(gl: &glow::Context, d: &ResolvedDraw) {
-  let Some(spans) = d.spans else {
-    issue_span(gl, d, d.range, 0);
-    return;
-  };
-  for (first, count) in clip_spans(spans, d.range.instance_count) {
-    point_instances(gl, d, first as u64);
-    issue_span(gl, d, DrawRange { instance_count: count as i32, ..d.range }, first as u64);
-  }
-  point_instances(gl, d, 0);
-}
-
-/// `issue_draw` over `range`, its instances starting at instance `base`
-/// of the buffers (where the instance pointers stand on entry, and are
-/// left).
-unsafe fn issue_span(gl: &glow::Context, d: &ResolvedDraw, range: DrawRange, base: u64) {
+  let range = d.range;
   let Some(plan) = SlicePlan::plan(range, d.desc.topology, d.program.reads_instance_id()) else {
     draw_range(gl, d, range);
     return;
@@ -787,7 +765,7 @@ unsafe fn issue_span(gl: &glow::Context, d: &ResolvedDraw, range: DrawRange, bas
         note_bound();
       }
     }
-    Issue::Sliced => issue_slices(gl, d, plan, range, base),
+    Issue::Sliced => issue_slices(gl, d, plan, range),
   }
 }
 
@@ -797,7 +775,7 @@ unsafe fn issue_span(gl: &glow::Context, d: &ResolvedDraw, range: DrawRange, bas
 /// instance axis. A wait that runs out (`SLICE_WAIT_LIMIT_SECS`) stops the
 /// measuring for this render - the GPU is hung and the present fence
 /// watchdog will say so - while the remaining slices still go out.
-unsafe fn issue_slices(gl: &glow::Context, d: &ResolvedDraw, plan: SlicePlan, range: DrawRange, base: u64) {
+unsafe fn issue_slices(gl: &glow::Context, d: &ResolvedDraw, plan: SlicePlan, range: DrawRange) {
   let label = d.label.unwrap_or("unlabelled");
   let mut hung = false;
   let mut wait_micros = submit_and_wait(gl, &mut hung, label);
@@ -811,7 +789,7 @@ unsafe fn issue_slices(gl: &glow::Context, d: &ResolvedDraw, plan: SlicePlan, ra
     let take = plan.take(at, rate, prev);
     match plan.axis {
       SliceAxis::Instances => {
-        point_instances(gl, d, base + at);
+        point_instances(gl, d, at);
         draw_range(gl, d, DrawRange { instance_count: take as i32, ..range });
       }
       SliceAxis::Vertices => {
@@ -834,7 +812,7 @@ unsafe fn issue_slices(gl: &glow::Context, d: &ResolvedDraw, plan: SlicePlan, ra
     slices += 1;
   }
   if plan.axis == SliceAxis::Instances {
-    point_instances(gl, d, base);
+    point_instances(gl, d, 0);
   }
   if let (false, Some(rate)) = (hung, meter.rate()) {
     d.gauge.measured(rate, slices, longest);

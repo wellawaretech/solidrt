@@ -170,6 +170,9 @@ pub fn paint_phase(
 /// it itself) and so count as no change. Every frame producer calls this
 /// before resolving its frame; returns whether anything changed.
 pub(crate) fn apply_content_changes(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::Context) -> bool {
+  // The draw lists rebuild over the frame's writes first: what they draw
+  // is this frame's content.
+  alloy.flush_draw_lists();
   let content = alloy.take_content_changes();
   let mut changed = !content.is_empty();
   if changed {

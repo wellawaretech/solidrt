@@ -145,23 +145,16 @@ impl SinkWriter for Writer<'_> {
     }
   }
 
-  // A depth-ordered entry's fresh view: the orderView update, plus the
-  // retained re-sort/republish when the order's inputs changed (a no-op
-  // on a gather entry, whose next publish picks the direction up), or
-  // the re-selection of the cells an entry draws. Runs with no target
-  // borrow held, which rematerialize's note_buffer_content needs.
-  fn write_order_view(&mut self, target: u64, draw: u64, clip: [f32; 16]) -> bool {
-    let Some(ids) = self.ctx.entry_buffer_ids(target, draw) else {
-      return self.landed(Err(format!("draw {draw} not found on target {target}")));
-    };
-    match self.ctx.set_instance_order_view(target, draw, OrderView { clip }, &ids) {
-      Ok(change) => {
+  // An ordered entry's fresh view: the view update, plus an indexed
+  // order's re-sort when its inputs changed (a draw list rebuilds at the
+  // rebuild point). Runs with no target borrow held, which the re-sort's
+  // note_buffer_content needs.
+  fn write_view(&mut self, target: u64, draw: u64, clip: [f32; 16]) -> bool {
+    match self.ctx.set_instance_order_view(target, draw, OrderView { clip }) {
+      Ok(reorder) => {
         self.wrote = true;
-        if change.reorder {
+        if reorder {
           self.ctx.rematerialize_retained_order(target, draw);
-        }
-        if change.reselect {
-          self.ctx.reselect_reader(target, draw);
         }
         true
       }
@@ -188,14 +181,18 @@ impl SinkWriter for Writer<'_> {
     }
   }
 
-  // An instance-record staging publish. A plain buffer takes the dirty
-  // range through the ordinary partial write (bounds-checked there against
-  // the buffer's size); an ordered instance buffer publishes the whole
-  // record set gathered into draw order instead - a partial range has no
-  // stable position once records draw in key order.
+  // An instance-record staging publish: the dirty range through the
+  // ordinary partial write (bounds-checked there against the buffer's
+  // size). A buffer a draw list reads takes it into its mirror, with the
+  // slots' cull boxes, and on to the GPU only when an entry also draws it
+  // directly.
   fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32], boxes: Option<&[f32]>) -> bool {
-    if self.ctx.buffer_has_order(buffer) {
-      return self.landed(self.ctx.ordered_instance_publish(buffer, values, boxes));
+    if let Err(e) = self.ctx.check_indexed_publish(buffer) {
+      return self.landed(Err(e));
+    }
+    match self.ctx.list_write_instances(buffer, lo as usize, hi as usize, values, boxes) {
+      Some(false) => return self.landed(Ok(())),
+      Some(true) | None => {}
     }
     let range = &values[lo as usize..hi as usize];
     let mut data = Vec::with_capacity(range.len() * 4);

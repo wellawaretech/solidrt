@@ -693,6 +693,10 @@ declare module "flux:gpu" {
       buffers?: BufferId[]
       /** Draw the instance records in key order (see {@link InstanceOrder}). */
       instanceOrder?: InstanceOrder
+      /** How the instance records are cut into cells, where their cull
+       * boxes come from, and whether the entry culls by them (see
+       * {@link InstanceCells}). */
+      cells?: InstanceCells
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
@@ -888,7 +892,8 @@ declare module "flux:gpu" {
    * addressing stable slots - raise and y-sort without record churn, and
    * back-to-front over a large population without per-record JS. (This
    * orders one entry's RECORDS; {@link setDrawOrder} orders a target's
-   * ENTRIES - different granularity, unrelated verbs.)
+   * ENTRIES - different granularity, unrelated verbs.) Beside it the
+   * entry may declare `cells` (see {@link InstanceCells}).
    *
    * The key, one of two modes fixed at creation, both offsets counted in
    * FLOATS into one instance record: `field` reads the single f32 at that
@@ -901,78 +906,33 @@ declare module "flux:gpu" {
    * order, so untouched populations draw exactly as without an order - and
    * NaN keys sort last (ascending).
    *
-   * The order materializes when the buffer is PUBLISHED: each
-   * {@link beginBufferWrite}/{@link endBufferWrite} publish gathers the
-   * records into key order on the way to the GPU (one extra copy of the
-   * published bytes; a single-buffer entry retains nothing). A population
-   * that republishes each frame re-orders each frame for free; a direction
-   * change alone takes effect at the next publish - unless the entry opts
-   * into `retain`, where it re-orders immediately from core's retained
-   * copy. Because the GPU-side
-   * contents are the gathered records, {@link writeBuffer} on an ordered
-   * buffer throws (a byte-offset write would land on the wrong records -
-   * publish whole record sets through the lease), {@link readBuffer} reads
-   * back gathered order, a publish must be a whole number of records, and
-   * `instanceCount` below the published record count draws the first N in
-   * key order.
+   * An order over records the app writes draws from a DRAW LIST per
+   * entry: the engine keeps the records in slot order, every write
+   * ({@link writeBuffer}, a {@link beginBufferWrite}/{@link endBufferWrite}
+   * publish, a spatial record sink) lands there as a dirty range, and
+   * once per frame each entry whose view, key or instance count changed,
+   * or whose visible records a write touched, takes the records it draws -
+   * culled by its view under `cull`, sorted by the key when there is one
+   * - into buffers of its own and draws them. The cost of a frame follows
+   * what the entry draws, not the population; a frame with no change does
+   * nothing. The buffers' own GPU copy is written only while some entry
+   * draws them without an order (a shadow pass), and a buffer only draw
+   * lists read reads back its records in slot order. `instanceCount` is
+   * the population: the first N slots.
    *
-   * An entry with SEVERAL instance-step buffers orders them all under ONE
-   * permutation: the key reads from the key buffer's records (`buffer`,
-   * default the first instance-step layout), and every other instance-step
-   * buffer's publishes gather to match, so split records (a core-written
-   * pose buffer plus an app-written style buffer) always describe the same
-   * draw order. This retains a copy of each buffer's records: when the key
-   * order changes - including through spatial record sinks, with no
-   * publish from the app anywhere - the sibling buffers republish
-   * themselves in the same frame. An ordered buffer must be bound once on
-   * the entry (not as another layout's buffer nor as its index buffer) and
-   * ordered by no other entry; a buffer swap ({@link BufferUpdate})
-   * carries the order to the new buffers, every swapped instance-step
-   * buffer at once - republish app-written buffers after a swap, the new
-   * buffer starts empty.
-   *
-   * CELLS (`cells`) add view culling per cell to a gathered order: each
-   * record has a cull box, the gather keeps the buffer in cell order, and
-   * every entry drawing the buffers draws only the instances of the cells
-   * its view meets - contiguous spans of the one gathered buffer, so a
-   * camera move uploads no record. With a field key the cells are BANDS
-   * of the key (`size` the band width): the key order stays exact and
-   * the culling is along the key alone (a y-sorted 2d crowd culls by
-   * rows). With no key (`{ cells }` alone) they are the cells of a
-   * lattice keyed by each record's box center, row-major (the highest cut
-   * axis most significant): two records that overlap across a cell
-   * boundary may then draw in either order. Records whose box is empty
-   * (zero size, hidden, freed) sort last and no view draws them. The cull
-   * boxes come from the records' own fields (`extent`), or without one
-   * from the spatial record sinks that write the key buffer
-   * (flux:spatial setInstanceBoxes). Each entry selects under the view
-   * its draw sink feeds (flux:spatial bindDraw `orderFeed: "cells"`);
-   * before its first view it draws everything. A position key or an
-   * indexed order with cells throws. The selection is draw-only: the
-   * records, their slots and every query are unchanged.
+   * An entry with SEVERAL instance-step buffers draws them all in one
+   * order: the key read from the key buffer's records (`buffer`, default
+   * the first instance-step layout), the cull boxes from the first
+   * instance-step buffer's (see InstanceCells), and every other
+   * instance-step buffer's records follow, so split records (a
+   * core-written pose buffer plus an app-written style buffer) always
+   * describe the same draw. An ordered buffer must be bound once on the
+   * entry (not as another layout's buffer nor as its index buffer); any
+   * number of entries may order the same buffers, each its own way. A
+   * buffer swap ({@link BufferUpdate}) carries the order to the new
+   * buffers, every swapped instance-step buffer at once.
    */
-  export type InstanceOrder = InstanceKeyOrder | InstanceCellOrder
-  /** Where a cell-culled population's record boxes are read from: float
-   * offsets of record fields. A record is a rectangle in the record
-   * frame's xy plane - its center (`position`, 2 floats), its full size
-   * (`size`, 2 floats; a zero axis draws nothing), its rotation about z
-   * in radians (`rotation`, absent = axis-aligned) and its screen-size
-   * floor (`minScreenPx`: the smaller drawn axis held at no fewer screen
-   * pixels, the stage's screenSizeScale), whose reach widens its box at
-   * every view's zoom. */
-  export type CellExtent = { position: number; size: number; rotation?: number; minScreenPx?: number }
-  /** An instance order without a key, culled per lattice cell (see
-   * InstanceOrder's cells): `size` the cell size per axis (0 = not cut),
-   * `origin` the corner of cell [0, 0, 0] (default the record frame's
-   * zero), in record units. */
-  export type InstanceCellOrder = {
-    cells: { size: [number, number, number]; origin?: [number, number, number]; extent?: CellExtent }
-    /** The buffer whose records the extent reads (InstanceKeyOrder's
-     * `buffer`). */
-    buffer?: number
-  }
-  /** An instance order by a key (see InstanceOrder). */
-  export type InstanceKeyOrder = ({ field: number } | { position: number; direction: [number, number, number] }) & {
+  export type InstanceOrder = ({ field: number } | { position: number; direction: [number, number, number] }) & {
     descending?: boolean
     /**
      * The pipeline buffer index (into its `buffers` layouts) whose
@@ -980,23 +940,9 @@ declare module "flux:gpu" {
      * several instance-step buffers the key may live in any one of them -
      * a core-written pose buffer keyed by position, or an app-written
      * style buffer keyed by an explicit sort field - and every other one
-     * gathers under its permutation.
+     * draws in its order.
      */
     buffer?: number
-    /**
-     * The retained-copy strategy, for write-once populations (a splat
-     * cloud: records written once, only the ORDER changes per camera
-     * move). Core keeps a CPU copy of each buffer's published records, and
-     * an `orderDirection` update re-sorts that copy and republishes the
-     * entry's buffers core-side, in the same call, with no publish from
-     * the app; when the re-sort leaves the order unchanged nothing
-     * uploads, so a parked camera costs nothing. The copy is the
-     * deliberate cost (the records' size in CPU memory); publishes still
-     * go through the lease and update the copy. Position keys only - a
-     * field key re-orders when its records republish, so retaining buys
-     * nothing there and throws.
-     */
-    retain?: boolean
     /**
      * The INDEX materialization, for a population whose records live in a
      * data texture the shader fetches by record index: the records are
@@ -1009,16 +955,17 @@ declare module "flux:gpu" {
      * instance record, so one drawn instance covers K records - written
      * whole on every re-sort (the sorted ids, then 0xFFFFFFFF to the end
      * of the buffer, which the shader culls before fetching). A re-sort
-     * then uploads 4 bytes per record instead of the record. Retains by
-     * nature; takes exactly one instance-step buffer, over a handed-off
-     * key column only (publishing that buffer through the lease throws,
-     * and attaching over whole handed-off records or a different column
-     * throws naming both), and `instanceCount` picks the first count x K
-     * records of the mirror. Above about 16k records the re-sort runs on
-     * the engine's sort thread: the ids land a sort later (the order lags
-     * the camera by one sort, tens of milliseconds at a million records
-     * on a phone), a frame never waits for it, and a `settle` does; a
-     * smaller population sorts in the flush, exact for the frame.
+     * then uploads 4 bytes per record instead of the record. Takes
+     * exactly one instance-step buffer, over a handed-off key column only
+     * (publishing that buffer throws, and attaching over whole handed-off
+     * records or a different column throws naming both), and
+     * `instanceCount` picks the first count x K records of the mirror.
+     * Above about 16k records the re-sort runs on the engine's sort
+     * thread: the ids land a sort later (the order lags the camera by one
+     * sort, tens of milliseconds at a million records on a phone), a
+     * frame never waits for it, and a `settle` does; a smaller population
+     * sorts in the flush, exact for the frame. No `cells` beside it: a
+     * packed population culls by its runs.
      */
     indices?: { stride: number }
     /**
@@ -1026,43 +973,79 @@ declare module "flux:gpu" {
      * {@link RecordKey} with `packed`, whose records come in runs):
      * `threshold` is the contribution in pixels - a record's importance
      * from the run ramp times the pixel scale at the run's box under the
-     * entry's `orderView` - below which a run's tail is not drawn. 0 (the
+     * entry's `view` - below which a run's tail is not drawn. 0 (the
      * default) thins nothing and the instance count alone budgets. On an
      * order without `indices` it throws.
      */
     lod?: { threshold: number }
-    /** View culling in bands of a field key, `size` units wide (see
-     * InstanceOrder's cells). */
-    cells?: { size: number; extent?: CellExtent }
   }
   /**
-   * The order half of a draw-entry update, the per-camera-move update of
-   * a position-keyed {@link InstanceOrder}. `orderDirection` replaces the
-   * projected key's direction by hand. `orderView` is the fed form: the
-   * entry's model-to-clip matrix (column-major, 16 numbers - what its
-   * vertex stage projects with), from which the engine takes the depth
-   * direction (the w row; the z row of an orthographic matrix) and, on a
-   * packed population, the frustum and pixel scale its runs are culled
-   * and thinned by; the spatial core's `orderFeed` writes it. `orderLod`
-   * replaces a packed population's LOD threshold (`lod`). On a gather
-   * entry a direction stages sort state for the entry's NEXT publish and
-   * renders nothing by itself; on a retained entry (`retain: true`, or
-   * indexed) a change re-sorts core's copy right away and, when the
-   * order changed, republishes the entry's buffers - no publish from the
-   * app. On an entry without a position-keyed instance order it throws.
+   * An entry's CELLS, the facts view culling works from, declared beside
+   * the `instanceOrder` at creation: each instance record has a cull box
+   * and sits in the lattice cell of its box center. `size` is one number
+   * (square cells in x and y) or [x, y, z] (0 = not cut along that axis),
+   * `origin` the corner of cell [0, 0, 0] (default the record frame's
+   * zero), in record units. The cull boxes come from the first
+   * instance-step buffer, whatever buffer holds the key: from its
+   * records' own fields (`extent`), or without one from the spatial
+   * record sink that writes it (flux:spatial setInstanceBoxes).
    *
-   * On an entry drawing a cell-culled population (an order with `cells`,
-   * or any entry over its buffers) `orderView` is the view its cells are
-   * selected under, and `orderViewport` the [width, height] in pixels a
-   * screen reach (CellExtent's `minScreenPx`) is measured in: the view's
-   * own pixels where its target renders at an oversample (default the
-   * target's size).
+   * With `cull: true` the entry culls by them: it draws only the
+   * records whose boxes its view meets, in the order it would draw them
+   * unculled - culling never changes what draws over what. Records whose
+   * box is empty (zero size, hidden, freed) draw nothing. The view is the
+   * one its draw sink feeds (flux:spatial bindDraw `viewFeed: "cull"`);
+   * before its first view the entry draws every record. Without a key the
+   * records draw in slot order; without a key and without `cull`, the
+   * entry draws its buffers as they are. Cells beside an indexed order
+   * throw. The culling is draw-only: the records, their slots and every
+   * query are unchanged.
+   */
+  export type InstanceCells = {
+    size: number | [number, number, number]
+    origin?: [number, number, number]
+    extent?: CellExtent
+    /** Cull by the cells under the entry's view; absent or false draws
+     * every record. */
+    cull?: boolean
+    /** Record units every cull box grows by on every side: what the
+     * vertex stage may draw beyond a record's box (Godot's
+     * `extra_cull_margin`). A finite, non-negative number; default 0. */
+    margin?: number
+  }
+  /** Where a culled population's record boxes are read from: float
+   * offsets of record fields. A record is a rectangle in the record
+   * frame's xy plane - its center (`position`, 2 floats), its full size
+   * (`size`, 2 floats; a zero axis draws nothing), its rotation about z
+   * in radians (`rotation`, absent = axis-aligned) and its screen-size
+   * floor (`minScreenPx`: the smaller drawn axis held at no fewer screen
+   * pixels, the stage's screenSizeScale), whose reach widens its box at
+   * every view's zoom. */
+  export type CellExtent = { position: number; size: number; rotation?: number; minScreenPx?: number }
+  /**
+   * The order half of a draw-entry update, the per-camera-move update of
+   * an ordered or culled entry. `view` is the entry's model-to-clip matrix
+   * (column-major, 16 numbers - what its vertex stage projects with), the
+   * fed form the spatial core's `viewFeed` writes: a position key takes
+   * its depth direction from it (the w row; the z row of an orthographic
+   * matrix), an entry whose cells cull culls under it, and a packed population
+   * takes the frustum and pixel scale its runs are culled and thinned by.
+   * `orderDirection` replaces a position key's direction by hand.
+   * `viewport` is the [width, height] in pixels a culled entry measures
+   * screen reach (CellExtent's `minScreenPx`) in: the view's own pixels
+   * where its target renders at an oversample (default the target's
+   * size); on an entry that does not cull it is ignored. `orderLod`
+   * replaces a packed population's LOD threshold (`lod`). A draw list
+   * follows at the next frame; an indexed order re-sorts right away and,
+   * when the order changed, writes its ids - no publish from the app.
+   * `orderDirection` on an entry without a position key throws, and
+   * `view` on an entry without an instance order.
    */
   export type OrderUpdate = {
+    view?: ArrayLike<number>
+    viewport?: [number, number]
     orderDirection?: [number, number, number]
-    orderView?: ArrayLike<number>
     orderLod?: { threshold: number }
-    orderViewport?: [number, number]
   }
 
   /**
@@ -1108,6 +1091,10 @@ declare module "flux:gpu" {
       buffers?: (VertexBufferLayout & { buffer: BufferId })[]
       /** Draw the instance records in key order (see {@link InstanceOrder}). */
       instanceOrder?: InstanceOrder
+      /** How the instance records are cut into cells, where their cull
+       * boxes come from, and whether the entry culls by them (see
+       * {@link InstanceCells}). */
+      cells?: InstanceCells
       topology?: Topology
       depth?: boolean
       depthWrite?: boolean
@@ -1150,18 +1137,20 @@ declare module "flux:gpu" {
    * closes and nothing is published. Always closes the lease, error or not;
    * throws when no write is open or `byteLength` exceeds the buffer size.
    * Pipelines drawing from the buffer re-render, like {@link writeBuffer}.
-   * On an ordered instance buffer ({@link InstanceOrder}) the publish is
-   * where the order materializes: the records reach the GPU gathered into
-   * key order, and `byteLength` must be a whole number of records.
+   * On an ordered instance buffer ({@link InstanceOrder}) the records land
+   * in the engine's slot-order copy and every entry ordering them draws
+   * them from the next frame. Publishing an indexed order's id buffer
+   * throws.
    */
   export function endBufferWrite(id: BufferId, byteLength?: number): void
   /**
    * Overwrite part of a vertex buffer at `byteOffset` (default 0), within the
    * size it was created with. Pipelines drawing from the buffer re-render
-   * with their last-applied params. Throws on an ordered instance buffer
-   * ({@link InstanceOrder}): its GPU contents are in key order, so a
-   * byte-offset write would land on the wrong records - publish whole
-   * record sets through {@link beginBufferWrite}/{@link endBufferWrite}.
+   * with their last-applied params. On an ordered instance buffer
+   * ({@link InstanceOrder}) the bytes land in the engine's slot-order copy
+   * and the entries whose drawn records they touch draw them from the
+   * next frame: writing the few records that changed costs those records.
+   * Writing an indexed order's id buffer throws.
    */
   export function writeBuffer(id: BufferId, data: Uint8Array, byteOffset?: number): void
   /**
@@ -1177,7 +1166,7 @@ declare module "flux:gpu" {
    * stored by importance descending, so a prefix of a run is its most
    * important records. What a splat bake stores. The engine decodes the
    * depth key from the words and the box, keeps the words alone per
-   * record, and under the entry's `orderView` skips a run whose box is
+   * record, and under the entry's `view` skips a run whose box is
    * out of view and cuts a visible one where its ramp falls under the
    * LOD threshold at the run's projected scale; the instance count is a
    * budget the threshold rises to meet, and without a view the budget
@@ -1197,22 +1186,21 @@ declare module "flux:gpu" {
    * Hand a buffer's full record set to the engine - the write-once form of
    * an ordered instance buffer ({@link InstanceOrder}): the engine's order
    * mirror takes ownership of a copy, so the app keeps none, and the
-   * ordered entry sorts and republishes from the mirror on its own - the
-   * first publish when the entry attaches (nothing draws before that),
-   * re-sorts on `orderDirection` and `orderView` changes, and prefix
-   * republishes when the entry's `instanceCount` changes (the first n
-   * records are the sorted population; on a packed hand-off the count is
-   * a budget over the runs the view keeps). With a {@link RecordKey} the
+   * ordered entry draws from the mirror on its own - from when the entry
+   * attaches (nothing draws before that), re-sorting on `orderDirection`
+   * and `view` changes, and taking the first n records as the
+   * population when the entry's `instanceCount` changes (on a packed
+   * hand-off the count is a budget over the runs the view keeps). With a {@link RecordKey} the
    * mirror keeps the records' key column only - the index
    * materialization, where the engine sorts the column and writes ids,
    * so a 1M-record cloud is resident as 12 MB of positions (8 packed),
-   * not its record block; without one it keeps the whole
-   * records a gathered order republishes. Hand off before the entry
-   * attaches; a second call replaces the records wholesale. By the time
-   * an entry attaches over the buffer the hand-off must match the order's
-   * form: whole records of the order's stride that fit the buffer for a
-   * gathered order, the order's own key column for an indexed one (whose
-   * buffer holds their ids instead). The mirror is freed with the buffer.
+   * not its record block; without one it keeps the whole records a draw
+   * list draws from. Hand off before the entry attaches; a second call
+   * replaces the records wholesale. By the time an entry attaches over the
+   * buffer the hand-off must match the order's form: whole records of the
+   * order's stride for a draw list, the order's own key column for an
+   * indexed one (whose buffer holds their ids instead). The mirror is
+   * freed with the buffer.
    */
   export function transferRecords(id: BufferId, records: Uint8Array, key?: RecordKey): void
   /**
@@ -1431,6 +1419,10 @@ declare module "flux:gpu" {
       buffers?: BufferId[]
       /** Draw the instance records in key order (see {@link InstanceOrder}). */
       instanceOrder?: InstanceOrder
+      /** How the instance records are cut into cells, where their cull
+       * boxes come from, and whether the entry culls by them (see
+       * {@link InstanceCells}). */
+      cells?: InstanceCells
       before?: DrawId
       /** Debug name reported beside the entry in the resource inventory
        * (`/gpu`, `get_gpu_resources`), so a draw is found by what it draws

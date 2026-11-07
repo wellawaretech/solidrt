@@ -28,21 +28,19 @@ impl Context {
   /// Overwrite part of a vertex buffer (`data` at `byte_offset`, within the
   /// buffer's original size); every pipeline drawing from it re-renders with
   /// its last-applied params at the next dirty flush, so geometry-only
-  /// changes reach the screen even when no new params arrive. The caller
+  /// changes reach the screen even when no new params arrive. A buffer a
+  /// draw list reads takes the write into its mirror, in slot order, and
+  /// the lists it touches rebuild at the next rebuild point. The caller
   /// must request a frame.
   pub fn write_gpu_buffer(&self, id: u64, data: &[u8], byte_offset: usize) -> Result<(), String> {
     let size = *self.buffer_sizes.borrow().get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
-    // An ordered buffer's GPU contents are in key order, so a byte-offset
-    // write would land on the wrong records; ordered buffers publish whole
-    // record sets through the lease, where the gather runs.
-    if self.buffer_has_order(id) {
-      return Err(format!(
-        "buffer {id} has an instance order; publish whole records through beginBufferWrite/endBufferWrite"
-      ));
-    }
+    self.check_indexed_publish(id)?;
     let end = byte_offset.checked_add(data.len()).ok_or_else(|| "offset overflow".to_string())?;
     if end > size {
       return Err(format!("write of {} bytes at offset {byte_offset} exceeds buffer size {size}", data.len()));
+    }
+    if self.list_write(id, data, byte_offset) == Some(false) {
+      return Ok(());
     }
     self.send(RasterCmd::WriteBuffer { id, data: data.to_vec(), byte_offset });
     self.note_buffer_content(id);
@@ -64,12 +62,12 @@ impl Context {
 
   /// Blocks the raster thread finished with, back into the pool (retired
   /// ids drop). Called wherever a staging block is about to be taken - the
-  /// lease pair AND the core-side ordered republishes (rematerialize, the
-  /// spatial instance publish), which otherwise mint a fresh block per
-  /// republish while the returns pile up unread in the channel: a
-  /// camera-driven re-sort stream with no JS publish anywhere leaked the
-  /// full buffer size per re-sort until the process died (found at
-  /// gaussian-splats stage B scale, ~250 MB/s on a phone).
+  /// lease pair AND the core-side order writes (an indexed re-sort, the
+  /// draw lists' gathers), which otherwise mint a fresh block per write
+  /// while the returns pile up unread in the channel: a camera-driven
+  /// re-sort stream with no JS publish anywhere leaked the full buffer
+  /// size per re-sort until the process died (found at gaussian-splats
+  /// stage B scale, ~250 MB/s on a phone).
   pub(super) fn drain_recycled_blocks(&self) {
     let mut leases = self.write_leases.borrow_mut();
     while let Ok((rid, block)) = self.block_recycle_rx.try_recv() {
@@ -84,12 +82,10 @@ impl Context {
   /// closes the lease, error or not. The caller must request a frame on a
   /// non-zero publish (same contract as `write_gpu_buffer`).
   ///
-  /// When the buffer is some entry's ordered instance buffer, the publish is
-  /// where the order materializes: the records are gathered into key order
-  /// through a second pooled block (see `gather_for_publish`), and THAT
-  /// block moves to the raster thread - the one copy the ordering costs.
+  /// When a draw list reads the buffer, the publish lands in its mirror,
+  /// in slot order, and the block goes back to the pool; it moves on to the
+  /// raster thread only when an entry also draws the buffer directly.
   pub fn end_buffer_write(&self, id: u64, len: usize) -> Result<(), String> {
-    // The gather below may take a second pooled block; give it the returns.
     self.drain_recycled_blocks();
     let block = self.write_leases.borrow_mut().end(id)?;
     if len == 0 {
@@ -101,7 +97,14 @@ impl Context {
       self.write_leases.borrow_mut().cancel(id, block);
       return Err(format!("publish of {len} bytes exceeds buffer size {size}"));
     }
-    let block = self.gather_for_publish(id, block, len)?;
+    if let Err(e) = self.check_indexed_publish(id) {
+      self.write_leases.borrow_mut().cancel(id, block);
+      return Err(e);
+    }
+    if self.list_write(id, &block[..len], 0) == Some(false) {
+      self.write_leases.borrow_mut().cancel(id, block);
+      return Ok(());
+    }
     self.send(RasterCmd::WriteBufferLease { id, block, len, recycle: self.block_recycle_tx.clone() });
     self.note_buffer_content(id);
     Ok(())
@@ -114,8 +117,8 @@ impl Context {
   pub fn destroy_gpu_buffer(&self, id: u64) {
     self.buffer_sizes.borrow_mut().remove(&id);
     self.write_leases.borrow_mut().destroy(id);
-    // The ordering entry (if any) keeps its declaration - a later buffer
-    // swap re-keys it - but the retired id stops resolving as ordered.
+    // An ordered entry keeps its declaration - a later buffer swap re-keys
+    // it - but the retired id stops resolving as ordered.
     self.drop_order_buffer(id);
     self.spatial().forget_buffer(id);
     self.send(RasterCmd::DestroyBuffer { id });
@@ -127,12 +130,15 @@ impl Context {
   /// draw-range resolution and the captured draw bound (see
   /// `TargetMirror::bounds`) both read.
 
-  /// Read back part of a vertex buffer's contents by registry id. An
-  /// ordered instance buffer reads back in gathered (key) order, not slot
-  /// order - the GPU-side contents ARE the gathered records.
+  /// Read back part of a vertex buffer's contents by registry id. A buffer
+  /// only draw lists draw reads back from its mirror, in slot order: its
+  /// GPU copy is not kept.
   pub fn read_gpu_buffer(&self, id: u64, byte_offset: usize, len: usize) -> Result<Vec<u8>, String> {
-    if !self.buffer_sizes.borrow().contains_key(&id) {
-      return Err(format!("buffer {id} not found"));
+    let size = *self.buffer_sizes.borrow().get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
+    if byte_offset.checked_add(len).is_some_and(|end| end <= size) {
+      if let Some(bytes) = self.list_read(id, byte_offset, len) {
+        return Ok(bytes);
+      }
     }
     self.rpc(|reply| RasterCmd::ReadBuffer { id, byte_offset, len, reply })?
   }

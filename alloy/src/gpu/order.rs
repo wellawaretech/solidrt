@@ -1,32 +1,24 @@
-//! Instance draw order within one entry (gather-at-publish): the pure half.
-//! A draw entry may declare an instance order - a key read from each instance
-//! record - and the Context permutes the records into key order while they
-//! move through the buffer-write lease, so the GPU consumes key order while
-//! writers keep addressing stable slots. This module owns the key vocabulary,
-//! the setup validation, and the sort/gather; it knows nothing about buffers,
-//! entries, or threads (Context's registry in context/order.rs does), which
-//! keeps it testable in isolation.
+//! Instance order within one entry: the pure half. A draw entry may
+//! declare an instance order - a key read from each instance record - and
+//! view culling by cells. This module owns the key vocabulary, the setup
+//! validation, the sort and the view arithmetic; it knows nothing about
+//! buffers, entries, or threads (Context's registry in context/order.rs
+//! does), which keeps it testable in isolation.
 //!
 //! The sort is an LSD radix over order-preserving u32 quantizations of the
 //! f32 keys - counting passes, no comparisons - because ordered populations
-//! are large (30k sprites, 100k+ splats) and republish per frame, so the
-//! sort must be linear and allocation-free in steady state. It is stable:
-//! equal keys keep slot order, so the untouched case reproduces today's
+//! are large (30k sprites, 100k+ splats) and re-sort per frame, so the sort
+//! must be linear and allocation-free in steady state. It is stable: equal
+//! keys keep slot order, so the untouched case reproduces the
 //! insertion-order draw exactly.
 //!
-//! Two materializations of one permutation: the gathered records (the
-//! instance buffer holds the records themselves in key order) and, for a
-//! population whose records live in a data texture the shader fetches by
-//! id, the INDEX stream - the instance buffer holds the sorted record
-//! indices as u32, K of them per instance record, and a re-sort uploads
-//! 4 bytes per record instead of the record.
-//!
-//! A gathered order may also cut its population into CELLS for view
-//! culling (`Cells`): each record carries a cull box, the gather keeps the
-//! buffer in cell order (a lattice cell key, or bands of a field key), and
-//! the runs of equal cells become a run table whose boxes a view tests, so
-//! the cells a view meets are contiguous instance spans of the one
-//! gathered buffer (`order_cells`, `select_cells`).
+//! Two forms follow who writes the records
+//! (okf/design/draw-order-and-culling.md, D4). A population the app writes
+//! draws per view from a draw list (draw_list.rs): the view's visible slots,
+//! sorted by the key, gathered. A population handed off once draws through
+//! the INDEX stream: the instance buffer holds the sorted record indices as
+//! u32, K of them per instance record, the records live in a data texture
+//! the shader fetches by id, and a re-sort uploads 4 bytes per record.
 
 use crate::spatial::Lattice;
 
@@ -55,11 +47,6 @@ pub enum OrderKey {
   /// along a caller-named direction. Core does arithmetic on caller-named
   /// data; no camera concept enters (the SharedSlot projection stance).
   Projected { offset: usize, direction: [f32; 3] },
-  /// The lattice cell of each record's cull box center, row-major (the
-  /// highest cut axis most significant): the key of a cell-culled
-  /// population without a world-wide order (`Cells`). Reads no record
-  /// field; the boxes come with the population.
-  Cell { lattice: Lattice },
 }
 
 impl OrderKey {
@@ -67,7 +54,6 @@ impl OrderKey {
   pub fn offset(&self) -> usize {
     match *self {
       OrderKey::Field { offset } | OrderKey::Projected { offset, .. } => offset,
-      OrderKey::Cell { .. } => 0,
     }
   }
 
@@ -76,7 +62,6 @@ impl OrderKey {
     match self {
       OrderKey::Field { .. } => 4,
       OrderKey::Projected { .. } => 12,
-      OrderKey::Cell { .. } => 0,
     }
   }
 
@@ -85,7 +70,6 @@ impl OrderKey {
     match *self {
       OrderKey::Field { .. } => OrderKey::Field { offset },
       OrderKey::Projected { direction, .. } => OrderKey::Projected { offset, direction },
-      OrderKey::Cell { lattice } => OrderKey::Cell { lattice },
     }
   }
 }
@@ -160,9 +144,7 @@ pub const RUN_RAMP_SAMPLES: usize = 16;
 /// run is cut where its ramp falls below the selection's contribution
 /// threshold at the run's projected scale (`Selection`). Nothing here
 /// names what the records are: a point cloud, a particle cache or a splat
-/// cloud hands off the same table. A cell-culled population's cells are
-/// the same table built by the core (`order_cells`): boxes and starts, no
-/// ramp (nothing thins a cell), and a screen reach per run.
+/// cloud hands off the same table.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RunTable {
   /// Each run's position box: min xyz, max xyz.
@@ -170,13 +152,8 @@ pub struct RunTable {
   /// Each run's first record; run r spans starts[r]..starts[r + 1], the
   /// last to the record count. Ascending from 0.
   pub starts: Vec<u32>,
-  /// `RUN_RAMP_SAMPLES` importance samples per run, in run order; empty
-  /// for a table nothing thins (a cell table).
+  /// `RUN_RAMP_SAMPLES` importance samples per run, in run order.
   pub ramp: Vec<f32>,
-  /// Each run's screen reach in pixels: how far its records may draw
-  /// beyond its box at any zoom (the largest screen-size floor among
-  /// them, `CellBox`); empty = none.
-  pub px: Vec<f32>,
 }
 
 impl RunTable {
@@ -292,7 +269,7 @@ impl OrderView {
   // The six frustum planes in the model frame, (a, b, c, d) with
   // ax + by + cz + d >= 0 inside, unnormalized (an in/out test needs no
   // norm).
-  fn planes(&self) -> [[f32; 4]; 6] {
+  pub(super) fn planes(&self) -> [[f32; 4]; 6] {
     let r0 = self.row(0);
     let r1 = self.row(1);
     let r2 = self.row(2);
@@ -322,7 +299,7 @@ impl OrderView {
   }
 
   // The smallest and largest clip w over the box's corners.
-  fn w_range(&self, b: &[f32; 6]) -> (f32, f32) {
+  pub(super) fn w_range(&self, b: &[f32; 6]) -> (f32, f32) {
     let r3 = self.row(3);
     let mut w_min = f32::INFINITY;
     let mut w_max = f32::NEG_INFINITY;
@@ -352,7 +329,7 @@ impl OrderView {
   // farthest corner's, so the growth never falls short), tested against
   // the planes. A box reaching to or behind the eye is tested ungrown: its
   // scale is unbounded there, so the screen reach adds nothing.
-  fn reaches(&self, planes: &[[f32; 4]; 6], b: &[f32; 6], px: f32, viewport: [f32; 2]) -> bool {
+  pub(super) fn reaches(&self, planes: &[[f32; 4]; 6], b: &[f32; 6], px: f32, viewport: [f32; 2]) -> bool {
     if !(px > 0.0) {
       return inside(planes, b);
     }
@@ -368,11 +345,18 @@ impl OrderView {
     let g = px / scale;
     inside(planes, &[b[0] - g, b[1] - g, b[2] - g, b[3] + g, b[4] + g, b[5] + g])
   }
+
+  /// Whether a record's cull box, grown by its screen reach at this view's
+  /// pixel scale over `viewport`, reaches into the view: the one
+  /// visibility test of a record (an empty box never does).
+  pub fn reaches_box(&self, cell: &CellBox, viewport: [f32; 2]) -> bool {
+    !cell.is_empty() && self.reaches(&self.planes(), &cell.bounds, cell.px, viewport)
+  }
 }
 
 // Whether a box reaches into the volume of `planes` (the positive vertex
 // of every plane on its inside).
-fn inside(planes: &[[f32; 4]; 6], b: &[f32; 6]) -> bool {
+pub(super) fn inside(planes: &[[f32; 4]; 6], b: &[f32; 6]) -> bool {
   planes.iter().all(|p| {
     let x = if p[0] >= 0.0 { b[3] } else { b[0] };
     let y = if p[1] >= 0.0 { b[4] } else { b[1] };
@@ -381,9 +365,20 @@ fn inside(planes: &[[f32; 4]; 6], b: &[f32; 6]) -> bool {
   })
 }
 
+// Whether a box lies wholly inside the volume of `planes` (the negative
+// vertex of every plane on its inside).
+pub(super) fn contains(planes: &[[f32; 4]; 6], b: &[f32; 6]) -> bool {
+  planes.iter().all(|p| {
+    let x = if p[0] >= 0.0 { b[0] } else { b[3] };
+    let y = if p[1] >= 0.0 { b[1] } else { b[4] };
+    let z = if p[2] >= 0.0 { b[2] } else { b[5] };
+    p[0] * x + p[1] * y + p[2] * z + p[3] >= 0.0
+  })
+}
+
 /// The clip depth below which a run's box counts as at the eye: its
 /// projected scale is unbounded and the run is kept whole.
-const VIEW_W_FLOOR: f32 = 1e-6;
+pub(super) const VIEW_W_FLOOR: f32 = 1e-6;
 
 /// What a packed population is selected by before it sorts
 /// (`order_packed`): the view (None selects every run whole, as a
@@ -660,25 +655,22 @@ impl KeyColumn {
 }
 
 /// One entry's declared instance order: the key source, which buffer's
-/// records hold it, and the direction of the sort. Ascending draws
-/// smallest key first; descending is the back-to-front alpha case when
-/// larger keys are nearer.
+/// records hold it, the direction of the sort, and view culling.
+/// Ascending draws smallest key first; descending is the back-to-front
+/// alpha case when larger keys are nearer. Without a key the records draw
+/// in slot order, culled by their cells.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InstanceOrder {
-  pub key: OrderKey,
+  /// None = slot order: an order of culled cells alone.
+  pub key: Option<OrderKey>,
   pub descending: bool,
   /// The pipeline buffer index whose records hold the key; None = the
-  /// first instance-step buffer. On an entry with several instance-step
-  /// buffers every one gathers under the key buffer's permutation,
-  /// whoever writes it - a core-written pose buffer keyed by world y, or
-  /// an app-written style buffer keyed by an explicit sort field.
+  /// first instance-step buffer (where the cull boxes always are, see
+  /// `Cells`). Every instance-step buffer of the entry draws
+  /// in the one order this buffer's records decide, whoever writes it - a
+  /// core-written pose buffer keyed by world y, or an app-written style
+  /// buffer keyed by an explicit sort field.
   pub key_buffer: Option<usize>,
-  /// The retained-copy strategy, for write-once populations (splat
-  /// clouds): the registry keeps a CPU copy of each slot's published
-  /// records, and a direction update re-sorts and republishes them
-  /// core-side - no publish from the app. Position keys only (a field
-  /// key re-orders when its records republish, so retaining buys nothing).
-  pub retain: bool,
   /// The index materialization: Some(record stride in bytes) when the
   /// key buffer holds sorted record INDICES rather than records. The
   /// records are handed off (`instance_order_records`) with a `KeyColumn`
@@ -692,28 +684,34 @@ pub struct InstanceOrder {
   /// the contribution in pixels below which a run's tail is not drawn.
   /// 0 (the default) thins nothing; the budget alone decides.
   pub lod_threshold: f32,
-  /// View culling per cell (`Cells`): the gather keeps the records in cell
-  /// order and every entry drawing them draws only the cells its view
-  /// meets. None draws the whole population.
+  /// How the population is cut into cells and where its cull boxes come
+  /// from, with the switch that culls by them (`Cells`). None draws the
+  /// whole population.
   pub cells: Option<Cells>,
 }
 
-/// An instance order's options as the API boundary passes them, each one
+/// An entry's order options as the API boundary passes them, each one
 /// unchecked: `InstanceOrder::from_options` decides which combinations
 /// hold and what each value may be.
 #[derive(Debug, Clone, Default)]
 pub struct OrderOptions {
+  /// The `instanceOrder` option: the key.
+  pub key: Option<KeyOptions>,
+  pub cells: Option<CellOptions>,
+}
+
+/// The `instanceOrder` of `OrderOptions`.
+#[derive(Debug, Clone, Default)]
+pub struct KeyOptions {
   pub field: Option<f64>,
   pub position: Option<f64>,
   pub direction: Option<[f32; 3]>,
   pub descending: bool,
   pub buffer: Option<f64>,
-  pub retain: bool,
   /// The handed-off record's byte stride (`indices.stride`).
   pub indices: Option<f64>,
   /// The LOD threshold in pixels (`lod.threshold`).
   pub lod: Option<f64>,
-  pub cells: Option<CellOptions>,
 }
 
 /// The `cells` of `OrderOptions`.
@@ -722,54 +720,51 @@ pub struct CellOptions {
   pub size: Option<CellSize>,
   pub origin: Option<[f64; 3]>,
   pub extent: Option<RecordExtent>,
+  pub cull: Option<bool>,
+  /// Record units every cull box grows by (`Cells::margin`).
+  pub margin: Option<f64>,
 }
 
-/// A `cells` size as passed: one number (a band width along a field key)
-/// or three (a keyless lattice's [x, y, z] cell sizes).
+/// A `cells` size as passed: one number (square cells in x and y) or
+/// three (a lattice's [x, y, z] cell sizes, 0 = unbounded along an axis).
 #[derive(Debug, Clone, Copy)]
 pub enum CellSize {
-  Band(f64),
+  Square(f64),
   Lattice([f64; 3]),
 }
 
 impl InstanceOrder {
-  /// The order the API-boundary options describe. With a key, `parse`'s
-  /// rules, then the LOD threshold (`with_lod`), then `cells` as bands
-  /// along the key (`with_bands`: a band width, no origin). Without a key,
-  /// `cells` is a lattice (`cell_grid`: [x, y, z] cell sizes, an optional
-  /// origin), which takes none of the key's options.
-  pub fn from_options(o: OrderOptions) -> Result<InstanceOrder, String> {
-    let keyless = o.field.is_none() && o.position.is_none();
-    match o.cells {
-      Some(cells) if keyless => {
-        if o.descending || o.retain || o.indices.is_some() || o.direction.is_some() || o.lod.is_some() {
-          return Err(
-            "instanceOrder cells without a key take no descending, retain, indices, direction or lod".to_string(),
-          );
+  /// The order the API-boundary options describe, if any: the key by
+  /// `parse`'s rules and its LOD threshold (`with_lod`), then `cells`
+  /// with their `cull` switch (`with_cells`). Without a key, cells make an
+  /// order of their own (slot order).
+  pub fn from_options(o: OrderOptions) -> Result<Option<InstanceOrder>, String> {
+    let order = match o.key {
+      Some(k) => {
+        let order = InstanceOrder::parse(k.field, k.position, k.direction, k.descending, k.buffer, k.indices)?;
+        match k.lod {
+          Some(threshold) => order.with_lod(threshold)?,
+          None => order,
         }
-        let Some(CellSize::Lattice(cell)) = cells.size else {
-          return Err("instanceOrder cells without a key need a size of [x, y, z] cell sizes".to_string());
-        };
-        let lattice = Lattice { origin: cells.origin.unwrap_or([0.0; 3]), cell };
-        InstanceOrder::cell_grid(lattice, o.buffer, cells.extent)
       }
-      cells => {
-        let mut order =
-          InstanceOrder::parse(o.field, o.position, o.direction, o.descending, o.buffer, o.retain, o.indices)?;
-        if let Some(threshold) = o.lod {
-          order = order.with_lod(threshold)?;
-        }
-        let Some(cells) = cells else {
-          return Ok(order);
-        };
-        if cells.origin.is_some() {
-          return Err("instanceOrder cells over a key take no origin (a lattice's, without a key)".to_string());
-        }
-        let Some(CellSize::Band(band)) = cells.size else {
-          return Err("instanceOrder cells over a key need a size: the band width, one number".to_string());
-        };
-        order.with_bands(band, cells.extent)
+      None if o.cells.is_some() => {
+        InstanceOrder { key: None, descending: false, key_buffer: None, indices: None, lod_threshold: 0.0, cells: None }
       }
+      None => return Ok(None),
+    };
+    let Some(cells) = o.cells else {
+      return Ok(Some(order));
+    };
+    let cell = match cells.size {
+      Some(CellSize::Square(size)) => [size, size, 0.0],
+      Some(CellSize::Lattice(cell)) => cell,
+      None => return Err("cells need a size: one number, or [x, y, z] cell sizes".to_string()),
+    };
+    let lattice = Lattice { origin: cells.origin.unwrap_or([0.0; 3]), cell };
+    let order = order.with_cells(lattice, cells.extent, cells.cull)?;
+    match cells.margin {
+      Some(margin) => order.with_cull_margin(margin).map(Some),
+      None => Ok(Some(order)),
     }
   }
 
@@ -777,8 +772,7 @@ impl InstanceOrder {
   /// into one instance record (exactly one of the two), `direction` is
   /// required with `position` and rejected with `field`, `buffer` names the
   /// pipeline buffer index holding the key (default: the first
-  /// instance-step buffer), `retain` opts into the retained-copy strategy
-  /// (position keys only), `indices` (a byte stride) selects the index
+  /// instance-step buffer), `indices` (a byte stride) selects the index
   /// materialization over handed-off records of that stride. Stored
   /// offsets are bytes.
   pub fn parse(
@@ -787,7 +781,6 @@ impl InstanceOrder {
     direction: Option<[f32; 3]>,
     descending: bool,
     buffer: Option<f64>,
-    retain: bool,
     indices: Option<f64>,
   ) -> Result<InstanceOrder, String> {
     let key_buffer = key_buffer(buffer)?;
@@ -801,9 +794,6 @@ impl InstanceOrder {
       (Some(f), None) => {
         if direction.is_some() {
           return Err("direction applies to a position key; a field key has none".to_string());
-        }
-        if retain {
-          return Err("retain applies to a position key; a field key re-orders when its records republish".to_string());
         }
         OrderKey::Field { offset: float_offset(f, "instanceOrder field")? }
       }
@@ -819,50 +809,50 @@ impl InstanceOrder {
       None => None,
       Some(s) => Some(record_stride(s, "instanceOrder indices.stride")?),
     };
-    let order = InstanceOrder { key, descending, key_buffer, retain, indices, lod_threshold: 0.0, cells: None };
+    let order = InstanceOrder { key: Some(key), descending, key_buffer, indices, lod_threshold: 0.0, cells: None };
     if let Some(stride) = indices {
       order.check_stride(stride)?;
     }
     Ok(order)
   }
 
-  /// A cell order (`OrderKey::Cell`): the records drawn in row-major
-  /// order of the `lattice` cell their cull box centers fall in, and
-  /// culled per cell. `buffer` names the buffer whose records the extent
-  /// reads, as `parse`'s does.
-  pub fn cell_grid(
+  /// This order with its population cut per cell of `lattice` (`Cells`),
+  /// its cull boxes read from `extent` or published beside the records,
+  /// culled when `cull` says so. Any key, or none, combines with cells; an
+  /// indexed order culls by its runs instead.
+  pub fn with_cells(
+    self,
     lattice: Lattice,
-    buffer: Option<f64>,
     extent: Option<RecordExtent>,
+    cull: Option<bool>,
   ) -> Result<InstanceOrder, String> {
-    lattice.validate().map_err(|e| format!("instanceOrder cells: {e}"))?;
-    if CellPacker::new(&lattice).axes.is_empty() {
-      return Err("instanceOrder cells: a cell size must be positive on at least one axis".to_string());
+    if self.indices.is_some() {
+      return Err("cells cut a population the app writes; an indexed order culls by its runs".to_string());
     }
-    Ok(InstanceOrder {
-      key: OrderKey::Cell { lattice },
-      descending: false,
-      key_buffer: key_buffer(buffer)?,
-      retain: false,
-      indices: None,
-      lod_threshold: 0.0,
-      cells: Some(Cells { band: None, extent }),
-    })
+    lattice.validate().map_err(|e| format!("cells: {e}"))?;
+    if lattice.cell.iter().all(|&c| c == 0.0) {
+      return Err("cells: a cell size must be positive on at least one axis".to_string());
+    }
+    Ok(InstanceOrder { cells: Some(Cells { lattice, extent, cull, margin: 0.0 }), ..self })
   }
 
-  /// This field order culled by bands (`Cells::band`): the sorted key cut
-  /// every `band` units, the world-wide order kept exact. A gathered field
-  /// order only.
-  pub fn with_bands(self, band: f64, extent: Option<RecordExtent>) -> Result<InstanceOrder, String> {
-    if !matches!(self.key, OrderKey::Field { .. }) || self.indices.is_some() || self.retain {
-      return Err(
-        "instanceOrder cells take a field key as bands, or no key as a lattice; a position key or an indexed order has no cells".to_string(),
-      );
+  /// This order with its cull boxes grown by `margin` record units on
+  /// every side (`Cells::margin`): a finite, non-negative margin, on an
+  /// order with cells.
+  pub fn with_cull_margin(self, margin: f64) -> Result<InstanceOrder, String> {
+    let Some(cells) = self.cells else {
+      return Err("a cull margin grows the boxes of cells; the order has none".to_string());
+    };
+    if !(margin.is_finite() && margin >= 0.0) {
+      return Err(format!("cells margin must be a finite non-negative number of record units, got {margin}"));
     }
-    if !(band.is_finite() && band > 0.0) {
-      return Err(format!("instanceOrder cells: the band size must be a finite positive number, got {band}"));
-    }
-    Ok(InstanceOrder { cells: Some(Cells { band: Some(band as f32), extent }), ..self })
+    Ok(InstanceOrder { cells: Some(Cells { margin: margin as f32, ..cells }), ..self })
+  }
+
+  /// Whether the order culls by its cells: their switch on. An absent
+  /// switch is off.
+  pub fn culls(&self) -> bool {
+    self.cells.is_some_and(|c| c.cull == Some(true))
   }
 
   /// This order with its LOD threshold (`lod_threshold`) set: a finite,
@@ -894,10 +884,9 @@ impl InstanceOrder {
   /// column's under the index materialization (the mirror holds nothing
   /// else), the instance buffer's otherwise.
   pub fn mirror_stride(&self, instance_stride: usize) -> usize {
-    if self.indices.is_some() {
-      self.key.bytes()
-    } else {
-      instance_stride
+    match (self.indices, self.key) {
+      (Some(_), Some(key)) => key.bytes(),
+      _ => instance_stride,
     }
   }
 
@@ -908,13 +897,16 @@ impl InstanceOrder {
     if self.indices.is_none() {
       return *self;
     }
-    InstanceOrder { key: self.key.at(0), ..*self }
+    InstanceOrder { key: self.key.map(|key| key.at(0)), ..*self }
   }
 
   /// The key column an index-materialized order expects its records handed
-  /// off as; None for the gathered forms.
+  /// off as; None for a draw list.
   pub fn key_column(&self) -> Option<KeyColumn> {
-    self.indices.map(|stride| KeyColumn { stride, offset: self.key.offset(), len: self.key.bytes(), packed: None })
+    match (self.indices, self.key) {
+      (Some(stride), Some(key)) => Some(KeyColumn { stride, offset: key.offset(), len: key.bytes(), packed: None }),
+      _ => None,
+    }
   }
 
   /// The key bytes must sit inside one record of `stride` bytes: a field key
@@ -923,32 +915,33 @@ impl InstanceOrder {
     if let Some(extent) = self.cells.and_then(|c| c.extent) {
       extent.check_stride(stride)?;
     }
-    let name = match self.key {
+    let Some(key) = self.key else {
+      return Ok(());
+    };
+    let name = match key {
       OrderKey::Field { .. } => "field",
       OrderKey::Projected { .. } => "position",
-      OrderKey::Cell { .. } => return Ok(()),
     };
-    if self.key.offset() + self.key.bytes() > stride {
+    if key.offset() + key.bytes() > stride {
       return Err(format!(
         "instanceOrder {name} offset {} does not fit the {stride}-byte instance record",
-        self.key.offset() / 4
+        key.offset() / 4
       ));
     }
     Ok(())
   }
 
-  /// Replace the projected key's direction (the per-camera-move update).
-  /// On a gather entry it takes effect at the next publish (gather retains
-  /// nothing to re-sort in place); on a retained entry the registry
-  /// re-materializes from its copy right after (`rematerialize_retained_order`).
+  /// Replace the projected key's direction (the per-camera-move update):
+  /// a draw list re-sorts at its next rebuild, an index entry re-sorts from
+  /// its key column right after (`rematerialize_retained_order`).
   pub fn set_direction(&mut self, direction: [f32; 3]) -> Result<(), String> {
-    let OrderKey::Projected { offset, .. } = self.key else {
+    let Some(OrderKey::Projected { offset, .. }) = self.key else {
       return Err(
         "the entry's instance order has no position key; orderDirection applies to position keys".to_string(),
       );
     };
     check_direction(direction)?;
-    self.key = OrderKey::Projected { offset, direction };
+    self.key = Some(OrderKey::Projected { offset, direction });
     Ok(())
   }
 }
@@ -1010,11 +1003,25 @@ impl CellBox {
     let b = self.bounds;
     !(b[0] <= b[3] && b[1] <= b[4] && b[2] <= b[5])
   }
+
+  /// The box grown by `margin` on every side of every axis; an empty box
+  /// stays empty.
+  pub fn grown(self, margin: f32) -> CellBox {
+    if margin == 0.0 || self.is_empty() {
+      return self;
+    }
+    let mut bounds = self.bounds;
+    for a in 0..3 {
+      bounds[a] -= margin;
+      bounds[a + 3] += margin;
+    }
+    CellBox { bounds, px: self.px }
+  }
 }
 
 /// Where a cell-culled population's record boxes come from when its
-/// records are the app's (a record layer): fields of the key buffer's
-/// records by role, as byte offsets. A record is a rectangle in the xy
+/// records are the app's (a record layer): fields of the first
+/// instance-step buffer's records by role, as byte offsets. A record is a rectangle in the xy
 /// plane of the record frame: its center (`position`, a vec2), its full
 /// size (`size`, a vec2; a zero axis draws nothing), its rotation about
 /// z in radians (`rotation`, none = axis-aligned) and its screen-size
@@ -1057,7 +1064,7 @@ impl RecordExtent {
       if let Some(at) = at {
         if at + len > stride {
           return Err(format!(
-            "instanceOrder cells extent {name} at float {} does not fit the {stride}-byte instance record",
+            "cells extent {name} at float {} does not fit the {stride}-byte instance record",
             at / 4
           ));
         }
@@ -1110,53 +1117,22 @@ pub fn screen_floor_reach(w: f32, h: f32, floor: f32) -> f32 {
   floor * (1.0 + (w.max(h) / smallest).powi(2)).sqrt() * 0.5
 }
 
-/// A gathered order's view culling per cell. Each record has a cull box
-/// (`CellBox`), from the record's own fields (`extent`) or from the
-/// publish (a spatial record sink stages each slot's box beside its pose,
-/// `None` here). The gather sorts records that draw nothing past every
-/// cell, and the drawn records form runs of equal cells: under a cell key
-/// (`OrderKey::Cell`) a run is one lattice cell, under a field key a band
-/// `band` units of the sorted key wide (the world-wide order stays exact,
-/// the culling is along that key alone). A run's box is the union of its
-/// records' boxes, its px their largest screen reach, and every entry
-/// drawing the population draws the spans of the runs its view meets
-/// (`select_cells`).
+/// An order's cells, the facts view culling works from: each record has a
+/// cull box (`CellBox`), read from the first instance-step buffer, from
+/// its records' own fields (`extent`) or from its publish (a spatial
+/// record sink stages each slot's box beside its pose, `None` here),
+/// whatever buffer holds the key, and sits in the `lattice` cell of its box center.
+/// With `cull` on, every view of the population draws only the records
+/// whose boxes it meets (draw_list.rs), in the order it would draw them
+/// unculled. `margin` grows every box by that many record units on every
+/// side: what a vertex stage may draw beyond the record's box (Godot's
+/// `extra_cull_margin`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cells {
-  pub band: Option<f32>,
+  pub lattice: Lattice,
   pub extent: Option<RecordExtent>,
-}
-
-// Bits per cut axis of a cell key: the 32 bits shared by the cut axes,
-// most significant first.
-const CELL_KEY_BITS: [[u32; 3]; 3] = [[32, 0, 0], [16, 16, 0], [11, 11, 10]];
-
-// The cut axes of a lattice and the bits each takes in a cell key, the
-// highest axis most significant (rows of y before columns of x).
-struct CellPacker {
-  lattice: Lattice,
-  axes: Vec<(usize, u32)>,
-}
-
-impl CellPacker {
-  fn new(lattice: &Lattice) -> CellPacker {
-    let cut: Vec<usize> = (0..3).rev().filter(|&a| lattice.cell[a] > 0.0).collect();
-    let bits = if cut.is_empty() { [0; 3] } else { CELL_KEY_BITS[cut.len() - 1] };
-    CellPacker { lattice: *lattice, axes: cut.into_iter().zip(bits).collect() }
-  }
-
-  // The key of the cell holding `p`: each cut axis's index biased to the
-  // middle of its bits and clamped into them, concatenated; never u32::MAX
-  // (the key of a record that draws nothing).
-  fn key(&self, p: [f64; 3]) -> u32 {
-    let mut key = 0u64;
-    for &(axis, bits) in &self.axes {
-      let half = 1i64 << (bits - 1);
-      let index = (self.lattice.index(p[axis], axis) + half).clamp(0, (1i64 << bits) - 1);
-      key = (key << bits) | index as u64;
-    }
-    (key as u32).min(u32::MAX - 1)
-  }
+  pub cull: Option<bool>,
+  pub margin: f32,
 }
 
 fn float_offset(value: f64, name: &str) -> Result<usize, String> {
@@ -1175,7 +1151,8 @@ fn record_stride(value: f64, name: &str) -> Result<usize, String> {
   Ok(value as usize)
 }
 
-fn check_direction(direction: [f32; 3]) -> Result<(), String> {
+/// A direction a position key projects onto: finite and not zero.
+pub(crate) fn check_direction(direction: [f32; 3]) -> Result<(), String> {
   if direction.iter().any(|c| !c.is_finite()) {
     return Err("direction components must be finite".to_string());
   }
@@ -1192,8 +1169,6 @@ fn check_direction(direction: [f32; 3]) -> Result<(), String> {
 pub struct OrderScratch {
   // Quantized key per slot (indexed by slot; never reordered).
   keys: Vec<u32>,
-  // A field-keyed cell population's band per slot (`order_cells`).
-  bands: Vec<i64>,
   // A packed population's selection (`select_runs`): the kept (first
   // record, records) per visible run, and each run's pixel scale squared
   // under the view (None = culled) while it is decided.
@@ -1213,8 +1188,7 @@ pub struct OrderScratch {
 
 impl OrderScratch {
   /// The permutation `order_permutation` left behind (perm[i] = the slot
-  /// drawn i-th) - what a multi-buffer entry retains and applies to sibling
-  /// publishes.
+  /// drawn i-th) - what an index entry materializes.
   pub fn perm(&self) -> &[u32] {
     &self.perm
   }
@@ -1230,6 +1204,19 @@ impl OrderScratch {
   #[allow(dead_code)]
   pub fn runs(&self) -> &[(u32, u32)] {
     &self.runs
+  }
+
+  /// Sort `slots` in place by `key(slot)`, stable: equal keys keep the
+  /// order they came in (a draw list's slot order).
+  pub(super) fn sort_slots(&mut self, slots: &mut [u32], key: impl Fn(u32) -> u32) {
+    self.ids.clear();
+    self.ids.extend_from_slice(slots);
+    self.keys.clear();
+    self.keys.extend(slots.iter().map(|&slot| key(slot)));
+    radix_sort(self);
+    for (out, &i) in slots.iter_mut().zip(self.perm.iter()) {
+      *out = self.ids[i as usize];
+    }
   }
 }
 
@@ -1253,7 +1240,7 @@ fn read_u32(bytes: &[u8], at: usize) -> u32 {
 // of non-negatives, so unsigned order equals numeric order (-inf lowest,
 // +inf highest, the standard radix float transform). NaN in the usual
 // positive quiet pattern maps above +inf and sorts last ascending.
-fn quantize(f: f32) -> u32 {
+pub(super) fn quantize(f: f32) -> u32 {
   let b = f.to_bits();
   if b >> 31 == 1 {
     !b
@@ -1262,21 +1249,10 @@ fn quantize(f: f32) -> u32 {
   }
 }
 
-/// Gather `src`'s records into `dst` in key order. `src.len()` must be a
-/// whole number of `stride`-byte records and `dst` at least as long - both
-/// the caller's checks (the Context registry validates the publish length
-/// against the entry's stride before calling). Stable: equal keys keep slot
-/// order.
-pub fn gather_ordered(order: &InstanceOrder, stride: usize, src: &[u8], dst: &mut [u8], scratch: &mut OrderScratch) {
-  order_permutation(order, stride, src, scratch);
-  gather_permuted(&scratch.perm, stride, src, dst);
-}
-
-/// Sort `src`'s records by key and leave the permutation in `scratch.perm`
-/// (perm[i] = the slot drawn i-th) - the compute half of `gather_ordered`,
-/// exposed so a multi-buffer entry can gather several buffers under ONE
-/// permutation (computed from the key buffer, applied to its siblings).
-/// Same contracts and stability as `gather_ordered`.
+/// Sort `src`'s records (a whole number of `stride`-byte records) by key
+/// and leave the permutation in `scratch.perm` (perm[i] = the slot drawn
+/// i-th). Stable: equal keys keep slot order; without a key the
+/// permutation is slot order.
 pub fn order_permutation(order: &InstanceOrder, stride: usize, src: &[u8], scratch: &mut OrderScratch) {
   debug_assert!(stride > 0 && src.len() % stride == 0, "publish length not a whole number of records");
   let count = src.len() / stride;
@@ -1284,140 +1260,27 @@ pub fn order_permutation(order: &InstanceOrder, stride: usize, src: &[u8], scrat
   keys.clear();
   keys.reserve(count);
   for slot in 0..count {
-    let at = slot * stride;
-    let f = match order.key {
-      OrderKey::Field { offset } => read_f32(src, at + offset),
-      OrderKey::Projected { offset, direction } => {
-        read_f32(src, at + offset) * direction[0]
-          + read_f32(src, at + offset + 4) * direction[1]
-          + read_f32(src, at + offset + 8) * direction[2]
-      }
-      // A cell key orders through `order_cells` (it reads the boxes, not
-      // the records); here it keeps slot order.
-      OrderKey::Cell { .. } => 0.0,
-    };
-    let k = quantize(f);
-    keys.push(if order.descending { !k } else { k });
+    keys.push(order.key.map_or(0, |key| record_key(&key, order.descending, src, slot * stride)));
   }
   radix_sort(scratch);
 }
 
-/// Order a cell-culled population (`InstanceOrder::cells`): key every
-/// record of `src` by its cell (`OrderKey::Cell`, from its cull box
-/// center) or its field, the records whose box in `boxes` is empty (or
-/// past its end) past every key, sort, and build the runs of the drawn
-/// prefix into `table` - starts where the sorted cell (or band) changes,
-/// each run's box the union of its records' boxes and its px their
-/// largest. Leaves the permutation in `scratch.perm` like
-/// `order_permutation`; returns the records drawn (the runs' extent).
-pub fn order_cells(
-  order: &InstanceOrder,
-  stride: usize,
-  src: &[u8],
-  boxes: &[f32],
-  scratch: &mut OrderScratch,
-  table: &mut RunTable,
-) -> usize {
-  debug_assert!(stride > 0 && src.len() % stride == 0, "publish length not a whole number of records");
-  let count = src.len() / stride;
-  let band = order.cells.and_then(|c| c.band);
-  let packer = match order.key {
-    OrderKey::Cell { lattice } => Some(CellPacker::new(&lattice)),
-    _ => None,
+/// The radix key of the record at byte `at` of `src` under `key`: the
+/// quantized field or projected position, flipped when `descending`.
+pub(super) fn record_key(key: &OrderKey, descending: bool, src: &[u8], at: usize) -> u32 {
+  let f = match *key {
+    OrderKey::Field { offset } => read_f32(src, at + offset),
+    OrderKey::Projected { offset, direction } => {
+      read_f32(src, at + offset) * direction[0]
+        + read_f32(src, at + offset + 4) * direction[1]
+        + read_f32(src, at + offset + 8) * direction[2]
+    }
   };
-  let OrderScratch { keys, bands, .. } = scratch;
-  keys.clear();
-  keys.reserve(count);
-  bands.clear();
-  let mut drawn = 0usize;
-  for slot in 0..count {
-    let cell = CellBox::read(boxes, slot);
-    if cell.is_empty() {
-      keys.push(u32::MAX);
-      bands.push(0);
-      continue;
-    }
-    drawn += 1;
-    let b = cell.bounds;
-    match (&packer, order.key) {
-      (Some(packer), _) => {
-        let center = [(b[0] + b[3]) as f64 * 0.5, (b[1] + b[4]) as f64 * 0.5, (b[2] + b[5]) as f64 * 0.5];
-        keys.push(packer.key(center));
-        bands.push(0);
-      }
-      (None, OrderKey::Field { offset }) => {
-        let f = read_f32(src, slot * stride + offset);
-        let k = quantize(f);
-        keys.push((if order.descending { !k } else { k }).min(u32::MAX - 1));
-        bands.push(band.map_or(0, |w| (f / w).floor() as i64));
-      }
-      (None, _) => {
-        debug_assert!(false, "cells take a cell or a field key");
-        keys.push(0);
-        bands.push(0);
-      }
-    }
-  }
-  radix_sort(scratch);
-  let OrderScratch { keys, bands, perm, .. } = scratch;
-  table.bounds.clear();
-  table.starts.clear();
-  table.ramp.clear();
-  table.px.clear();
-  let mut last: Option<(u32, i64)> = None;
-  for (i, &slot) in perm[..drawn].iter().enumerate() {
-    let slot = slot as usize;
-    let cell = CellBox::read(boxes, slot);
-    let run = if packer.is_some() { (keys[slot], 0) } else { (0, bands[slot]) };
-    if last != Some(run) {
-      last = Some(run);
-      table.starts.push(i as u32);
-      table.bounds.push(cell.bounds);
-      table.px.push(cell.px);
-      continue;
-    }
-    let b = table.bounds.last_mut().expect("a run was opened");
-    for a in 0..3 {
-      b[a] = b[a].min(cell.bounds[a]);
-      b[a + 3] = b[a + 3].max(cell.bounds[a + 3]);
-    }
-    let px = table.px.last_mut().expect("a run was opened");
-    *px = px.max(cell.px);
-  }
-  drawn
-}
-
-/// The instance spans an entry draws of a cell-culled population of
-/// `drawn` records under `view`, into `spans` as (first instance, count)
-/// in buffer order: every run whose box, grown by its screen reach at the
-/// view's pixel scale over `viewport` (the pixels the reach is measured
-/// in), reaches into the view, adjacent runs merged into one span. Without
-/// a view the whole drawn prefix is one span.
-pub fn select_cells(
-  table: &RunTable,
-  drawn: usize,
-  view: Option<&OrderView>,
-  viewport: [f32; 2],
-  spans: &mut Vec<(u32, u32)>,
-) {
-  spans.clear();
-  let Some(view) = view else {
-    if drawn > 0 {
-      spans.push((0, drawn as u32));
-    }
-    return;
-  };
-  let planes = view.planes();
-  for (r, b) in table.bounds.iter().enumerate() {
-    let px = table.px.get(r).copied().unwrap_or(0.0);
-    if !view.reaches(&planes, b, px, viewport) {
-      continue;
-    }
-    let (start, len) = table.span(r, drawn);
-    match spans.last_mut() {
-      Some(last) if last.0 + last.1 == start as u32 => last.1 += len as u32,
-      _ => spans.push((start as u32, len as u32)),
-    }
+  let k = quantize(f);
+  if descending {
+    !k
+  } else {
+    k
   }
 }
 
@@ -1443,7 +1306,7 @@ pub fn order_packed(
   debug_assert!(words.len() % word_bytes == 0, "packed mirror not whole records");
   let count = words.len() / word_bytes;
   let selected = select_runs(table, count, sel, scratch);
-  let OrderKey::Projected { direction, .. } = order.key else {
+  let Some(OrderKey::Projected { direction, .. }) = order.key else {
     debug_assert!(false, "a packed key is a position key");
     return 0;
   };
@@ -1542,29 +1405,4 @@ pub fn materialize_indices_through(perm: &[u32], ids: &[u32], dst: &mut [u8]) {
     chunk.copy_from_slice(&id.to_ne_bytes());
   }
   debug_assert!(perm.len() <= slots, "permutation longer than the index buffer");
-}
-
-/// Gather `src`'s records into `dst` following `perm` (perm[i] = the slot
-/// drawn i-th). `dst` must hold at least `src.len()` bytes. The record
-/// counts may disagree - a sibling buffer can publish more or fewer records
-/// than the key buffer the permutation was computed from: perm entries past
-/// `src`'s record count are skipped, records past the permutation's length
-/// append in slot order. Every source record lands exactly once either way.
-pub fn gather_permuted(perm: &[u32], stride: usize, src: &[u8], dst: &mut [u8]) {
-  debug_assert!(stride > 0 && src.len() % stride == 0, "publish length not a whole number of records");
-  debug_assert!(dst.len() >= src.len(), "gather destination smaller than the publish");
-  let count = src.len() / stride;
-  let mut out = 0usize;
-  let mut place = |slot: usize| {
-    dst[out * stride..(out + 1) * stride].copy_from_slice(&src[slot * stride..(slot + 1) * stride]);
-    out += 1;
-  };
-  for &slot in perm {
-    if (slot as usize) < count {
-      place(slot as usize);
-    }
-  }
-  for slot in perm.len()..count {
-    place(slot);
-  }
 }

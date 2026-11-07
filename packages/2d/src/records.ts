@@ -3,14 +3,13 @@
 // populations). Sprites are 20 JS-owned floats in one canonical
 // Float32Array ordered by draw order (insertion order - painter's
 // algorithm, later over earlier; `orderBy` swaps that for a core-produced
-// key order at publish, records untouched); mutations batch, and the flush
+// key order per view, records untouched); mutations batch, and the flush
 // (ahead of the frame's paint, or at a microtask outside a frame)
 // publishes what changed through the core's record stream
 // (`createRecordStream` in @solidrt/core/gpu, the publish model every
 // JS-stepped population shares): the dirty record range as one buffer
-// write, or under `orderBy` the drawn prefix whole through the zero-copy
-// write lease (the core gathers it into key order during the copy, and a
-// byte range has no stable position under a permutation). A moved sprite
+// write, under `orderBy` and `cull` too (the core keeps the records in
+// slot order and builds each view's draw list from them). A moved sprite
 // is 20 float stores plus its share of one memcpy per dirty frame; a
 // static layer publishes nothing and therefore costs nothing.
 //
@@ -35,10 +34,11 @@
 //
 // Layer space, camera, pointer dispatch and the sprite functions
 // (addSprite/setSprite/...) are shared with the node layer; picking here is
-// the JS reverse walk (pointInSprite), since records have no nodes.
+// the JS reverse walk (pointInSprite), since records have no nodes, in
+// draw order under `orderBy` (the key, ties on record order).
 import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core"
 import { checkScreenSize, createRecordStream, destroyBuffer, screenSizeScale } from "@solidrt/core/gpu"
-import type { BufferId, InstanceOrder } from "@solidrt/core/gpu"
+import type { BufferId } from "@solidrt/core/gpu"
 import type { AttributeAccess, ShaderParams } from "@solidrt/core/gpu"
 import { checkAtlases, frameIndex, hasMeshAtlas, hasNearestAtlas } from "./atlas.ts"
 import type { Atlas } from "./atlas.ts"
@@ -46,12 +46,13 @@ import { fullFrame, isFrame, writeFrame, writeMesh } from "./frames.ts"
 import type { Frame } from "./frames.ts"
 import { atlasBindings, MESH_ATTRIBUTES, RECORD_ATTRIBUTES } from "./glsl.ts"
 import { MESH_FLOATS } from "./sprite-mesh.ts"
-import { checkCells, checkParams, checkTint, readFrame } from "./layer.ts"
+import { checkParams, checkTint, cullCellSize, readFrame } from "./layer.ts"
 import type { LayerBase, Sprite, SpriteLayer, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
 import { materialSamplers, unlit } from "./material.ts"
 import { pointInSprite } from "./pick.ts"
 import { blankStyle, createStyleStreams, growStyle, shiftStyle, writeStyle } from "./style.ts"
 import { createViews } from "./views.ts"
+import type { ViewOrder } from "./views.ts"
 
 // Floats per instance record:
 // [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA,
@@ -77,22 +78,31 @@ const ATLAS_FIELD_OFFSET = 15
 const OUTLINE_FIELD_OFFSET = 16
 const RESOLVED = Promise.resolve()
 
-export type RecordLayerOptions = Omit<SpriteLayerOptions, "orderBy"> & {
+export type RecordLayerOptions = Omit<SpriteLayerOptions, "orderBy" | "cull"> & {
   /**
-   * Draw records in KEY order instead of record order, produced by core at
-   * each publish (the gpu `instanceOrder` primitive - the flush's lease
-   * copy arrives gathered, no per-record JS anywhere): `"y"` keys on the
+   * Draw records in KEY order instead of record order, produced by core
+   * per view (the gpu `instanceOrder` primitive, no per-record JS
+   * anywhere): `"y"` keys on the
    * record's cy, so a perspective crowd paints back to front (smaller y =
    * further up the screen = drawn first); or an explicit `{ field,
    * descending? }` float offset into the record for a custom sort key.
    * Record slots stay stable - record i keeps meaning sprite i, and
    * destroy still shifts - only the draw order changes. Ties keep
-   * record order, so an unset key draws exactly as before. Known
-   * limitation: pick() resolves overlapping sprites by record order, not
-   * visual order, when a key is set. With `cells` (SpriteLayerOptions)
-   * only `"y"` is allowed; a `{ field }` order throws.
+   * record order, so an unset key draws exactly as before. pick()
+   * follows the same order: the topmost hit is the record drawn on top.
+   * Combines with culling (`cull`).
    */
   orderBy?: "y" | { field: number; descending?: boolean }
+  /**
+   * View culling (SpriteLayerOptions.cull), OFF by default here, unlike
+   * the sprite layer: a record layer's use is a JS loop rewriting every
+   * record each frame, where culling saves nothing while every record is
+   * in view and costs its per-record work (about 6 ms a frame at 30,000
+   * records on an Adreno 610 tablet). `cull: true` (or `{ cellSize }`)
+   * for a large layer the camera moves over while its records mostly
+   * rest: a board, a map.
+   */
+  cull?: boolean | { cellSize: number }
 }
 
 export type RecordLayer = LayerBase & {
@@ -213,9 +223,8 @@ export function instanceAttribute(layer: RecordLayer | SpriteLayer, name: string
  * Write the mirror first, through records(), then call this. The range
  * is against the mirror's capacity, not the live sprites: a record past
  * the last live sprite (on a node layer, past the highest slot in use)
- * is accepted and never drawn. Under `orderBy` any range republishes the
- * drawn prefix whole - the core gathers it into key order, and a byte
- * range has no stable position under a permutation. @solidrt/3d's
+ * is accepted and never drawn. Under `orderBy` and `cull` the range is
+ * still the cost: the core orders and culls per view. @solidrt/3d's
  * updateRecords(mesh).
  */
 export function updateRecords(layer: RecordLayer | SpriteLayer, options: UpdateRecordsOptions = {}): void {
@@ -268,7 +277,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
   if (!(capacity > 0 && Number.isInteger(capacity))) {
     throw new Error(`createRecordLayer: capacity must be a positive integer, got ${capacity}`)
   }
-  checkCells("createRecordLayer", opts?.cells, opts?.orderBy)
+  let cellSize = cullCellSize("createRecordLayer", opts?.cull, false)
   let label = opts?.label ?? "sprites"
   // A hull layer appends the frame's mesh field to every record.
   let hull = hasMeshAtlas(atlases)
@@ -287,17 +296,14 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
   // same publish, the same growth, the same shift on destroy.
   let styles = createStyleStreams(material, capacity, label)
   let orderBy = opts?.orderBy
-  let cells = opts?.cells
-  // A cells layer's boxes come from the records themselves: center, size,
-  // rotation and screen-size floor by field.
+  // A culled layer's boxes come from the records themselves: center,
+  // size, rotation and screen-size floor by field.
   let extent = { position: 0, size: SIZE_FIELD_OFFSET, rotation: ROT_FIELD_OFFSET, minScreenPx: MIN_PX_FIELD_OFFSET }
-  let instanceOrder: InstanceOrder | undefined =
-    orderBy === undefined
-      ? cells && { cells: { size: [cells.size, cells.size, 0], extent } }
-      : orderBy === "y"
-        ? { field: Y_FIELD_OFFSET, cells: cells && { size: cells.size, extent } }
-        : { field: orderBy.field, descending: orderBy.descending }
-  let ordered = instanceOrder !== undefined
+  let culled = cellSize !== undefined ? { cells: { size: cellSize, extent, margin: material.cullMargin, cull: true } } : undefined
+  let keyField = orderBy === undefined ? undefined : orderBy === "y" ? Y_FIELD_OFFSET : orderBy.field
+  let descending = typeof orderBy === "object" && orderBy.descending === true
+  let order: ViewOrder | undefined =
+    keyField === undefined ? culled : { instanceOrder: { field: keyField, descending: descending || undefined }, ...culled }
   let gpu = material.pipeline(atlases, [hull ? [...RECORD_ATTRIBUTES, ...MESH_ATTRIBUTES] : RECORD_ATTRIBUTES], label, hull)
   // The instance buffers in pipeline order after the corners.
   let buffers = () => [stream.buffer, ...styles.map(s => s.stream.buffer)]
@@ -336,40 +342,21 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     let count = drawn()
     if (grownFrom.length > 0) {
       // The replacements are filled whole before the swap (the entry must
-      // never point at an unwritten buffer): the live prefix, or under
-      // orderBy the drawn one, which is all the gather may see.
-      stream.publish(true, ordered ? count : live)
-      for (let s of styles) s.stream.publish(true, ordered ? count : live)
+      // never point at an unwritten buffer): the live prefix.
+      stream.publish(true, live)
+      for (let s of styles) s.stream.publish(true, live)
       views.setBuffers(buffers())
       views.setCount(count)
-      if (ordered) {
-        // That publish landed BEFORE the swap, so the order had not yet
-        // followed to the grown buffers and it went out ungathered. One
-        // more publish, now under the swapped-in order, restores key
-        // order - growth frames only.
-        stream.publish(true, count)
-        for (let s of styles) s.stream.publish(true, count)
-      }
       for (let old of grownFrom) destroyBuffer(old)
       grownFrom.length = 0
       published = count
       return
     }
-    if (ordered) {
-      // The gathered set IS the drawn prefix: a dirty record or a moved
-      // dial republishes it whole, every stream alike (the core gathers
-      // them under one permutation).
-      if (stream.dirty || count !== published) {
-        stream.publish(true, count)
-        for (let s of styles) s.stream.publish(true, count)
-      }
-    } else {
-      // The dirty range, clipped to the live sprites (a record past them
-      // is never drawn): one partial write at its byte offset, per
-      // dirty stream.
-      stream.publish(false, live)
-      for (let s of styles) s.stream.publish(false, live)
-    }
+    // The dirty range, clipped to the live sprites (a record past them
+    // is never drawn): one partial write at its byte offset, per dirty
+    // stream.
+    stream.publish(false, live)
+    for (let s of styles) s.stream.publish(false, live)
     if (count !== published) {
       views.setCount(count)
       published = count
@@ -435,7 +422,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
   let views = createViews({
     label,
     root: null,
-    cells: cells !== undefined,
+    culls: cellSize !== undefined,
     pipeline: gpu.pipeline,
     corners: gpu.corners,
     vertexCount: gpu.vertexCount,
@@ -445,7 +432,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     tint: () => tint,
     params: () => params,
     pick: (x, y, zoom) => layer.pick(x, y, zoom),
-    order: instanceOrder,
+    order,
     nearest: hasNearestAtlas(atlases),
   })
 
@@ -472,12 +459,13 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       return views.create(vopts)
     },
     pick(x, y, zoom = 1) {
-      // Topmost first: reverse draw order over the DRAWN prefix (a sprite
-      // past the dial is undrawn and unpicked), exact rotated-rect
+      // Topmost first: reverse record order over the DRAWN prefix (a
+      // sprite past the dial is undrawn and unpicked), exact rotated-rect
       // containment of the drawn rect (the record's size under its clamp
-      // at this zoom).
+      // at this zoom); under orderBy the hits then sort by the key, the
+      // draw order, ties staying in reverse record order.
       if (!(zoom > 0)) throw new Error(`pick: zoom must be positive, got ${zoom}`)
-      let out: Sprite[] = []
+      let hits: number[] = []
       let r = layer._records
       for (let i = drawn() - 1; i >= 0; i--) {
         let at = i * stride
@@ -485,10 +473,15 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
         let h = r[at + 3]!
         let scale = screenSizeScale(w, h, zoom, r[at + MIN_PX_FIELD_OFFSET]!, r[at + MAX_PX_FIELD_OFFSET]!)
         if (pointInSprite(x, y, r[at]!, r[at + 1]!, w * scale, h * scale, r[at + 8]!)) {
-          out.push(layer._order[i]!)
+          hits.push(i)
         }
       }
-      return out
+      // A stable sort keeps the reverse record order among equal keys.
+      if (keyField !== undefined) {
+        let sign = descending ? -1 : 1
+        hits.sort((a, b) => sign * (r[b * stride + keyField]! - r[a * stride + keyField]!))
+      }
+      return hits.map(i => layer._order[i]!)
     },
     dispose() {
       if (disposed) return

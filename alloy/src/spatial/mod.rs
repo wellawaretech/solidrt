@@ -144,22 +144,27 @@ pub struct DrawSink {
   /// Where the entry sorts on a target ordering its entries
   /// (`set_draw_sort`); ignored elsewhere.
   pub order: DrawOrder,
-  /// Feed the entry's instance order its view from the target's: the
-  /// node's model-to-clip matrix (`write_order_view`), written when the
+  /// Feed the entry its view from the target's: the node's model-to-clip
+  /// matrix (`write_view`), under the gates `ViewFeed` names. None feeds
+  /// nothing. The consumer never computes a direction itself.
+  pub view_feed: Option<ViewFeed>,
+}
+
+/// What a draw sink's view feed serves (`DrawSink::view_feed`), which
+/// picks when the matrix is written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewFeed {
+  /// A depth order (a position-keyed instance order; a packed population
+  /// also culls and thins its runs under the matrix): written when the
   /// view direction turned past `ORDER_DIRECTION_EPS_COS` (the re-sort
   /// gate), the eye moved past `ORDER_VIEW_MOVE_FRACTION` of its distance
   /// to the node's box, or the projection changed (the re-selection
-  /// gates). For an entry whose instance records are depth-ordered (a
-  /// projected-key `instanceOrder`); a packed population also culls and
-  /// thins its runs under the matrix. The consumer never computes a
-  /// direction itself.
-  pub order_feed: bool,
-  /// With `order_feed`: the entry draws a cell-culled population (an
-  /// instance order with cells, or an entry over its buffers), so the
-  /// feed writes the matrix on every change of it instead of under the
-  /// three gates. A cell selection is a box test per cell with no record
-  /// moved, and the gates' eye distance means nothing under a 2d pan.
-  pub cell_feed: bool,
+  /// gates).
+  Order,
+  /// View culling (an instance order with cells and cull on): written on
+  /// every change of the matrix, since the entry's draw list follows the
+  /// view and the gates' eye distance means nothing under a 2d pan.
+  Cull,
 }
 
 /// The queue a draw entry sorts in on a sorted target, drawn in this
@@ -201,14 +206,14 @@ struct BoundSink {
   /// The `uLodFade` value last written (the solid `[1, 1]` until a band
   /// is entered; entries are created solid).
   fade: [f64; 2],
-  /// What the order feed last wrote (`DrawSink::order_feed`): the unit
+  /// What an order feed last wrote (`ViewFeed::Order`): the unit
   /// direction (zeros before the first write, so the first pass always
   /// feeds), the eye and the projection's focal factor and kind.
   fed: [f64; 3],
   fed_eye: [f64; 3],
   fed_focal: f64,
   fed_ortho: bool,
-  /// The matrix a cell feed last wrote (`DrawSink::cell_feed`).
+  /// The matrix a cull feed last wrote (`ViewFeed::Cull`).
   fed_clip: [f32; 16],
   /// Why the entry is off, or that it is on, as of the last cull pass
   /// that decided it (`cull_state`).
@@ -318,13 +323,13 @@ pub trait SinkWriter {
   /// composes the target's full permutation around these. False means
   /// the order did not land; nothing is released over it.
   fn write_order(&mut self, target: u64, order: &[u64]) -> bool;
-  /// A depth-ordered entry's fresh view (`DrawSink::order_feed`): the
-  /// node's model-to-clip matrix, column-major, the target's
-  /// view-projection over the node's world transform relative to the
-  /// target's render origin - what the entry's vertex stage projects
-  /// with. False stops that sink's feed (the entry has no projected
-  /// instance order to steer); the draw sink itself stays bound.
-  fn write_order_view(&mut self, target: u64, draw: u64, clip: [f32; 16]) -> bool;
+  /// An entry's fresh view (`DrawSink::view_feed`): the node's
+  /// model-to-clip matrix, column-major, the target's view-projection
+  /// over the node's world transform relative to the target's render
+  /// origin - what the entry's vertex stage projects with. False stops
+  /// that sink's feed (the entry has no instance order to steer); the
+  /// draw sink itself stays bound.
+  fn write_view(&mut self, target: u64, draw: u64, clip: [f32; 16]) -> bool;
   /// A shared-slot group's array param, rewritten whole (slot sinks share
   /// one array value; see `SharedSlotSink`).
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool;
@@ -334,14 +339,12 @@ pub trait SinkWriter {
   /// target is gone).
   fn write_param(&mut self, target: u64, draw: Option<u64>, name: &str, value: f32) -> bool;
   /// One buffer's staged instance records: the coalesced dirty float range
-  /// `[lo, hi)` plus `values`, the WHOLE staging mirror - so a writer that
-  /// must publish the full record set (an ordered instance buffer gathers
-  /// into draw order, where a partial range has no stable position) can
-  /// reach every record, while the plain path writes just the range. At
-  /// most one write per buffer per flush, however many nodes moved (see
-  /// `InstanceRecordSink`). `boxes` are the slots' cull boxes, whole
-  /// (`CELL_BOX_FLOATS` per slot), on a buffer that keeps them
-  /// (`set_instance_boxes`): what a cell-culled instance order culls by.
+  /// `[lo, hi)` plus `values`, the WHOLE staging mirror, of which a writer
+  /// takes the range. At most one write per buffer per flush, however many
+  /// nodes moved (see `InstanceRecordSink`). `boxes` are the slots' cull
+  /// boxes, whole (`CELL_BOX_FLOATS` per slot), on a buffer that keeps
+  /// them (`set_instance_boxes`): what a draw list culling the records
+  /// culls by.
   fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32], boxes: Option<&[f32]>) -> bool;
   /// A float texture's fresh rows, whole: 16 floats (one column-major mat4,
   /// one row of a 4-texel-wide rgba32f texture) per bound slot. At most one
@@ -454,11 +457,12 @@ const ORDER_BUCKET_MARGIN: f64 = 0.1591;
 /// The render_order magnitude the packed key holds; beyond it values
 /// clamp and tie.
 const ORDER_RENDER_LIMIT: i32 = 1 << 20;
-/// The order-direction feed's re-key gate (`DrawSink::order_feed`), the
+/// The order feed's re-key gate (`ViewFeed::Order`), the
 /// cosine of the angle a sink's fed direction must turn by before a new
-/// one is written (~2 degrees): each write re-sorts a whole record
-/// population and republishes a retained one, so the gate trades a
-/// bounded mis-order in motion against sort time and upload bandwidth.
+/// one is written (~2 degrees): each write re-sorts a record population
+/// (an indexed one whole, a draw list its visible records), so the gate
+/// trades a bounded mis-order in motion against sort time and upload
+/// bandwidth.
 /// Set by feel; revisit against the splat-scale measurements
 /// (okf/plans/gaussian-splats.md).
 const ORDER_DIRECTION_EPS_COS: f64 = 0.99939;
@@ -1150,8 +1154,8 @@ pub struct Spatial {
   /// state between flushes.
   draw_sorts: HashMap<u64, DrawSort>,
   /// The nodes holding at least one order-feed draw sink
-  /// (`DrawSink::order_feed`); pruned lazily by the feed pass.
-  order_feeds: Vec<u32>,
+  /// (`DrawSink::view_feed`); pruned lazily by the feed pass.
+  view_feeds: Vec<u32>,
   /// Bind order counter: every draw sink bound takes the next value.
   bind_seq: u64,
   /// The residency gate: viewers, grids, the pending enters and the
@@ -2377,7 +2381,7 @@ impl Spatial {
     }
   }
 
-  /// Feed every order-feed sink (`DrawSink::order_feed`) its target's
+  /// Feed every view-feed sink (`DrawSink::view_feed`) its target's
   /// current view as the node's model-to-clip matrix (the target's
   /// view-projection in origin space over the node's world transform
   /// shifted by the origin: exactly `uViewProj * uModel`). From it the
@@ -2386,18 +2390,19 @@ impl Spatial {
   /// records' world depth along the view forward f is ordered exactly by
   /// the model-frame direction W3x3^T f, which is the matrix's w row -
   /// and, for a packed population, the frustum and the pixel scale its
-  /// runs are culled and thinned by. Written under three gates: the
-  /// direction turned past `ORDER_DIRECTION_EPS_COS` since the last
-  /// write (the re-sort gate), the eye moved past
+  /// runs are culled and thinned by. An order feed is written under
+  /// three gates: the direction turned past `ORDER_DIRECTION_EPS_COS`
+  /// since the last write (the re-sort gate), the eye moved past
   /// `ORDER_VIEW_MOVE_FRACTION` of its distance to the node's box, or the
-  /// projection changed (the re-selection gates). A target without a
+  /// projection changed (the re-selection gates); a cull feed on every
+  /// change of the matrix. A target without a
   /// view feeds nothing (and keeps the sink's last view); a write that
   /// does not land stops that sink's feed, the sink itself stays.
-  fn order_feed_pass(&mut self, out: &mut dyn SinkWriter) {
-    if self.order_feeds.is_empty() {
+  fn view_feed_pass(&mut self, out: &mut dyn SinkWriter) {
+    if self.view_feeds.is_empty() {
       return;
     }
-    let mut feeds = std::mem::take(&mut self.order_feeds);
+    let mut feeds = std::mem::take(&mut self.view_feeds);
     feeds.retain(|&i| {
       if !self.nodes[i as usize].alive {
         return false;
@@ -2406,9 +2411,9 @@ impl Spatial {
       let world_box = self.nodes[i as usize].world_box;
       let mut sinks = std::mem::take(&mut self.nodes[i as usize].sinks);
       for b in sinks.iter_mut() {
-        if !b.sink.order_feed {
+        let Some(feed) = b.sink.view_feed else {
           continue;
-        }
+        };
         let (Some(view), Some(&(vp, _))) = (self.lod_views.get(&b.sink.target), self.view_projs.get(&b.sink.target))
         else {
           continue;
@@ -2421,15 +2426,15 @@ impl Spatial {
           shifted[14] -= origin[2];
           narrow(&math::multiply(vp, shifted))
         };
-        if b.sink.cell_feed {
+        if feed == ViewFeed::Cull {
           let clip32 = model_clip(&world);
           if clip32 == b.fed_clip {
             continue;
           }
-          if out.write_order_view(b.sink.target, b.sink.draw, clip32) {
+          if out.write_view(b.sink.target, b.sink.draw, clip32) {
             b.fed_clip = clip32;
           } else {
-            b.sink.order_feed = false;
+            b.sink.view_feed = None;
           }
           continue;
         }
@@ -2464,20 +2469,20 @@ impl Spatial {
           continue;
         }
         let clip32 = model_clip(&world);
-        if out.write_order_view(b.sink.target, b.sink.draw, clip32) {
+        if out.write_view(b.sink.target, b.sink.draw, clip32) {
           b.fed = d;
           b.fed_eye = view.eye;
           b.fed_focal = view.focal;
           b.fed_ortho = view.ortho;
         } else {
-          b.sink.order_feed = false;
+          b.sink.view_feed = None;
         }
       }
-      let keep = sinks.iter().any(|b| b.sink.order_feed);
+      let keep = sinks.iter().any(|b| b.sink.view_feed.is_some());
       self.nodes[i as usize].sinks = sinks;
       keep
     });
-    self.order_feeds = feeds;
+    self.view_feeds = feeds;
   }
 
   /// The draw order of every sorted target (`set_draw_sort`) whose bound
@@ -3423,13 +3428,26 @@ impl Spatial {
     }
   }
 
+  /// Publish `buffer`'s whole instance staging, records and boxes, at the
+  /// next flush: a reader that came after the last write (a draw list's
+  /// attach) gets every slot, not only the next change. A no-op on a
+  /// buffer no record slot is bound to.
+  pub fn republish_instances(&mut self, buffer: u64) {
+    if let Some(group) = self.instances.get_mut(&buffer) {
+      let len = group.values.len();
+      if len > 0 {
+        group.mark(0, len);
+      }
+    }
+  }
+
   /// Whether the record slots on `buffer` stage a cull box beside the
   /// record (`CellBox`): the node's local box (its cull box, else its
   /// bounds; unbounded without either or with culling off) in the
   /// buffer's record frame, grown by its cull margin, with its screen
   /// reach (`set_cull_px`), and the empty box for a hidden or unbound
   /// slot. The boxes publish whole with every write of the buffer: what a
-  /// cell-culled instance order keyed on it culls by. Declared before the
+  /// draw list culling the population keyed on it culls by. Declared before the
   /// first bind it holds for the group that bind creates; a retarget
   /// carries it.
   pub fn set_instance_boxes(&mut self, buffer: u64, enabled: bool) {
@@ -4480,8 +4498,8 @@ impl Spatial {
         sort.dirty = true;
       }
     }
-    if sink.order_feed && !self.order_feeds.contains(&i) {
-      self.order_feeds.push(i);
+    if sink.view_feed.is_some() && !self.view_feeds.contains(&i) {
+      self.view_feeds.push(i);
     }
     self.enqueue(i);
     Ok(())
@@ -4625,7 +4643,7 @@ impl Spatial {
     // After the walk (worlds fresh) and unconditionally: the feed reacts
     // to view writes and node rotations alike, and its own epsilon gate
     // is the cheap early-out.
-    self.order_feed_pass(out);
+    self.view_feed_pass(out);
     if self.draw_sorts.values().any(|s| s.dirty || s.view_moved) {
       self.order_pass(out);
     }

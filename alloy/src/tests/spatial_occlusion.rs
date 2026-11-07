@@ -28,8 +28,7 @@ fn sink(target: u64, draw: u64) -> DrawSink {
     fade: false,
     params: true,
     order: DrawOrder::default(),
-    order_feed: false,
-    cell_feed: false,
+    view_feed: None,
   }
 }
 
