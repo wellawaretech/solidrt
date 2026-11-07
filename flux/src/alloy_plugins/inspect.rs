@@ -484,6 +484,13 @@ pub fn gpu_record(
             if d.instance_count != 1 {
               map.insert("instanceCount".into(), d.instance_count.into());
             }
+            // A cell-culled population's selection under the entry's
+            // view: the spans drawn, and the instances they submit.
+            if let Some(spans) = &d.instance_spans {
+              let list: Vec<serde_json::Value> = spans.iter().map(|&(first, count)| serde_json::json!([first, count])).collect();
+              map.insert("instanceSpans".into(), list.into());
+              map.insert("instancesDrawn".into(), spans.iter().map(|&(_, n)| n as u64).sum::<u64>().into());
+            }
             // The submission budget's figures (alloy gl::slicing): the
             // slice count of the entry's last render when it was cut, and
             // the longest submission measured, whole ms, when measured.

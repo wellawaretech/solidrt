@@ -1041,7 +1041,7 @@ impl SinkWriter for ParamRecorder {
     self.writes.push((target, draw, name.to_string(), value as f64));
     !self.dead.contains(&target)
   }
-  fn write_instances(&mut self, _: u64, _: u32, _: u32, _: &[f32]) -> bool {
+  fn write_instances(&mut self, _: u64, _: u32, _: u32, _: &[f32], _: Option<&[f32]>) -> bool {
     true
   }
   fn write_texture(&mut self, _: u64, _: &[f32]) -> bool {

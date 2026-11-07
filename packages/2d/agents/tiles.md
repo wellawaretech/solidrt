@@ -263,10 +263,9 @@ is not a record write (chunks re-render GPU-side, nothing re-uploads),
 but it does re-render every resident chunk: drive it from slow state,
 not per frame. `setParams` (a material prelude's uniforms) and a cell's
 `style` (the material's per-cell record, `setTile`/`setTiles` `{ style
-}`) are the same two levels for a custom look, see materials.md. Not
-built: view culling for the sprite and record layers (each view drawing
-only the cells of records its camera meets;
-okf/backlog/2d-sprite-view-culling.md holds the design).
+}`) are the same two levels for a custom look, see materials.md. The
+sprite and record layers cull per cell too (`cells`, each view drawing
+only the cells its camera meets): View culling per cell in views.md.
 
 ## Traps
 

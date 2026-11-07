@@ -147,15 +147,21 @@ impl SinkWriter for Writer<'_> {
 
   // A depth-ordered entry's fresh view: the orderView update, plus the
   // retained re-sort/republish when the order's inputs changed (a no-op
-  // on a gather entry, whose next publish picks the direction up). Runs
-  // with no target borrow held, which rematerialize's
-  // note_buffer_content needs.
+  // on a gather entry, whose next publish picks the direction up), or
+  // the re-selection of the cells an entry draws. Runs with no target
+  // borrow held, which rematerialize's note_buffer_content needs.
   fn write_order_view(&mut self, target: u64, draw: u64, clip: [f32; 16]) -> bool {
-    match self.ctx.set_instance_order_view(target, draw, OrderView { clip }) {
-      Ok(changed) => {
+    let Some(ids) = self.ctx.entry_buffer_ids(target, draw) else {
+      return self.landed(Err(format!("draw {draw} not found on target {target}")));
+    };
+    match self.ctx.set_instance_order_view(target, draw, OrderView { clip }, &ids) {
+      Ok(change) => {
         self.wrote = true;
-        if changed {
+        if change.reorder {
           self.ctx.rematerialize_retained_order(target, draw);
+        }
+        if change.reselect {
+          self.ctx.reselect_reader(target, draw);
         }
         true
       }
@@ -187,9 +193,9 @@ impl SinkWriter for Writer<'_> {
   // the buffer's size); an ordered instance buffer publishes the whole
   // record set gathered into draw order instead - a partial range has no
   // stable position once records draw in key order.
-  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]) -> bool {
+  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32], boxes: Option<&[f32]>) -> bool {
     if self.ctx.buffer_has_order(buffer) {
-      return self.landed(self.ctx.ordered_instance_publish(buffer, values));
+      return self.landed(self.ctx.ordered_instance_publish(buffer, values, boxes));
     }
     let range = &values[lo as usize..hi as usize];
     let mut data = Vec::with_capacity(range.len() * 4);

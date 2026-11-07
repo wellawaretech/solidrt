@@ -117,6 +117,7 @@ impl Context {
     // The ordering entry (if any) keeps its declaration - a later buffer
     // swap re-keys it - but the retired id stops resolving as ordered.
     self.drop_order_buffer(id);
+    self.spatial().forget_buffer(id);
     self.send(RasterCmd::DestroyBuffer { id });
   }
 

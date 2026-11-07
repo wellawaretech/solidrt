@@ -116,6 +116,68 @@ impl RegionSpec {
   }
 }
 
+/// A lattice of cells: `origin` the corner of cell (0, 0, 0), `cell` the
+/// size per axis, 0 meaning unbounded along that axis (the index is 0
+/// there). The one cell vocabulary of the core: a residency grid indexes
+/// its regions by it (`GridSpec::lattice`), and a cell-culled instance
+/// population keys its records by it (`OrderKey::Cell`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lattice {
+  pub origin: [f64; 3],
+  pub cell: [f64; 3],
+}
+
+impl Lattice {
+  /// The lattice's contract: a finite origin, finite non-negative cell
+  /// sizes.
+  pub fn validate(&self) -> Result<(), String> {
+    if self.origin.iter().any(|v| !v.is_finite()) {
+      return Err("origin must be finite".to_string());
+    }
+    if self.cell.iter().any(|v| !v.is_finite() || *v < 0.0) {
+      return Err("cell sizes must be finite and not negative (0 = unbounded)".to_string());
+    }
+    Ok(())
+  }
+
+  /// The raw index of the cell holding `p` along `axis` (0 on an unbounded
+  /// axis).
+  pub fn index(&self, p: f64, axis: usize) -> i64 {
+    if self.cell[axis] > 0.0 {
+      ((p - self.origin[axis]) / self.cell[axis]).floor() as i64
+    } else {
+      0
+    }
+  }
+
+  /// The box of the raw cell `raw`; an unbounded axis takes the extent of
+  /// `reach` there.
+  pub fn cell_box(&self, raw: [i64; 3], reach: &Box3) -> Box3 {
+    let mut b = [0.0f64; 6];
+    for a in 0..3 {
+      if self.cell[a] > 0.0 {
+        b[a] = self.origin[a] + raw[a] as f64 * self.cell[a];
+        b[a + 3] = b[a] + self.cell[a];
+      } else {
+        b[a] = reach[a];
+        b[a + 3] = reach[a + 3];
+      }
+    }
+    b
+  }
+
+  /// The center of cell `cell`, with the unbounded axes taken at `at`.
+  pub fn cell_center(&self, cell: [i64; 3], at: [f64; 3]) -> [f64; 3] {
+    let mut c = at;
+    for a in 0..3 {
+      if self.cell[a] > 0.0 {
+        c[a] = self.origin[a] + (cell[a] as f64 + 0.5) * self.cell[a];
+      }
+    }
+    c
+  }
+}
+
 /// A grid of cells: `origin` the corner of cell (0, 0, 0), `cell` the
 /// size per axis with 0 meaning unbounded along that axis (the index is 0
 /// there and the test ignores the axis), `bounds` an optional inclusive
@@ -193,12 +255,7 @@ impl GridSpec {
     self.margins.validate()?;
     validate_weight(self.weight)?;
     validate_limit(self.limit)?;
-    if self.origin.iter().any(|v| !v.is_finite()) {
-      return Err("origin must be finite".to_string());
-    }
-    if self.cell.iter().any(|v| !v.is_finite() || *v < 0.0) {
-      return Err("cell sizes must be finite and not negative (0 = unbounded)".to_string());
-    }
+    self.lattice().validate()?;
     if let Some(b) = self.bounds {
       if (0..3).any(|a| b[a] > b[a + 3]) {
         return Err("bounds min must not exceed max".to_string());
@@ -213,6 +270,11 @@ impl GridSpec {
       return Err("a grid placed by a node takes its world from the node: pass node or root, not both".to_string());
     }
     Ok(())
+  }
+
+  /// The lattice the grid's cells index.
+  pub fn lattice(&self) -> Lattice {
+    Lattice { origin: self.origin, cell: self.cell }
   }
 
   /// The canonical index of a raw cell index: wrapped into its period.
@@ -236,29 +298,13 @@ impl GridSpec {
   /// The world box of the raw cell `raw`; an unbounded axis takes the
   /// enumeration box's extent `reach` there.
   fn cell_box(&self, raw: [i64; 3], reach: &Box3) -> Box3 {
-    let mut b = [0.0f64; 6];
-    for a in 0..3 {
-      if self.cell[a] > 0.0 {
-        b[a] = self.origin[a] + raw[a] as f64 * self.cell[a];
-        b[a + 3] = b[a] + self.cell[a];
-      } else {
-        b[a] = reach[a];
-        b[a + 3] = reach[a + 3];
-      }
-    }
-    b
+    self.lattice().cell_box(raw, reach)
   }
 
   /// The world center of a canonical cell, with the unbounded axes taken
   /// at `at` (the eye: distance 0 along an axis the cell spans whole).
   fn cell_center(&self, cell: [i32; 3], at: [f64; 3]) -> [f64; 3] {
-    let mut c = at;
-    for a in 0..3 {
-      if self.cell[a] > 0.0 {
-        c[a] = self.origin[a] + (cell[a] as f64 + 0.5) * self.cell[a];
-      }
-    }
-    c
+    self.lattice().cell_center(cell.map(i64::from), at)
   }
 }
 
@@ -918,14 +964,9 @@ impl Residency {
           Some(Placement { inverse: None, .. }) => continue,
           None => (reach, None),
         };
-        let mut lo = [0i64; 3];
-        let mut hi = [0i64; 3];
-        for a in 0..3 {
-          if spec.cell[a] > 0.0 {
-            lo[a] = ((reach[a] - spec.origin[a]) / spec.cell[a]).floor() as i64;
-            hi[a] = ((reach[a + 3] - spec.origin[a]) / spec.cell[a]).floor() as i64;
-          }
-        }
+        let lattice = spec.lattice();
+        let lo: [i64; 3] = std::array::from_fn(|a| lattice.index(reach[a], a));
+        let hi: [i64; 3] = std::array::from_fn(|a| lattice.index(reach[a + 3], a));
         for i in lo[0]..=hi[0] {
           for j in lo[1]..=hi[1] {
             for k in lo[2]..=hi[2] {

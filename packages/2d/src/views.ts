@@ -23,16 +23,31 @@
 // root of the walk: a sprite under a minimap gets its ordinary handlers,
 // and the view's listeners are the last stop.
 //
-// Every view of a layer with regions is a VIEWER to the spatial core's
-// residency gate: the shell pushes its camera over its viewport as an
-// orthographic view (viewMatrices, under a key of its own: flux:spatial
-// allocViewKey) on creation and on every camera or size write, scoped to
-// the layer's world (its root node, so a 3d scene's cells and another
-// layer's are never wanted by it), and withdraws it at dispose. So a
-// region grid over a sprite layer (region.ts) and a tile layer's chunks
-// (tiles.ts) are wanted by whatever shows that world - the main view, a
-// minimap, a split-screen pane - with no viewer bookkeeping in the layer
-// kinds. The record layer has no regions, so its views push none.
+// Every view of a layer with a world is a SPATIAL VIEW: the shell pushes
+// its camera over its viewport as an orthographic view (viewMatrices) as
+// its own target's view (flux:spatial setView under the view's texture
+// id) on creation and on every camera or size write, scoped to the
+// layer's world (its root node, so a 3d scene's cells and another layer's
+// are never wanted by it), and withdraws it at dispose. That one view is
+// what the residency gate tests regions against - a region grid over a
+// sprite layer (region.ts) and a tile layer's chunks (tiles.ts) are
+// wanted by whatever shows that world, the main view, a minimap, a
+// split-screen pane, with no viewer bookkeeping in the layer kinds - and
+// what the order feed derives a cell-culled layer's selection from. The
+// record layer has no regions; its views push none unless the layer
+// culls by cells.
+//
+// A layer created with `cells` (layer.ts, records.ts) culls its records
+// per cell in the core: the one ordered entry declares the cells, the
+// gather keeps the buffers in cell order, and every view's entry draws
+// only the instance spans of the cells its camera meets. Each view's
+// entry is a draw sink of the layer's FRAME node - the node at the
+// layer's render origin, whose model frame the records are in - with the
+// cell feed on, so the core writes the entry its model-to-clip matrix on
+// every camera move and re-selects; this module computes nothing per
+// move. The sink's count is the instance count (setDrawCount fans it
+// out), and the view's size is the entry's orderViewport, the pixels a
+// screen-size floor's reach is measured in.
 //
 // The same viewer is what a POSITIONAL SOUND is heard from: `listener()`
 // makes the view's flux:audio listener over its key, so a sound placed at
@@ -46,7 +61,7 @@ import { originCell, requestFrame, snapOrigin } from "@solidrt/core"
 import { createListener } from "flux:audio"
 import type { Listener, ListenerOptions } from "@solidrt/core/audio"
 import * as spatial from "flux:spatial"
-import type { NodeId, ViewKey } from "flux:spatial"
+import type { NodeId } from "flux:spatial"
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import { spriteDispatch } from "./dispatch.ts"
 import type { PointerFeed } from "@solidrt/core"
@@ -61,6 +76,10 @@ import { checkOversample, thrashSentinel, unevenSentinel } from "./oversample.ts
 // distance; 2^16 keeps it under a few hundredths of a screen pixel, and
 // a camera crossing a cell (tens of thousands of pixels) is rare.
 const ORIGIN_CELL_SCREEN_PX = 65536
+
+// The frame node's transform scratch (x, y, z, rotation quaternion,
+// scale): a translation to the render origin.
+const FRAME_TRANSFORM = new Float64Array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1])
 
 export type ViewOptions = {
   /** View pixels: the viewport its camera maps the world onto. */
@@ -168,11 +187,21 @@ export type ViewShellDeps = {
   /** Create the view's draw target of `width` x `height` TEXELS seeded
    * with `params` (the viewport, the camera, the kind's own). */
   createTarget: (width: number, height: number, params: ShaderParams, opts: { clearColor: [number, number, number, number]; label: string }) => TextureId
-  /** The world the view is a viewer of, for the residency gate: the
-   * layer's root node, which scopes the viewer to the layer's own
-   * regions (flux:spatial setView `root`); null for a layer with no
-   * regions to want (the record layer), whose views push no viewer. */
+  /** The world the view is a spatial view of: the layer's root node,
+   * which scopes the residency gate to the layer's own regions
+   * (flux:spatial setView `root`); null for a layer with no world (a
+   * record layer without cells), whose views push no view. */
   root: NodeId | null
+  /** The render origin the view's spatial view is relative to, in layer
+   * pixels: the layer's, where its records are (views.ts); absent = the
+   * camera point itself. */
+  origin?: () => [number, number]
+  /** Whether the layer's sprites are nodes a positional sound can sit
+   * on (the view's listener); default true. */
+  placesSound?: boolean
+  /** With the function that re-pushes the view's spatial view, once at
+   * creation: what a moved render origin calls. */
+  viewer?: (push: () => void) => void
   /** With every oversample the view takes, at creation and on each
    * change (the sprite and record layers' uneven-blocks check). */
   oversampled?: (n: number) => void
@@ -207,25 +236,29 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
   let thrash = thrashSentinel(`view "${label}"`)
   let disposed = false
   let listeners = new Set<LayerPointerListener>()
-  // The gate's viewer: the camera over the viewport, pushed whenever
-  // either changes, scoped to the layer's world. The target's params
-  // write demands the frame whose flush tests the regions; the first
-  // push, before any entry, asks for it itself.
-  let viewer: ViewKey | null = deps.root === null ? null : spatial.allocViewKey()
+  // The view's spatial view: the camera over the viewport, pushed
+  // whenever either changes, scoped to the layer's world, under the
+  // view's own texture id. The target's params write demands the frame
+  // whose flush reads it; the first push, before any entry, asks for it
+  // itself.
+  let viewer: TextureId | null = deps.root === null ? null : texture
   let listener: Listener | null = null
   let gateView = new Float64Array(16)
   let gateProj = new Float64Array(16)
-  // The viewer's render origin: the camera point itself, so the gate
-  // tests regions against a box around zero at any distance.
+  // The view's render origin: the layer's (deps.origin), else the camera
+  // point itself, so the gate tests regions against a box around zero at
+  // any distance. The view is the world's; the core relativizes it.
   let gateOrigin = new Float64Array(3)
   let pushViewer = () => {
     if (viewer === null) return
+    let [ox, oy] = deps.origin?.() ?? [cam.x, cam.y]
     viewMatrices(cam, width, height, gateView, gateProj)
-    gateOrigin[0] = cam.x
-    gateOrigin[1] = cam.y
+    gateOrigin[0] = ox
+    gateOrigin[1] = oy
     spatial.setView(viewer, gateView, gateProj, deps.root!, gateOrigin)
   }
   pushViewer()
+  deps.viewer?.(pushViewer)
   if (viewer !== null) requestFrame()
   let view: ViewHandle = {
     texture,
@@ -284,7 +317,7 @@ export function createViewShell(opts: ViewOptions, deps: ViewShellDeps): ViewHan
       return dispatch(layout)
     },
     listener(options) {
-      if (viewer === null) {
+      if (viewer === null || deps.placesSound === false) {
         throw new Error("view.listener: a record layer's sprites have no nodes to place sound on; positional sound needs a sprite layer")
       }
       if (listener === null) listener = createListener({ view: viewer }, options)
@@ -351,9 +384,13 @@ export type ViewDeps = {
   /** Whether any of the layer's atlases samples nearest (hasNearestAtlas):
    * its views then warn once at a fractional oversample. */
   nearest: boolean
-  /** The layer's root node, the world its views are viewers of (see
-   * ViewShellDeps.root); null for a layer with no regions. */
+  /** The layer's root node, the world its views are spatial views of
+   * (see ViewShellDeps.root); null for a layer with no regions, whose
+   * views push a view only under `cells` (scoped to the frame node). */
   root: NodeId | null
+  /** Whether the key order (`order`) culls by cells: every view's entry
+   * then draws only the cells its camera meets (see the module comment). */
+  cells: boolean
   /** The layer's pose buffer, whose core-written records the render
    * origin re-bases (flux:spatial setInstanceOrigin); absent for a layer
    * whose records are its own (the record layer, world f32 as written),
@@ -374,7 +411,9 @@ export type Views = {
   dispose(): void
 }
 
-type ViewRecord = { view: ViewHandle; entry: DrawId }
+// A view, its entry, the re-push of its spatial view, and (cells) the
+// view size its entry's orderViewport was last given.
+type ViewRecord = { view: ViewHandle; entry: DrawId; push: () => void; width: number; height: number }
 
 /** The sprite and record layers' views: one entry over the layer's
  * instance buffers per view, the key order on one of them. */
@@ -397,6 +436,17 @@ export function createViews(deps: ViewDeps): Views {
   // (one coalesced write) and rewrites every view's camera params.
   let origin: [number, number] = [0, 0]
   let originArray = new Float64Array(3)
+  // The frame node of a cells layer: at the render origin, so its model
+  // frame is the records' and the matrix the core feeds each view's entry
+  // maps them; null without cells.
+  let frame: NodeId | null = null
+  let placeFrame = () => {
+    FRAME_TRANSFORM[0] = origin[0]
+    FRAME_TRANSFORM[1] = origin[1]
+    if (frame === null) frame = spatial.createNode(FRAME_TRANSFORM, true)
+    else spatial.setTransform(frame, FRAME_TRANSFORM)
+  }
+  if (deps.cells) placeFrame()
   let primary = (): ViewRecord | null => views.values().next().value ?? null
   let paramsFor = (record: ViewRecord, cam: CameraState): ShaderParams => {
     let isPrimary = views.size === 0 || primary() === record
@@ -404,17 +454,36 @@ export function createViews(deps: ViewDeps): Views {
       originArray[0] = origin[0]
       originArray[1] = origin[1]
       spatial.setInstanceOrigin(deps.pose(), originArray)
-      for (let v of views) if (v !== record) setTargetParams(v.view.texture, cameraParams(v.view.camera(), origin))
+      if (frame !== null) placeFrame()
+      // Every other view re-bases: its camera params and its spatial view
+      // (the primary's own push follows its camera write).
+      for (let v of views) {
+        if (v === record) continue
+        setTargetParams(v.view.texture, cameraParams(v.view.camera(), origin))
+        v.push()
+      }
     }
     return cameraParams(cam, origin)
   }
-  let entryFor = (texture: TextureId, order: InstanceOrder | undefined): DrawId =>
-    addDraw(texture, deps.pipeline, null, {
+  let entryFor = (view: ViewHandle, order: InstanceOrder | undefined): DrawId => {
+    let entry = addDraw(view.texture, deps.pipeline, null, {
       buffers: [deps.corners, ...deps.buffers()],
       vertexCount: deps.vertexCount,
       instanceOrder: order,
       instanceCount: deps.count(),
     })
+    if (frame !== null) {
+      // The entry's view feeds from the frame node's sink; its screen
+      // reach is measured in view pixels.
+      spatial.bindDraw(frame, view.texture, entry, { params: false, count: deps.count(), orderFeed: "cells" })
+      setViewport(view, entry)
+    }
+    return entry
+  }
+  let setViewport = (view: ViewHandle, entry: DrawId) => {
+    let size = view.size()
+    setDrawRange(view.texture, entry, { orderViewport: [size.width, size.height] })
+  }
   // The ordered view went: the next live view re-adds its entry with the
   // order, so key order survives any one view's lifetime.
   let rehome = () => {
@@ -422,31 +491,44 @@ export function createViews(deps: ViewDeps): Views {
     let next = views.values().next().value
     if (!next) return
     removeDraw(next.view.texture, next.entry)
-    next.entry = entryFor(next.view.texture, deps.order)
+    next.entry = entryFor(next.view, deps.order)
     ordered = next
   }
   return {
     create(opts) {
-      let record: ViewRecord = { view: undefined as unknown as ViewHandle, entry: 0 as DrawId }
+      let record: ViewRecord = { view: undefined as unknown as ViewHandle, entry: 0 as DrawId, push: () => {}, width: opts.width, height: opts.height }
       let view = createViewShell(opts, {
         label: deps.label,
-        root: deps.root,
+        root: deps.root ?? frame,
+        origin: () => origin,
+        placesSound: deps.pose !== undefined,
+        viewer: push => (record.push = push),
         pick: deps.pick,
         cameraParams: cam => paramsFor(record, cam),
         oversampled: uneven,
+        changed(v) {
+          let size = v.size()
+          if (frame === null || (size.width === record.width && size.height === record.height)) return
+          record.width = size.width
+          record.height = size.height
+          setViewport(v, record.entry)
+        },
         createTarget: (w, h, params, o) => createDrawTarget(w, h, { ...params, uTint: deps.tint(), ...deps.params() }, { textures: deps.textures, clearColor: o.clearColor, label: o.label, autoFree: false }),
         disposing() {
           views.delete(record)
-          // The entry dies with its target, releasing the buffers' order.
+          if (frame !== null) spatial.unbindDraw(frame, view.texture)
+          // The ordered entry goes first, releasing the buffers' order for
+          // the next view (the target, and its other state, dies after).
           if (ordered === record) {
             ordered = null
+            removeDraw(view.texture, record.entry)
             rehome()
           }
         },
       })
       let order = ordered === null ? deps.order : undefined
       record.view = view
-      record.entry = entryFor(view.texture, order)
+      record.entry = entryFor(view, order)
       if (order !== undefined) ordered = record
       views.add(record)
       return view
@@ -455,7 +537,10 @@ export function createViews(deps: ViewDeps): Views {
       for (let v of views) setDrawBuffers(v.view.texture, v.entry, { buffers: [deps.corners, ...instanceBuffers] })
     },
     setCount(count) {
-      for (let v of views) setDrawRange(v.view.texture, v.entry, { instanceCount: count })
+      // A cells layer's entries are its frame sink's: the count is the
+      // sink's "on" count.
+      if (frame !== null) spatial.setDrawCount(frame, count)
+      else for (let v of views) setDrawRange(v.view.texture, v.entry, { instanceCount: count })
     },
     setTint(tint) {
       for (let v of views) setTargetParams(v.view.texture, { uTint: tint })
@@ -465,6 +550,10 @@ export function createViews(deps: ViewDeps): Views {
     },
     dispose() {
       for (let v of [...views]) v.view.dispose()
+      if (frame !== null) {
+        spatial.destroyNode(frame)
+        frame = null
+      }
     },
   }
 }

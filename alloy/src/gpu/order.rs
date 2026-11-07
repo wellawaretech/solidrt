@@ -20,6 +20,15 @@
 //! id, the INDEX stream - the instance buffer holds the sorted record
 //! indices as u32, K of them per instance record, and a re-sort uploads
 //! 4 bytes per record instead of the record.
+//!
+//! A gathered order may also cut its population into CELLS for view
+//! culling (`Cells`): each record carries a cull box, the gather keeps the
+//! buffer in cell order (a lattice cell key, or bands of a field key), and
+//! the runs of equal cells become a run table whose boxes a view tests, so
+//! the cells a view meets are contiguous instance spans of the one
+//! gathered buffer (`order_cells`, `select_cells`).
+
+use crate::spatial::Lattice;
 
 /// The id an index stream carries past the sorted population (every slot
 /// of the last instance's group past the count, and the rest of the
@@ -46,6 +55,11 @@ pub enum OrderKey {
   /// along a caller-named direction. Core does arithmetic on caller-named
   /// data; no camera concept enters (the SharedSlot projection stance).
   Projected { offset: usize, direction: [f32; 3] },
+  /// The lattice cell of each record's cull box center, row-major (the
+  /// highest cut axis most significant): the key of a cell-culled
+  /// population without a world-wide order (`Cells`). Reads no record
+  /// field; the boxes come with the population.
+  Cell { lattice: Lattice },
 }
 
 impl OrderKey {
@@ -53,6 +67,7 @@ impl OrderKey {
   pub fn offset(&self) -> usize {
     match *self {
       OrderKey::Field { offset } | OrderKey::Projected { offset, .. } => offset,
+      OrderKey::Cell { .. } => 0,
     }
   }
 
@@ -61,6 +76,7 @@ impl OrderKey {
     match self {
       OrderKey::Field { .. } => 4,
       OrderKey::Projected { .. } => 12,
+      OrderKey::Cell { .. } => 0,
     }
   }
 
@@ -69,6 +85,7 @@ impl OrderKey {
     match *self {
       OrderKey::Field { .. } => OrderKey::Field { offset },
       OrderKey::Projected { direction, .. } => OrderKey::Projected { offset, direction },
+      OrderKey::Cell { lattice } => OrderKey::Cell { lattice },
     }
   }
 }
@@ -143,16 +160,23 @@ pub const RUN_RAMP_SAMPLES: usize = 16;
 /// run is cut where its ramp falls below the selection's contribution
 /// threshold at the run's projected scale (`Selection`). Nothing here
 /// names what the records are: a point cloud, a particle cache or a splat
-/// cloud hands off the same table.
-#[derive(Clone, Debug, PartialEq)]
+/// cloud hands off the same table. A cell-culled population's cells are
+/// the same table built by the core (`order_cells`): boxes and starts, no
+/// ramp (nothing thins a cell), and a screen reach per run.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct RunTable {
   /// Each run's position box: min xyz, max xyz.
   pub bounds: Vec<[f32; 6]>,
   /// Each run's first record; run r spans starts[r]..starts[r + 1], the
   /// last to the record count. Ascending from 0.
   pub starts: Vec<u32>,
-  /// `RUN_RAMP_SAMPLES` importance samples per run, in run order.
+  /// `RUN_RAMP_SAMPLES` importance samples per run, in run order; empty
+  /// for a table nothing thins (a cell table).
   pub ramp: Vec<f32>,
+  /// Each run's screen reach in pixels: how far its records may draw
+  /// beyond its box at any zoom (the largest screen-size floor among
+  /// them, `CellBox`); empty = none.
+  pub px: Vec<f32>,
 }
 
 impl RunTable {
@@ -286,31 +310,75 @@ impl OrderView {
   // box at or behind the eye (w at the floor) projects without bound and
   // is kept whole.
   fn scale2(&self, planes: &[[f32; 4]; 6], b: &[f32; 6], viewport: [f32; 2]) -> Option<f32> {
-    for p in planes {
-      let x = if p[0] >= 0.0 { b[3] } else { b[0] };
-      let y = if p[1] >= 0.0 { b[4] } else { b[1] };
-      let z = if p[2] >= 0.0 { b[5] } else { b[2] };
-      if p[0] * x + p[1] * y + p[2] * z + p[3] < 0.0 {
-        return None;
-      }
+    if !inside(planes, b) {
+      return None;
     }
+    let (w_min, _) = self.w_range(b);
+    if !(w_min > VIEW_W_FLOOR) {
+      return Some(f32::INFINITY);
+    }
+    let (sx, sy) = self.axis_scales(viewport);
+    Some(sx * sy / (w_min * w_min))
+  }
+
+  // The smallest and largest clip w over the box's corners.
+  fn w_range(&self, b: &[f32; 6]) -> (f32, f32) {
     let r3 = self.row(3);
     let mut w_min = f32::INFINITY;
+    let mut w_max = f32::NEG_INFINITY;
     for corner in 0..8 {
       let x = if corner & 1 == 0 { b[0] } else { b[3] };
       let y = if corner & 2 == 0 { b[1] } else { b[4] };
       let z = if corner & 4 == 0 { b[2] } else { b[5] };
-      w_min = w_min.min(r3[0] * x + r3[1] * y + r3[2] * z + r3[3]);
+      let w = r3[0] * x + r3[1] * y + r3[2] * z + r3[3];
+      w_min = w_min.min(w);
+      w_max = w_max.max(w);
     }
-    if !(w_min > VIEW_W_FLOOR) {
-      return Some(f32::INFINITY);
-    }
+    (w_min, w_max)
+  }
+
+  // Pixels per model unit along the screen's x and y at clip w 1: the
+  // lengths of the matrix's x and y rows over half the viewport.
+  fn axis_scales(&self, viewport: [f32; 2]) -> (f32, f32) {
     let r0 = self.row(0);
     let r1 = self.row(1);
     let sx = (r0[0] * r0[0] + r0[1] * r0[1] + r0[2] * r0[2]).sqrt() * 0.5 * viewport[0];
     let sy = (r1[0] * r1[0] + r1[1] * r1[1] + r1[2] * r1[2]).sqrt() * 0.5 * viewport[1];
-    Some(sx * sy / (w_min * w_min))
+    (sx, sy)
   }
+
+  // Whether a box whose records may draw `px` pixels beyond it reaches
+  // into the view: the box grown by `px` at its smallest pixel scale (the
+  // farthest corner's, so the growth never falls short), tested against
+  // the planes. A box reaching to or behind the eye is tested ungrown: its
+  // scale is unbounded there, so the screen reach adds nothing.
+  fn reaches(&self, planes: &[[f32; 4]; 6], b: &[f32; 6], px: f32, viewport: [f32; 2]) -> bool {
+    if !(px > 0.0) {
+      return inside(planes, b);
+    }
+    let (w_min, w_max) = self.w_range(b);
+    if !(w_min > VIEW_W_FLOOR) {
+      return inside(planes, b);
+    }
+    let (sx, sy) = self.axis_scales(viewport);
+    let scale = sx.min(sy) / w_max;
+    if !(scale > 0.0) {
+      return inside(planes, b);
+    }
+    let g = px / scale;
+    inside(planes, &[b[0] - g, b[1] - g, b[2] - g, b[3] + g, b[4] + g, b[5] + g])
+  }
+}
+
+// Whether a box reaches into the volume of `planes` (the positive vertex
+// of every plane on its inside).
+fn inside(planes: &[[f32; 4]; 6], b: &[f32; 6]) -> bool {
+  planes.iter().all(|p| {
+    let x = if p[0] >= 0.0 { b[3] } else { b[0] };
+    let y = if p[1] >= 0.0 { b[4] } else { b[1] };
+    let z = if p[2] >= 0.0 { b[5] } else { b[2] };
+    p[0] * x + p[1] * y + p[2] * z + p[3] >= 0.0
+  })
 }
 
 /// The clip depth below which a run's box counts as at the eye: its
@@ -624,9 +692,87 @@ pub struct InstanceOrder {
   /// the contribution in pixels below which a run's tail is not drawn.
   /// 0 (the default) thins nothing; the budget alone decides.
   pub lod_threshold: f32,
+  /// View culling per cell (`Cells`): the gather keeps the records in cell
+  /// order and every entry drawing them draws only the cells its view
+  /// meets. None draws the whole population.
+  pub cells: Option<Cells>,
+}
+
+/// An instance order's options as the API boundary passes them, each one
+/// unchecked: `InstanceOrder::from_options` decides which combinations
+/// hold and what each value may be.
+#[derive(Debug, Clone, Default)]
+pub struct OrderOptions {
+  pub field: Option<f64>,
+  pub position: Option<f64>,
+  pub direction: Option<[f32; 3]>,
+  pub descending: bool,
+  pub buffer: Option<f64>,
+  pub retain: bool,
+  /// The handed-off record's byte stride (`indices.stride`).
+  pub indices: Option<f64>,
+  /// The LOD threshold in pixels (`lod.threshold`).
+  pub lod: Option<f64>,
+  pub cells: Option<CellOptions>,
+}
+
+/// The `cells` of `OrderOptions`.
+#[derive(Debug, Clone, Default)]
+pub struct CellOptions {
+  pub size: Option<CellSize>,
+  pub origin: Option<[f64; 3]>,
+  pub extent: Option<RecordExtent>,
+}
+
+/// A `cells` size as passed: one number (a band width along a field key)
+/// or three (a keyless lattice's [x, y, z] cell sizes).
+#[derive(Debug, Clone, Copy)]
+pub enum CellSize {
+  Band(f64),
+  Lattice([f64; 3]),
 }
 
 impl InstanceOrder {
+  /// The order the API-boundary options describe. With a key, `parse`'s
+  /// rules, then the LOD threshold (`with_lod`), then `cells` as bands
+  /// along the key (`with_bands`: a band width, no origin). Without a key,
+  /// `cells` is a lattice (`cell_grid`: [x, y, z] cell sizes, an optional
+  /// origin), which takes none of the key's options.
+  pub fn from_options(o: OrderOptions) -> Result<InstanceOrder, String> {
+    let keyless = o.field.is_none() && o.position.is_none();
+    match o.cells {
+      Some(cells) if keyless => {
+        if o.descending || o.retain || o.indices.is_some() || o.direction.is_some() || o.lod.is_some() {
+          return Err(
+            "instanceOrder cells without a key take no descending, retain, indices, direction or lod".to_string(),
+          );
+        }
+        let Some(CellSize::Lattice(cell)) = cells.size else {
+          return Err("instanceOrder cells without a key need a size of [x, y, z] cell sizes".to_string());
+        };
+        let lattice = Lattice { origin: cells.origin.unwrap_or([0.0; 3]), cell };
+        InstanceOrder::cell_grid(lattice, o.buffer, cells.extent)
+      }
+      cells => {
+        let mut order =
+          InstanceOrder::parse(o.field, o.position, o.direction, o.descending, o.buffer, o.retain, o.indices)?;
+        if let Some(threshold) = o.lod {
+          order = order.with_lod(threshold)?;
+        }
+        let Some(cells) = cells else {
+          return Ok(order);
+        };
+        if cells.origin.is_some() {
+          return Err("instanceOrder cells over a key take no origin (a lattice's, without a key)".to_string());
+        }
+        let Some(CellSize::Band(band)) = cells.size else {
+          return Err("instanceOrder cells over a key need a size: the band width, one number".to_string());
+        };
+        order.with_bands(band, cells.extent)
+      }
+    }
+  }
+
   /// Parse the API-boundary shape: `field` or `position` are float offsets
   /// into one instance record (exactly one of the two), `direction` is
   /// required with `position` and rejected with `field`, `buffer` names the
@@ -644,15 +790,7 @@ impl InstanceOrder {
     retain: bool,
     indices: Option<f64>,
   ) -> Result<InstanceOrder, String> {
-    let key_buffer = match buffer {
-      None => None,
-      Some(b) => {
-        if !(b.is_finite() && b >= 0.0 && b.fract() == 0.0 && (b as usize) < super::vocab::MAX_BUFFERS) {
-          return Err(format!("instanceOrder buffer must be an integer 0..{}, got {b}", super::vocab::MAX_BUFFERS - 1));
-        }
-        Some(b as usize)
-      }
-    };
+    let key_buffer = key_buffer(buffer)?;
     let key = match (field, position) {
       (Some(_), Some(_)) => return Err("instanceOrder takes either field or position, not both".to_string()),
       (None, None) => {
@@ -681,11 +819,50 @@ impl InstanceOrder {
       None => None,
       Some(s) => Some(record_stride(s, "instanceOrder indices.stride")?),
     };
-    let order = InstanceOrder { key, descending, key_buffer, retain, indices, lod_threshold: 0.0 };
+    let order = InstanceOrder { key, descending, key_buffer, retain, indices, lod_threshold: 0.0, cells: None };
     if let Some(stride) = indices {
       order.check_stride(stride)?;
     }
     Ok(order)
+  }
+
+  /// A cell order (`OrderKey::Cell`): the records drawn in row-major
+  /// order of the `lattice` cell their cull box centers fall in, and
+  /// culled per cell. `buffer` names the buffer whose records the extent
+  /// reads, as `parse`'s does.
+  pub fn cell_grid(
+    lattice: Lattice,
+    buffer: Option<f64>,
+    extent: Option<RecordExtent>,
+  ) -> Result<InstanceOrder, String> {
+    lattice.validate().map_err(|e| format!("instanceOrder cells: {e}"))?;
+    if CellPacker::new(&lattice).axes.is_empty() {
+      return Err("instanceOrder cells: a cell size must be positive on at least one axis".to_string());
+    }
+    Ok(InstanceOrder {
+      key: OrderKey::Cell { lattice },
+      descending: false,
+      key_buffer: key_buffer(buffer)?,
+      retain: false,
+      indices: None,
+      lod_threshold: 0.0,
+      cells: Some(Cells { band: None, extent }),
+    })
+  }
+
+  /// This field order culled by bands (`Cells::band`): the sorted key cut
+  /// every `band` units, the world-wide order kept exact. A gathered field
+  /// order only.
+  pub fn with_bands(self, band: f64, extent: Option<RecordExtent>) -> Result<InstanceOrder, String> {
+    if !matches!(self.key, OrderKey::Field { .. }) || self.indices.is_some() || self.retain {
+      return Err(
+        "instanceOrder cells take a field key as bands, or no key as a lattice; a position key or an indexed order has no cells".to_string(),
+      );
+    }
+    if !(band.is_finite() && band > 0.0) {
+      return Err(format!("instanceOrder cells: the band size must be a finite positive number, got {band}"));
+    }
+    Ok(InstanceOrder { cells: Some(Cells { band: Some(band as f32), extent }), ..self })
   }
 
   /// This order with its LOD threshold (`lod_threshold`) set: a finite,
@@ -743,9 +920,13 @@ impl InstanceOrder {
   /// The key bytes must sit inside one record of `stride` bytes: a field key
   /// reads one f32, a projected key reads a vec3.
   pub fn check_stride(&self, stride: usize) -> Result<(), String> {
+    if let Some(extent) = self.cells.and_then(|c| c.extent) {
+      extent.check_stride(stride)?;
+    }
     let name = match self.key {
       OrderKey::Field { .. } => "field",
       OrderKey::Projected { .. } => "position",
+      OrderKey::Cell { .. } => return Ok(()),
     };
     if self.key.offset() + self.key.bytes() > stride {
       return Err(format!(
@@ -762,11 +943,219 @@ impl InstanceOrder {
   /// re-materializes from its copy right after (`rematerialize_retained_order`).
   pub fn set_direction(&mut self, direction: [f32; 3]) -> Result<(), String> {
     let OrderKey::Projected { offset, .. } = self.key else {
-      return Err("the entry's instance order uses a field key; orderDirection applies to position keys".to_string());
+      return Err(
+        "the entry's instance order has no position key; orderDirection applies to position keys".to_string(),
+      );
     };
     check_direction(direction)?;
     self.key = OrderKey::Projected { offset, direction };
     Ok(())
+  }
+}
+
+// The pipeline buffer index an order names at the API boundary.
+fn key_buffer(buffer: Option<f64>) -> Result<Option<usize>, String> {
+  match buffer {
+    None => Ok(None),
+    Some(b) => {
+      if !(b.is_finite() && b >= 0.0 && b.fract() == 0.0 && (b as usize) < super::vocab::MAX_BUFFERS) {
+        return Err(format!("instanceOrder buffer must be an integer 0..{}, got {b}", super::vocab::MAX_BUFFERS - 1));
+      }
+      Ok(Some(b as usize))
+    }
+  }
+}
+
+/// Floats per record of a population's cull boxes (`CellBox`): min xyz,
+/// max xyz, then the screen reach in pixels.
+pub const CELL_BOX_FLOATS: usize = 7;
+
+/// A record's cull box: what its drawing covers in the record frame, and
+/// how many screen pixels it may draw beyond that at any zoom (a
+/// screen-size floor's reach from the center). A record that draws
+/// nothing (zero size, hidden, freed) has the empty box (`EMPTY`): it
+/// sorts past every cell and no view submits it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CellBox {
+  pub bounds: [f32; 6],
+  pub px: f32,
+}
+
+impl CellBox {
+  /// The box of a record that draws nothing.
+  pub const EMPTY: CellBox = CellBox {
+    bounds: [f32::INFINITY, f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY],
+    px: 0.0,
+  };
+
+  /// The box as its `CELL_BOX_FLOATS` floats.
+  pub fn floats(&self) -> [f32; CELL_BOX_FLOATS] {
+    let b = self.bounds;
+    [b[0], b[1], b[2], b[3], b[4], b[5], self.px]
+  }
+
+  /// Box `i` of a floats column; past its end (a slot no sink has written)
+  /// the empty box.
+  pub fn read(floats: &[f32], i: usize) -> CellBox {
+    let at = i * CELL_BOX_FLOATS;
+    match floats.get(at..at + CELL_BOX_FLOATS) {
+      Some(f) => CellBox { bounds: [f[0], f[1], f[2], f[3], f[4], f[5]], px: f[6] },
+      None => CellBox::EMPTY,
+    }
+  }
+
+  /// Whether the box covers nothing (min above max on an axis, or not a
+  /// number).
+  pub fn is_empty(&self) -> bool {
+    let b = self.bounds;
+    !(b[0] <= b[3] && b[1] <= b[4] && b[2] <= b[5])
+  }
+}
+
+/// Where a cell-culled population's record boxes come from when its
+/// records are the app's (a record layer): fields of the key buffer's
+/// records by role, as byte offsets. A record is a rectangle in the xy
+/// plane of the record frame: its center (`position`, a vec2), its full
+/// size (`size`, a vec2; a zero axis draws nothing), its rotation about
+/// z in radians (`rotation`, none = axis-aligned) and its screen-size
+/// floor (`min_screen_px`: the smaller drawn axis held at no fewer screen
+/// pixels than this, the vertex stage's `screenSizeScale`), whose reach
+/// the box carries as its px.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordExtent {
+  pub position: usize,
+  pub size: usize,
+  pub rotation: Option<usize>,
+  pub min_screen_px: Option<usize>,
+}
+
+impl RecordExtent {
+  /// Parse the API-boundary shape: float offsets into one record.
+  pub fn parse(
+    position: f64,
+    size: f64,
+    rotation: Option<f64>,
+    min_screen_px: Option<f64>,
+  ) -> Result<RecordExtent, String> {
+    Ok(RecordExtent {
+      position: float_offset(position, "cells extent position")?,
+      size: float_offset(size, "cells extent size")?,
+      rotation: rotation.map(|r| float_offset(r, "cells extent rotation")).transpose()?,
+      min_screen_px: min_screen_px.map(|m| float_offset(m, "cells extent minScreenPx")).transpose()?,
+    })
+  }
+
+  /// Every field must sit inside one record of `stride` bytes.
+  pub fn check_stride(&self, stride: usize) -> Result<(), String> {
+    let fields = [
+      ("position", Some(self.position), 8),
+      ("size", Some(self.size), 8),
+      ("rotation", self.rotation, 4),
+      ("minScreenPx", self.min_screen_px, 4),
+    ];
+    for (name, at, len) in fields {
+      if let Some(at) = at {
+        if at + len > stride {
+          return Err(format!(
+            "instanceOrder cells extent {name} at float {} does not fit the {stride}-byte instance record",
+            at / 4
+          ));
+        }
+      }
+    }
+    Ok(())
+  }
+
+  /// The cull box of the record at byte `at` of `src`.
+  pub fn cell_box(&self, src: &[u8], at: usize) -> CellBox {
+    let cx = read_f32(src, at + self.position);
+    let cy = read_f32(src, at + self.position + 4);
+    let w = read_f32(src, at + self.size).abs();
+    let h = read_f32(src, at + self.size + 4).abs();
+    if !(w > 0.0 && h > 0.0) {
+      return CellBox::EMPTY;
+    }
+    let (hx, hy) = (w * 0.5, h * 0.5);
+    let (ex, ey) = match self.rotation {
+      Some(r) => {
+        let (s, c) = read_f32(src, at + r).sin_cos();
+        (c.abs() * hx + s.abs() * hy, s.abs() * hx + c.abs() * hy)
+      }
+      None => (hx, hy),
+    };
+    let floor = self.min_screen_px.map_or(0.0, |m| read_f32(src, at + m));
+    CellBox { bounds: [cx - ex, cy - ey, 0.0, cx + ex, cy + ey, 0.0], px: screen_floor_reach(w, h, floor) }
+  }
+
+  /// The cull boxes of every record of `src` into `out`, `CELL_BOX_FLOATS`
+  /// per record.
+  pub fn boxes(&self, stride: usize, src: &[u8], out: &mut Vec<f32>) {
+    out.clear();
+    out.reserve(src.len() / stride * CELL_BOX_FLOATS);
+    for at in (0..src.len() / stride).map(|r| r * stride) {
+      out.extend_from_slice(&self.cell_box(src, at).floats());
+    }
+  }
+}
+
+/// How far, in screen pixels, a `w` x `h` rectangle held at `floor`
+/// pixels on its smaller axis reaches from its center: half its drawn
+/// diagonal at the floor, which depends on the aspect only. 0 with the
+/// floor off or the rectangle collapsed (a ceiling only shrinks it).
+pub fn screen_floor_reach(w: f32, h: f32, floor: f32) -> f32 {
+  let smallest = w.min(h);
+  if !(floor > 0.0 && smallest > 0.0) {
+    return 0.0;
+  }
+  floor * (1.0 + (w.max(h) / smallest).powi(2)).sqrt() * 0.5
+}
+
+/// A gathered order's view culling per cell. Each record has a cull box
+/// (`CellBox`), from the record's own fields (`extent`) or from the
+/// publish (a spatial record sink stages each slot's box beside its pose,
+/// `None` here). The gather sorts records that draw nothing past every
+/// cell, and the drawn records form runs of equal cells: under a cell key
+/// (`OrderKey::Cell`) a run is one lattice cell, under a field key a band
+/// `band` units of the sorted key wide (the world-wide order stays exact,
+/// the culling is along that key alone). A run's box is the union of its
+/// records' boxes, its px their largest screen reach, and every entry
+/// drawing the population draws the spans of the runs its view meets
+/// (`select_cells`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cells {
+  pub band: Option<f32>,
+  pub extent: Option<RecordExtent>,
+}
+
+// Bits per cut axis of a cell key: the 32 bits shared by the cut axes,
+// most significant first.
+const CELL_KEY_BITS: [[u32; 3]; 3] = [[32, 0, 0], [16, 16, 0], [11, 11, 10]];
+
+// The cut axes of a lattice and the bits each takes in a cell key, the
+// highest axis most significant (rows of y before columns of x).
+struct CellPacker {
+  lattice: Lattice,
+  axes: Vec<(usize, u32)>,
+}
+
+impl CellPacker {
+  fn new(lattice: &Lattice) -> CellPacker {
+    let cut: Vec<usize> = (0..3).rev().filter(|&a| lattice.cell[a] > 0.0).collect();
+    let bits = if cut.is_empty() { [0; 3] } else { CELL_KEY_BITS[cut.len() - 1] };
+    CellPacker { lattice: *lattice, axes: cut.into_iter().zip(bits).collect() }
+  }
+
+  // The key of the cell holding `p`: each cut axis's index biased to the
+  // middle of its bits and clamped into them, concatenated; never u32::MAX
+  // (the key of a record that draws nothing).
+  fn key(&self, p: [f64; 3]) -> u32 {
+    let mut key = 0u64;
+    for &(axis, bits) in &self.axes {
+      let half = 1i64 << (bits - 1);
+      let index = (self.lattice.index(p[axis], axis) + half).clamp(0, (1i64 << bits) - 1);
+      key = (key << bits) | index as u64;
+    }
+    (key as u32).min(u32::MAX - 1)
   }
 }
 
@@ -803,6 +1192,8 @@ fn check_direction(direction: [f32; 3]) -> Result<(), String> {
 pub struct OrderScratch {
   // Quantized key per slot (indexed by slot; never reordered).
   keys: Vec<u32>,
+  // A field-keyed cell population's band per slot (`order_cells`).
+  bands: Vec<i64>,
   // A packed population's selection (`select_runs`): the kept (first
   // record, records) per visible run, and each run's pixel scale squared
   // under the view (None = culled) while it is decided.
@@ -901,11 +1292,133 @@ pub fn order_permutation(order: &InstanceOrder, stride: usize, src: &[u8], scrat
           + read_f32(src, at + offset + 4) * direction[1]
           + read_f32(src, at + offset + 8) * direction[2]
       }
+      // A cell key orders through `order_cells` (it reads the boxes, not
+      // the records); here it keeps slot order.
+      OrderKey::Cell { .. } => 0.0,
     };
     let k = quantize(f);
     keys.push(if order.descending { !k } else { k });
   }
   radix_sort(scratch);
+}
+
+/// Order a cell-culled population (`InstanceOrder::cells`): key every
+/// record of `src` by its cell (`OrderKey::Cell`, from its cull box
+/// center) or its field, the records whose box in `boxes` is empty (or
+/// past its end) past every key, sort, and build the runs of the drawn
+/// prefix into `table` - starts where the sorted cell (or band) changes,
+/// each run's box the union of its records' boxes and its px their
+/// largest. Leaves the permutation in `scratch.perm` like
+/// `order_permutation`; returns the records drawn (the runs' extent).
+pub fn order_cells(
+  order: &InstanceOrder,
+  stride: usize,
+  src: &[u8],
+  boxes: &[f32],
+  scratch: &mut OrderScratch,
+  table: &mut RunTable,
+) -> usize {
+  debug_assert!(stride > 0 && src.len() % stride == 0, "publish length not a whole number of records");
+  let count = src.len() / stride;
+  let band = order.cells.and_then(|c| c.band);
+  let packer = match order.key {
+    OrderKey::Cell { lattice } => Some(CellPacker::new(&lattice)),
+    _ => None,
+  };
+  let OrderScratch { keys, bands, .. } = scratch;
+  keys.clear();
+  keys.reserve(count);
+  bands.clear();
+  let mut drawn = 0usize;
+  for slot in 0..count {
+    let cell = CellBox::read(boxes, slot);
+    if cell.is_empty() {
+      keys.push(u32::MAX);
+      bands.push(0);
+      continue;
+    }
+    drawn += 1;
+    let b = cell.bounds;
+    match (&packer, order.key) {
+      (Some(packer), _) => {
+        let center = [(b[0] + b[3]) as f64 * 0.5, (b[1] + b[4]) as f64 * 0.5, (b[2] + b[5]) as f64 * 0.5];
+        keys.push(packer.key(center));
+        bands.push(0);
+      }
+      (None, OrderKey::Field { offset }) => {
+        let f = read_f32(src, slot * stride + offset);
+        let k = quantize(f);
+        keys.push((if order.descending { !k } else { k }).min(u32::MAX - 1));
+        bands.push(band.map_or(0, |w| (f / w).floor() as i64));
+      }
+      (None, _) => {
+        debug_assert!(false, "cells take a cell or a field key");
+        keys.push(0);
+        bands.push(0);
+      }
+    }
+  }
+  radix_sort(scratch);
+  let OrderScratch { keys, bands, perm, .. } = scratch;
+  table.bounds.clear();
+  table.starts.clear();
+  table.ramp.clear();
+  table.px.clear();
+  let mut last: Option<(u32, i64)> = None;
+  for (i, &slot) in perm[..drawn].iter().enumerate() {
+    let slot = slot as usize;
+    let cell = CellBox::read(boxes, slot);
+    let run = if packer.is_some() { (keys[slot], 0) } else { (0, bands[slot]) };
+    if last != Some(run) {
+      last = Some(run);
+      table.starts.push(i as u32);
+      table.bounds.push(cell.bounds);
+      table.px.push(cell.px);
+      continue;
+    }
+    let b = table.bounds.last_mut().expect("a run was opened");
+    for a in 0..3 {
+      b[a] = b[a].min(cell.bounds[a]);
+      b[a + 3] = b[a + 3].max(cell.bounds[a + 3]);
+    }
+    let px = table.px.last_mut().expect("a run was opened");
+    *px = px.max(cell.px);
+  }
+  drawn
+}
+
+/// The instance spans an entry draws of a cell-culled population of
+/// `drawn` records under `view`, into `spans` as (first instance, count)
+/// in buffer order: every run whose box, grown by its screen reach at the
+/// view's pixel scale over `viewport` (the pixels the reach is measured
+/// in), reaches into the view, adjacent runs merged into one span. Without
+/// a view the whole drawn prefix is one span.
+pub fn select_cells(
+  table: &RunTable,
+  drawn: usize,
+  view: Option<&OrderView>,
+  viewport: [f32; 2],
+  spans: &mut Vec<(u32, u32)>,
+) {
+  spans.clear();
+  let Some(view) = view else {
+    if drawn > 0 {
+      spans.push((0, drawn as u32));
+    }
+    return;
+  };
+  let planes = view.planes();
+  for (r, b) in table.bounds.iter().enumerate() {
+    let px = table.px.get(r).copied().unwrap_or(0.0);
+    if !view.reaches(&planes, b, px, viewport) {
+      continue;
+    }
+    let (start, len) = table.span(r, drawn);
+    match spans.last_mut() {
+      Some(last) if last.0 + last.1 == start as u32 => last.1 += len as u32,
+      _ => spans.push((start as u32, len as u32)),
+    }
+  }
 }
 
 /// `order_permutation` over a packed mirror: `words` holds the packed

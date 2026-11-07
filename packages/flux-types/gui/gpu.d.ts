@@ -930,8 +930,49 @@ declare module "flux:gpu" {
    * carries the order to the new buffers, every swapped instance-step
    * buffer at once - republish app-written buffers after a swap, the new
    * buffer starts empty.
+   *
+   * CELLS (`cells`) add view culling per cell to a gathered order: each
+   * record has a cull box, the gather keeps the buffer in cell order, and
+   * every entry drawing the buffers draws only the instances of the cells
+   * its view meets - contiguous spans of the one gathered buffer, so a
+   * camera move uploads no record. With a field key the cells are BANDS
+   * of the key (`size` the band width): the key order stays exact and
+   * the culling is along the key alone (a y-sorted 2d crowd culls by
+   * rows). With no key (`{ cells }` alone) they are the cells of a
+   * lattice keyed by each record's box center, row-major (the highest cut
+   * axis most significant): two records that overlap across a cell
+   * boundary may then draw in either order. Records whose box is empty
+   * (zero size, hidden, freed) sort last and no view draws them. The cull
+   * boxes come from the records' own fields (`extent`), or without one
+   * from the spatial record sinks that write the key buffer
+   * (flux:spatial setInstanceBoxes). Each entry selects under the view
+   * its draw sink feeds (flux:spatial bindDraw `orderFeed: "cells"`);
+   * before its first view it draws everything. A position key or an
+   * indexed order with cells throws. The selection is draw-only: the
+   * records, their slots and every query are unchanged.
    */
-  export type InstanceOrder = ({ field: number } | { position: number; direction: [number, number, number] }) & {
+  export type InstanceOrder = InstanceKeyOrder | InstanceCellOrder
+  /** Where a cell-culled population's record boxes are read from: float
+   * offsets of record fields. A record is a rectangle in the record
+   * frame's xy plane - its center (`position`, 2 floats), its full size
+   * (`size`, 2 floats; a zero axis draws nothing), its rotation about z
+   * in radians (`rotation`, absent = axis-aligned) and its screen-size
+   * floor (`minScreenPx`: the smaller drawn axis held at no fewer screen
+   * pixels, the stage's screenSizeScale), whose reach widens its box at
+   * every view's zoom. */
+  export type CellExtent = { position: number; size: number; rotation?: number; minScreenPx?: number }
+  /** An instance order without a key, culled per lattice cell (see
+   * InstanceOrder's cells): `size` the cell size per axis (0 = not cut),
+   * `origin` the corner of cell [0, 0, 0] (default the record frame's
+   * zero), in record units. */
+  export type InstanceCellOrder = {
+    cells: { size: [number, number, number]; origin?: [number, number, number]; extent?: CellExtent }
+    /** The buffer whose records the extent reads (InstanceKeyOrder's
+     * `buffer`). */
+    buffer?: number
+  }
+  /** An instance order by a key (see InstanceOrder). */
+  export type InstanceKeyOrder = ({ field: number } | { position: number; direction: [number, number, number] }) & {
     descending?: boolean
     /**
      * The pipeline buffer index (into its `buffers` layouts) whose
@@ -990,6 +1031,9 @@ declare module "flux:gpu" {
      * order without `indices` it throws.
      */
     lod?: { threshold: number }
+    /** View culling in bands of a field key, `size` units wide (see
+     * InstanceOrder's cells). */
+    cells?: { size: number; extent?: CellExtent }
   }
   /**
    * The order half of a draw-entry update, the per-camera-move update of
@@ -1006,8 +1050,20 @@ declare module "flux:gpu" {
    * indexed) a change re-sorts core's copy right away and, when the
    * order changed, republishes the entry's buffers - no publish from the
    * app. On an entry without a position-keyed instance order it throws.
+   *
+   * On an entry drawing a cell-culled population (an order with `cells`,
+   * or any entry over its buffers) `orderView` is the view its cells are
+   * selected under, and `orderViewport` the [width, height] in pixels a
+   * screen reach (CellExtent's `minScreenPx`) is measured in: the view's
+   * own pixels where its target renders at an oversample (default the
+   * target's size).
    */
-  export type OrderUpdate = { orderDirection?: [number, number, number]; orderView?: ArrayLike<number>; orderLod?: { threshold: number } }
+  export type OrderUpdate = {
+    orderDirection?: [number, number, number]
+    orderView?: ArrayLike<number>
+    orderLod?: { threshold: number }
+    orderViewport?: [number, number]
+  }
 
   /**
    * Compile a GLSL ES vertex+fragment pipeline into an offscreen texture of

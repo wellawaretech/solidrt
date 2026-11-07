@@ -84,11 +84,12 @@ pub use gpu::{
   TextureRect, TextureRegistry, TextureShape, CUBE_FACES, MIN_ANISOTROPY,
 };
 pub use gpu::{
-  parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferLayout, BufferUpdate, CullMode, DepthState,
-  DepthStorage, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat, InstanceOrder, KeyColumn,
-  NodeShader, OrderCounters, OrderKey, OrderView, PackedFormat, PackedKey, ParamValue, PipelineDesc, PipelineSpec,
-  RunTable, Selection, ShaderStage, StepMode, TargetSpec, TextureBinding, Topology, UniformKind, UniformSlot,
-  UniformTable, VertexAttr, WindowShader, INDEX_NONE, MAX_BUFFERS, RUN_RAMP_SAMPLES,
+  parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferLayout, BufferUpdate, CellOptions, CellSize,
+  CullMode, DepthState, DepthStorage, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat,
+  InstanceOrder, KeyColumn, NodeShader, OrderCounters, OrderKey, OrderOptions, OrderView, PackedFormat, PackedKey,
+  ParamValue, PipelineDesc, PipelineSpec, RecordExtent, RunTable, Selection, ShaderStage, StepMode, TargetSpec,
+  TextureBinding, Topology, UniformKind, UniformSlot, UniformTable, VertexAttr, WindowShader, CELL_BOX_FLOATS,
+  INDEX_NONE, MAX_BUFFERS, RUN_RAMP_SAMPLES,
 };
 pub use gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use input::InputState;

@@ -38,7 +38,7 @@
 // the JS reverse walk (pointInSprite), since records have no nodes.
 import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core"
 import { checkScreenSize, createRecordStream, destroyBuffer, screenSizeScale } from "@solidrt/core/gpu"
-import type { BufferId } from "@solidrt/core/gpu"
+import type { BufferId, InstanceOrder } from "@solidrt/core/gpu"
 import type { AttributeAccess, ShaderParams } from "@solidrt/core/gpu"
 import { checkAtlases, frameIndex, hasMeshAtlas, hasNearestAtlas } from "./atlas.ts"
 import type { Atlas } from "./atlas.ts"
@@ -46,7 +46,7 @@ import { fullFrame, isFrame, writeFrame, writeMesh } from "./frames.ts"
 import type { Frame } from "./frames.ts"
 import { atlasBindings, MESH_ATTRIBUTES, RECORD_ATTRIBUTES } from "./glsl.ts"
 import { MESH_FLOATS } from "./sprite-mesh.ts"
-import { checkParams, checkTint, readFrame } from "./layer.ts"
+import { checkCells, checkParams, checkTint, readFrame } from "./layer.ts"
 import type { LayerBase, Sprite, SpriteLayer, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
 import { materialSamplers, unlit } from "./material.ts"
 import { pointInSprite } from "./pick.ts"
@@ -62,6 +62,9 @@ export const INSTANCE_FLOATS = 20
 
 // Float offset of cy in a record - what `orderBy: "y"` keys on.
 const Y_FIELD_OFFSET = 1
+// Float offsets of the size [w, h] and the rotation in a record.
+const SIZE_FIELD_OFFSET = 2
+const ROT_FIELD_OFFSET = 8
 // Float offsets of the screen-size clamp in a record.
 const MIN_PX_FIELD_OFFSET = 13
 const MAX_PX_FIELD_OFFSET = 14
@@ -86,7 +89,8 @@ export type RecordLayerOptions = Omit<SpriteLayerOptions, "orderBy"> & {
    * destroy still shifts - only the draw order changes. Ties keep
    * record order, so an unset key draws exactly as before. Known
    * limitation: pick() resolves overlapping sprites by record order, not
-   * visual order, when a key is set.
+   * visual order, when a key is set. With `cells` (SpriteLayerOptions)
+   * only `"y"` is allowed; a `{ field }` order throws.
    */
   orderBy?: "y" | { field: number; descending?: boolean }
 }
@@ -264,6 +268,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
   if (!(capacity > 0 && Number.isInteger(capacity))) {
     throw new Error(`createRecordLayer: capacity must be a positive integer, got ${capacity}`)
   }
+  checkCells("createRecordLayer", opts?.cells, opts?.orderBy)
   let label = opts?.label ?? "sprites"
   // A hull layer appends the frame's mesh field to every record.
   let hull = hasMeshAtlas(atlases)
@@ -282,11 +287,15 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
   // same publish, the same growth, the same shift on destroy.
   let styles = createStyleStreams(material, capacity, label)
   let orderBy = opts?.orderBy
-  let instanceOrder =
+  let cells = opts?.cells
+  // A cells layer's boxes come from the records themselves: center, size,
+  // rotation and screen-size floor by field.
+  let extent = { position: 0, size: SIZE_FIELD_OFFSET, rotation: ROT_FIELD_OFFSET, minScreenPx: MIN_PX_FIELD_OFFSET }
+  let instanceOrder: InstanceOrder | undefined =
     orderBy === undefined
-      ? undefined
+      ? cells && { cells: { size: [cells.size, cells.size, 0], extent } }
       : orderBy === "y"
-        ? { field: Y_FIELD_OFFSET }
+        ? { field: Y_FIELD_OFFSET, cells: cells && { size: cells.size, extent } }
         : { field: orderBy.field, descending: orderBy.descending }
   let ordered = instanceOrder !== undefined
   let gpu = material.pipeline(atlases, [hull ? [...RECORD_ATTRIBUTES, ...MESH_ATTRIBUTES] : RECORD_ATTRIBUTES], label, hull)
@@ -426,6 +435,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
   let views = createViews({
     label,
     root: null,
+    cells: cells !== undefined,
     pipeline: gpu.pipeline,
     corners: gpu.corners,
     vertexCount: gpu.vertexCount,

@@ -445,9 +445,13 @@ fn collect_entry_half(
 // descending, the key slot ({ slot }, default 0), the retained-copy
 // opt-in ({ retain }) and the index materialization ({ indices: { stride }
 // }, the handed-off record's byte stride). Only the object shape is
-// checked here; the key rules (exactly one of the two, offset values,
-// direction values, buffer index bounds, retain with position only, stride
-// fit) are alloy's.
+// checked here; the order rules (exactly one key, offset values, direction
+// values, buffer index bounds, retain with position only, stride fit, the
+// options cells take with and without a key) are alloy's
+// (`InstanceOrder::from_options`). `cells` adds view culling per cell:
+// with a field key its `size` is the band width along the key, without a
+// key it is the lattice's [x, y, z] cell size (with an `origin`), and
+// `extent` names the record fields the cull boxes are read from.
 fn collect_instance_order(
   ctx: &Ctx<'_>,
   opts: &Option<Object<'_>>,
@@ -479,11 +483,24 @@ fn collect_instance_order(
     },
   };
   let lod = collect_lod(ctx, &o, "lod", api)?;
-  let order = alloy::InstanceOrder::parse(field, position, direction, descending, buffer, retain, indices)
-    .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
-  match lod {
-    Some(threshold) => order.with_lod(threshold).map(Some).map_err(|e| throw_str(ctx, &format!("{api}: {e}"))),
-    None => Ok(Some(order)),
+  let cells = match o.get::<_, Option<Object>>("cells")? {
+    None => None,
+    Some(c) => Some(alloy::CellOptions {
+      size: collect_cell_size(ctx, &c, api)?,
+      origin: collect_vec3(ctx, &c, "origin", api)?,
+      extent: collect_extent(ctx, &c, api)?,
+    }),
+  };
+  let options = alloy::OrderOptions { field, position, direction, descending, buffer, retain, indices, lod, cells };
+  alloy::InstanceOrder::from_options(options).map(Some).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
+}
+
+// The `size` of an instanceOrder's cells: one number or an [x, y, z];
+// which one the order takes is alloy's.
+fn collect_cell_size(ctx: &Ctx<'_>, cells: &Object<'_>, api: &str) -> rquickjs::Result<Option<alloy::CellSize>> {
+  match cells.get::<_, Value>("size")?.as_number() {
+    Some(band) => Ok(Some(alloy::CellSize::Band(band))),
+    None => Ok(collect_vec3(ctx, cells, "size", api)?.map(alloy::CellSize::Lattice)),
   }
 }
 
@@ -497,6 +514,45 @@ fn collect_lod(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickj
     Some(t) => Ok(Some(t)),
     None => Err(throw_str(ctx, &format!("{api}: {key} needs a threshold (a contribution in pixels)"))),
   }
+}
+
+// The `extent` of an instanceOrder's cells: the record fields, as float
+// offsets, the cull boxes are read from; the offset rules are alloy's.
+fn collect_extent(ctx: &Ctx<'_>, cells: &Object<'_>, api: &str) -> rquickjs::Result<Option<alloy::RecordExtent>> {
+  let Some(e) = cells.get::<_, Option<Object>>("extent")? else {
+    return Ok(None);
+  };
+  let (Some(position), Some(size)) = (e.get::<_, Option<f64>>("position")?, e.get::<_, Option<f64>>("size")?) else {
+    return Err(throw_str(ctx, &format!("{api}: instanceOrder cells extent needs position and size (float offsets)")));
+  };
+  let rotation = e.get::<_, Option<f64>>("rotation")?;
+  let min_screen_px = e.get::<_, Option<f64>>("minScreenPx")?;
+  alloy::RecordExtent::parse(position, size, rotation, min_screen_px)
+    .map(Some)
+    .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
+}
+
+// An [x, y, z] of numbers under `key`, exactly 3 when present.
+fn collect_vec3(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<Option<[f64; 3]>> {
+  let Some(list) = obj.get::<_, Option<Vec<f64>>>(key)? else {
+    return Ok(None);
+  };
+  if list.len() != 3 {
+    return Err(throw_str(ctx, &format!("{api}: {key} must be [x, y, z] (3 numbers), got {}", list.len())));
+  }
+  Ok(Some([list[0], list[1], list[2]]))
+}
+
+// A [width, height] in pixels under `key`, exactly 2 numbers when present;
+// the value rules are alloy's.
+fn collect_size2(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<Option<[f32; 2]>> {
+  let Some(list) = obj.get::<_, Option<Vec<f64>>>(key)? else {
+    return Ok(None);
+  };
+  if list.len() != 2 {
+    return Err(throw_str(ctx, &format!("{api}: {key} must be [width, height] (2 numbers), got {}", list.len())));
+  }
+  Ok(Some([list[0] as f32, list[1] as f32]))
 }
 
 // A column-major 4x4 matrix under `key`: exactly 16 numbers when present.
@@ -597,6 +653,7 @@ fn collect_draw_update(ctx: &Ctx<'_>, update: &Object<'_>, api: &str) -> rquickj
     order_direction: collect_direction(ctx, update, "orderDirection", api)?,
     order_view: collect_matrix(ctx, update, "orderView", api)?.map(|clip| alloy::OrderView { clip }),
     order_lod: collect_lod(ctx, update, "orderLod", api)?,
+    order_viewport: collect_size2(ctx, update, "orderViewport", api)?,
   })
 }
 
@@ -1683,7 +1740,7 @@ fn transfer_records(
           let bounds: Vec<[f32; 6]> = floats.chunks_exact(6).map(|b| [b[0], b[1], b[2], b[3], b[4], b[5]]).collect();
           let starts = elements_of(&ctx, &runs, "transferRecords")?.to_vec();
           let ramp = elements_of(&ctx, &ramp, "transferRecords")?.to_vec();
-          packed = Some(alloy::RunTable { bounds, starts, ramp });
+          packed = Some(alloy::RunTable { bounds, starts, ramp, px: Vec::new() });
           Some(alloy::PackedKey { format })
         }
       };

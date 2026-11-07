@@ -575,6 +575,35 @@ export type SpriteLayerOptions = {
    * names its keys.)
    */
   orderBy?: "y" | "renderOrder"
+  /**
+   * View culling per cell: every view draws only the sprites in the cells
+   * its camera meets, so a frame's vertex work follows what the views
+   * show instead of the size of the world. The core keeps the sprites
+   * gathered in cell order (slots, handles, picking and queries stay as
+   * they are) and selects the cells per view on every camera move, with
+   * no per-sprite JS and no record upload. `size` is the cell edge in
+   * layer pixels: under `orderBy: "y"` the cells are horizontal bands
+   * `size` tall and the y order stays exact; without `orderBy` they are a
+   * square grid drawn row by row, so two sprites that overlap across a
+   * cell boundary may draw in either order (Unity's chunked Tilemap makes
+   * the same trade). Hidden and zero-size sprites are never submitted.
+   * With `orderBy: "renderOrder"` (a world-wide order a grid cannot keep)
+   * it throws. Off by default: it costs the core's gather on every
+   * publish, which a layer its views show whole gains nothing from.
+   */
+  cells?: { size: number }
+}
+
+/** The cells option's check (createSpriteLayer, createRecordLayer): a
+ * finite positive size, and no world-wide order beside it but y. */
+export function checkCells(verb: string, cells: { size: number } | undefined, orderBy: unknown): void {
+  if (cells === undefined) return
+  if (!(Number.isFinite(cells.size) && cells.size > 0)) {
+    throw new Error(`${verb}: cells.size must be a finite positive number of layer pixels, got ${cells.size}`)
+  }
+  if (orderBy !== undefined && orderBy !== "y") {
+    throw new Error(`${verb}: cells keep the y order only; a world-wide order by ${JSON.stringify(orderBy)} cannot be drawn per cell`)
+  }
 }
 
 /**
@@ -980,6 +1009,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   if (!(capacity > 0 && Number.isInteger(capacity))) {
     throw new Error(`createSpriteLayer: capacity must be a positive integer, got ${capacity}`)
   }
+  checkCells("createSpriteLayer", opts?.cells, opts?.orderBy)
   let label = opts?.label ?? "sprites"
   let tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createSpriteLayer", tint)
@@ -1004,7 +1034,11 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   // The material's style streams, after the layer's own: the same
   // publish, the same growth.
   let styles = createStyleStreams(material, capacity, label)
-  let ordered = opts?.orderBy !== undefined
+  let cells = opts?.cells
+  let ordered = opts?.orderBy !== undefined || cells !== undefined
+  // A cells layer's pose slots carry each sprite's cull box beside its
+  // pose: what the core's cell gather culls by.
+  if (cells !== undefined) spatial.setInstanceBoxes(pose, true)
   let gpu = material.pipeline(atlases, [POSE_ATTRIBUTES, hull ? [...SPRITE_ATTRIBUTES, ...MESH_ATTRIBUTES] : SPRITE_ATTRIBUTES], label, hull)
   // The sprites with a screen-size clamp (either bound on), and the
   // furthest any of them reaches from its center at its floor (floorReach,
@@ -1167,19 +1201,25 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     }
     if (changed) sprites.mark(sprite._slot, sprite._slot + 1)
     let min = spriteData[at + SPRITE_MIN_PX_FIELD]!
+    let wasClamped = clamped.has(sprite)
+    let r = 0
     if (min > 0 || spriteData[at + SPRITE_MAX_PX_FIELD]! > 0) {
       clamped.add(sprite)
-      let r = floorReach(sprite._w, sprite._h, min)
+      r = floorReach(sprite._w, sprite._h, min)
       if (r >= reach) reach = r
       else reachDirty = true
     } else {
       dropClamp(sprite)
     }
+    // A floored sprite draws beyond its box when zoomed out: its cell
+    // carries the reach (in view pixels) so no view culls it early.
+    if (cells !== undefined && (r > 0 || wasClamped)) spatial.setCullPx(sprite.node!, r)
   }
 
   let views = createViews({
     label,
     root,
+    cells: cells !== undefined,
     pose: () => pose,
     pipeline: gpu.pipeline,
     corners: gpu.corners,
@@ -1196,12 +1236,14 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     // record (slot 1); either way the core gathers BOTH buffers under the
     // one permutation at every publish and republishes the sibling itself
     // when the key buffer re-orders.
+    // Cells cut the y order into bands, or without one key the sprites
+    // by their grid cell (the pose slots' cull boxes, row-major).
     order:
       opts?.orderBy === "y"
-        ? { field: POSE_Y_FIELD }
+        ? { field: POSE_Y_FIELD, cells: cells && { size: cells.size } }
         : opts?.orderBy === "renderOrder"
           ? { field: SPRITE_KEY_FIELD, buffer: 2 }
-          : undefined,
+          : cells && { cells: { size: [cells.size, cells.size, 0] } },
   })
 
   let layer: SpriteLayer = {

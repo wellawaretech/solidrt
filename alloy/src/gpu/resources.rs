@@ -147,6 +147,10 @@ pub struct GpuDrawInfo {
   pub first_vertex: i32,
   pub vertex_count: i32,
   pub instance_count: i32,
+  /// The instance spans the entry draws of its range, (first, count) cut
+  /// to the instance count: a cell-culled population's selection under
+  /// the entry's view. None draws the range whole.
+  pub instance_spans: Option<Vec<(u32, u32)>>,
   /// The float uniforms applied on the entry's most recent render.
   pub params: Vec<(String, ParamValue)>,
   /// sampler2D uniform name -> source texture id.

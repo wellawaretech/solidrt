@@ -238,8 +238,14 @@ declare module "flux:spatial" {
      * population follows the camera with no per-frame work here. For
      * entries that declared a position-key instanceOrder; on any other
      * entry the first feed fails (with a warning) and the feed stops, the
-     * sink stays. */
-    orderFeed?: boolean
+     * sink stays.
+     *
+     * `"cells"` feeds an entry drawing a cell-culled population (an
+     * instanceOrder with `cells`, or any entry over its buffers: a second
+     * view of one layer) on EVERY change of the matrix: the entry then
+     * draws only the cells its view meets, re-selected per move with a
+     * box test per cell and no record moved. */
+    orderFeed?: boolean | "cells"
   }
   /**
    * Route the node's world matrix to one draw entry's `uModel` (and
@@ -524,6 +530,12 @@ declare module "flux:spatial" {
   /** Whether frustums gate the node's draw sinks (default true), and the
    * world-unit margin the test grows its box by (default 0). */
   export function setCull(node: NodeId, enabled: boolean, margin: number): void
+  /** Screen pixels the node's drawing may reach beyond its box at any
+   * zoom (a screen-size floor's reach from its center; default 0), which
+   * its record slot's cull box carries (setInstanceBoxes): a cell
+   * selection grows the box by it at each view's pixel scale. Restages a
+   * shown slot at once. Throws on a negative or non-finite value. */
+  export function setCullPx(node: NodeId, px: number): void
   /** Whether the node's box is a SOLID to overlap, sweep and moveAndSlide
    * (default true); false keeps the box in the picking index for rays
    * alone - a record population's box, which stands for instances a ray
@@ -938,6 +950,18 @@ declare module "flux:spatial" {
    * f32 reach of one another (about 10^5 px at sub-pixel precision).
    */
   export function setInstanceOrigin(buffer: BufferId, origin: Float64Array): void
+  /**
+   * Whether the record slots on `buffer` stage a cull box beside the
+   * record: the node's box (its cull bounds, else its bounds; unbounded
+   * without either or with culling off) in the buffer's record frame,
+   * grown by its cull margin, with its screen reach (setCullPx), and an
+   * empty box for a hidden or unbound slot. The boxes publish with every
+   * write of the buffer and are what a cell-culled instanceOrder keyed on
+   * it culls by (flux:gpu InstanceOrder `cells` without an `extent`).
+   * Declared before the first bind it holds for that bind; a retarget
+   * carries it to the new buffer.
+   */
+  export function setInstanceBoxes(buffer: BufferId, enabled: boolean): void
 
   /** A registered clip's handle (createClip). */
   export type ClipId = number

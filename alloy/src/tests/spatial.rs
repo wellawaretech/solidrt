@@ -21,6 +21,7 @@ pub(super) enum Write {
   OrderView { target: u64, draw: u64, clip: [f32; 16] },
   Shared { target: u64, name: String, values: Vec<f32> },
   Instances { buffer: u64, first: u32, values: Vec<f32> },
+  Boxes { buffer: u64, boxes: Vec<f32> },
   Texture { texture: u64, values: Vec<f32> },
   Param { target: u64, draw: Option<u64>, name: String, value: f32 },
 }
@@ -85,9 +86,13 @@ impl SinkWriter for Recorder {
     self.landed(target)
   }
 
-  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]) -> bool {
-    // Record the range slice under `first`, matching the plain write path.
+  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32], boxes: Option<&[f32]>) -> bool {
+    // Record the range slice under `first`, matching the plain write path,
+    // and the cull boxes whole after it.
     self.writes.push(Write::Instances { buffer, first: lo, values: values[lo as usize..hi as usize].to_vec() });
+    if let Some(boxes) = boxes {
+      self.writes.push(Write::Boxes { buffer, boxes: boxes.to_vec() });
+    }
     self.landed(buffer)
   }
   fn write_texture(&mut self, texture: u64, values: &[f32]) -> bool {
@@ -106,6 +111,7 @@ fn sink(draw: u64) -> DrawSink {
     params: true,
     order: DrawOrder::default(),
     order_feed: false,
+    cell_feed: false,
   }
 }
 
@@ -192,6 +198,7 @@ fn hiding_flips_counts_and_unhide_rewrites_params() {
       params: true,
       order: DrawOrder::default(),
       order_feed: false,
+      cell_feed: false,
     },
   )
   .expect("sink");
@@ -223,6 +230,7 @@ fn sinks_are_per_target_and_one_move_feeds_them_all() {
       params: true,
       order: DrawOrder::default(),
       order_feed: false,
+      cell_feed: false,
     },
   )
   .expect("sink");
@@ -237,6 +245,7 @@ fn sinks_are_per_target_and_one_move_feeds_them_all() {
       params: true,
       order: DrawOrder::default(),
       order_feed: false,
+      cell_feed: false,
     },
   )
   .expect("sink");
@@ -257,6 +266,7 @@ fn sinks_are_per_target_and_one_move_feeds_them_all() {
       params: true,
       order: DrawOrder::default(),
       order_feed: false,
+      cell_feed: false,
     },
   )
   .expect("rebind");
@@ -1194,6 +1204,7 @@ fn culling_is_per_target_and_respects_the_opt_out_and_margin() {
       params: true,
       order: DrawOrder::default(),
       order_feed: false,
+      cell_feed: false,
     },
   )
   .expect("sink");
@@ -1208,6 +1219,7 @@ fn culling_is_per_target_and_respects_the_opt_out_and_margin() {
       params: true,
       order: DrawOrder::default(),
       order_feed: false,
+      cell_feed: false,
     },
   )
   .expect("sink");
@@ -1436,6 +1448,7 @@ fn lod_group(s: &mut Spatial, target: u64, fade: bool) -> (u64, [u64; 3]) {
         params: true,
         order: DrawOrder::default(),
         order_feed: false,
+        cell_feed: false,
       },
     )
     .expect("sink");
@@ -1579,6 +1592,7 @@ fn levels_are_picked_per_target_and_shadow_targets_follow_the_view_they_are_give
         params: true,
         order: DrawOrder::default(),
         order_feed: false,
+        cell_feed: false,
       },
     )
     .expect("sink");
@@ -1602,6 +1616,7 @@ fn levels_are_picked_per_target_and_shadow_targets_follow_the_view_they_are_give
         params: true,
         order: DrawOrder::default(),
         order_feed: false,
+        cell_feed: false,
       },
     )
     .expect("sink");
@@ -1653,6 +1668,7 @@ fn a_lod_reference_measures_by_the_other_targets_view() {
         params: true,
         order: DrawOrder::default(),
         order_feed: false,
+        cell_feed: false,
       },
     )
     .expect("sink");
@@ -1727,6 +1743,7 @@ fn nested_groups_chain_and_clearing_a_group_draws_everything_again() {
         params: true,
         order: DrawOrder::default(),
         order_feed: false,
+        cell_feed: false,
       },
     )
     .expect("sink");
@@ -1859,6 +1876,7 @@ fn keyed(draw: u64, queue: DrawQueue, render_order: i32) -> DrawSink {
     params: true,
     order: DrawOrder { queue, render_order },
     order_feed: false,
+    cell_feed: false,
   }
 }
 
@@ -2140,6 +2158,7 @@ fn feed_sink(target: u64, draw: u64) -> DrawSink {
     params: true,
     order: DrawOrder::default(),
     order_feed: true,
+    cell_feed: false,
   }
 }
 
@@ -2394,4 +2413,91 @@ fn queries_hold_their_precision_far_from_the_origin() {
   }
   assert!((hit1.distance - hit0.distance).abs() < 1e-6, "distance {} vs {}", hit1.distance, hit0.distance);
   assert_eq!(hit1.face, hit0.face);
+}
+
+// --- Cull boxes ---
+
+fn boxes_written(writes: &[Write]) -> Vec<Vec<f32>> {
+  writes
+    .iter()
+    .filter_map(|w| match w {
+      Write::Boxes { boxes, .. } => Some(boxes.clone()),
+      _ => None,
+    })
+    .collect()
+}
+
+#[test]
+fn record_slots_stage_their_cull_boxes_in_the_record_frame() {
+  use crate::gpu::{CellBox, CELL_BOX_FLOATS};
+  let mut s = Spatial::new();
+  // A 4 x 2 sprite at (12, 20) over a unit box, the buffer's records
+  // relative to (10, 0, 0); declared before the bind.
+  s.set_instance_origin(4, [10.0, 0.0, 0.0]);
+  s.set_instance_boxes(4, true);
+  let n = s.create([12.0, 20.0, 0.0], Q, [4.0, 2.0, 1.0], true);
+  s.set_bounds(n, Some([-0.5, -0.5, -0.5, 0.5, 0.5, 0.5])).expect("bounds");
+  s.set_instance_record(n, record(4, 1), None).expect("bind");
+  let boxes = boxes_written(&flush(&mut s));
+  assert_eq!(boxes.len(), 1);
+  assert_eq!(boxes[0].len(), 2 * CELL_BOX_FLOATS);
+  // Slot 0 is bound by nobody: empty. Slot 1 is the sprite's box.
+  assert!(CellBox::read(&boxes[0], 0).is_empty());
+  assert_eq!(CellBox::read(&boxes[0], 1), CellBox { bounds: [0.0, 19.0, -0.5, 4.0, 21.0, 0.5], px: 0.0 });
+  // A screen reach alone republishes the box.
+  s.set_cull_px(n, 6.0).expect("px");
+  let boxes = boxes_written(&flush(&mut s));
+  assert_eq!(CellBox::read(&boxes[0], 1).px, 6.0);
+  // Hidden: the empty box.
+  s.set_visible(n, false).expect("hide");
+  let boxes = boxes_written(&flush(&mut s));
+  assert!(CellBox::read(&boxes[0], 1).is_empty());
+  // A buffer without boxes publishes none.
+  let m = s.create([0.0; 3], Q, ONE, true);
+  s.set_instance_record(m, record(5, 0), None).expect("bind");
+  assert!(boxes_written(&flush(&mut s)).is_empty());
+}
+
+#[test]
+fn record_declarations_outlive_the_group_until_the_buffer_goes() {
+  use crate::gpu::{CellBox, CELL_BOX_FLOATS};
+  let mut s = Spatial::new();
+  s.set_instance_origin(4, [10.0, 0.0, 0.0]);
+  s.set_instance_boxes(4, true);
+  let bounds = Some([-0.5, -0.5, -0.5, 0.5, 0.5, 0.5]);
+  let first = s.create([12.0, 0.0, 0.0], Q, ONE, true);
+  s.set_bounds(first, bounds).expect("bounds");
+  s.set_instance_record(first, record(4, 0), None).expect("bind");
+  flush(&mut s);
+  // Every record leaves: the group drops with its last write.
+  s.destroy(first).expect("destroy");
+  flush(&mut s);
+  // A new bind's group still stages boxes, in the declared frame.
+  let second = s.create([12.0, 0.0, 0.0], Q, ONE, true);
+  s.set_bounds(second, bounds).expect("bounds");
+  s.set_instance_record(second, record(4, 0), None).expect("bind");
+  let boxes = boxes_written(&flush(&mut s));
+  assert_eq!(boxes.len(), 1);
+  assert_eq!(boxes[0].len(), CELL_BOX_FLOATS);
+  assert_eq!(CellBox::read(&boxes[0], 0).bounds, [1.5, -0.5, -0.5, 2.5, 0.5, 0.5]);
+  // The buffer destroyed: a later group over its id declares nothing.
+  s.destroy(second).expect("destroy");
+  flush(&mut s);
+  s.forget_buffer(4);
+  let third = s.create([0.0; 3], Q, ONE, true);
+  s.set_instance_record(third, record(4, 0), None).expect("bind");
+  assert!(boxes_written(&flush(&mut s)).is_empty());
+}
+
+#[test]
+fn a_cell_feed_writes_on_every_view_change() {
+  let mut s = Spatial::new();
+  let n = s.create([0.0; 3], Q, ONE, true);
+  s.bind_sink(n, DrawSink { cell_feed: true, ..feed_sink(1, 7) }).expect("sink");
+  s.set_view(1, sort_view([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]));
+  assert_eq!(views(&flush(&mut s)).len(), 1);
+  // A move far under the depth feed's gates still feeds a cell entry.
+  s.set_view(1, sort_view([0.01, 0.0, 10.0], [0.0, 0.0, -1.0]));
+  assert_eq!(views(&flush(&mut s)).len(), 1);
+  assert!(views(&flush(&mut s)).is_empty(), "parked: nothing re-feeds");
 }

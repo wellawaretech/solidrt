@@ -24,9 +24,10 @@ pub use glyphs::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQ
 pub use lease::WriteLeases;
 pub use limits::GpuLimits;
 pub use order::{
-  gather_ordered, gather_permuted, materialize_indices, materialize_indices_through, order_packed, order_permutation,
-  InstanceOrder, KeyColumn, OrderKey, OrderScratch, OrderView, PackedFormat, PackedKey, RunTable, Selection,
-  INDEX_NONE, RUN_RAMP_SAMPLES,
+  gather_ordered, gather_permuted, materialize_indices, materialize_indices_through, order_cells, order_packed,
+  order_permutation, select_cells, CellBox, CellOptions, CellSize, InstanceOrder, KeyColumn, OrderKey, OrderOptions,
+  OrderScratch, OrderView, PackedFormat, PackedKey, RecordExtent, RunTable, Selection, CELL_BOX_FLOATS, INDEX_NONE,
+  RUN_RAMP_SAMPLES,
 };
 pub use order_worker::{OrderCounters, OrderWorker, PackedJob, SortJob};
 pub use resources::{

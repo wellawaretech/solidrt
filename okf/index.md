@@ -221,13 +221,6 @@ Shaped, not started.
   quantized to whole pixels, since no single origin serves both; the fix is
   records local to region cells, each cell its own buffer and draw, the tile
   layer's chunking applied to populations.
-- **[A sprite layer draws every sprite, on screen or not](backlog/2d-sprite-view-culling.md)** [2026-10-14]
-  A sprite or record layer is one instanced draw over all its records, so its
-  vertex cost follows the size of the world, not what a view shows (19.5 ms of
-  a 46.6 ms drag frame on an Adreno 610 for 30,703 records with about 650 on
-  screen); the fix is view culling per cell in the core - records gathered in
-  cell order, each view drawing only the cells its camera meets - on the
-  selection path packed populations already use.
 - **[A streaming tile world hitches on the tablet whenever a RESIDENT chunk re-bakes, a write into a texture the frames in flight still sample](backlog/2d-tile-world-frame-hitches.md)** [2026-10-16]
   The tiles example on the SM-T500 shows 50 to 67 ms gaps a few times a
   second; measured 2026-10-16 with a probe matrix and a sched/gfx trace, the
@@ -698,6 +691,13 @@ Shaped, not started.
   frame while the app keeps presenting partial frames, so on screen it reads
   as a logic bug (entities drawn after the throwing line vanish) and the only
   trace is a log line the reader has to think to look for.
+- **[An ordered or cell-culled layer re-gathers its whole population on every record write](backlog/ordered-layer-whole-prefix-publish.md)** [2026-11-06]
+  A record or sprite layer with orderBy or cells publishes its whole used
+  prefix and re-sorts it core-side on every frame that writes any record,
+  about 13 ms of the JS thread per such frame at 30,703 records on an Adreno
+  610 tablet's CPU (1 ms without an order); wanted a publish that costs what
+  changed when the order did not move, and only the moved records' share when
+  it did.
 - **[Coalesce the per-event syncs of writes made outside a frame](backlog/outside-frame-sync-coalescing.md)** [2026-10-06]
   A pointer move handler that moves a sprite or a mesh flushes its layer or
   scene once per dispatched move, because every event is its own JS entry with
@@ -1189,6 +1189,14 @@ Finished, kept for the reasoning.
   ms a drag frame against 42.9 with quads, 30,703 records on an Adreno 610) -
   wanted a zero-size early-out and three points per vertex, the cost view
   culling leaves.
+- **[A sprite layer draws every sprite, on screen or not](done/2d-sprite-view-culling.md)** [2026-10-14]
+  A sprite or record layer is one instanced draw over all its records, so its
+  vertex cost follows the size of the world, not what a view shows (about 6 ms
+  of a 41.6 ms drag frame on an Adreno 610 for 30,703 records with about 650
+  on screen); the fix is view culling per cell of a population's members in
+  the core - members gathered in cell order, cell boxes from the boxes the
+  core already keeps, each view drawing the contiguous instance ranges of the
+  cells its camera meets.
 - **[Seeding a tile world is one setTile call per cell](done/2d-tile-bulk-writes.md)** [2026-09-07]
   There was no bulk write, so an 18k-cell seed was 18k setTile calls each
   paying locate() and a frame copy; setTiles now writes a rect from a

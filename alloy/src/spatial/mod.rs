@@ -62,7 +62,7 @@ pub use clips::{ChannelInterpolation, ChannelPath, ClipChannel, ClipId, ClipMark
 #[cfg(test)]
 pub(crate) use pick::{ray_shape, BVH_MIN_TRIANGLES};
 pub use residency::{
-  GridId, GridSpec, RegionEvent, RegionMargins, RegionRef, RegionSpec, RegionState, ResidencyStats,
+  GridId, GridSpec, Lattice, RegionEvent, RegionMargins, RegionRef, RegionSpec, RegionState, ResidencyStats,
   DEFAULT_RESIDENCY_BUDGET, VIEW_KEY_BASE,
 };
 pub use rig::{
@@ -88,6 +88,7 @@ pub use transitions::{
   Component, Lanes, MotionState, NodeEndpoint, NodeMotion, NodeTransitionConfig, NodeTransitionEntry,
 };
 
+use crate::gpu::{CellBox, CELL_BOX_FLOATS};
 use crate::motion::TrackStart;
 use bvh::Bvh;
 use cull::{shift_box, union, world_box, Frustum};
@@ -153,6 +154,12 @@ pub struct DrawSink {
   /// thins its runs under the matrix. The consumer never computes a
   /// direction itself.
   pub order_feed: bool,
+  /// With `order_feed`: the entry draws a cell-culled population (an
+  /// instance order with cells, or an entry over its buffers), so the
+  /// feed writes the matrix on every change of it instead of under the
+  /// three gates. A cell selection is a box test per cell with no record
+  /// moved, and the gates' eye distance means nothing under a 2d pan.
+  pub cell_feed: bool,
 }
 
 /// The queue a draw entry sorts in on a sorted target, drawn in this
@@ -201,6 +208,8 @@ struct BoundSink {
   fed_eye: [f64; 3],
   fed_focal: f64,
   fed_ortho: bool,
+  /// The matrix a cell feed last wrote (`DrawSink::cell_feed`).
+  fed_clip: [f32; 16],
   /// Why the entry is off, or that it is on, as of the last cull pass
   /// that decided it (`cull_state`).
   gate: CullState,
@@ -330,8 +339,10 @@ pub trait SinkWriter {
   /// into draw order, where a partial range has no stable position) can
   /// reach every record, while the plain path writes just the range. At
   /// most one write per buffer per flush, however many nodes moved (see
-  /// `InstanceRecordSink`).
-  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]) -> bool;
+  /// `InstanceRecordSink`). `boxes` are the slots' cull boxes, whole
+  /// (`CELL_BOX_FLOATS` per slot), on a buffer that keeps them
+  /// (`set_instance_boxes`): what a cell-culled instance order culls by.
+  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32], boxes: Option<&[f32]>) -> bool;
   /// A float texture's fresh rows, whole: 16 floats (one column-major mat4,
   /// one row of a 4-texel-wide rgba32f texture) per bound slot. At most one
   /// write per texture per flush (see `TextureSlotSink`).
@@ -806,6 +817,10 @@ struct InstanceGroup {
   refs: u32,
   /// Dirty float range [lo, hi) into `values`; None = clean.
   dirty: Option<(usize, usize)>,
+  /// Each slot's cull box in the record frame (`CELL_BOX_FLOATS` per
+  /// slot), on a buffer that keeps them (`set_instance_boxes`); None
+  /// otherwise.
+  boxes: Option<Vec<f32>>,
 }
 
 impl InstanceGroup {
@@ -827,8 +842,31 @@ impl InstanceGroup {
     while self.values.len() < need {
       self.values.extend_from_slice(self.projection.hidden());
     }
+    if let Some(boxes) = &mut self.boxes {
+      while boxes.len() < slots * CELL_BOX_FLOATS {
+        boxes.extend_from_slice(&CellBox::EMPTY.floats());
+      }
+    }
+  }
+
+  /// Stage slot `index`'s cull box; marks the slot dirty when it changed,
+  /// so a box-only change publishes too.
+  fn stage_box(&mut self, index: usize, cell: CellBox) {
+    let stride = self.stride();
+    let Some(boxes) = &mut self.boxes else { return };
+    let at = index * CELL_BOX_FLOATS;
+    let floats = cell.floats();
+    if boxes[at..at + CELL_BOX_FLOATS] != floats {
+      boxes[at..at + CELL_BOX_FLOATS].copy_from_slice(&floats);
+      self.mark(index * stride, (index + 1) * stride);
+    }
   }
 }
+
+/// A cull box's half extent on an axis it does not bound (a node without
+/// bounds, or with culling off): far beyond any view, yet finite, so the
+/// plane arithmetic stays exact.
+const CULL_UNBOUNDED: f32 = 1e30;
 
 /// The `Pose2D` decomposition of a world matrix (see `InstanceProjection`).
 fn pose2d(m: &Mat4) -> [f64; 5] {
@@ -972,6 +1010,10 @@ struct Node {
   collide: bool,
   /// World units the frustum test widens the box by on every side.
   cull_margin: f64,
+  /// Screen pixels the node's drawing may reach beyond its box at any
+  /// zoom (a screen-size floor, `set_cull_px`): carried by its record
+  /// slot's cull box, which a cell selection grows per view.
+  cull_px: f64,
   /// Nodes whose world boxes, united, stand in for this node's own in the
   /// frustum test (a skinned part culled by its joints' boxes, so the box
   /// follows the pose). Empty = the node's own box.
@@ -1065,6 +1107,9 @@ pub struct Spatial {
   /// kept apart from the group so a declaration before the first bind
   /// holds.
   instance_origins: HashMap<u64, [f64; 3]>,
+  /// The buffers whose record slots stage a cull box beside the record
+  /// (`set_instance_boxes`), kept apart from the group like the origins.
+  instance_boxes: HashSet<u64>,
   /// Per target, the clip volume its draw sinks are gated by, derived
   /// from its view (`set_view`; a target without one never culls).
   frustums: HashMap<u64, Frustum>,
@@ -1214,6 +1259,7 @@ impl Spatial {
       cull: true,
       collide: true,
       cull_margin: 0.0,
+      cull_px: 0.0,
       cull_group: Vec::new(),
       cull_owners: Vec::new(),
       shape: None,
@@ -2367,6 +2413,26 @@ impl Spatial {
         else {
           continue;
         };
+        let origin = self.origins.get(&b.sink.target).copied().unwrap_or([0.0; 3]);
+        let model_clip = |world: &Mat4| {
+          let mut shifted = *world;
+          shifted[12] -= origin[0];
+          shifted[13] -= origin[1];
+          shifted[14] -= origin[2];
+          narrow(&math::multiply(vp, shifted))
+        };
+        if b.sink.cell_feed {
+          let clip32 = model_clip(&world);
+          if clip32 == b.fed_clip {
+            continue;
+          }
+          if out.write_order_view(b.sink.target, b.sink.draw, clip32) {
+            b.fed_clip = clip32;
+          } else {
+            b.sink.order_feed = false;
+          }
+          continue;
+        }
         let f = view.forward;
         // Column i of the world's upper 3x3 dotted with f = (W3x3^T f)_i.
         let d = [
@@ -2397,16 +2463,7 @@ impl Spatial {
         if !(turned || moved || reprojected) {
           continue;
         }
-        let origin = self.origins.get(&b.sink.target).copied().unwrap_or([0.0; 3]);
-        let mut shifted = world;
-        shifted[12] -= origin[0];
-        shifted[13] -= origin[1];
-        shifted[14] -= origin[2];
-        let clip = math::multiply(vp, shifted);
-        let mut clip32 = [0.0f32; 16];
-        for (o, v) in clip32.iter_mut().zip(clip) {
-          *o = v as f32;
-        }
+        let clip32 = model_clip(&world);
         if out.write_order_view(b.sink.target, b.sink.draw, clip32) {
           b.fed = d;
           b.fed_eye = view.eye;
@@ -2752,7 +2809,7 @@ impl Spatial {
       let record_on = self.nodes[r as usize].record_on;
       if let Some(old) = self.nodes[r as usize].records.get(current as usize).copied() {
         if record_on {
-          self.stage_record(&old, old.projection.hidden());
+          self.stage_pose(r, &old, None);
         }
       }
       self.nodes[r as usize].record_level = level;
@@ -2763,10 +2820,7 @@ impl Spatial {
       let new = self.nodes[r as usize].records[level as usize];
       if shown {
         let m = self.anchored(new.buffer, &world);
-        match new.projection {
-          InstanceProjection::Pose2D => self.stage_record(&new, &pose2d(&m).map(|v| v as f32)),
-          InstanceProjection::Matrix => self.stage_record(&new, &narrow(&m)),
-        }
+        self.stage_pose(r, &new, Some(&m));
         self.nodes[r as usize].record_on = true;
       }
     }
@@ -3249,6 +3303,7 @@ impl Spatial {
     }
     for sink in &sinks {
       let origins = &self.instance_origins;
+      let boxed = self.instance_boxes.contains(&sink.buffer);
       let group = self.instances.entry(sink.buffer).or_insert_with(|| InstanceGroup {
         projection: sink.projection,
         anchor,
@@ -3258,6 +3313,7 @@ impl Spatial {
         values: Vec::new(),
         refs: 0,
         dirty: None,
+        boxes: boxed.then(Vec::new),
       });
       if group.projection != sink.projection {
         return Err(format!(
@@ -3321,6 +3377,9 @@ impl Spatial {
     if let Some(origin) = self.instance_origins.remove(&old) {
       self.instance_origins.insert(new, origin);
     }
+    if self.instance_boxes.remove(&old) {
+      self.instance_boxes.insert(new);
+    }
     for n in self.nodes.iter_mut() {
       for record in n.records.iter_mut() {
         if record.buffer == old {
@@ -3360,10 +3419,129 @@ impl Spatial {
       }
       let world = n.world;
       let m = self.anchored(buffer, &world);
-      match rec.projection {
-        InstanceProjection::Pose2D => self.stage_record(&rec, &pose2d(&m).map(|v| v as f32)),
-        InstanceProjection::Matrix => self.stage_record(&rec, &narrow(&m)),
+      self.stage_pose(i as u32, &rec, Some(&m));
+    }
+  }
+
+  /// Whether the record slots on `buffer` stage a cull box beside the
+  /// record (`CellBox`): the node's local box (its cull box, else its
+  /// bounds; unbounded without either or with culling off) in the
+  /// buffer's record frame, grown by its cull margin, with its screen
+  /// reach (`set_cull_px`), and the empty box for a hidden or unbound
+  /// slot. The boxes publish whole with every write of the buffer: what a
+  /// cell-culled instance order keyed on it culls by. Declared before the
+  /// first bind it holds for the group that bind creates; a retarget
+  /// carries it.
+  pub fn set_instance_boxes(&mut self, buffer: u64, enabled: bool) {
+    let changed = if enabled { self.instance_boxes.insert(buffer) } else { self.instance_boxes.remove(&buffer) };
+    if !changed {
+      return;
+    }
+    let Some(group) = self.instances.get_mut(&buffer) else {
+      return;
+    };
+    if !enabled {
+      group.boxes = None;
+      return;
+    }
+    let slots = group.values.len() / group.stride();
+    group.boxes = Some(Vec::new());
+    group.reserve(slots);
+    for i in 0..self.nodes.len() {
+      let n = &self.nodes[i];
+      if !n.alive || !n.record_on {
+        continue;
       }
+      let Some(rec) = n.records.get(n.record_level as usize).copied() else {
+        continue;
+      };
+      if rec.buffer == buffer {
+        let world = n.world;
+        let m = self.anchored(buffer, &world);
+        self.stage_pose(i as u32, &rec, Some(&m));
+      }
+    }
+  }
+
+  /// The buffer is destroyed: its declarations (`set_instance_origin`,
+  /// `set_instance_boxes`) go with it. A group still bound to it drops at
+  /// its next write, which does not land.
+  pub fn forget_buffer(&mut self, buffer: u64) {
+    self.instance_origins.remove(&buffer);
+    self.instance_boxes.remove(&buffer);
+  }
+
+  /// Screen pixels the node's drawing may reach beyond its box at any
+  /// zoom (a screen-size floor's reach from its center; 0 = none): carried
+  /// by its record slot's cull box (`set_instance_boxes`), which a cell
+  /// selection grows by it at each view's pixel scale. Restages a shown
+  /// slot's box at once.
+  pub fn set_cull_px(&mut self, id: NodeId, px: f64) -> Result<(), String> {
+    if !(px.is_finite() && px >= 0.0) {
+      return Err(format!("cull px must be a finite non-negative number of pixels, got {px}"));
+    }
+    let i = self.resolve(id)?;
+    let n = &mut self.nodes[i as usize];
+    if n.cull_px == px {
+      return Ok(());
+    }
+    n.cull_px = px;
+    if !n.record_on {
+      return Ok(());
+    }
+    if let Some(rec) = n.records.get(n.record_level as usize).copied() {
+      let world = n.world;
+      let m = self.anchored(rec.buffer, &world);
+      self.stage_pose(i, &rec, Some(&m));
+    }
+    Ok(())
+  }
+
+  /// Stage node `i`'s record slot `rec`: its pose `m` in the buffer's
+  /// record frame (`anchored`), projected, and its cull box on a buffer
+  /// that keeps them; None stages the hidden record and the empty box.
+  fn stage_pose(&mut self, i: u32, rec: &InstanceRecordSink, m: Option<&Mat4>) {
+    let Some(m) = m else {
+      self.stage_record(rec, rec.projection.hidden());
+      if let Some(group) = self.instances.get_mut(&rec.buffer) {
+        group.stage_box(rec.index as usize, CellBox::EMPTY);
+      }
+      return;
+    };
+    // A pose record with a zero axis draws nothing (a 2d sprite collapsed
+    // to a line): no box, so no view submits it.
+    let collapsed = match rec.projection {
+      InstanceProjection::Pose2D => {
+        let pose = pose2d(m);
+        self.stage_record(rec, &pose.map(|v| v as f32));
+        pose[3] == 0.0 || pose[4] == 0.0
+      }
+      InstanceProjection::Matrix => {
+        self.stage_record(rec, &narrow(m));
+        false
+      }
+    };
+    if !self.instances.get(&rec.buffer).is_some_and(|g| g.boxes.is_some()) {
+      return;
+    }
+    if collapsed {
+      if let Some(group) = self.instances.get_mut(&rec.buffer) {
+        group.stage_box(rec.index as usize, CellBox::EMPTY);
+      }
+      return;
+    }
+    let n = &self.nodes[i as usize];
+    let bounds = match n.cull_bounds.or(n.bounds) {
+      Some(local) if n.cull => {
+        let b = world_box(&local, m);
+        let g = n.cull_margin;
+        [b[0] - g, b[1] - g, b[2] - g, b[3] + g, b[4] + g, b[5] + g].map(|v| v as f32)
+      }
+      _ => [-CULL_UNBOUNDED, -CULL_UNBOUNDED, -CULL_UNBOUNDED, CULL_UNBOUNDED, CULL_UNBOUNDED, CULL_UNBOUNDED],
+    };
+    let cell = CellBox { bounds, px: n.cull_px as f32 };
+    if let Some(group) = self.instances.get_mut(&rec.buffer) {
+      group.stage_box(rec.index as usize, cell);
     }
   }
 
@@ -3378,6 +3556,7 @@ impl Spatial {
         group.values[at..at + stride].copy_from_slice(hidden);
         group.mark(at, at + stride);
       }
+      group.stage_box(sink.index as usize, CellBox::EMPTY);
       group.refs = group.refs.saturating_sub(1);
     }
   }
@@ -4293,6 +4472,7 @@ impl Spatial {
       fed_eye: [0.0; 3],
       fed_focal: 0.0,
       fed_ortho: false,
+      fed_clip: [0.0; 16],
       gate: CullState::Hidden,
     });
     for target in rekeyed {
@@ -4463,18 +4643,21 @@ impl Spatial {
     // The rigs' curve bindings: a changed curve value into its param.
     self.flush_curve_sinks(out);
     // Instance staging publishes the same way: one coalesced dirty range
-    // per buffer per flush, a group dropping with its last write.
+    // per buffer per flush, a group dropping with its last write. The
+    // buffer's declarations outlive its group (the next bind's group
+    // takes them) and go with the buffer: a write that did not land.
     let instance_origins = &mut self.instance_origins;
+    let instance_boxes = &mut self.instance_boxes;
     self.instances.retain(|buffer, group| {
       let mut landed = true;
       if let Some((lo, hi)) = group.dirty.take() {
-        landed = out.write_instances(*buffer, lo as u32, hi as u32, &group.values);
+        landed = out.write_instances(*buffer, lo as u32, hi as u32, &group.values, group.boxes.as_deref());
       }
-      let keep = landed && group.refs > 0;
-      if !keep {
+      if !landed {
         instance_origins.remove(buffer);
+        instance_boxes.remove(buffer);
       }
-      keep
+      landed && group.refs > 0
     });
     // Palette staging publishes whole per texture: the matrix rows the
     // walk staged (anchor-relative already, see `PaletteGroup`) and the
@@ -4671,13 +4854,10 @@ impl Spatial {
     if let Some(rec) = record {
       if shown && (changed || !record_on) {
         let m = self.anchored(rec.buffer, &world);
-        match rec.projection {
-          InstanceProjection::Pose2D => self.stage_record(&rec, &pose2d(&m).map(|v| v as f32)),
-          InstanceProjection::Matrix => self.stage_record(&rec, &narrow(&m)),
-        }
+        self.stage_pose(i, &rec, Some(&m));
         self.nodes[i as usize].record_on = true;
       } else if !shown && record_on {
-        self.stage_record(&rec, rec.projection.hidden());
+        self.stage_pose(i, &rec, None);
         self.nodes[i as usize].record_on = false;
       }
     }

@@ -55,7 +55,7 @@ export type SpriteLayerProps = LayerPointerProps &
    * still its own, `<Sprite>`, `<Group>` and `<Text2d>` children mount
    * into it - and leaves its lifetime to its maker, so the component
    * face sits over an imperative layer. The creation props (atlases,
-   * capacity, material, orderBy) describe a layer the component makes,
+   * capacity, material, orderBy, cells) describe a layer the component makes,
    * so with `layer` they have nothing to apply to and throw.
    */
   layer?: LayerHandle
@@ -93,6 +93,10 @@ export type SpriteLayerProps = LayerPointerProps &
    * SpriteLayerOptions.orderBy).
    */
   orderBy?: "y" | "renderOrder"
+  /** View culling per cell, `size` layer pixels a cell: each view draws
+   * only the sprites in the cells its camera meets. Creation-fixed (see
+   * SpriteLayerOptions.cells). */
+  cells?: { size: number }
   /**
    * Stagger (ms) on the layer's root: the enters and exits of the sprites
    * and groups straight under the layer that begin in one frame are spaced
@@ -152,7 +156,7 @@ export type SpriteLayerProps = LayerPointerProps &
 
 // The props that describe a layer the component creates - meaningless,
 // hence rejected, on an adopted one (`layer`), which was created already.
-const CREATION_PROPS = ["atlases", "capacity", "material", "orderBy"] as const
+const CREATION_PROPS = ["atlases", "capacity", "material", "orderBy", "cells"] as const
 
 // The props that configure the layer's own view - meaningless, hence
 // rejected, on a layer without one (output={false}).
@@ -203,6 +207,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
       params: props.params,
       tint: props.tint,
       orderBy: props.orderBy,
+      cells: props.cells,
       stagger: props.stagger,
       timeScale: props.timeScale ?? undefined,
       label: props.label,

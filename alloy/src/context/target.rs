@@ -945,13 +945,22 @@ impl Context {
       self.set_instance_order_direction(target, entry_key, direction)?;
     }
     let mut reorder = update.order_direction.is_some();
+    let mut reselect = false;
     if let Some(view) = update.order_view {
-      reorder |= self.set_instance_order_view(target, entry_key, view)?;
+      let change = self.set_instance_order_view(target, entry_key, view, &next_ids)?;
+      reorder |= change.reorder;
+      reselect |= change.reselect;
+    }
+    if let Some(viewport) = update.order_viewport {
+      reselect |= self.set_instance_order_viewport(target, entry_key, viewport, &next_ids)?;
     }
     if let Some(threshold) = update.order_lod {
       reorder |= self.set_instance_order_lod(target, entry_key, threshold)?;
     }
-    let order_only = update.order_direction.is_some() || update.order_view.is_some() || update.order_lod.is_some();
+    let order_only = update.order_direction.is_some()
+      || update.order_view.is_some()
+      || update.order_lod.is_some()
+      || update.order_viewport.is_some();
     if instance_swap {
       self.commit_order_swap(target, entry_key, next_ids);
     }
@@ -984,6 +993,11 @@ impl Context {
     // Gather entries re-order at their next publish, as above.
     if reorder {
       self.rematerialize_retained_order(target, entry_key);
+    }
+    // An entry drawing cells re-selects them under its new view or
+    // viewport: spans only, no record moves.
+    if reselect {
+      self.reselect_reader(target, entry_key);
     }
     // An instance-count change on an entry over HANDED-OFF records moves
     // the published prefix of the core's mirror: the first n records

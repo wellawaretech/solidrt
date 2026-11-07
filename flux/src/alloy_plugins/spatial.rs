@@ -109,6 +109,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("lodLevel")?;
     decl.declare("setLodReference")?;
     decl.declare("setCull")?;
+    decl.declare("setCullPx")?;
     decl.declare("setCollide")?;
     decl.declare("setCullBounds")?;
     decl.declare("setCullGroup")?;
@@ -193,6 +194,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("unbindRecord")?;
     decl.declare("retargetRecords")?;
     decl.declare("setInstanceOrigin")?;
+    decl.declare("setInstanceBoxes")?;
     Ok(())
   }
 
@@ -224,6 +226,7 @@ impl ModuleDef for SpatialModule {
     exports.export("lodLevel", Function::new(ctx.clone(), lod_level)?)?;
     exports.export("setLodReference", Function::new(ctx.clone(), set_lod_reference)?)?;
     exports.export("setCull", Function::new(ctx.clone(), set_cull)?)?;
+    exports.export("setCullPx", Function::new(ctx.clone(), set_cull_px)?)?;
     exports.export("setCollide", Function::new(ctx.clone(), set_collide)?)?;
     exports.export("setCullBounds", Function::new(ctx.clone(), set_cull_bounds)?)?;
     exports.export("setCullGroup", Function::new(ctx.clone(), set_cull_group)?)?;
@@ -308,6 +311,7 @@ impl ModuleDef for SpatialModule {
     exports.export("unbindRecord", Function::new(ctx.clone(), unbind_record)?)?;
     exports.export("retargetRecords", Function::new(ctx.clone(), retarget_records)?)?;
     exports.export("setInstanceOrigin", Function::new(ctx.clone(), set_instance_origin)?)?;
+    exports.export("setInstanceBoxes", Function::new(ctx.clone(), set_instance_boxes)?)?;
     Ok(())
   }
 }
@@ -528,7 +532,15 @@ fn bind_draw(ctx: Ctx<'_>, id: u64, target: u64, draw: u64, opts: OptArg<Object<
   let normal = flag("normal", false)?;
   let fade = flag("fade", false)?;
   let params = flag("params", true)?;
-  let order_feed = flag("orderFeed", false)?;
+  // orderFeed: true (the gated feed of a depth order) or "cells" (every
+  // view change, for an entry drawing a cell-culled population).
+  let (order_feed, cell_feed) = match field("orderFeed")? {
+    Some(v) if v.as_string().is_some_and(|s| s.to_string().is_ok_and(|s| s == "cells")) => (true, true),
+    Some(v) if !v.is_undefined() => {
+      (v.as_bool().ok_or_else(|| throw_str(&ctx, "bindDraw: orderFeed must be a boolean or \"cells\""))?, false)
+    }
+    _ => (false, false),
+  };
   let count = number("count", 1.0)? as u32;
   let queue = draw_queue(&ctx, number("queue", QUEUE_OPAQUE as f64)? as u32, "bindDraw")?;
   let render_order = number("renderOrder", 0.0)? as i32;
@@ -536,7 +548,17 @@ fn bind_draw(ctx: Ctx<'_>, id: u64, target: u64, draw: u64, opts: OptArg<Object<
     .alloy
     .spatial_bind(
       id,
-      DrawSink { target, draw, normal, count, fade, params, order: DrawOrder { queue, render_order }, order_feed },
+      DrawSink {
+        target,
+        draw,
+        normal,
+        count,
+        fade,
+        params,
+        order: DrawOrder { queue, render_order },
+        order_feed,
+        cell_feed,
+      },
     )
     .map_err(|e| throw_str(&ctx, &format!("bindDraw: {e}")))
 }
@@ -750,6 +772,12 @@ fn set_cull(ctx: Ctx<'_>, id: u64, enabled: bool, margin: f64) -> rquickjs::Resu
     .spatial()
     .set_cull(id, enabled, margin as f64)
     .map_err(|e| throw_str(&ctx, &format!("setCull: {e}")))
+}
+
+/// Screen pixels the node's drawing may reach beyond its box at any zoom
+/// (a screen-size floor's reach), carried by its record slot's cull box.
+fn set_cull_px(ctx: Ctx<'_>, id: u64, px: f64) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().set_cull_px(id, px).map_err(|e| throw_str(&ctx, &format!("setCullPx: {e}")))
 }
 
 /// Whether the node's box is a solid to the volume queries (default
@@ -2533,6 +2561,13 @@ fn set_instance_origin(ctx: Ctx<'_>, buffer: u64, origin: TypedArray<'_, f64>) -
     return Err(throw_str(&ctx, "setInstanceOrigin: origin must be a Float64Array of 3"));
   }
   super::gui(&ctx).alloy.spatial().set_instance_origin(buffer, [o[0], o[1], o[2]]);
+  Ok(())
+}
+
+/// Whether the record slots on a buffer stage a cull box beside the
+/// record (what a cell-culled instance order keyed on it culls by).
+fn set_instance_boxes(ctx: Ctx<'_>, buffer: u64, enabled: bool) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().set_instance_boxes(buffer, enabled);
   Ok(())
 }
 

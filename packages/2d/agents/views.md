@@ -218,6 +218,52 @@ Not yet, all additive: a
 tint, and a viewport over SEVERAL layers under one camera (their
 scene-level camera) - okf/backlog/2d-layer-views-additive.md.
 
+### View culling per cell
+
+Without it a sprite or record layer's view submits EVERY record, on
+screen or not: its vertex work follows the size of the world, not what
+the view shows (a sprite off screen is placed in full and only then
+clipped). `cells: { size }` on `createSpriteLayer`, `createRecordLayer`
+or `<SpriteLayer>` makes each view draw only the sprites in the cells
+its camera meets - Unity's chunked Tilemap and Godot's rendering
+quadrants, per cell rather than per sprite. It is all core work: the
+gather keeps the records in cell order on every publish, and each view's
+entry re-selects its cells on every camera move (a box test per cell,
+no record uploaded, no per-sprite JS); slots, handles, picking and
+queries are untouched. `size` is the cell edge in layer pixels.
+
+- Order. Under `orderBy: "y"` the cells are horizontal bands `size`
+  tall and the y order stays exact. Without `orderBy` they are a square
+  grid drawn row by row, so two sprites that overlap across a cell
+  boundary may draw in either order (Unity's chunk mode makes the same
+  trade); a board or a map whose sprites do not overlap never shows it.
+  `orderBy: "renderOrder"` (a record layer's `{ field }`) is a
+  world-wide order a grid cannot keep, so with `cells` it throws.
+- What is never submitted: hidden, destroyed and zero-size sprites,
+  in any cell.
+- Reach. A cell's box is the union of its sprites' rotated rects; a
+  screen-size floor (`minScreenPx`) widens it by the floor's reach at
+  each view's zoom, so a floored marker just past the edge still draws
+  when zoomed out. Hull meshes and outlines draw inside the rect, so
+  they need no margin.
+- Cost. The option turns on the gather (as `orderBy` does): a plain
+  layer then publishes its records as the whole used prefix instead of
+  the changed range, and the core re-sorts them, on every frame that
+  writes a record. A camera move costs no measurable CPU. Measured on an
+  Adreno 610 tablet with a 30,703-record hull layer, about 650 sprites
+  on screen: a pan went from 41.7 to 36.0 ms of GPU per frame (the
+  off-screen records' vertex work, about 0.19 us each per frame, is
+  gone), but a frame that writes records took about 13 ms more of the JS
+  thread (plain `orderBy: "y"` alone costs most of that). So it pays for
+  a large layer the camera moves over while its records mostly rest (a
+  board, a map, a world of props), and it costs CPU on a layer that
+  rewrites records every frame. A few thousand records off screen save
+  under a millisecond; tens of thousands save several. It is off by
+  default. The cell size hardly matters (256 to 1024 px cells measured
+  the same there): pick a cell of a view width or less.
+- Check it with the GPU inventory (`get_gpu_resources`): a culled
+  view's entry reports `instanceSpans` and `instancesDrawn`.
+
 ## Regions
 
 A sprite layer STREAMS by the spatial core's residency gate the way the

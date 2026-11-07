@@ -1,8 +1,10 @@
 use crate::gpu::{
-  gather_ordered, gather_permuted, materialize_indices, materialize_indices_through, order_packed, order_permutation,
-  InstanceOrder, KeyColumn, OrderKey, OrderScratch, OrderView, OrderWorker, PackedFormat, PackedJob, PackedKey,
-  RunTable, Selection, SortJob, INDEX_NONE, RUN_RAMP_SAMPLES,
+  gather_ordered, gather_permuted, materialize_indices, materialize_indices_through, order_cells, order_packed,
+  order_permutation, select_cells, CellBox, CellOptions, CellSize, InstanceOrder, KeyColumn, OrderKey, OrderOptions,
+  OrderScratch, OrderView, OrderWorker, PackedFormat, PackedJob, PackedKey, RecordExtent, RunTable, Selection, SortJob,
+  CELL_BOX_FLOATS, INDEX_NONE, RUN_RAMP_SAMPLES,
 };
+use crate::spatial::Lattice;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -26,6 +28,7 @@ fn field_order(offset_floats: usize) -> InstanceOrder {
     retain: false,
     indices: None,
     lod_threshold: 0.0,
+    cells: None,
   }
 }
 
@@ -82,6 +85,7 @@ fn check_stride_bounds_the_key_bytes() {
     retain: false,
     indices: None,
     lod_threshold: 0.0,
+    cells: None,
   };
   projected.check_stride(16).expect("vec3 at float 1 fits a 16-byte record");
   assert!(projected.check_stride(12).expect_err("vec3 past the record").contains("does not fit"));
@@ -90,7 +94,7 @@ fn check_stride_bounds_the_key_bytes() {
 #[test]
 fn set_direction_is_projected_only() {
   let mut f = field_order(0);
-  assert!(f.set_direction([0.0, 1.0, 0.0]).expect_err("field key").contains("field key"));
+  assert!(f.set_direction([0.0, 1.0, 0.0]).expect_err("field key").contains("no position key"));
   let mut p = InstanceOrder {
     key: OrderKey::Projected { offset: 0, direction: [1.0, 0.0, 0.0] },
     descending: false,
@@ -98,6 +102,7 @@ fn set_direction_is_projected_only() {
     retain: false,
     indices: None,
     lod_threshold: 0.0,
+    cells: None,
   };
   assert!(p.set_direction([0.0, 0.0, 0.0]).expect_err("zero direction").contains("zero vector"));
   p.set_direction([0.0, 2.0, 0.0]).expect("replace");
@@ -131,6 +136,7 @@ fn gather_descending_reverses() {
     retain: false,
     indices: None,
     lod_threshold: 0.0,
+    cells: None,
   };
   gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 1)).collect();
@@ -151,6 +157,7 @@ fn projected_key_follows_the_direction() {
     retain: false,
     indices: None,
     lod_threshold: 0.0,
+    cells: None,
   };
   gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 3)).collect();
@@ -447,7 +454,7 @@ fn packed_cloud(count: usize, run_len: usize) -> (Vec<u8>, RunTable, Vec<f32>) {
   let (records, zs) = packed_records(count, &bounds, run_len);
   let starts: Vec<u32> = (0..runs).map(|c| (c * run_len) as u32).collect();
   let ramp = falling_ramp(count, &starts);
-  (records, RunTable { bounds, starts, ramp }, zs)
+  (records, RunTable { bounds, starts, ramp, px: vec![] }, zs)
 }
 
 // `count` packed records at random grid positions inside the box of their
@@ -562,7 +569,7 @@ fn packed_hand_off_is_validated() {
   nan.ramp[0] = f32::NAN;
   assert!(column.check_packed(records.len(), &nan).expect_err("a NaN sample").contains("finite"));
   // No records: no runs.
-  let empty = RunTable { bounds: vec![], starts: vec![], ramp: vec![] };
+  let empty = RunTable { bounds: vec![], starts: vec![], ramp: vec![], px: vec![] };
   assert!(empty.check(0).is_ok());
   assert!(table.check(0).expect_err("runs for nothing").contains("no records"));
   assert!(empty.check(5).expect_err("records with no runs").contains("no runs"));
@@ -633,7 +640,7 @@ fn placed_cloud() -> (Vec<u8>, RunTable) {
   let starts = vec![0, 100, 200];
   // Importance (len - rank) / len: 1 down to 0.01.
   let ramp = falling_ramp(300, &starts).iter().map(|v| v / 100.0).collect();
-  (records, RunTable { bounds, starts, ramp })
+  (records, RunTable { bounds, starts, ramp, px: vec![] })
 }
 
 // The view culls the run behind the eye whole and cuts the visible runs
@@ -759,4 +766,197 @@ fn sort_worker_sorts_a_packed_job() {
     last = zs[id as usize];
   }
   drop(worker);
+}
+
+// --- Cells ---
+
+// Records of [cx, cy, w, h, rot, minScreenPx], the extent over them.
+const CELL_RECORD: usize = 24;
+const CELL_EXTENT: RecordExtent = RecordExtent { position: 0, size: 8, rotation: Some(16), min_screen_px: Some(20) };
+
+fn cell_records(records: &[[f32; 6]]) -> Vec<u8> {
+  bytes(&records.iter().flatten().copied().collect::<Vec<f32>>())
+}
+
+fn boxes_of(src: &[u8]) -> Vec<f32> {
+  let mut boxes = Vec::new();
+  CELL_EXTENT.boxes(CELL_RECORD, src, &mut boxes);
+  boxes
+}
+
+// A 2d lattice of 10-unit cells over x and y.
+fn grid_order() -> InstanceOrder {
+  let lattice = Lattice { origin: [0.0; 3], cell: [10.0, 10.0, 0.0] };
+  InstanceOrder::cell_grid(lattice, None, Some(CELL_EXTENT)).expect("cell order")
+}
+
+// The y-down orthographic view of the 2d views over a `w` x `h` world
+// rectangle at (x, y), zoom 1: clip x = 2 (p.x - x) / w - 1, clip y =
+// 1 - 2 (p.y - y) / h.
+fn view_rect(x: f32, y: f32, w: f32, h: f32) -> OrderView {
+  let mut m = [0.0f32; 16];
+  m[0] = 2.0 / w;
+  m[5] = -2.0 / h;
+  m[10] = -1.0;
+  m[12] = -2.0 * x / w - 1.0;
+  m[13] = 2.0 * y / h + 1.0;
+  m[15] = 1.0;
+  OrderView { clip: m }
+}
+
+#[test]
+fn a_cell_order_takes_a_lattice_and_bands_take_a_field_key() {
+  let none = Lattice { origin: [0.0; 3], cell: [0.0; 3] };
+  assert!(InstanceOrder::cell_grid(none, None, None).expect_err("no cut axis").contains("positive"));
+  let bad = Lattice { origin: [0.0; 3], cell: [-1.0, 1.0, 0.0] };
+  assert!(InstanceOrder::cell_grid(bad, None, None).is_err());
+  let y = field_order(1);
+  assert_eq!(y.with_bands(16.0, None).expect("bands").cells.and_then(|c| c.band), Some(16.0));
+  assert!(y.with_bands(0.0, None).expect_err("zero band").contains("band"));
+  let position =
+    InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false, None).expect("position order");
+  assert!(position.with_bands(16.0, None).is_err(), "a position key has no bands");
+  // The extent's fields must fit the record.
+  assert!(grid_order().check_stride(CELL_RECORD).is_ok());
+  assert!(grid_order().check_stride(20).expect_err("minScreenPx past the record").contains("minScreenPx"));
+}
+
+#[test]
+fn order_options_take_cells_as_a_lattice_without_a_key_and_bands_over_one() {
+  let cells = |size| Some(CellOptions { size, origin: None, extent: None });
+  let lattice = Some(CellSize::Lattice([10.0, 10.0, 0.0]));
+  let grid = InstanceOrder::from_options(OrderOptions { cells: cells(lattice), ..Default::default() })
+    .expect("a keyless cell order");
+  assert!(matches!(grid.key, OrderKey::Cell { .. }));
+  let banded = InstanceOrder::from_options(OrderOptions {
+    field: Some(1.0),
+    cells: cells(Some(CellSize::Band(16.0))),
+    ..Default::default()
+  })
+  .expect("bands over a field key");
+  assert_eq!(banded.cells.and_then(|c| c.band), Some(16.0));
+  // Without a key: a lattice size, and none of the key's options.
+  let lod = OrderOptions { lod: Some(1.0), cells: cells(lattice), ..Default::default() };
+  assert!(InstanceOrder::from_options(lod).expect_err("keyless lod").contains("without a key"));
+  let band = OrderOptions { cells: cells(Some(CellSize::Band(16.0))), ..Default::default() };
+  assert!(InstanceOrder::from_options(band).expect_err("keyless band").contains("[x, y, z]"));
+  // Over a key: a band width, no origin, and the key's own rules (lod on
+  // an indexed order only, which bands are not).
+  let field = |cells| OrderOptions { field: Some(1.0), cells, ..Default::default() };
+  assert!(InstanceOrder::from_options(field(cells(lattice))).expect_err("lattice over a key").contains("band width"));
+  let origin = Some(CellOptions { size: Some(CellSize::Band(16.0)), origin: Some([0.0; 3]), extent: None });
+  assert!(InstanceOrder::from_options(field(origin)).expect_err("origin over a key").contains("origin"));
+  let lod = OrderOptions { lod: Some(1.0), ..field(cells(Some(CellSize::Band(16.0)))) };
+  assert!(InstanceOrder::from_options(lod).expect_err("lod over bands").contains("indexed"));
+}
+
+#[test]
+fn an_extent_reads_a_rotated_box_and_the_screen_floor_reach() {
+  let half_turn = std::f32::consts::FRAC_PI_2;
+  let src = cell_records(&[
+    [5.0, 5.0, 4.0, 2.0, half_turn, 0.0],
+    [0.0, 0.0, 0.0, 3.0, 0.0, 0.0],
+    [1.0, 1.0, 2.0, 1.0, 0.0, 8.0],
+  ]);
+  let boxes = boxes_of(&src);
+  assert_eq!(boxes.len(), 3 * CELL_BOX_FLOATS);
+  // A quarter turn swaps the extents.
+  let b = CellBox::read(&boxes, 0);
+  for (got, want) in b.bounds.iter().zip([4.0, 3.0, 0.0, 6.0, 7.0, 0.0]) {
+    assert!((got - want).abs() < 1e-5, "{:?}", b.bounds);
+  }
+  // A zero axis draws nothing.
+  assert!(CellBox::read(&boxes, 1).is_empty());
+  // A 2:1 sprite floored at 8 px reaches half its diagonal at the floor:
+  // 8 * sqrt(1 + 4) / 2.
+  assert!((CellBox::read(&boxes, 2).px - 8.0 * 5.0f32.sqrt() / 2.0).abs() < 1e-4);
+  // Past the column's end, the empty box.
+  assert!(CellBox::read(&boxes, 3).is_empty());
+}
+
+#[test]
+fn a_cell_order_gathers_row_major_and_sorts_empty_records_last() {
+  // Cells (column, row): a (2, 0), b (0, 1), c (0, 0), d empty, e (2, 0).
+  let src = cell_records(&[
+    [25.0, 5.0, 2.0, 2.0, 0.0, 0.0],
+    [5.0, 15.0, 2.0, 2.0, 0.0, 0.0],
+    [3.0, 3.0, 2.0, 2.0, 0.0, 0.0],
+    [4.0, 4.0, 0.0, 0.0, 0.0, 0.0],
+    [21.0, 6.0, 2.0, 2.0, 0.0, 6.0],
+  ]);
+  let boxes = boxes_of(&src);
+  let mut scratch = OrderScratch::default();
+  let mut table = RunTable::default();
+  let drawn = order_cells(&grid_order(), CELL_RECORD, &src, &boxes, &mut scratch, &mut table);
+  assert_eq!(drawn, 4);
+  // Row 0 (c, then a and e in slot order), row 1 (b), the empty record last.
+  assert_eq!(scratch.perm(), &[2, 0, 4, 1, 3]);
+  assert_eq!(table.starts, vec![0, 1, 3]);
+  assert!(table.ramp.is_empty());
+  // A run's box is the union of its records' boxes, its px their largest.
+  assert_eq!(table.bounds[1], [20.0, 4.0, 0.0, 26.0, 7.0, 0.0]);
+  assert_eq!(table.px[1], 6.0 * 2.0f32.sqrt() / 2.0);
+  assert_eq!(table.span(2, drawn), (3, 1));
+}
+
+#[test]
+fn bands_cut_the_sorted_key_and_keep_its_order() {
+  // Keyed on cy (float 1) in bands of 10.
+  let order = field_order(1).with_bands(10.0, Some(CELL_EXTENT)).expect("bands");
+  let src = cell_records(&[
+    [0.0, 25.0, 2.0, 2.0, 0.0, 0.0],
+    [0.0, 3.0, 2.0, 2.0, 0.0, 0.0],
+    [0.0, 14.0, 0.0, 2.0, 0.0, 0.0],
+    [0.0, 7.0, 2.0, 2.0, 0.0, 0.0],
+    [0.0, 12.0, 2.0, 2.0, 0.0, 0.0],
+  ]);
+  let boxes = boxes_of(&src);
+  let mut scratch = OrderScratch::default();
+  let mut table = RunTable::default();
+  let drawn = order_cells(&order, CELL_RECORD, &src, &boxes, &mut scratch, &mut table);
+  assert_eq!(drawn, 4);
+  // y order exactly (3, 7, 12, 25), the empty record (14) last.
+  assert_eq!(scratch.perm(), &[1, 3, 4, 0, 2]);
+  assert_eq!(table.starts, vec![0, 2, 3]);
+}
+
+#[test]
+fn a_view_draws_the_spans_of_the_cells_it_meets() {
+  // Runs of 10 records over x: [0, 10], [10, 20], [40, 50]; the third
+  // reaches 15 px beyond its box.
+  let table = RunTable {
+    bounds: vec![
+      [0.0, 0.0, 0.0, 10.0, 10.0, 0.0],
+      [10.0, 0.0, 0.0, 20.0, 10.0, 0.0],
+      [40.0, 0.0, 0.0, 50.0, 10.0, 0.0],
+    ],
+    starts: vec![0, 10, 20],
+    ramp: vec![],
+    px: vec![0.0, 0.0, 15.0],
+  };
+  let mut spans = Vec::new();
+  // No view: the drawn prefix whole.
+  select_cells(&table, 30, None, [1.0, 1.0], &mut spans);
+  assert_eq!(spans, vec![(0, 30)]);
+  // A view over [0, 30] x [0, 20] at two pixels per unit meets the first
+  // two runs: one span (the third's reach is 7.5 units, to 32.5).
+  let view = view_rect(0.0, 0.0, 30.0, 20.0);
+  select_cells(&table, 30, Some(&view), [60.0, 40.0], &mut spans);
+  assert_eq!(spans, vec![(0, 20)]);
+  // Over [12, 32] at one pixel per unit: the second run, and the third
+  // through its 15 px of reach (its box grown to [25, 65]); the first is
+  // out. Adjacent runs draw as one span.
+  let view = view_rect(12.0, 0.0, 20.0, 20.0);
+  select_cells(&table, 30, Some(&view), [20.0, 20.0], &mut spans);
+  assert_eq!(spans, vec![(10, 20)]);
+  // The same rectangle over twice the pixels: the reach is 7.5 units
+  // ([32.5, 57.5]), short of the view.
+  select_cells(&table, 30, Some(&view), [40.0, 40.0], &mut spans);
+  assert_eq!(spans, vec![(10, 10)]);
+  // Runs on both sides of a culled one: two spans.
+  let view = view_rect(-5.0, 0.0, 60.0, 20.0);
+  let gapped =
+    RunTable { bounds: vec![table.bounds[0], [100.0, 0.0, 0.0, 110.0, 10.0, 0.0], table.bounds[2]], ..table.clone() };
+  select_cells(&gapped, 30, Some(&view), [60.0, 20.0], &mut spans);
+  assert_eq!(spans, vec![(0, 10), (20, 10)]);
 }

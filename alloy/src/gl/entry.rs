@@ -61,6 +61,11 @@ pub(super) struct DrawEntry {
   /// Resolved and bounds-checked UI-side (see `resolve_draw_range`) before
   /// it ever reaches this field.
   pub(super) draw: DrawRange,
+  /// The instance spans the entry draws of its range, as (first instance,
+  /// count) in buffer order: a cell-culled population's selection under
+  /// the entry's view (`Context`'s order registry). None draws the
+  /// range's instances whole; every span is cut to the range's count.
+  pub(super) spans: Option<Vec<(u32, u32)>>,
   /// This entry's current uniform values, folded in by the params merge (its
   /// only writer) and re-applied at every render - entries sharing a program
   /// overwrite each other's uniforms per pass, so re-application is
@@ -259,6 +264,7 @@ impl MeshState {
           vao: e.vao,
           buffers: &e.buffers,
           range: e.draw,
+          spans: e.spans.as_deref(),
           index: e.buffers.index.as_ref().map(|(_, _, fmt)| *fmt),
           params: &e.params,
           inputs,
@@ -268,6 +274,13 @@ impl MeshState {
       })
       .collect()
   }
+}
+
+/// An entry's instance spans cut to its range's `instance_count`: spans
+/// starting at or past the count go, one crossing it ends there.
+pub(super) fn clip_spans(spans: &[(u32, u32)], instance_count: i32) -> impl Iterator<Item = (u32, u32)> + '_ {
+  let count = instance_count.max(0) as u32;
+  spans.iter().filter(move |&&(first, _)| first < count).map(move |&(first, len)| (first, len.min(count - first)))
 }
 
 unsafe fn record_layout(gl: &glow::Context, program: &ShaderProgram, layout: &BufferLayout) {

@@ -1058,6 +1058,10 @@ pub struct DrawUpdate {
   /// Replace a packed population's LOD threshold (`InstanceOrder::
   /// lod_threshold`), re-selecting under it.
   pub order_lod: Option<f64>,
+  /// The pixels the entry's cell selection measures screen reach in (the
+  /// view's own, where the target renders at an oversample); default the
+  /// target's size. For an entry drawing a cell-culled population.
+  pub order_viewport: Option<[f32; 2]>,
 }
 
 /// One draw entry's share of a spatial flush: the fresh value of each of

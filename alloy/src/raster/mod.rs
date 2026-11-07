@@ -1083,6 +1083,9 @@ impl RasterState {
           RasterCmd::SetDrawRange { target, draw, range } => {
             self.entry_write(target, "draw range update", |_, shader| shader.set_entry_draw(draw, range));
           }
+          RasterCmd::SetDrawSpans { target, draw, spans } => {
+            self.entry_write(target, "draw spans update", |_, shader| shader.set_entry_spans(draw, spans));
+          }
           RasterCmd::SetDrawBuffers { target, draw, ids } => {
             let buffers = resolve_entry_buffers(&self.buffers, ids);
             self.entry_write(target, "draw buffer swap", |gl, shader| shader.set_entry_buffers(gl, draw, buffers?));

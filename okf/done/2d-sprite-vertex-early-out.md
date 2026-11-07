@@ -48,7 +48,7 @@ that are mostly empty or off screen.
 
 - **Off-screen sprites are view culling's.** Most of this table's vertex
   work is records off screen, and
-  [2d-sprite-view-culling](../backlog/2d-sprite-view-culling.md) stops submitting
+  [2d-sprite-view-culling](2d-sprite-view-culling.md) stops submitting
   them, as engines do (a renderer's bounds or a chunk tested before the
   draw, not in the vertex stage). A bounding-circle test in the vertex
   stage would only add to that the sprites just off screen inside a
@@ -114,7 +114,7 @@ that are mostly empty or off screen.
 (the point count in the packed field), `packages/2d/agents/materials.md`,
 `packages/2d/tests/hull-meshes.test.tsx`.
 
-Related: [2d-sprite-view-culling](../backlog/2d-sprite-view-culling.md) removes the
+Related: [2d-sprite-view-culling](2d-sprite-view-culling.md) removes the
 part of this table's cost that follows the world size; this item makes
 what is still submitted cheaper. Both items quote the same 19.5 ms, so
 whichever lands second re-measures its expected win.
