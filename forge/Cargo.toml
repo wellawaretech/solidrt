@@ -101,7 +101,7 @@ hyper = { version = "=1.12.0", features = ["server", "http1"], optional = true }
 # The TLS stack behind `tls`: rustls through tokio-rustls, without its
 # default aws-lc-rs provider (a second provider and a C build), and the
 # webpki roots.
-tokio-rustls = { version = "=0.26.4", default-features = false, features = ["ring", "tls12", "logging"], optional = true }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12", "logging"], optional = true }
 webpki-roots = { version = "=1.0.11", optional = true }
 hyper-util = { version = "=0.1.21", features = ["tokio"], optional = true }
 http-body-util = { version = "=0.1.5", optional = true }
@@ -242,7 +242,7 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Stor
 [build-dependencies]
 # Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the
 # Android build can link clang_rt.builtins; see build.rs.
-cc = "=1.10.0"
+cc = "=1.11.0"
 # Drives the vendored libopus's CMake project (build.rs); already in the tree
 # (sdl3-sys builds SDL with it).
 cmake = "=0.1.58"
