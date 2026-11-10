@@ -274,14 +274,15 @@ fn glass_under_a_fading_group_is_prepainted() {
   assert_eq!(reused.backdrops_prepainted, 1);
 }
 
-// The paint-time snap (rendertree/grid.rs): a child laid out at a
-// fractional position is painted with its device origin on a whole pixel,
-// which its extent cell records (the envelope's 1 px AA outset above the
-// snapped origin). At 1x a 16.98 px spacer puts the next row at 17; at
-// 1.5x the grid is the device's, so 25.47 device snaps to 25, two thirds
-// of a logical pixel. Layout itself keeps the fractional box.
+// The walk's frames stay fractional (rendertree/grid.rs): a child laid out
+// at a fractional position is placed there, and its box is rounded once,
+// where it is drawn (the box offset of record_node), not where it is
+// placed. Its extent cell records the fractional place (with the
+// envelope's 1 px AA outset above it) at every display scale: the present
+// damage floors, ceils and pads it, which holds the rounded edge. Layout
+// itself keeps the fractional box.
 #[test]
-fn child_boxes_are_painted_on_the_device_grid() {
+fn child_boxes_are_placed_fractionally_and_rounded_at_the_draw() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   tree.create_node(2, attached());
@@ -307,9 +308,9 @@ fn child_boxes_are_painted_on_the_device_grid() {
   let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
 
   let at_1x = extent_at(&mut tree, 1.0);
-  assert!(close(at_1x.origin.y, 17.0 - 1.0), "{at_1x:?}");
+  assert!(close(at_1x.origin.y, 16.98 - 1.0), "{at_1x:?}");
   assert!(close(tree.node(3).placement().y, 16.98), "layout keeps the fractional box");
 
   let at_1_5x = extent_at(&mut tree, 1.5);
-  assert!(close(at_1_5x.origin.y, 25.0 / 1.5 - 1.0), "{at_1_5x:?}");
+  assert!(close(at_1_5x.origin.y, 16.98 - 1.0), "{at_1_5x:?}");
 }

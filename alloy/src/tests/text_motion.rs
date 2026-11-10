@@ -107,10 +107,26 @@ fn a_known_zoom_rasters_for_its_end_at_once() {
   // A text mounting mid-zoom rasters for the end straight away.
   let (made, wait) = raster_density(None, 1.04, end / 1.04, false);
   assert!((made - end).abs() < 1e-6 && !wait);
-  // A zoom out (the end below the raster's scale): kept and minified in
-  // flight, re-made at the resting scale.
-  assert_eq!(raster_density(Some(end), 1.05, 1.0 / 1.05, false), (end, true));
-  assert_eq!(raster_density(Some(end), 1.0, 1.0, true), (1.0, false));
+  // A zoom out within the motion bound of its end: re-made for the end at
+  // once and magnified in flight, kept from there, and nothing is left to
+  // do at rest, so the text does not step when the scale rests.
+  let (made, wait) = raster_density(Some(end), 1.05, 1.0 / 1.05, false);
+  assert!((made - 1.0).abs() < 1e-6 && !wait, "{made} {wait}");
+  assert_eq!(raster_density(Some(made), 1.02, 1.0 / 1.02, false), (made, false));
+  assert_eq!(raster_density(Some(made), 1.0, 1.0, true), (made, false));
+  // A text mounting under a pop from 1.18 makes its first raster for the
+  // end, and a re-triggered pop over a resting raster keeps it.
+  let (made, wait) = raster_density(None, 1.18, 1.0 / 1.18, false);
+  assert!((made - 1.0).abs() < 1e-6 && !wait, "{made} {wait}");
+  assert_eq!(raster_density(Some(1.0), 1.18, 1.0 / 1.18, false), (1.0, false));
+  // A spring past its end, headed back to it: the raster is the end's
+  // already, kept while the scale is off it.
+  assert_eq!(raster_density(Some(1.0), 0.98, 1.0 / 0.98, false), (1.0, true));
+  // Past the motion bound a zoom out keeps its raster and minifies it,
+  // and switches to the end once it is within the bound.
+  assert_eq!(raster_density(Some(2.0), 2.0, 1.0 / 2.0, false), (2.0, false));
+  let (made, wait) = raster_density(Some(2.0), 1.4, 1.0 / 1.4, false);
+  assert!((made - 1.0).abs() < 1e-6 && !wait, "{made} {wait}");
   // Past the motion bound the raster is re-made in flight, for the larger
   // of now and the end.
   let (made, wait) = raster_density(Some(1.0), 1.6, 2.0 / 1.6, false);

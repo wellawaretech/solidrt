@@ -198,6 +198,10 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
     BoundaryMode::Snapshot => out.push(("repaintBoundary", ReadValue::Str("snapshot".into()))),
     BoundaryMode::SnapshotNoAa => out.push(("repaintBoundary", ReadValue::Str("snapshot-no-aa".into()))),
   }
+  // Element-level, on every kind: only the off-default value reads back.
+  if element.pixel_snap_off {
+    out.push(("pixelSnap", ReadValue::Bool(false)));
+  }
   // Size containment is a layout flag beside the style (LayoutData), so it
   // reads back here rather than from the style adapter.
   if element.layout.as_ref().is_some_and(|layout| layout.contain_size) {

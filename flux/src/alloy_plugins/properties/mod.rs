@@ -116,6 +116,24 @@ pub fn apply_jsx(
     return Ok(Damage::None);
   }
 
+  // Element-level, kind-independent: `pixelSnap={false}` turns the rounding
+  // to the device grid off for the node and its subtree (see
+  // Element::pixel_snap_off); true and null are the default, rounding on.
+  // Damage::Paint brings the walk to the node; the boundary caches below
+  // notice the other rounding themselves.
+  if name == "pixelSnap" {
+    let off = match value {
+      PropValue::Null | PropValue::Bool(true) => false,
+      PropValue::Bool(false) => true,
+      _ => return Err(format!("pixelSnap must be a boolean, got {}", describe(value))),
+    };
+    if el.pixel_snap_off == off {
+      return Ok(Damage::None);
+    }
+    el.pixel_snap_off = off;
+    return Ok(Damage::Paint);
+  }
+
   // `position` is decoded here rather than in the layout style adapter because
   // it has a side effect beyond the taffy Style: it marks the element as a
   // positioning context used to resolve container-relative bounding boxes.

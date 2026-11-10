@@ -1,7 +1,7 @@
 //! The device pixel grid (rendertree/grid.rs): what the paint-time snap does
 //! to a box under a translate, a scale, a raster root, and a rotation.
 use crate::renderer::{Matrix, Point, Size};
-use crate::rendertree::grid::{at_scale, raster, shift, snap_box, through};
+use crate::rendertree::grid::{at_scale, raster, rounds, scale, shift, snap_box, snap_move, through, translate};
 use crate::rendertree::Vector;
 
 fn close(a: f32, b: f32) -> bool {
@@ -67,5 +67,50 @@ fn rotation_and_3d_do_not_snap() {
     0.0, -s,  c,   0.0,
     0.0, 0.0, 0.0, 1.0,
   );
-  assert!(through(&at_scale(1.0), &tilt).is_none());
+  assert!(scale(&through(&at_scale(1.0), &tilt)).is_none());
+}
+
+// A movement rounds to whole device pixels per axis, in frame units, and a
+// zero movement stays zero: at 1.5x a 0.3 px move is 0.45 device, no move
+// at all, and a 10.4 px one is 15.6 device, 16, so 10.667 px.
+#[test]
+fn a_movement_rounds_to_whole_device_pixels() {
+  let grid = at_scale(1.5);
+  let by = snap_move(&grid, Vector::new(0.3, 10.4));
+  assert!(close(by.x, 0.0) && close(by.y, 16.0 / 1.5), "{by:?}");
+  assert_eq!(snap_move(&grid, Vector::zero()), Vector::zero());
+  // Where the frame sits does not matter: a movement is not a position.
+  let moved = translate(&grid, Vector::new(0.37, 0.61));
+  assert_eq!(snap_move(&moved, Vector::new(0.3, 10.4)), by);
+  // Under a rotation there is no grid to move along.
+  let rotated = through(&grid, &Matrix::new_2d(0.0, 1.0, -1.0, 0.0, 0.0, 0.0));
+  assert_eq!(snap_move(&rotated, Vector::new(0.3, 10.4)), Vector::new(0.3, 10.4));
+}
+
+// A box is rounded once, on its absolute position: a parent at 10.4 with a
+// child at +0.3 lands the child on 11 (10.7 rounded), where rounding the
+// parent first and the child on top of it gave 10.
+#[test]
+fn a_nested_box_rounds_once() {
+  let parent = translate(&at_scale(1.0), Vector::new(10.4, 0.0));
+  let (pos, _) = snap_box(&parent, Point::new(0.3, 0.0), Size::new(5.0, 5.0));
+  assert!(close(10.4 + pos.x, 11.0), "{pos:?}");
+}
+
+// With the rounding off (a running track, pixelSnap={false}) nothing moves:
+// no box, no point, no movement. The flag is one-way and every frame
+// derived from the grid keeps it; the scale still reads.
+#[test]
+fn an_unrounded_grid_rounds_nothing() {
+  let grid = at_scale(1.5).or_unrounded(true);
+  assert!(grid.unrounded() && !rounds(&grid) && rounds(&at_scale(1.5)));
+  assert!(shift(&grid, Point::new(0.3, 0.3)).is_none());
+  let (pos, size) = snap_box(&grid, Point::new(0.3, 45.71), Size::new(100.4, 16.98));
+  assert!(close(pos.y, 45.71) && close(size.height, 16.98), "{pos:?} {size:?}");
+  assert_eq!(snap_move(&grid, Vector::new(0.3, 10.4)), Vector::new(0.3, 10.4));
+  let deeper = through(&translate(&grid, Vector::new(3.0, 3.0)), &Matrix::scale(2.0, 2.0, 1.0));
+  assert!(deeper.unrounded() && deeper.or_unrounded(false).unrounded());
+  assert!(close(scale(&deeper).expect("a 2d chain"), 3.0));
+  // A raster root starts over: its grid rounds.
+  assert!(rounds(&raster(2.0, Vector::new(3.0, 3.0))));
 }

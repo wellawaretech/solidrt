@@ -296,6 +296,28 @@ fn repaint_boundary_reads_back_on_a_d_view() {
 }
 
 #[test]
+fn pixel_snap_is_a_one_way_off_on_every_kind() {
+  // Element-level: every kind takes it, laid out or detached. Only false
+  // changes anything (Paint: the walk has to reach the node again); true
+  // and null are the default, and a write of the value in force is no
+  // damage at all. The tree record shows the off-default value only.
+  use crate::alloy_plugins::properties::{read_jsx, ReadValue};
+  for kind in ["view", "d-view", "text", "d-text", "rect", "d-rect"] {
+    let mut el = Element::from_kind(kind).expect("known kind");
+    assert!(!read_jsx(&el).iter().any(|(n, _)| *n == "pixelSnap"), "{kind}: the default emits nothing");
+    assert_eq!(apply_el(&mut el, "pixelSnap", PropValue::Bool(true)), Ok(Damage::None), "{kind}");
+    assert_eq!(apply_el(&mut el, "pixelSnap", PropValue::Bool(false)), Ok(Damage::Paint), "{kind}");
+    assert!(el.pixel_snap_off, "{kind}");
+    assert!(read_jsx(&el).iter().any(|(n, v)| *n == "pixelSnap" && matches!(v, ReadValue::Bool(false))), "{kind}");
+    assert_eq!(apply_el(&mut el, "pixelSnap", PropValue::Bool(false)), Ok(Damage::None), "{kind}: no change");
+    assert_eq!(apply_el(&mut el, "pixelSnap", PropValue::Null), Ok(Damage::Paint), "{kind}: null resets");
+    assert!(!el.pixel_snap_off, "{kind}");
+  }
+  let err = apply("view", "pixelSnap", text("off")).unwrap_err();
+  assert_eq!(err, "pixelSnap must be a boolean, got \"off\"");
+}
+
+#[test]
 fn texture_params_route_to_the_gpu_channel() {
   // Params are target state: the write goes straight to the GPU channel
   // (production: Context::set_target_params) and produces NO tree damage,

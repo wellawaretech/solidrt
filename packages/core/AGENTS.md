@@ -639,6 +639,19 @@ moves core's peerDependencies and the scaffold's pins
   declare it on every level that should glide; `layout: true` borrows the
   `all` motion, and `all` alone never slides. See
   examples/layout-slide.tsx.
+  Pixel snapping and motion: boxes, text and movements are rounded to
+  whole device pixels where they are drawn, so static UI is crisp. A
+  RUNNING transition that moves an element (x, y, scale, rotate, origin,
+  perspective, `layout`) turns the rounding off for its subtree until it
+  settles, then the element lands on its pixel (once, by at most a
+  device pixel: half for its own rounding, half more under a translate). A value written directly (per-frame, a drag) and a write
+  held by a `delay` are not motion and stay rounded: a directly written
+  translate or scroll moves by whole device pixels, so to move smoothly
+  go through a transition. `pixelSnap={false}` (any element, inherited,
+  a one-way off) turns the rounding off for a subtree in motion AND at
+  rest: animated display type or drawn art then ends its motion exactly
+  where the motion put it, with no step. The cost is softer text and
+  two-row hairlines at rest, so not for body text or 1 px lines.
   Per-frame work is for genuinely procedural motion, and a game or a
   simulation is that in full: its natural shape is ONE `onFrame` doing one
   sim step and N property (or sprite) writes, which is not a smell but the

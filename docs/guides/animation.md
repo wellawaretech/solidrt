@@ -162,6 +162,39 @@ Some props are fast to animate, and some are slow:
 This needs an extra layer. To fade one shape, put the alpha in its `color`,
 for example `#2a3a5580`. This costs nothing.
 
+## Pixel snapping
+
+The runtime draws each box and each text on whole device pixels. This keeps
+edges and text sharp. The effect on motion is as follows:
+
+- **A transition that moves an element** (`x`, `y`, `scale`, `rotate`, the
+  transform origin, `perspective` or a `layout` slide) stops the snapping
+  for that element and its children while it runs. The motion is smooth.
+  When the transition ends, the element moves onto its pixel. This last
+  move is at most one device pixel.
+- **A transition with a `delay`** does not stop the snapping during the
+  delay. The element does not move in that time.
+- **A value that you write directly** is not a transition. A translate or a
+  scroll offset then moves in steps of one device pixel. To move an element
+  smoothly, use a transition.
+
+For an element that must not make the last move, set `pixelSnap={false}`.
+The runtime then does not snap the element or its children, in motion and
+at rest. Use it for large text and drawn art that animate, for example a
+title with letters that move:
+
+```tsx
+<view pixelSnap={false}>
+  <d-view scale={big() ? 1.2 : 1} transition={{ scale: { duration: 300, bounce: 0.4 } }}>
+    <d-text fontSize={64}>Title</d-text>
+  </d-view>
+</view>
+```
+
+Without snapping, text is less sharp at rest and a line of 1 px can show on
+two rows. Do not use `pixelSnap={false}` for body text or thin lines. A
+`pixelSnap={true}` on a child does not start the snapping again.
+
 ## Common errors
 
 **The first value does not animate.** All values before the first frame of
@@ -184,6 +217,10 @@ immediately. To make the neighbors slide, give them a `layout` slide.
 
 **`width` and `height` are not in `transition`.** They are layout props.
 Use the `layout` slide, `scale`, or the `w` and `h` of a detached element.
+
+**An element moves a small distance when its transition ends.** The
+snapping starts again at the end of the transition. Set `pixelSnap={false}`
+on the element or on a parent. Refer to [Pixel snapping](#pixel-snapping).
 
 ## Test an animation
 

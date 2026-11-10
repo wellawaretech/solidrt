@@ -4,6 +4,33 @@ What to check when auditing solidrt. One section per rule: the rule, where it
 is stated, and how to check it. This file holds the checks only. Findings are
 work: file them in `okf/` (`tiny.md` or `backlog/`), not here.
 
+## No outside project is named
+
+Rule: CLAUDE.md "Never name an outside project". Nothing in the repository
+names or points at a project that uses SolidRT (an app, a game, a client's
+product or the maintainer's own): not its name, path, ids, assets or
+screenshots, and no code or tuning values copied from it. A problem found
+there is described by its shape and reproduced here with neutral names.
+
+Scope: the whole tree, `okf/` and the tests included, and the commit
+messages since the last audit.
+
+How to check:
+
+- Ask the maintainer for the names and paths of the projects built on
+  SolidRT. Keep that list out of the repository: it is what the rule
+  forbids.
+- `git grep -il <name>` each of them over the tree, and
+  `git log -i --grep=<name>` over the history.
+- Read the provenance phrases added to `okf/` since the last audit ("seen
+  in", "found in", "reported by"): one that points outside is a finding
+  even where it gives no name.
+
+Not a violation:
+
+- Third-party software, dependencies and prior art named for comparison.
+- The examples, demos and apps that live in this repository.
+
 ## Flux plugins marshal only
 
 Rule: CLAUDE.md "Plugins should be thin FFI layers", `flux/CLAUDE.md` "Plugin

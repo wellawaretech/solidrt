@@ -32,6 +32,7 @@ mod liveness;
 mod microphone_ring;
 mod paint;
 mod path;
+mod pixel_snap;
 mod present;
 mod release;
 mod renderer;

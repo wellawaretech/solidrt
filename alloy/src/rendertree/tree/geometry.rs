@@ -25,15 +25,21 @@ impl RenderTree {
   }
 
   /// The window's device pixels at display `scale` that the node's box
-  /// paints: the box `bounding_box_viewport` gives, landed as the paint
-  /// walk lands it. When the chain keeps the box axis-aligned, the box snaps
-  /// by the paint's own rule (`grid::snap_box`: origin and far edges each to
-  /// the nearest whole pixel), so the result is the pixels the paint covers
-  /// and none of a neighbour's. Under a rotation, a flip or a 3D transform
-  /// nothing snaps, and the bounds are outset to every pixel they touch,
-  /// anti-aliased edges included. Window-relative, so a box past the
-  /// window's top-left has a negative origin. None when
-  /// `bounding_box_viewport` is.
+  /// paints: the box `bounding_box_viewport` gives, rounded once on its
+  /// absolute position, as the paint walk rounds a box where it draws it.
+  /// When the chain keeps the box axis-aligned, the box snaps by the
+  /// paint's own rule (`grid::snap_box`: origin and far edges each to the
+  /// nearest whole pixel), so the result is the pixels the paint covers and
+  /// none of a neighbour's. That holds for a box with no movement and no
+  /// boundary above it. The paint rounds a movement on the chain (a
+  /// translate, a scroll offset, a held slide) by itself and a boundary's
+  /// origin ahead of its interior, so under either the paint can land one
+  /// device pixel from this box; and it rounds nothing under a running
+  /// track or `pixelSnap={false}`, where the paint is up to half a pixel
+  /// off it. Under a rotation, a flip or a 3D transform nothing snaps, and
+  /// the bounds are outset to every pixel they touch, anti-aliased edges
+  /// included. Window-relative, so a box past the window's top-left has a
+  /// negative origin. None when `bounding_box_viewport` is.
   pub fn device_box(&self, id: u64, scale: f32) -> Option<IRect> {
     let Quad { corners, shift } = self.compute_corners(id, false)?;
     let bounds = Rect::from_points(corners).translate(shift);

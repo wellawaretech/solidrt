@@ -23,3 +23,6 @@ The gap: a component boundary hides the tag. A component returning
 `<view>` used inside a `<d-view>` escapes any static check, so the runtime
 error stays the backstop for composed trees - the static check narrows the
 class, it cannot close it.
+
+If [detached-attribute](detached-attribute.md) lands, the check keys on the
+static `detached` attribute instead of the `d-*` tag name.

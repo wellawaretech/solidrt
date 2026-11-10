@@ -618,6 +618,14 @@ impl Transitions {
       || self.pending.iter().any(|w| w.node == node && props.contains(&w.prop))
   }
 
+  /// Whether a track runs for the node on one of `props`: tracks only. A
+  /// held write (a delay, a stagger) is not motion, the value sits still
+  /// until its track starts (what decides whether the paint walk rounds:
+  /// `RenderTree::unrounded`).
+  pub fn any_track(&self, node: u64, props: &[AnimProp]) -> bool {
+    self.tracks.iter().any(|t| t.node == node && props.contains(&t.prop))
+  }
+
   /// Take the track list for an advance pass (tree.rs), leaving the clock in
   /// place. Returns the tracks and the longest stretch any of them has yet
   /// to cover up to the clock - zero when every track is already at it

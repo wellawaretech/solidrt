@@ -19,6 +19,25 @@ pub struct SlideRemaining {
   pub growth: Vector,
 }
 
+// The properties whose running track moves a node's box, and so drops the
+// rounding to the device grid for its subtree until the track settles
+// (`RenderTree::unrounded`): the transform (on a detached kind `X` and `Y`
+// are its own position) and the layout slide.
+const MOTION_PROPS: [AnimProp; 12] = [
+  AnimProp::X,
+  AnimProp::Y,
+  AnimProp::Scale,
+  AnimProp::ScaleX,
+  AnimProp::ScaleY,
+  AnimProp::Rotate,
+  AnimProp::RotateX,
+  AnimProp::RotateY,
+  AnimProp::OriginX,
+  AnimProp::OriginY,
+  AnimProp::Perspective,
+  AnimProp::Layout,
+];
+
 impl RenderTree {
   /// Mount-time enter animations: a per-property `from` in the node's
   /// transition declaration snaps the property to `from` and starts a track
@@ -488,6 +507,17 @@ impl RenderTree {
 
   pub(crate) fn keep_resizing(&mut self, node_id: u64, laid_out_against: Size) {
     self.resizing.insert(node_id, Some(laid_out_against));
+  }
+
+  /// Whether the paint walk leaves this node and its subtree off the device
+  /// grid (grid.rs): the node declares `pixelSnap={false}`, or a running
+  /// track moves its box (`MOTION_PROPS`). Motion is a fact of the
+  /// transition engine, not an observation of the value: a value written
+  /// directly has no track and stays rounded, and so does a write held by
+  /// a delay.
+  pub fn unrounded(&self, node_id: u64) -> bool {
+    let Some(el) = self.nodes.get(&node_id) else { return false };
+    el.pixel_snap_off || self.transitions.any_track(node_id, &MOTION_PROPS)
   }
 
   /// Where a view's own scale is headed: the end of a running transition

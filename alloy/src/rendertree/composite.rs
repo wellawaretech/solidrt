@@ -106,8 +106,11 @@ pub fn paint_phase(
   // scoped: only plain stats leave the block.
   let (mut stats, damage, regions) = {
     let mut ctx = BuildContext::new(platform, alloy);
-    // The window's grid: device pixels through the display scale.
-    ctx.grid = grid::at_scale(platform.display_scale());
+    // The window's grid: device pixels through the display scale, with the
+    // rounding off where the root itself says so (the child loop decides it
+    // for every other node).
+    ctx.grid = grid::at_scale(platform.display_scale()).or_unrounded(tree.unrounded(root_id));
+    ctx.pixel_snap_off = tree.node(root_id).pixel_snap_off;
     // The root's boxes come from its layout like every other node's (the hit
     // side derives them per element, so a padded root must agree here too),
     // snapped like every other node's; before the first layout the window
@@ -299,13 +302,15 @@ fn own_matrix(element: &Element, size: Size) -> Option<Matrix> {
   }
 }
 
-// own_matrix with its translation snapped to the grid: under `slot_grid`
-// (the grid of the frame the node is placed in) the box origin lands on a
-// whole device pixel when the chain stays axis-aligned, and is left where
-// the matrix puts it otherwise. The one value both the inline path and
-// the composite-time hoists apply, so a recording's interior, snapped
-// against a grid-aligned box frame when recorded, replays on the grid
-// after a transform write.
+// A boundary's own_matrix, its origin snapped to the grid: under
+// `slot_grid` (the grid of the frame the node is placed in) the box origin
+// lands on a whole device pixel when the chain stays axis-aligned and
+// rounds, and is left where the matrix puts it otherwise. A boundary is
+// the one node that rounds a position ahead of the draw: its recording's
+// interior (or its texture) is fixed relative to this origin, so the origin
+// has to be on a pixel for the interior to replay on the grid after a
+// transform write. A capture rounds its interior from its own origin the
+// same way.
 pub(super) fn snapped_own(element: &Element, size: Size, slot_grid: &grid::GridMap) -> Option<Matrix> {
   let own = own_matrix(element, size)?;
   match grid::shift(&grid::through(slot_grid, &own), Point::zero()) {
@@ -314,16 +319,49 @@ pub(super) fn snapped_own(element: &Element, size: Size, slot_grid: &grid::GridM
   }
 }
 
-// A View's scroll offset snapped to whole device pixels under `box_grid`
-// (the grid of the box frame, after the own matrix): the children slide by
-// whole pixels, as every browser scrolls, so a recording boundary's
+// A non-boundary view's own_matrix: its `translate` rounded as a movement
+// (grid::snap_move) against `slot_grid`, and nothing else. The view's
+// children then keep their fractions whatever the translate is, so each
+// one's rounding at the draw stays where it was and a translated group
+// moves rigidly, by whole device pixels. The translate is the last op of
+// the chain, applied in the slot frame (View::compose_user), so rounding
+// it there is exact, with or without a scale in the chain. Left as it is
+// where the chain through the matrix is not axis-aligned (a rotated view
+// does not step) or does not round.
+fn moved_own(element: &Element, size: Size, slot_grid: &grid::GridMap) -> Option<Matrix> {
+  let ElementKind::View(view) = &element.kind else { return None };
+  let own = view.box_matrix(size);
+  if !grid::rounds(&grid::through(slot_grid, &own)) {
+    return Some(own);
+  }
+  let translate = view.translate.unwrap_or_default();
+  let by = grid::snap_move(slot_grid, translate) - translate;
+  if by == Vector::zero() {
+    return Some(own);
+  }
+  Some(own.then(&Matrix::translation(by.x, by.y, 0.0)))
+}
+
+// The own matrix the walk places a node's box with: a boundary's origin
+// lands on the grid (snapped_own), any other view rounds only its translate
+// (moved_own). The one value the inline path and every composite path
+// agree on.
+pub(super) fn placed_own(element: &Element, size: Size, slot_grid: &grid::GridMap) -> Option<Matrix> {
+  match element.repaint_boundary {
+    BoundaryMode::None => moved_own(element, size, slot_grid),
+    _ => snapped_own(element, size, slot_grid),
+  }
+}
+
+// A View's scroll offset rounded to whole device pixels under `box_grid`
+// (the grid of the box frame, after the own matrix): a movement
+// (grid::snap_move), so the children slide by whole pixels, as every
+// browser scrolls, keep their fractions, and a recording boundary's
 // interior stays on the grid at every scroll offset. None for non-Views and
 // unscrolled Views.
 pub(super) fn snapped_scroll(element: &Element, box_grid: &grid::GridMap) -> Option<Vector> {
   let ElementKind::View(v) = &element.kind else { return None };
-  let s = v.scroll?;
-  let by = grid::shift(&grid::translate(box_grid, -s), Point::zero()).unwrap_or_default();
-  Some(s - by)
+  Some(grid::snap_move(box_grid, v.scroll?))
 }
 
 // Per-axis overflow clipping from the element's layout style; no layout means
@@ -626,7 +664,7 @@ fn build_recursive<'a>(
   if let ElementKind::View(v) = &element.kind {
     if let Some(f) = v.active_backdrop_filter() {
       let region = cull::Extent::Bounded(Rect::new(Point::zero(), ctx.size))
-        .transformed(&snapped_own(element, ctx.size, &ctx.grid).unwrap_or_else(Matrix::identity))
+        .transformed(&placed_own(element, ctx.size, &ctx.grid).unwrap_or_else(Matrix::identity))
         .to_window(Point::zero(), &ctx.to_window);
       ctx.backdrop_regions.push(match region {
         cull::Extent::Bounded(r) => Some((r, f.blur_outset())),
@@ -682,8 +720,16 @@ fn build_recursive<'a>(
       let seen = composite.map(|now| text::scale_observed(element.scale_seen.get(), now, ctx.frame));
       element.scale_seen.set(seen);
       let at_rest = seen.is_some_and(|seen| seen.at_rest()) || ctx.scale_at_rest;
+      // A recording holds the rounding it was recorded under. One made
+      // while a track moved it (its interior unrounded) is re-made once the
+      // rounding is back, so the interior ends on the resting grid; one made
+      // at rest replays as it is under a track that starts. A change of
+      // `pixelSnap` above it re-makes it either way.
       let cached = match &*element.paint_cache.borrow() {
-        Some(PaintCache::Recording(rec)) => Some((rec.dl.clone(), rec.backdrops, rec.grid_scale, rec.holds_text)),
+        Some(PaintCache::Recording(rec)) => {
+          let stale = (rec.unrounded && !ctx.grid.unrounded()) || rec.pixel_snap_off != ctx.pixel_snap_off;
+          Some((rec.dl.clone(), rec.backdrops, rec.grid_scale, rec.holds_text, stale))
+        }
         _ => None,
       };
       // The density the recording's text layers are made for, by the rule
@@ -696,10 +742,12 @@ fn build_recursive<'a>(
       // inside have no observation of their own from the replayed frames,
       // so the record walk tells them.
       let mut settled = false;
-      if let Some((dl, backdrops, recorded, holds_text)) = cached {
-        let remake = holds_text && matches!((recorded, density), (Some(have), Some((want, _))) if want != have);
+      if let Some((dl, backdrops, recorded, holds_text, stale)) = cached {
+        let remake =
+          stale || (holds_text && matches!((recorded, density), (Some(have), Some((want, _))) if want != have));
         if remake {
-          // The text layers inside were rasterized for another density.
+          // The text layers inside were rasterized for another density, or
+          // the interior was recorded under another rounding.
           element.paint_cache.borrow_mut().take();
           settled = at_rest;
         } else {
@@ -752,6 +800,8 @@ fn build_recursive<'a>(
           backdrops,
           grid_scale: density.map(|(want, _)| want),
           holds_text: ctx.text_layers > layers_before,
+          unrounded: ctx.grid.unrounded(),
+          pixel_snap_off: ctx.pixel_snap_off,
         }));
       }
     }
@@ -797,11 +847,18 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   if offset != (0.0, 0.0) {
     sub.translate(-offset.0, -offset.1);
   }
-  // The capture is a raster root: its grid is the texture's.
+  // The capture is a raster root: its grid is the texture's (rounding off
+  // only under `pixelSnap={false}`: a track's motion ends at a raster), and
+  // no scale transition outside it reaches the texts inside, which raster
+  // for the capture's own density.
   let slot_grid = ctx.grid;
-  ctx.grid = grid::raster(scale, -Vector::new(offset.0, offset.1));
+  let outer_target = ctx.scale_target;
+  ctx.grid = grid::raster(scale, -Vector::new(offset.0, offset.1)).or_unrounded(ctx.pixel_snap_off);
+  ctx.scale_target = 1.0;
+  ctx.raster_root = true;
   isolated_walk(scene, node_id, ctx, &mut sub, hoist);
   ctx.grid = slot_grid;
+  ctx.scale_target = outer_target;
 
   let Some(dl) = sub.build() else {
     for done in requests {
@@ -857,15 +914,14 @@ pub(super) fn record_node<'a>(
     builder.save();
   }
 
-  // The node's own matrix and scroll, snapped to the grid (snapped_own,
-  // snapped_scroll): under a hoist they are the caller's, computed against
-  // the same slot grid and carried in the hoist, so the recording and its
-  // composite agree. The box grid is the raster's own under
-  // Hoist::Transform (the caller reset it: the matrix is applied to the
-  // quad, not inside the raster) and the slot grid through the matrix
-  // otherwise.
+  // The node's own matrix and scroll (placed_own, snapped_scroll): under a
+  // hoist they are the caller's, computed against the same slot grid and
+  // carried in the hoist, so the recording and its composite agree. The box
+  // grid is the raster's own under Hoist::Transform (the caller reset it:
+  // the matrix is applied to the quad, not inside the raster) and the slot
+  // grid through the matrix otherwise.
   let own = match hoist {
-    Hoist::None => snapped_own(element, ctx.size, &ctx.grid),
+    Hoist::None => placed_own(element, ctx.size, &ctx.grid),
     Hoist::Transform(m) | Hoist::Full(m) => Some(m),
   };
   let box_grid = match (hoist, &own) {
@@ -873,6 +929,29 @@ pub(super) fn record_node<'a>(
     (_, Some(m)) => grid::through(&ctx.grid, m),
   };
   let scroll = snapped_scroll(element, &box_grid);
+
+  // The box offset: what moves the box frame's origin onto a whole device
+  // pixel. The walk's frames are fractional, so this is where a box is
+  // rounded, once: what the node draws of its own box (a kind's fill and
+  // stroke, a view's clip and backdrop) is emitted under it, sized
+  // `ctx.size`, the snapped size, so the far edges land on pixels too. For
+  // a detached kind the box frame is the frame it inherits: the offset
+  // rounds that frame's origin and the node's own x and y add on top as
+  // written, so a d-rect that fills its parent covers the pixels the
+  // parent's box covers. It is undone before the scroll, the fit and the
+  // children, which round for themselves. A text takes none for its
+  // content: its layer quad is its one rounding, against the grid of the
+  // frame the builder is in (text::build_layer). Zero for a boundary (its
+  // origin is whole), under a running track or `pixelSnap={false}`
+  // (nothing rounds), and for the node a raster records (its content sits
+  // at the texture's origin).
+  let raster_root = std::mem::take(&mut ctx.raster_root);
+  let box_offset = match raster_root {
+    true => None,
+    false => grid::shift(&box_grid, Point::zero()).filter(|by| *by != Vector::zero()),
+  };
+  let is_text = matches!(&element.kind, ElementKind::Text(_));
+  let mut offset_applied = None;
 
   // Record order: user matrix, clip, scroll, fit, children - a hoist covers a
   // prefix, and draw_cached_recording applies the same order around a cached
@@ -883,17 +962,31 @@ pub(super) fn record_node<'a>(
   if matches!(hoist, Hoist::None) {
     if let Some(own) = &own {
       builder.transform(own);
-    } else if pass.is_none() {
-      element.build(ctx, builder);
-      if let ElementKind::Text(text) = &element.kind {
-        scene.note_text_layer(node_id, text.has_layer());
-        if text.scale_wait() {
-          scene.note_scale_wait(node_id);
-        }
+    }
+  }
+  if !is_text {
+    offset_applied = box_offset;
+    if let Some(by) = offset_applied {
+      builder.translate(by.x, by.y);
+    }
+  }
+  if matches!(hoist, Hoist::None) && own.is_none() && pass.is_none() {
+    element.build(ctx, builder);
+    if let ElementKind::Text(text) = &element.kind {
+      scene.note_text_layer(node_id, text.has_layer());
+      if text.scale_wait() {
+        scene.note_scale_wait(node_id);
       }
     }
   }
   if record_clip {
+    // A text's clip is its box, so it takes the offset its content skipped.
+    if is_text {
+      offset_applied = box_offset;
+      if let Some(by) = offset_applied {
+        builder.translate(by.x, by.y);
+      }
+    }
     apply_clip(builder, element, ctx.size);
   }
   // The backdrop layer reads the current target, so only the inline path
@@ -916,6 +1009,10 @@ pub(super) fn record_node<'a>(
       emit_backdrop(builder, element, ctx.size, pass.alpha);
     }
     Some(_) => {}
+  }
+  // The clip stays where it was set; the frame goes back to its fraction.
+  if let Some(by) = offset_applied {
+    builder.translate(-by.x, -by.y);
   }
   if !hoisted_full {
     apply_scroll(builder, scroll);
@@ -982,6 +1079,13 @@ pub(super) fn record_node<'a>(
     }
     if element.painted_size().is_some() {
       ctx.cull = ctx.cull.clipped(ctx.size, clip_x, clip_y);
+      // The clip is the snapped box and this rect is stated in the
+      // fractional frame: an edge row can show up to a rounding's reach
+      // past it.
+      if clip_x || clip_y {
+        let reach = grid::scale(&box_grid).map_or(0.0, |scale| grid::SNAP_REACH_DEVICE_PX / scale);
+        ctx.cull = ctx.cull.map(|r| r.inflate(reach, reach));
+      }
     }
     if let Some(s) = scroll {
       ctx.cull = ctx.cull.scrolled(s);
@@ -1039,18 +1143,33 @@ pub(super) fn record_node<'a>(
       continue;
     }
 
-    // The child's painted box: its layout box snapped to the grid (grid.rs),
-    // origin and far edges on whole device pixels, where the whole
-    // subtree is then placed. A detached child has no box of its own: it
-    // inherits the frame whole (the design size under a design-size view,
-    // so a d-text wraps and a d-rect fills in design units) and draws its
-    // own geometry where it says, unsnapped - the detached kinds are the
+    // The grid of the child's slot: this frame's, with the rounding off for
+    // the child and its subtree where a running track moves the child's box
+    // or the child says `pixelSnap={false}` (RenderTree::unrounded). Read
+    // here, ahead of the child's own matrix, because a layout slide moves
+    // the child in this loop.
+    let slot_grid = ctx.grid.or_unrounded(scene.unrounded(child_id));
+
+    // The child's place and painted size. The place is fractional: its
+    // layout location, plus what a layout slide still has it off that
+    // location by, rounded as a movement (grid::snap_move) so a held slide
+    // keeps the child's fraction. The size is its layout box snapped to the
+    // grid (grid.rs): the box the child then draws at its box offset
+    // (record_node), origin and far edges on whole device pixels, rounded
+    // once and there. A detached child has no box of its own: it inherits
+    // the frame whole (the design size under a design-size view, so a
+    // d-text wraps and a d-rect fills in design units) and draws its own
+    // geometry where it says, unsnapped - the detached kinds are the
     // animation lane. The content box stays the layout's: text and inline
     // atoms are placed fractionally inside the snapped box, as browsers
     // place text runs. Hit testing reads the layout boxes, never these.
-    let (pos, child_size) = match child.painted_size() {
-      Some(size) => grid::snap_box(&ctx.grid, child.placement(), size),
-      None => (child.placement(), child_frame),
+    let (pos, child_size) = match (child.painted_box(), child.layout.as_ref()) {
+      (Some(painted), Some(layout)) => {
+        let solved = layout.solved_box().origin;
+        let pos = solved + grid::snap_move(&slot_grid, painted.origin - solved);
+        (pos, grid::snap_box(&slot_grid, pos, painted.size).1)
+      }
+      _ => (child.placement(), child_frame),
     };
 
     // The child's current window extent, kept on the element for damage
@@ -1079,12 +1198,14 @@ pub(super) fn record_node<'a>(
     let parent_map = ctx.to_window;
     ctx.to_window = cull::map_translate(&ctx.to_window, pos.to_vector());
     let parent_grid = ctx.grid;
-    ctx.grid = grid::translate(&ctx.grid, pos.to_vector());
+    ctx.grid = grid::translate(&slot_grid, pos.to_vector());
+    let parent_snap_off = ctx.pixel_snap_off;
+    ctx.pixel_snap_off = parent_snap_off || child.pixel_snap_off;
 
     builder.translate(pos.x, pos.y);
 
     // The child's border box (painted: a layout slide's mid-motion box
-    // included, snapped above), and its content box derived from the same
+    // included, its size snapped above), and its content box derived from the same
     // layout - the split hit testing makes too, so paint and hit size a
     // kind against the same boxes (okf/done/padding-box-divergence.md). No
     // layout means no padding, so content covers the frame.
@@ -1095,6 +1216,7 @@ pub(super) fn record_node<'a>(
     ctx.cull = parent_cull;
     ctx.to_window = parent_map;
     ctx.grid = parent_grid;
+    ctx.pixel_snap_off = parent_snap_off;
     builder.translate(-pos.x, -pos.y);
   }
   ctx.cull = saved_cull;

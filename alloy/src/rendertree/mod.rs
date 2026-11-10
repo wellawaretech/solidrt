@@ -75,6 +75,15 @@ pub struct BuildContext<'a> {
   /// snapshot's or a capture's texture inside its raster. None past a
   /// non-2D matrix.
   pub grid: grid::GridMap,
+  /// Whether the walk is under a `pixelSnap={false}` node
+  /// (`Element::pixel_snap_off`): the one source of the grid's `unrounded`
+  /// flag that survives a raster root, which builds its grid from this bit
+  /// where a running track's flag clears.
+  pub pixel_snap_off: bool,
+  /// Set by a raster root (a snapshot, a capture) for the node it records,
+  /// which takes it: that node's content sits at the texture's origin by
+  /// construction, so it takes no box offset (composite::record_node).
+  pub raster_root: bool,
   /// The text atlas frame this walk belongs to: what a text or a recording
   /// stamps its scale observation with (text::build_layer).
   pub frame: u64,
@@ -133,7 +142,9 @@ impl<'a> BuildContext<'a> {
       content: Rect::new(Point::zero(), Size::default()),
       cull: None,
       to_window: None,
-      grid: None,
+      grid: grid::GridMap::default(),
+      pixel_snap_off: false,
+      raster_root: false,
       frame: platform.text_atlas().frame(),
       scale_at_rest: false,
       text_layers: 0,
@@ -468,6 +479,11 @@ pub struct Element {
   // in snapshots and matched by `RenderTree::find`. Never affects layout,
   // paint or hit testing.
   pub label: Option<String>,
+  // `pixelSnap={false}`: nothing in this node's subtree is rounded to the
+  // device grid, in motion or at rest (grid.rs). A one-way off, inherited
+  // down the paint walk; a write is Paint damage, and the boundary caches
+  // below notice the change themselves (boundary.rs).
+  pub pixel_snap_off: bool,
 }
 
 impl Element {
@@ -489,6 +505,7 @@ impl Element {
       transitions: None,
       lifecycle: Lifecycle::default(),
       label: None,
+      pixel_snap_off: false,
     }
   }
 
@@ -516,6 +533,7 @@ impl Element {
       transitions: None,
       lifecycle: Lifecycle::default(),
       label: None,
+      pixel_snap_off: false,
     }
   }
 

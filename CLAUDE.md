@@ -1,3 +1,12 @@
+# Never name an outside project
+HARD RULE, NO EXCEPTIONS. Nothing checked into this repository names or points at a project that uses SolidRT: an app, a game, a client's product or the maintainer's own, private or public. Not its name, its path, its package or bundle id, its identifiers, its assets, its screenshots, or code and tuning values copied from it. This holds for every file - source, comments, tests, examples, docs, `okf/`, AGENTS files, generated output - and for commit and PR text.
+
+A problem found in such a project is described by its shape ("a title whose letters animate") and reproduced here from scratch, with neutral names and neutral numbers. Where it was seen is never recorded: not as provenance, not in a test comment, not in a note.
+
+Third-party software, dependencies and prior art (Chrome, Godot) are not this; name them as before.
+
+Before finishing any change made while looking at an outside project, search the working tree for that project's name and paths (`grep -rIil <name>`, outside `node_modules` and `target`) and remove every hit. A hit that was already there is removed too.
+
 # Code style
 ASCII characters only. No em-dashes.
 

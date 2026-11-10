@@ -232,7 +232,8 @@ struct TextLayer {
   rendering: u64,
   /// Whether the cells were hinted: a raster made for a scale the text
   /// rests at is, one made mid-motion at an in-between scale is not (see
-  /// build_layer), and is re-made hinted once the scale rests.
+  /// build_layer), and is re-made hinted once the scale rests. Never set
+  /// on a display that does not hint.
   hinted: bool,
   /// The text atlas frame this layer was last composited at.
   used: u64,
@@ -345,12 +346,24 @@ pub(crate) fn raster_scale(have: f32, now: f32, at_rest: bool) -> RasterScale {
 /// rest: `have` the raster's scale (None before the first), `now` the
 /// composite scale, `factor` where the running scale transitions on the
 /// chain take it (`BuildContext::scale_target`, 1 with none), `at_rest`
-/// whether `now` held over the rest looks. With a transition headed up,
-/// the raster is made for its end at once and the motion minifies it, as
-/// Chrome rasters a known animation at its larger end; headed down, the
-/// raster is kept and minified, and re-made at the resting scale.
+/// whether `now` held over the rest looks. A known end rasters for that
+/// end, up or down. Headed up, the raster is made for the end at once and
+/// the motion minifies it, as Chrome rasters a known animation at its
+/// larger end. Headed down, while `now` is within the motion bound of the
+/// end, the raster is made at the end too and the motion magnifies it,
+/// whether or not a raster exists: the one re-raster of a zoom then falls
+/// at its start, where the motion hides it, and nothing is left to do when
+/// the scale rests, so the text does not step there
+/// (okf/done/pixel-snap-at-draw.md). Past the bound a downward zoom
+/// keeps its raster and minifies it until it is within the bound.
 pub(crate) fn raster_density(have: Option<f32>, now: f32, factor: f32, at_rest: bool) -> (f32, bool) {
-  let ahead = (factor > 1.0 && factor.is_finite()).then(|| now * factor);
+  let end = (factor != 1.0 && factor > 0.0 && factor.is_finite()).then(|| now * factor);
+  let ahead = end.filter(|&end| end > now);
+  let below = end.filter(|&end| end < now && now / end <= LAYER_SCALE_MOTION_BOUND);
+  if let Some(end) = below {
+    // A raster already at the end is the one to keep, its exact scale too.
+    return (have.filter(|&have| scale_held(have, end)).unwrap_or(end), false);
+  }
   let Some(have) = have else {
     return (ahead.unwrap_or(now), false);
   };
@@ -532,7 +545,8 @@ impl Text {
   // raster scale follows the composite scale at rest and holds while it
   // moves (`raster_density`): a text under a scale animation composites
   // its existing raster stretched until the scale has held, then
-  // re-rasterizes once, or rasters for a known end at once; a text that
+  // re-rasterizes once, or rasters for a known end (a transition's) at
+  // once and has nothing left to do at rest; a text that
   // decides to wait asks for a look at the next frame (`scale_wait`, which
   // the walk registers with the tree).
   #[allow(clippy::too_many_arguments)]
@@ -549,9 +563,16 @@ impl Text {
     let composite = layer_scale(ctx);
     // At rest when the scale held over the rest looks, or when an enclosing
     // recording decided so for its record walk.
-    let seen = scale_observed(self.scale_seen.get(), composite, ctx.frame);
+    let last_look = self.scale_seen.get();
+    let seen = scale_observed(last_look, composite, ctx.frame);
     self.scale_seen.set(Some(seen));
     let at_rest = seen.at_rest() || ctx.scale_at_rest;
+    // Steady when nothing says the scale moves: it is the scale of the last
+    // look, however long ago that was (or this is the first), and no
+    // transition on the chain is taking it elsewhere. Rest is proven by
+    // consecutive looks, which an app at rest never makes; steady is what a
+    // text has to go on without them.
+    let steady = ctx.scale_target == 1.0 && last_look.is_none_or(|last| scale_held(last.scale, composite));
     let mut layer = self.layer.borrow_mut();
     let (scale, wait) = raster_density(layer.as_ref().map(|l| l.scale), composite, ctx.scale_target, at_rest);
     self.scale_wait.set(wait);
@@ -559,15 +580,20 @@ impl Text {
     if wait {
       ctx.platform.request_frame();
     }
-    // Hinted when made for a scale the text rests at: at rest, at the
-    // display scale (every static text), or at a running transition's end,
-    // which it rests at next. A raster made mid-motion at an in-between
-    // scale is unhinted, so its x-height does not pop between rows as the
-    // size moves; a kept raster keeps its hinting while the scale moves and
-    // is re-made hinted once it rests.
+    // Hinted when made for a scale the text rests at, as far as it can
+    // tell: at rest, steady (a text drawn into an app at rest, under a
+    // design-size fit or any scale that is not the display's; a text whose
+    // content changed there), at the display scale, or at a running
+    // transition's end, which it rests at next. A raster made mid-motion
+    // at an in-between scale is unhinted, so its x-height does not pop
+    // between rows as the size moves; a kept raster keeps its hinting while
+    // the scale moves and is re-made hinted once it rests. Where the
+    // display does not hint at all there is nothing to tell apart, and
+    // nothing to re-make.
+    let hints = ctx.platform.text_hint() != Hint::Off;
     let display_scale = ctx.platform.display_scale();
     let at_end = ctx.scale_target != 1.0 && scale_held(scale, composite * ctx.scale_target);
-    let hinted = at_rest || scale == display_scale || at_end;
+    let hinted = hints && (at_rest || steady || scale == display_scale || at_end);
     let Some((rect, tex_w, tex_h)) = Self::layer_geometry(owned, index, scale) else {
       return;
     };
@@ -629,6 +655,15 @@ impl Text {
     }
     let layer = layer.as_mut().expect("built above");
     layer.used = frame;
+    // An unhinted raster on a display that hints was made while the scale
+    // moved (a step of an animation, or one direct write far enough to
+    // re-make it at once). It is re-made hinted when the scale rests, and
+    // rest takes consecutive looks: ask for them, so a scale that stopped
+    // on this very frame is not left unhinted until something else draws.
+    if hints && !layer.hinted && !at_rest {
+      self.scale_wait.set(true);
+      ctx.platform.request_frame();
+    }
     // The content occupies the top-left rect * scale pixels of the
     // ceil-padded texture; mapping exactly that region onto the logical box
     // keeps the composite pixel-exact.
@@ -637,7 +672,10 @@ impl Text {
     // The glyph quads snap to pixel rows and subpixel phases inside the
     // layer, so the layer's quad is a painted box like any other: its
     // origin (the text origin plus the slack, fractional) lands on a whole
-    // device pixel, and the text moves by under a pixel with it.
+    // device pixel, and the text moves by under a pixel with it. This is
+    // the text's one rounding, against the grid of the frame the builder
+    // is in (the walk gives a text no box offset); none where the grid
+    // does not round (a rotation, a running track, pixelSnap={false}).
     let mut dst = Rect::new(origin + layer.rect.origin.to_vector(), layer.rect.size);
     if let Some(shift) = grid::shift(&ctx.grid, dst.origin) {
       dst.origin += shift;

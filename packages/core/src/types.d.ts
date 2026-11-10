@@ -409,6 +409,22 @@ export interface NodeProps {
    * what the user sees breaks.
    */
   label?: string
+  /**
+   * `false` turns pixel snapping off for this element and everything under
+   * it. By default a box, a text and a movement are rounded to whole device
+   * pixels where they are drawn, so edges and text are crisp; a running
+   * transition that moves an element (a translate, a scale, a rotation, a
+   * layout slide) turns the rounding off by itself for as long as it runs,
+   * and the element moves onto its pixel, by at most one device pixel,
+   * when the transition ends. Under `pixelSnap={false}` nothing is rounded,
+   * in motion or at rest, so content ends its motion exactly where the
+   * motion put it, with no step. The cost is at rest: text on a fraction
+   * of a pixel is drawn softer, and a 1 px line can spread over two rows.
+   * Use it for animated display type and drawn art, not for body text or
+   * hairlines. It is a one-way off: `pixelSnap={true}` further down does
+   * not turn the rounding back on.
+   */
+  pixelSnap?: boolean
 }
 
 export interface InputProps extends NodeProps {

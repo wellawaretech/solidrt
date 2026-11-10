@@ -428,9 +428,10 @@ Shaped, not started.
   not exist in the image crate, so it needs the dav1d C system dependency.
 - **[Border widths land off the device grid at fractional scales](backlog/border-width-device-pixels.md)** [2026-10-08]
   A 1 logical px stroke at 1.5x is 1.5 device pixels, so its inner edge sits
-  on a half pixel and reads as a soft second row whatever the box does;
-  browsers snap border widths to whole device pixels (at least one), and the
-  box kinds' strokes should too.
+  on a half pixel and reads as a soft second row whatever the box does; a
+  rect's stroke is floored to whole device pixels (at least one), as Chrome's
+  is, for a laid-out rect and for the detached rect that draws every stock
+  border.
 - **[Native modules cannot read camera frames](backlog/camera-frame-tap.md)** [2026-10-08]
   alloy's camera pump holds every frame as upright RGBA on the CPU and hands
   it only to the texture upload and the QR decoder, so a custom runtime module
@@ -496,6 +497,12 @@ Shaped, not started.
   mark a drag-to-move region, so a desktop widget (a character, a clock, a
   floating panel) runs in an ordinary framed window; `<window>` has only
   title, fullscreen and shader. Desktop-only.
+- **[Replace the d-* tags with a set-once detached attribute](backlog/detached-attribute.md)** [2026-11-10]
+  The seven d-* intrinsics (d-view, d-rect, d-oval, d-line, d-path, d-texture,
+  d-text) double the tag set for one bit that never changes after creation; a
+  static `detached` attribute on the plain tag (`<view detached>`) says the
+  same thing, and createElement already receives static props inline, so the
+  bit is known when the native node is built.
 - **[Statically detect layout elements inside detached views](backlog/detached-nesting-static-check.md)** [2026-08-02]
   A <view> nested inside a <d-view> typechecks and fails only at runtime, and
   TypeScript cannot catch it (every JSX expression is the one Element type, so
@@ -741,6 +748,15 @@ Shaped, not started.
   group opacity and group transforms; add an opt-in tree output (groups with
   id/opacity/transform, paths in local space) backed by a `transform` matrix
   prop on views, keeping the flat list as the default.
+- **[Decide whether scroll and JS-driven motion drop pixel rounding](backlog/pixel-snap-scroll-and-js-motion.md)** [2026-11-10]
+  After pixel-snap-at-draw a transform track moves its subtree unrounded, but
+  a scroll offset still moves by whole device pixels and a value JS writes
+  every frame (a pan, a pinch) still rounds, so a fling's tail steps and a
+  pinched scale keeps a half-pixel wobble; neither is measured, unrounded
+  scroll softens text and reverses a decision browsers share, so a
+  frame-by-frame read comes first, and the follow spec waits on it;
+  `pixelSnap={false}` of pixel-snap-at-draw is the answer where a subtree
+  should never round.
 - **[Make the fence wait over a video plane adaptive](backlog/plane-adaptive-fence-wait.md)** [2026-09-12]
   An app animating over a playing video plane runs at 16 fps because every
   window present waits for its GPU work while a plane exists; wait only for
@@ -2600,6 +2616,14 @@ Finished, kept for the reasoning.
   (GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT), killing the app; hit twice,
   reproducibly, on the Linux desktop client while bringing up the 2d starlings
   demo.
+- **[Snap to the device grid once, at the draw](done/pixel-snap-at-draw.md)** [2026-11-08]
+  A scale transition around text wobbles by up to a device pixel per frame and
+  steps when it rests, because the paint walk rounds a view's origin, the
+  child box and the text quad in turn, each on top of the last; rounding moves
+  to the draw, a running track that moves a box drops the rounding for its
+  subtree until it settles, a text under a downward scale rasters for its end,
+  and `pixelSnap={false}` turns the rounding off for a subtree that must not
+  step when its motion ends.
 - **[Painted boxes land off the device pixel grid](done/pixel-snapped-paint-boxes.md)** [2026-10-08]
   Layout places every node at fractional logical positions (a 16.98 px row
   height puts rows at 45.71, 62.69, 79.67), and the composite walk drew them
@@ -3500,6 +3524,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   patch, why a patch follows changed records and is one buffer write, the
   churn floor of culling, the record layer's cull default, and the Adreno pass
   timer that attributes rather than totals.
+- **[What reading pixel snap under motion showed](notes/pixel-snap-motion-findings.md)** [2026-11-10]
+  Findings from building pixel-snap-at-draw - the settling frame is bounded by
+  a rounding plus the motion's last step, a read of the picture restarts a
+  text's rest count, the text layer count in the stats reads a frame late, a
+  text must hint when its scale is steady and not wait for rest, and a node
+  under a boundary can rest one device pixel from where it rests bare.
 - **[What cancels a pointer, and what only looks like it does](notes/pointer-cancel-sources.md)** [2026-10-05]
   The platform touch cancels are the only producers of a pointer cancel; a
   desktop focus loss and the dev-tool input mute both deliver the up, so

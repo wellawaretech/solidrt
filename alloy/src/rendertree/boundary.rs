@@ -67,6 +67,16 @@ pub struct RecordingCache {
   /// a vector-only recording replays crisply at any scale and never
   /// re-records for one.
   pub holds_text: bool,
+  /// Whether the rounding to the device grid was off when it was recorded
+  /// (a running track moved it, or `pixelSnap={false}`): its interior is
+  /// then unrounded, and a replay with the rounding back re-records it once
+  /// (composite.rs). The density compare cannot catch this: a zoom records
+  /// at its end density on a mid-motion grid, and the density still
+  /// matches at rest.
+  pub unrounded: bool,
+  /// Whether it was recorded under `pixelSnap={false}`; a replay under the
+  /// other setting re-records it.
+  pub pixel_snap_off: bool,
 }
 
 /// The backdrop panels inside a Recording cache, summarized from the
@@ -119,6 +129,16 @@ pub struct SnapshotCache {
   pub height: f32,
   pub scale: f32,
   pub valid: bool,
+  /// The node's layout size (unsnapped) when it was rasterized, beside the
+  /// box above. Under a running track the node's box is that layout size
+  /// and at rest it is the snapped box, so keyed on the box alone every
+  /// snapshot under a track would re-rasterize when the track starts and
+  /// again when it ends: under a track the compare is on this size and
+  /// the quad draws at the cached box (snapshot_node).
+  pub layout: Size,
+  /// Whether it was rasterized under `pixelSnap={false}`; under the other
+  /// setting its interior holds the wrong rounding and it is stale.
+  pub pixel_snap_off: bool,
   /// The shader half, present while a boundary shader is declared (see
   /// `View::set_shader`); its output is composited in place of `texture`.
   pub shaded: Option<ShadedCache>,
@@ -327,9 +347,10 @@ pub(super) fn draw_cached_recording(
 }
 
 // Snapshot gate: the subtree is rasterized into a texture at the density
-// its quad composites at (the grid inside the node's own matrix, at rest:
-// text::raster_density, so a zoom stretches the texture until the scale
-// holds and re-rasterizes once) and composited as a single quad until
+// its quad composites at (the grid inside the node's own matrix, at rest
+// or at a running transition's end: text::raster_density, so a zoom
+// stretches the texture and re-rasterizes once) and composited as a single
+// quad until
 // something inside it changes, its layout size changes, or that density
 // changes. Content
 // painting outside the layout box is cropped (unlike a recording boundary);
@@ -362,7 +383,24 @@ fn snapshot_node_unculled<'a>(
   // The inherited frame, copied out for the BoundaryComposite's backdrop
   // emission (ctx cannot be re-borrowed at draw time).
   let frame = ctx.size;
-  let (width, height, offset) = painted_box(element, ctx.size);
+  let (mut width, mut height, offset) = painted_box(element, ctx.size);
+  // The node's box follows the rounding of the frame it sits in: its
+  // layout size where a running track has the rounding off, the snapped
+  // box at rest. A cache whose layout size is this one keeps its box while
+  // the rounding is off, so a snapshot made at rest is reused as it is
+  // when a track starts and when it ends; one made under a track
+  // re-rasterizes once at rest if its box is another size there. A
+  // `pixelSnap` change above it makes the interior stale.
+  let layout = element.painted_size().unwrap_or_else(|| Size::new(width, height));
+  if let Some(PaintCache::Snapshot(snap)) = &mut *element.paint_cache.borrow_mut() {
+    if snap.pixel_snap_off != ctx.pixel_snap_off {
+      snap.valid = false;
+    }
+    if ctx.grid.unrounded() && snap.layout == layout {
+      (width, height) = (snap.width, snap.height);
+    }
+  }
+  let pixel_snap_off = ctx.pixel_snap_off;
   let own = snapped_own(element, ctx.size, &ctx.grid);
   // The raster density: the grid inside the node's own matrix (what the
   // quad is scaled by on composite), followed at rest and ahead of a known
@@ -391,7 +429,7 @@ fn snapshot_node_unculled<'a>(
   // A raster made for a scale the node rests at (at rest, or a known zoom's
   // end) is told to its record walk below: the texts inside raster hinted
   // for exactly this density, as any text at rest, and wait for nothing.
-  let for_rest = at_rest || (factor > 1.0 && text::scale_held(scale, composite * factor));
+  let for_rest = at_rest || (factor != 1.0 && text::scale_held(scale, composite * factor));
   let box_key = SnapshotKey { width, height, scale, outset: 0.0 };
   let (tex_w, tex_h) = box_key.texture_dims();
 
@@ -406,10 +444,9 @@ fn snapshot_node_unculled<'a>(
     Some(m) => Hoist::Transform(m),
     None => Hoist::None,
   };
-  // The raster is a raster root: inside it the grid is the texture's, the
-  // content countered by the paint offset (and pushed out by a shader
-  // outset below). The slot grid comes back for the composite.
-  let slot_grid = ctx.grid;
+  // The raster is a raster root (record_raster): inside it the grid is the
+  // texture's, the content countered by the paint offset (and pushed out by
+  // a shader outset below).
   let paint_offset = Vector::new(offset.0, offset.1);
 
   // The boundary shader (views only) and its pending-write flag, consumed
@@ -492,12 +529,7 @@ fn snapshot_node_unculled<'a>(
       // paint into the effect's transparent margin.
       sub.clip_rect(&Rect::new(Point::new(0.0, 0.0), Size::new(width, height)), ClipOperation::Intersect);
     }
-    ctx.grid = grid::raster(scale, Vector::new(outset, outset));
-    let outer_rest = ctx.scale_at_rest;
-    ctx.scale_at_rest = outer_rest || for_rest;
-    record_node(scene, node_id, ctx, &mut sub, hoist);
-    ctx.scale_at_rest = outer_rest;
-    ctx.grid = slot_grid;
+    record_raster(scene, node_id, ctx, &mut sub, hoist, grid::raster(scale, Vector::new(outset, outset)), for_rest);
     let Some(dl) = sub.build() else { return };
 
     // Reusable storage: the source (plain or shaded), plus output and
@@ -554,6 +586,8 @@ fn snapshot_node_unculled<'a>(
           height,
           scale,
           valid: true,
+          layout,
+          pixel_snap_off,
           shaded: Some(ShadedCache { output, outset, history }),
         }));
       }
@@ -589,12 +623,7 @@ fn snapshot_node_unculled<'a>(
   if offset != (0.0, 0.0) {
     sub.translate(-offset.0, -offset.1);
   }
-  ctx.grid = grid::raster(scale, -paint_offset);
-  let outer_rest = ctx.scale_at_rest;
-  ctx.scale_at_rest = outer_rest || for_rest;
-  record_node(scene, node_id, ctx, &mut sub, hoist);
-  ctx.scale_at_rest = outer_rest;
-  ctx.grid = slot_grid;
+  record_raster(scene, node_id, ctx, &mut sub, hoist, grid::raster(scale, -paint_offset), for_rest);
   let Some(dl) = sub.build() else { return };
 
   // Stale storage at unchanged dimensions is re-rendered in place: the
@@ -614,8 +643,16 @@ fn snapshot_node_unculled<'a>(
         ctx.snapshots_rerendered += 1;
         publish_snapshot(element, ctx, &texture, tex_w, tex_h);
         quad.draw_texture(builder, &texture);
-        *element.paint_cache.borrow_mut() =
-          Some(PaintCache::Snapshot(SnapshotCache { texture, width, height, scale, valid: true, shaded: None }));
+        *element.paint_cache.borrow_mut() = Some(PaintCache::Snapshot(SnapshotCache {
+          texture,
+          width,
+          height,
+          scale,
+          valid: true,
+          layout,
+          pixel_snap_off,
+          shaded: None,
+        }));
         return;
       }
       Err(e) => {
@@ -630,14 +667,51 @@ fn snapshot_node_unculled<'a>(
       ctx.snapshots_rasterized += 1;
       publish_snapshot(element, ctx, &texture, tex_w, tex_h);
       quad.draw_texture(builder, &texture);
-      *element.paint_cache.borrow_mut() =
-        Some(PaintCache::Snapshot(SnapshotCache { texture, width, height, scale, valid: true, shaded: None }));
+      *element.paint_cache.borrow_mut() = Some(PaintCache::Snapshot(SnapshotCache {
+        texture,
+        width,
+        height,
+        scale,
+        valid: true,
+        layout,
+        pixel_snap_off,
+        shaded: None,
+      }));
     }
     Err(e) => {
       log::warn!("snapshot rasterization failed for node {node_id}: {e}; painting inline");
       quad.draw_inline(builder, &dl);
     }
   }
+}
+
+// Record a snapshot boundary's subtree as a raster root: inside it the grid
+// is the texture's (`grid`), rounding off only under `pixelSnap={false}` -
+// a running track's motion ends at a raster, so the contents stay on their
+// texture's grid. No scale transition outside reaches the texts inside
+// either: the raster's density already holds where the chain is headed
+// (text::raster_density), so they raster for exactly that density, and
+// `for_rest` tells them it is one the node rests at.
+fn record_raster<'a>(
+  scene: &'a RenderTree,
+  node_id: u64,
+  ctx: &mut BuildContext<'a>,
+  sub: &mut DisplayListBuilder,
+  hoist: Hoist,
+  grid: grid::GridMap,
+  for_rest: bool,
+) {
+  let slot_grid = ctx.grid;
+  let outer_rest = ctx.scale_at_rest;
+  let outer_target = ctx.scale_target;
+  ctx.grid = grid.or_unrounded(ctx.pixel_snap_off);
+  ctx.scale_at_rest = outer_rest || for_rest;
+  ctx.scale_target = 1.0;
+  ctx.raster_root = true;
+  record_node(scene, node_id, ctx, sub, hoist);
+  ctx.grid = slot_grid;
+  ctx.scale_at_rest = outer_rest;
+  ctx.scale_target = outer_target;
 }
 
 // Re-point a boundary's vended texture id (see RenderTree::snapshot_texture)

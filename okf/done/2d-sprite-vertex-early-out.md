@@ -133,8 +133,8 @@ least three distinct points by construction, and `sprite-mesh.test.ts`
 checks this and the padding on every random mesh.
 
 Measured on the same tablet (Galaxy Tab A7, schedutil on all 8 cores,
-thermal status 0, battery 24 C, USB power), with the Meinstein boards
-of `../demo/tiles` on 0.0.86. Only `glsl.ts` and `sprite-mesh.ts` were
+thermal status 0, battery 24 C, USB power), with the boards of
+`../demo/tiles` on 0.0.86. Only `glsl.ts` and `sprite-mesh.ts` were
 swapped. Each row is three runs of the scripted drag, each after a
 fresh reload of the same deal, and the runs agreed within 0.2 ms:
 
