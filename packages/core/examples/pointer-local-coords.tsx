@@ -21,7 +21,7 @@ function App() {
   return (
     <window alignItems="center" justifyContent="center">
       <view width={360} height={240} rotate={0.3} scale={1.2}>
-        <d-rect radius={16} color="#2a2f3a" />
+        <rect detached radius={16} color="#2a2f3a" />
         <view
           position="absolute"
           width={100}
@@ -42,7 +42,7 @@ function App() {
             grab = null
           }}
         >
-          <d-rect radius={12} color="#3366b3" />
+          <rect detached radius={12} color="#3366b3" />
           <text color="white">drag me</text>
         </view>
       </view>

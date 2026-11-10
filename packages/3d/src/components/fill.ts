@@ -17,7 +17,7 @@ import type { DensityProps } from "./fill-math.ts"
 export type OutputLeaf = {
   /** Hand over the leaf you render (`ref={leaf.ref}`): a layout leaf,
    * the one whose box the target follows and whose layout the handlers
-   * scale by. A d-* leaf has no box to follow. */
+   * scale by. A detached leaf has no box to follow. */
   ref: (node: { id: number }) => void
   /** The pointer handlers for the ref'd leaf, scaled to its layout box
    * per event (so a leaf laid out at any size, under any designSize fit

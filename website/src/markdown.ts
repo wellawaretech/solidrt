@@ -36,7 +36,7 @@ export function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-// An identifier in inline code is kept whole: `d-texture` never splits at the
+// An identifier in inline code is kept whole: `flex-start` never splits at the
 // hyphen, `getBoundingBoxViewport` never mid-word. Other tokens (paths, `::`
 // chains) keep their break points, so a long one cannot widen a phone page.
 const IDENTIFIER = /^[\w$-]+$/;

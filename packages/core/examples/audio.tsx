@@ -43,7 +43,7 @@ function sweep(): Int16Array {
 function Button(props: { label: string; onTap: () => void }) {
   return (
     <view onPointerDown={props.onTap} padding={12} clipRadius={8}>
-      <d-rect color="#333" />
+      <rect detached color="#333" />
       <text color="#e6e6e6">{props.label}</text>
     </view>
   )

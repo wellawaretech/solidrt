@@ -93,7 +93,7 @@ export function Pressable(props: PressableProps) {
       cursor={props.cursor ?? "pointer"}
     >
       {hasBackground() ? (
-        <d-rect
+        <rect detached
           transition={withTransitionDefaults(split().background, colorFade())}
           onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
           color={style()?.backgroundColor ?? "transparent"}
@@ -102,7 +102,7 @@ export function Pressable(props: PressableProps) {
       ) : null}
       {kids()}
       {hasBorder() ? (
-        <d-rect
+        <rect detached
           drawStyle="stroke"
           transition={withTransitionDefaults(split().border, colorFade())}
           onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}

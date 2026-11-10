@@ -33,7 +33,7 @@ mesh costs one uniform write. By default `<Scene>` composites the target
 as a plain `<texture>` leaf that fills its parent's box, rendered at the
 leaf's on-screen device-pixel size (give `width`/`height` for a fixed
 target instead); the `output` prop receives the texture id
-and replaces that leaf - place a `<d-texture>`, add paint or pointer
+and replaces that leaf - place a `<texture detached>`, add paint or pointer
 props, chain a post-effect shader target, or return null and composite
 `scene.texture` yourself.
 

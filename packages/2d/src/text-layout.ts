@@ -11,7 +11,7 @@
 import type { FontPreparedText } from "flux:font"
 
 /** The anchor of the run's x: where the point sits on each line's
- * extent (SVG's text-anchor, d-text's `anchor`). */
+ * extent (SVG's text-anchor, a detached text's `anchor`). */
 export type TextAnchor = "start" | "middle" | "end"
 /** The anchor of the run's y: the top of the first line, the middle of
  * the box, the first baseline, or the bottom of the last line. */

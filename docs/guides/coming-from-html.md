@@ -12,22 +12,25 @@ There are two types of elements:
 
 - **Layout elements.** These are as the elements in HTML. The layout engine
   gives each one a position and a size in its parent.
-- **Detached elements** (`d-*`). These have no layout box, and the layout
+- **Detached elements.** These have no layout box, and the layout
   engine does not see them. You give each one `x`, `y`, `w` and `h` in the
   coordinates of its parent. Without `w` and `h`, a detached element fills
   the box of its parent.
 
-Most elements have the two forms, for example `rect` and `d-rect`. A `span`
-is neither. It is a styled run in a `text`.
+Most elements have the two forms, for example `<rect>` and
+`<rect detached>`. A `span` is neither. It is a styled run in a `text`.
+
+To make an element detached, write the `detached` attribute at the tag. The
+attribute is a literal. You cannot set it from a signal or from a spread.
 
 | Element | Use | Nearest&nbsp;HTML |
 | --- | --- | --- |
 | `window` | The root of the tree. One for each app | `body` |
-| `view`, `d-view` | Groups, clips and transforms other elements | `div` |
-| `text`, `d-text` | A paragraph | `p` |
+| `view`, `view detached` | Groups, clips and transforms other elements | `div` |
+| `text`, `text detached` | A paragraph | `p` |
 | `span` | A styled run in a `text` | `span` |
-| `rect`, `d-rect`<br>`oval`, `d-oval`<br>`line`, `d-line`<br>`path`, `d-path` | Shapes | SVG shapes |
-| `texture`, `d-texture` | An image, or pixels that you write | `img`, `canvas` |
+| `rect`, `rect detached`<br>`oval`, `oval detached`<br>`line`, `line detached`<br>`path`, `path detached` | Shapes | SVG shapes |
+| `texture`, `texture detached` | An image, or pixels that you write | `img`, `canvas` |
 
 Use the layout form for the structure of a screen. Use the detached form for
 backgrounds, for content that moves in each frame, and for shapes that you
@@ -52,29 +55,30 @@ names, for example `flexDirection`, `gap` and `padding`.
 </text>
 ```
 
-**A `view` does not paint.** There is no `backgroundColor`. Put a `d-rect`
-in the view, before the content:
+**A `view` does not paint.** There is no `backgroundColor`. Put a
+`<rect detached>` in the view, before the content:
 
 ```tsx
 <view padding={16}>
-  <d-rect color="#1b2440" radius={12} />
+  <rect detached color="#1b2440" radius={12} />
   <text color="white">Boxed</text>
 </view>
 ```
 
-The `d-rect` fills the view, and it does not move the `text`. Do not use a
-`rect` for this. A `rect` is a layout element, and it takes a position in
-the column, as a `div` does.
+The detached rect fills the view, and it does not move the `text`. Do not
+use a plain `rect` for this. A plain `rect` is a layout element, and it
+takes a position in the column, as a `div` does.
 
-**There is no border.** Draw the border with a second `d-rect`. One shape
-has one `color`, so the fill and the stroke cannot have different colors.
+**There is no border.** Draw the border with a second `<rect detached>`. One
+shape has one `color`, so the fill and the stroke cannot have different
+colors.
 Put the stroke after the content, so that the content does not cover it:
 
 ```tsx
 <view padding={16}>
-  <d-rect color="#1b2440" radius={12} />
+  <rect detached color="#1b2440" radius={12} />
   <text color="white">Boxed</text>
-  <d-rect color="#7ea9ea" drawStyle="stroke" strokeWidth={2} radius={12} />
+  <rect detached color="#7ea9ea" drawStyle="stroke" strokeWidth={2} radius={12} />
 </view>
 ```
 

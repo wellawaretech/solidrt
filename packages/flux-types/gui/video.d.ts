@@ -1,12 +1,12 @@
 // Video playback and recording (gui-enabled runtime only). The imperative primitive;
 // @solidrt/core wraps it with SolidJS reactivity. There is no video element:
-// a texture player's `texture` id is displayed with <texture>/<d-texture>,
-// and a richer Video component composes in a higher layer. A plane player
-// (Android) has no texture at all: the platform composites the decoded
-// picture fullscreen beneath the UI. Both players run off the frame loop
-// (demux, decode, the clock, frame selection and audio on their own
-// threads; a texture player's frames are shown at the UI's cadence, the
-// way a browser's compositor shows a video's) and both stream: the source
+// a texture player's `texture` id is displayed with <texture> or
+// <texture detached>, and a richer Video component composes in a higher
+// layer. A plane player (Android) has no texture at all: the platform
+// composites the decoded picture fullscreen beneath the UI. Both players run
+// off the frame loop (demux, decode, the clock, frame selection and audio on
+// their own threads; a texture player's frames are shown at the UI's cadence,
+// the way a browser's compositor shows a video's) and both stream: the source
 // may be a URL, read as it plays.
 
 declare module "flux:video" {

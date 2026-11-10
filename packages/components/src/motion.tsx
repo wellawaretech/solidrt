@@ -125,7 +125,7 @@ export function PressFeedback(props: {
     return f === undefined ? undefined : { color: f }
   }
   return (
-    <d-rect
+    <rect detached
       transition={fade()}
       color={props.pressed || props.hovered ? tint() : withAlpha(tint(), 0)}
       radius={props.radius}

@@ -19,20 +19,20 @@ sprites; a run's pose is its group's (`run.group`), where glyph pointer
 events bubble. Two cell kinds: "msdf" (the default: one atlas sharp at
 every zoom, the fragment stage decoding `Atlas.sdf`; the per-run
 `outline` draws only here) and "mask" (coverage at the face's exact size,
-for 1:1 drawing). Text
-as elements is still the right tool up to hundreds of labels: `d-text`
-under a `<view>` carrying the camera transform (what `<TileLayer>` does
-for its chunks) costs no JS per label on a camera move and is rasterized
-at the real scale; runs are for thousands, for in-layer draw order, and
-for a zoom animation that would re-rasterize every label per frame.
+for 1:1 drawing). Text as elements is still the right tool up to hundreds
+of labels: `<text detached>` under a `<view>` carrying the camera
+transform (what `<TileLayer>` does for its chunks) costs no JS per label
+on a camera move and is rasterized at the real scale; runs are for
+thousands, for in-layer draw order, and for a zoom animation that would
+re-rasterize every label per frame.
 
 Layout is `layoutText` (text-layout.ts, pure): `\n` breaks, `maxWidth`
 wraps with core's greedy rule, `align` per line, `anchor`
-(start/middle/end, as d-text) and `anchorY` (top/middle/baseline/bottom)
-place the run's point, `lineHeight` as named; `letterSpacing` is shaped
-into the units by the engine. The run reports `width`, `height`, `ascent`
-and `lines`. A run's `fontSize` defaults to the face's; glyphs scale their
-cells by `fontSize / font.size`.
+(start/middle/end, as a detached text) and `anchorY`
+(top/middle/baseline/bottom) place the run's point, `lineHeight` as named;
+`letterSpacing` is shaped into the units by the engine. The run reports
+`width`, `height`, `ascent` and `lines`. A run's `fontSize` defaults to
+the face's; glyphs scale their cells by `fontSize / font.size`.
 
 ## Traps
 

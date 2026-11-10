@@ -12,7 +12,7 @@
 // costs zero passes; createShaderTextureMemo resizes the post target in
 // place when the pane or the display scale changes.
 //
-// The same slot takes a `<d-texture>`, a leaf with blendMode/fit/pointer
+// The same slot takes a `<texture detached>`, a leaf with blendMode/fit/pointer
 // props, or `() => null` (headless - composite scene.texture elsewhere).
 // A `maxPixels` next to `renderScale` would hold the scene's cost on any
 // display; scene-views.tsx shows the fixed-size form.

@@ -33,6 +33,14 @@ function createProxyNode(elementType: ElementType): ProxyNode {
   return node
 }
 
+// The d-* wire kind, printed as the author wrote the element: <view detached>.
+const DETACHED_PREFIX = "d-"
+function tagLabel(elementType: string): string {
+  return elementType.startsWith(DETACHED_PREFIX)
+    ? `<${elementType.slice(DETACHED_PREFIX.length)} detached>`
+    : `<${elementType}>`
+}
+
 // Ancestor chain for event dispatch: node ids from `id` (inclusive) to the
 // root, following the mount tree (a portaled node reports its mount point's
 // chain, not its lexical one). Empty when the id is unknown.
@@ -150,7 +158,7 @@ export function scanForOrphans(now: number): void {
   if (fresh.length === 0 && magnitude <= warnedMagnitude) return
   for (let [type] of fresh) warnedLeakTypes.add(type)
   warnedMagnitude = magnitude
-  let list = [...counts].map(([type, n]) => `<${type}> x${n}`).join(", ")
+  let list = [...counts].map(([type, n]) => `${tagLabel(type)} x${n}`).join(", ")
   let abandoned =
     abandonedBuilds === 0
       ? ""
@@ -186,7 +194,7 @@ function setTreeProperty(node: ProxyNode, name: string, value: unknown): void {
     if (warnedRejectedProps.has(key)) return
     warnedRejectedProps.add(key)
     let stack = new Error().stack ?? ""
-    console.warn(`Ignoring property '${name}' on <${node.elementType}>: ${message}\n${stack}`)
+    console.warn(`Ignoring property '${name}' on ${tagLabel(node.elementType)}: ${message}\n${stack}`)
   }
 }
 
@@ -201,6 +209,7 @@ const ROUTE_TREE = 0
 const ROUTE_EVENT = 1
 const ROUTE_FOCUSABLE = 2
 const ROUTE_HINTS = 3
+const ROUTE_DETACHED = 4
 let propRoutes = new Map<string, number>()
 
 function routeFor(name: string): number {
@@ -212,7 +221,9 @@ function routeFor(name: string): number {
         ? ROUTE_FOCUSABLE
         : name === "textInputHints"
           ? ROUTE_HINTS
-          : ROUTE_TREE
+          : name === "detached"
+            ? ROUTE_DETACHED
+            : ROUTE_TREE
     propRoutes.set(name, route)
   }
   return route
@@ -238,6 +249,11 @@ function applyProp<T>(node: ProxyNode, name: string, value: T): void {
     case ROUTE_HINTS:
       setTextInputHints(node.id, value as any)
       return
+    case ROUTE_DETACHED:
+      // The bundler turns a literal `detached` at the tag into the d-* kind,
+      // so the name never arrives as a prop from JSX. Reaching here means a
+      // spread (or hand-written createElement props) carried it.
+      throw new Error("Detached is set once, as a literal attribute at the tag")
   }
 
   setTreeProperty(node, name, value)
@@ -297,7 +313,7 @@ let renderer = createRenderer<ProxyNode>({
     if (typeof node !== "object" || node.id === undefined) {
       let what = typeof node === "function" ? "a signal accessor" : `a ${typeof node}`
       throw new Error(
-        `insertNode received ${what} instead of an element under <${parent?.elementType ?? "?"}>; ` +
+        `insertNode received ${what} instead of an element under ${tagLabel(parent?.elementType ?? "?")}; ` +
           `resolve the children with children() or return one root element from the component.`,
       )
     }
@@ -309,7 +325,7 @@ let renderer = createRenderer<ProxyNode>({
     if (parent) {
       // console.debug("[sol] insertNode", parent.id, node.id, anchor?.id ?? "")
 
-      // Native first: the tree refuses a laid-out element under a d-* parent
+      // Native first: the tree refuses a laid-out element under a detached parent
       // (it throws, naming both tags), and the mirror must not record a child
       // the tree does not have.
       if (anchor) tree.insertNode(parent.id, node.id, anchor.id)
@@ -448,7 +464,7 @@ export let insert: InsertFn = (parent, accessor, marker, initial, options) =>
   insertRaw(
     parent,
     typeof accessor === "function"
-      ? guard(accessor as any, () => `a child expression of <${parent.elementType}> ${getNodePath(parent.id).join("/")}`, true, undefined)
+      ? guard(accessor as any, () => `a child expression of ${tagLabel(parent.elementType)} ${getNodePath(parent.id).join("/")}`, true, undefined)
       : accessor,
     marker,
     initial,

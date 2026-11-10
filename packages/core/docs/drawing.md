@@ -64,7 +64,8 @@ Dashes like a rect; the pattern starts at 3 o'clock and runs clockwise.
 
 A laid-out `<line>` without `points` draws its box's top-left-to-bottom-right
 diagonal, so in practice it is a rule: give it a thin box. Endpoints are a
-detached-only concept, so arbitrary angles and connectors want `d-line`.
+detached-only concept, so arbitrary angles and connectors want
+`<line detached>`.
 `points` makes either form a polyline - a flat `[x0, y0, x1, y1, ...]` array
 (or a `Float32Array`), optionally `closed` - the numeric middle ground between
 a segment and a path: animate it by writing a new array, nothing is parsed.
@@ -92,7 +93,7 @@ for every pixel source in the engine.
 
 The SolidRT brand mark, the same seven-segment puzzle the scaffold's welcome
 screen and the player draw, as a component: a square `view` of `size`
-pixels with the segments as gradient-filled `d-path`s.
+pixels with the segments as gradient-filled detached paths.
 
 {{ decl packages/core/src/logo.tsx LogoProps }}
 

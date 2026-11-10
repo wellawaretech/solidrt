@@ -292,11 +292,11 @@ export { checkScreenSize, glsl, SCREEN_SIZE_GLSL, screenSizeScale } from "./shad
 
 // captureSnapshot renders a node to pixels and readTexture reads any
 // texture's bytes back; both resolve the same { width, height, data } shape.
-// A laid-out node captures its layout box; a `d-*` node captures its painted
-// box - its own w/h when set, else the nearest laid-out ancestor's box, its
-// x/y offset mapped to the texture origin. A capture creates no texture and
-// nothing needs freeing; to display or sample the result, upload it with
-// createTexture.
+// A laid-out node captures its layout box; a detached node captures its
+// painted box - its own w/h when set, else the nearest laid-out ancestor's
+// box, its x/y offset mapped to the texture origin. A capture creates no
+// texture and nothing needs freeing; to display or sample the result, upload
+// it with createTexture.
 //
 // This is the one-shot bake path: draw something only the engine can produce
 // (shaped text, an SVG, a themed view), capture it and process the pixels on

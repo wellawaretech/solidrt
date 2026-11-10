@@ -48,7 +48,7 @@ the app applies and edits, never a default.
   convention, already the controls' internal rule), zoom in octaves,
   twist in turns, mouse motion under lock through a fixed reference
   (1500 px per unit, Three's 0.002 rad/px). The pointer feed normalizes
-  by the element's laid-out box, which a detached d-* leaf does not have:
+  by the element's laid-out box, which a detached leaf does not have:
   the feed throws at the first press unless created with `layout`.
 - **Brackets tell a finger from an impulse.** A pinch's deltas arrive
   between begin and end; a wheel notch arrives alone. The 2d camera

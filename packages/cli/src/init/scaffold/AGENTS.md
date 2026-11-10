@@ -9,14 +9,16 @@ should open whenever the work matches its trigger.
 ## Levels: core, and extensions on top
 
 - @solidrt/core is the low-level foundation: host intrinsics (`<window>`,
-  `<view>`, `<text>`, the detached `d-*` drawing primitives) with flat props
-  that feed the layout and paint engine directly. An app can be written
-  entirely at this level. Laid-out `<view>`/`<text>` are the default
-  building blocks for a screen; the detached `d-*` forms are for drawn
-  geometry and animation hot spots, not general structure (core's AGENTS.md
-  has the rule). d-* elements go under anything; laid-out elements
-  only under laid-out parents (a `<view>` inside a `<d-view>` throws), so a
-  component's doc comment says which kind it renders.
+  `<view>`, `<text>`, the detached drawing primitives such as
+  `<rect detached>`) with flat props that feed the layout and paint engine
+  directly. An app can be written entirely at this level. Laid-out
+  `<view>`/`<text>` are the default building blocks for a screen; the
+  detached forms are for drawn geometry and animation hot spots, not general
+  structure (core's AGENTS.md has the rule). `detached` is a literal
+  attribute written at the tag, set once: never `detached={expr}` and never
+  from a spread. Detached elements go under anything; laid-out elements
+  only under laid-out parents (a `<view>` inside a `<view detached>`
+  throws), so a component's doc comment says which kind it renders.
 - Extensions build on core. The first-party ones are @solidrt/components
   (UI components), @solidrt/2d (2D graphics), @solidrt/3d (3D graphics) and
   @solidrt/router (screens as routes).

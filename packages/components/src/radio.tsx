@@ -143,7 +143,7 @@ export function Radio(props: RadioProps) {
         scale={pressScale(press.pressed())}
         transition={scaleFeedback()}
       >
-        <d-rect drawStyle="stroke" transition={colorFade()} radius={pill(ring())} color={ringColor()} strokeWidth={ringWidth()} />
+        <rect detached drawStyle="stroke" transition={colorFade()} radius={pill(ring())} color={ringColor()} strokeWidth={ringWidth()} />
         <Show when={selected()}>
           <view
             position="absolute"

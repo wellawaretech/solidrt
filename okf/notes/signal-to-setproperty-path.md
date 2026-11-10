@@ -10,8 +10,8 @@ Read 2026-08-19 from the code as it stands: `@solidjs/signals` 2.0.0-rc.0
 prod build (`node_modules/@solidjs/signals/dist/prod/core/*.js`, field
 names mangled), `@solidjs/universal`, `packages/core/src/renderer.ts`,
 `flux/src/alloy_plugins/tree.rs` + `properties/`, `alloy/src/rendertree/tree.rs`.
-Reference case: `<d-rect x={x()} width={x()*2} color={c()}>` with `x`
-written once per frame from a `requestAnimationFrame` callback.
+Reference case: `<rect detached x={x()} width={x()*2} color={c()}>` with
+`x` written once per frame from a `requestAnimationFrame` callback.
 `probes/compile-jsx.ts` prints the compiled shape for any TSX file;
 `probes/signal-path-probe.tsx` is the reference case.
 
@@ -129,8 +129,8 @@ rquickjs `Function::new` closure `(u64, String, Value)`. Per call:
 
 ## Measured (2026-08-19, release linux client, QuickJS, Intel RPL-P laptop)
 
-Harness: `probes/signal-bench.tsx`, N = 1000 `<d-rect>` each bound to its
-own signal (`x` and `y` from it), every signal written every frame from one
+Harness: `probes/signal-bench.tsx`, N = 1000 `<rect detached>` each bound
+to its own signal (`x` and `y` from it), every signal written every frame from one
 `onFrame` callback, so 1000 setter calls, 1000 dirty element effects and
 2000 `setProperty` writes per frame. The callback times its setter loop,
 then calls `flush()` itself and times that, and logs medians over 120
@@ -210,16 +210,16 @@ with nodes PAINTED, not nodes animated:
 - N=4000 (grid wider than the window): p50 3.9 ms, paint 3.3 ms,
   nodesPainted ~2080 (culling drops the off-screen half), 58 fps.
 
-So paint costs ~1.6 us per painted d-rect per frame, linear; layout and
+So paint costs ~1.6 us per painted detached rect per frame, linear; layout and
 the Rust tick are noise (layoutMs 0.01). Ceiling at 60 Hz: roughly 10k
 painted animating nodes per frame. The next lever, if ever needed, is
 paint-side (display-list build cost per node, culling, boundary
 placement), not the write path; every animating node repaints by
-definition (Damage::Paint on d-* geometry), so repaint boundaries only
+definition (Damage::Paint on detached geometry), so repaint boundaries only
 protect static content around them, and transform/opacity animation on
 views (Damage::Compose) skips even that.
 
-Boundary effect measured (probes/boundary-bench.tsx: 4000 static d-rects
+Boundary effect measured (probes/boundary-bench.tsx: 4000 static detached rects
 in one view + 50 continuously animating siblings): without a boundary the
 root rebuild re-records everything - nodesPainted 4052, paint ~4.3 ms;
 with repaintBoundary on the static view the walk replays its cached

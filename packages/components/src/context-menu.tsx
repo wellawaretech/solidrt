@@ -196,7 +196,7 @@ export function ContextMenu(props: ContextMenuProps) {
         transition={popupFadeOut()}
       >
         <view position="absolute" top={0} left={0} right={0} bottom={0} onPointerDown={() => setOpen(false)}>
-          <d-rect transition={colorFade()} color={theme.color.scrim} />
+          <rect detached transition={colorFade()} color={theme.color.scrim} />
         </view>
         <view
           position="absolute"

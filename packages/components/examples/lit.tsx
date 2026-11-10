@@ -91,7 +91,7 @@ function LightPad() {
       onPointerUp={() => setDragging(false)}
     >
       <Surface role="control" sunken radius={theme.radius.lg} />
-      <d-rect x={marker().x} y={marker().y} w={MARKER} h={MARKER} radius={MARKER / 2} color={theme.light.color} />
+      <rect detached x={marker().x} y={marker().y} w={MARKER} h={MARKER} radius={MARKER / 2} color={theme.light.color} />
     </view>
   )
 }

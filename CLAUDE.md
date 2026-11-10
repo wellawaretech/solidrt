@@ -105,6 +105,7 @@ Run from repo root:
 - `cargo test -p flux --lib --features gui` - the flux property/plugin tests; a bare `cargo test -p flux` builds the gpu examples without `gui` and fails
 - `cargo test -p flux --lib --features test` - the same, with the flux:test module's tests
 - `cargo test -p flux --test <name>` - one of the cargo integration tests in `flux/tests/*.rs`, which hold only what Rust observes about an engine (the logger, uncaught reporting, idleness, exit, the embedding API); each is a binary linking flux, so run them one at a time. The flux module tests are `flux/tests/*.test.ts`, run by `sol test`
+- `bun run sol check` - the typecheck: at the repo root it bundles and typechecks every entry (example apps, package examples, demos and test files, the CLI's command modules); with a path, that one entry. Typecheck with this, never with a raw `tsc -p <tsconfig>`, which reports errors `sol check` does not (a config that only makes sense under the bundler's settings)
 - `bun run sol test` - the JS tests (`tests/*.test.ts`): flux tests on the `flux` binary (`make -C flux flux`), app tests (files that import `@solidrt/test`) on the dev client in its headless test mode (`make client`)
 
 Debug builds are for functional verification only: unoptimized Rust (and

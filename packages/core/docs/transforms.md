@@ -1,11 +1,11 @@
 # Transforms
 
 Transform props apply after layout, at composite time. Nothing re-records and
-nothing reflows, on a laid-out `view` as much as on a `d-view`, so these are
-the props to animate.
+nothing reflows, on a laid-out `view` as much as on a `<view detached>`, so
+these are the props to animate.
 
-They live on `ViewOwnProps`, which means both `view` and `d-view` have them;
-see [elements](/core/elements/).
+They live on `ViewOwnProps`, which means both `view` and `<view detached>`
+have them; see [elements](/core/elements/).
 
 {{ decl packages/core/src/types.d.ts TransformProps }}
 
@@ -19,11 +19,11 @@ per axis to match the engine's `x`/`y` prop convention.
 {{ decl packages/core/src/types.d.ts OriginY }}
 
 A percentage origin tracks the layout size with no reactive wiring of your
-own. On a `d-view` there is no box, so the origin defaults to the view's local
-`(0,0)` - the origin its children's coordinates are authored against - and
-`pct()` or keyword origins resolve against the inherited box, which is rarely
-what you want. Pivot a `d-view` around its content by setting the origin in
-pixels.
+own. On a detached view there is no box, so the origin defaults to the view's
+local `(0,0)` - the origin its children's coordinates are authored against -
+and `pct()` or keyword origins resolve against the inherited box, which is
+rarely what you want. Pivot a detached view around its content by setting the
+origin in pixels.
 
 ## Opacity
 

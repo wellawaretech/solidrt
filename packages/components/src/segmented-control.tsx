@@ -157,7 +157,7 @@ export function SegmentedControl<T>(props: SegmentedControlProps<T>) {
           all three on the same x/w so they travel as one. */}
       <Show when={indicatorPaint().contactShadow}>
         {(shadow) => (
-          <d-rect
+          <rect detached
             transition={indicatorTransition()}
             color={indicator() ? activeFill() : withAlpha(activeFill(), 0)}
             x={indicator()?.x ?? 0}
@@ -169,7 +169,7 @@ export function SegmentedControl<T>(props: SegmentedControlProps<T>) {
       </Show>
       <Show when={indicatorPaint().keyShadow}>
         {(shadow) => (
-          <d-rect
+          <rect detached
             transition={indicatorTransition()}
             color={indicator() ? activeFill() : withAlpha(activeFill(), 0)}
             x={indicator()?.x ?? 0}
@@ -179,7 +179,7 @@ export function SegmentedControl<T>(props: SegmentedControlProps<T>) {
           />
         )}
       </Show>
-      <d-rect
+      <rect detached
         transition={indicatorTransition()}
         onTransitionEnd={partTransitionEnd("indicator", "x", props.onTransitionEnd)}
         color={indicator() ? indicatorPaint().fill : withAlpha(activeFill(), 0)}
@@ -190,7 +190,7 @@ export function SegmentedControl<T>(props: SegmentedControlProps<T>) {
       />
       <Show when={indicatorPaint().bevel}>
         {(bevel) => (
-          <d-rect
+          <rect detached
             transition={indicatorTransition()}
             drawStyle="stroke"
             strokeWidth={1}
@@ -236,7 +236,7 @@ export function SegmentedControl<T>(props: SegmentedControlProps<T>) {
                 radius={corners(i())}
               />
               <Show when={press.focused() && policy.focusRing}>
-                <d-rect drawStyle="stroke" color={theme.color.ring} strokeWidth={theme.borderWidth.focus} radius={corners(i())} />
+                <rect detached drawStyle="stroke" color={theme.color.ring} strokeWidth={theme.borderWidth.focus} radius={corners(i())} />
               </Show>
               <text
                 transition={colorFade()}

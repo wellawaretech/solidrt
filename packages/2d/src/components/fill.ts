@@ -67,7 +67,7 @@ export type DensityProps = {
  */
 export type OutputLeaf = {
   /** Hand over the leaf you render (`ref={leaf.ref}`): a layout leaf. A
-   * d-* leaf has no box to follow. */
+   * detached leaf has no box to follow. */
   ref: (node: { id: number }) => void
   /** The view's pointer handlers for the ref'd leaf, scaled to its layout
    * box per event: one spread carries the sprite events, the view's own

@@ -77,7 +77,7 @@ function App() {
             clipRadius={10}
             onPointerDown={() => setExpanded(expanded() === label ? null : label)}
           >
-            <d-rect color="#2a3a55" radius={10} />
+            <rect detached color="#2a3a55" radius={10} />
             <view flexDirection="row" justifyContent="space-between">
               <text color="#e8eef6" fontSize={18}>{label}</text>
               <text

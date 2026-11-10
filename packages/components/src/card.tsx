@@ -113,7 +113,7 @@ export function Card(props: CardProps) {
         onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
       />
       <Show when={lifts()}>
-        <d-rect color={glare()} radius={radius()} />
+        <rect detached color={glare()} radius={radius()} />
       </Show>
       <Show when={props.title != null}>
         <text transition={colorFade()} color={theme.color.text} {...typeStyle("title")}>

@@ -1,8 +1,8 @@
 // SVG documents as data: parseSvg turns a document string into a flat list of
-// draws that map straight onto <d-path> elements. Vector currency is path
-// data, the same way raster currency is a texture id - there is no document
-// element that swallows the source; the app owns the parsed data and composes
-// ordinary primitives from it.
+// draws that map straight onto <path detached> elements. Vector currency is
+// path data, the same way raster currency is a texture id - there is no
+// document element that swallows the source; the app owns the parsed data and
+// composes ordinary primitives from it.
 
 import { parseSvg as fluxParseSvg } from "flux:svg"
 import { parseColor, type Gradient } from "./color"
@@ -19,15 +19,16 @@ export let svg = String.raw
 
 /**
  * One resolved draw in document coordinates. The keys match `PathProps`, so a
- * draw spreads onto a `<d-path>` unchanged: `<d-path {...draw} />`. A source
- * path with both a fill and a stroke yields two draws (fill first).
+ * draw spreads onto a `<path detached>` unchanged:
+ * `<path detached {...draw} />`. A source path with both a fill and a stroke
+ * yields two draws (fill first).
  */
 export type SvgDraw = {
   d: string
   color: string | Gradient
   drawStyle: "fill" | "stroke"
   fillRule?: "nonzero" | "evenodd"
-  /** Absent when the source omits it: the d-path default of 1 applies, SVG's own. */
+  /** Absent when the source omits it: the path's default of 1 applies, SVG's own. */
   strokeWidth?: number
   strokeCap?: StrokeCap
   strokeJoin?: StrokeJoin
@@ -49,14 +50,15 @@ export type SvgDocument = {
  *
  *     let doc = createMemo(() => parseSvg(src))
  *     <view repaintBoundary designSize={[doc().width, doc().height]} width={48} height={48}>
- *       {doc().draws.map((draw) => <d-path {...draw} />)}
+ *       {doc().draws.map((draw) => <path detached {...draw} />)}
  *     </view>
  *
  * The plain repaintBoundary is the recommended default: the parsed subtree is
- * static, so it never re-records alongside changing siblings. Each `<d-path>`
- * hit-tests its exact outline; when the document should act as ONE hit target
- * (the usual icon case), add `pointerEvents="all"` to the wrapper - the box
- * then matches as a whole and the per-path outline tests are skipped.
+ * static, so it never re-records alongside changing siblings. Each
+ * `<path detached>` hit-tests its exact outline; when the document should
+ * act as ONE hit target (the usual icon case), add `pointerEvents="all"` to
+ * the wrapper - the box then matches as a whole and the per-path outline
+ * tests are skipped.
  *
  * `opts.color` drives `currentColor` in the document (any CSS color string),
  * which is how monochrome icon sets (Lucide, Feather, Heroicons, ...) get

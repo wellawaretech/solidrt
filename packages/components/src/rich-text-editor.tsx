@@ -129,7 +129,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
       }}
       runs={runs}
       renderLine={({ line, font, color }) => (
-        <d-text y={line().y} w={line().width + 1} {...font()} color={color()} maxLines={1}>
+        <text detached y={line().y} w={line().width + 1} {...font()} color={color()} maxLines={1}>
           {intervals(doc())
             .filter((i) => i.end > line().start && i.start < line().end)
             .map((i) => (
@@ -137,7 +137,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
                 {doc().text.slice(Math.max(i.start, line().start), Math.min(i.end, line().end))}
               </span>
             ))}
-        </d-text>
+        </text>
       )}
       onFocus={props.onFocus}
       onBlur={props.onBlur}

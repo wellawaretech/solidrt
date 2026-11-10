@@ -421,13 +421,13 @@ export function EditorField(props: EditorFieldProps) {
   // Everything inside the viewport is detached: the value is drawn per
   // laid-out line by renderLine (createTextEditorLayout breaks the lines from
   // the prepared text, at the viewport width when multiline) and the caret is
-  // a d-rect at the measured before-caret width on its line, so typing, caret
-  // movement, blink and scroll never touch layout. The single-line viewport
-  // carries an explicit height (detached content takes no layout slot) equal
-  // to the one-line height; a multiline viewport stretches to the field's
-  // height. The editor layout keeps the caret in view (its offsets land in the
-  // post-layout flush, before paint); scrollX/scrollY are paint-time
-  // translates that also apply to detached children.
+  // a detached rect at the measured before-caret width on its line, so
+  // typing, caret movement, blink and scroll never touch layout. The
+  // single-line viewport carries an explicit height (detached content takes no
+  // layout slot) equal to the one-line height; a multiline viewport stretches
+  // to the field's height. The editor layout keeps the caret in view (its
+  // offsets land in the post-layout flush, before paint); scrollX/scrollY are
+  // paint-time translates that also apply to detached children.
   // The font is the layout's font fields over the theme's body role,
   // resolved like Text resolves its own (family, scaled size, line height,
   // style, compensated weight); every metric - the rows, the caret, the
@@ -553,21 +553,21 @@ export function EditorField(props: EditorFieldProps) {
         onPointerCancel={handleViewportPointerEnd}
       >
         {showPlaceholder() ? (
-          <d-text w={PLACEHOLDER_SHAPE_WIDTH} {...font()} color={theme.color.textMuted} maxLines={1}>
+          <text detached w={PLACEHOLDER_SHAPE_WIDTH} {...font()} color={theme.color.textMuted} maxLines={1}>
             {props.placeholder ?? ""}
-          </d-text>
+          </text>
         ) : (
           <>
             {focused() ? (
               <For each={editor.selectionRects(buffer.selection().anchor, buffer.selection().focus)} keyed={false}>
-                {(r) => <d-rect color={theme.color.selection} x={r().x} y={r().y} w={r().width} h={r().height} />}
+                {(r) => <rect detached color={theme.color.selection} x={r().x} y={r().y} w={r().width} h={r().height} />}
               </For>
             ) : null}
             <For each={editor.lines()} keyed={false}>
               {(line) => props.renderLine({ line, font, color: textColor })}
             </For>
             {showCaret() ? (
-              <d-rect
+              <rect detached
                 color={textColor()}
                 x={caret().x}
                 y={caret().y + (caret().height - fontSize()) / 2}

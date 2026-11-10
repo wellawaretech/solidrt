@@ -18,7 +18,7 @@ import { render, windowSize, safeArea } from "@solidrt/core"
 function App() {
   return (
     <window>
-      <d-rect color="#101418" />
+      <rect detached color="#101418" />
       <view flex={1} flexDirection="column" gap={8} paddingTop={safeArea().top} paddingBottom={safeArea().bottom}>
         <text fontSize={18} color="#e6e6e6">{windowSize().width} x {windowSize().height}</text>
       </view>

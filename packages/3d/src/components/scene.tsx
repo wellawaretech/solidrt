@@ -135,7 +135,7 @@ export type SceneProps = ScenePointerProps &
   /**
    * Compose the output yourself: called once (untracked) with the scene's
    * texture id and the leaf contract, and its return renders in place of
-   * the built-in `<texture>` leaf - a `<d-texture>`, a leaf carrying
+   * the built-in `<texture>` leaf - a `<texture detached>`, a leaf carrying
    * paint/pointer/layout props, or a post-effect chain (a shader target
    * sampling the id; created in the callback it disposes with the Scene).
    * Return null to render no leaf. `ref={leaf.ref}` on the leaf you render

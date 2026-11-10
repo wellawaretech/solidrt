@@ -6,7 +6,7 @@ all of them and is left out here.
 {{ intrinsics packages/core/jsx-runtime.d.ts }}
 
 Read a row as the sum of its parts: `<rect>` takes paint props, pointer props
-and layout props, while `<d-rect>` swaps the layout props for detached
+and layout props, while `<rect detached>` swaps the layout props for detached
 geometry. The [reference pages](/core/#reference) cover the interfaces in
 that table.
 

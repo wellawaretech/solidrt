@@ -11,7 +11,7 @@
 // 3. Marching ants: `dashOffset` slides the dash pattern, so writing it every
 //    frame animates the dashes. The ring is dense (6 px segments under
 //    12 px dashes), which only works because the phase carries across
-//    vertices; the two-point d-line and the d-path go through the same
+//    vertices; the two-point detached line and the path go through the same
 //    walker (a path's dashes are pieces of its curves, stroked as curves).
 // 4. Partial draw: `pathLength={1}` makes the dash units fractions of the
 //    geometry's length, so `onLength={0.77} offLength={1}` draws the first
@@ -19,11 +19,11 @@
 //    knowing its length.
 // 5. A laid-out <line points>: the points are content (like a path's `d`), so
 //    the box measures from their extent and takes part in the row.
-// 6. Dashed boxes: the same props on d-rect and d-oval dash the inset
+// 6. Dashed boxes: the same props on detached rects and ovals dash the inset
 //    outline the solid stroke draws, so a marquee or a drop zone is one
 //    element and its dashes never leave the box.
-// The two-endpoint form (x1..y2, on d-line only) is unchanged; while `points`
-// is set it takes precedence over the endpoints.
+// The two-endpoint form (x1..y2, on <line detached> only) is unchanged; while
+// `points` is set it takes precedence over the endpoints.
 import { render, onFrame, createSignal } from "@solidrt/core"
 
 const SAMPLES = 200
@@ -68,14 +68,14 @@ function App() {
 
   return (
     <window padding={24} gap={20}>
-      <d-rect color="#0b0f17" />
+      <rect detached color="#0b0f17" />
 
       <text fontSize={16} color="#8b949e">
         live trace: a Float32Array of {SAMPLES} points written every frame
       </text>
       <view width={TRACE_W} height={TRACE_H} flexShrink={0}>
-        <d-rect radius={8} color="#151b28" />
-        <d-line points={trace()} color="#3fb950" strokeWidth={3} strokeJoin="round" />
+        <rect detached radius={8} color="#151b28" />
+        <line detached points={trace()} color="#3fb950" strokeWidth={3} strokeJoin="round" />
       </view>
 
       <text fontSize={16} color="#8b949e">
@@ -83,20 +83,20 @@ function App() {
       </text>
       <view flexDirection="row" flexWrap="wrap" gap={20}>
         <view width={140} height={120}>
-          <d-rect radius={8} color="#151b28" />
-          <d-line points={TRIANGLE} closed color="#e3b341" strokeWidth={8} strokeJoin="round" />
+          <rect detached radius={8} color="#151b28" />
+          <line detached points={TRIANGLE} closed color="#e3b341" strokeWidth={8} strokeJoin="round" />
         </view>
         <view width={140} height={120}>
-          <d-rect radius={8} color="#151b28" />
-          <d-line points={TRIANGLE} color="#e3b341" strokeWidth={8} strokeCap="round" />
+          <rect detached radius={8} color="#151b28" />
+          <line detached points={TRIANGLE} color="#e3b341" strokeWidth={8} strokeCap="round" />
         </view>
         <view width={140} height={120}>
-          <d-rect radius={8} color="#151b28" />
-          <d-line points={TRIANGLE} drawStyle="fill" color="#a371f7" />
+          <rect detached radius={8} color="#151b28" />
+          <line detached points={TRIANGLE} drawStyle="fill" color="#a371f7" />
         </view>
         <view width={140} height={120}>
-          <d-rect radius={8} color="#151b28" />
-          <d-line points={TRIANGLE} closed drawStyle="stroke-and-fill" onLength={12} offLength={8} color="#f85149" strokeWidth={3} />
+          <rect detached radius={8} color="#151b28" />
+          <line detached points={TRIANGLE} closed drawStyle="stroke-and-fill" onLength={12} offLength={8} color="#f85149" strokeWidth={3} />
         </view>
       </view>
 
@@ -105,16 +105,16 @@ function App() {
       </text>
       <view flexDirection="row" flexWrap="wrap" gap={20}>
         <view width={140} height={120}>
-          <d-rect radius={8} color="#151b28" />
-          <d-line points={RING} closed onLength={12} offLength={8} dashOffset={ants()} color="#e3b341" strokeWidth={3} />
+          <rect detached radius={8} color="#151b28" />
+          <line detached points={RING} closed onLength={12} offLength={8} dashOffset={ants()} color="#e3b341" strokeWidth={3} />
         </view>
         <view width={300} height={120}>
-          <d-rect radius={8} color="#151b28" />
-          <d-line x1={20} y1={60} x2={280} y2={60} onLength={0} offLength={14} dashOffset={-ants()} color="#79c0ff" strokeWidth={6} strokeCap="round" />
+          <rect detached radius={8} color="#151b28" />
+          <line detached x1={20} y1={60} x2={280} y2={60} onLength={0} offLength={14} dashOffset={-ants()} color="#79c0ff" strokeWidth={6} strokeCap="round" />
         </view>
         <view width={220} height={120}>
-          <d-rect radius={8} color="#151b28" />
-          <d-path d={CURVE} drawStyle="stroke" onLength={10} offLength={6} dashOffset={ants()} color="#f778ba" strokeWidth={3} strokeCap="round" />
+          <rect detached radius={8} color="#151b28" />
+          <path detached d={CURVE} drawStyle="stroke" onLength={10} offLength={6} dashOffset={ants()} color="#f778ba" strokeWidth={3} strokeCap="round" />
         </view>
       </view>
 
@@ -123,16 +123,16 @@ function App() {
       </text>
       <view flexDirection="row" flexWrap="wrap" gap={20}>
         <view width={140} height={120}>
-          <d-rect radius={8} color="#151b28" />
-          <d-rect x={20} y={20} w={100} h={80} radius={12} drawStyle="stroke" onLength={8} offLength={6} dashOffset={-ants()} color="#e3b341" strokeWidth={3} />
+          <rect detached radius={8} color="#151b28" />
+          <rect detached x={20} y={20} w={100} h={80} radius={12} drawStyle="stroke" onLength={8} offLength={6} dashOffset={-ants()} color="#e3b341" strokeWidth={3} />
         </view>
         <view width={140} height={120}>
-          <d-rect radius={8} color="#151b28" />
-          <d-rect x={20} y={20} w={100} h={80} drawStyle="stroke-and-fill" onLength={10} offLength={6} color="#f8514966" strokeWidth={6} strokeCap="round" />
+          <rect detached radius={8} color="#151b28" />
+          <rect detached x={20} y={20} w={100} h={80} drawStyle="stroke-and-fill" onLength={10} offLength={6} color="#f8514966" strokeWidth={6} strokeCap="round" />
         </view>
         <view width={140} height={120}>
-          <d-rect radius={8} color="#151b28" />
-          <d-oval x={20} y={20} w={100} h={80} drawStyle="stroke" pathLength={1} onLength={drawn()} offLength={1} color="#3fb950" strokeWidth={4} strokeCap="round" />
+          <rect detached radius={8} color="#151b28" />
+          <oval detached x={20} y={20} w={100} h={80} drawStyle="stroke" pathLength={1} onLength={drawn()} offLength={1} color="#3fb950" strokeWidth={4} strokeCap="round" />
         </view>
       </view>
 
@@ -141,12 +141,12 @@ function App() {
       </text>
       <view flexDirection="row" flexWrap="wrap" gap={20}>
         <view width={220} height={120}>
-          <d-rect radius={8} color="#151b28" />
-          <d-path d={CURVE} drawStyle="stroke" pathLength={1} onLength={0.77} offLength={1} color="#3fb950" strokeWidth={4} strokeCap="round" />
+          <rect detached radius={8} color="#151b28" />
+          <path detached d={CURVE} drawStyle="stroke" pathLength={1} onLength={0.77} offLength={1} color="#3fb950" strokeWidth={4} strokeCap="round" />
         </view>
         <view width={140} height={120}>
-          <d-rect radius={8} color="#151b28" />
-          <d-line points={TRIANGLE} closed pathLength={1} onLength={drawn()} offLength={1} color="#79c0ff" strokeWidth={4} strokeCap="round" strokeJoin="round" />
+          <rect detached radius={8} color="#151b28" />
+          <line detached points={TRIANGLE} closed pathLength={1} onLength={drawn()} offLength={1} color="#79c0ff" strokeWidth={4} strokeCap="round" strokeJoin="round" />
         </view>
       </view>
 

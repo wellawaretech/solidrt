@@ -237,11 +237,12 @@ export type Pct = { readonly __unit: "pct"; v: number }
 // split per axis to match the engine's x/y prop convention. A bare number is
 // pixels; `pct(50)` is a fraction of the box, so a percentage origin tracks the
 // layout size with no reactive wiring. Unset defaults to the axis center on a
-// laid-out view; on a d-view (no box of its own) it defaults to the view's
-// local (0,0) - the origin its children's coordinates are authored against, so
-// the pivot never depends on the inherited box. To pivot a d-view around its
-// content's center, set the origin explicitly in pixels; pct()/keywords on a
-// d-view resolve against the inherited box, which is rarely what you want.
+// laid-out view; on a detached view (no box of its own) it defaults to the
+// view's local (0,0) - the origin its children's coordinates are authored
+// against, so the pivot never depends on the inherited box. To pivot a detached
+// view around its content's center, set the origin explicitly in pixels;
+// pct()/keywords on a detached view resolve against the inherited box, which is
+// rarely what you want.
 type OriginX = number | Pct | "left" | "center" | "right"
 type OriginY = number | Pct | "top" | "center" | "bottom"
 
@@ -483,7 +484,7 @@ export interface InputProps extends NodeProps {
 
 /**
  * Detached-only geometry, in paint-space pixels. Never affects layout: these
- * props exist only on the d-* forms, where there is no layout box and the
+ * props exist only on the detached forms, where there is no layout box and the
  * element owns its geometry. The layout forms of the draw primitives derive
  * their geometry from the layout box instead (size it with width/height).
  */
@@ -511,8 +512,8 @@ export interface OvalGeometryProps extends PositionProps {
 }
 
 /**
- * See {@link PositionProps}: detached-only, never affects layout. A d-text
- * is boxed or anchored. Boxed (no `anchor`): it wraps at `w`, or at the box
+ * See {@link PositionProps}: detached-only, never affects layout. A detached
+ * text is boxed or anchored. Boxed (no `anchor`): it wraps at `w`, or at the box
  * inherited from the nearest laid-out ancestor, and `textAlign` aligns
  * lines inside that width - so a right-aligned label needs a `w`. Anchored:
  * `x` is a point on the line (SVG's text-anchor), which is what a label on a
@@ -539,7 +540,7 @@ export interface TextGeometryProps extends PositionProps {
 /**
  * See {@link PositionProps}: detached-only, never affects layout. The
  * endpoints (or `points`) are the line's own geometry; `x`/`y` offset all of
- * it, the way a `d-path`'s offset its `d`, so one write moves a polyline. A
+ * it, the way a detached path's offset its `d`, so one write moves a polyline. A
  * line's reported bounds (getBoundingBox, the tree, a detached capture) are
  * its painted box: the geometry's extent plus the stroke's reach, not the
  * inherited box.
@@ -727,7 +728,7 @@ export interface TransitionProps {
    * `transition={{ x: { duration: 400, bounce: 0.2 }, opacity: "200ms ease-out" }}`.
    * `all` covers every animatable property the element has, and a bare
    * string is shorthand for it: `transition="300ms ease-out"`. Only
-   * properties the element carries animate (a d-rect has x, a view's x is
+   * properties the element carries animate (a detached rect has x, a view's x is
    * its transform); the initial values (every write before the element's
    * first paint) never animate unless the entry sets `from` (an enter
    * animation), and a write the property cannot animate (null on a scalar,
@@ -829,9 +830,9 @@ export interface WindowShaderProps {
   previous?: boolean
 }
 
-// Everything a view offers besides layout: d-view uses this directly (a
-// detached view has no taffy presence, so layout props would be rejected at
-// runtime); the layout `view` adds LayoutProps below.
+// Everything a view offers besides layout: `<view detached>` uses this
+// directly (a detached view has no taffy presence, so layout props would be
+// rejected at runtime); the layout `view` adds LayoutProps below.
 export interface ViewOwnProps extends TransformProps, InputProps {
   children?: Children
   trace?: boolean
@@ -854,7 +855,7 @@ export interface ViewOwnProps extends TransformProps, InputProps {
    * arrive in design coordinates. The overflow clip and scrollX/scrollY stay
    * box properties: the clip rect is the layout box and scroll offsets are box
    * pixels, regardless of fit scale. The natural wrapper for parseSvg draws,
-   * any d-* subtree authored in fixed design units, or a whole panel that
+   * any detached subtree authored in fixed design units, or a whole panel that
    * should scale rather than reflow.
    */
   designSize?: [number, number]
@@ -875,8 +876,9 @@ export interface ViewOwnProps extends TransformProps, InputProps {
    * on layout-size or display-scale changes. Content painted outside the
    * element's layout box is cropped, and ancestor scale animations smear the
    * bitmap; best for screen-aligned, static, raster-expensive content. On a
-   * d-view the box is the inherited frame (the nearest laid-out ancestor's
-   * box, or the design size under a designSize view), same as a capture.
+   * detached view the box is the inherited frame (the nearest laid-out
+   * ancestor's box, or the design size under a designSize view), same as a
+   * capture.
    *
    * "snapshot-no-aa" is "snapshot" rasterized without anti-aliasing: cheaper
    * (no multisampled scratch, one render pass), but vector content - svg
@@ -1038,12 +1040,12 @@ export interface DashProps {
 // A line's geometry is numbers, not a path string: the primitive to reach
 // for when the geometry moves (each endpoint is one property write, a
 // polyline is one array write; a path animates by rebuilding its `d` string).
-// Two forms: the segment, whose endpoints (x1/y1/x2/y2) exist on the
-// detached `d-line` only, and the polyline (`points`), which exists on both.
+// Two forms: the segment, whose endpoints (x1/y1/x2/y2) exist on
+// `<line detached>` only, and the polyline (`points`), which exists on both.
 // A laid-out `<line>` without points is practically a rule - give it a thin
 // box (length x strokeWidth); in general it draws its layout box's
 // top-left-to-bottom-right diagonal. For arbitrary angles and connectors use
-// `d-line`; for curves, a path. A line's stroke is centered on its geometry,
+// `<line detached>`; for curves, a path. A line's stroke is centered on its geometry,
 // so it straddles the box (a rect's paints inside), and the bounds it
 // reports are the painted box: geometry plus stroke, on both forms.
 //
@@ -1073,7 +1075,7 @@ export interface LineProps extends PaintProps, InputProps, DashProps {
  * `d` is an SVG path string; the stroke is centered on the geometry. The
  * bounds a path reports (getBoundingBox, the tree, a detached capture) are
  * its painted box: the geometry's tight extent (curve extrema, not control
- * points) plus the stroke's reach, at a `d-path`'s x/y - not its layout box
+ * points) plus the stroke's reach, at a detached path's x/y - not its layout box
  * or the inherited one.
  */
 export interface PathProps extends PaintProps, InputProps, DashProps {

@@ -150,10 +150,10 @@ impl RenderTree {
     let child_has_layout = self.node(node_id).has_layout();
     let child_is_span = matches!(self.node(node_id).kind, ElementKind::Span(_));
     if child_has_layout && !self.node(parent_id).has_layout() {
+      let child = self.node(node_id).kind.name();
+      let parent = self.node(parent_id).kind.name();
       return Err(format!(
-        "<{}> cannot be a child of <d-{}>: a detached subtree must be entirely detached (d-* elements only)",
-        self.node(node_id).kind.name(),
-        self.node(parent_id).kind.name()
+        "<{child}> cannot be a child of <{parent} detached>: a detached subtree must be entirely detached (write the child as <{child} detached>)"
       ));
     }
 

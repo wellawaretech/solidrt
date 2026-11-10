@@ -434,8 +434,8 @@ function App() {
           </Card>
           <Card title="Icons">
             <Text muted>
-              Lucide SVGs parsed by the core parseSvg primitive into d-path draws. currentColor
-              follows the theme; the last two are recolored explicitly.
+              Lucide SVGs parsed by the core parseSvg primitive into detached path draws.
+              currentColor follows the theme; the last two are recolored explicitly.
             </Text>
             <View layout={{ flexDirection: "row", gap: space("lg"), alignItems: "center" }}>
               <Icon src={HOUSE} />

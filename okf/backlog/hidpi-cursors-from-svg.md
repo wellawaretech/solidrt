@@ -27,7 +27,7 @@ platform honors alternates (macOS, Wayland, Windows with the DPI hint).
 ## Shape
 
 Entirely in JS over what exists: `parseSvg` (forge's usvg, geometry only)
-plus a `<d-view>` draw of the document into a texture target at each
+plus a `<view detached>` draw of the document into a texture target at each
 scale and `readTexture` back to straight-alpha RGBA8, fed to the same
 `flux:rendertree` `createCursor` binding. The draw needs a frame, so the
 helper is async or takes a texture the app rendered; decide which reads

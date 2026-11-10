@@ -36,8 +36,10 @@ shape fills the layout box it sits in:
 </view>
 ```
 
-Each painting element also has a detached twin: `d-view`, `d-rect`,
-`d-path`, `d-text`, and so on. Detached elements are positioned by their
+Each painting element also has a detached form, written with the
+`detached` attribute: `<view detached>`, `<rect detached>`,
+`<path detached>`, `<text detached>`, and so on. The attribute is set once,
+as a literal at the tag. Detached elements are positioned by their
 parent's coordinate system rather than by layout, so changing one costs no
 reflow. Use them for anything that moves at animation frequency.
 
@@ -51,7 +53,7 @@ DOM to diff:
 ```tsx
 let [x, setX] = createSignal(0)
 
-<d-rect x={x()} w={40} h={40} color="tomato" />
+<rect detached x={x()} w={40} h={40} color="tomato" />
 ```
 
 The reactive and control-flow vocabulary comes from SolidJS 2.0 and is
@@ -133,7 +135,7 @@ so an idle app is genuinely idle.
 let [t, setT] = createSignal(0)
 onFrame((tick) => setT(tick))
 
-<d-view rotate={t() / 1000}>...</d-view>
+<view detached rotate={t() / 1000}>...</view>
 ```
 
 ## Environment and devices
@@ -255,7 +257,7 @@ interface a dozen times and still not say where a prop comes from.
 - [Drawing](/core/drawing/) - `rect`, `oval`, `line`, `path`,
   `texture`, and the paint props they share
 - [Text](/core/text/) - `text` and `span`
-- [Detached elements](/core/detached/) - the `d-*` forms and their
+- [Detached elements](/core/detached/) - the detached forms and their
   paint-space geometry
 - [Layout](/core/layout/) - flexbox, the grid subset, and the box
   props

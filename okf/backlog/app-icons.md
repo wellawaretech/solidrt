@@ -94,7 +94,7 @@ Stage 3 remains.
 ## Decided: SVG
 
 SVG won for both shipped stages: one file, scales to every surface, already
-rendered by the engine (usvg -> d-path) for the player, and rasterized at
+rendered by the engine (usvg -> detached path) for the player, and rasterized at
 a fixed size by resvg for the window icon. The default/fallback mark is the
 embedded `lattice/assets/icon-puzzle-gradient.svg`. Stage 3's OS-level
 embedding will still need fixed-size rasters produced at pack time.

@@ -173,10 +173,10 @@ function App() {
       <view width={pct(100)} height={pct(100)}>
         {/* Ground color: regions with no cell render nothing, so the
             full-bleed backdrop is the container's, not the layer's. */}
-        <d-rect x={0} y={0} w={windowSize().width} h={windowSize().height} color="#0d0d17" />
+        <rect detached x={0} y={0} w={windowSize().width} h={windowSize().height} color="#0d0d17" />
         <TileLayer layer={layer} camera={camera()} />
         <view position="absolute" x={windowSize().width - MINIMAP_SIZE - MINIMAP_MARGIN} y={MINIMAP_MARGIN} width={MINIMAP_SIZE} height={MINIMAP_SIZE}>
-          <d-rect x={0} y={0} w={MINIMAP_SIZE} h={MINIMAP_SIZE} color="#1a1a2a" />
+          <rect detached x={0} y={0} w={MINIMAP_SIZE} h={MINIMAP_SIZE} color="#1a1a2a" />
           <TileLayer layer={layer} camera={minimap()} />
         </view>
       </view>

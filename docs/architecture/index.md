@@ -67,8 +67,9 @@ This decision has an effect on these parts:
   boundary during compositing. These changes do not cause a new recording.
 - **Display list reuse.** The runtime does not record an unchanged subtree
   again.
-- **Detached elements.** The `d-*` elements are outside of layout. An
-  animation of one of these elements causes no reflow.
+- **Detached elements.** The elements with the `detached` attribute are
+  outside of layout. An animation of one of these elements causes no
+  reflow.
 
 ## Threads
 

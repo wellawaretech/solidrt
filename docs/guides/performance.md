@@ -27,8 +27,11 @@ props are fast to animate.
 
 A change to a layout prop starts a layout pass. The layout engine
 calculates the boxes of the element and its neighbors again. The detached
-elements (`d-*`) prevent this. A detached element has no layout box, so a
-change to its `x`, `y`, `w` or `h` changes only that element.
+elements prevent this. A detached element has no layout box, so a change to
+its `x`, `y`, `w` or `h` changes only that element. To make an element
+detached, write the `detached` attribute at the tag, for example
+`<view detached>`. The attribute is a literal. You cannot set it from a
+signal or from a spread.
 
 Use detached elements for content that moves often, and for shapes that you
 draw at coordinates, for example a chart. Use layout elements for the

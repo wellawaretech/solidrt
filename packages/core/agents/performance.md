@@ -128,26 +128,25 @@ Rules, in order of leverage:
    blur; get_stats' backdropsPrepainted counts them), one extra backdrop
    capture per panel while the opacity is below 1.
    Placement rule for animation-heavy screens: a boundary around a node
-   that animates its own paint (a moving d-*, a changing color) is useless
-   - its interior is damaged every frame, so the cache never survives. The
-   win is a boundary around the static bulk NEXT TO the animators: the
-   frame then re-records only the moving nodes and replays the fenced
-   content as one cached draw, an order-of-magnitude cut when static
-   content dominates the node count. get_stats' nodesPainted shows exactly
-   what the paint walk still enters. The exception where a boundary on the
-   animator itself pays is transform/opacity animation of the boundary
+   that animates its own paint (a moving detached element, a changing
+   color) is useless - its interior is damaged every frame, so the cache
+   never survives. The win is a boundary around the static bulk NEXT TO the
+   animators: the frame then re-records only the moving nodes and replays
+   the fenced content as one cached draw, an order-of-magnitude cut when
+   static content dominates the node count. get_stats' nodesPainted shows
+   exactly what the paint walk still enters. The exception where a boundary
+   on the animator itself pays is transform/opacity animation of the boundary
    node - the hoisting described above.
 6. "snapshot" boundaries pay first-frame texture allocation + raster:
    creating many at once (dealing a board of 64 sprites) is a visible
    one-frame hiccup - pool or pre-warm if that moment matters. The texture
    is sized by the view's box: the layout box on a view, the inherited
-   frame on a d-view (so a d-view directly under the window snapshots the
-   whole window - box it tighter when the content is small). Confirm a
-   boundary actually engaged rather than trusting the prop: get_render_tree
-   props reads
-   repaintBoundary back, get_stats' nodesPainted drops when the fenced
-   subtree stops being walked, and the dev overlay's BND/SNP lines count
-   boundary reuse per frame.
+   frame on a detached view (so a detached view directly under the window
+   snapshots the whole window - box it tighter when the content is small).
+   Confirm a boundary actually engaged rather than trusting the prop:
+   get_render_tree props reads repaintBoundary back, get_stats' nodesPainted
+   drops when the fenced subtree stops being walked, and the dev overlay's
+   BND/SNP lines count boundary reuse per frame.
 7. Shading pixels the app already drew is a different mechanism from rule 2's
    generated textures, and both forms are a `shader` prop taking a linked
    program from compileShader/linkProgram (@solidrt/core/gpu), not a
@@ -191,8 +190,8 @@ Rules, in order of leverage:
    line breaking is arithmetic over the shaped words. So re-breaking text
    every frame with prepareText + layoutNextLine (a shape that breathes, an
    obstacle that moves, an editor on every keystroke) is cheap - the lines'
-   d-texts hit the same cache - while changing a text's font, size or
-   weight re-shapes it. Painting costs one paragraph draw per line run of
+   detached texts hit the same cache - while changing a text's font, size
+   or weight re-shapes it. Painting costs one paragraph draw per line run of
    same-styled words (the joined line goes through the same cache, so a
    line composition seen before is a lookup): a paragraph draws as its
    lines, not its words, and a re-breaking one shapes only the lines whose
@@ -312,14 +311,14 @@ not infer it from the desktop number.
   compositor's own present record (`sol android --census`), against a
   frame that ran at 60 fps with a 13 ms GPU span:
   - a 3-stop linear-gradient fill per pane: +15 ms, 20 fps. A gradient is
-    shaded per pixel per frame; the same tint as a flat `d-rect` costs
-    nothing, and even a once-rendered 32x32 texture stretched over the pane
-    costs +5 ms over the flat fill.
+    shaded per pixel per frame; the same tint as a flat `<rect detached>`
+    costs nothing, and even a once-rendered 32x32 texture stretched over
+    the pane costs +5 ms over the flat fill.
   - a rounded clip (`overflow="hidden"` with `clipRadius`) on a box whose
     size is in flight: ~8 ms for one pane, ~13 ms for ten, most of it when
     an image is under the clip. A static rounded clip is nearly free. Round
-    the paint instead (`radius` on `d-rect`, `d-texture` and `<texture>`)
-    and keep the clip rectangular.
+    the paint instead (`radius` on `<rect detached>`, `<texture detached>`
+    and `<texture>`) and keep the clip rectangular.
   - four 16 px draws per pane with `destination-out` and `destination-over`
     blends: +16 ms. Any blend but source-over leaves the fast path,
     whatever the size.

@@ -234,7 +234,7 @@ export function Select<T>(props: SelectProps<T>) {
         transition={popupFadeOut()}
       >
         <view position="absolute" top={0} left={0} right={0} bottom={0} onPointerDown={() => setOpen(false)}>
-          <d-rect transition={colorFade()} color={theme.color.scrim} />
+          <rect detached transition={colorFade()} color={theme.color.scrim} />
         </view>
         <view
           position="absolute"
@@ -335,7 +335,7 @@ export function Select<T>(props: SelectProps<T>) {
           when={theme.icons.chevronDown}
           fallback={
             <view width={12} height={8}>
-              <d-path
+              <path detached
                 d="M 2 2 L 6 6 L 10 2"
                 drawStyle="stroke"
                 transition={colorFade()}

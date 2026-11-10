@@ -8,18 +8,18 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 ## Host elements and layout
 - `window-root.tsx` - the minimal app; the root must be `<window>`.
 - `view-layout.tsx` - `<view>` as a flex container; containers do not paint.
-- `view-design-size.tsx` - `designSize` on a `<view>`: author a scene once in fixed design units and let the view uniformly scale-and-center (letterbox) that space into its box. Children live in design space for layout as well as paint (the box they inherit IS the design size, so a bare `d-rect` fills it and a flex row lays out against the design width, never reflowing on resize); the view itself sizes like a replaced element whose intrinsic size is the design size; pointer `localX`/`localY` arrive in design units. The fixed-aspect alternative to `windowSizeClass` reflow for diagrams, slides, dashboards, game boards, scaled panels.
-- `background-rect.tsx` - a `d-rect` filling its parent as a background.
-- `detached-positioning.tsx` - the `d-` prefix: x/y placement, no reflow, detached-only children.
+- `view-design-size.tsx` - `designSize` on a `<view>`: author a scene once in fixed design units and let the view uniformly scale-and-center (letterbox) that space into its box. Children live in design space for layout as well as paint (the box they inherit IS the design size, so a bare `<rect detached>` fills it and a flex row lays out against the design width, never reflowing on resize); the view itself sizes like a replaced element whose intrinsic size is the design size; pointer `localX`/`localY` arrive in design units. The fixed-aspect alternative to `windowSizeClass` reflow for diagrams, slides, dashboards, game boards, scaled panels.
+- `background-rect.tsx` - a `<rect detached>` filling its parent as a background.
+- `detached-positioning.tsx` - the `detached` attribute: x/y placement, no reflow, detached-only children.
 - `text-paint-styling.tsx` - the uniform `color` prop; `drawStyle="stroke"` vs fill.
 
 ## Text
-- `text-flow.tsx` - app-side line breaking: `prepareText` shapes a paragraph's words once, `layoutNextLine` breaks one line per call at any width. Poured band by band into a circle (each band the chord at its height), then the cursor continues in a column beside it; every line is a `d-text` of its own text. Re-breaks fully on resize for arithmetic plus word-cache hits.
-- `text-glyphs.tsx` - per-glyph positions: `prepareText(text, { carets: true })` reports each unit's kerned grapheme x positions from the shaping that is drawn. One `d-text` per glyph placed from carets sits exactly on the whole headline; the same glyphs placed by per-character `measureText` drift on every kerning pair.
+- `text-flow.tsx` - app-side line breaking: `prepareText` shapes a paragraph's words once, `layoutNextLine` breaks one line per call at any width. Poured band by band into a circle (each band the chord at its height), then the cursor continues in a column beside it; every line is a `<text detached>` of its own text. Re-breaks fully on resize for arithmetic plus word-cache hits.
+- `text-glyphs.tsx` - per-glyph positions: `prepareText(text, { carets: true })` reports each unit's kerned grapheme x positions from the shaping that is drawn. One `<text detached>` per glyph placed from carets sits exactly on the whole headline; the same glyphs placed by per-character `measureText` drift on every kerning pair.
 
 ## Frame and lifecycle
 - `frame-animation.tsx` - `onFrame` driving a transform animation each frame.
-- `on-layout-connect.tsx` - `onLayout` + `getBoundingBox` connecting laid-out boxes with a `d-path`.
+- `on-layout-connect.tsx` - `onLayout` + `getBoundingBox` connecting laid-out boxes with a `<path detached>`.
 - `stagger.tsx` - enter/exit/stagger with no per-frame JS: `from` and `exit` per property on each row's own `transition`, `stagger` on the ANCESTOR cascading them in occurrence order, and the replay idiom - a keyed `<Show>` remounts the subtree when its `when` value changes, so bumping an epoch replays the whole cascade. Exiting rows stay painted until they settle.
 - `layout-slide.tsx` - the `layout` transition, the companion to exit: rows declaring it slide from the box they had to the box a layout gives them, position and size, instead of jumping - tap a row to expand it (it grows to fit its detail text while the rows below slide down), its "remove" mark to remove it (its exit plays where it was while the rows below slide up), the header to shuffle the order (a `<For>` reorder), the footer to add one back. No per-frame JS, no hand-animated `y` or `height`.
 
@@ -63,8 +63,8 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `audio.tsx` - `createSound`: decode a clip once from bytes (here a binary import), replay cheaply; `overlap` stacking vs single-voice, `playing()` signal, release on unmount. `createPcmSound` for a synthesised clip from raw samples (a generated sine sweep). Points to `createSoundStream` for long tracks streamed from a path.
 
 ## Vector graphics
-- `line-points.tsx` - `points` on `line`/`d-line`: a flat `[x0, y0, x1, y1, ...]` array (or `Float32Array`) makes the polyline whose geometry is numbers - a live trace rewritten every frame with no `d` string to parse, `closed` outlines, `drawStyle="fill"` polygons (a line's paint defaults to stroke), per-segment dashing, and a laid-out `<line points>` measuring its box from the points.
-- `parse-svg.tsx` - `parseSvg` turns a whole SVG *document string* (not HTML/JSX children) into plain draw data mapped to `<d-path>` inside a `designSize`-fitted view; per-shape hover highlighting shows the payoff (exact-outline hit testing, recolor without re-parse), plus a `currentColor` icon recolored via the `color` option. This is how to use existing icon libraries (Lucide, Heroicons, etc.) - hand their SVG source to `parseSvg`.
+- `line-points.tsx` - `points` on `<line>`/`<line detached>`: a flat `[x0, y0, x1, y1, ...]` array (or `Float32Array`) makes the polyline whose geometry is numbers - a live trace rewritten every frame with no `d` string to parse, `closed` outlines, `drawStyle="fill"` polygons (a line's paint defaults to stroke), per-segment dashing, and a laid-out `<line points>` measuring its box from the points.
+- `parse-svg.tsx` - `parseSvg` turns a whole SVG *document string* (not HTML/JSX children) into plain draw data mapped to `<path detached>` inside a `designSize`-fitted view; per-shape hover highlighting shows the payoff (exact-outline hit testing, recolor without re-parse), plus a `currentColor` icon recolored via the `color` option. This is how to use existing icon libraries (Lucide, Heroicons, etc.) - hand their SVG source to `parseSvg`.
 
 ## Bundling assets
 - `binary-import.tsx` - `import bytes from "./file" with { type: "binary" }` inlines a file's bytes into the bundle as a `Uint8Array` (the bytes are in memory, so `inline-image.tsx` displays them with the synchronous `decodeImage` + `createTexture` path).

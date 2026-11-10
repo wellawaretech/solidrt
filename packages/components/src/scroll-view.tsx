@@ -202,7 +202,7 @@ export function ScrollView(props: ScrollViewProps) {
       pointerEvents={props.pointerEvents}
     >
       {hasBackground() ? (
-        <d-rect
+        <rect detached
           transition={split().background}
           onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
           color={props.style?.backgroundColor ?? "transparent"}
@@ -236,7 +236,7 @@ export function ScrollView(props: ScrollViewProps) {
         </view>
       </view>
       {hasBorder() ? (
-        <d-rect
+        <rect detached
           drawStyle="stroke"
           transition={split().border}
           onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}

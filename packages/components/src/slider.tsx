@@ -67,9 +67,9 @@ export function Slider(props: SliderProps) {
   let pct = () => clamp(((value() - min()) / (max() - min())) * 100, 0, 100)
 
   // Measured groove width in pixels. The fill and thumb are driven off this
-  // rather than a percentage `width`/`left`, so dragging repaints (d-rect `w`,
-  // thumb `x` transform) instead of reflowing taffy every move. Refreshed each
-  // layout so it tracks resizes.
+  // rather than a percentage `width`/`left`, so dragging repaints (detached
+  // rect `w`, thumb `x` transform) instead of reflowing taffy every move.
+  // Refreshed each layout so it tracks resizes.
   let groove: { id: number } | undefined
   let [grooveWidth, setGrooveWidth] = createSignal(0)
   onLayout(() => {
@@ -183,7 +183,7 @@ export function Slider(props: SliderProps) {
           outlineTransition={split().border}
           onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
         />
-        <d-rect
+        <rect detached
           transition={colorFade()}
           color={fillPaint().fill}
           w={fillPx()}

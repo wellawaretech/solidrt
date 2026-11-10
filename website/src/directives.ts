@@ -17,6 +17,16 @@ import { splitDeclarations, type Declaration } from "./reference.ts";
 
 const ROOT = "..";
 
+// In the JSX types (packages/core/jsx-runtime.d.ts): the interface that marks
+// a branch of a paired tag as the detached one.
+const DETACHED_FORM = "DetachedForm";
+// Parts of an element's composition that say nothing about its props: the
+// `ref` callback every element takes, and the `detached` discriminant.
+let INTRINSIC_NOISE = ["ElementRef", "LaidOutForm", DETACHED_FORM];
+// The guard on a laid-out branch, `Never<GeometryProps>`: names it declares
+// absent, so not props either.
+const GUARD_PREFIX = "Never<";
+
 // Declarations per source file, parsed once however many symbols a page pulls.
 let parsed = new Map<string, Map<string, Declaration>>();
 async function declarationsOf(path: string): Promise<Map<string, Declaration>> {
@@ -81,21 +91,44 @@ let providers: Record<string, Provider> = {
   },
 
   // {{ intrinsics <path> }} - the JSX element vocabulary as a table, from the
-  // IntrinsicElements map. `ElementRef` (the `ref` callback every element
-  // takes) is dropped from each composition as noise.
+  // IntrinsicElements map. A tag with a detached form is a union of two named
+  // branches: each branch is a row (`<rect>`, `<rect detached>`), expanded to
+  // the prop interfaces it extends. What says nothing about the props is
+  // dropped (INTRINSIC_NOISE, the laid-out branch's guard), and so are the
+  // deprecated tags.
   async intrinsics([path]) {
     if (!path) throw new Error("intrinsics takes <path>");
     let source = await file(ROOT + "/" + path!).text();
     let block = source.match(/interface IntrinsicElements \{([\s\S]*?)\n  \}/)?.[1];
     if (!block) throw new Error(`no IntrinsicElements map in ${path}`);
-    let rows = [...block.matchAll(/^\s+"?([a-z-]+)"?: (.+)$/gm)].map((m) => {
-      let composition = m[2]!
-        .split("&")
-        .map((s) => s.trim())
-        .filter((s) => s !== "ElementRef")
-        .join(" &amp; ");
-      return `<tr><td><code>&lt;${m[1]}&gt;</code></td><td><code>${composition}</code></td></tr>`;
-    });
+    // The file's own composing interfaces: name -> what it extends.
+    let bases = new Map<string, string[]>();
+    for (let m of source.matchAll(/interface (\w+) extends ([^{]+)\{/g)) {
+      bases.set(m[1]!, m[2]!.split(",").map((s) => s.trim()));
+    }
+    let expand = (name: string): string[] => bases.get(name)?.flatMap(expand) ?? [name];
+    let rows: string[] = [];
+    let deprecated = false;
+    for (let line of block.split("\n")) {
+      if (line.includes("@deprecated")) {
+        deprecated = true;
+        continue;
+      }
+      let m = line.match(/^\s+"?([a-z-]+)"?: (.+)$/);
+      if (!m) continue;
+      if (deprecated) {
+        deprecated = false;
+        continue;
+      }
+      for (let branch of m[2]!.split("|")) {
+        let parts = branch.split("&").flatMap((s) => expand(s.trim()));
+        let tag = parts.includes(DETACHED_FORM) ? `${m[1]} detached` : m[1];
+        let composition = parts
+          .filter((s) => !INTRINSIC_NOISE.includes(s) && !s.startsWith(GUARD_PREFIX))
+          .join(" &amp; ");
+        rows.push(`<tr><td><code>&lt;${tag}&gt;</code></td><td><code>${composition}</code></td></tr>`);
+      }
+    }
     if (rows.length === 0) throw new Error(`no elements in the IntrinsicElements map of ${path}`);
     return (
       "<table>\n<thead><tr><th>Element</th><th>Props</th></tr></thead>\n<tbody>\n" +

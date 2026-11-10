@@ -163,9 +163,10 @@ no event reaches; the same on `<View3d>`); an `output`
 leaf spreads `{...leaf.handlers}` (scaled to the ref'd leaf's layout
 box per event) and an imperative composition `{...scene.handlers}` onto
 the element showing the texture. `scene.handlers` assumes that leaf is
-LAID OUT at the target size - true for the built-in leaf and a d-texture
-at natural size, under any ancestor transforms or design-size fits (the
-hit test undoes them; localX/localY arrive in the leaf's layout frame).
+LAID OUT at the target size - true for the built-in leaf and a detached
+texture at natural size, under any ancestor transforms or design-size
+fits (the hit test undoes them; localX/localY arrive in the leaf's
+layout frame).
 A leaf laid out at a different size uses
 `scene.handlersFor(() => ({ width, height }))` with its layout size.
 tests/dispatch.test.ts pins the walk, claiming, capture, hover, wheel

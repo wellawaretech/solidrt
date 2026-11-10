@@ -58,7 +58,7 @@ wall-clock frame time. Do not use the GPU timer figures - see
 | Window composite | ~2 | zero-pass probe, below |
 
 **Per-pass cost is flat at ~2.15 ms** regardless of size or content.
-Measured with a since-removed floor-probe demo (a fullscreen d-rect plus N
+Measured with a since-removed floor-probe demo (a fullscreen detached rect plus N
 armable constant-shader targets)
 by arming N 128x128 targets whose shader writes a constant, nothing else in
 the frame:

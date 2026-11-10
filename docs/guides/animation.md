@@ -25,7 +25,7 @@ let [pressed, setPressed] = createSignal(false)
   onPointerUp={() => setPressed(false)}
   padding={16}
 >
-  <d-rect color="#2a3a55" radius={10} />
+  <rect detached color="#2a3a55" radius={10} />
   <text color="white">Press me</text>
 </view>
 ```
@@ -107,7 +107,7 @@ const SLIDE = { duration: 400, bounce: 0.15 } satisfies Transition
 <For each={rows()}>
   {(label) => (
     <view transition={{ layout: SLIDE }} padding={16}>
-      <d-rect color="#2a3a55" radius={10} />
+      <rect detached color="#2a3a55" radius={10} />
       <text color="white">{label}</text>
     </view>
   )}
@@ -131,13 +131,15 @@ in ms:
 let [angle, setAngle] = createSignal(0)
 onFrame((time) => setAngle(time / 1000))
 
-<d-view x={100} y={100} rotate={angle()}>
-  <d-rect x={-20} y={-20} w={40} h={40} color="tomato" />
-</d-view>
+<view detached x={100} y={100} rotate={angle()}>
+  <rect detached x={-20} y={-20} w={40} h={40} color="tomato" />
+</view>
 ```
 
-Use detached elements (`d-*`) for this motion. A detached element has no
-layout box, so a new value does not start a layout pass.
+Use detached elements for this motion. A detached element has no layout
+box, so a new value does not start a layout pass. To make an element
+detached, write the `detached` attribute at the tag. The attribute is a
+literal. You cannot set it from a signal or from a spread.
 
 The runtime draws a frame only when something changes. While an `onFrame`
 function is registered, the app draws each frame. Thus, stop the function
@@ -185,9 +187,9 @@ title with letters that move:
 
 ```tsx
 <view pixelSnap={false}>
-  <d-view scale={big() ? 1.2 : 1} transition={{ scale: { duration: 300, bounce: 0.4 } }}>
-    <d-text fontSize={64}>Title</d-text>
-  </d-view>
+  <view detached scale={big() ? 1.2 : 1} transition={{ scale: { duration: 300, bounce: 0.4 } }}>
+    <text detached fontSize={64}>Title</text>
+  </view>
 </view>
 ```
 

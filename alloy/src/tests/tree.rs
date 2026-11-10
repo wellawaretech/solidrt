@@ -84,7 +84,7 @@ fn attached_under_detached_is_refused_and_leaves_tree_untouched() {
   tree.create_node(1, detached());
   tree.create_node(2, attached());
   let err = tree.insert_node(1, 2, None).expect_err("laid-out under detached must be refused");
-  assert!(err.starts_with("<view> cannot be a child of <d-view>"), "{err}");
+  assert!(err.starts_with("<view> cannot be a child of <view detached>"), "{err}");
   assert!(tree.node(1).children.is_empty());
   assert_eq!(tree.node(2).parent, None);
 }

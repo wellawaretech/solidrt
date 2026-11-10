@@ -37,7 +37,7 @@ function App() {
         scrollY={scroll.offset().y}
         onWheel={onWheel}
       >
-        <d-rect color="#1a2233" radius={12} />
+        <rect detached color="#1a2233" radius={12} />
         <view ref={(n: { id: number }) => (content = n)} flexShrink={0} padding={12} gap={8}>
           <For each={rows}>
             {(i) => (

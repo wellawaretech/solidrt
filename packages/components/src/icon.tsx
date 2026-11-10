@@ -20,13 +20,13 @@ export interface IconProps extends TransitionProps {
 const SIZE = 24
 
 // A themed wrapper over parseSvg: the document parsed once per src/color (a
-// memo), its draws mapped to <d-path> in a square designSize-fitted box colored
-// from the theme by default. That is the only value it adds, so reach for
-// parseSvg plus your own <view designSize> when you need a non-square box or
-// want no theme coupling. The plain repaintBoundary keeps the static subtree
-// from re-recording alongside animating siblings; pointerEvents="all" makes
-// the box one hit unit (and skips per-path outline tests) - an icon's shapes
-// are never individual targets.
+// memo), its draws mapped to <path detached> in a square designSize-fitted
+// box colored from the theme by default. That is the only value it adds, so
+// reach for parseSvg plus your own <view designSize> when you need a
+// non-square box or want no theme coupling. The plain repaintBoundary keeps the
+// static subtree from re-recording alongside animating siblings;
+// pointerEvents="all" makes the box one hit unit (and skips per-path outline
+// tests) - an icon's shapes are never individual targets.
 export function Icon(props: IconProps) {
   let size = () => props.size ?? SIZE
   let doc = createMemo(() => parseSvg(props.src, { color: props.color ?? theme.color.text }))
@@ -42,7 +42,7 @@ export function Icon(props: IconProps) {
       designSize={[doc().width, doc().height]}
       {...props.layout}
     >
-      <For each={doc().draws}>{(draw) => <d-path {...draw} />}</For>
+      <For each={doc().draws}>{(draw) => <path detached {...draw} />}</For>
     </view>
   )
 }

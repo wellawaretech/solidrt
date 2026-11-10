@@ -26,14 +26,14 @@ function App() {
 
   return (
     <window>
-      <d-rect color="#0b0f17" />
+      <rect detached color="#0b0f17" />
       <view flex={1} flexDirection="column" gap={GAP} padding={PAD}>
         <text color="#e6e6e6" fontSize={18}>{capabilities.windowSizeClass} - {cols()} column{cols() === 1 ? "" : "s"}</text>
         <view flexDirection="row" flexWrap="wrap" gap={GAP}>
           <For each={COLORS}>
             {(c) => (
               <view width={cardWidth()} height={96} alignItems="center" justifyContent="center">
-                <d-rect color={c} radius={12} />
+                <rect detached color={c} radius={12} />
                 <text color="#0b0f17" fontSize={16} fontWeight={700}>card</text>
               </view>
             )}

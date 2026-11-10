@@ -1,9 +1,9 @@
 // Video playback, reactive (SolidJS) layer. There is no <video> element by
 // design: a player streams into a texture id, so displaying it is just
-// <texture src={video.texture()} /> (or <d-texture> for detached-layout
-// placement), and every texture capability - shaders, offscreen targets,
-// subtree effects - applies to video for free. A richer Video component
-// composes on top of this in a higher layer, not in core.
+// <texture src={video.texture()} /> (or <texture detached> for
+// detached-layout placement), and every texture capability - shaders,
+// offscreen targets, subtree effects - applies to video for free. A richer
+// Video component composes on top of this in a higher layer, not in core.
 //
 // A plane player (`present: "plane"`, Android) has no texture: the platform
 // composites the picture fullscreen beneath the UI on the video's own clock,

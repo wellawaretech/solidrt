@@ -171,8 +171,8 @@ const CREATION_PROPS = ["tileW", "tileH", "atlases", "frames", "material", "chun
  * image of a resident chunk inside it, so the seam is two quads over one
  * texture. A second `<TileLayer layer={handle}>` is a second view of the
  * same world (a minimap); a `<Camera2d>` child drives this view's camera.
- * A layout component: it cannot sit inside a d-* subtree; `output` with
- * a `<d-texture>` is the detached form. Tiles are data, not children:
+ * A layout component: it cannot sit inside a detached subtree; `output` with
+ * a `<texture detached>` is the detached form. Tiles are data, not children:
  * write them through `ref` with `setTile` and `setTiles` - there is no
  * `<Tile>` component on purpose (a component per tile would re-introduce
  * the per-element cost the bake removes).

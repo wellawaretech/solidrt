@@ -185,7 +185,7 @@ pub fn apply_jsx(
   if name == "repaintBoundary" {
     if !matches!(el.kind, ElementKind::View(_)) {
       return Err(
-        "Unknown property 'repaintBoundary': repaint boundaries are view-only; wrap this element in a view or d-view"
+        "Unknown property 'repaintBoundary': repaint boundaries are view-only; wrap this element in a <view> or a <view detached>"
           .to_string(),
       );
     }
@@ -266,7 +266,8 @@ pub fn apply_jsx(
   // warns and continues) instead of silently painting geometry that diverges
   // from the box. View x/y are transforms, not box geometry, and stay.
   if el.has_layout() && detached_only_geometry(&el.kind, name) {
-    return Err(format!("Detached-only property '{name}': a layout element's geometry is its layout box (size it with width/height), so this is available on the d-* form only"));
+    let kind = el.kind.name();
+    return Err(format!("Detached-only property '{name}': a layout element's geometry is its layout box (size it with width/height), so this is available on <{kind} detached> only"));
   }
 
   let handled = match &mut el.kind {
@@ -316,7 +317,7 @@ pub fn apply_jsx(
   if let Some(container) = container {
     if paint::is_paint_prop(name) || is_web_background_prop(name) {
       return Err(format!(
-        "Unknown property '{name}': a {container} has no paint; put the fill on a child <rect> (or <d-rect>) covering it"
+        "Unknown property '{name}': a {container} has no paint; put the fill on a child <rect> (or <rect detached>) covering it"
       ));
     }
   }

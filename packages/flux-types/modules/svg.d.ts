@@ -32,9 +32,9 @@ declare module "flux:svg" {
 
   /**
    * One resolved draw in document coordinates. The keys deliberately match
-   * the path element's props, so a draw spreads onto a `<d-path>` unchanged.
-   * A source path with both a fill and a stroke yields two draws (fill
-   * first). Solid colors are `#rrggbbaa` strings; stroke keys are only
+   * the path element's props, so a draw spreads onto a `<path detached>`
+   * unchanged. A source path with both a fill and a stroke yields two draws
+   * (fill first). Solid colors are `#rrggbbaa` strings; stroke keys are only
    * present on stroke draws, `fillRule` only on fills.
    */
   export type SvgDraw = {

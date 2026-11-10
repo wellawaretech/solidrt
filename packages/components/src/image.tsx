@@ -100,7 +100,7 @@ export function Image(props: ImageProps) {
       pointerEvents={props.pointerEvents}
     >
       {props.style?.backgroundColor != null ? (
-        <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={props.style?.backgroundColor} radius={props.style?.borderRadius} />
+        <rect detached transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={props.style?.backgroundColor} radius={props.style?.borderRadius} />
       ) : null}
       <Loading fallback={null}>
         <Errored
@@ -114,7 +114,7 @@ export function Image(props: ImageProps) {
         </Errored>
       </Loading>
       {hasBorder() ? (
-        <d-rect
+        <rect detached
           drawStyle="stroke"
           transition={split().border}
           onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}

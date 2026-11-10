@@ -1,9 +1,18 @@
 # Detached elements
 
-Every painting element has a detached twin: `d-view`, `d-rect`, `d-oval`,
-`d-line`, `d-path`, `d-text`, `d-texture`. A detached element has no layout
-box. It is not part of the layout at all, and instead owns its geometry in
-paint-space pixels, positioned in the coordinate system of its parent.
+Every painting element has a detached form, written with the `detached`
+attribute: `<view detached>`, `<rect detached>`, `<oval detached>`,
+`<line detached>`, `<path detached>`, `<text detached>`,
+`<texture detached>`. A detached element has no layout box. It is not part
+of the layout at all, and instead owns its geometry in paint-space pixels,
+positioned in the coordinate system of its parent.
+
+The attribute is set once, as a literal. Write it bare, first after the tag
+name. An element never changes form: `detached={expr}` is a compile error,
+and a `detached` that arrives in a spread (`<view {...props}>`) throws. A
+spread next to the literal is fine: `<path detached {...draw} />`. On a
+component, `detached` is an ordinary prop. Older code may show the
+deprecated `d-*` spelling (`<d-view>`), which still compiles.
 
 That is the whole idea, and the reason to reach for one:
 
@@ -12,7 +21,7 @@ let [x, setX] = createSignal(0)
 onFrame((now) => setX(Math.sin(now / 500) * 100))
 
 <view width={pct(100)} height={200}>
-  <d-rect x={x()} y={20} w={40} h={40} color="tomato" />
+  <rect detached x={x()} y={20} w={40} h={40} color="tomato" />
 </view>
 ```
 
@@ -33,7 +42,7 @@ only where content is genuinely drawn rather than arranged.
 ## What changes
 
 A detached element composes exactly the same paint, text and pointer props as
-its layout twin. One thing is swapped: the [layout](/core/layout/)
+its layout form. One thing is swapped: the [layout](/core/layout/)
 props are replaced by geometry props.
 
 | | Layout form | Detached form |
@@ -42,13 +51,14 @@ props are replaced by geometry props.
 | Size | `width`/`height` and the box it is given | `w`, `h`, defaulting to the inherited box |
 | Costs a reflow | yes | no |
 
-`d-view` is the container case: it composes `ViewOwnProps` directly (see
-[elements](/core/elements/)), so it still transforms, clips and
+`<view detached>` is the container case: it composes `ViewOwnProps` directly
+(see [elements](/core/elements/)), so it still transforms, clips and
 takes input, but a layout prop on it is dropped with a one-time warning
 rather than silently ignored.
 
 `<span>` has no detached form, since an inline run never has a box of its own
-to detach from.
+to detach from. Neither has `<window>`, which is the root of the layout.
+Either one written with `detached` is a compile error.
 
 ## Geometry
 
@@ -60,26 +70,28 @@ since the box shrinks and the geometry does not.
 {{ decl packages/core/src/types.d.ts PositionProps }}
 
 Most primitives add a size, defaulting to the box they inherit from their
-ancestor, so a `d-rect` with only `x`/`y` still has something to draw:
+ancestor, so a `<rect detached>` with only `x`/`y` still has something to
+draw:
 
 {{ decl packages/core/src/types.d.ts GeometryProps }}
 
-`d-oval` measures its box rather than a radius:
+`<oval detached>` measures its box rather than a radius:
 
 {{ decl packages/core/src/types.d.ts OvalGeometryProps }}
 
-`d-text` is boxed or anchored. Boxed, it wraps at `w` or at the inherited
-box, and `textAlign` aligns lines inside that width. Anchored, `x` is a point
-on the line (SVG's `text-anchor`) and the text does not wrap unless given a
-`w`; that is the form for labels. Its reported bounds are the laid-out
+`<text detached>` is boxed or anchored. Boxed, it wraps at `w` or at the
+inherited box, and `textAlign` aligns lines inside that width. Anchored, `x`
+is a point on the line (SVG's `text-anchor`) and the text does not wrap unless
+given a `w`; that is the form for labels. Its reported bounds are the laid-out
 paragraph, with `w`/`h` overriding a side each:
 
 {{ decl packages/core/src/types.d.ts TextGeometryProps }}
 
-`d-path` takes only a position, since its size is whatever its `d` string
-draws. `d-line` has no width and height either: its geometry is its two
-endpoints (or, as a polyline, its `points`), offset as a whole by `x`/`y`,
-which is what makes it the primitive to reach for when the geometry moves.
+`<path detached>` takes only a position, since its size is whatever its `d`
+string draws. `<line detached>` has no width and height either: its geometry
+is its two endpoints (or, as a polyline, its `points`), offset as a whole by
+`x`/`y`, which is what makes it the primitive to reach for when the geometry
+moves.
 Both report their bounds
 (getBoundingBox, the tree, a capture) as that geometry plus the stroke, not
 the inherited box:
@@ -90,6 +102,7 @@ the inherited box:
 
 `x` and `y` also appear on [transform](/core/transforms/) props,
 where they mean a post-layout subtree translation and exist on laid-out views
-too. The two never collide on one element: on a `d-*` primitive `x`/`y` is
-where the geometry is drawn, and on a `view` or `d-view` it is a translation
-applied to the whole subtree. Both are cheap; neither triggers layout.
+too. The two never collide on one element: on a detached primitive `x`/`y`
+is where the geometry is drawn, and on a `view` or `<view detached>` it is a
+translation applied to the whole subtree. Both are cheap; neither triggers
+layout.

@@ -14,14 +14,15 @@ laid-out structure even when every card holds a tier-2 chart or a tier-3
 shader. Escalate the element the content calls for, never the whole screen.
 
 1. Laid-out elements - `<view>`/`<text>`, with `<rect>` (or a filling
-   `<d-rect>` child) for background, border, radius. The structure of a
-   screen, not its finish.
-2. Vector art, detached from layout - `d-path`/`d-rect`/`d-oval`/`d-line`,
-   whose `color` takes a gradient (createLinearGradient /
-   createRadialGradient) and which honour `blendMode`, plus `parseSvg` to
-   draw a whole SVG document as one subtree. Free-form shapes, decoration,
-   diagrams, charts, anything positioned rather than flowed. Examples:
-   parse-svg, detached-positioning, text-paint-styling.
+   `<rect detached>` child) for background, border, radius. The structure
+   of a screen, not its finish.
+2. Vector art, detached from layout - `<path detached>`/`<rect detached>`/
+   `<oval detached>`/`<line detached>`, whose `color` takes a gradient
+   (createLinearGradient / createRadialGradient) and which honour
+   `blendMode`, plus `parseSvg` to draw a whole SVG document as one
+   subtree. Free-form shapes, decoration, diagrams, charts, anything
+   positioned rather than flowed. Examples: parse-svg, detached-positioning,
+   text-paint-styling.
 3. GPU textures - `createShaderTexture` puts a fragment shader in a
    `<texture>` (moving gradients, noise, glow, dissolves, a background that
    is alive), `createPipelineTexture` draws geometry you generate yourself
@@ -48,8 +49,8 @@ no matter how complex the effect, which is why the performance model
   the result; `withAlpha(color, a)` gives any color at an opacity (do not
   rebuild `rgba()` strings by hand from a hex); `brightness(color)` picks
   readable text over any fill.
-- gradient background -> a gradient `color` on a `d-rect` (gradients are
-  paint values, usable anywhere a color is)
+- gradient background -> a gradient `color` on a `<rect detached>`
+  (gradients are paint values, usable anywhere a color is)
 - `filter: blur/grayscale/hue-rotate/...` -> the `filter` prop on a view
   (object form: `filter={{ blur: 4, grayscale: 1 }}`; hueRotate in radians).
   For processing beyond the CSS filter functions, a `shader` on the view
@@ -57,7 +58,7 @@ no matter how complex the effect, which is why the performance model
 - `box-shadow` -> the `shadow` prop on the shape that IS the surface:
   `<rect radius={12} color="white" shadow={{ y: 4, blur: 16, color:
   "#0006" }}/>` (also on oval and path; fields are CSS box-shadow's, color
-  required). `text-shadow` / glow -> still no prop: draw an offset `d-*`
+  required). `text-shadow` / glow -> still no prop: draw an offset detached
   shape under the content, or a view shader with `outset` (the transparent
   margin an effect bleeds into)
 - `backdrop-filter` -> the `backdropFilter` prop on a view (same keys as
@@ -72,12 +73,12 @@ no matter how complex the effect, which is why the performance model
 - `@keyframes` -> a `transition` prop when the motion is target-shaped;
   `onFrame` writing a signal for genuinely procedural sequences; a `uTime`
   uniform when the animation is continuous and visual
-- `<canvas>` 2D -> `d-*` primitives (rebuild one `d-path` string per frame
-  rather than animating N elements)
+- `<canvas>` 2D -> detached primitives (rebuild one detached path's `d` string
+  per frame rather than animating N elements)
 - leader lines, connectors, an annotation or badge hugging an element, any
   drawing that must align with laid-out content -> measure, do not
   calculate: read the boxes with `getBoundingBox` inside `onLayout` and
-  drive the `d-*` overlay from the result (core AGENTS.md "Measuring
+  drive the detached overlay from the result (core AGENTS.md "Measuring
   layout", examples/on-layout-connect.tsx). Mirroring the layout math in JS
   to predict where an element ends up is always wrong somewhere
 - `<canvas>` WebGL, three.js -> `createPipelineTexture`, or `@solidrt/3d`

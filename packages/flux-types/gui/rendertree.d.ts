@@ -132,7 +132,7 @@ declare module "flux:rendertree" {
   export function createNode(id: number, kind: string): void
   /**
    * Insert `nodeId` under `parentId`, before `anchorId` if given (else appended).
-   * Throws an `Error` when a laid-out node would land under a detached (d-*)
+   * Throws an `Error` when a laid-out node would land under a detached
    * parent: a detached subtree is entirely detached. The tree is left untouched.
    */
   export function insertNode(parentId: number, nodeId: number, anchorId?: number): void

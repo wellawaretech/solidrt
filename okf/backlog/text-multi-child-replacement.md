@@ -38,7 +38,7 @@ If it does reproduce, the questions to answer before proposing a fix:
   (`<text>{count()}</text>`), or only when static and reactive children mix?
 - Is the replacement at the JS renderer boundary (a `removeNode` +
   `createNode` pair) or inside a single native `set_text` write?
-- Does the same shape in a `d-text` behave differently?
+- Does the same shape in a `<text detached>` behave differently?
 
 Source: root TODO.md, migrated 2026-08-14.
 

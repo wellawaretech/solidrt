@@ -72,9 +72,9 @@ For the full list of components, with props and examples, see
 *Status: experimental.*
 
 `@solidrt/2d` is the extension for apps and games with much 2D content. Core
-already draws 2D content well. A `d-texture` with an atlas sub-rect is a
-sprite, with native transitions and pointer events. Core can show a few
-thousand of these sprites.
+already draws 2D content well. A `<texture detached>` with an atlas
+sub-rect is a sprite, with native transitions and pointer events. Core can
+show a few thousand of these sprites.
 
 `@solidrt/2d` is for larger quantities. Its instanced sprite layer puts
 thousands of sprites into one GPU buffer and one draw call. These sprites

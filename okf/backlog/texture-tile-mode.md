@@ -49,7 +49,7 @@ and fills the destination rect through that paint instead of calling
 controls tile size and offset: scale so the source texture maps to the desired
 tile size, translate to scroll the pattern.
 
-Open before implementing: trace how `d-rect`'s fill-with-paint path works so
+Open before implementing: trace how a detached rect's fill-with-paint path works so
 the new path matches it, and confirm whether the existing rect-fill plumbing
 can carry an arbitrary `ColorSource` or needs its own draw path. Naming is also
 open - `tileMode` mirrors Impeller, `repeat` mirrors CSS; decide against the

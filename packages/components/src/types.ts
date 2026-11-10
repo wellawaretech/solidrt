@@ -13,13 +13,13 @@ import type {
 } from "@solidrt/core"
 
 // Native transitions through a component. A component is a root view plus
-// the nodes it draws for `style` (a background d-rect, a stroke d-rect for
-// the border), so a declaration names the STYLE properties - backgroundColor,
-// borderColor, borderWidth, borderRadius - next to the view-level ones, and
-// splitTransition hands each entry to the node that owns it. Core's paint
-// names (color, radius, strokeWidth) are deliberately not accepted: on a
-// component they would land on the root view, which has no paint, and be
-// silently ignored.
+// the nodes it draws for `style` (a background detached rect, a stroke
+// detached rect for the border), so a declaration names the STYLE properties
+// - backgroundColor, borderColor, borderWidth, borderRadius - next to the
+// view-level ones, and splitTransition hands each entry to the node that
+// owns it. Core's paint names (color, radius, strokeWidth) are deliberately
+// not accepted: on a component they would land on the root view, which has
+// no paint, and be silently ignored.
 //
 // Controls with a moving part of their own name it as an extra entry
 // (Switch `knob`, SegmentedControl `indicator`, ProgressBar `fill`), routed

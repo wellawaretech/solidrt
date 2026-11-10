@@ -86,7 +86,7 @@ export function Logo(props: LogoProps) {
       <Show when={mode() !== "none"}>
         <Animate />
       </Show>
-      <For each={SEGMENTS}>{(seg) => <d-path d={seg.d} color={fill(seg)} />}</For>
+      <For each={SEGMENTS}>{(seg) => <path detached d={seg.d} color={fill(seg)} />}</For>
     </view>
   )
 }

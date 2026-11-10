@@ -35,7 +35,7 @@ export function Divider(props: DividerProps) {
       alignSelf="stretch"
       {...props.layout}
     >
-      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={color()} />
+      <rect detached transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={color()} />
     </view>
   )
 }

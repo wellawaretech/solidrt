@@ -238,12 +238,13 @@ export type TextEditorLayout = {
  * The line and caret geometry of an editable text, plus the scroll offsets
  * that keep the caret within the viewport node. Lines come from prepareText
  * (with caret stops) + layoutNextLine at the viewport width (or unbounded
- * when not wrapping) and are drawn by the caller, one d-text per line. A unit
- * wider than the wrap width is split into its graphemes first, so long
- * unbroken text wraps instead of overflowing. An empty text, or one ending in
- * a hard break, still gets a (blank) last line to sit the caret on. Caret
- * positions are the units' grapheme stops: the caret x, the nearest position
- * to an x, and a caret step all come from the same shaping that is drawn.
+ * when not wrapping) and are drawn by the caller, one <text detached> per
+ * line. A unit wider than the wrap width is split into its graphemes first,
+ * so long unbroken text wraps instead of overflowing. An empty text, or one
+ * ending in a hard break, still gets a (blank) last line to sit the caret
+ * on. Caret positions are the units' grapheme stops: the caret x, the
+ * nearest position to an x, and a caret step all come from the same shaping
+ * that is drawn.
  *
  * The scroll offsets are retained between frames and only adjusted when the
  * caret would fall outside the visible range, so stationary text does not

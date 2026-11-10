@@ -81,7 +81,7 @@ export function Modal(props: ModalProps) {
         bottom={0}
         onPointerDown={dismiss}
       >
-        <d-rect transition={colorFade()} color={props.backdropColor ?? theme.color.scrim} />
+        <rect detached transition={colorFade()} color={props.backdropColor ?? theme.color.scrim} />
       </view>
       {props.children}
     </view>

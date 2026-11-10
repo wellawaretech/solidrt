@@ -70,8 +70,8 @@ into the text, and `hardBreak[i]`, for `prepared.length` units. `layoutNextLine`
 is a greedy breaker over those numbers: it fills one line to the width you hand
 it and returns the cursor for the next, so a circle is a stack of chords, a
 column is the same loop with a new box, and a headline that must fit is a loop
-over sizes. Each line is drawn as a `<d-text>` of exactly its own text in the
-same font.
+over sizes. Each line is drawn as a `<text detached>` of exactly its own text
+in the same font.
 
 The split is what makes it usable: shaping happened once, through the shared
 word cache the drawn lines hit again, so re-breaking three paragraphs every

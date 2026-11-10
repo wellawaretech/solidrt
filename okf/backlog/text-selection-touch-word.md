@@ -32,7 +32,7 @@ Component-only over the existing selection machinery in `EditorField` plus
 `selectionRects`. The recognizers exist since 2026-09-22 (core's
 `createLongPress`, which wins the finger at its timer and streams moves
 after it, and `createDoubleTap`; okf/done/pointer-discrete-gestures.md);
-what remains is handle drawing (two small `d-path`
+what remains is handle drawing (two small `<path detached>`
 grips at the first/last selection rect corners) with their own drag
 mapping through `offsetAtX`/`lineAtY`. Clipboard integration (the usual
 reason to select on touch) is the separate clipboard module.

@@ -160,7 +160,7 @@ API: `StyleProps`, `Glow`, `Glass`, `Material`, `MaterialRole`, `ElevationLevel`
 
 ## Typography helpers
 
-`typeStyle(variant)` resolves a theme type-scale role (`caption`/`label`/`body`/`title`/`heading`) to font props ready to spread onto a `<text>` or `d-text`: `fontSize` carries `policy.textScale`, `fontWeight` is the role's own. Reactive when called inside a tracked scope, like any theme/policy read. `Text` applies it for you; reach for the helpers when building custom text out of core primitives.
+`typeStyle(variant)` resolves a theme type-scale role (`caption`/`label`/`body`/`title`/`heading`) to font props ready to spread onto a `<text>` or a `<text detached>`: `fontSize` carries `policy.textScale`, `fontWeight` is the role's own. Reactive when called inside a tracked scope, like any theme/policy read. `Text` applies it for you; reach for the helpers when building custom text out of core primitives.
 
 `typeScaleStyles()` is the type scale as font styles (every role, plus the mono family at body size), and `warmTypeScale()` hands them to core's `warmText`, which makes their glyph cells ahead of the first screen on the text engine's worker. `Window` does this on mount and again when the theme or the text policy changes; an app that draws its own window calls it once at startup.
 
@@ -456,7 +456,7 @@ function Chip(props) {
   let press = createPress(props)
   return (
     <view ref={press.ref} {...press.handlers} padding={8} focusable cursor="pointer">
-      <d-rect color={press.pressed() ? theme.color.overlayPressed : theme.color.surfaceAlt} radius={theme.radius.full} />
+      <rect detached color={press.pressed() ? theme.color.overlayPressed : theme.color.surfaceAlt} radius={theme.radius.full} />
       <text color={theme.color.text}>{props.label}</text>
     </view>
   )
@@ -835,7 +835,7 @@ API: `SplitView`, `SplitViewProps` - typed and commented in [src/split-view.tsx]
 
 ### Icon
 
-A thin themed wrapper over the core `parseSvg` primitive. `src` is a whole SVG document as a string; the component parses it once (memoized), maps the draws to `<d-path>` in a square `designSize`-fitted box (`size`, default 24) and, for monochrome icons that stroke/fill with `currentColor`, recolors it via `color` (default the theme text color). It carries no icon set and no name registry, so any `currentColor` SVG works (Lucide, Feather, Heroicons, ...) and only the icons you import are bundled. Multi-color documents keep their own fills. For a non-square box, use `parseSvg` directly.
+A thin themed wrapper over the core `parseSvg` primitive. `src` is a whole SVG document as a string; the component parses it once (memoized), maps the draws to `<path detached>` in a square `designSize`-fitted box (`size`, default 24) and, for monochrome icons that stroke/fill with `currentColor`, recolors it via `color` (default the theme text color). It carries no icon set and no name registry, so any `currentColor` SVG works (Lucide, Feather, Heroicons, ...) and only the icons you import are bundled. Multi-color documents keep their own fills. For a non-square box, use `parseSvg` directly.
 
 Icons are just SVG strings: import them as assets (`import House from "lucide-static/icons/house.svg"`, resolved to a string), pull them from a string export, or inline a literal.
 

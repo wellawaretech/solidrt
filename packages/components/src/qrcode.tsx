@@ -36,10 +36,10 @@ const MODULE_SIZE = 6
 const MARGIN = 16
 
 // Render a QR for `data` as primitives: merge horizontal runs of dark modules
-// per row into a single d-rect, placed at explicit coordinates on a light
-// quiet-zone panel. Everything inside the panel is detached, so a data change
-// repaints without touching layout; the panel view itself has a fixed size
-// (module count * module size + margins) that only changes when the data
+// per row into a single detached rect, placed at explicit coordinates on a
+// light quiet-zone panel. Everything inside the panel is detached, so a data
+// change repaints without touching layout; the panel view itself has a fixed
+// size (module count * module size + margins) that only changes when the data
 // crosses a QR version boundary.
 export function QrCode(props: QrCodeProps) {
   let grid = createMemo(() => {
@@ -71,9 +71,9 @@ export function QrCode(props: QrCodeProps) {
 
   return (
     <view repaintBoundary width={side()} height={side()} transition={splitTransition(props.transition).root} onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)} {...props.layout}>
-      <d-rect color={props.background ?? "#ffffff"} radius={props.radius ?? theme.radius.md} />
+      <rect detached color={props.background ?? "#ffffff"} radius={props.radius ?? theme.radius.md} />
       {grid().runs.map((run) => (
-        <d-rect
+        <rect detached
           x={margin() + run.x * size()}
           y={margin() + run.y * size()}
           w={run.len * size()}

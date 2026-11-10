@@ -192,7 +192,7 @@ function App() {
         {/* The background belongs INSIDE the captured node: a sibling behind it
             is not part of the node, and the card would capture transparent. */}
         <view ref={n => (content = n)} flexDirection="column" gap={22} padding={PADDING}>
-          <d-rect color={backgroundColor} />
+          <rect detached color={backgroundColor} />
           <text fontSize={16} fontWeight={600} color="#6f86c4">{release.title}</text>
           {sections.map(section => (
             <view flexDirection="column" gap={9}>

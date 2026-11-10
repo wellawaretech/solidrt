@@ -88,9 +88,9 @@ move heavy calculations to WebAssembly or to Rust.
 [Performance](/guides/performance/) shows where each type of work belongs.
 
 To set the style, you use props on elements, not stylesheets. A `view` does
-not paint. Thus, for a background, put a `<d-rect>` in the view. Do not use
-`background-color`. The [element vocabulary](/core/vocabulary/) shows all
-elements.
+not paint. Thus, for a background, put a `<rect detached>` in the view. Do
+not use `background-color`. The [element vocabulary](/core/vocabulary/)
+shows all elements.
 
 There are no DevTools. In place of DevTools, `sol mcp` lets a coding agent
 read the live tree, the logs and screenshots of the running app. Refer to

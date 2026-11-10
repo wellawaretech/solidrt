@@ -497,17 +497,12 @@ Shaped, not started.
   mark a drag-to-move region, so a desktop widget (a character, a clock, a
   floating panel) runs in an ordinary framed window; `<window>` has only
   title, fullscreen and shader. Desktop-only.
-- **[Replace the d-* tags with a set-once detached attribute](backlog/detached-attribute.md)** [2026-11-10]
-  The seven d-* intrinsics (d-view, d-rect, d-oval, d-line, d-path, d-texture,
-  d-text) double the tag set for one bit that never changes after creation; a
-  static `detached` attribute on the plain tag (`<view detached>`) says the
-  same thing, and createElement already receives static props inline, so the
-  bit is known when the native node is built.
 - **[Statically detect layout elements inside detached views](backlog/detached-nesting-static-check.md)** [2026-08-02]
-  A <view> nested inside a <d-view> typechecks and fails only at runtime, and
-  TypeScript cannot catch it (every JSX expression is the one Element type, so
-  children cannot be constrained per tag); the place to prevent this coding
-  error is the bundler's JSX pass, where tags are static.
+  A <view> nested inside a <view detached> typechecks and fails only at
+  runtime, and TypeScript cannot catch it (every JSX expression is the one
+  Element type, so children cannot be constrained per tag); the place to
+  prevent this coding error is the bundler's Babel pass that resolves the
+  detached attribute, where tags and the literal attribute are static.
 - **[Dev/prod signal for validation](backlog/dev-prod-validation-policy.md)** [2026-07-17]
   The missing runtime signal and shared helper behind the agreed convention of
   throwing in dev and warning in prod; today everything is dev, so validation
@@ -740,9 +735,9 @@ Shaped, not started.
 - **[Apply SVG clipPath in parseSvg](backlog/parse-svg-clip-path.md)** [2026-11-01]
   parseSvg drops clipPath (usvg resolves it, forge never reads it) and the
   render tree has no path clip at all (Impeller's clip_path is never called,
-  overflow clips need a layout box); add a generic clipPath prop on
-  view/d-view/d-path in alloy, emit per-draw clips from forge in flat mode,
-  and carry the same field on groups once tree mode lands.
+  overflow clips need a layout box); add a generic clipPath prop on view,
+  detached view and detached path in alloy, emit per-draw clips from forge in
+  flat mode, and carry the same field on groups once tree mode lands.
 - **[parseSvg tree output](backlog/parse-svg-tree.md)** [2026-08-28]
   parseSvg flattens usvg's group tree into one draw list, losing group ids,
   group opacity and group transforms; add an opt-in tree output (groups with
@@ -1803,6 +1798,12 @@ Finished, kept for the reasoning.
   outside the view sizes like a replaced element (the texture's rules, but
   compressible) with the design size as its intrinsic size. Decided 2026-08-27
   as one rule, no opt-in.
+- **[Replace the d-* tags with a set-once detached attribute](done/detached-attribute.md)** [2026-11-10]
+  The seven d-* intrinsics (d-view, d-rect, d-oval, d-line, d-path, d-texture,
+  d-text) double the tag set for one bit that never changes after creation; a
+  literal `detached` attribute on the plain tag (`<view detached>`) says the
+  same thing, and the bundler's JSX pass resolves it to the detached form at
+  compile time, so the runtime and the native tree do not change.
 - **[Detached-view transform origin pivots around the inherited box](done/detached-view-transform-origin.md)** [2026-08-03]
   Fixed 2026-08-03 - a d-view's unset transform origin now defaults to its
   local (0,0), the point its children's coordinates are authored against,

@@ -585,8 +585,8 @@ export type ViewOptions = {
   /** Render into a rectangle of this draw target (an app-owned atlas)
    * instead of a target of the view's own: every view into one atlas
    * costs ONE pass. `x`/`y` (top-left origin, default 0) place the tile;
-   * display it with `<d-texture src={atlas} srcX srcY srcW srcH>`. The
-   * atlas carries depth, samples and the format; `view.texture` is then
+   * display it with `<texture detached src={atlas} srcX srcY srcW srcH>`.
+   * The atlas carries depth, samples and the format; `view.texture` is then
    * the tile's id (a draw target, not a texture), `view.depthTexture` and
    * `view.hdrTexture` are null, and the tile holds LINEAR light like every
    * buffer - resolve the atlas once with a DEFAULT_RESOLVE pass over it
@@ -1074,9 +1074,9 @@ export type Scene = {
    * moves (the element hit-test has the same limit).
    *
    * Coordinates assume the leaf is LAID OUT at the target size - true for
-   * the built-in leaf and a d-texture at natural size, under any ancestor
-   * transforms or design-size fits (the hit test undoes them). A leaf laid out
-   * at a different size needs handlersFor instead.
+   * the built-in leaf and a detached texture at natural size, under any
+   * ancestor transforms or design-size fits (the hit test undoes them). A leaf
+   * laid out at a different size needs handlersFor instead.
    */
   handlers: SceneHandlers
   /** handlers for a leaf whose LAYOUT size differs from the target size -

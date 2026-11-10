@@ -1289,12 +1289,12 @@ declare module "flux:gpu" {
    * redraws over its own rectangle (the rest keeps its pixels), a changed
    * parent redraws everything. That is what makes N views or N shadow maps
    * cost one pass instead of N. The returned id is not a texture: sample,
-   * display (`<d-texture src={parent} srcX srcY srcW srcH>`), read back and
-   * copy the PARENT; `depthTexture(parent)` is the tile's depth too. Depth,
-   * `samples`, `format`, `render` and `loadOp` are the parent's (passing
-   * them throws), `clearColor` is the tile's own. A rectangle partly outside the
-   * parent is clipped; {@link setTargetRect} moves it. Tiles do not nest.
-   * Destroying the parent destroys its tiles.
+   * display (`<texture detached src={parent} srcX srcY srcW srcH>`), read
+   * back and copy the PARENT; `depthTexture(parent)` is the tile's depth
+   * too. Depth, `samples`, `format`, `render` and `loadOp` are the parent's
+   * (passing them throws), `clearColor` is the tile's own. A rectangle partly
+   * outside the parent is clipped; {@link setTargetRect} moves it. Tiles do not
+   * nest. Destroying the parent destroys its tiles.
    */
   export function createDrawTarget(
     width: number,
@@ -1610,11 +1610,11 @@ declare module "flux:gpu" {
    * top-to-bottom rows - the {@link readTexture} result shape), resolving once
    * it has been rendered on the next paint pass. The node must be attached to
    * the live tree (an unmounted node is never painted, so its capture rejects)
-   * and paint a non-zero box. A laid-out node captures its layout box. A `d-*`
-   * node has no layout box - that is what detached means - so it captures its
-   * painted box instead: its own `w`/`h` when set, else the nearest laid-out
-   * ancestor's box (the same box the render tree reports for it), with its
-   * `x`/`y` paint offset mapped to the texture origin.
+   * and paint a non-zero box. A laid-out node captures its layout box. A
+   * detached node has no layout box - that is what detached means - so it
+   * captures its painted box instead: its own `w`/`h` when set, else the
+   * nearest laid-out ancestor's box (the same box the render tree reports for
+   * it), with its `x`/`y` paint offset mapped to the texture origin.
    * Rendered at the current display scale, so `width`/`height` are actual
    * pixel dimensions (ceil(logicalSize * displayScale)), not logical points.
    * No texture is created and there is nothing to free; to display or sample

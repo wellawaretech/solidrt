@@ -53,7 +53,7 @@ function App() {
   }
   return (
     <window>
-      <d-rect color="#181820" />
+      <rect detached color="#181820" />
       <view flexDirection="column" gap={10} padding={24}>
         <text color="#eef4ff" fontSize={22} fontWeight={700}>
           Gamepads
@@ -86,7 +86,7 @@ function App() {
           )}
         </For>
       </view>
-      <For each={players}>{(p, i) => <d-rect x={p.pos()[0]} y={p.pos()[1]} w={MARKER} h={MARKER} radius={6} color={COLORS[i()]} />}</For>
+      <For each={players}>{(p, i) => <rect detached x={p.pos()[0]} y={p.pos()[1]} w={MARKER} h={MARKER} radius={6} color={COLORS[i()]} />}</For>
     </window>
   )
 }

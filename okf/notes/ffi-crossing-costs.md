@@ -12,9 +12,9 @@ laptop), against `ac230d1`. Two harnesses, both throwaway apps run under
 
 - a microbench that imports `flux:rendertree` directly and times raw
   `createNode`/`setProperty` loops with `performance.now()`, best of 5;
-- a mount bench that renders 3000 `<d-rect>` components with 8 static
-  props each through Solid + the core renderer and times the synchronous
-  `render()` call, ~60 samples per build via reloads.
+- a mount bench that renders 3000 `<rect detached>` components with 8
+  static props each through Solid + the core renderer and times the
+  synchronous `render()` call, ~60 samples per build via reloads.
 
 Both were run against HEAD (one crossing per prop) and against a build
 with batched creation (`createNode(id, kind, propsObject)`: one crossing

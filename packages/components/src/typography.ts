@@ -4,11 +4,12 @@ import { theme, type TextVariant } from "./theme"
 import { policy } from "./policy"
 
 // Resolved font props for a type-scale role, with the text policies applied:
-// spread onto a <text> or d-text. fontSize carries policy.textScale
-// (lineHeight is relative to the size, so it scales implicitly). Reactive
-// when called inside a tracked scope, like any theme/policy read. The weight
-// is the role's own: the text engine blends coverage with DirectWrite's
-// recipe, so light-on-dark text needs no compensation at any display scale.
+// spread onto a <text> or a <text detached>. fontSize carries
+// policy.textScale (lineHeight is relative to the size, so it scales
+// implicitly). Reactive when called inside a tracked scope, like any
+// theme/policy read. The weight is the role's own: the text engine blends
+// coverage with DirectWrite's recipe, so light-on-dark text needs no
+// compensation at any display scale.
 export function typeStyle(variant: TextVariant) {
   let role = theme.text[variant]
   return {

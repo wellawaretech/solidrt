@@ -33,10 +33,10 @@ atlases draws sprites from any of them in the same draw (the multi-texture
 batch), and a mipmapped sheet goes through `extrudeGrid`/`extrudeRects`
 first so its mip chain does not bleed across cells.
 
-The rendertree already handles 2D well: a `d-texture` with atlas sub-rects is
-a sprite, with native transitions, gesture-arena pointer events, and
-per-element inspectability, and it carries populations into the low
-thousands. This package is for what lies beyond that: dense, animated
+The rendertree already handles 2D well: a `<texture detached>` with atlas
+sub-rects is a sprite, with native transitions, gesture-arena pointer
+events, and per-element inspectability, and it carries populations into
+the low thousands. This package is for what lies beyond that: dense, animated
 populations - entities, particles, bullets - drawn as one instanced draw
 per view. Every sprite is a node of the spatial core, so native
 transitions, groups, picking and the collision queries reach it with no

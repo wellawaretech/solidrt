@@ -42,7 +42,7 @@ test("a text shows at rest what it still shows after frames are drawn around it"
         </view>
       </view>
       <view width={10} height={10} opacity={dim() ? 0.5 : 1} transition={{ opacity: "200ms linear" }}>
-        <d-rect color="#ffffff" />
+        <rect detached color="#ffffff" />
       </view>
     </view>
   ))

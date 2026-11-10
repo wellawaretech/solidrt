@@ -19,8 +19,8 @@
 // Raster vs vector: a texture has a fixed source resolution, so it softens when
 // drawn larger than (displayed size x env.displayScale) on a hi-DPI display.
 // Author raster at 2-3x the largest size you will draw it. When the render size
-// is fluid or DPI varies, prefer a vector (svg.tsx / <d-path>) instead - it
-// stays crisp at any size.
+// is fluid or DPI varies, prefer a vector (svg.tsx / <path detached>) instead -
+// it stays crisp at any size.
 import { render, createImage, Loading } from "@solidrt/core"
 
 function App() {

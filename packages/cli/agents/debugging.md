@@ -179,7 +179,7 @@ when exactly one client is connected.
   this same record, through `@solidrt/test`):
   - `id`, `kind`, `x`, `y`, `width`, `height`: the window-relative box of
     the node as painted, the axis-aligned bounds of its painted corners;
-    zero before the first layout. `detached: true` marks a d-* node.
+    zero before the first layout. `detached: true` marks a detached node.
   - `text`: a text's content; `label`: the node's `label` prop, a stable
     name that survives a reload where ids do not; `children`, cut off past
     `depth`, with `childCount` saying how many the node has (descend with
@@ -518,13 +518,13 @@ The loop is the same as over MCP: `/reload`, then `/logs?since=`, then
   the problem in the capture, say that instead of guessing.
 - Snapshots are downscaled by the time you see them, so a full-window capture
   cannot show you a defect a few pixels across. Whenever you hand-author
-  geometry - a `d-path` from raw path math, a `radius` where two shapes meet,
-  a stroke join - inspect it MAGNIFIED once, when you write it: get_snapshot
-  with a tight crop at scale 4-8 shows the actual rendered pixels enlarged,
-  in one call, on the real app. Verifying that a shape is in the right place
-  is not the same check as verifying it is drawn right - and get_render_tree
-  props answers the third question, whether the value you set is the value
-  the renderer holds.
+  geometry - a `<path detached>` from raw path math, a `radius` where two
+  shapes meet, a stroke join - inspect it MAGNIFIED once, when you write it:
+  get_snapshot with a tight crop at scale 4-8 shows the actual rendered
+  pixels enlarged, in one call, on the real app. Verifying that a shape is in
+  the right place is not the same check as verifying it is drawn right - and
+  get_render_tree props answers the third question, whether the value you set
+  is the value the renderer holds.
 - GPU/geometry bugs: inspect the actual GPU data FIRST - get_gpu_resources
   for draw counts/uniforms/sizes, get_texture for atlas or data-texture
   contents ("is this tile blank?" is a ten-second question), get_buffer for

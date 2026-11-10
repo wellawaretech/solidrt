@@ -112,7 +112,7 @@ export function Checkbox(props: CheckboxProps) {
           <Show
             when={theme.icons.check}
             fallback={
-              <d-path
+              <path detached
                 d={check()}
                 drawStyle="stroke"
                 transition={colorFade()}

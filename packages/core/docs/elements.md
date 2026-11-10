@@ -32,7 +32,7 @@ sits in.
 ```
 
 Its props split in two. `ViewOwnProps` is everything a view offers besides
-layout, and it is what the detached `d-view` composes on its own:
+layout, and it is what `<view detached>` composes on its own:
 
 {{ decl packages/core/src/types.d.ts ViewOwnProps }}
 
@@ -46,13 +46,13 @@ Three of those props are worth knowing before you need them:
   scaled uniformly and centered. Everything under the view - layout, paint,
   input - happens in design units, and the view itself sizes like a
   replaced element whose intrinsic size is the design size. It is the
-  natural wrapper for `parseSvg` output, any `d-*` subtree authored in
+  natural wrapper for `parseSvg` output, any detached subtree authored in
   fixed units, or a whole laid-out panel that should scale rather than
   reflow.
 - `repaintBoundary` retains the subtree's display list, and in its
   `"snapshot"` forms its rasterized pixels too. It is the lever for putting
   heavy static content next to content that changes every frame. On a
-  `d-view` the snapshot boxes the inherited frame: the nearest laid-out
+  detached view the snapshot boxes the inherited frame: the nearest laid-out
   ancestor's box, or the design size under a `designSize` view.
 - `clipRadius` rounds the clip, and only does anything when `overflow` is
   non-visible.

@@ -253,7 +253,7 @@ through its debug commands, and `camera-components.test.tsx` drives
 Output composition: without `output`, `Scene` emits a minimal
 `<texture>` leaf and nothing else is forwarded - anything more goes
 through `output(texture, leaf)`, which renders in place of that leaf: a
-`<d-texture>`, a leaf with blendMode/fit/pointer/layout props, or a
+`<texture detached>`, a leaf with blendMode/fit/pointer/layout props, or a
 post-effect chain (`createShaderTarget` sampling the id with a
 covering-triangle pass; created in the callback it disposes with the
 Scene). Return null for no leaf at all and compose `scene.texture`

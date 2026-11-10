@@ -78,7 +78,7 @@
 // The element's laid-out box normalizes the travel: read at the press
 // through getLayoutBox (the untransformed read, so a designSize fit or
 // an ancestor transform never skews it), or from `layout` when given -
-// required for a detached d-* leaf, which has no layout box (the feed
+// required for a detached leaf, which has no layout box (the feed
 // throws rather than treat pixels as heights), and handy for a headless
 // check with no tree. A zero-height box passes pixels through unscaled.
 //
@@ -173,7 +173,7 @@ export interface PointerFeed extends InputDevice {
 
 export interface PointerFeedOptions {
   /** The element's size, when the app knows it - required for a detached
-   * d-* leaf, which has no layout box; default reads getLayoutBox at each
+   * leaf, which has no layout box; default reads getLayoutBox at each
    * press. */
   layout?: () => { width: number; height: number } | null
 }
@@ -366,7 +366,7 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
   let size = (event: { currentTarget: number }): { width: number; height: number } => {
     let box = options.layout ? options.layout() : getLayoutBox({ id: event.currentTarget })
     if (box === null && !options.layout) {
-      throw new Error("createPointerFeed: the element has no layout box (a detached d-* leaf, or before its first layout); create the feed with { layout: () => ({ width, height }) } for it")
+      throw new Error("createPointerFeed: the element has no layout box (a detached leaf, or before its first layout); create the feed with { layout: () => ({ width, height }) } for it")
     }
     return box && box.width > 0 && box.height > 0 ? { width: box.width, height: box.height } : { width: 0, height: 0 }
   }

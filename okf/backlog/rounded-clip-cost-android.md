@@ -43,7 +43,7 @@ So:
   slide) is: ~8 ms for one pane, ~13 ms for ten, on top of a 12.8 ms
   frame. The cost is not linear in the count, so part of it is a
   per-frame path change and part per clip.
-- What is drawn under the clip matters: with the pane's `d-texture`
+- What is drawn under the clip matters: with the pane's detached texture
   (the frost slice) removed the ten clips cost ~6 ms instead of ~13.
 - Both sides pay: the raster thread's per-frame CPU triples (5 -> 15 ms
   at 20 fps) and the GPU span doubles. The UI thread is idle (jsMs
@@ -73,12 +73,12 @@ GLES, and why destination-out/over leave the fast blend path.
 - The cause named, and either fixed in alloy or documented in
   performance.md as a rule ("a rounded clip on a resizing box costs N ms
   per pane on a tiled GPU; round the paint instead").
-- Done 2026-09-22: a `radius` on `d-texture`/`<texture>` (a rounded image
-  draw: `draw_rounded_rect` with the texture as an image color source,
-  kinds/texture.rs). The demo's ten panes with `radius` on the frost slice
-  and a plain rect clip on the card: 121 frames at 17 ms p50 / 17 ms p90,
-  GPU span 14.9 ms p50, raster thread ~15% - the same frame as with no
-  rounding at all. The rounded clip's own cost stays open.
+- Done 2026-09-22: a `radius` on `<texture detached>`/`<texture>` (a
+  rounded image draw: `draw_rounded_rect` with the texture as an image
+  color source, kinds/texture.rs). The demo's ten panes with `radius` on
+  the frost slice and a plain rect clip on the card: 121 frames at 17 ms
+  p50 / 17 ms p90, GPU span 14.9 ms p50, raster thread ~15% - the same
+  frame as with no rounding at all. The rounded clip's own cost stays open.
 - Done 2026-09-23: get_stats' `paintOps` counts draws, clips (rounded
   ones apart), save layers and non-source-over blends per rebuild, so
   this kind of cost is attributed in one read instead of a

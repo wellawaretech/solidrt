@@ -150,8 +150,8 @@ export function makePointerInput(deps: PointerInputDeps): PointerInput {
 
   // localX/localY arrive in the leaf's LAYOUT frame (the hit test undoes
   // every transform above it, design-size fits included), so a leaf laid
-  // out at the target size - the built-in <Scene> leaf, a d-texture at
-  // natural size - is already in scene pixels. Only a leaf deliberately
+  // out at the target size - the built-in <Scene> leaf, a detached texture
+  // at natural size - is already in scene pixels. Only a leaf deliberately
   // laid out at a DIFFERENT size (the supersampling pattern) needs the
   // ratio, and only the app knows that layout: handlersFor takes it.
   let makeHandlers = (layout: (() => { width: number; height: number }) | null): SceneHandlers => {

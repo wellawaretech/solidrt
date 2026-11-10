@@ -68,7 +68,7 @@ export function Spinner(props: SpinnerProps) {
       <Show when={policy.motion !== "none"}>
         <Animate />
       </Show>
-      <d-path
+      <path detached
         d={path()}
         drawStyle="stroke"
         transition={colorFade()}

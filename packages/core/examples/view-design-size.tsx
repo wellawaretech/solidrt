@@ -16,9 +16,10 @@
 // 3. Children live in DESIGN space, laid-out ones included. x/y, w/h,
 //    fontSize, stroke widths, flex, percentages, text wrapping - everything
 //    resolves against the design size, not the box. The box a child inherits
-//    IS the design size, so a bare `d-rect` fills the design space, detached
-//    text wraps at its width, and a flex row is laid out at the design width
-//    whatever the window - nothing reflows on resize, the fit does the work.
+//    IS the design size, so a bare `<rect detached>` fills the design space,
+//    detached text wraps at its width, and a flex row is laid out at the
+//    design width whatever the window - nothing reflows on resize, the fit
+//    does the work.
 // 4. Pointer coordinates arrive in design space too. localX/localY on the
 //    design-size view (and on anything under it) read in design units, so no
 //    scale factor is threaded through the app's hit math.
@@ -31,8 +32,8 @@
 // one design space instead.
 //
 // Design space changes the units, not the element choice: laid-out views and
-// text stay the default under a designSize (fact 3). The d-* scene below is
-// free-form drawn geometry; panels, cards and labels would still be built
+// text stay the default under a designSize (fact 3). The detached scene below
+// is free-form drawn geometry; panels, cards and labels would still be built
 // from laid-out elements, as the flex row at the bottom shows.
 //
 // Resize the window and watch: the scene keeps its aspect ratio, everything
@@ -52,7 +53,7 @@ function App() {
   return (
     // The window background is what shows through the letterbox bars.
     <window>
-      <d-rect color="#0b0f17" />
+      <rect detached color="#0b0f17" />
 
       {/* flex={1} overrides the intrinsic design size: the box is the whole
           window, and the fit maps the design into it (fact 1). */}
@@ -64,30 +65,30 @@ function App() {
       >
         {/* No w/h, so it fills the box it inherits - which under a design size is
             the design space (fact 3). Its edges are the letterbox edges. */}
-        <d-rect color="#151b28" />
+        <rect detached color="#151b28" />
 
         {/* A scene at literal design coordinates. No breakpoints, no
             windowSize() reads, no scale factor: authored once, at this size. */}
-        <d-rect x={40} y={40} w={240} h={140} radius={12} color="#1f6feb" />
-        <d-rect x={300} y={40} w={300} h={140} radius={12} color="#3fb950" />
-        <d-oval x={40} y={220} w={140} h={140} color="#a371f7" />
-        <d-line x1={200} y1={300} x2={600} y2={300} color="#e3b341" strokeWidth={6} />
-        <d-text x={64} y={95} fontSize={28} color="#e6e6e6">
+        <rect detached x={40} y={40} w={240} h={140} radius={12} color="#1f6feb" />
+        <rect detached x={300} y={40} w={300} h={140} radius={12} color="#3fb950" />
+        <oval detached x={40} y={220} w={140} h={140} color="#a371f7" />
+        <line detached x1={200} y1={300} x2={600} y2={300} color="#e3b341" strokeWidth={6} />
+        <text detached x={64} y={95} fontSize={28} color="#e6e6e6">
           fixed design space
-        </d-text>
-        <d-text x={324} y={95} fontSize={28} color="#0b0f17">
+        </text>
+        <text detached x={324} y={95} fontSize={28} color="#0b0f17">
           {DESIGN_W} x {DESIGN_H}
-        </d-text>
+        </text>
 
         {/* Pointer position in design units (fact 4), drawn in design units.
             Non-keyed Show keeps the marker node mounted across moves (a
             ternary on at() would recreate it every event); the accessor
             reads update its props fine-grained. */}
-        <d-text x={200} y={330} fontSize={22} color="#8b949e">
+        <text detached x={200} y={330} fontSize={22} color="#8b949e">
           {at() ? `design x ${round(at()!.x)}, y ${round(at()!.y)}` : "move the pointer over the scene"}
-        </d-text>
+        </text>
         <Show when={at()}>
-          {(a) => <d-oval x={a().x - 8} y={a().y - 8} w={16} h={16} color="#f85149" />}
+          {(a) => <oval detached x={a().x - 8} y={a().y - 8} w={16} h={16} color="#f85149" />}
         </Show>
 
         {/* A laid-out row under the design size (fact 3): positioned and sized in
@@ -98,7 +99,7 @@ function App() {
             flex row, laid out in design units
           </text>
           <view flex={1} height={10}>
-            <d-rect radius={5} color="#1f6feb" />
+            <rect detached radius={5} color="#1f6feb" />
           </view>
         </view>
       </view>

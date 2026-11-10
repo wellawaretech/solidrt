@@ -4,8 +4,8 @@ An instanced sprite layer above `@solidrt/core/gpu`: a layer's atlases
 bound together, N quads from any of them in ONE draw call, composited into
 the app as an ordinary `<texture>`
 leaf. The live layer backs every sprite with a SPATIAL ARENA node (never a
-rendertree element - `d-texture` sprites are the right tool up to the low
-thousands; measured ~0.65us paint and ~15KB memory per NODE, and every
+rendertree element - `<texture detached>` sprites are the right tool up to
+the low thousands; measured ~0.65us paint and ~15KB memory per NODE, and every
 moved node is two setProperty FFI calls per frame). The node makes sprites
 citizens of the spatial core: native producers (node transitions, animation
 clips, physics) reach them through `sprite.node`, hierarchy recomputes

@@ -275,8 +275,8 @@ sprites its camera meets): View culling in views.md.
   LAID-OUT leaves and take no position props, so to overlay sprites on
   tiles wrap each in a `<view position="absolute">` inside one container
   - as plain flex siblings they stack side by side instead. Neither can
-  live inside a d-* subtree (the insert throws; `output` with a
-  `<d-texture>` is the detached form).
+  live inside a detached subtree (the insert throws; `output` with a
+  `<texture detached>` is the detached form).
 - A layer with NO VIEW bakes nothing: imperative use (no `<TileLayer>`)
   makes one with `layer.createView({ width, height, camera })` and shows
   `view.texture`, or every chunk stays records on the CPU. `resident()`

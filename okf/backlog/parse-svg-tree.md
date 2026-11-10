@@ -38,7 +38,7 @@ ignored (fill always first).
 - Flat stays the default and keeps its shape, so the icon one-liner, the
   components `Icon` and the player app-icon do not change. Tree is opt-in;
   TS overloads on `tree: true` give each call site the right type.
-- `SvgDraw` is unchanged and stays spread-clean (`<d-path {...draw} />`):
+- `SvgDraw` is unchanged and stays spread-clean (`<path detached {...draw} />`):
   unknown props are rejected by name in flux, so `id`/`type` live on the
   path node, not on the draw. A path node holds 1..2 draws in paint order.
 - Optional keys are omitted, not set to undefined, matching the draw keys.
@@ -66,12 +66,12 @@ A sextet, not skew props, for two reasons:
   detail forge must not know; a sextet is data.
 - Authored transform and animation stay separate. Composed as the
   OUTERMOST step of the user chain (after x/y), `rotate`/`scale`/`x`/`y`/
-  `origin` operate inside the authored frame: `<d-view
+  `origin` operate inside the authored frame: `<view detached
   transform={hand.transform} rotate={angle()}>` spins a clock hand about
   its own authored origin, no arithmetic, no extra wrapper. Decomposed
   props would force the app to add its angle to the authored one.
 
-`transform?: [number x6]` on `TransformProps` (view and d-view). One field
+`transform?: [number x6]` on `TransformProps` (view and detached view). One field
 plus one `then` in alloy, one decode in flux `properties/view.rs`, types,
 one alloy test. Not animatable via `transition`: it is a base, not a value
 to tween. Skew props remain possible later as an independent authoring
@@ -81,8 +81,8 @@ convenience.
 
     function Nodes(props: { nodes: SvgNode[] }) {
       return <For each={props.nodes}>{(n) => n.type === "group"
-        ? <d-view transform={n.transform} opacity={n.opacity}><Nodes nodes={n.children} /></d-view>
-        : <For each={n.draws}>{(draw) => <d-path {...draw} />}</For>
+        ? <view detached transform={n.transform} opacity={n.opacity}><Nodes nodes={n.children} /></view>
+        : <For each={n.draws}>{(draw) => <path detached {...draw} />}</For>
       }</For>
     }
 

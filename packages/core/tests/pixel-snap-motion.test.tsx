@@ -5,10 +5,10 @@
 // off for a subtree for good. What only the picture shows is read here,
 // frame by frame, as each frame's own paint drew it:
 //
-// - a letter of an animated title (a d-view with springs on y, scale and
-//   rotate around a d-text, every origin on a half pixel) ends its motion
-//   with no step under `pixelSnap={false}`, and without it stays unrounded
-//   while its tracks run and is rounded only when the last ends;
+// - a letter of an animated title (a detached view with springs on y, scale
+//   and rotate around a detached text, every origin on a half pixel) ends its
+//   motion with no step under `pixelSnap={false}`, and without it stays
+//   unrounded while its tracks run and is rounded only when the last ends;
 // - nothing rasterizes again when a scale that came down rests;
 // - a number that pops in from larger moves one way only, as text and as
 //   a snapshot boundary;
@@ -118,7 +118,7 @@ function Title(props: { left: number; pose: Pose; pixelSnap?: boolean }) {
   let pose = () => POSES[props.pose]
   return (
     <view pixelSnap={props.pixelSnap} position="absolute" left={props.left} top={TITLE.top} width={TITLE.width} height={TITLE.height}>
-      <d-view
+      <view detached
         x={LETTER.x + LETTER.w / 2}
         y={TITLE.height / 2 + pose().y}
         scale={pose().scale}
@@ -129,10 +129,10 @@ function Title(props: { left: number; pose: Pose; pixelSnap?: boolean }) {
           rotate: { duration: 520, bounce: 0.4 },
         }}
       >
-        <d-text x={-LETTER.w / 2} y={-TITLE.height / 2} w={LETTER.w} color="#ffffff" fontSize={TITLE_PX}>
+        <text detached x={-LETTER.w / 2} y={-TITLE.height / 2} w={LETTER.w} color="#ffffff" fontSize={TITLE_PX}>
           n
-        </d-text>
-      </d-view>
+        </text>
+      </view>
     </view>
   )
 }
@@ -309,10 +309,10 @@ test("a box is on the grid while a translate is held, off it while the track run
   await app.mount(() => (
     <view ref={stage} flex={1}>
       <view marginLeft={BOX.at} marginTop={BOX.at} width={BOX.width} height={BOX.height} x={x()} transition={{ x: SLIDE }}>
-        <d-rect color="#ffffff" />
+        <rect detached color="#ffffff" />
       </view>
       <view pixelSnap={false} marginLeft={BOX.at} marginTop={BOX.at} width={BOX.width} height={BOX.height}>
-        <d-rect color="#ffffff" />
+        <rect detached color="#ffffff" />
       </view>
     </view>
   ))

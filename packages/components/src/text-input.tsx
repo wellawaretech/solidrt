@@ -54,9 +54,9 @@ export interface TextInputProps extends TransitionProps {
 }
 
 // A plain string field over the shared EditorField shell: the buffer is
-// core's createTextBuffer and every line is one d-text of the value's slice.
-// Detached text takes its width from the box it is drawn in; +1 so the ink
-// width rounding never wraps a line's own text.
+// core's createTextBuffer and every line is one detached text of the
+// value's slice. Detached text takes its width from the box it is drawn in;
+// +1 so the ink width rounding never wraps a line's own text.
 export function TextInput(props: TextInputProps) {
   let value = (): string => ""
   return (
@@ -77,9 +77,9 @@ export function TextInput(props: TextInputProps) {
         return buffer
       }}
       renderLine={({ line, font, color }) => (
-        <d-text y={line().y} w={line().width + 1} {...font()} color={color()} maxLines={1}>
+        <text detached y={line().y} w={line().width + 1} {...font()} color={color()} maxLines={1}>
           {value().slice(line().start, line().end)}
-        </d-text>
+        </text>
       )}
       onSubmit={props.onSubmit}
       onCancel={props.onCancel}

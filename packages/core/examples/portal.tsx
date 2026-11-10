@@ -18,7 +18,7 @@ import { render, createPortal } from "@solidrt/core"
 function Banner() {
   return createPortal(
     <view position="absolute" top={0} left={0} right={0} padding={12}>
-      <d-rect color="#e0245e" />
+      <rect detached color="#e0245e" />
       <text color="#ffffff">Portaled banner - escaped the card</text>
     </view>
   )

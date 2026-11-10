@@ -9,7 +9,7 @@ function Chip(props) {
   let press = createPress(props)
   return (
     <view ref={press.ref} {...press.handlers} padding={8} focusable cursor="pointer">
-      <d-rect color={press.pressed() ? theme.color.overlayPressed : theme.color.surfaceAlt} radius={theme.radius.full} />
+      <rect detached color={press.pressed() ? theme.color.overlayPressed : theme.color.surfaceAlt} radius={theme.radius.full} />
       <text color={theme.color.text}>{props.label}</text>
     </view>
   )

@@ -5,9 +5,9 @@
 // from. The engine never sees a "shape" or a "column": here the paragraph is
 // poured band by band into a circle (each band's width is the chord at that
 // height, its line centered on it) and, when the circle is full, the same
-// cursor continues in a column beside it. Every line is a d-text of exactly its
-// own text, so the whole break redoes on every resize for arithmetic plus
-// word-cache hits; nothing is shaped twice.
+// cursor continues in a column beside it. Every line is a <text detached> of
+// exactly its own text, so the whole break redoes on every resize for
+// arithmetic plus word-cache hits; nothing is shaped twice.
 import { For, createMemo, layoutNextLine, prepareText, render, windowSize } from "@solidrt/core"
 
 const FONT = { fontSize: 16, lineHeight: 1.4 }
@@ -73,13 +73,13 @@ function App() {
   })
   return (
     <window>
-      <d-rect color="#f4efe6" />
-      <d-oval x={circle().x} y={circle().y} w={circle().d} h={circle().d} drawStyle="stroke" strokeWidth={1} color="#d8b26a" />
+      <rect detached color="#f4efe6" />
+      <oval detached x={circle().x} y={circle().y} w={circle().d} h={circle().d} drawStyle="stroke" strokeWidth={1} color="#d8b26a" />
       <For each={lines()} keyed={false}>
         {line => (
-          <d-text x={line().x} y={line().y} w={line().w + 1} {...FONT} color="#2b2620">
+          <text detached x={line().x} y={line().y} w={line().w + 1} {...FONT} color="#2b2620">
             {line().text}
-          </d-text>
+          </text>
         )}
       </For>
     </window>

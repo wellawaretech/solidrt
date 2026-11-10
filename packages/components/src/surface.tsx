@@ -227,16 +227,16 @@ export function Surface(props: SurfaceProps) {
   return (
     <>
       <Show when={contact()}>
-        {(shadow) => <d-rect color={caster()} radius={props.radius} shadow={shadow()} transition={shadowTransition()} />}
+        {(shadow) => <rect detached color={caster()} radius={props.radius} shadow={shadow()} transition={shadowTransition()} />}
       </Show>
-      <Show when={glow()}>{(shadow) => <d-rect color={caster()} radius={props.radius} shadow={shadow()} />}</Show>
+      <Show when={glow()}>{(shadow) => <rect detached color={caster()} radius={props.radius} shadow={shadow()} />}</Show>
       <Show when={!keyOnFill() && key()}>
-        {(shadow) => <d-rect color="transparent" radius={props.radius} shadow={shadow()} transition={shadowTransition()} />}
+        {(shadow) => <rect detached color="transparent" radius={props.radius} shadow={shadow()} transition={shadowTransition()} />}
       </Show>
       <Show
         when={glass()}
         fallback={
-          <d-rect
+          <rect detached
             transition={fillTransition()}
             onTransitionEnd={props.onFillTransitionEnd}
             color={fill()}
@@ -256,23 +256,23 @@ export function Surface(props: SurfaceProps) {
             clipRadius={props.radius}
             backdropFilter={{ blur: g().blur, saturate: GLASS_SATURATE }}
           >
-            <d-rect transition={fillTransition()} onTransitionEnd={props.onFillTransitionEnd} color={glassFill()} radius={props.radius} />
+            <rect detached transition={fillTransition()} onTransitionEnd={props.onFillTransitionEnd} color={glassFill()} radius={props.radius} />
           </view>
         )}
       </Show>
       <Show when={tinted()}>
-        <d-rect
+        <rect detached
           transition={tintFade()}
           color={props.pressed || props.hovered ? tint() : withAlpha(tint(), 0)}
           radius={props.radius}
         />
       </Show>
       <Show when={bevel()}>
-        {(b) => <d-rect drawStyle="stroke" strokeWidth={BEVEL_WIDTH} color={b()} radius={props.radius} />}
+        {(b) => <rect detached drawStyle="stroke" strokeWidth={BEVEL_WIDTH} color={b()} radius={props.radius} />}
       </Show>
       <Show when={props.outline}>
         {(o) => (
-          <d-rect
+          <rect detached
             drawStyle="stroke"
             transition={outlineTransition()}
             onTransitionEnd={props.onOutlineTransitionEnd}

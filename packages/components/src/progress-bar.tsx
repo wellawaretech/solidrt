@@ -42,7 +42,7 @@ export function ProgressBar(props: ProgressBarProps) {
   let indeterminate = () => props.value === undefined
 
   // Measured track width in pixels. Both the determinate fill and the
-  // indeterminate segment are drawn as a detached d-rect sized in pixels (paint
+  // indeterminate segment are drawn as a detached rect sized in pixels (paint
   // only) rather than animating a percentage `width`, which would reflow taffy
   // whenever the value changes. Refreshed each layout so it tracks resizes.
   let trackNode: { id: number } | undefined
@@ -71,7 +71,7 @@ export function ProgressBar(props: ProgressBarProps) {
   }
 
   // Fill width in pixels: a fixed segment while indeterminate, the value fraction
-  // otherwise. Drawn via the detached d-rect `w` below (paint only), so a
+  // otherwise. Drawn via the detached rect's `w` below (paint only), so a
   // changing value never reflows. The indeterminate slide comes from the `x`
   // offset.
   let fillWidth = () => (indeterminate() ? SEGMENT : clamp(props.value ?? 0, 0, 1)) * trackWidth()
@@ -108,7 +108,7 @@ export function ProgressBar(props: ProgressBarProps) {
         outlineTransition={split().border}
         onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
       />
-      <d-rect transition={fillTransition()} onTransitionEnd={partTransitionEnd("fill", "w", props.onTransitionEnd)} color={fillPaint().fill} radius={radius()} w={fillWidth()} h={h()} x={indeterminate() ? offset() : 0} shadow={fillPaint().glow} />
+      <rect detached transition={fillTransition()} onTransitionEnd={partTransitionEnd("fill", "w", props.onTransitionEnd)} color={fillPaint().fill} radius={radius()} w={fillWidth()} h={h()} x={indeterminate() ? offset() : 0} shadow={fillPaint().glow} />
     </view>
   )
 }

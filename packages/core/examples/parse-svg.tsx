@@ -2,15 +2,16 @@
 // not HTML: there are no <rect>/<circle>/<path> JSX children to nest. You hand
 // it the source text (a string you import, fetch, or inline) and get back the
 // document's intrinsic size plus a flat list of draws whose keys match the
-// path element's props - so rendering is a map to <d-path>, wrapped in a view
-// whose `designSize` fits the document's coordinate space into the box.
+// path element's props - so rendering is a map to <path detached>, wrapped in a
+// view whose `designSize` fits the document's coordinate space into the box.
 //
 // The point of draws-as-data over an opaque document element: every shape is
 // a real node you own. Below, the house highlights the shape under the
 // pointer - exact-geometry hit testing (the path outline, not its box), with
 // the recolor a per-node prop override that never re-parses the document.
-// The same structure gives per-shape animation (wrap a subset in <d-view>),
-// layer filtering, or interleaving your own JSX between document layers.
+// The same structure gives per-shape animation (wrap a subset in
+// <view detached>), layer filtering, or interleaving your own JSX between
+// document layers.
 //
 // A multi-color document keeps each shape's own fill; a monochrome icon
 // using stroke/fill "currentColor" is recolored by the `color` option,
@@ -57,7 +58,7 @@ function InteractiveHouse() {
     <view repaintBoundary width={240} height={240} designSize={[doc().width, doc().height]}>
       <For each={doc().draws}>
         {(draw, i) => (
-          <d-path
+          <path detached
             {...draw}
             color={hot() === i() ? "#ffd166" : draw.color}
             onPointerEnter={() => setHot(i())}
@@ -70,14 +71,14 @@ function InteractiveHouse() {
 }
 
 // The plain pattern: memoized parse, designSize-fitted box, draws mapped to
-// <d-path>, and a plain repaintBoundary (the DL-reuse tier, not "snapshot")
-// so the static subtree never re-records alongside animating siblings. The
-// components-package Icon is this plus theming.
+// <path detached>, and a plain repaintBoundary (the DL-reuse tier, not
+// "snapshot") so the static subtree never re-records alongside animating
+// siblings. The components-package Icon is this plus theming.
 function Svg(props: { src: string; size: number; color?: string }) {
   let doc = createMemo(() => parseSvg(props.src, { color: props.color }))
   return (
     <view repaintBoundary width={props.size} height={props.size} designSize={[doc().width, doc().height]}>
-      <For each={doc().draws}>{(draw) => <d-path {...draw} />}</For>
+      <For each={doc().draws}>{(draw) => <path detached {...draw} />}</For>
     </view>
   )
 }

@@ -12,6 +12,7 @@ import { requireBinary, runQuiet } from "../lib/util"
 import { fail } from "../lib/fail"
 import type { BundleOutput } from "../types/bundle"
 import { buildManifest, manifestAssetFor, type ManifestAsset } from "../lib/project"
+import { detachedAttribute } from "./detached"
 
 // Babel plugin: rewrite `import data from "../x" with { type: "binary" }` into an
 // inline Uint8Array of the file's bytes, and `with { type: "text" }` into an
@@ -98,7 +99,9 @@ async function babelLoad(path: string, code: string, plugins: PluginItem[], inpu
 // up as an import specifier in the emitted code, resolved from the app's tree at
 // bundle time; the CLI itself never loads core, so core is deliberately neither
 // a dependency nor a peer of this package (a second copy under the CLI could be
-// hoisted over the app's and bundle two runtime instances). Plain .js/.ts app
+// hoisted over the app's and bundle two runtime instances). detachedAttribute
+// runs ahead of solid and rewrites a literal `detached` on a host tag to the
+// d-* tag (see detached.ts). Plain .js/.ts app
 // modules take the same path (solid is a no-op without JSX) so inlineImport
 // can rewrite their `with { type: "binary" }` imports too; dependency code
 // (node_modules) skips the babel detour and keeps Bun's native loaders.
@@ -118,7 +121,7 @@ function solidPlugin(inputs: Set<string>, babelMaps?: Map<string, object>, isola
             `${args.path} is a "use isolate" module: import its types only (import type * as W from "../...") and call it through isolate() from flux:isolate`,
           )
         }
-        let plugins = [jsx, [solid, { moduleName: "@solidrt/core", generate: "universal" }], inlineImport(inputs)]
+        let plugins = [jsx, detachedAttribute, [solid, { moduleName: "@solidrt/core", generate: "universal" }], inlineImport(inputs)]
         return babelLoad(args.path, code, plugins, inputs, babelMaps)
       })
     },

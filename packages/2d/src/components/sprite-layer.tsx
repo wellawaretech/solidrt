@@ -186,8 +186,8 @@ const VIEW_PROPS = [
  * own view, composited as an ordinary `<texture>` leaf so the output
  * takes layout, transforms, blendMode, and pointer events like any
  * element - or hand `output` the texture id and compose it yourself. A
- * layout component: it cannot sit inside a d-* subtree; `output` with a
- * `<d-texture>` is the detached form. Children (`<Sprite>`) render
+ * layout component: it cannot sit inside a detached subtree; `output` with a
+ * `<texture detached>` is the detached form. Children (`<Sprite>`) render
  * nothing themselves - they populate the retained layer through context;
  * `<View2d>` children are further views of the same sprites.
  */

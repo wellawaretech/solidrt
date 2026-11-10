@@ -126,8 +126,9 @@ No new crate edges: alloy does not depend on forge and still will not.
 - `@solidrt/core/video` - createVideo() -> reactive stream over the
   `flux:video` player (texture id, dims, duration, currentTime,
   play/pause, close; auto-closed with the owner). NO video primitive
-  (user decision 2026-08-12): `<texture>`/`<d-texture>` are the display
-  targets (d-* first for animation-frequency content), matching the
+  (user decision 2026-08-12): `<texture>`/`<texture detached>` are the
+  display targets (the detached form first for animation-frequency
+  content), matching the
   no-image-primitive texture-id currency. The player exposes its handles
   so a richer Video component composes in a higher layer, not core.
 

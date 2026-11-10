@@ -319,7 +319,8 @@ export interface BoundingBox {
  * the current frame. Transforms anywhere in the chain (including the node's
  * own) compose fully; the box is the axis-aligned bounds of the transformed
  * quad. A detached node reports its painted box: its own w/h (or the
- * inherited box), or for `d-line` and `d-path` the geometry plus its stroke.
+ * inherited box), or for `<line detached>` and `<path detached>` the
+ * geometry plus its stroke.
  */
 export function getBoundingBox(node: { id: number }): BoundingBox | null {
   return tree.getBoundingBox(node.id)
@@ -381,14 +382,15 @@ export function measureText(text: string, options?: tree.MeasureTextOptions): { 
  * obstacle that is not in the flow, pours across columns (layoutNextLine's
  * `cursor` continues a paragraph in the next box), fits a box by trying
  * sizes, and gets per-glyph positions (`carets: true`; the only kerned
- * source, see PreparedText.carets). Draw each line as a d-text of exactly
- * its own text. Re-breaking every frame is cheap - the words are shaped
- * already and the lines' d-texts hit the same cache - so a shape that moves
- * or breathes can re-flow at frame rate. A paragraph that just wraps in a
- * box is a <text>, which also does floats, balancing and ellipsis. A long
- * text's first prepare shapes every distinct word once (some 30 us a word
- * on a phone): prepare it per paragraph as the reader reaches it, or once
- * behind a drawn loading state, not on a frame that must animate.
+ * source, see PreparedText.carets). Draw each line as a <text detached> of
+ * exactly its own text. Re-breaking every frame is cheap - the words are
+ * shaped already and the lines' detached texts hit the same cache - so a
+ * shape that moves or breathes can re-flow at frame rate. A paragraph that
+ * just wraps in a box is a <text>, which also does floats, balancing and
+ * ellipsis. A long text's first prepare shapes every distinct word once
+ * (some 30 us a word on a phone): prepare it per paragraph as the reader
+ * reaches it, or once behind a drawn loading state, not on a frame that must
+ * animate.
  */
 export function prepareText(text: string, options?: tree.MeasureTextOptions): tree.PreparedText {
   return tree.prepareText(text, options)
@@ -497,7 +499,7 @@ export function unitInk(prepared: tree.PreparedText, index: number): number {
  * the unit's ink stays within `width` (a hair of slack for float drift
  * included); a hard break ends the line; a unit
  * wider than `width` on its own goes on the line whole and overflows. Draw a
- * line as `<d-text x y w={line.width + 1}>{prepared.text.slice(line.start, line.end)}</d-text>`
+ * line as `<text detached x y w={line.width + 1}>{prepared.text.slice(line.start, line.end)}</text>`
  * with the same font options; its words are already shaped, so that is
  * cheap. With `runs`, a unit crossing a run boundary is several glued units
  * that always land on one line; draw such a line with a <span> per run.

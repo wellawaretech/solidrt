@@ -11,7 +11,7 @@ export function App() {
 
   return (
     <>
-      <d-rect color={backgroundColor} />
+      <rect detached color={backgroundColor} />
       <view flex={1} paddingTop={safeArea().top} paddingBottom={safeArea().bottom}>
         <Outlet />
       </view>

@@ -113,7 +113,7 @@ export function Dismissible(props: DismissibleProps) {
       {...swipe.handlers}
     >
       {props.style?.backgroundColor != null || props.style?.borderRadius != null ? (
-        <d-rect
+        <rect detached
           transition={split().background}
           onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
           color={props.style?.backgroundColor ?? "transparent"}

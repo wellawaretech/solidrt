@@ -383,9 +383,10 @@ function App() {
   // of the row under the hero panel.
   let panels = createMemo(() => {
     let size = windowSize()
-    // x/y/w/h is the DETACHED box vocabulary (d-* only) - a d-texture takes
-    // no layout width/height and would silently fall back to the inherited
-    // window box, drawing all three panels on top of each other.
+    // x/y/w/h is the DETACHED box vocabulary (detached elements only) - a
+    // detached texture takes no layout width/height and would silently fall
+    // back to the inherited window box, drawing all three panels on top of
+    // each other.
     if (size.height > size.width) {
       let hero = Math.round(size.height * SPLIT)
       let rest = size.height - hero
@@ -434,9 +435,10 @@ function App() {
   let knotMaterial = shaderMaterial({ vertex: LIT_VERTEX, fragment: KNOT_FRAGMENT, label: "knot" })
 
   // Both side views render `into` this one target as tiles: one pass for the
-  // pair, each panel's <d-texture> showing its tile through srcX/srcY. The id
-  // stays stable across a resize, so the <d-texture src> bindings and the
-  // owner-scoped auto-free keep working.
+  // pair, each panel's <texture detached> showing its tile through
+  // srcX/srcY. The id stays stable across a resize, so the
+  // <texture detached src> bindings and the owner-scoped auto-free keep
+  // working.
   let atlas = createDrawTarget(initial.atlas.width, initial.atlas.height, null, {
     depth: true,
     clearColor: VIEW_CLEAR,
@@ -475,7 +477,7 @@ function App() {
   ) => {
     let orbit = pointer.handlers
     return (
-      <d-texture
+      <texture detached
         {...tile()}
         {...box()}
         onPointerDown={(e: PointerEvent) => {

@@ -8,7 +8,7 @@ function App() {
 
   return (
     <window title="The Solid Runtime">
-      <d-rect color={backgroundColor} />
+      <rect detached color={backgroundColor} />
       <view
         flex={1}
         gap={20}

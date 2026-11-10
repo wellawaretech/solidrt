@@ -38,10 +38,10 @@ function Swipeable() {
   })
   return (
     <view width={CARD_WIDTH} height={CARD_HEIGHT} overflow="hidden" {...swipe.handlers}>
-      <d-rect color="#243044" radius={8} />
+      <rect detached color="#243044" radius={8} />
       <view width={CARD_WIDTH} height={CARD_HEIGHT} x={x()} transition={dragging() ? null : { x: { duration: 250 } }} alignItems="center" justifyContent="center">
-        <d-rect color="#3b5f8a" radius={8} />
-        <d-text color="#ffffff">{status()}</d-text>
+        <rect detached color="#3b5f8a" radius={8} />
+        <text detached color="#ffffff">{status()}</text>
       </view>
     </view>
   )
@@ -66,8 +66,8 @@ function LongPressable() {
   })
   return (
     <view width={TILE} height={TILE} x={pos().x} y={pos().y} alignItems="center" justifyContent="center" {...lp.handlers}>
-      <d-rect color={held() ? "#d9822b" : "#8a5f3b"} radius={12} />
-      <d-text color="#ffffff">{status()}</d-text>
+      <rect detached color={held() ? "#d9822b" : "#8a5f3b"} radius={12} />
+      <text detached color="#ffffff">{status()}</text>
     </view>
   )
 }
@@ -118,8 +118,8 @@ function Tappable(props: { double: boolean }) {
   }
   return (
     <view width={TILE} height={TILE} alignItems="center" justifyContent="center" onPointerDown={down} onPointerMove={props.double ? dt.handlers.onPointerMove : undefined} onPointerUp={up}>
-      <d-rect color={props.double ? "#3b8a5f" : "#5f8a3b"} radius={12} />
-      <d-text color="#ffffff">{status()}</d-text>
+      <rect detached color={props.double ? "#3b8a5f" : "#5f8a3b"} radius={12} />
+      <text detached color="#ffffff">{status()}</text>
     </view>
   )
 }
@@ -134,8 +134,8 @@ function Pannable() {
   })
   return (
     <view width={CARD_WIDTH} height={CARD_HEIGHT} alignItems="center" justifyContent="center" {...pan.handlers}>
-      <d-rect color="#44304a" radius={8} />
-      <d-text color="#ffffff">{status()}</d-text>
+      <rect detached color="#44304a" radius={8} />
+      <text detached color="#ffffff">{status()}</text>
     </view>
   )
 }
@@ -170,8 +170,8 @@ function Viewport() {
   })
   return (
     <view width={CARD_WIDTH} height={TILE} alignItems="center" justifyContent="center" {...pointer.handlers}>
-      <d-rect color="#2b4a5a" radius={12} />
-      <d-text color="#ffffff">{status()}</d-text>
+      <rect detached color="#2b4a5a" radius={12} />
+      <text detached color="#ffffff">{status()}</text>
     </view>
   )
 }
@@ -179,7 +179,7 @@ function Viewport() {
 function App() {
   return (
     <window flexDirection="column" gap={24} padding={24}>
-      <d-rect color="#101418" />
+      <rect detached color="#101418" />
       <view flexDirection="row" gap={24}>
         <Swipeable />
         <Pannable />

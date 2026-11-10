@@ -47,7 +47,7 @@ function App() {
           <view gap={12} transition={{ stagger: STAGGER_MS }}>
             {ROWS.map((label) => (
               <view x={0} opacity={1} transition={{ x: SLIDE, opacity: FADE }} height={48} justifyContent="center" paddingLeft={16}>
-                <d-rect color="#2a3a55" radius={10} />
+                <rect detached color="#2a3a55" radius={10} />
                 <text color="#e8eef6" fontSize={18}>{label}</text>
               </view>
             ))}

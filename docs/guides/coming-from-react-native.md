@@ -37,7 +37,7 @@ There are two layers:
 
 | React Native | Components | Core |
 | --- | --- | --- |
-| `<View style>` | `<View layout style>` | `<view>` with a `<d-rect>` in it |
+| `<View style>` | `<View layout style>` | `<view>` with a `<rect detached>` in it |
 | `<Text>` | `<Text>` | `<text>`, with `<span>` in it |
 | `<Image>`, `expo-image` | `<Image src>` | `<texture>` with `createImage` |
 | `<Pressable onPress>` | `<Pressable onPress>` | `onPointerDown`, `onPointerUp` |
@@ -54,7 +54,7 @@ React Native. SolidRT also has a subset of CSS grid.
 
 | React Native | SolidRT |
 | --- | --- |
-| `Animated`, Reanimated | The `transition` prop: springs and tweens that the runtime runs, also for enter and exit. For motion in each frame, `onFrame` moves the [detached elements](/core/detached/) (`d-rect`, `d-view`, ...) without a layout pass |
+| `Animated`, Reanimated | The `transition` prop: springs and tweens that the runtime runs, also for enter and exit. For motion in each frame, `onFrame` moves the [detached elements](/core/detached/) (`<rect detached>`, `<view detached>`, ...) without a layout pass |
 | react-native-gesture-handler | `createPan`, `createSwipe`, `createLongPress`, `createDoubleTap` and `createTransform` in Core |
 | `useWindowDimensions` | `windowSize()` |
 | `PixelRatio` | `displayScale()` |

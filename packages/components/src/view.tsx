@@ -51,7 +51,7 @@ export function View(props: ViewProps) {
       pointerEvents={props.pointerEvents}
     >
       {hasBackground() ? (
-        <d-rect
+        <rect detached
           transition={withTransitionDefaults(split().background, colorFade())}
           onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
           color={props.style?.backgroundColor ?? "transparent"}
@@ -60,7 +60,7 @@ export function View(props: ViewProps) {
       ) : null}
       {props.children}
       {hasBorder() ? (
-        <d-rect
+        <rect detached
           drawStyle="stroke"
           transition={withTransitionDefaults(split().border, colorFade())}
           onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}

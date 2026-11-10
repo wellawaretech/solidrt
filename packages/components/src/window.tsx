@@ -64,7 +64,7 @@ export function Window(props: WindowProps) {
       pointerEvents={props.pointerEvents}
     >
       {props.style?.backgroundColor != null ? (
-        <d-rect transition={colorFade()} color={props.style.backgroundColor} />
+        <rect detached transition={colorFade()} color={props.style.backgroundColor} />
       ) : null}
       {props.children}
     </window>

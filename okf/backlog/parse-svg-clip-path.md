@@ -1,6 +1,6 @@
 ---
 title: Apply SVG clipPath in parseSvg
-description: parseSvg drops clipPath (usvg resolves it, forge never reads it) and the render tree has no path clip at all (Impeller's clip_path is never called, overflow clips need a layout box); add a generic clipPath prop on view/d-view/d-path in alloy, emit per-draw clips from forge in flat mode, and carry the same field on groups once tree mode lands.
+description: parseSvg drops clipPath (usvg resolves it, forge never reads it) and the render tree has no path clip at all (Impeller's clip_path is never called, overflow clips need a layout box); add a generic clipPath prop on view, detached view and detached path in alloy, emit per-draw clips from forge in flat mode, and carry the same field on groups once tree mode lands.
 created: 2026-11-01
 ---
 
@@ -26,13 +26,13 @@ The render tree cannot express the result either. Impeller has
 `clip_rect`, `clip_rounded_rect` and `clip_oval` (the overflow clip in
 `rendertree/composite.rs` `apply_clip`, the shadow clip-outs). The only clip
 an element can carry is `overflow` + `clipRadius`, which needs a layout
-box, so a `d-view` cannot clip at all.
+box, so a `<view detached>` cannot clip at all.
 
 ## Design
 
 ### alloy: a generic path clip
 
-A `clipPath` prop on view, d-view and d-path:
+A `clipPath` prop on `<view>`, `<view detached>` and `<path detached>`:
 
     clipPath?: { d: string; fillRule?: "nonzero" | "evenodd" }[]
 
@@ -42,7 +42,7 @@ space, applied after the user chain. Not a parseSvg special: any app can
 clip a view to a shape with it.
 
 - Paint: `clip_path(.., Intersect)` per entry under a save; Damage::Paint.
-  No layout box needed, so it works on d-views and d-paths.
+  No layout box needed, so it works on detached views and paths.
 - Hit test: points outside any entry miss the node and its subtree
   (point-in-path through the lyon code `kinds/path.rs` already uses).
   Clipped-away geometry must not take taps.
@@ -55,9 +55,9 @@ clip a view to a shape with it.
 
 The flat draw list has no groups to hang a clip on, so each `SvgDraw`
 carries the clip chain of every group above it, baked into document
-coordinates: `clip?: { d, fillRule? }[]`, spread onto `<d-path clipPath>`.
-The key name on the draw must match the d-path prop so the spread stays
-clean. Per entry: map each clip child through the clip's transform and the
+coordinates: `clip?: { d, fillRule? }[]`, spread onto
+`<path detached clipPath>`. The key name on the draw must match the
+`<path detached>` prop so the spread stays clean. Per entry: map each clip child through the clip's transform and the
 group's absolute transform, union the children into one path, then append
 the nested `clip_path()` as the next entry.
 
@@ -84,7 +84,7 @@ replaces that line.
 - Per-draw cost: a clipped emoji with 20 draws issues 20 clips. Measure on
   Android before shipping; see `rounded-clip-cost-android.md` for how
   clips already hurt there. If it shows, flat mode could merge consecutive
-  draws with the same chain behind one clipped d-view, which changes the
+  draws with the same chain behind one clipped detached view, which changes the
   flat shape.
 
 ## Out of scope
@@ -96,8 +96,8 @@ replaces that line.
 
 ## Stage 1
 
-- alloy: `clipPath` on view/d-view/d-path through paint, hit, bounds,
-  boundary; tests.
+- alloy: `clipPath` on view, detached view and detached path through
+  paint, hit, bounds, boundary; tests.
 - flux: property decode; `forge_plugins/svg.rs` marshals `clip`;
   `packages/flux-types/modules/svg.d.ts`.
 - forge `svg.rs` + `tests/svg.rs`: chain collection, transform baking,

@@ -26,7 +26,7 @@ shared and already exists: the offset-based selection and edit primitives
 (`createTextBuffer`, packages/core/src/text-input.ts), the line/caret
 geometry (`createTextEditorLayout`: lines, caret stops, offsetAtX, lineAtY,
 scroll), focus and text-session plumbing, grapheme stepping, per-line
-`d-text` drawing. What is missing is style awareness in the geometry, a
+`<text detached>` drawing. What is missing is style awareness in the geometry, a
 document model, and the component.
 
 ## Done looks like
@@ -36,7 +36,8 @@ toolbar-less: the app renders controls and calls `toggleMark`, `setBlock`,
 `insertAtom` on the editor) that edits a document value: styled runs
 (weight, style, color, underline, links as a mark), inline atoms, block
 attributes (heading level, list); selection, caret and scrolling as
-`TextInput`; per-line rendering with `d-text` + `<span>` children.
+`TextInput`; per-line rendering with `<text detached>` + `<span>`
+children.
 
 ## Steps
 
@@ -79,8 +80,9 @@ attributes (heading level, list); selection, caret and scrolling as
    (packages/components/src/rich-text-editor.tsx): `Document` value
    (controlled/uncontrolled), `editorRef` hands the app the document buffer
    as the formatting API (no toolbar). Lines from the shell fed with
-   geometry runs derived from the document; each line one `d-text` with a
-   `<span>` per style interval (document runs cut at paragraph boundaries).
+   geometry runs derived from the document; each line one
+   `<text detached>` with a `<span>` per style interval (document runs cut
+   at paragraph boundaries).
    Drawn vocabulary: bold, italic, underline, code (mono), color, link
    (primary + underline) inline; heading 1-3 block. Other attributes are
    carried, not drawn. Verified live: styled render, format on a range,

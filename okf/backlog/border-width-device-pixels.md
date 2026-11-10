@@ -17,8 +17,8 @@ one half-covered row. `alloy/examples/pixel_snap.rs` works around it with
 a 2 px stroke at 1.5x.
 
 Every stock border is a detached rect: `View`, `Pressable`, `ScrollView`,
-`Image` and `Surface` draw theirs as a `<d-rect drawStyle="stroke">` that
-fills the frame of the view it sits in. So the case that matters is the
+`Image` and `Surface` draw theirs as a `<rect detached drawStyle="stroke">`
+that fills the frame of the view it sits in. So the case that matters is the
 detached one.
 
 ## Done looks like
@@ -37,7 +37,8 @@ one.
   the floor returns when the track settles.
 - Hit testing keeps the declared width.
 - `alloy/examples/pixel_snap.rs` asserts a 1 px stroke at 1.5x with no
-  partial pixel, for a laid-out rect and for a `d-rect` border in a view.
+  partial pixel, for a laid-out rect and for a `<rect detached>` border in
+  a view.
 
 Floor, not round: a 1 px border at 1.5x is 1 device pixel, which is what a
 1 px hairline usually means. Chrome floors; Firefox rounds.

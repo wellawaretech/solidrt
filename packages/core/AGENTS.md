@@ -89,9 +89,9 @@ you need the raw fact (e.g. `env.displayScale` for asset sizing below).
 Because the drawn size is fluid and the display DPI varies, asset format is a
 real design decision, not an afterthought:
 
-- Prefer VECTORS (`parseSvg` draws mapped to `<d-path>` in a `designSize` view)
-  whenever the render size is fluid or DPI varies - they stay crisp at any
-  size x `displayScale()`.
+- Prefer VECTORS (`parseSvg` draws mapped to `<path detached>` in a
+  `designSize` view) whenever the render size is fluid or DPI varies - they
+  stay crisp at any size x `displayScale()`.
 - RASTER (`<texture>` / `createImage`) needs source resolution >= displayed size
   x `env.displayScale`, or it softens on hi-DPI. Author raster at 2-3x the
   largest size you will ever draw it. A 256px PNG blown up large on a hi-DPI
@@ -166,7 +166,7 @@ moves core's peerDependencies and the scaffold's pins
     THEY DO NOT PAINT. A `<view>` has no background/fill prop.
   - Draw primitives - `<rect>`, `<oval>`, `<path>`, `<texture>`, `<text>`.
     These paint. To give a view a background, render a draw primitive (e.g.
-    `<d-rect>`) as a child, behind the content.
+    `<rect detached>`) as a child, behind the content.
 
 - Paint color is the `color` prop (a CSS color string). There is NO `fill`,
   `stroke`, or `background` prop (some older doc examples are wrong about this).
@@ -176,63 +176,78 @@ moves core's peerDependencies and the scaffold's pins
   a rounded `clipRadius` around an image, which tiled GPUs pay dearly for.
 
 - Registered JSX intrinsics: `window`, `view`, `text`, `span`, `rect`, `oval`,
-  `line`, `path`, `texture`, `audio`, plus the `d-` variants `d-view`, `d-rect`,
-  `d-oval`, `d-line`, `d-path`, `d-texture`, `d-text`. Line endpoints
-  (`x1`/`y1`/`x2`/`y2`) exist only on `d-line`; a laid-out `<line>` has no
-  endpoint props and spans its layout box corner to corner. `points` (a flat
-  `[x0, y0, x1, y1, ...]` array, plus `closed`) turns either form into a
-  polyline and wins over the endpoints while set.
-- Nesting rule: d-* elements go under anything; laid-out elements only under
-  laid-out parents. A detached subtree is entirely detached, and the insert
-  throws otherwise (`<view> cannot be a child of <d-view>: ...`). So a
-  component that renders any laid-out element is a LAYOUT component and
-  cannot be used inside a d-* subtree, and a component meant for d-* trees
-  renders d-* only. Say which in the component's doc comment: the types
-  cannot tell (every JSX expression is the same `Element`).
+  `line`, `path`, `texture`, `audio`. Seven of them have a detached form,
+  written with the `detached` attribute: `<view detached>`, `<rect detached>`,
+  `<oval detached>`, `<line detached>`, `<path detached>`,
+  `<texture detached>`, `<text detached>`. Line endpoints
+  (`x1`/`y1`/`x2`/`y2`) exist only on `<line detached>`; a laid-out `<line>`
+  has no endpoint props and spans its layout box corner to corner. `points`
+  (a flat `[x0, y0, x1, y1, ...]` array, plus `closed`) turns either form
+  into a polyline and wins over the endpoints while set.
+- Nesting rule: detached elements go under anything; laid-out elements only
+  under laid-out parents. A detached subtree is entirely detached, and the
+  insert throws otherwise (`<view> cannot be a child of <view detached>: a
+  detached subtree must be entirely detached (write the child as <view
+  detached>)`). So a component that renders any laid-out element is a LAYOUT
+  component and cannot be used inside a detached subtree, and a component
+  meant for detached trees renders detached elements only. Say which in the
+  component's doc comment: the types cannot tell (every JSX expression is
+  the same `Element`).
 
-- Plain vs `d-` variant (the `d-` prefix means "detached" - detached from the
-  layout engine, Taffy): a plain element (e.g. `rect`) is `RectProps &
-  LayoutProps`, so it draws AND is laid out by Taffy. The detached variant
-  (`d-rect`) is `RectProps` only - it draws but is NOT in the layout pass; you
-  place it yourself with `x`/`y` (omit them and it fills the parent, which is
-  how backgrounds work). Laid-out elements are the DEFAULT for building a
-  screen: structure, cards, panels, labels - anything flex/gap/padding
-  should place - is `<view>`/`<text>` and plain primitives. Reach for `d-`
-  only with a concrete reason: a background/underlay, free-form drawn
-  geometry (a chart's marks, a diagram, vector art), an overlay pinned at
-  coordinates, or as a performance lever for many directly-positioned,
-  often-animating elements (e.g. hundreds of balls), where `d-` skips the
-  per-element layout plain elements would incur. Hand-positioning what flex
-  would place - a card built from d-rects and d-texts at computed offsets -
+- Plain vs detached form ("detached" means detached from the layout engine,
+  Taffy): a plain element (e.g. `rect`) is `RectProps & LayoutProps`, so it
+  draws AND is laid out by Taffy. The detached form (`<rect detached>`) is
+  `RectProps` only - it draws but is NOT in the layout pass; you place it
+  yourself with `x`/`y` (omit them and it fills the parent, which is how
+  backgrounds work). `detached` is set once, as a literal: write it bare at
+  the tag, first after the tag name. `detached={expr}` is a compile error,
+  and a `detached` carried in a spread (`<view {...props}>`) throws
+  "Detached is set once, as a literal attribute at the tag"; a spread next
+  to the literal is fine (`<path detached {...draw} />`). An element never
+  switches form; render the other element instead. On a component,
+  `detached` is an ordinary prop. `<span>` and `<window>` have no detached
+  form (a compile error). Laid-out elements are the
+  DEFAULT for building a screen: structure, cards, panels, labels - anything
+  flex/gap/padding should place - is `<view>`/`<text>` and plain
+  primitives. Reach for a detached element only with a concrete reason: a
+  background/underlay, free-form drawn geometry (a chart's marks, a
+  diagram, vector art), an overlay pinned at coordinates, or as a
+  performance lever for many directly-positioned, often-animating elements
+  (e.g. hundreds of balls), where a detached element skips the per-element
+  layout plain elements would incur. Hand-positioning what flex would
+  place - a card built from detached rects and texts at computed offsets -
   forfeits wrapping, sizing and resize behavior for nothing: inside a chart
-  the marks and axis labels are d-*, but the card around it is a `<view>`.
+  the marks and axis labels are detached, but the card around it is a
+  `<view>`.
   A `designSize` view is NOT a reason to go detached - laid-out children
   resolve in design units too.
 
-- Transform origin on a `d-view`: with `originX`/`originY` unset, scale/rotate
-  pivot at the view's local (0,0) - the origin its children's coordinates are
-  authored against - not at a box center (a laid-out view pivots at its own
-  box center; a d-view has no box). To scale a detached group around its
-  content's center, set the origin explicitly in pixels, e.g.
-  `originX={100} originY={50}` for content drawn in a 200x100 local space.
-  Avoid pct()/keyword origins on a d-view - they resolve against the box
-  inherited from the nearest laid-out ancestor.
+- Transform origin on a `<view detached>`: with `originX`/`originY` unset,
+  scale/rotate pivot at the view's local (0,0) - the origin its children's
+  coordinates are authored against - not at a box center (a laid-out view
+  pivots at its own box center; a detached view has no box). To scale a
+  detached group around its content's center, set the origin explicitly in
+  pixels, e.g. `originX={100} originY={50}` for content drawn in a 200x100
+  local space. Avoid pct()/keyword origins on a detached view - they resolve
+  against the box inherited from the nearest laid-out ancestor.
 
-- Transforms live on views only. A draw primitive (`d-rect`, `d-text`,
-  `d-path`, ...) paints in its parent's space and has no `rotate`, `scale`
-  or origin of its own; to spin or scale one in place, wrap it in a `d-view`
-  carrying the transform, with the origin set in pixels as above. So a
-  rotating glyph is two nodes, the view at the pivot and the text placed
-  around it - `<d-view x={cx} y={cy} rotate={r}><d-text anchor="middle"
-  y={-h / 2}>{ch}</d-text></d-view>`.
+- Transforms live on views only. A draw primitive (`<rect detached>`,
+  `<text detached>`, `<path detached>`, ...) paints in its parent's space
+  and has no `rotate`, `scale` or origin of its own; to spin or scale one in
+  place, wrap it in a `<view detached>` carrying the transform, with the
+  origin set in pixels as above. So a rotating glyph is two nodes, the view
+  at the pivot and the text placed around it - `<view detached x={cx}
+  y={cy} rotate={r}><text detached anchor="middle"
+  y={-h / 2}>{ch}</text></view>`.
 
-- A `d-text` label is anchored, not boxed: `anchor="start" | "middle" |
-  "end"` makes `x` a point on the line (SVG's text-anchor), the text shapes
-  at its natural width (no wrap) and its lines align to the anchor's side.
-  Without `anchor` a d-text is a paragraph box wrapping at `w` or at the
-  inherited box, and `textAlign` aligns inside that width - so
-  `textAlign="right"` on a `w`-less d-text aligns to the ancestor's right
-  edge, not to `x`. Reach for `anchor` on chart, axis and diagram labels.
+- A `<text detached>` label is anchored, not boxed:
+  `anchor="start" | "middle" | "end"` makes `x` a point on the line (SVG's
+  text-anchor), the text shapes at its natural width (no wrap) and its lines
+  align to the anchor's side. Without `anchor` a detached text is a paragraph
+  box wrapping at `w` or at the inherited box, and `textAlign` aligns inside
+  that width - so `textAlign="right"` on a `w`-less detached text aligns to
+  the ancestor's right edge, not to `x`. Reach for `anchor` on chart, axis and
+  diagram labels.
 
 - Layout-affecting vs not (this matters for per-frame work). Props fall in three
   buckets, split by where they take effect:
@@ -262,9 +277,10 @@ moves core's peerDependencies and the scaffold's pins
   computed layout, not reactive - read them in `onLayout(fn)` (fires after
   layout, before paint) or in an event handler. The canonical shape: let
   flex place the boxes, measure them in onLayout, and drive DETACHED drawing
-  from the result - a d-path connector between two cards, a badge pinned to
-  a bar. Two rules keep it one pass: write the measurement only to props
-  that do not affect layout (a `d` string, a d-* position, a transform), and
+  from the result - a detached path connector between two cards, a badge
+  pinned to a bar. Two rules keep it one pass: write the measurement only to
+  props that do not affect layout (a `d` string, a detached element's
+  position, a transform), and
   call `flush()` after the write so it lands in this frame's display list.
   See examples/on-layout-connect.tsx. A draw target that sizes to the
   element showing it (a scene or a 2d view filling its pane, a shader
@@ -297,15 +313,16 @@ moves core's peerDependencies and the scaffold's pins
 
 - JSX text children collapse whitespace (ordinary JSX semantics): runs of
   spaces become one, so space-padding a mono label collapses silently. An
-  expression container preserves it - `<d-text>{"one    two"}</d-text>` - and
-  `\n` inside one produces a hard line break.
+  expression container preserves it -
+  `<text detached>{"one    two"}</text>` - and `\n` inside one produces a
+  hard line break.
 
 - Rich text: `<span>` inside `<text>` restyles a run (`color`, `fontFamily`,
   `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`,
   `textDecoration="underline"`); spans nest and
   inherit inward from the `<text>`. Never lay a paragraph out word by word in
   a wrapping row to mix styles - one `<text>` with spans wraps as a whole.
-  A span is content, not a box (no layout or `d-` form, no size, no
+  A span is content, not a box (no layout or detached form, no size, no
   bounding box; it takes its parent's form). A `<span>` takes
   pointer handlers (a link is a span, hit per line it spans), and any other
   element child of `<text>` (`<view>`, `<texture>`, `<path>`, ...) is an
@@ -325,13 +342,12 @@ moves core's peerDependencies and the scaffold's pins
   column); `breakLines(prepared, width)` breaks the whole text at one width
   in one native call (the `<text>` breaker, `textWrap` included) and
   returns line columns with each line's top `y`. Draw each line as a
-  `<d-text>` of exactly its text with the same font. Re-breaking every frame
-  is arithmetic plus cache hits, so a moving or breathing shape re-flows at
-  frame rate; only the first shaping cost anything. A long text (thousands
-  of distinct words: a document, license notices) costs that first shaping
-  for every distinct word, half a second or more on a phone in one call:
-  prepare it per paragraph as the reader reaches it (docs/text.md, "Long
-  texts").
+  `<text detached>` of exactly its text with the same font. Re-breaking every
+  frame is arithmetic plus cache hits, so a moving or breathing shape re-flows
+  at frame rate; only the first shaping cost anything. A long text (thousands
+  of distinct words: a document, license notices) costs that first shaping for
+  every distinct word, half a second or more on a phone in one call: prepare
+  it per paragraph as the reader reaches it (docs/text.md, "Long texts").
   `carets: true` adds every unit's per-grapheme x positions as one table
   (`prepared.carets.first[i]` to `first[i + 1]` index `offset` and `x`) -
   the ONLY kerned per-glyph source; per-character `measureText` drops
@@ -486,7 +502,7 @@ moves core's peerDependencies and the scaffold's pins
   finger lifted at speed (`GestureListener.end(velocity)`,
   `AxesHooks.onEnd(name, velocity)`, `input.end(action, velocity?)` by
   name), which is how the cameras fling. A
-  detached d-* leaf has no layout box: give the feed `{ layout }` or it
+  detached leaf has no layout box: give the feed `{ layout }` or it
   throws at the first press. `invert(source)` and `scale(source, k)` are
   the value processors: keys and sticks move the CAMERA where a drag moves
   the content, so a preset binds arrows or a stick to `pan`/`rotate`
@@ -775,11 +791,11 @@ function App() {
   let [count, setCount] = createSignal(0)
   return (
     <window flexDirection="column" alignItems="center" justifyContent="center" gap={24}>
-      <d-rect color="#0b0f17" />                  {/* window background */}
+      <rect detached color="#0b0f17" />           {/* window background */}
       <text color="#1f6feb" fontSize={48} fontWeight={800}>{count()}</text>
       <view onPointerDown={() => setCount((c) => c + 1)}
         padding={16} alignItems="center" justifyContent="center">
-        <d-rect color="#1f6feb" radius={12} />    {/* button background, underlays the label */}
+        <rect detached color="#1f6feb" radius={12} /> {/* button background, underlays the label */}
         <text color="#ffffff" fontSize={20}>increment</text>
       </view>
     </window>
@@ -789,7 +805,7 @@ function App() {
 render(() => <App />)
 ```
 
-Note the two `<d-rect>` underlays: a `<view>`/`<window>` does not paint, so a
-background is a draw-primitive child placed behind the content.
+Note the two `<rect detached>` underlays: a `<view>`/`<window>` does not
+paint, so a background is a draw-primitive child placed behind the content.
 
 To run and verify (incl. headless), see @solidrt/cli (its AGENTS.md).
