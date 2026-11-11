@@ -198,10 +198,11 @@ declared, on edges that are resampled anyway.
   scale, and the same answer with the rounding off.
 - The rect build, headless (`alloy/src/tests/pixel_snap.rs`): the width
   it paints at for a grid, a rest factor, a running width track and
-  geometry of its own, and what it counts. One link has no headless test:
-  that the walk hands the running width track to the build. No headless
-  path reads a painted width back from a display list, so only the
-  example would see that line go.
+  geometry of its own, and what it counts. The walk-level link, that the
+  walk hands the running width track to the build, is tested through the
+  display list readback: the drawn width is read from the frame's list
+  mid-track and after it settles
+  (okf/done/headless-display-list-readback.md).
 - `alloy/src/tests/composite.rs`: a recording with a stroked rect and no
   text re-records on a scale change, and one made under a rotation is
   made again when the frame comes upright.
@@ -230,7 +231,7 @@ A thin filled box. A divider is a filled rect in a view one logical pixel
 high, so its thickness comes from the box snap, each edge rounded by
 itself: at 1.5x it is 1 or 2 device pixels by the row it lands on. That is
 a size and not a stroke width, it takes layout space, and the floor here
-does not reach it: okf/backlog/divider-thickness-device-pixels.md, which
+does not reach it: okf/backlog/divider-caret-device-pixels.md, which
 builds on this note.
 
 ## Related

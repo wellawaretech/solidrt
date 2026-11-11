@@ -437,10 +437,12 @@ Shaped, not started.
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
   either not found or checked against the wrong file.
-- **[Copy an image to the clipboard](backlog/clipboard-image.md)** [2026-11-03]
-  "navigator.clipboard is text only; wanted an image write (image/png) on
-  desktop through SDL_SetClipboardData, listed as \"clipboard-image\" in
-  Flux.capabilities only where it works; Android is out, since copying an
+- **[Copy and paste an image through the clipboard](backlog/clipboard-image.md)** [2026-11-03]
+  "navigator.clipboard is text only; wanted an image write and read
+  (image/png) on desktop through SDL_SetClipboardData and
+  SDL_GetClipboardData, in the web shape with ClipboardItem over a Uint8Array,
+  listed as \"clipboard-image\" in Flux.capabilities only where it works; the
+  clipboard moves from alloy to ore with it; Android is out, since copying an
   image is not a normal Android action."
 - **[A 3d scene mounted after a context recovery draws black on the SM-T500](backlog/context-recovery-3d-scene-black.md)** [2026-10-19]
   On the Samsung SM-T500 (Adreno 610) a splat scene created fifteen seconds
@@ -516,13 +518,14 @@ Shaped, not started.
   and the rig partial path; the bottleneck is per-op display-list processing
   on the armv7 CPU, so the real lever is not handing Impeller the full scene
   DL every frame.
-- **[A divider is 1 or 2 device pixels thick by its row at fractional scales](backlog/divider-thickness-device-pixels.md)** [2026-11-10]
+- **[A divider and the text caret land off the device grid at fractional scales](backlog/divider-caret-device-pixels.md)** [2026-11-10]
   A divider is a filled rect in a view one logical pixel high, so the box snap
   rounds its two edges apart and at 1.5x it is 2 device pixels on one row and
-  1 on the next; its thickness is a stroke width and not a box size, so the
-  divider becomes a line across its frame, and a line whose length is the
-  frame's takes the stroke floor of border-width-device-pixels and lands its
-  edges on the grid.
+  1 on the next, and the text caret is a 1 px detached rect at a fractional x
+  that nothing rounds, so it is soft at any scale; both are a thickness that
+  is a width and not a box, so both become a line, and a horizontal or
+  vertical two-point line takes the stroke floor of border-width-device-pixels
+  and lands its edges on the grid.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
@@ -2305,6 +2308,14 @@ Finished, kept for the reasoning.
   issue, per target, and reported per presented frame in get_stats'
   window.targets and cumulatively in /gpu; fragments shaded stay a documented
   gap on the GLES 3.0 baseline, so fill still needs subtraction.
+- **[No headless test can read what the paint walk drew](done/headless-display-list-readback.md)** [2026-11-11]
+  The display list is an opaque renderer type, so a unit test sees counters
+  and caches but never which shape was drawn where, at what width or with
+  which paint, and paint behaviour is asserted only by GL examples that CI
+  compiles and does not run; under cfg(test) the renderer's own recording
+  types keep a log of the ops they forward, so a test runs the real walk
+  headless and asserts the ops (texture draws stay out of reach, a headless
+  walk has no texture to draw).
 - **[pointerEvents="all" captured every point in the window](done/hit-test-pointer-events-all.md)** [2026-08-22]
   The hit test only applied its in-bounds gate to pointerEvents auto, so an
   "all" node outside the pointer descended into its children and fell through

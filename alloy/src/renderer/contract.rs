@@ -68,7 +68,14 @@ pub trait Texture: Clone + Send + Sync {
 /// `DisplayListBuilder::draw_display_list`, which keeps it by reference, so
 /// a retained list (a repaint boundary's) is recorded once and replayed
 /// from every frame that nests it.
-pub trait DisplayList: Clone + Send + Sync {}
+pub trait DisplayList: Clone + Send + Sync {
+  /// The ops the list recorded, in order with their arguments, a nested
+  /// list as one op that holds its own. Test builds only: alloy's tests read
+  /// what the paint walk drew through it, so a second renderer must supply
+  /// it too.
+  #[cfg(test)]
+  fn ops(&self) -> &[super::oplog::Op];
+}
 
 /// Records a display list. Every call appends one op; the state ops
 /// (save, clip, transform) scope the draws after them until the matching
@@ -129,9 +136,15 @@ pub trait DisplayListBuilder: Sized {
   fn draw_display_list(&mut self, dl: &super::DisplayList, opacity: f32) -> &mut Self;
 }
 
+/// The stroke width a paint starts at, in logical pixels. A renderer whose
+/// own paint starts elsewhere (Impeller's starts at zero, a hairline) sets
+/// this in its `Default`.
+pub const DEFAULT_STROKE_WIDTH: f32 = 1.0;
+
 /// How a draw paints: a solid color or a source, the style and stroke
-/// metrics, the blend mode, and the filters. Starts at a solid opaque
-/// fill, source-over, width 1, butt caps, miter joins at limit 4.
+/// metrics, the blend mode, and the filters. Starts at a solid opaque black
+/// fill, source-over, a stroke width of `DEFAULT_STROKE_WIDTH`, butt caps,
+/// miter joins at limit 4.
 pub trait Paint: Default {
   fn set_color(&mut self, color: Color) -> &mut Self;
   /// Paint from `source` instead of the color; the color's alpha still

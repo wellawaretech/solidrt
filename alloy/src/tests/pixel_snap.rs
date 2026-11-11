@@ -3,10 +3,14 @@
 //! box, never under a held write, and under `pixelSnap={false}`; what a
 //! recording made while the rounding was off does when it comes back; and
 //! when a running track keeps a rect's stroke off its device-pixel floor.
-//! Headless: the walk's counters and the tree's own answers, no pixels (the
-//! pixels are alloy/examples/pixel_snap.rs and the core app tests).
+//! Headless: the walk's counters, the tree's own answers, and what the walk
+//! drew, read back from the frame's display list (`DisplayList::ops` and
+//! `renderer::oplog::placed`, test builds only): a rect's stroke width and
+//! its device edges. No pixels (the pixels are alloy/examples/pixel_snap.rs
+//! and the core app tests).
+use crate::renderer::oplog::{placed, Op, Placed};
 use crate::renderer::prelude::*;
-use crate::renderer::{Color, DisplayListBuilder, DrawStyle};
+use crate::renderer::{Color, DisplayList, DisplayListBuilder, DrawStyle, Rect};
 use crate::rendertree::composite::{apply_content_changes, paint_phase, PaintStats};
 use crate::rendertree::{transitions, *};
 use std::sync::Arc;
@@ -73,12 +77,32 @@ impl Stage {
     Self { platform, alloy: headless() }
   }
 
+  fn at_scale(display_scale: f32) -> Self {
+    let stage = Self::new();
+    stage.platform.set_display_scale(display_scale);
+    stage
+  }
+
   // One frame as a producer runs it: the tracks advance, then the paint.
   fn frame(&self, tree: &mut RenderTree, now_ms: f64) -> PaintStats {
     tree.set_transition_now(now_ms);
     tree.advance_transitions();
     apply_content_changes(tree, &self.platform, &self.alloy);
     paint_phase(&mut DisplayListBuilder::new(None), tree, &self.platform, &self.alloy)
+  }
+
+  // The same frame recorded the way `composite::render` records one, under
+  // the display scale, so the list's root space is device pixels; the list
+  // it built.
+  fn drawn(&self, tree: &mut RenderTree, now_ms: f64) -> DisplayList {
+    tree.set_transition_now(now_ms);
+    tree.advance_transitions();
+    apply_content_changes(tree, &self.platform, &self.alloy);
+    let mut builder = DisplayListBuilder::new(None);
+    let scale = self.platform.display_scale();
+    builder.scale(scale, scale);
+    paint_phase(&mut builder, tree, &self.platform, &self.alloy);
+    builder.build().expect("the frame builds")
   }
 }
 
@@ -252,12 +276,12 @@ fn the_rect_build_floors_its_stroke_and_counts_it() {
   assert!(close(width, 1.0 / 1.5) && count == 0, "{width} {count}");
 }
 
-// The wiring through the real paint walk: a stroked rect whose width track
-// runs, inside a recording. The walk sets the flag from the query for the
-// rect it builds; what the build then paints is not observable headless
-// (alloy/examples/pixel_snap.rs reads pixels), so this holds the two ends:
-// the query is true for the node through the run, and the recording made
-// in flight still counts the stroke as made for one scale.
+// The wiring through the real paint walk, by the recording's count: a
+// stroked rect whose width track runs, inside a recording. The query is
+// true for the node through the run, and the recording made in flight
+// still counts the stroke as made for one scale. What the build then
+// paints is read back from the frame's list below
+// (a_running_width_track_draws_the_declared_width_and_the_end_its_floor).
 #[test]
 fn a_recording_of_a_rect_with_a_running_width_track_is_scale_bound() {
   let mut tree = tree_with_mover(LINEAR_100.into());
@@ -278,4 +302,155 @@ fn a_recording_of_a_rect_with_a_running_width_track_is_scale_bound() {
     _ => panic!("the boundary holds a recording"),
   };
   assert!(scale_bound, "the moving stroke is still counted");
+}
+
+// The display scale of the stroke readback tests: one where a 1 px stroke
+// and a fractional box offset both fall between device pixels.
+const SNAP_SCALE: f32 = 1.5;
+// The fill rect's margin, in logical px: 15.45 device px at SNAP_SCALE, so
+// the snap moves the box's near edges.
+const FRACTIONAL_MARGIN: f32 = 10.3;
+// The fill rect's side, in logical px: 15.75 device px at SNAP_SCALE, so
+// its far edges (at 31.2 device px) are snapped too.
+const FRACTIONAL_BOX: f32 = 10.5;
+// A declared width of 2.85 device px at SNAP_SCALE: one that floors to 2
+// and would round to 3, above the one-pixel minimum.
+const WIDE_STROKE: f32 = 1.9;
+// The width the running track heads to: 4.5 device px at SNAP_SCALE,
+// floored to 4 once the track settles.
+const TRACK_END: f32 = 3.0;
+// A frame inside the track's run, where the width it has reached is no
+// whole number of device px.
+const MID_TRACK_MS: f64 = 30.0;
+// A frame past the track's end.
+const SETTLED_MS: f64 = 200.0;
+// How far a device coordinate or width may sit from the expected one:
+// float noise.
+const EPS: f32 = 1e-4;
+
+fn whole(v: f32) -> bool {
+  (v - v.round()).abs() < EPS
+}
+
+fn margin(tree: &mut RenderTree, id: u64, m: f32) {
+  let style = tree.node_mut(id).style_mut().expect("laid-out node");
+  style.margin = taffy::Rect { left: length(m), top: length(m), right: zero(), bottom: zero() };
+}
+
+// The fill rect stroked at `width`, through its paint props.
+fn stroke_fill(tree: &mut RenderTree, width: f32) {
+  tree.edit(FILL, |el| {
+    let paint = el.kind.paint_mut().expect("a rect paints");
+    paint.set_draw_style(Some(DrawStyle::Stroke));
+    paint.set_stroke_width(Some(width))
+  });
+}
+
+// The one stroked rect a frame of these trees draws, with the transform it
+// was drawn under, and its rect in the frame it was drawn in.
+fn stroked_rect(ops: &[Op]) -> (Placed<'_>, Rect) {
+  let mut found = placed(ops)
+    .into_iter()
+    .filter(|p| matches!(p.op, Op::DrawRect { paint, .. } if paint.draw_style == DrawStyle::Stroke));
+  let drawn = found.next().expect("a stroked rect is drawn");
+  assert!(found.next().is_none(), "one stroked rect");
+  let Op::DrawRect { rect, .. } = drawn.op else { unreachable!("filtered on rect draws") };
+  (drawn, *rect)
+}
+
+// The width a placed draw's paint strokes at, in its own frame.
+fn stroke_width(drawn: &Placed) -> f32 {
+  drawn.op.paint().expect("a draw paints").stroke_width
+}
+
+// A stroked rect that takes its geometry from the frame, at a fractional
+// offset and of a fractional size, drawn by the real walk at 1.5x: its 1 px
+// stroke is drawn at one device pixel (1 / 1.5 in frame units), its drawn
+// rect is the snapped box inset by half that width, and the box's device
+// edges (the drawn rect outset by half the width) are whole.
+#[test]
+fn a_rect_stroke_is_drawn_at_its_device_pixel_floor_inside_whole_edges() {
+  let (near, far) = (FRACTIONAL_MARGIN * SNAP_SCALE, (FRACTIONAL_MARGIN + FRACTIONAL_BOX) * SNAP_SCALE);
+  assert!(!whole(near) && !whole(far), "both edges are fractional on the device grid");
+  let mut tree = tree_with_mover(LINEAR_100.into());
+  size(&mut tree, FILL, FRACTIONAL_BOX, FRACTIONAL_BOX);
+  margin(&mut tree, FILL, FRACTIONAL_MARGIN);
+  stroke_fill(&mut tree, 1.0);
+  let stage = Stage::at_scale(SNAP_SCALE);
+  let list = stage.drawn(&mut tree, 0.0);
+  let (drawn, rect) = stroked_rect(list.ops());
+
+  let width = stroke_width(&drawn);
+  assert!((width - 1.0 / SNAP_SCALE).abs() < EPS, "{width}");
+  let device_width = drawn.device_stroke_width().expect("an upright frame has one device width");
+  assert!((device_width - 1.0).abs() < EPS, "{device_width}");
+  // The box spans 15.45 to 31.2 device px; the snap rounds both edges, to
+  // 15 and 31 (16 device px), and the drawn rect is that box inset by half
+  // the width.
+  let (near, far) = (near.round(), far.round());
+  let snapped = (far - near) / SNAP_SCALE;
+  let inset = width / 2.0;
+  let local = [rect.min_x(), rect.min_y(), rect.width(), rect.height()];
+  let want = [inset, inset, snapped - width, snapped - width];
+  assert!(local.iter().zip(want).all(|(got, want)| (got - want).abs() < EPS), "{rect:?}");
+  let device = drawn.device_rect().expect("an upright frame has a device box");
+  let half = device_width / 2.0;
+  let edges = [device.min_x() - half, device.min_y() - half, device.max_x() + half, device.max_y() + half];
+  assert!(edges.iter().all(|e| whole(*e)), "{edges:?}");
+  let want = [near, near, far, far];
+  assert!(edges.iter().zip(want).all(|(got, want)| (got - want).abs() < EPS), "{edges:?}");
+}
+
+// The stroke is drawn at the whole number of device pixels its width
+// floors to, not at any whole number and not the nearest one: 2.85 device
+// px paints 2.
+#[test]
+fn a_rect_stroke_is_drawn_at_the_whole_device_pixels_its_width_floors_to() {
+  assert!((WIDE_STROKE * SNAP_SCALE).fract() > 0.5, "the floor and the rounding differ");
+  let mut tree = tree_with_mover(LINEAR_100.into());
+  margin(&mut tree, FILL, FRACTIONAL_MARGIN);
+  stroke_fill(&mut tree, WIDE_STROKE);
+  let stage = Stage::at_scale(SNAP_SCALE);
+  let list = stage.drawn(&mut tree, 0.0);
+  let (drawn, _) = stroked_rect(list.ops());
+  let device_width = drawn.device_stroke_width().expect("an upright frame has one device width");
+  assert!((device_width - 2.0).abs() < EPS, "{device_width}");
+  let device = drawn.device_rect().expect("an upright frame has a device box");
+  let half = device_width / 2.0;
+  let edges = [device.min_x() - half, device.min_y() - half, device.max_x() + half, device.max_y() + half];
+  assert!(edges.iter().all(|e| whole(*e)), "{edges:?}");
+}
+
+// The walk hands a running width track to the rect build
+// (composite::record_node): mid-track the stroke is drawn at the width the
+// track has reached, the rect's declared width, where its floor would be
+// another; once the track settles, at the floor of the end width.
+#[test]
+fn a_running_width_track_draws_the_declared_width_and_the_end_its_floor() {
+  let mut tree = tree_with_mover(LINEAR_100.into());
+  stroke_fill(&mut tree, 1.0);
+  tree.edit(FILL, |el| {
+    el.transitions = Some(Box::new(TransitionConfig { all: Some(LINEAR_100.into()), ..Default::default() }));
+    Damage::None
+  });
+  let stage = Stage::at_scale(SNAP_SCALE);
+  stage.drawn(&mut tree, 0.0);
+  assert!(tree.transition_write(FILL, AnimProp::StrokeWidth, Some(scalar(TRACK_END))));
+
+  let list = stage.drawn(&mut tree, MID_TRACK_MS);
+  assert!(tree.stroke_width_moving(FILL), "the track runs through the frame");
+  let declared = tree.node(FILL).kind.paint().expect("a rect paints").stroke_width;
+  assert!(declared > 1.0 && declared < TRACK_END, "mid-track: {declared}");
+  assert!(!whole(declared * SNAP_SCALE), "its floor is another width: {declared}");
+  let (drawn, _) = stroked_rect(list.ops());
+  let width = stroke_width(&drawn);
+  assert!((width - declared).abs() < EPS, "drawn {width}, declared {declared}");
+
+  let list = stage.drawn(&mut tree, SETTLED_MS);
+  assert!(!tree.stroke_width_moving(FILL), "settled");
+  let floored = (TRACK_END * SNAP_SCALE).floor() / SNAP_SCALE;
+  assert!((floored - TRACK_END).abs() > EPS, "the end width has a floor of its own");
+  let (drawn, _) = stroked_rect(list.ops());
+  let width = stroke_width(&drawn);
+  assert!((width - floored).abs() < EPS, "drawn {width}, floor {floored}");
 }

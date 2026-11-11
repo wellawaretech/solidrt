@@ -8,6 +8,10 @@
 //! it reaches parity (okf/plans/renderer-seam.md), and nothing outside this
 //! module changes.
 //!
+//! In a test build the recording types also keep a plain-data log of what
+//! they recorded (`oplog`), which a list returns through
+//! `DisplayList::ops`, so a test reads back what the paint walk drew.
+//!
 //! The aliases are the names the rest of the code uses; the traits are in
 //! scope through the prelude:
 //!
@@ -18,6 +22,8 @@
 
 pub mod contract;
 mod impeller;
+#[cfg(test)]
+pub mod oplog;
 mod vocab;
 
 pub use contract::Target;

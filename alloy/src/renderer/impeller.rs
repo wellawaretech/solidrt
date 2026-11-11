@@ -1,13 +1,24 @@
-//! Impeller behind the renderer contract: every type a newtype over the
-//! `impellers` crate's, every call forwarded. The only module in the
-//! workspace that names `impellers`.
+//! Impeller behind the renderer contract: every type wraps the `impellers`
+//! crate's own, every call forwarded. The recording types (`Paint`,
+//! `Path`, `PathBuilder`, `DisplayListBuilder`, `DisplayList`) are structs
+//! that hold it as `inner`, with room for the test log beside it; the rest
+//! are tuple newtypes. The only module in the workspace that names
+//! `impellers`.
 //!
 //! Geometry needs no conversion: the crate's `Point`, `Rect`, `Size`,
 //! `ISize` and `Matrix` are the same euclid types as the vocabulary's
 //! (alloy's euclid pin tracks the crate's for exactly this). Colors and
 //! enums convert by value.
+//!
+//! In a test build the recording types also keep a log of what they
+//! forward (`super::oplog`): a paint its fields, a path its segments, a
+//! builder its ops, a list the finished log. Each forwarder has one
+//! `cfg(test)` statement beside its call; Impeller's recording runs as in
+//! any build.
 
 use super::contract;
+#[cfg(test)]
+use super::oplog::{Op, PaintLog, PathLog, PathSegment};
 use super::{
   BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, ISize, Matrix, Point, Rect, RoundingRadii,
   StrokeCap, StrokeJoin, TextureSampling, TileMode,
@@ -15,6 +26,8 @@ use super::{
 use impellers as imp;
 use std::num::NonZeroU32;
 use std::os::raw::c_void;
+#[cfg(test)]
+use std::sync::Arc;
 
 pub struct Renderer(imp::Context);
 
@@ -36,7 +49,7 @@ impl contract::Renderer for Renderer {
     let fbo = target.framebuffer.map_or(0, |f| f.0.get() as u64);
     let mut surface = unsafe { self.0.wrap_fbo(fbo, imp::PixelFormat::RGBA8888, target.size) }
       .ok_or_else(|| "failed to wrap the framebuffer".to_string())?;
-    surface.draw_display_list(&dl.0).map_err(|e| e.to_string())
+    surface.draw_display_list(&dl.inner).map_err(|e| e.to_string())
   }
 }
 
@@ -52,28 +65,54 @@ impl contract::Texture for Texture {
 }
 
 #[derive(Clone)]
-pub struct DisplayList(imp::DisplayList);
+pub struct DisplayList {
+  inner: imp::DisplayList,
+  // A list is cloned and crosses threads: the log is shared.
+  #[cfg(test)]
+  ops: Arc<[Op]>,
+}
 
-impl contract::DisplayList for DisplayList {}
+impl contract::DisplayList for DisplayList {
+  #[cfg(test)]
+  fn ops(&self) -> &[Op] {
+    &self.ops
+  }
+}
 
-pub struct DisplayListBuilder(imp::DisplayListBuilder);
+pub struct DisplayListBuilder {
+  inner: imp::DisplayListBuilder,
+  #[cfg(test)]
+  ops: Vec<Op>,
+}
 
 impl contract::DisplayListBuilder for DisplayListBuilder {
   fn new(cull: Option<&Rect>) -> Self {
-    DisplayListBuilder(imp::DisplayListBuilder::new(cull))
+    DisplayListBuilder {
+      inner: imp::DisplayListBuilder::new(cull),
+      #[cfg(test)]
+      ops: Vec::new(),
+    }
   }
 
   fn build(mut self) -> Option<DisplayList> {
-    self.0.build().map(DisplayList)
+    self.inner.build().map(|inner| DisplayList {
+      inner,
+      #[cfg(test)]
+      ops: self.ops.into(),
+    })
   }
 
   fn save(&mut self) -> &mut Self {
-    self.0.save();
+    self.inner.save();
+    #[cfg(test)]
+    self.ops.push(Op::Save);
     self
   }
 
   fn save_layer(&mut self, bounds: &Rect, paint: Option<&Paint>) -> &mut Self {
-    self.0.save_layer(bounds, paint.map(|p| &p.0), None);
+    self.inner.save_layer(bounds, paint.map(|p| &p.inner), None);
+    #[cfg(test)]
+    self.ops.push(Op::SaveLayer { bounds: *bounds, paint: paint.map(|p| p.log) });
     self
   }
 
@@ -95,67 +134,93 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         &identity
       }
     };
-    self.0.save_layer(bounds, paint.map(|p| &p.0), Some(backdrop));
+    self.inner.save_layer(bounds, paint.map(|p| &p.inner), Some(backdrop));
+    #[cfg(test)]
+    self.ops.push(Op::SaveBackdropLayer { bounds: *bounds, paint: paint.map(|p| p.log), filter: filter.is_some() });
     self
   }
 
   fn restore(&mut self) -> &mut Self {
-    self.0.restore();
+    self.inner.restore();
+    #[cfg(test)]
+    self.ops.push(Op::Restore);
     self
   }
 
   fn translate(&mut self, x: f32, y: f32) -> &mut Self {
-    self.0.translate(x, y);
+    self.inner.translate(x, y);
+    #[cfg(test)]
+    self.ops.push(Op::Translate { x, y });
     self
   }
 
   fn scale(&mut self, x: f32, y: f32) -> &mut Self {
-    self.0.scale(x, y);
+    self.inner.scale(x, y);
+    #[cfg(test)]
+    self.ops.push(Op::Scale { x, y });
     self
   }
 
   fn transform(&mut self, matrix: &Matrix) -> &mut Self {
-    self.0.transform(matrix);
+    self.inner.transform(matrix);
+    #[cfg(test)]
+    self.ops.push(Op::Transform(*matrix));
     self
   }
 
   fn clip_rect(&mut self, rect: &Rect, op: ClipOperation) -> &mut Self {
-    self.0.clip_rect(rect, clip_operation(op));
+    self.inner.clip_rect(rect, clip_operation(op));
+    #[cfg(test)]
+    self.ops.push(Op::ClipRect { rect: *rect, op });
     self
   }
 
   fn clip_oval(&mut self, bounds: &Rect, op: ClipOperation) -> &mut Self {
-    self.0.clip_oval(bounds, clip_operation(op));
+    self.inner.clip_oval(bounds, clip_operation(op));
+    #[cfg(test)]
+    self.ops.push(Op::ClipOval { bounds: *bounds, op });
     self
   }
 
   fn clip_rounded_rect(&mut self, rect: &Rect, radii: &RoundingRadii, op: ClipOperation) -> &mut Self {
-    self.0.clip_rounded_rect(rect, &rounding_radii(radii), clip_operation(op));
+    self.inner.clip_rounded_rect(rect, &rounding_radii(radii), clip_operation(op));
+    #[cfg(test)]
+    self.ops.push(Op::ClipRoundedRect { rect: *rect, radii: *radii, op });
     self
   }
 
   fn draw_line(&mut self, from: Point, to: Point, paint: &Paint) -> &mut Self {
-    self.0.draw_line(from, to, &paint.0);
+    self.inner.draw_line(from, to, &paint.inner);
+    #[cfg(test)]
+    self.ops.push(Op::DrawLine { from, to, paint: paint.log });
     self
   }
 
   fn draw_rect(&mut self, rect: &Rect, paint: &Paint) -> &mut Self {
-    self.0.draw_rect(rect, &paint.0);
+    self.inner.draw_rect(rect, &paint.inner);
+    #[cfg(test)]
+    self.ops.push(Op::DrawRect { rect: *rect, paint: paint.log });
     self
   }
 
   fn draw_oval(&mut self, bounds: &Rect, paint: &Paint) -> &mut Self {
-    self.0.draw_oval(bounds, &paint.0);
+    self.inner.draw_oval(bounds, &paint.inner);
+    #[cfg(test)]
+    self.ops.push(Op::DrawOval { bounds: *bounds, paint: paint.log });
     self
   }
 
   fn draw_rounded_rect(&mut self, rect: &Rect, radii: &RoundingRadii, paint: &Paint) -> &mut Self {
-    self.0.draw_rounded_rect(rect, &rounding_radii(radii), &paint.0);
+    self.inner.draw_rounded_rect(rect, &rounding_radii(radii), &paint.inner);
+    #[cfg(test)]
+    self.ops.push(Op::DrawRoundedRect { rect: *rect, radii: *radii, paint: paint.log });
     self
   }
 
   fn draw_path(&mut self, path: &Path, paint: &Paint) -> &mut Self {
-    self.0.draw_path(&path.0, &paint.0);
+    self.inner.draw_path(&path.inner, &paint.inner);
+    #[cfg(test)]
+    self.ops.push(Op::DrawPath { path: path.log.clone(), paint: paint.log });
     self
   }
 
@@ -167,84 +232,151 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     sampling: TextureSampling,
     paint: Option<&Paint>,
   ) -> &mut Self {
-    self.0.draw_texture_rect(&texture.0, src, dst, texture_sampling(sampling), paint.map(|p| &p.0));
+    self.inner.draw_texture_rect(&texture.0, src, dst, texture_sampling(sampling), paint.map(|p| &p.inner));
+    #[cfg(test)]
+    self.ops.push(Op::DrawTextureRect { src: *src, dst: *dst, sampling, paint: paint.map(|p| p.log) });
     self
   }
 
   fn draw_display_list(&mut self, dl: &DisplayList, opacity: f32) -> &mut Self {
-    self.0.draw_display_list(&dl.0, opacity);
+    self.inner.draw_display_list(&dl.inner, opacity);
+    #[cfg(test)]
+    self.ops.push(Op::DrawDisplayList { ops: dl.ops.clone(), opacity });
     self
   }
 }
 
-#[derive(Default)]
-pub struct Paint(imp::Paint);
+pub struct Paint {
+  inner: imp::Paint,
+  #[cfg(test)]
+  log: PaintLog,
+}
+
+impl Default for Paint {
+  // Impeller's own paint starts at a stroke width of zero, which it strokes
+  // as a hairline. The contract starts a paint at
+  // `contract::DEFAULT_STROKE_WIDTH`, so the width is set here; the other
+  // defaults are Impeller's own.
+  fn default() -> Self {
+    let mut inner = imp::Paint::default();
+    inner.set_stroke_width(contract::DEFAULT_STROKE_WIDTH);
+    Paint {
+      inner,
+      #[cfg(test)]
+      log: PaintLog::default(),
+    }
+  }
+}
 
 impl contract::Paint for Paint {
   fn set_color(&mut self, color: Color) -> &mut Self {
-    self.0.set_color(imp_color(color));
+    self.inner.set_color(imp_color(color));
+    #[cfg(test)]
+    {
+      self.log.color = color;
+    }
     self
   }
 
   fn set_color_source(&mut self, source: &ColorSource) -> &mut Self {
-    self.0.set_color_source(&source.0);
+    self.inner.set_color_source(&source.0);
+    #[cfg(test)]
+    {
+      self.log.color_source = true;
+    }
     self
   }
 
   fn set_draw_style(&mut self, style: DrawStyle) -> &mut Self {
-    self.0.set_draw_style(match style {
+    self.inner.set_draw_style(match style {
       DrawStyle::Fill => imp::DrawStyle::Fill,
       DrawStyle::Stroke => imp::DrawStyle::Stroke,
       DrawStyle::StrokeAndFill => imp::DrawStyle::StrokeAndFill,
     });
+    #[cfg(test)]
+    {
+      self.log.draw_style = style;
+    }
     self
   }
 
   fn set_blend_mode(&mut self, mode: BlendMode) -> &mut Self {
-    self.0.set_blend_mode(blend_mode(mode));
+    self.inner.set_blend_mode(blend_mode(mode));
+    #[cfg(test)]
+    {
+      self.log.blend_mode = mode;
+    }
     self
   }
 
   fn set_stroke_width(&mut self, width: f32) -> &mut Self {
-    self.0.set_stroke_width(width);
+    self.inner.set_stroke_width(width);
+    #[cfg(test)]
+    {
+      self.log.stroke_width = width;
+    }
     self
   }
 
   fn set_stroke_cap(&mut self, cap: StrokeCap) -> &mut Self {
-    self.0.set_stroke_cap(match cap {
+    self.inner.set_stroke_cap(match cap {
       StrokeCap::Butt => imp::StrokeCap::Butt,
       StrokeCap::Round => imp::StrokeCap::Round,
       StrokeCap::Square => imp::StrokeCap::Square,
     });
+    #[cfg(test)]
+    {
+      self.log.stroke_cap = cap;
+    }
     self
   }
 
   fn set_stroke_join(&mut self, join: StrokeJoin) -> &mut Self {
-    self.0.set_stroke_join(match join {
+    self.inner.set_stroke_join(match join {
       StrokeJoin::Miter => imp::StrokeJoin::Miter,
       StrokeJoin::Round => imp::StrokeJoin::Round,
       StrokeJoin::Bevel => imp::StrokeJoin::Bevel,
     });
+    #[cfg(test)]
+    {
+      self.log.stroke_join = join;
+    }
     self
   }
 
   fn set_stroke_miter(&mut self, miter: f32) -> &mut Self {
-    self.0.set_stroke_miter(miter);
+    self.inner.set_stroke_miter(miter);
+    #[cfg(test)]
+    {
+      self.log.stroke_miter = miter;
+    }
     self
   }
 
   fn set_color_filter(&mut self, filter: &ColorFilter) -> &mut Self {
-    self.0.set_color_filter(&filter.0);
+    self.inner.set_color_filter(&filter.0);
+    #[cfg(test)]
+    {
+      self.log.color_filter = true;
+    }
     self
   }
 
   fn set_image_filter(&mut self, filter: &ImageFilter) -> &mut Self {
-    self.0.set_image_filter(&filter.0);
+    self.inner.set_image_filter(&filter.0);
+    #[cfg(test)]
+    {
+      self.log.image_filter = true;
+    }
     self
   }
 
   fn set_mask_filter(&mut self, filter: &MaskFilter) -> &mut Self {
-    self.0.set_mask_filter(&filter.0);
+    self.inner.set_mask_filter(&filter.0);
+    #[cfg(test)]
+    {
+      self.log.mask_filter = true;
+    }
     self
   }
 }
@@ -322,46 +454,69 @@ impl contract::MaskFilter for MaskFilter {
 }
 
 #[derive(Clone)]
-pub struct Path(imp::Path);
+pub struct Path {
+  inner: imp::Path,
+  // A path is cloned and kept across frames: the log is shared.
+  #[cfg(test)]
+  log: Arc<PathLog>,
+}
 
 impl contract::Path for Path {}
 
 #[derive(Default)]
-pub struct PathBuilder(imp::PathBuilder);
+pub struct PathBuilder {
+  inner: imp::PathBuilder,
+  #[cfg(test)]
+  segments: Vec<PathSegment>,
+}
 
 impl contract::Pen for PathBuilder {
   fn move_to(&mut self, p: Point) -> &mut Self {
-    self.0.move_to(p);
+    self.inner.move_to(p);
+    #[cfg(test)]
+    self.segments.push(PathSegment::MoveTo(p));
     self
   }
 
   fn line_to(&mut self, p: Point) -> &mut Self {
-    self.0.line_to(p);
+    self.inner.line_to(p);
+    #[cfg(test)]
+    self.segments.push(PathSegment::LineTo(p));
     self
   }
 
   fn quadratic_to(&mut self, ctrl: Point, p: Point) -> &mut Self {
-    self.0.quadratic_curve_to(ctrl, p);
+    self.inner.quadratic_curve_to(ctrl, p);
+    #[cfg(test)]
+    self.segments.push(PathSegment::QuadraticTo { ctrl, to: p });
     self
   }
 
   fn cubic_to(&mut self, ctrl1: Point, ctrl2: Point, p: Point) -> &mut Self {
-    self.0.cubic_curve_to(ctrl1, ctrl2, p);
+    self.inner.cubic_curve_to(ctrl1, ctrl2, p);
+    #[cfg(test)]
+    self.segments.push(PathSegment::CubicTo { ctrl1, ctrl2, to: p });
     self
   }
 }
 
 impl contract::PathBuilder for PathBuilder {
   fn close(&mut self) -> &mut Self {
-    self.0.close();
+    self.inner.close();
+    #[cfg(test)]
+    self.segments.push(PathSegment::Close);
     self
   }
 
   fn build(mut self, fill: FillType) -> Path {
-    Path(self.0.take_path_new(match fill {
-      FillType::NonZero => imp::FillType::NonZero,
-      FillType::EvenOdd => imp::FillType::Odd,
-    }))
+    Path {
+      inner: self.inner.take_path_new(match fill {
+        FillType::NonZero => imp::FillType::NonZero,
+        FillType::EvenOdd => imp::FillType::Odd,
+      }),
+      #[cfg(test)]
+      log: Arc::new(PathLog { segments: self.segments, fill }),
+    }
   }
 }
 

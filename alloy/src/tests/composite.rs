@@ -454,3 +454,53 @@ fn a_recording_made_upright_replays_under_a_rotation() {
   let tilted = records_after(&mut tree, DISPLAY_SCALE, |_| Damage::None, |v| v.set_rotate(Some(TILT_DEG)));
   assert_eq!(tilted, (1, 0));
 }
+
+// How far a recorded stroke width may sit from the expected one: float
+// noise.
+const WIDTH_EPS: f32 = 1e-4;
+
+// The width the zoomer's cached recording strokes its shape at, read from
+// the list the RecordingCache holds.
+fn recorded_stroke_width(tree: &RenderTree) -> f32 {
+  let cache = tree.node(ZOOMER).paint_cache.borrow();
+  let Some(PaintCache::Recording(rec)) = &*cache else { panic!("the zoomer holds a recording") };
+  let mut widths = crate::renderer::oplog::placed(rec.dl.ops()).into_iter().filter_map(|p| match p.op {
+    crate::renderer::oplog::Op::DrawRect { paint, .. } if paint.draw_style == DrawStyle::Stroke => {
+      Some(paint.stroke_width)
+    }
+    _ => None,
+  });
+  let width = widths.next().expect("the recording strokes the shape");
+  assert!(widths.next().is_none(), "one stroked rect");
+  width
+}
+
+// A recording made again for a new scale holds the new floor, not only a
+// new count: at 1x the 1 px stroke is recorded at its declared width, and
+// once a static scale write of 1.5 comes to rest at its floor for 1.5x, one
+// device pixel (1 / 1.5 in frame units).
+#[test]
+fn a_recording_made_again_for_a_new_scale_holds_its_floor() {
+  let mut tree = zoomer_with(stroked().with_layout());
+  let platform = crate::tests::text_platform();
+  let alloy = headless();
+  platform.set_window_size(400.0, 300.0);
+  let paint = |tree: &mut RenderTree| {
+    apply_content_changes(tree, &platform, &alloy);
+    paint_phase(&mut DisplayListBuilder::new(None), tree, &platform, &alloy);
+  };
+  let close = |a: f32, b: f32| (a - b).abs() < WIDTH_EPS;
+
+  paint(&mut tree);
+  let before = recorded_stroke_width(&tree);
+  assert!(close(before, 1.0), "{before}");
+  on_zoomer(&mut tree, |view| {
+    view.set_scale_x(Some(ZOOM_TO));
+    view.set_scale_y(Some(ZOOM_TO))
+  });
+  for _ in 0..FRAMES_TO_REST {
+    paint(&mut tree);
+  }
+  let after = recorded_stroke_width(&tree);
+  assert!(close(after, 1.0 / ZOOM_TO), "{after}");
+}

@@ -52,3 +52,10 @@ engine references. Methods take and return native Rust types only.
 # Tests
 Unit tests live in the single `src/tests/` folder (`src/tests/<module>.rs`),
 never inline in source files.
+
+A lib test reads back what the paint walk drew: in a test build a display
+list returns its ops through `DisplayList::ops()`, and
+`renderer::oplog::placed` places each one in device pixels (test builds
+only, no cost to a shipped build). A claim about a shape's ops (its box, its
+stroke width, its paint) goes there; pixels and texture draws stay with the
+GL examples.
