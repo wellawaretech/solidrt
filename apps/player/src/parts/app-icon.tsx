@@ -58,7 +58,7 @@ export function AppIcon(props: { app: InstalledApp; size: number }) {
           flexShrink={0}
           designSize={[d().width, d().height]}
         >
-          <For each={d().draws}>{(draw) => <d-path {...draw} />}</For>
+          <For each={d().draws}>{(draw) => <path detached {...draw} />}</For>
         </view>
       )}
     </Show>

@@ -8,7 +8,7 @@ import { render } from "@solidrt/core"
 function Bsod() {
   return (
     <window title="solidrt">
-      <d-rect color="#1144bb" />
+      <rect detached color="#1144bb" />
       <view
         flexGrow={1}
         justifyContent="center"

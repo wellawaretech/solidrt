@@ -109,7 +109,7 @@ export function ScanScreen() {
         }}
       >
         <View layout={{ width: reticle().size, height: reticle().size }}>
-          <d-path
+          <path detached
             d={reticle().d}
             color="white"
             drawStyle="stroke"

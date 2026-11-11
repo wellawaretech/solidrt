@@ -496,7 +496,7 @@ function DevCard(props: {
           when={props.busy}
           fallback={
             <View layout={{ width: 8, height: 8 }}>
-              <d-oval color={props.connected ? theme.color.primary : theme.color.textMuted} />
+              <oval detached color={props.connected ? theme.color.primary : theme.color.textMuted} />
             </View>
           }
         >
