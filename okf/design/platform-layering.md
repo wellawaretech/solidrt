@@ -201,7 +201,7 @@ with five jobs:
 | Wake: `FrameReady` pushed by the raster and vsync threads | SDL custom event | OS (mechanism) |
 | Frame signals: `FrameRelease`, vsync arming, refresh counting, cadence, idle tick, `FrameRendered`, liveness, redraw | alloy | alloy |
 | Raster results: presents, context loss (`recover_gl` rebuilds the window and GL) | mixed | alloy, calling the OS layer for the rebuild |
-| Commands: window operations (title, icon, fullscreen, cursor, pointer lock, text input, minimize), clipboard, dialog | SDL calls in the loop | OS; the pacing commands stay alloy |
+| Commands: window operations (title, icon, fullscreen, cursor, pointer lock, text input, minimize), dialog | SDL calls in the loop | OS; the pacing commands stay alloy |
 
 The split stays on the existing SDL pump. The OS layer is the pump, as a
 plain function; alloy keeps its loop and carries out the pacing lattice
@@ -297,7 +297,8 @@ OS integration is spread over three crates:
   (`thread_nice`, `performance_cores`, `pin_thread_to`; libc and Win32, no
   SDL), the Android JNI glue (`with_android_activity`, `java_strings`,
   `init_android_context`, `packed_asset_location`), `barcode.rs` (rxing,
-  portable: forge), gamepads, clipboard, dialogs.
+  portable: forge), gamepads, dialogs. The clipboard moved to ore
+  (okf/done/clipboard-image.md).
 - **forge**: content providers, process facts, subprocess, tty, the
   AMediaCodec decoder's JNI side, `process::home_dir` (a slice of
   `SDL_GetUserFolder` rebuilt from `HOME`/`USERPROFILE`), the WAV decoder
@@ -440,6 +441,8 @@ it, not as a big-bang refactor.
 - iOS (a future target): APNs, BGTaskScheduler and entitlements fit the
   same pieces; not checked further.
 - None of the test-set features has a backlog item except those already
-  in `backlog/` (deep-links, clipboard-image, share-sheet,
-  location-module, gamepad-haptics, desktop-widget-window) and opening a
-  link, now part of okf/done/ore-landing-zone.md.
+  in `backlog/` (deep-links, share-sheet, location-module,
+  gamepad-haptics, desktop-widget-window), opening a link, now part of
+  okf/done/ore-landing-zone.md, and the clipboard image, now
+  okf/done/clipboard-image.md (its Windows bitmap rest is
+  okf/backlog/clipboard-image-windows-bitmap.md).

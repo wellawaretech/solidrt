@@ -259,7 +259,10 @@ fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
 /// wasmi on a target without a backend, so `base_capabilities` reads the
 /// lane forge was built with. `link` (flux:link's openLink) and `share`
 /// (navigator.share) are facts of the platform, not the build: listed only
-/// where it has an opener and a share sheet.
+/// where it has an opener and a share sheet. `clipboard-image` is a fact of
+/// the platform too, but not listed here: only the gui seam defines
+/// `navigator.clipboard`, so its `register_capabilities` lists it, and a
+/// headless flux, which has no clipboard, never does.
 const BASE_CAPABILITIES: &[&str] = &[
   "sqlite",
   "fs",

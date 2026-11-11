@@ -9,8 +9,9 @@
 
 pub mod abort;
 pub mod body;
-// Web standard by surface, alloy-backed and installed from `gui::install`
-// (see the placement rule in flux/CLAUDE.md), so gui-gated.
+// Web standard by surface (see the placement rule in flux/CLAUDE.md),
+// ore-backed, and gui-gated: the clipboard needs the windowing platform's
+// video subsystem, so it is installed from `gui::install`.
 #[cfg(feature = "gui")]
 pub mod clipboard;
 pub mod compression;

@@ -26,6 +26,8 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 - video volume and mute: neither `flux:video` player exposes any, while their PCM sink is a plain SDL3 audio stream (`PcmStream`, alloy/src/audio.rs) that has a gain; add `volume` and `muted` with the web names over `SDL_SetAudioStreamGain` (flux/src/alloy_plugins/video.rs, flux-types gui/video.d.ts).
 - `/dialog` and the `get_dialog`/`answer_dialog` tools have no automated test over the HTTP hop (the plugin and the harness are tested; the route was verified by hand on 2026-10-15): add one beside packages/test/tests/debug.test.tsx.
+- `Array::len` on a script-supplied array aborts the process for a length of 2^31 or more (rquickjs asserts an int32), at flux/src/forge_plugins/sqlite.rs:287 and :297 and flux/src/plugins/value.rs:146: read the length as a number instead, as `navigator.clipboard.write` does.
+- `keys::<String>()` reads an object key as a Rust string straight from its atom, cut at a NUL and with no UTF-8 check (a lone surrogate gives an invalid `String`), at flux/src/standards_plugins/headers.rs:105 and flux/src/forge_plugins/serve.rs:137 and :147: iterate as `rquickjs::String`, convert with its validated `to_string()`, and `get` with the JS key, as the `ClipboardItem` constructor does.
 - `measureText`/`prepareText` (and `<text fontSize>`) take a zero or negative `fontSize` without a word: `fontSize` decodes through `opt_f32` in flux/src/alloy_plugins/properties/text.rs, where `fontStretch` already uses `opt_positive_f32`; throw like it (the font module's prepareText already does).
 
 ## Components

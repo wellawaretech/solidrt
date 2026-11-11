@@ -13,7 +13,7 @@ import { resolve } from "node:path"
 import { port as FIXED_PORT } from "../lib/args"
 import { CLI_VERSION } from "../lib/project"
 import { resolveFromCwd, sameKey } from "../lib/registry"
-import type { ImageResponse } from "../types/control"
+import type { ClipboardResponse, ImageResponse } from "../types/control"
 
 // An explicit --port pins the port for the bridge's lifetime. Otherwise the
 // server is resolved from the registry by the bridge's cwd (once, then again
@@ -487,6 +487,13 @@ let TOOLS: {
     inputSchema: { client: CLIENT_ARG },
   },
   {
+    name: "get_clipboard",
+    annotations: READ_ONLY,
+    description:
+      "Read what the running app last wrote to the clipboard (navigator.clipboard writeText or write): `clipboard`, null when it wrote nothing (or an empty text), `{ text }` for a text, or a PNG image, returned as an image with its byte length. This is the app's last write, not the OS clipboard's content, which another app may have replaced since; nothing here sets the clipboard. Under the test host it is the engine's own clipboard, never the OS's. Read it after tapping a Copy button to see what the app copied.",
+    inputSchema: { client: CLIENT_ARG },
+  },
+  {
     name: "get_location",
     annotations: READ_ONLY,
     description:
@@ -730,6 +737,8 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       return control(`/requested-links${clientParam(args)}`)
     case "get_requested_shares":
       return control(`/requested-shares${clientParam(args)}`)
+    case "get_clipboard":
+      return control(`/clipboard${clientParam(args)}`)
     case "get_location":
       return control(`/link${clientParam(args)}`)
     case "get_dialog":
@@ -798,6 +807,13 @@ async function toContent(name: string, result: ControlResult, args?: any): Promi
       }
     }
     content.push({ type: "image", data: pngBase64, mimeType: "image/png" }, { type: "text", text })
+    return { content }
+  }
+  // A PNG on the clipboard is shown as the image it is, with its size,
+  // rather than as a page of base64.
+  let clipboard = name === "get_clipboard" ? (result.body as ClipboardResponse).clipboard : null
+  if (clipboard && "base64" in clipboard && clipboard.type === "image/png") {
+    content.push({ type: "image", data: clipboard.base64, mimeType: "image/png" }, { type: "text", text: `Clipboard image: image/png, ${clipboard.byteLength} bytes` })
     return { content }
   }
   content.push({ type: "text", text: JSON.stringify(result.body, null, 2) })

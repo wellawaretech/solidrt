@@ -437,13 +437,12 @@ Shaped, not started.
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
   either not found or checked against the wrong file.
-- **[Copy and paste an image through the clipboard](backlog/clipboard-image.md)** [2026-11-03]
-  "navigator.clipboard is text only; wanted an image write and read
-  (image/png) on desktop through SDL_SetClipboardData and
-  SDL_GetClipboardData, in the web shape with ClipboardItem over a Uint8Array,
-  listed as \"clipboard-image\" in Flux.capabilities only where it works; the
-  clipboard moves from alloy to ore with it; Android is out, since copying an
-  image is not a normal Android action."
+- **[Check the clipboard image on Windows and macOS](backlog/clipboard-image-windows-bitmap.md)** [2026-11-11]
+  "The clipboard image read falls back to a Windows bitmap (CF_DIB, read as
+  image/bmp and converted to PNG on the JS thread) but has only been compiled,
+  never run on Windows; a write offers only the registered PNG format, so a
+  Windows app that pastes only CF_DIB gets nothing from us; and a macOS app
+  that copies TIFF only likely reads as no image. None of it run yet."
 - **[A 3d scene mounted after a context recovery draws black on the SM-T500](backlog/context-recovery-3d-scene-black.md)** [2026-10-19]
   On the Samsung SM-T500 (Adreno 610) a splat scene created fifteen seconds
   after a guilty-reset recovery renders black at 2 ms per pass although its
@@ -1755,6 +1754,14 @@ Finished, kept for the reasoning.
   Git hash, version and profile per connected client in list_clients, so "does
   this binary have my engine fix" is checkable; build timestamp and HEAD
   staleness still deferred.
+- **[Copy and paste an image through the clipboard](done/clipboard-image.md)** [2026-11-11]
+  "Landed: navigator.clipboard.write and read carry a PNG image (one
+  ClipboardItem over a Uint8Array, the one type image/png) on desktop through
+  SDL_SetClipboardData and SDL_GetClipboardData, listed as \"clipboard-image\"
+  at the gui seam; the clipboard, text included, moved from alloy to an ore
+  session the test host and the control API read; a Windows bitmap reads as
+  BMP from ore and is converted to PNG in the plugin; Android stays text
+  only."
 - **[Clipboard (navigator.clipboard)](done/clipboard.md)** [2026-09-02]
   Landed 2026-09-02: navigator.clipboard readText/writeText (text only, gui
   builds only) over SDL's clipboard, and Ctrl/Cmd+C/X/V in EditorField so

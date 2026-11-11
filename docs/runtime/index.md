@@ -90,8 +90,11 @@ SolidRT runs on a GUI build. These are the modules that it adds:
   pickers resolve to `flux:fs` handles. The `dialog` capability is in the
   list only on platforms that can show a picker.
 
-A GUI build also adds `navigator.clipboard` (`readText`/`writeText`, text
-only), because the clipboard needs a windowing platform.
+A GUI build also adds `navigator.clipboard` and `ClipboardItem`, because
+the clipboard needs a windowing platform. `readText` and `writeText` copy
+and paste text. `read` and `write` copy and paste a PNG image. The
+`clipboard-image` capability is in the list only on platforms that can
+copy and paste an image.
 
 The `create*` primitives in Core add reactivity to these modules. The
 modules are the imperative layer below the primitives.

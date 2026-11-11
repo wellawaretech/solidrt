@@ -1,7 +1,7 @@
 //! System file dialogs: the platform's own open, save and folder pickers.
 //! A dialog is shown from the platform loop's thread as a command
 //! (`AlloyCommand::ShowDialog`) and answered through a responder once the
-//! user is done, the clipboard's round trip with a later answer. Desktop
+//! user is done, from whatever thread the platform answers on. Desktop
 //! goes through SDL (the xdg-desktop-portal file chooser with a zenity
 //! fallback on Linux, IFileDialog on Windows, NSOpenPanel as a sheet on
 //! the app window on macOS). Android goes through the activity's own

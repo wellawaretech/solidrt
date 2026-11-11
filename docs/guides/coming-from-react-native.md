@@ -75,7 +75,7 @@ React Native. SolidRT also has a subset of CSS grid.
 | `expo-document-picker` | `flux:dialog` |
 | `expo-sqlite` | `flux:sqlite` |
 | AsyncStorage | There is no `localStorage`. Use `flux:sqlite` or `flux:fs` |
-| `expo-clipboard` | `navigator.clipboard`, for text only |
+| `expo-clipboard` | `navigator.clipboard`, for text, and for a PNG image with the `clipboard-image` capability |
 | `fetch` | `fetch`, the same standard API |
 
 [Runtime](/runtime/) gives the documentation for the `flux:*` modules.

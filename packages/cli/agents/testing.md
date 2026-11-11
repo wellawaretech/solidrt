@@ -181,6 +181,12 @@ the state another way, and the test uses it:
   path, name }] }` with unset fields null. Under test no sheet shows:
   each share is recorded and the call resolves at once. A dismissed sheet
   (the app's `AbortError` branch) cannot be played under test yet.
+- `app.clipboard()` is what the clipboard holds: null, `{ text }`, or `{
+  type, data }` for an image. Under test the clipboard is the engine's
+  own, never the OS's, and `clipboard-image` is listed on every platform:
+  drive a Copy button, then assert. `app.setClipboard(content)` puts a
+  text, an image (`{ type: "image/png" | "image/bmp", data }`) or null
+  there for the app to paste; `read()` hands a BMP to the app as PNG.
 - `await app.camera(image)` makes an RGBA8 image (a `decodeImage` result,
   or `{ width, height, data }` the test builds) what the camera sees,
   before the app opens its camera: the viewfinder shows it and a QR code

@@ -8,12 +8,14 @@
 //!
 //! Its first facilities are window-free: the main-thread bridge, the
 //! links (opening one, the app's own scheme registration and its
-//! single-instance hand-off), the locale and the share sheet. The window, the event pump, the devices and the
-//! Android glue move in from alloy, forge and lattice as features touch
-//! them, not before.
+//! single-instance hand-off), the locale, the share sheet and the
+//! clipboard. The window, the event pump, the devices and the Android
+//! glue move in from alloy, forge and lattice as features touch them,
+//! not before.
 
 #[cfg(target_os = "android")]
 mod android;
+pub mod clipboard;
 pub mod link;
 pub mod locale;
 pub mod main_thread;

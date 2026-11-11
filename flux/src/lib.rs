@@ -37,6 +37,8 @@ pub use pending::{describe_in_flight, hold_engine, in_flight, settled, Hold};
 pub use plugins::add_capability;
 pub use plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
 pub use plugins::js_error::JsResult;
+#[cfg(feature = "gui")]
+pub use standards_plugins::clipboard;
 pub use standards_plugins::share;
 // The marshalling toolkit a module over flux uses as its plugins do (a
 // custom runtime's `runtime:*` module, docs/runtime "Native code"): the
@@ -73,6 +75,10 @@ pub fn capabilities() -> Vec<&'static str> {
   #[cfg(feature = "gui")]
   if alloy::dialogs_available() {
     caps.push(alloy_plugins::DIALOG_CAPABILITY);
+  }
+  #[cfg(feature = "gui")]
+  if ore::clipboard::image_available() {
+    caps.push(standards_plugins::clipboard::IMAGE_CAPABILITY);
   }
   caps
 }

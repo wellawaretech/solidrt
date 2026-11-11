@@ -2,9 +2,9 @@
 //! `alloy::Dialogs`, the session this engine keeps. `openFiles`, `saveFile`
 //! and `openDirectory` each resolve to `flux:fs` handles (a cancel is an
 //! empty list or null, never an error); the session decides whether the
-//! platform's dialog shows (through `AlloyCommand::ShowDialog`, the
-//! clipboard's round trip with a later answer) or an answer a test or an
-//! agent gave ahead is taken. A call holds the engine as work in flight
+//! platform's dialog shows (through `AlloyCommand::ShowDialog`, a command
+//! answered through a responder once the user is done) or an answer a
+//! test or an agent gave ahead is taken. A call holds the engine as work in flight
 //! until it is answered, so `settle` waits on it. The option words are the
 //! web pickers' (`multiple`, `suggestedName`, `startIn`, `types`), the
 //! result is the one file model the runtime has.

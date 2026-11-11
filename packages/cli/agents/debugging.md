@@ -23,6 +23,11 @@ What the individual descriptions cannot tell you:
   on an Android client, and nothing remote can close it: only the user
   picks a target or dismisses it, and the app's call (and `settle`) waits
   until then. `get_requested_shares` shows what the app handed out.
+- A flow that copies (`navigator.clipboard`) writes the OS clipboard on a
+  client. `get_clipboard` shows what the app last wrote (text, or a PNG
+  shown as an image), not what the OS clipboard holds now: another app may
+  have replaced it. Nothing remote sets the clipboard; under the test host
+  it is the engine's own (`app.setClipboard`).
 - If `list_clients` is empty, no app is running: ask the user to start
   `bun run sol run` rather than starting a second one yourself.
   The bridge needs no port: it resolves the server currently serving this
@@ -392,6 +397,10 @@ when exactly one client is connected.
   shares }`, oldest first, the last 64, each `{ title, text, url, files:
   [{ path, name }] }`). The client shows the share sheet for each and
   records it.
+- `/clipboard` - what the app last wrote to the clipboard (`{ clipboard
+  }`: null, `{ text }`, or `{ type: "image/png", byteLength, base64 }`).
+  The client writes the OS clipboard and keeps the last write; this is
+  not the OS clipboard's current content.
 - POST `/input` with `{ "events": [...] }` - synthetic input through the
   real pipeline, same event shape as the `send_input` tool (tap real
   coordinates read from `/tree` just before: the window's logical size

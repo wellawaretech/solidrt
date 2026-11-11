@@ -1,9 +1,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
 use flux::rquickjs::{Coerced, Ctx, Exception, Function, JsLifetime, Object, Persistent, Promise, TypedArray, Value};
 use flux::CopyBytes;
+use ore::clipboard::{Content, Image, ImageFormat};
 
 use crate::input_plan::{self, Injected};
 use crate::settle::{Cap, Stopped, Until};
@@ -232,6 +234,66 @@ fn requested_links(ctx: Ctx<'_>) -> flux::rquickjs::Result<Vec<String>> {
 fn requested_shares(ctx: Ctx<'_>) -> flux::rquickjs::Result<String> {
   stepper(&ctx, "requestedShares()")?;
   Ok(crate::share::requested_json(&ctx).to_string())
+}
+
+/// `clipboard()`: what the engine's clipboard holds: null, `{ text }`, or
+/// `{ type, data }` for an image (its MIME type and a fresh copy of its
+/// bytes). A test engine's clipboard is its own, never the OS's.
+fn clipboard(ctx: Ctx<'_>) -> flux::rquickjs::Result<Value<'_>> {
+  stepper(&ctx, "clipboard()")?;
+  let content = flux::clipboard::session(&ctx).and_then(|session| session.held());
+  let Some(content) = content else {
+    return Ok(Value::new_null(ctx));
+  };
+  let out = Object::new(ctx.clone())?;
+  match content {
+    Content::Text(text) => out.set("text", text)?,
+    Content::Image(image) => {
+      out.set("type", image.format.mime())?;
+      out.set("data", TypedArray::<u8>::new(ctx.clone(), image.bytes.to_vec())?)?;
+    }
+  }
+  Ok(out.into_value())
+}
+
+/// `setClipboard(content)`: put `content` on the engine's clipboard, in
+/// place of what it held, for the app to paste: null (empty), `{ text }`,
+/// or `{ type: "image/png" | "image/bmp", data }`. An empty text empties
+/// it.
+fn set_clipboard<'js>(ctx: Ctx<'js>, content: Value<'js>) -> flux::rquickjs::Result<()> {
+  stepper(&ctx, "setClipboard()")?;
+  let throw = |message: &str| Exception::throw_message(&ctx, &format!("sol:test setClipboard: {message}"));
+  let shape = "pass null, { text } or { type: \"image/png\" | \"image/bmp\", data: Uint8Array }";
+  let Some(session) = flux::clipboard::session(&ctx) else {
+    return Err(throw("no clipboard in this engine"));
+  };
+  if content.is_null() {
+    session.put(None);
+    return Ok(());
+  }
+  let Some(content) = content.as_object() else {
+    return Err(throw(shape));
+  };
+  let text: Value<'js> = content.get("text")?;
+  if let Some(text) = text.as_string() {
+    session.put(Some(Content::Text(text.to_string()?)));
+    return Ok(());
+  }
+  let kind: Value<'js> = content.get("type")?;
+  let format = match kind.as_string() {
+    Some(kind) => ImageFormat::from_mime(&kind.to_string()?),
+    None => None,
+  };
+  let Some(format) = format else {
+    return Err(throw(shape));
+  };
+  let data: Value<'js> = content.get("data")?;
+  let Ok(data) = TypedArray::<u8>::from_value(data) else {
+    return Err(throw(shape));
+  };
+  let bytes = Arc::from(flux::bytes_of(&ctx, &data, "sol:test setClipboard")?);
+  session.put(Some(Content::Image(Image { format, bytes })));
+  Ok(())
 }
 
 /// `debug(name, args)`: call a debug command the app registered
@@ -557,6 +619,8 @@ impl ModuleDef for SolTestModule {
     decl.declare("link")?;
     decl.declare("requestedLinks")?;
     decl.declare("requestedShares")?;
+    decl.declare("clipboard")?;
+    decl.declare("setClipboard")?;
     decl.declare("debug")?;
     decl.declare("stats")?;
     decl.declare("capture")?;
@@ -590,6 +654,8 @@ impl ModuleDef for SolTestModule {
     exports.export("link", Function::new(ctx.clone(), link)?)?;
     exports.export("requestedLinks", Function::new(ctx.clone(), requested_links)?)?;
     exports.export("requestedShares", Function::new(ctx.clone(), requested_shares)?)?;
+    exports.export("clipboard", Function::new(ctx.clone(), clipboard)?)?;
+    exports.export("setClipboard", Function::new(ctx.clone(), set_clipboard)?)?;
     exports.export("debug", Function::new(ctx.clone(), debug)?)?;
     exports.export("stats", Function::new(ctx.clone(), stats)?)?;
     exports.export("capture", Function::new(ctx.clone(), capture)?)?;

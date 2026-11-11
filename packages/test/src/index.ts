@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { camera as installCamera, capture, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, requestedLinks, requestedShares, microphone as installMicrophone, painted as paintFrame, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowReady } from "sol:test"
+import { camera as installCamera, capture, clipboard as readClipboard, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, requestedLinks, requestedShares, microphone as installMicrophone, painted as paintFrame, setClipboard as putClipboard, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
@@ -190,6 +190,13 @@ export type RequestedShare = {
   files: { path: string; name: string }[]
 }
 
+/**
+ * What the clipboard holds (`app.clipboard()`, `app.setClipboard()`): a
+ * text, or an image as its MIME type and its encoded bytes. `image/bmp`
+ * is what a Windows bitmap reads as; the app's `read()` gets it as PNG.
+ */
+export type ClipboardContent = { text: string } | { type: "image/png" | "image/bmp"; data: Uint8Array }
+
 /** A file dialog request the app made: which function, with which options. */
 export type DialogRequest =
   | { kind: "openFiles"; multiple: boolean; types: { description: string; extensions: string[] }[]; startIn: string | null }
@@ -253,6 +260,29 @@ export interface TestApp {
    * expect(app.requestedShares()).toEqual([{ title: null, text: "My board", url: null, files: [{ path: "share/board.png", name: "board.png" }] }])
    */
   requestedShares(): RequestedShare[]
+  /**
+   * What the clipboard holds: null when it is empty, `{ text }`, or
+   * `{ type, data }` for an image. Under test the clipboard is the
+   * engine's own, never the OS's: what the app wrote (`writeText`,
+   * `write`) lands here, so a test asserts what a Copy button copied.
+   *
+   * @example
+   * await app.input([{ type: "pointer", action: "tap", x: 100, y: 40 }])
+   * await app.settle()
+   * expect(app.clipboard()).toEqual({ text: "https://example.com/invite" })
+   */
+  clipboard(): ClipboardContent | null
+  /**
+   * Puts `content` on the clipboard, in place of what it held, for the app
+   * to paste (`readText`, `read`): a text, an image as PNG or BMP bytes
+   * (`read` hands a BMP to the app as PNG), or null to empty it.
+   *
+   * @example
+   * app.setClipboard({ type: "image/png", data: encodeImage(image) })
+   * await app.input([{ type: "pointer", action: "tap", x: 100, y: 40 }])
+   * await app.settle()
+   */
+  setClipboard(content: ClipboardContent | null): void
   /**
    * Makes `image` what the camera sees: every camera the app opens from
    * now on shows it (a `createCamera` or `open` resolves at once, no device
@@ -662,6 +692,19 @@ let app: TestApp = {
   },
   requestedLinks: () => requestedLinks(),
   requestedShares: () => JSON.parse(requestedShares()) as RequestedShare[],
+  clipboard: () => readClipboard() as ClipboardContent | null,
+  setClipboard(content) {
+    if (content === null) return putClipboard(null)
+    if (typeof content !== "object") throw new TypeError("setClipboard: pass { text }, { type, data } or null")
+    if ("text" in content) {
+      if (typeof content.text !== "string") throw new TypeError("setClipboard: text must be a string")
+      return putClipboard({ text: content.text })
+    }
+    let { type, data } = content as { type: unknown; data: unknown }
+    if (type !== "image/png" && type !== "image/bmp") throw new TypeError(`setClipboard: an image's type is "image/png" or "image/bmp", got ${JSON.stringify(type)}`)
+    if (!(data instanceof Uint8Array)) throw new TypeError("setClipboard: an image's data must be a Uint8Array of its encoded bytes")
+    putClipboard({ type, data })
+  },
   async camera(image) {
     let ok = image !== null && typeof image === "object" && image.data instanceof Uint8Array
     if (!ok) throw new TypeError("camera: pass { width, height, data }, with data a Uint8Array of RGBA8 (what decodeImage returns)")

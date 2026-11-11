@@ -136,6 +136,7 @@ const QUERY_KINDS: &[&str] = &[
   "dialog_answer",
   "requested_links",
   "requested_shares",
+  "clipboard",
 ];
 
 #[cfg(not(target_os = "android"))]
@@ -1126,6 +1127,24 @@ async fn try_serve(
                   }
                 }
               }
+              Some("clipboard") => {
+                // What the app last wrote to the clipboard (text, or an
+                // image as base64), not the OS clipboard's content: a dev
+                // client writes for real and keeps the last write, so an
+                // agent reads back what a Copy button put there.
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(clipboard_reply(&ctx, id));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
               Some("dialog_answer") => {
                 // Answer the waiting file dialog, or queue the answer for
                 // the next one: the paths (in the client's own file system)
@@ -1571,6 +1590,13 @@ fn requested_links_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
 /// share.rs spells them). Runs on the JS thread.
 fn requested_shares_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
   serde_json::json!({"type": "result", "id": id, "data": {"shares": crate::share::requested_json(ctx)}}).to_string()
+}
+
+/// What the app last wrote to the clipboard (the engine's
+/// `ore::clipboard::Session`, as clipboard.rs spells it). Runs on the JS
+/// thread.
+fn clipboard_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
+  serde_json::json!({"type": "result", "id": id, "data": {"clipboard": crate::clipboard::held_json(ctx)}}).to_string()
 }
 
 /// The file dialog state (the engine's `alloy::Dialogs` session, as

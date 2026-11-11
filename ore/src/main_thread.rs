@@ -1,5 +1,5 @@
 //! The main-thread bridge: the one way to run a main-thread-only call
-//! (`SDL_OpenURL`, and later the clipboard and the dialogs) from any
+//! (`SDL_OpenURL`, the clipboard, and later the dialogs) from any
 //! thread.
 //!
 //! It is `SDL_RunOnMainThread`. On the main thread, or while SDL has no

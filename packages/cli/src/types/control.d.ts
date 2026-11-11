@@ -110,5 +110,10 @@ export type ShutdownResponse = { ok: true }
 /** GET /snapshot and /texture: png by default, RGBA8 bytes with format=raw. */
 export type ImageResponse = { width: number; height: number; pngBase64?: string; rgbaBase64?: string }
 
+/** GET /clipboard: what the app last wrote, null for nothing. */
+export type ClipboardResponse = {
+  clipboard: null | { text: string } | { type: string; byteLength: number; base64: string }
+}
+
 /** Every non-2xx answer. */
 export type ControlError = { error: string }

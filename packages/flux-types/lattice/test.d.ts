@@ -105,6 +105,18 @@ declare module "sol:test" {
    */
   export function requestedShares(): string
   /**
+   * What the engine's clipboard holds: null when it is empty, `{ text }`,
+   * or `{ type, data }` for an image (its MIME type and a fresh copy of
+   * its bytes). A test engine's clipboard is its own, never the OS's.
+   */
+  export function clipboard(): { text: string } | { type: string; data: Uint8Array } | null
+  /**
+   * Puts `content` on the engine's clipboard, in place of what it held,
+   * for the app to paste: null empties it, as an empty text does. Throws
+   * on any other shape.
+   */
+  export function setClipboard(content: { text: string } | { type: "image/png" | "image/bmp"; data: Uint8Array } | null): void
+  /**
    * Calls a debug command the app registered with `registerDebug`. `args`
    * and the result are JSON text (null for no args). Throws on an unknown
    * name, a throwing command and a result JSON cannot carry.

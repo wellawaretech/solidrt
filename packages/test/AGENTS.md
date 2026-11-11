@@ -67,6 +67,10 @@ agents/testing.md.
   `app.requestedShares()` lists what the app handed to `navigator.share`
   (`{ title, text, url, files: [{ path, name }] }`, unset fields null):
   under test no sheet shows and the call resolves at once.
+  `app.clipboard()` reads the clipboard (null, `{ text }` or `{ type,
+  data }`) and `app.setClipboard(content)` puts a text, an image or null
+  on it for the app to paste: under test it is the engine's own
+  clipboard, never the OS's.
   `await app.debug(name, args)` calls a command the
   app registered with `registerDebug` and returns its value: the way to
   put a loaded app into a state its UI reaches slowly. A `gamepad` event

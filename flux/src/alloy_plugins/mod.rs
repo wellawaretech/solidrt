@@ -217,9 +217,9 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   // A sort job finishing on the sort thread latches a frame request before
   // it wakes the loop, like a camera frame or a glyph cell.
   alloy.set_frame_request_latch(platform.frame_request_handle());
-  // navigator.clipboard is a web-standard surface (standards_plugins) that
-  // marshals alloy commands, so it installs here at the gui seam.
-  let clipboard_cmd_tx = alloy_cmd_tx.clone();
+  // navigator.clipboard is a web-standard surface (standards_plugins) over
+  // ore; it needs the windowing platform's video subsystem, so it installs
+  // here at the gui seam and a headless flux has none.
   let dialog_cmd_tx = alloy_cmd_tx.clone();
   // The render tree and the capture/render devices are all `flux:*` modules
   // (registered below); only the web-standard rAF stays a global. The shared
@@ -251,7 +251,10 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .plugin(|ctx| audio::store_state(&ctx))
     .plugin(|ctx| spatial::store_state(&ctx))
     .plugin(|ctx| font::store_state(&ctx))
-    .plugin(move |ctx| crate::standards_plugins::clipboard::init_clipboard(&ctx, clipboard_cmd_tx))
+    .plugin(|ctx| {
+      crate::standards_plugins::clipboard::store_state(&ctx);
+      crate::standards_plugins::clipboard::init_clipboard(&ctx);
+    })
     .plugin(move |ctx| dialog::store_state(&ctx, dialog_cmd_tx))
     .plugin(register_capabilities)
     .module("flux:rendertree", tree::RenderTreeModule)
@@ -291,12 +294,19 @@ pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", 
 pub const DIALOG_CAPABILITY: &str = "dialog";
 
 /// List the gui capability names in `Flux.capabilities`; a plugin, since
-/// `install` is the gui-feature seam.
+/// `install` is the gui-feature seam. "clipboard-image" is a fact of the
+/// platform (`ore::clipboard::image_available`), listed here rather than
+/// with the base capabilities: only the gui seam defines
+/// `navigator.clipboard`, so a headless flux, desktop or not, has no image
+/// clipboard to list.
 fn register_capabilities(ctx: Ctx<'_>) {
   for name in GUI_CAPABILITIES {
     crate::add_capability(&ctx, name);
   }
   if alloy::dialogs_available() {
     crate::add_capability(&ctx, DIALOG_CAPABILITY);
+  }
+  if ore::clipboard::image_available() {
+    crate::add_capability(&ctx, crate::standards_plugins::clipboard::IMAGE_CAPABILITY);
   }
 }

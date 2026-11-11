@@ -441,6 +441,7 @@ const CONTROL_ENDPOINTS = [
   "/__control__/link",
   "/__control__/requested-links",
   "/__control__/requested-shares",
+  "/__control__/clipboard",
   "/__control__/texture",
   "/__control__/clock",
   "/__control__/input",
@@ -600,6 +601,12 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       // { shares: [{ title, text, url, files: [{ path, name }] }] }. The
       // client shows each sheet and records the share.
       return handleQuery(query, "requested_shares")
+    case "/__control__/clipboard":
+      // What the app last wrote to the clipboard: { clipboard: null |
+      // { text } | { type, byteLength, base64 } }. Not the OS clipboard's
+      // content, which another app may have replaced; under the test host
+      // it is the engine's own clipboard.
+      return handleQuery(query, "clipboard")
     case "/__control__/texture": {
       let textureId = parseInt(query.get("id") ?? "", 10)
       if (!Number.isFinite(textureId)) return Response.json({ error: "Texture requires ?id=<textureId>" }, { status: 400 })

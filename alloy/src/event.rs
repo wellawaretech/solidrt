@@ -65,14 +65,6 @@ pub enum AlloyCommand {
   // the applied state.
   SetPointerLock(bool),
   SetTextInputActive(bool, TextInputOptions),
-  // OS clipboard access, text only. SDL's clipboard belongs to the video
-  // subsystem's thread, so both are commands; the responder is called on the
-  // loop thread with the result (engine-free by design - the embedder decides
-  // how to route it back). Serviced within the event wait's tick deadline
-  // like every command, so a caller sees at most about one refresh of
-  // latency.
-  SetClipboardText(String, Box<dyn FnOnce(Result<(), String>) + Send>),
-  GetClipboardText(Box<dyn FnOnce(Result<String, String>) + Send>),
   // A system file dialog (dialog.rs): shown from the loop thread with the
   // app window as its parent, answered through the responder once the user
   // is done, from whatever thread the platform answers on. A cancel is an
