@@ -520,6 +520,15 @@ impl RenderTree {
     el.pixel_snap_off || self.transitions.any_track(node_id, &MOTION_PROPS)
   }
 
+  /// Whether a running track moves the node's stroke width: tracks only, a
+  /// held write is not motion and the value sits still until its track
+  /// starts. A rect's stroke is not floored to device pixels while its width
+  /// moves (okf/done/border-width-device-pixels.md); the settling tick
+  /// writes the end value, so that frame is floored again.
+  pub fn stroke_width_moving(&self, node_id: u64) -> bool {
+    self.transitions.any_track(node_id, &[AnimProp::StrokeWidth])
+  }
+
   /// Where a view's own scale is headed: the end of a running transition
   /// on its scale props (the longer axis, as the grid measures scale)
   /// relative to the value it holds now; 1 with no scale transition

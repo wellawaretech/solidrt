@@ -276,7 +276,7 @@ one on the way down fails the same compare. No walk over the subtree at
 the write, and no rule that the prop is set once.
 
 Not part of it: the glyph row and phase snapping inside a text layer,
-hinting, and the stroke floor of okf/backlog/border-width-device-pixels.md,
+hinting, and the stroke floor of okf/done/border-width-device-pixels.md,
 which is a width and not a position.
 
 The prop goes through `packages/core/src/types.d.ts`, the element-level
@@ -340,7 +340,7 @@ Browsers keep layout fractional and snap boxes at paint. WPF's
 
 - okf/done/pixel-snapped-paint-boxes.md: the rule this revises.
 - okf/done/text-layer-motion.md: the raster hysteresis it builds on.
-- okf/backlog/border-width-device-pixels.md: stroke widths on the grid,
+- okf/done/border-width-device-pixels.md: stroke widths on the grid,
   independent of this.
 - okf/backlog/pixel-snap-scroll-and-js-motion.md: scroll and values written
   from JS, which stay rounded here unless the subtree takes

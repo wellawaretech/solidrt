@@ -180,6 +180,13 @@ platform - init never waits on the user). On this Pi a scan press therefore
 shows the viewfinder for 10 s and then the notice "camera subsystem did not
 start within 10s"; on a healthy machine the first press simply works.
 
+## Upstream update, 2026-11-10
+
+icculus marked #15085 a duplicate of libsdl-org/SDL#16273 ("SDL_Init
+(SDL_INIT_CAMERA) takes 45 seconds and is unkillable") on 2026-11-09. It is
+still in 3.6.0 and still has no fix or linked PR, so track #16273 from now
+on. The Raspberry Pi case here is that one.
+
 ## Upstream
 
 #15085 is open, filed 2026-02-21, assigned to icculus, milestoned **3.6.0**,

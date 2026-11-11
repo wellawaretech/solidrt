@@ -179,7 +179,10 @@ export interface PaintProps {
   /**
    * Stroke thickness in logical px; default 1 (SVG's). 0 draws no stroke at
    * all, like CSS `border-width: 0` - never a hairline - so a stroke-only
-   * shape (or a line) at 0 draws nothing.
+   * shape (or a line) at 0 draws nothing. A `rect` that takes its geometry
+   * from its box (no `x`/`y`/`w`/`h`) paints its stroke at a whole number
+   * of device pixels, rounded down, at least one: 1 at a 1.5x display is 1
+   * device pixel.
    */
   strokeWidth?: number
 }
@@ -419,7 +422,8 @@ export interface NodeProps {
    * and the element moves onto its pixel, by at most one device pixel,
    * when the transition ends. Under `pixelSnap={false}` nothing is rounded,
    * in motion or at rest, so content ends its motion exactly where the
-   * motion put it, with no step. The cost is at rest: text on a fraction
+   * motion put it, with no step. A width is not a position: a rect's stroke
+   * width is still floored to whole device pixels (see `strokeWidth`). The cost is at rest: text on a fraction
    * of a pixel is drawn softer, and a 1 px line can spread over two rows.
    * Use it for animated display type and drawn art, not for body text or
    * hairlines. It is a one-way off: `pixelSnap={true}` further down does

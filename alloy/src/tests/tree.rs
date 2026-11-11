@@ -948,7 +948,8 @@ fn boundary_shader_input_hit_keeps_the_bake() {
     dl: dl(),
     backdrops: BakedBackdrops::None,
     grid_scale: None,
-    holds_text: false,
+    scale_bound: false,
+    floors_strokes: true,
     unrounded: false,
     pixel_snap_off: false,
   };
@@ -988,7 +989,8 @@ fn content_hit_invalidates_the_boundary_cache_path() {
     dl: crate::renderer::DisplayListBuilder::new(None).build().expect("build empty display list"),
     backdrops: BakedBackdrops::None,
     grid_scale: None,
-    holds_text: false,
+    scale_bound: false,
+    floors_strokes: true,
     unrounded: false,
     pixel_snap_off: false,
   }));

@@ -94,7 +94,7 @@ fn dashes_stay_inside_the_box_and_bounds_stay_the_box() {
   r.set_radius(Some([12.0; 4]));
   r.set_on_length(Some(7.0));
   r.set_off_length(Some(5.0));
-  let (outline, dash) = r.dashed_outline(size).expect("stroked and dashed");
+  let (outline, dash) = r.dashed_outline(size, r.paint.stroke_width).expect("stroked and dashed");
   let mut pen = Points::default();
   walk_dashes(outline.into_iter(), dash, &mut pen);
   assert!(!pen.0.is_empty());
@@ -131,7 +131,7 @@ fn path_length_scales_the_pattern_to_the_outline() {
   r.set_off_length(Some(1.0));
   r.set_path_length(Some(1.0));
   // Inset by 1 on every side: a 98 x 48 outline, 292 around.
-  let (_, dash) = r.dashed_outline(size).expect("dashed");
+  let (_, dash) = r.dashed_outline(size, r.paint.stroke_width).expect("dashed");
   assert!((dash.on - 146.0).abs() < 1e-3, "{dash:?}");
   assert!((dash.off - 292.0).abs() < 1e-3, "{dash:?}");
 }

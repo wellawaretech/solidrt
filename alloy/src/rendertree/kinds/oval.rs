@@ -95,7 +95,7 @@ impl Oval {
   // The drawn oval: the box inset by the stroke inset.
   fn stroke_path(&self, size: Size) -> Rect {
     let rect = self.geometry(size);
-    let d = self.paint.stroke_inset(rect.size.width, rect.size.height);
+    let d = self.paint.stroke_inset(self.paint.stroke_width, rect.size.width, rect.size.height);
     Rect::new(
       Point::new(rect.origin.x + d, rect.origin.y + d),
       Size::new(rect.size.width - d * 2.0, rect.size.height - d * 2.0),

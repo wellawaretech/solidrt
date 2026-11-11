@@ -2,15 +2,33 @@
 title: SDL AAudio never recovers a playback stream that was disconnected while paused
 description: On Android, when AAudio disconnects a stream while the app is in the background, SDL's resume calls requestStart, ignores the error it returns, and its device thread then waits forever on a data callback that never comes, so playback (and recording) stays dead until the device is closed; alloy reopens the playback stream when it does not pull after a resume.
 created: 2026-11-03
-status: filed
+status: fixed-upstream
 project: SDL (libsdl-org/SDL)
-versions: SDL 3.4.18 (sdl3-src 3.4.18); same code on main as of 2026-11-03
+versions: SDL 3.4.18 (sdl3-src 3.4.18); same code on main as of 2026-11-03; fixed on main and release-3.4.x 2026-11-03, after the 3.4.20 tag
 link: https://github.com/libsdl-org/SDL/issues/16640
 ---
 
 # SDL AAudio never recovers a playback stream that was disconnected while paused
 
-## Upstream
+## Upstream outcome
+
+SDL#16640 was closed as completed on 2026-11-09. The fix is main f7c5d8e
+and release-3.4.x 8548caa, "android: Fix aaudio resume-from-freeze"
+(2026-11-03). It is the suggested fix below, and it also covers recording:
+a failed `requestStart` sets `error_callback_triggered` and signals the
+semaphore, and `AAUDIO_RecordDevice` now calls `RecoverAAudioDevice` as
+`AAUDIO_PlayDevice` does, instead of failing the read.
+
+Not in a release yet as of 2026-11-10: the newest tag is 3.4.20
+(2026-11-03), whose notes do not list it, and the 3.4.x commit sits above
+3.4.20's float-recording fix. Our pin is `sdl3-src` 3.4.18. Check that the
+3.4.x branch also carries 36864b6 (main-only in the file history seen), the
+crash fix for a failed `RecoverAAudioDevice`, which the new recording path
+relies on. When a 3.4.x release with 8548caa is pinned: set `resolved`,
+remove the workaround listed under "Our workaround", and close
+`okf/backlog/android-microphone-dead-after-background.md`.
+
+## Upstream (as filed)
 
 Filed by someone else on 2026-11-02 as libsdl-org/SDL#16640 (playback
 only, milestone 3.6.0), with the same two-line fix as below. Their trigger

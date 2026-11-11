@@ -2,6 +2,7 @@ use super::dash::{box_outline, dashed_path, walked_length, Dash, Piece};
 use super::{PaintState, ShadowState};
 use crate::renderer::prelude::*;
 use crate::renderer::{ClipOperation, DisplayListBuilder, DrawStyle, Paint, Point, Rect, RoundingRadii, Size};
+use crate::rendertree::grid;
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{
@@ -63,6 +64,10 @@ impl Buildable for Rectangle {
   // repaint boundary) then cuts to a hairline on the sides it bounds, and
   // which makes `local_bounds` understate the painted area. Path and line
   // strokes stay centered - there the geometry is the stroke, not a box.
+  // A rect that takes its geometry from the frame paints its stroke at a
+  // whole number of device pixels, the declared width floored and at least
+  // one (painted_stroke_width), so its inner edge lands on the grid its
+  // snapped outer edge is on. Hit testing keeps the declared width.
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
     let rect = self.geometry(ctx.size);
     // The shadow paints first, under the shape, cast by the outer box (CSS
@@ -95,8 +100,9 @@ impl Buildable for Rectangle {
     // A zero-width stroke paints nothing (PaintState::painted_style): a
     // stroke-only shape then draws nothing at all, never a hairline.
     let Some(style) = self.paint.painted_style() else { return };
-    let (path, radii) = self.stroke_path(ctx.size);
-    match self.dashed_outline(ctx.size) {
+    let stroke_width = self.painted_stroke_width(ctx);
+    let (path, radii) = self.stroke_path(ctx.size, stroke_width);
+    match self.dashed_outline(ctx.size, stroke_width) {
       // Dashing is a stroke property: the fill keeps the whole inset shape,
       // the stroke gets its dashed pieces. Both paints are built from the
       // authored box, so a box-relative gradient stays anchored to the
@@ -109,12 +115,14 @@ impl Buildable for Rectangle {
         }
         let mut stroke = self.paint.to_paint_in(&rect);
         stroke.set_draw_style(DrawStyle::Stroke);
+        stroke.set_stroke_width(stroke_width);
         crate::rendertree::counters::note_draw();
         builder.draw_path(&dashed_path(outline.into_iter(), dash), &stroke);
       }
       None => {
         let mut paint = self.paint.to_paint_in(&rect);
         paint.set_draw_style(style);
+        paint.set_stroke_width(stroke_width);
         draw(builder, &path, radii, &paint);
       }
     }
@@ -130,11 +138,47 @@ impl Rectangle {
     )
   }
 
-  // The drawn shape: the box inset by the stroke inset, its radii shrunk by
-  // the same amount to keep the stroke parallel to the box corner.
-  fn stroke_path(&self, size: Size) -> (Rect, Option<[f32; 4]>) {
+  // Whether the rect takes its whole geometry from the frame: none of x, y,
+  // w and h is set. That is every laid-out rect, and a detached rect that
+  // fills the frame it inherits; a detached rect with geometry of its own
+  // is the animation lane and its stroke stays as written.
+  fn fills_frame(&self) -> bool {
+    self.x.is_none() && self.y.is_none() && self.w.is_none() && self.h.is_none()
+  }
+
+  // The width the stroke paints at: for a rect that fills its frame, the
+  // declared width floored to whole device pixels, at least one, at the
+  // scale the stroke rests at (grid::stroke_width,
+  // okf/done/border-width-device-pixels.md); the declared width where the
+  // frame has no single device width, while a track moves the width, and
+  // for a rect with geometry of its own.
+  pub(crate) fn painted_stroke_width(&self, ctx: &mut BuildContext) -> f32 {
+    let declared = self.paint.stroke_width;
+    if !self.paint.strokes() || !self.fills_frame() {
+      return declared;
+    }
+    // Counted whatever the floor answers, for a stroke that paints visibly:
+    // one recorded at the declared width (a moving width, a rotated frame,
+    // a scale whose floor is the declared width) is still wrong replayed at
+    // another scale, so an enclosing recording re-records for a scale
+    // change (composite.rs). A stroke that paints nothing (a border with a
+    // width and no color) has nothing to be wrong; a color change is Paint
+    // damage and re-records anyway.
+    if self.paint.paints_visibly() {
+      ctx.scale_bound += 1;
+    }
+    if ctx.stroke_width_moving {
+      return declared;
+    }
+    grid::stroke_width(&ctx.grid, declared, ctx.scale_target).unwrap_or(declared)
+  }
+
+  // The drawn shape: the box inset by the stroke inset of `stroke_width`,
+  // the width the stroke paints at, its radii shrunk by the same amount to
+  // keep the stroke parallel to the box corner.
+  fn stroke_path(&self, size: Size, stroke_width: f32) -> (Rect, Option<[f32; 4]>) {
     let rect = self.geometry(size);
-    let d = self.paint.stroke_inset(rect.size.width, rect.size.height);
+    let d = self.paint.stroke_inset(stroke_width, rect.size.width, rect.size.height);
     let path = Rect::new(
       Point::new(rect.origin.x + d, rect.origin.y + d),
       Size::new(rect.size.width - d * 2.0, rect.size.height - d * 2.0),
@@ -146,13 +190,14 @@ impl Rectangle {
   // as walker pieces, and the pattern in local units, a declared
   // `pathLength` (SVG) mapping the author's units onto the outline's length.
   // A dash's cap reaches along the outline by half the stroke width, which
-  // is exactly the inset, so nothing paints past the box.
-  pub(crate) fn dashed_outline(&self, size: Size) -> Option<(Vec<Piece>, Dash)> {
+  // is exactly the inset, so nothing paints past the box. `stroke_width` is
+  // the width the stroke paints at (painted_stroke_width).
+  pub(crate) fn dashed_outline(&self, size: Size, stroke_width: f32) -> Option<(Vec<Piece>, Dash)> {
     if !self.paint.strokes() {
       return None;
     }
     let dash = Dash::new(self.on_length, self.off_length, self.dash_offset)?;
-    let (path, radii) = self.stroke_path(size);
+    let (path, radii) = self.stroke_path(size, stroke_width);
     let outline = box_outline(path, radii.unwrap_or([0.0; 4]));
     let dash = match self.path_length.filter(|declared| *declared > 0.0) {
       Some(declared) => dash.scaled(walked_length(outline.iter().cloned()) / declared)?,

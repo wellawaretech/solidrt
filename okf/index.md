@@ -426,12 +426,6 @@ Shaped, not started.
 - **[AVIF decoding in decodeImage](backlog/avif-decode.md)** [2026-07-19]
   The one practical web image format decodeImage lacks; pure-Rust decode does
   not exist in the image crate, so it needs the dav1d C system dependency.
-- **[Border widths land off the device grid at fractional scales](backlog/border-width-device-pixels.md)** [2026-10-08]
-  A 1 logical px stroke at 1.5x is 1.5 device pixels, so its inner edge sits
-  on a half pixel and reads as a soft second row whatever the box does; a
-  rect's stroke is floored to whole device pixels (at least one), as Chrome's
-  is, for a laid-out rect and for the detached rect that draws every stock
-  border.
 - **[Native modules cannot read camera frames](backlog/camera-frame-tap.md)** [2026-10-08]
   alloy's camera pump holds every frame as upright RGBA on the CPU and hands
   it only to the texture upload and the QR decoder, so a custom runtime module
@@ -522,6 +516,13 @@ Shaped, not started.
   and the rig partial path; the bottleneck is per-op display-list processing
   on the armv7 CPU, so the real lever is not handing Impeller the full scene
   DL every frame.
+- **[A divider is 1 or 2 device pixels thick by its row at fractional scales](backlog/divider-thickness-device-pixels.md)** [2026-11-10]
+  A divider is a filled rect in a view one logical pixel high, so the box snap
+  rounds its two edges apart and at 1.5x it is 2 device pixels on one row and
+  1 on the next; its thickness is a stroke width and not a box size, so the
+  divider becomes a line across its frame, and a line whose length is the
+  frame's takes the stroke floor of border-width-device-pixels and lands its
+  edges on the grid.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
@@ -607,13 +608,14 @@ Shaped, not started.
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an sol doctor helper
   rather than an engine feature.
-- **[Declared damage for flush-rendered draw targets](backlog/gpu-target-damage.md)** [2026-11-05]
+- **[Damage rectangles for flush-rendered draw targets](backlog/gpu-target-damage.md)** [2026-11-05]
   A flush-rendered target re-renders in full when any of its inputs changes,
-  however small the area the change affects, because dirtiness is tracked per
-  input and nothing can say where on the target a change lands; the sub-target
-  partial path already renders rectangles and keeps the rest, so the missing
-  piece is one core primitive that declares the damaged rectangles of a
-  target.
+  however small the area the change affects, because a target is dirty or not
+  and nothing says where on it a change lands; the sub-target partial path
+  already renders rectangles and keeps the rest, and a draw list already knows
+  which records a write touched and their boxes, so the missing piece is
+  damage rectangles on a target's next render, derived by the draw list first
+  and declared by an app only once a second consumer is decided.
 - **[Animate gradient colors](backlog/gradient-color-transition.md)** [2026-09-27]
   A gradient-valued `color` never animates (the color lane reads a gradient as
   not animatable), so a lit fill snaps on a theme switch where a solid fill
@@ -1647,6 +1649,13 @@ Finished, kept for the reasoning.
   An omitted option object arrives at the binding as an explicit undefined,
   which Opt<Object> refuses - so createTexture without opts throws and every
   <Image> load fails.
+- **[Border widths land off the device grid at fractional scales](done/border-width-device-pixels.md)** [2026-11-11]
+  A 1 logical px stroke at 1.5x is 1.5 device pixels, so its inner edge sits
+  on a half pixel and reads as a soft second row whatever the box does; a
+  rect's stroke is floored to whole device pixels (at least one), as browsers
+  snap a border width, for a laid-out rect and for the detached rect that
+  draws every stock border, and a recording that holds such a stroke
+  re-records when its scale changes.
 - **[A bounding box read under a sliding ancestor drifts in size](done/bounding-box-size-drift-under-slide.md)** [2026-09-21]
   getBoundingBox computed a node's size from corners that already carried the
   ancestor chain's translation, so under a layout slide the width came back an

@@ -101,7 +101,9 @@ let logo = createImage("https://example.com/logo.png")
 The elements above are the core of SolidRT. The
 [Components](/extensions/components/) extension adds components that are
 nearer to HTML and CSS. For example, a `View` takes `backgroundColor`,
-`borderColor`, `borderWidth` and `borderRadius` in its `style`. An `Image`
+`borderColor`, `borderWidth` and `borderRadius` in its `style`. The
+runtime draws a border at a whole number of device pixels. It rounds the
+width down. The result is at least one device pixel. An `Image`
 takes a URL in its `src`. The extension also has `Button`, `TextInput`,
 `ScrollView`, `Modal` and more.
 

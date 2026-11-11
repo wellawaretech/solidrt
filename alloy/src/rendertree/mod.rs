@@ -91,9 +91,19 @@ pub struct BuildContext<'a> {
   /// composite scale is at rest: every text below rasters at it
   /// (text::raster_scale), whatever its own observation says.
   pub scale_at_rest: bool,
-  /// Text layers this walk drew so far; a recording reads the delta across
-  /// its record walk to know whether it holds text.
-  pub text_layers: u32,
+  /// Content this walk drew so far that is made for one scale: text layers,
+  /// and the stroke of every visibly painted rect that takes its geometry
+  /// from the frame, whether the device-pixel floor changed its width or
+  /// not (okf/done/border-width-device-pixels.md). A recording reads the delta
+  /// across its record walk to know whether it must be made again when its
+  /// scale changes. Only the recording reads it: the paint counters' text
+  /// layers (counters.rs) are their own.
+  pub scale_bound: u32,
+  /// Set by the walk for the node whose kind it is about to build: whether
+  /// a running track moves that node's stroke width
+  /// (RenderTree::stroke_width_moving). A kind's build sees only this
+  /// context, so the walk hands the answer over here, beside `size`.
+  pub stroke_width_moving: bool,
   /// Where the composite scale of this frame is headed: the product of the
   /// running scale transitions' ends over their current values along the
   /// chain (RenderTree::scale_transition_factor), 1 with none. A text or a
@@ -147,7 +157,8 @@ impl<'a> BuildContext<'a> {
       raster_root: false,
       frame: platform.text_atlas().frame(),
       scale_at_rest: false,
-      text_layers: 0,
+      scale_bound: 0,
+      stroke_width_moving: false,
       scale_target: 1.0,
       nodes_painted: 0,
       backdrop_regions: Vec::new(),

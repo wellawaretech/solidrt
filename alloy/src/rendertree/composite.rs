@@ -708,10 +708,11 @@ fn build_recursive<'a>(
         Some(m) => Hoist::Full(m),
         None => Hoist::None,
       };
-      // The density the recording's text layers are judged at: the grid
-      // scale inside the boundary's own matrix, what its texts read as
-      // their composite scale (text::layer_scale). Observed at every
-      // composite, so a scale that held over the rest looks is at rest.
+      // The density the recording's content made for one scale (text
+      // layers, floored strokes) is judged at: the grid scale inside the
+      // boundary's own matrix, what its texts read as their composite scale
+      // (text::layer_scale). Observed at every composite, so a scale that
+      // held over the rest looks is at rest.
       let inner_grid = match &own {
         Some(m) => grid::through(&ctx.grid, m),
         None => ctx.grid,
@@ -724,17 +725,27 @@ fn build_recursive<'a>(
       // while a track moved it (its interior unrounded) is re-made once the
       // rounding is back, so the interior ends on the resting grid; one made
       // at rest replays as it is under a track that starts. A change of
-      // `pixelSnap` above it re-makes it either way.
+      // `pixelSnap` above it re-makes it either way. Content made for one
+      // scale recorded where no stroke could be floored (a rotation, a
+      // scale on one axis) holds declared stroke widths: it is re-made once
+      // the frame can floor them, which the density compare below cannot
+      // see when the longer-axis scale is the same. Not the other way
+      // round: a stroke floored upright and replayed under a rotation is a
+      // fraction thinner, on edges that are resampled anyway.
+      let floors_strokes = grid::floors_strokes(&inner_grid);
       let cached = match &*element.paint_cache.borrow() {
         Some(PaintCache::Recording(rec)) => {
-          let stale = (rec.unrounded && !ctx.grid.unrounded()) || rec.pixel_snap_off != ctx.pixel_snap_off;
-          Some((rec.dl.clone(), rec.backdrops, rec.grid_scale, rec.holds_text, stale))
+          let stale = (rec.unrounded && !ctx.grid.unrounded())
+            || rec.pixel_snap_off != ctx.pixel_snap_off
+            || (rec.scale_bound && !rec.floors_strokes && floors_strokes);
+          Some((rec.dl.clone(), rec.backdrops, rec.grid_scale, rec.scale_bound, stale))
         }
         _ => None,
       };
-      // The density the recording's text layers are made for, by the rule
-      // the layers themselves apply (text::raster_density), with this
-      // boundary's own scale transition folded into the chain's.
+      // The density the recording's content made for one scale (text
+      // layers, floored strokes) is made for, by the rule the text layers
+      // themselves apply (text::raster_density), with this boundary's own
+      // scale transition folded into the chain's.
       let factor = ctx.scale_target * scene.scale_transition_factor(node_id);
       let recorded = cached.as_ref().and_then(|c| c.2);
       let density = composite.map(|now| text::raster_density(recorded, now, factor, at_rest));
@@ -742,16 +753,17 @@ fn build_recursive<'a>(
       // inside have no observation of their own from the replayed frames,
       // so the record walk tells them.
       let mut settled = false;
-      if let Some((dl, backdrops, recorded, holds_text, stale)) = cached {
+      if let Some((dl, backdrops, recorded, scale_bound, stale)) = cached {
         let remake =
-          stale || (holds_text && matches!((recorded, density), (Some(have), Some((want, _))) if want != have));
+          stale || (scale_bound && matches!((recorded, density), (Some(have), Some((want, _))) if want != have));
         if remake {
-          // The text layers inside were rasterized for another density, or
-          // the interior was recorded under another rounding.
+          // The content made for one scale inside (text layers, floored
+          // strokes) was made for another density, or the interior was
+          // recorded under another rounding.
           element.paint_cache.borrow_mut().take();
           settled = at_rest;
         } else {
-          if holds_text && matches!(density, Some((_, true))) {
+          if scale_bound && matches!(density, Some((_, true))) {
             scene.note_scale_wait(node_id);
             ctx.platform.request_frame();
           }
@@ -770,8 +782,10 @@ fn build_recursive<'a>(
             }),
           }
           ctx.boundaries_reused += 1;
-          if holds_text {
-            ctx.text_layers += 1;
+          // A replay carries its content made for one scale (text layers,
+          // floored strokes) into an enclosing recording's count.
+          if scale_bound {
+            ctx.scale_bound += 1;
           }
           boundary::draw_cached_recording(builder, element, hoisted, &dl, ctx.size);
           return;
@@ -780,7 +794,7 @@ fn build_recursive<'a>(
       // The recording outlives this frame's viewport (an ancestor scroll
       // does not invalidate it), so it must hold the whole subtree.
       let regions_before = ctx.backdrop_regions.len();
-      let layers_before = ctx.text_layers;
+      let scale_bound_before = ctx.scale_bound;
       let outer_rest = ctx.scale_at_rest;
       ctx.scale_at_rest = outer_rest || settled;
       let mut sub = DisplayListBuilder::new(None);
@@ -799,7 +813,8 @@ fn build_recursive<'a>(
           dl,
           backdrops,
           grid_scale: density.map(|(want, _)| want),
-          holds_text: ctx.text_layers > layers_before,
+          scale_bound: ctx.scale_bound > scale_bound_before,
+          floors_strokes,
           unrounded: ctx.grid.unrounded(),
           pixel_snap_off: ctx.pixel_snap_off,
         }));
@@ -971,6 +986,10 @@ pub(super) fn record_node<'a>(
     }
   }
   if matches!(hoist, Hoist::None) && own.is_none() && pass.is_none() {
+    // A rect's build floors its stroke to device pixels unless a track
+    // moves the width (kinds/rect.rs); the build sees only the context.
+    // The match first, so only rects pay for the track scan.
+    ctx.stroke_width_moving = matches!(&element.kind, ElementKind::Rectangle(_)) && scene.stroke_width_moving(node_id);
     element.build(ctx, builder);
     if let ElementKind::Text(text) = &element.kind {
       scene.note_text_layer(node_id, text.has_layer());

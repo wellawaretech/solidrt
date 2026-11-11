@@ -69,14 +69,14 @@ fn zero_stroke_width_strokes_nothing() {
   assert!(!p.strokes());
   assert_eq!(p.painted_style(), None);
   assert_eq!(p.stroke_outset(true, true), 0.0);
-  assert_eq!(p.stroke_inset(100.0, 50.0), 0.0);
+  assert_eq!(p.stroke_inset(p.stroke_width, 100.0, 50.0), 0.0);
 
   p.draw_style = DrawStyle::StrokeAndFill;
   assert!(p.fills());
   assert_eq!(p.painted_style(), Some(DrawStyle::Fill));
   p.stroke_width = 4.0;
   assert_eq!(p.painted_style(), Some(DrawStyle::StrokeAndFill));
-  assert_eq!(p.stroke_inset(100.0, 50.0), 2.0);
+  assert_eq!(p.stroke_inset(p.stroke_width, 100.0, 50.0), 2.0);
   // A null write resets to the default width, not to nothing.
   p.set_stroke_width(None);
   assert_eq!(p.stroke_width, DEFAULT_STROKE_WIDTH);

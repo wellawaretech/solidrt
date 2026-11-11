@@ -57,16 +57,28 @@ pub enum PaintCache {
 pub struct RecordingCache {
   pub dl: DisplayList,
   pub backdrops: BakedBackdrops,
-  /// The density its text layers were made for when recorded (the grid
-  /// scale inside the boundary's own matrix, or a running zoom's end),
-  /// which every replay judges the current scale against (composite.rs,
-  /// text::raster_density). None under a rotation or a 3d transform, where
-  /// there is no grid and nothing re-records for scale.
+  /// The density its content made for one scale (text layers, floored
+  /// strokes) was made for when recorded (the grid scale inside the
+  /// boundary's own matrix, or a running zoom's end), which every replay
+  /// judges the current scale against (composite.rs, text::raster_density).
+  /// None under a rotation or a 3d transform, where there is no grid and
+  /// nothing re-records for scale.
   pub grid_scale: Option<f32>,
-  /// Whether the record walk drew text layers, nested recordings included:
-  /// a vector-only recording replays crisply at any scale and never
-  /// re-records for one.
-  pub holds_text: bool,
+  /// Whether the record walk drew content made for one scale, nested
+  /// recordings included: text layers, and the stroke of every visibly
+  /// painted rect that takes its geometry from the frame, whether the
+  /// device-pixel floor changed its width or not
+  /// (okf/done/border-width-device-pixels.md). A recording with neither
+  /// replays crisply at any scale and never re-records for one.
+  pub scale_bound: bool,
+  /// Whether the grid it was recorded on (inside the boundary's own matrix)
+  /// had one device width for a stroke (grid::floors_strokes). Content
+  /// made for one scale that was recorded where no stroke could be floored
+  /// (a rotation, a scale on one axis) holds declared widths, and the
+  /// density compare does not see the frame come upright at the same
+  /// longer-axis scale: a replay on a grid that floors re-records it once
+  /// (composite.rs).
+  pub floors_strokes: bool,
   /// Whether the rounding to the device grid was off when it was recorded
   /// (a running track moved it, or `pixelSnap={false}`): its interior is
   /// then unrounded, and a replay with the rounding back re-records it once

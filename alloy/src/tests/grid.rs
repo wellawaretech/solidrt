@@ -1,7 +1,10 @@
 //! The device pixel grid (rendertree/grid.rs): what the paint-time snap does
-//! to a box under a translate, a scale, a raster root, and a rotation.
+//! to a box under a translate, a scale, a raster root, and a rotation, and
+//! the device-pixel floor of a stroke width.
 use crate::renderer::{Matrix, Point, Size};
-use crate::rendertree::grid::{at_scale, raster, rounds, scale, shift, snap_box, snap_move, through, translate};
+use crate::rendertree::grid::{
+  at_scale, floors_strokes, raster, rounds, scale, shift, snap_box, snap_move, stroke_width, through, translate,
+};
 use crate::rendertree::Vector;
 
 fn close(a: f32, b: f32) -> bool {
@@ -113,4 +116,109 @@ fn an_unrounded_grid_rounds_nothing() {
   assert!(close(scale(&deeper).expect("a 2d chain"), 3.0));
   // A raster root starts over: its grid rounds.
   assert!(rounds(&raster(2.0, Vector::new(3.0, 3.0))));
+}
+
+// A stroke width is floored to whole device pixels, at least one
+// (okf/done/border-width-device-pixels.md): 1 px at 1.5x is 1.5 device
+// pixels, floored to 1; 2 px at 1.5x is 3; 0.5 px at 1x is half a device
+// pixel, raised to the minimum of 1.
+#[test]
+fn a_stroke_width_floors_to_whole_device_pixels() {
+  let grid = at_scale(1.5);
+  assert!(close(stroke_width(&grid, 1.0, 1.0).expect("uniform"), 1.0 / 1.5));
+  assert!(close(stroke_width(&grid, 2.0, 1.0).expect("uniform"), 3.0 / 1.5));
+  assert!(close(stroke_width(&at_scale(1.0), 0.5, 1.0).expect("uniform"), 1.0));
+}
+
+// Matrix noise loses no pixel: a width a hair under 4 device pixels is 4.
+#[test]
+fn a_stroke_width_a_hair_under_a_pixel_keeps_it() {
+  let grid = at_scale(1.5);
+  let width = (4.0 - 1e-4) / 1.5;
+  assert!(close(stroke_width(&grid, width, 1.0).expect("uniform"), 4.0 / 1.5));
+}
+
+// The floor is taken at the scale the stroke rests at: 1 px under a 1.5x
+// grid headed to twice that is floored at 3x, 3 device pixels at rest,
+// one frame unit.
+#[test]
+fn a_stroke_width_floors_at_the_rest_scale() {
+  let width = stroke_width(&at_scale(1.5), 1.0, 2.0).expect("uniform");
+  assert!(close(width, 1.0), "{width}");
+}
+
+// A zero width paints nothing and stays zero.
+#[test]
+fn a_zero_stroke_width_stays_zero() {
+  assert_eq!(stroke_width(&at_scale(1.5), 0.0, 1.0), Some(0.0));
+}
+
+// No single device width: a rotation, a scale on one axis, a 3d matrix.
+#[test]
+fn a_stroke_width_is_not_floored_without_a_uniform_grid() {
+  let rotated = through(&at_scale(1.5), &Matrix::new_2d(0.0, 1.0, -1.0, 0.0, 0.0, 0.0));
+  assert_eq!(stroke_width(&rotated, 1.0, 1.0), None);
+  let stretched = through(&at_scale(1.0), &Matrix::scale(2.0, 1.5, 1.0));
+  assert_eq!(stroke_width(&stretched, 1.0, 1.0), None);
+  let (s, c) = 0.5f32.sin_cos();
+  #[rustfmt::skip]
+  let tilt = Matrix::new(
+    1.0, 0.0, 0.0, 0.0,
+    0.0, c,   s,   0.0,
+    0.0, -s,  c,   0.0,
+    0.0, 0.0, 0.0, 1.0,
+  );
+  assert_eq!(stroke_width(&through(&at_scale(1.0), &tilt), 1.0, 1.0), None);
+}
+
+// A width is not a position: the floor holds with the rounding off (a
+// running track, pixelSnap={false}).
+#[test]
+fn a_stroke_width_floors_with_the_rounding_off() {
+  let grid = at_scale(1.5);
+  let translated = translate(&grid, Vector::new(0.37, 0.61));
+  for width in [0.5, 1.0, 2.0] {
+    let rounded = stroke_width(&translated, width, 1.0);
+    assert!(rounded.is_some());
+    assert_eq!(stroke_width(&translated.or_unrounded(true), width, 1.0), rounded);
+  }
+}
+
+// The minimum of one device pixel is not taken at the rest scale: where
+// the rest scale has no whole width to give, the floor is the frame's own,
+// so a zoom out never widens the stroke at the scale it is drawn at.
+#[test]
+fn a_zoom_out_does_not_widen_the_stroke_at_its_own_scale() {
+  // 1 px at 1x headed to 0.5: one device pixel now, not two.
+  assert!(close(stroke_width(&at_scale(1.0), 1.0, 0.5).expect("uniform"), 1.0));
+  // 1 px at 1.5x headed to a quarter: the floor at 1.5x, one device pixel.
+  assert!(close(stroke_width(&at_scale(1.5), 1.0, 0.25).expect("uniform"), 1.0 / 1.5));
+  // 3 px at 1x headed to a quarter is 0.75 device pixels at rest: 3 now.
+  assert!(close(stroke_width(&at_scale(1.0), 3.0, 0.25).expect("uniform"), 3.0));
+  // A whole width at rest is taken there: 1 px at 0.5x headed to 4x is 2
+  // device pixels at rest, one frame unit.
+  assert!(close(stroke_width(&at_scale(0.5), 1.0, 4.0).expect("uniform"), 2.0 / (0.5 * 4.0)));
+}
+
+// A scale that is not finite and positive answers None, never NaN or an
+// infinite width: an infinite grid, a product that underflows to zero and
+// one that overflows.
+#[test]
+fn a_stroke_width_is_not_floored_at_a_degenerate_scale() {
+  assert!(!floors_strokes(&at_scale(f32::INFINITY)));
+  assert_eq!(stroke_width(&at_scale(f32::INFINITY), 1.0, 1.0), None);
+  assert_eq!(stroke_width(&at_scale(1e-30), 1.0, 1e-30), None);
+  assert_eq!(stroke_width(&at_scale(1e30), 1.0, 1e30), None);
+  assert_eq!(stroke_width(&at_scale(1.5), 1.0, f32::INFINITY), None);
+  assert_eq!(stroke_width(&at_scale(1.5), 1.0, f32::NAN), None);
+}
+
+// The predicate a recording stores: one device width for a stroke, with
+// the rounding of positions on or off.
+#[test]
+fn floors_strokes_answers_for_an_upright_uniform_frame() {
+  assert!(floors_strokes(&at_scale(1.5)));
+  assert!(floors_strokes(&at_scale(1.5).or_unrounded(true)));
+  assert!(!floors_strokes(&through(&at_scale(1.5), &Matrix::new_2d(0.0, 1.0, -1.0, 0.0, 0.0, 0.0))));
+  assert!(!floors_strokes(&through(&at_scale(1.0), &Matrix::scale(1.0, 0.5, 1.0))));
 }

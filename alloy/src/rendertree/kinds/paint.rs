@@ -325,18 +325,20 @@ impl PaintState {
     self.stroke_width / 2.0 * cap.max(join)
   }
 
-  // Half the stroke width when the paint strokes, 0 for a plain fill or a
-  // zero-width stroke.
+  // Half of `stroke_width`, the width the stroke paints at, when the paint
+  // strokes; 0 for a plain fill or a zero-width stroke. The width is the
+  // caller's: a rect's stroke paints at its device-pixel floor
+  // (`Rectangle::build`), an oval's at the declared width.
   // Rect and oval inset their geometry by this so a stroke paints inside its
   // bounds (CSS border semantics) instead of straddling them; see
   // `Rectangle::build`. Clamped to half the shorter side so a stroke wider
   // than the shape collapses onto the shape's center rather than inverting it.
-  pub fn stroke_inset(&self, w: f32, h: f32) -> f32 {
+  pub fn stroke_inset(&self, stroke_width: f32, w: f32, h: f32) -> f32 {
     if !self.strokes() {
       return 0.0;
     }
     let limit = (w / 2.0).min(h / 2.0).max(0.0);
-    (self.stroke_width / 2.0).clamp(0.0, limit)
+    (stroke_width / 2.0).clamp(0.0, limit)
   }
 
   fn build_paint(&self, bounds: Option<(f32, f32, f32, f32)>) -> Paint {

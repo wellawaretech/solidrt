@@ -1,6 +1,6 @@
 use crate::renderer::prelude::*;
-use crate::renderer::DisplayListBuilder;
-use crate::rendertree::composite::paint_phase;
+use crate::renderer::{DisplayListBuilder, DrawStyle};
+use crate::rendertree::composite::{apply_content_changes, paint_phase};
 use crate::rendertree::*;
 use std::sync::Arc;
 use taffy::prelude::*;
@@ -313,4 +313,144 @@ fn child_boxes_are_placed_fractionally_and_rounded_at_the_draw() {
 
   let at_1_5x = extent_at(&mut tree, 1.5);
   assert!(close(at_1_5x.origin.y, 16.98 - 1.0), "{at_1_5x:?}");
+}
+
+const ZOOMER: u64 = 2;
+const SHAPE: u64 = 3;
+
+// The scale the zoomer rests at after its one write; within the motion
+// bound of a text raster, so the recording waits for rest as a text's does.
+const ZOOM_TO: f32 = 1.5;
+// Frames enough for a scale written once to come to rest and the
+// recording to re-record, and for any second re-record to show.
+const FRAMES_TO_REST: usize = 8;
+
+// root(1, 400x300) > zoomer(2, 200x100, a Recording boundary) > shape(3)
+fn zoomer_with(shape: Element) -> RenderTree {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut zoomer = attached();
+  zoomer.repaint_boundary = BoundaryMode::Recording;
+  tree.create_node(ZOOMER, zoomer);
+  tree.create_node(SHAPE, shape);
+  tree.insert_node(1, ZOOMER, None).expect("insert");
+  tree.insert_node(ZOOMER, SHAPE, None).expect("insert");
+  tree.root = Some(1);
+  size(&mut tree, 1, 400.0, 300.0);
+  size(&mut tree, ZOOMER, 200.0, 100.0);
+  if tree.node_mut(SHAPE).style_mut().is_some() {
+    size(&mut tree, SHAPE, 50.0, 20.0);
+  }
+  tree
+}
+
+fn stroked() -> Rectangle {
+  let mut rect = Rectangle::default();
+  rect.paint.draw_style = DrawStyle::Stroke;
+  rect.paint.stroke_width = 1.0;
+  rect
+}
+
+// The rotation, in degrees, the boundary is recorded under or written to:
+// any rotation leaves the frame with no single device width for a stroke.
+const TILT_DEG: f32 = 10.0;
+// The display scale of the rotation tests: one where a fresh upright
+// record floors a 1 px stroke (to 1 / 1.5) instead of keeping it.
+const DISPLAY_SCALE: f32 = 1.5;
+
+// A write on the zoomer's view.
+fn on_zoomer(tree: &mut RenderTree, write: impl FnOnce(&mut View) -> Damage) {
+  tree.edit(ZOOMER, |e| {
+    let ElementKind::View(view) = &mut e.kind else { panic!("the zoomer is a view") };
+    write(view)
+  });
+}
+
+// The recordings the zoomer makes at `display_scale`: one on the first
+// frame (after `setup` on the boundary view), then the count over the
+// frames after `write` on it. Both are static writes, Compose damage on a
+// hoisted boundary matrix: neither re-records the boundary by itself.
+fn records_after(
+  tree: &mut RenderTree,
+  display_scale: f32,
+  setup: impl FnOnce(&mut View) -> Damage,
+  write: impl FnOnce(&mut View) -> Damage,
+) -> (u32, u32) {
+  let platform = crate::tests::text_platform();
+  let alloy = headless();
+  platform.set_window_size(400.0, 300.0);
+  platform.set_display_scale(display_scale);
+  let paint = |tree: &mut RenderTree| {
+    apply_content_changes(tree, &platform, &alloy);
+    paint_phase(&mut DisplayListBuilder::new(None), tree, &platform, &alloy).boundaries_recorded
+  };
+  on_zoomer(tree, setup);
+  let first = paint(tree);
+  on_zoomer(tree, write);
+  let after = (0..FRAMES_TO_REST).map(|_| paint(tree)).sum();
+  (first, after)
+}
+
+// One static scale write on the boundary.
+fn records_after_a_zoom(tree: &mut RenderTree) -> (u32, u32) {
+  records_after(
+    tree,
+    1.0,
+    |_| Damage::None,
+    |view| {
+      view.set_scale_x(Some(ZOOM_TO));
+      view.set_scale_y(Some(ZOOM_TO))
+    },
+  )
+}
+
+// A stroke floored to device pixels is made for one scale, as a text layer
+// is (okf/done/border-width-device-pixels.md): a recording that holds one
+// and no text re-records once for a static scale write, where the scale
+// comes to rest, and not again. (Under a scale transition it re-records at
+// the start and at the end, as a recording holding text does.)
+#[test]
+fn a_recording_with_a_floored_stroke_re_records_for_a_static_scale_write() {
+  let mut tree = zoomer_with(stroked().with_layout());
+  assert_eq!(records_after_a_zoom(&mut tree), (1, 1));
+}
+
+// A recording of vector content made for no scale replays at any scale: a
+// filled rect, and a stroked rect with geometry of its own (the animation
+// lane, whose stroke stays as written).
+#[test]
+fn a_recording_without_a_floored_stroke_does_not_re_record_for_scale() {
+  let mut filled = zoomer_with(Rectangle::default().with_layout());
+  assert_eq!(records_after_a_zoom(&mut filled), (1, 0));
+  let own = Rectangle { w: Some(30.0), ..stroked() };
+  let mut detached = zoomer_with(own.no_layout());
+  assert_eq!(records_after_a_zoom(&mut detached), (1, 0));
+}
+
+// A recording made under a rotation holds the declared stroke width, and
+// the longer-axis scale does not change when the frame comes upright: it
+// is made again once the frame can floor the stroke, and not again.
+#[test]
+fn a_recording_made_under_a_rotation_re_records_when_upright() {
+  let mut tree = zoomer_with(stroked().with_layout());
+  let upright = records_after(&mut tree, DISPLAY_SCALE, |v| v.set_rotate(Some(TILT_DEG)), |v| v.set_rotate(Some(0.0)));
+  assert_eq!(upright, (1, 1));
+}
+
+// Content made for no scale has no width to fix: a filled rect recorded
+// under a rotation replays when the frame comes upright.
+#[test]
+fn a_filled_recording_made_under_a_rotation_replays_when_upright() {
+  let mut tree = zoomer_with(Rectangle::default().with_layout());
+  let upright = records_after(&mut tree, DISPLAY_SCALE, |v| v.set_rotate(Some(TILT_DEG)), |v| v.set_rotate(Some(0.0)));
+  assert_eq!(upright, (1, 0));
+}
+
+// The other direction is left: a stroke floored upright and replayed under
+// a rotation is a fraction thinner, on edges that are resampled anyway.
+#[test]
+fn a_recording_made_upright_replays_under_a_rotation() {
+  let mut tree = zoomer_with(stroked().with_layout());
+  let tilted = records_after(&mut tree, DISPLAY_SCALE, |_| Damage::None, |v| v.set_rotate(Some(TILT_DEG)));
+  assert_eq!(tilted, (1, 0));
 }

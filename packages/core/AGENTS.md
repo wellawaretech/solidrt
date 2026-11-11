@@ -171,6 +171,9 @@ moves core's peerDependencies and the scaffold's pins
 - Paint color is the `color` prop (a CSS color string). There is NO `fill`,
   `stroke`, or `background` prop (some older doc examples are wrong about this).
   Outlines: `drawStyle="stroke"` (or "stroke-and-fill") plus `strokeWidth`.
+  A `<rect>` that takes its geometry from its box (no `x`/`y`/`w`/`h`)
+  paints its stroke at a whole number of device pixels, rounded down, at
+  least one: 1 px at a 1.5x display is 1 device pixel.
   Corner radius on draw primitives: `radius` (number or [tl, tr, br, bl]);
   on `texture` too, drawn as a rounded image in one draw - use it instead of
   a rounded `clipRadius` around an image, which tiled GPUs pay dearly for.

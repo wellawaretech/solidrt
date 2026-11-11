@@ -97,7 +97,7 @@ that filled the caches.
 - A stroke's inner edge is not the box's business: a 1 logical px stroke
   at 1.5x is 1.5 device pixels and its inner edge sits on a half pixel
   whatever the box does. Border widths on the grid are a separate
-  decision (okf/backlog/border-width-device-pixels.md).
+  decision (okf/done/border-width-device-pixels.md).
 - Detached (d-*) nodes are not snapped: they have no layout box, draw
   their own geometry where it says, and are the animation lane.
 
@@ -106,4 +106,4 @@ that filled the caches.
 - Snapshot boundaries still rasterize at the display scale only, so under
   a design-size fit or a scale transform the texture is resampled
   whatever the quad lands on: okf/backlog/snapshot-raster-composite-scale.md.
-- Border widths at fractional scales: okf/backlog/border-width-device-pixels.md.
+- Border widths at fractional scales: okf/done/border-width-device-pixels.md.

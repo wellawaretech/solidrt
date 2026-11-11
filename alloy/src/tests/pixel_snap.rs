@@ -1,11 +1,12 @@
 //! Where the paint walk leaves the device grid alone
 //! (okf/done/pixel-snap-at-draw.md): under a running track that moves a
-//! box, never under a held write, and under `pixelSnap={false}`; and what a
-//! recording made while the rounding was off does when it comes back.
+//! box, never under a held write, and under `pixelSnap={false}`; what a
+//! recording made while the rounding was off does when it comes back; and
+//! when a running track keeps a rect's stroke off its device-pixel floor.
 //! Headless: the walk's counters and the tree's own answers, no pixels (the
 //! pixels are alloy/examples/pixel_snap.rs and the core app tests).
 use crate::renderer::prelude::*;
-use crate::renderer::DisplayListBuilder;
+use crate::renderer::{Color, DisplayListBuilder, DrawStyle};
 use crate::rendertree::composite::{apply_content_changes, paint_phase, PaintStats};
 use crate::rendertree::{transitions, *};
 use std::sync::Arc;
@@ -172,4 +173,109 @@ fn a_recording_under_pixel_snap_off_does_not_re_record_when_a_track_ends() {
     let frame = stage.frame(&mut tree, now);
     assert_eq!((frame.boundaries_recorded, frame.boundaries_reused), (0, 1), "at {now}");
   }
+}
+
+// A rect's stroke is not floored to device pixels while a track moves its
+// width (okf/done/border-width-device-pixels.md): the query the walk hands
+// the build counts running tracks only, so a held write is floored, and
+// the settling tick drops the track ahead of the frame that shows the end.
+#[test]
+fn a_running_stroke_width_track_moves_the_width_and_a_held_write_does_not() {
+  let mut tree = tree_with_mover(LINEAR_100.into());
+  tree.edit(FILL, |el| {
+    let entry = TransitionEntry { spec: LINEAR_100, delay_ms: HOLD_MS, from: None, exit: None };
+    el.transitions = Some(Box::new(TransitionConfig { all: Some(entry), ..Default::default() }));
+    Damage::None
+  });
+  let stage = Stage::new();
+  stage.frame(&mut tree, 0.0);
+  assert!(!tree.stroke_width_moving(FILL), "at rest");
+  assert!(tree.transition_write(FILL, AnimProp::StrokeWidth, Some(scalar(3.0))));
+  stage.frame(&mut tree, 10.0);
+  assert!(!tree.stroke_width_moving(FILL), "a held write is not motion");
+  stage.frame(&mut tree, f64::from(HOLD_MS) + 10.0);
+  assert!(tree.stroke_width_moving(FILL), "a running track moves the width");
+  assert!(!tree.stroke_width_moving(BOUNDARY), "the track is the rect's own");
+  tree.set_transition_now(f64::from(HOLD_MS) + 200.0);
+  tree.advance_transitions();
+  assert!(!tree.stroke_width_moving(FILL), "settled before the paint");
+}
+
+// The rect build's width and count, headless
+// (okf/done/border-width-device-pixels.md): `painted_stroke_width` against
+// a context whose grid, rest factor and width flag are set by hand. The
+// width is in frame units; the count is what an enclosing recording reads
+// to know it holds content made for one scale.
+#[test]
+fn the_rect_build_floors_its_stroke_and_counts_it() {
+  let platform = crate::tests::text_platform();
+  let alloy = headless();
+  let stroked = || {
+    let mut rect = Rectangle::default();
+    rect.paint.draw_style = DrawStyle::Stroke;
+    rect.paint.stroke_width = 1.0;
+    rect
+  };
+  // The width a rect paints at under (grid scale, rest factor, a moving
+  // width), and how much it added to the count.
+  let built = |rect: &Rectangle, grid: f32, rest: f32, moving: bool| {
+    let mut ctx = BuildContext::new(&platform, &alloy);
+    ctx.grid = crate::rendertree::grid::at_scale(grid);
+    ctx.scale_target = rest;
+    ctx.stroke_width_moving = moving;
+    let width = rect.painted_stroke_width(&mut ctx);
+    (width, ctx.scale_bound)
+  };
+  let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+
+  // 1 px at 1.5x: one device pixel, counted.
+  let (width, count) = built(&stroked(), 1.5, 1.0, false);
+  assert!(close(width, 1.0 / 1.5) && count == 1, "{width} {count}");
+  // A running track on the width: the declared width, still counted.
+  let (width, count) = built(&stroked(), 1.5, 1.0, true);
+  assert!(close(width, 1.0) && count == 1, "{width} {count}");
+  // Headed to twice the scale: floored at 3x, three device pixels.
+  let (width, count) = built(&stroked(), 1.5, 2.0, false);
+  assert!(close(width, 1.0) && count == 1, "{width} {count}");
+  // Geometry of its own: as declared, not counted.
+  let own = Rectangle { w: Some(30.0), ..stroked() };
+  let (width, count) = built(&own, 1.5, 1.0, false);
+  assert!(close(width, 1.0) && count == 0, "{width} {count}");
+  // A plain fill strokes nothing and is not counted.
+  let (_, count) = built(&Rectangle::default(), 1.5, 1.0, false);
+  assert_eq!(count, 0);
+  // A stroke that paints nothing (a border with a width and no color) is
+  // floored like any other but not counted.
+  let mut clear = stroked();
+  clear.paint.color = Color::new_srgba(0.0, 0.0, 0.0, 0.0);
+  let (width, count) = built(&clear, 1.5, 1.0, false);
+  assert!(close(width, 1.0 / 1.5) && count == 0, "{width} {count}");
+}
+
+// The wiring through the real paint walk: a stroked rect whose width track
+// runs, inside a recording. The walk sets the flag from the query for the
+// rect it builds; what the build then paints is not observable headless
+// (alloy/examples/pixel_snap.rs reads pixels), so this holds the two ends:
+// the query is true for the node through the run, and the recording made
+// in flight still counts the stroke as made for one scale.
+#[test]
+fn a_recording_of_a_rect_with_a_running_width_track_is_scale_bound() {
+  let mut tree = tree_with_mover(LINEAR_100.into());
+  tree.edit(FILL, |el| {
+    el.transitions = Some(Box::new(TransitionConfig { all: Some(LINEAR_100.into()), ..Default::default() }));
+    let paint = el.kind.paint_mut().expect("a rect paints");
+    paint.set_draw_style(Some(DrawStyle::Stroke));
+    paint.set_stroke_width(Some(1.0))
+  });
+  let stage = Stage::new();
+  stage.frame(&mut tree, 0.0);
+  assert!(tree.transition_write(FILL, AnimProp::StrokeWidth, Some(scalar(3.0))));
+  let moving = stage.frame(&mut tree, 50.0);
+  assert!(tree.stroke_width_moving(FILL), "the track runs through the frame");
+  assert_eq!(moving.boundaries_recorded, 1, "the width moved: the recording is made in flight");
+  let scale_bound = match &*tree.node(BOUNDARY).paint_cache.borrow() {
+    Some(PaintCache::Recording(rec)) => rec.scale_bound,
+    _ => panic!("the boundary holds a recording"),
+  };
+  assert!(scale_bound, "the moving stroke is still counted");
 }

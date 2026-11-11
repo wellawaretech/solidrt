@@ -377,7 +377,7 @@ pub fn camera_subsystem_init() -> bool {
   // advertise "32x32 - 16384x16384 with step 2/2" for ~20 formats each, and
   // SDL walks every size in that range - ~67 million VIDIOC_ENUM_FRAMEINTERVALS
   // calls per format, measured at ~38k/s, all failing. That is not slow, it is
-  // unbounded (libsdl-org/SDL#15085, open, milestoned 3.6.0; the same loop OOMs
+  // unbounded (libsdl-org/SDL#15085, a duplicate of #16273, open, milestoned 3.6.0; the same loop OOMs
   // instead where the interval ioctl succeeds).
   //
   // Running it off the UI thread does not contain it. SDL_UDEV_Scan matches the

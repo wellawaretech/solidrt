@@ -317,7 +317,8 @@ pub(crate) enum RasterScale {
 }
 
 /// The raster hysteresis rule (okf/done/text-layer-motion.md), shared by
-/// the text layer, a recording boundary holding text layers and a snapshot
+/// the text layer, a recording boundary holding content made for one scale
+/// (text layers, rect strokes floored to device pixels) and a snapshot
 /// boundary (through `raster_density`): a raster made at `have` under a
 /// composite scale of `now`, `at_rest` when `now` held over the rest
 /// looks. The raster scale follows rest, as browsers treat a transform
@@ -597,7 +598,7 @@ impl Text {
     let Some((rect, tex_w, tex_h)) = Self::layer_geometry(owned, index, scale) else {
       return;
     };
-    ctx.text_layers += 1;
+    ctx.scale_bound += 1;
     let width = owned.layouts[index].width;
     let content = Size::new(width, owned.layouts[index].layout.height);
     let frame = ctx.frame;
