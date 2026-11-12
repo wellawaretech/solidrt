@@ -213,7 +213,7 @@ enum InitStatus {
 /// treats that as "no cameras yet", an open waits for it (`pump_init`). When
 /// the worker finishes, the devices it found arrive as SDL
 /// CAMERA_DEVICE_ADDED events through the normal hotplug path
-/// (translate_event -> CameraDeviceChange), so listeners re-enumerate
+/// (ore's pump -> CameraDeviceChange), so listeners re-enumerate
 /// without polling.
 ///
 /// The worker exists because SDL_INIT_CAMERA probes devices synchronously and

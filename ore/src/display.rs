@@ -2,6 +2,9 @@
 //! data. Read from the platform at the window, a change event comes with
 //! the event pump.
 
+/// The refresh rate assumed when the display reports none (or 0 Hz).
+pub const DEFAULT_REFRESH_HZ: f32 = 60.0;
+
 /// Orientation of the display the window is on (DisplayOrientation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Orientation {

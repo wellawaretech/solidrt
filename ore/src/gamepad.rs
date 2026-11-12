@@ -1,6 +1,14 @@
-//! The gamepad vocabulary: one connected pad's state as a snapshot reports
-//! it, and the commands a synthetic pad is driven by. Plain data; the pads
-//! themselves come with the event pump.
+//! The gamepads: one connected pad's state as a snapshot reports it, the
+//! commands a synthetic pad is driven by, and the pads themselves
+//! (`Gamepads`): SDL's gamepads and joysticks in stable slots, opened from
+//! the platform (`Platform::gamepads`) and fed by the pump's events, with
+//! the synthetic pads the dev tools seat beside them.
+
+use sdl3::event::Event as SdlEvent;
+use sdl3::gamepad::{Axis, Button, Gamepad};
+use sdl3::joystick::{HatState, Joystick, JoystickId};
+// GamepadSubsystem is only exported at the crate root (sdl3::gamepad::* is private)
+use sdl3::{GamepadSubsystem, JoystickSubsystem};
 
 /// One connected gamepad's current state. `buttons` holds the names of the
 /// currently-pressed buttons (SDL3 positional names: "south", "dpadUp", ...);
@@ -36,4 +44,500 @@ pub enum GamepadCommand {
   Disconnect {
     slot: usize,
   },
+}
+
+// Semantic names for the JS-facing snapshot. SDL's own string names are the
+// controller-mapping-format ones ("a", "dpup", ...), which conflate position
+// and label; these follow SDL3's positional enum instead.
+fn button_name(b: Button) -> &'static str {
+  match b {
+    Button::South => "south",
+    Button::East => "east",
+    Button::West => "west",
+    Button::North => "north",
+    Button::Back => "back",
+    Button::Guide => "guide",
+    Button::Start => "start",
+    Button::LeftStick => "leftStick",
+    Button::RightStick => "rightStick",
+    Button::LeftShoulder => "leftShoulder",
+    Button::RightShoulder => "rightShoulder",
+    Button::DPadUp => "dpadUp",
+    Button::DPadDown => "dpadDown",
+    Button::DPadLeft => "dpadLeft",
+    Button::DPadRight => "dpadRight",
+    Button::Misc1 => "misc1",
+    Button::Misc2 => "misc2",
+    Button::Misc3 => "misc3",
+    Button::Misc4 => "misc4",
+    Button::Misc5 => "misc5",
+    Button::Misc6 => "misc6",
+    Button::RightPaddle1 => "rightPaddle1",
+    Button::LeftPaddle1 => "leftPaddle1",
+    Button::RightPaddle2 => "rightPaddle2",
+    Button::LeftPaddle2 => "leftPaddle2",
+    Button::Touchpad => "touchpad",
+  }
+}
+
+const BUTTONS: [Button; 15] = [
+  Button::South,
+  Button::East,
+  Button::West,
+  Button::North,
+  Button::Back,
+  Button::Guide,
+  Button::Start,
+  Button::LeftStick,
+  Button::RightStick,
+  Button::LeftShoulder,
+  Button::RightShoulder,
+  Button::DPadUp,
+  Button::DPadDown,
+  Button::DPadLeft,
+  Button::DPadRight,
+];
+
+const AXES: [(Axis, &str); 6] = [
+  (Axis::LeftX, "leftX"),
+  (Axis::LeftY, "leftY"),
+  (Axis::RightX, "rightX"),
+  (Axis::RightY, "rightY"),
+  (Axis::TriggerLeft, "leftTrigger"),
+  (Axis::TriggerRight, "rightTrigger"),
+];
+
+// Names for raw (unmapped) joystick buttons, by index in W3C standard-mapping
+// order. These are positional guesses (the standard layout is what browsers
+// remap *into*, not natural HID order), but a single guessed vocabulary means
+// consumers never need a raw-vs-mapped code path; `mapped: false` on the
+// snapshot discloses the uncertainty.
+const RAW_BUTTONS: [&str; 17] = [
+  "south",
+  "east",
+  "west",
+  "north",
+  "leftShoulder",
+  "rightShoulder",
+  "leftTrigger",
+  "rightTrigger",
+  "back",
+  "start",
+  "leftStick",
+  "rightStick",
+  "dpadUp",
+  "dpadDown",
+  "dpadLeft",
+  "dpadRight",
+  "guide",
+];
+
+// Overflow names for raw button indices past the standard layout.
+const RAW_EXTRA_BUTTONS: [&str; 15] = [
+  "button17", "button18", "button19", "button20", "button21", "button22", "button23", "button24", "button25",
+  "button26", "button27", "button28", "button29", "button30", "button31",
+];
+
+fn raw_button_name(index: u32) -> Option<&'static str> {
+  let i = index as usize;
+  RAW_BUTTONS.get(i).or_else(|| RAW_EXTRA_BUTTONS.get(i - RAW_BUTTONS.len())).copied()
+}
+
+const RAW_AXES: [&str; 8] = ["leftX", "leftY", "rightX", "rightY", "axis4", "axis5", "axis6", "axis7"];
+
+// Retro sticks and arcade adapters often report their d-pad as a hat rather
+// than buttons; fold hat 0 into the dpad names so consumers see one shape.
+fn hat_names(state: HatState) -> &'static [&'static str] {
+  match state {
+    HatState::Centered => &[],
+    HatState::Up => &["dpadUp"],
+    HatState::Down => &["dpadDown"],
+    HatState::Left => &["dpadLeft"],
+    HatState::Right => &["dpadRight"],
+    HatState::RightUp => &["dpadRight", "dpadUp"],
+    HatState::RightDown => &["dpadRight", "dpadDown"],
+    HatState::LeftUp => &["dpadLeft", "dpadUp"],
+    HatState::LeftDown => &["dpadLeft", "dpadDown"],
+  }
+}
+
+fn axis_value(raw: i16) -> f32 {
+  (raw as f32 / 32767.0).clamp(-1.0, 1.0)
+}
+
+/// The static button name a synthetic pad may hold (the mapped
+/// vocabulary, `button_name`), or None for a name no pad reports.
+pub fn synthetic_button_name(name: &str) -> Option<&'static str> {
+  BUTTONS.iter().map(|&b| button_name(b)).find(|&n| n == name)
+}
+
+/// The static axis name a synthetic pad may hold (the mapped vocabulary,
+/// `AXES`), or None.
+pub fn synthetic_axis_name(name: &str) -> Option<&'static str> {
+  AXES.iter().map(|&(_, n)| n).find(|&n| n == name)
+}
+
+// Instance ids for synthetic pads: far above anything SDL hands out, so a
+// synthetic pad never aliases a physical one in slot_of.
+const SYNTHETIC_ID_BASE: u32 = 1 << 30;
+
+// A synthetic pad's held state (see GamepadCommand).
+struct SyntheticPad {
+  id: u32,
+  name: String,
+  buttons: Vec<&'static str>,
+  axes: Vec<(&'static str, f32)>,
+}
+
+// A connected pad: opened through SDL's gamepad API when the device has a
+// controller-database mapping (semantic button positions are then reliable),
+// or through the raw joystick API otherwise - SDL refuses to guess a layout
+// it doesn't know, but for an app's purposes a plain 2-button stick is a pad.
+//
+// A mapped pad also keeps a raw joystick handle to the same device (SDL
+// refcounts the open): Android's auto-mapping is built from a hasKeys probe
+// that TV remotes routinely fail for their Back key, so the mapping can lack
+// the back entry even though the press arrives as raw button 4 - the Android
+// driver sends gamepad-button enum values as joystick button indices. The
+// raw handle lets take_back_edge read past that gap.
+//
+// A synthetic pad (the dev tools' input injection) sits in the same slots
+// with a held state, so the snapshot, the coalescing, the sticky replay
+// and the back edge see no difference; it reports as mapped, its names
+// being the mapped vocabulary.
+enum Pad {
+  Mapped { pad: Gamepad, joystick: Option<Joystick> },
+  Raw(Joystick),
+  Synthetic(SyntheticPad),
+}
+
+// SDL_GAMEPAD_BUTTON_BACK: on the Android joystick driver, raw button
+// indices are the gamepad-button enum values.
+#[cfg(target_os = "android")]
+const RAW_BACK_INDEX: u32 = 4;
+
+impl Pad {
+  fn id(&self) -> u32 {
+    match self {
+      Pad::Mapped { pad, .. } => pad.id().ok().map_or(0, JoystickId::raw),
+      Pad::Raw(joystick) => joystick.id().raw(),
+      Pad::Synthetic(pad) => pad.id,
+    }
+  }
+
+  fn is_synthetic(&self) -> bool {
+    matches!(self, Pad::Synthetic(_))
+  }
+
+  fn state(&self) -> GamepadState {
+    match self {
+      Pad::Synthetic(pad) => GamepadState {
+        id: pad.id,
+        name: pad.name.clone(),
+        buttons: pad.buttons.clone(),
+        axes: pad.axes.clone(),
+        mapped: true,
+      },
+      Pad::Mapped { pad, .. } => GamepadState {
+        id: self.id(),
+        name: pad.name().unwrap_or_default(),
+        // The full truth, including "back": that button doubles as the
+        // client-owned back trigger (see take_back_edge), but the snapshot
+        // stays faithful - consumers get facts, the back event carries the
+        // intent.
+        buttons: BUTTONS.iter().copied().filter(|&b| pad.button(b)).map(button_name).collect(),
+        axes: AXES.iter().map(|&(axis, name)| (name, axis_value(pad.axis(axis)))).collect(),
+        mapped: true,
+      },
+      Pad::Raw(joystick) => {
+        let mut buttons: Vec<&'static str> = Vec::new();
+        let mut press = |name: &'static str| {
+          if !buttons.contains(&name) {
+            buttons.push(name);
+          }
+        };
+        for i in 0..joystick.num_buttons() {
+          if joystick.button(i).unwrap_or(false) {
+            if let Some(name) = raw_button_name(i) {
+              press(name);
+            }
+          }
+        }
+        if joystick.num_hats() > 0 {
+          if let Ok(hat) = joystick.hat(0) {
+            for name in hat_names(hat) {
+              press(name);
+            }
+          }
+        }
+        let axes = (0..joystick.num_axes())
+          .filter_map(|i| {
+            let name = *RAW_AXES.get(i as usize)?;
+            Some((name, axis_value(joystick.axis(i).unwrap_or(0))))
+          })
+          .collect();
+        GamepadState { id: self.id(), name: joystick.name(), buttons, axes, mapped: false }
+      }
+    }
+  }
+}
+
+// Opened pads in stable slots (web Gamepad API style): a pad keeps its
+// index for its whole connection, disconnecting leaves a hole, and the next
+// connect fills the lowest free slot. Stable indices are what lets a game
+// keep "player 2" attached to the same physical pad across the session.
+//
+// Everything is driven by the Joy* event family: gamepad events are
+// synthesized from joystick events (SDL_GamepadEventWatcher), so joystick
+// events cover mapped and unmapped devices alike, and SDL emits Added events
+// for already-connected devices when the subsystem initializes, so
+// open-on-Added covers initial population too.
+//
+// The slots do not need SDL to hold synthetic pads: a table made with
+// `synthetic` has no subsystems and seats those alone, which is what a host
+// with no device loop (a stepped test host) drives its pads through, with
+// the same commands, snapshot and back edge.
+pub struct Gamepads {
+  // SDL's pad and joystick subsystems; None on a table of synthetic pads.
+  sdl: Option<(GamepadSubsystem, JoystickSubsystem)>,
+  slots: Vec<Option<Pad>>,
+  dirty: bool,
+  back_down: bool,
+  // The dev-tool user-input mute (an agent measuring or testing; the
+  // embedder's loop sets it, see set_muted). Pad state is level-read, so the mute cannot drop events the
+  // way the key/pointer path does: instead, entering it emits one neutral
+  // state (every pad still listed, nothing pressed, sticks at rest) - the
+  // pad version of "releases still pass" - and nothing more until it lifts,
+  // when the real state goes out again. No back edge while muted. Synthetic
+  // pads are the dev tools' own input and pass through the mute, as the
+  // injected key and pointer events do.
+  muted: bool,
+  // Instance ids handed to synthetic pads, from SYNTHETIC_ID_BASE up.
+  next_synthetic_id: u32,
+}
+
+impl Gamepads {
+  /// A table that seats synthetic pads only (see the struct).
+  pub fn synthetic() -> Gamepads {
+    Gamepads {
+      sdl: None,
+      slots: Vec::new(),
+      dirty: false,
+      back_down: false,
+      muted: false,
+      next_synthetic_id: SYNTHETIC_ID_BASE,
+    }
+  }
+
+  pub(crate) fn new(sdl: &sdl3::Sdl) -> Option<Gamepads> {
+    let gamepad = match sdl.gamepad() {
+      Ok(subsystem) => subsystem,
+      Err(e) => {
+        log::warn!("[ore] gamepad subsystem unavailable: {e}");
+        return None;
+      }
+    };
+    let joystick = match sdl.joystick() {
+      Ok(subsystem) => subsystem,
+      Err(e) => {
+        log::warn!("[ore] joystick subsystem unavailable: {e}");
+        return None;
+      }
+    };
+    Some(Gamepads {
+      sdl: Some((gamepad, joystick)),
+      slots: Vec::new(),
+      dirty: false,
+      back_down: false,
+      muted: false,
+      next_synthetic_id: SYNTHETIC_ID_BASE,
+    })
+  }
+
+  /// Apply a synthetic-pad command (the dev tools' GamepadCommand). A slot that
+  /// holds a physical pad, or none, is an error for Set and Disconnect;
+  /// Connect into a taken slot is too. Any change marks the state dirty,
+  /// so the next snapshot carries it.
+  pub fn apply(&mut self, cmd: GamepadCommand) -> Result<(), String> {
+    match cmd {
+      GamepadCommand::Connect { slot, name } => {
+        let slot = match slot {
+          Some(i) => {
+            if self.slots.get(i).is_some_and(Option::is_some) {
+              return Err(format!("slot {i} is taken"));
+            }
+            i
+          }
+          None => self.slots.iter().position(Option::is_none).unwrap_or(self.slots.len()),
+        };
+        if slot >= self.slots.len() {
+          self.slots.resize_with(slot + 1, || None);
+        }
+        let id = self.next_synthetic_id;
+        self.next_synthetic_id += 1;
+        log::info!("[ore] pad connected (synthetic): {name} in slot {slot}");
+        self.slots[slot] = Some(Pad::Synthetic(SyntheticPad { id, name, buttons: Vec::new(), axes: Vec::new() }));
+      }
+      GamepadCommand::Set { slot, buttons, axes } => {
+        let pad = self.synthetic_mut(slot)?;
+        pad.buttons = buttons;
+        pad.axes = axes;
+      }
+      GamepadCommand::Disconnect { slot } => {
+        self.synthetic_mut(slot)?;
+        self.slots[slot] = None;
+      }
+    }
+    self.dirty = true;
+    Ok(())
+  }
+
+  fn synthetic_mut(&mut self, slot: usize) -> Result<&mut SyntheticPad, String> {
+    match self.slots.get_mut(slot) {
+      Some(Some(Pad::Synthetic(pad))) => Ok(pad),
+      Some(Some(_)) => Err(format!("slot {slot} holds a physical pad")),
+      _ => Err(format!("slot {slot} holds no synthetic pad")),
+    }
+  }
+
+  // Track connection changes and mark state dirty on any pad activity. The
+  // per-event payloads are ignored: the snapshot re-reads current state from
+  // the open handles, which cannot drift from SDL's view.
+  // Fed by the pump, which waits behind the `window` feature.
+  #[cfg_attr(not(feature = "window"), allow(dead_code))]
+  pub(crate) fn handle_event(&mut self, e: &SdlEvent) {
+    match e {
+      SdlEvent::JoyDeviceAdded { which, .. } => {
+        if self.slot_of(which.raw()).is_some() {
+          return; // already open (SDL can re-announce)
+        }
+        let Some((gamepad, joystick)) = &self.sdl else {
+          return;
+        };
+        let id = *which;
+        let opened = if gamepad.is_gamepad(id) {
+          gamepad.open(id).map(|pad| Pad::Mapped { pad, joystick: joystick.open(id).ok() }).map_err(|e| e.to_string())
+        } else {
+          joystick.open(id).map(Pad::Raw).map_err(|e| e.to_string())
+        };
+        match opened {
+          Ok(pad) => {
+            let kind = match &pad {
+              Pad::Mapped { .. } => "mapped",
+              Pad::Raw(_) => "raw",
+              Pad::Synthetic(_) => "synthetic",
+            };
+            log::info!("[ore] pad connected ({kind}): {}", pad.state().name);
+            let free = self.slots.iter().position(|s| s.is_none());
+            match free {
+              Some(i) => self.slots[i] = Some(pad),
+              None => self.slots.push(Some(pad)),
+            }
+            self.dirty = true;
+          }
+          Err(err) => log::warn!("[ore] pad open failed: {err}"),
+        }
+      }
+      SdlEvent::JoyDeviceRemoved { which, .. } => {
+        if let Some(i) = self.slot_of(which.raw()) {
+          self.slots[i] = None;
+          self.dirty = true;
+        }
+      }
+      // Muted, activity is not news: the neutral state already went out.
+      SdlEvent::JoyButtonDown { .. }
+      | SdlEvent::JoyButtonUp { .. }
+      | SdlEvent::JoyAxisMotion { .. }
+      | SdlEvent::JoyHatMotion { .. }
+        if !self.muted =>
+      {
+        self.dirty = true;
+      }
+      _ => {}
+    }
+  }
+
+  // One snapshot per main-loop iteration, however many pad events arrived:
+  // analog sticks can emit several motion events per frame and each JS emit
+  // crosses the runtime boundary.
+  pub fn take_snapshot_if_dirty(&mut self) -> Option<Vec<Option<GamepadState>>> {
+    if !self.dirty {
+      return None;
+    }
+    self.dirty = false;
+    let mut pads = self.snapshot();
+    if self.muted {
+      for (state, slot) in pads.iter_mut().zip(&self.slots) {
+        let Some(pad) = state else { continue };
+        if slot.as_ref().is_some_and(Pad::is_synthetic) {
+          continue;
+        }
+        pad.buttons.clear();
+        for axis in &mut pad.axes {
+          axis.1 = 0.0;
+        }
+      }
+    }
+    Some(pads)
+  }
+
+  /// Apply the user-input mute (see `muted`). A change in either direction
+  /// marks the state dirty: entering sends the neutral state, leaving the
+  /// real one.
+  pub fn set_muted(&mut self, muted: bool) {
+    if muted != self.muted {
+      self.muted = muted;
+      self.dirty = true;
+    }
+  }
+
+  /// Every slot's pad state now, a None hole for a free slot.
+  pub fn snapshot(&self) -> Vec<Option<GamepadState>> {
+    self.slots.iter().map(|slot| slot.as_ref().map(Pad::state)).collect()
+  }
+
+  // The gamepad "back" (select) button is a client-owned back trigger, the
+  // pad-side sibling of AC_BACK on the key path: a press edge on any mapped
+  // pad becomes the embedder's back request, and the button never appears in the JS
+  // snapshot (see Pad::state). Mapped pads only: on a raw HID pad "back" is a
+  // positional guess, too uncertain to hang an exit-the-app intent on. State
+  // is level-read per iteration, so a press outlasting one loop drain (any
+  // human press does) is never missed and holding is one request.
+  pub fn take_back_edge(&mut self) -> bool {
+    let physical = self.slots.iter().flatten().any(|p| match p {
+      Pad::Mapped { pad, joystick } => {
+        if pad.button(Button::Back) {
+          return true;
+        }
+        // Android: read the raw button too - the auto-mapping may lack the
+        // back entry for TV remotes (see the Pad doc comment). Elsewhere raw
+        // indices are device-arbitrary, so only the mapping is trusted.
+        #[cfg(target_os = "android")]
+        {
+          joystick.as_ref().is_some_and(|j| j.button(RAW_BACK_INDEX).unwrap_or(false))
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+          let _ = joystick;
+          false
+        }
+      }
+      Pad::Raw(_) | Pad::Synthetic(_) => false,
+    });
+    // A synthetic back is the dev tools' own request and passes the mute.
+    let synthetic = self.slots.iter().flatten().any(|p| match p {
+      Pad::Synthetic(pad) => pad.buttons.contains(&"back"),
+      _ => false,
+    });
+    let down = physical || synthetic;
+    let edge = down && !self.back_down;
+    // Level tracking continues while muted, so a press held across the mute
+    // is still one request, never an edge on the way out.
+    self.back_down = down;
+    edge && (!self.muted || synthetic)
+  }
+
+  fn slot_of(&self, id: u32) -> Option<usize> {
+    self.slots.iter().position(|s| s.as_ref().is_some_and(|p| p.id() == id))
+  }
 }

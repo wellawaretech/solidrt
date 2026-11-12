@@ -238,8 +238,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use std::sync::{Arc, Mutex};
 
 // Receives the soft-keyboard (IME) inset height in pixels from
-// SolidRTActivity.nativeKeyboardInset (Android UI thread) and stores it for
-// the event loop to pick up. The export lives in the cdylib so the symbol
+// SolidRTActivity.nativeKeyboardInset (Android UI thread) and stores it in
+// ore for the pump to pick up. The export lives in the cdylib so the symbol
 // lands in libmain.so; the env/class pointers are unused.
 #[cfg(target_os = "android")]
 #[no_mangle]
@@ -248,7 +248,7 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeKeyboardInset(
   _class: *mut core::ffi::c_void,
   px: core::ffi::c_int,
 ) {
-  alloy::set_keyboard_inset_px(px as i32);
+  ore::window::set_keyboard_inset_px(px as i32);
 }
 
 // Receives hardware-keyboard presence from SolidRTActivity (initial device
@@ -261,7 +261,7 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeHardwareKeyboard(
   _class: *mut core::ffi::c_void,
   present: u8,
 ) {
-  alloy::set_hardware_keyboard(present != 0);
+  ore::window::set_hardware_keyboard(present != 0);
 }
 
 // Receives "the system destroyed the video plane's surface" from
@@ -321,7 +321,7 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeVideoPlaneVsync(
 
 // Receives one finger sample from SolidRTSurface (Android UI thread): the
 // touch path that carries each sample's own time, which SDL's does not
-// (see alloy's touch.rs).
+// (see ore's touch.rs).
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_com_solidrt_app_SolidRTSurface_nativeTouch(
@@ -333,7 +333,7 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTSurface_nativeTouch(
   y: f32,
   time_ns: i64,
 ) {
-  alloy::touch::push(pointer_id as i32, action as i32, x, y, time_ns);
+  ore::touch::push(pointer_id as i32, action as i32, x, y, time_ns);
 }
 
 // Receives a held redraw from SolidRTSurface (Android UI thread): the

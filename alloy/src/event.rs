@@ -1,11 +1,8 @@
 use crate::renderer::{ISize, Rect};
-use sdl3::event::Event as SdlEvent;
-use sdl3::keyboard::Scancode;
-
-use crate::sdl_utils;
 
 use ore::cursor::{Cursor, CursorFrame};
 use ore::display::Orientation;
+use ore::event::PlatformEvent;
 use ore::gamepad::GamepadState;
 use ore::input::{Modifiers, PointerType};
 use ore::lifecycle::SuspendHold;
@@ -97,18 +94,6 @@ pub enum AlloyCommand {
   SetHeadlessWindow { width: u32, height: u32, scale: f32 },
 }
 
-// SDL's modifier bits as the modifier state an event carries: either side's
-// key sets the flag.
-pub(crate) fn modifiers_from_sdl(m: sdl3::keyboard::Mod) -> Modifiers {
-  use sdl3::keyboard::Mod;
-  Modifiers {
-    shift: m.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD),
-    ctrl: m.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD),
-    alt: m.intersects(Mod::LALTMOD | Mod::RALTMOD),
-    meta: m.intersects(Mod::LGUIMOD | Mod::RGUIMOD),
-  }
-}
-
 /// An event on the channel to the embedder, with when it happened: the
 /// platform's time for an input event (see `EventSender::send_at`), the
 /// send for everything else.
@@ -172,17 +157,19 @@ pub enum AlloyEvent {
     hold: SuspendHold,
   },
   // The user's back intent: Android's back button/gesture (AC_BACK), or the
-  // desktop chord (see `is_back_trigger`). Unlike Quit this is a request, not
-  // a command: it surfaces to the app as the preventable `back` event (in-app
-  // navigation handles it there), and only an unprevented dispatch (or an
-  // unresponsive engine) falls through to the default action: exit.
+  // desktop chord (translated by ore, see ore::event::PlatformEvent::Back).
+  // Unlike Quit this is a request, not a command: it surfaces to the app as
+  // the preventable `back` event (in-app navigation handles it there), and
+  // only an unprevented dispatch (or an unresponsive engine) falls through
+  // to the default action: exit.
   Back,
   // A link handed to the running app from outside: a custom-scheme URL the
   // OS routed here (macOS and iOS deliver it through SDL's drop path, an
-  // Android intent through the activity's onNewIntent, see `link_from_drop`),
-  // or one a dev tool injected. The raw string, untouched: what it means is
-  // the app's to decide, and it is untrusted input. The link a process was
-  // started with is not an event but a launch fact (see the embedder).
+  // Android intent through the activity's onNewIntent; translated by ore,
+  // see ore::event::PlatformEvent::Link), or one a dev tool injected. The
+  // raw string, untouched: what it means is the app's to decide, and it is
+  // untrusted input. The link a process was started with is not an event
+  // but a launch fact (see the embedder).
   Link {
     link: String,
   },
@@ -214,9 +201,9 @@ pub enum AlloyEvent {
   // are undefined). Repaint trigger only; never surfaces to JS.
   Exposed,
   // One key transition, already translated to the W3C UI Events vocabulary
-  // (see `crate::keymap`): `key` is the logical value ("a", "!", "Enter"),
-  // `code` the physical key ("KeyA", "NumpadEnter"). SDL's keycodes and
-  // scancodes never leave this crate.
+  // by ore (ore::event::PlatformEvent::Key): `key` is the logical value ("a",
+  // "!", "Enter"), `code` the physical key ("KeyA", "NumpadEnter"). SDL's
+  // keycodes and scancodes never leave ore.
   Key {
     down: bool,
     key: String,
@@ -392,19 +379,11 @@ pub(crate) fn current_system_theme_event() -> AlloyEvent {
 }
 
 pub(crate) fn current_input_devices_event() -> AlloyEvent {
-  // On Android the SDL touch list over-reports (TV boxes with virtual input
-  // drivers claiming pointer sources), so the fact is gated on the
-  // platform's own touchscreen feature declaration.
-  #[cfg(target_os = "android")]
-  let touch = ore::window::has_touch_device() && ore::android::has_touchscreen_feature();
-  #[cfg(not(target_os = "android"))]
-  let touch = ore::window::has_touch_device();
-  AlloyEvent::InputDevices {
-    keyboard: ore::window::physical_keyboard(),
-    mouse: ore::window::has_mouse(),
-    touch,
-    screen_keyboard: ore::window::has_screen_keyboard_support(),
-  }
+  input_devices_event(ore::window::input_devices())
+}
+
+fn input_devices_event(d: ore::input::InputDevices) -> AlloyEvent {
+  AlloyEvent::InputDevices { keyboard: d.keyboard, mouse: d.mouse, touch: d.touch, screen_keyboard: d.screen_keyboard }
 }
 
 pub(crate) fn current_orientation_event(window: &Window) -> AlloyEvent {
@@ -412,9 +391,14 @@ pub(crate) fn current_orientation_event(window: &Window) -> AlloyEvent {
 }
 
 pub(crate) fn current_resize_event(window: &Window) -> AlloyEvent {
-  let (w, h) = window.size_in_pixels();
-  let scale = window.display_scale();
-  let r = window.safe_area();
+  resize_event(window.size_in_pixels(), window.display_scale(), window.safe_area())
+}
+
+// The resize for a drawable of `pixel_size` physical pixels at `scale`: the
+// logical size is the pixel size over the scale, the safe area is already in
+// logical points. One place, so the event ore's pump reports and the one
+// read from the window here cannot disagree.
+fn resize_event((w, h): (u32, u32), scale: f32, r: ore::display::Rect) -> AlloyEvent {
   AlloyEvent::Resize {
     size: ISize::new((w as f32 / scale) as i64, (h as f32 / scale) as i64),
     safe_area: Rect::new(
@@ -449,38 +433,6 @@ pub(crate) fn headless_init_events(window: &crate::stepped::HeadlessWindow, fps:
   [AlloyEvent::DisplayRefreshRate { hz: fps as f32 }, headless_resize_event(window)]
 }
 
-// Maps SDL mouse buttons to web-standard MouseEvent.button codes:
-// 0=left, 1=middle, 2=right, 3=back (X1), 4=forward (X2).
-// Unknown returns None so the caller can drop the event.
-fn map_mouse_button(b: sdl3::mouse::MouseButton) -> Option<u8> {
-  use sdl3::mouse::MouseButton::*;
-  match b {
-    Left => Some(0),
-    Middle => Some(1),
-    Right => Some(2),
-    X1 => Some(3),
-    X2 => Some(4),
-    Unknown => None,
-  }
-}
-
-// The user's back triggers, normalized to AlloyEvent::Back before the generic
-// key path so apps never additionally see them as keydown/keyup: AC_BACK on
-// every platform (on Android the system back button and back swipe, the only
-// signal with SDL_ANDROID_TRAP_BACK_BUTTON=1; on desktop the keyboard's
-// BrowserBack media key arrives as the same scancode), plus the client-owned
-// chord Ctrl+Shift+Backspace (Cmd+Shift+Backspace on macOS). The gamepad
-// "back" (select) button is the third trigger, normalized on the pad
-// snapshot path (see gamepad.rs take_back_edge).
-fn is_back_trigger(scancode: Option<Scancode>, keymod: sdl3::keyboard::Mod) -> bool {
-  if scancode == Some(Scancode::AcBack) {
-    return true;
-  }
-  let m = modifiers_from_sdl(keymod);
-  let chord_mod = if cfg!(target_os = "macos") { m.meta } else { m.ctrl };
-  chord_mod && m.shift && scancode == Some(Scancode::Backspace)
-}
-
 /// The user-originated input a dev-tool mute drops (see the mute site in
 /// app.rs): presses, moves, wheel, text and back. Releases are left out on
 /// purpose - a button or key held when the mute began must still let go.
@@ -496,260 +448,47 @@ pub(crate) fn is_muted_input(event: &AlloyEvent) -> bool {
   }
 }
 
-pub(crate) fn translate_event(sdl_event: SdlEvent, window: &Window) -> Option<AlloyEvent> {
-  match sdl_event {
-    SdlEvent::Quit { .. } => Some(AlloyEvent::Quit),
-    // iOS applicationWillTerminate (Android sends it alongside Quit at
-    // destroy, where the second copy is moot: Quit ends the process).
-    SdlEvent::AppTerminating { .. } => Some(AlloyEvent::Quit),
-    SdlEvent::KeyDown { keycode, scancode, keymod, repeat, .. } => {
-      if is_back_trigger(scancode, keymod) {
-        // Repeats collapse: holding the trigger is one request.
-        return if repeat { None } else { Some(AlloyEvent::Back) };
+// The platform's events, as ore's pump translated them, on the embedder's
+// channel: variant to variant, plain data carried over.
+impl From<PlatformEvent> for AlloyEvent {
+  fn from(e: PlatformEvent) -> AlloyEvent {
+    match e {
+      PlatformEvent::Quit => AlloyEvent::Quit,
+      PlatformEvent::Back => AlloyEvent::Back,
+      PlatformEvent::Link { link } => AlloyEvent::Link { link },
+      PlatformEvent::WindowFocus => AlloyEvent::WindowFocus,
+      PlatformEvent::WindowBlur => AlloyEvent::WindowBlur,
+      PlatformEvent::Visibility { visible } => AlloyEvent::Visibility { visible },
+      PlatformEvent::Exposed => AlloyEvent::Exposed,
+      PlatformEvent::Key { down, key, code, modifiers, repeat } => {
+        AlloyEvent::Key { down, key, code, modifiers, repeat }
       }
-      Some(AlloyEvent::Key {
-        down: true,
-        key: crate::keymap::w3c_key(keycode, scancode, keymod),
-        code: crate::keymap::w3c_code(scancode),
-        modifiers: modifiers_from_sdl(keymod),
-        repeat,
-      })
-    }
-    SdlEvent::KeyUp { keycode, scancode, keymod, repeat, .. } => {
-      // Swallow the trigger's release too. Best-effort for the chord: with the
-      // modifiers already released, a stray keyup "Backspace" reaches apps,
-      // which is harmless (nothing acts on an unmatched keyup).
-      if is_back_trigger(scancode, keymod) {
-        return None;
+      PlatformEvent::Resize { pixel_size, display_scale, safe_area } => {
+        resize_event(pixel_size, display_scale, safe_area)
       }
-      Some(AlloyEvent::Key {
-        down: false,
-        key: crate::keymap::w3c_key(keycode, scancode, keymod),
-        code: crate::keymap::w3c_code(scancode),
-        modifiers: modifiers_from_sdl(keymod),
-        repeat,
-      })
+      PlatformEvent::PointerMove { pointer_id, pointer_type, x, y, rel, modifiers } => {
+        AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, rel, modifiers }
+      }
+      PlatformEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
+        AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers }
+      }
+      PlatformEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
+        AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers }
+      }
+      PlatformEvent::PointerCancel { pointer_id, pointer_type, x, y, modifiers } => {
+        AlloyEvent::PointerCancel { pointer_id, pointer_type, x, y, modifiers }
+      }
+      PlatformEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => {
+        AlloyEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers }
+      }
+      PlatformEvent::TextInput { text } => AlloyEvent::TextInput { text },
+      PlatformEvent::DisplayOrientation { orientation } => AlloyEvent::DisplayOrientation { orientation },
+      PlatformEvent::SystemThemeChanged => current_system_theme_event(),
+      PlatformEvent::InputDevices(d) => input_devices_event(d),
+      PlatformEvent::DisplayRefreshRate { hz } => AlloyEvent::DisplayRefreshRate { hz },
+      PlatformEvent::KeyboardVisibility { shown, height } => AlloyEvent::KeyboardVisibility { shown, height },
+      PlatformEvent::PowerStatus { info } => AlloyEvent::PowerStatus { info },
+      PlatformEvent::CameraDeviceChange { added } => AlloyEvent::CameraDeviceChange { added },
     }
-    SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusGained, .. } => Some(AlloyEvent::WindowFocus),
-    SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusLost, .. } => Some(AlloyEvent::WindowBlur),
-    // Lifecycle: Android pause/resume arrives on the app path, desktop
-    // minimize/restore on the window path. DID (not WILL) on both Android
-    // sides: the transition is only fact once it completed, and on resume the
-    // recreated EGL surface exists by then. Occluded is deliberately not
-    // mapped (noisy on macOS, and partial occlusion is not "hidden").
-    SdlEvent::AppDidEnterBackground { .. } => Some(AlloyEvent::Visibility { visible: false }),
-    SdlEvent::AppDidEnterForeground { .. } => Some(AlloyEvent::Visibility { visible: true }),
-    SdlEvent::Window { win_event: sdl3::event::WindowEvent::Minimized, .. }
-    | SdlEvent::Window { win_event: sdl3::event::WindowEvent::Hidden, .. } => {
-      Some(AlloyEvent::Visibility { visible: false })
-    }
-    SdlEvent::Window { win_event: sdl3::event::WindowEvent::Restored, .. }
-    | SdlEvent::Window { win_event: sdl3::event::WindowEvent::Shown, .. } => {
-      Some(AlloyEvent::Visibility { visible: true })
-    }
-    SdlEvent::Window { win_event: sdl3::event::WindowEvent::Exposed, .. } => Some(AlloyEvent::Exposed),
-    SdlEvent::Window { win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h), .. } => {
-      let display_scale = window.display_scale();
-      let size = ISize::new((w as f32 / display_scale) as i64, (h as f32 / display_scale) as i64);
-      let r = window.safe_area();
-      let safe_area = Rect::new(
-        crate::renderer::Point::new(r.x as f32, r.y as f32),
-        crate::renderer::Size::new(r.width as f32, r.height as f32),
-      );
-      Some(AlloyEvent::Resize { size, safe_area, display_scale })
-    }
-    // SDL reports mouse coordinates in window units, which are logical points
-    // on some backends (macOS, Wayland) and physical pixels on others
-    // (Android, X11). The JS-facing logical space is always
-    // size_in_pixels / display_scale (see current_resize_event), so mouse
-    // coordinates convert by mouse_scale: the ratio between the two spaces,
-    // 1.0 where SDL already reports logical points.
-    SdlEvent::MouseMotion { which, x, y, xrel, yrel, .. } => {
-      let k = mouse_scale(window);
-      Some(AlloyEvent::PointerMove {
-        pointer_id: which as u64,
-        pointer_type: PointerType::Mouse,
-        x: x * k,
-        y: y * k,
-        rel: Some((xrel * k, yrel * k)),
-        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
-      })
-    }
-    SdlEvent::MouseButtonDown { which, mouse_btn, x, y, .. } => {
-      let k = mouse_scale(window);
-      let button = map_mouse_button(mouse_btn)?;
-      Some(AlloyEvent::PointerDown {
-        pointer_id: which as u64,
-        pointer_type: PointerType::Mouse,
-        button,
-        x: x * k,
-        y: y * k,
-        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
-      })
-    }
-    SdlEvent::MouseButtonUp { which, mouse_btn, x, y, .. } => {
-      let k = mouse_scale(window);
-      let button = map_mouse_button(mouse_btn)?;
-      Some(AlloyEvent::PointerUp {
-        pointer_id: which as u64,
-        pointer_type: PointerType::Mouse,
-        button,
-        x: x * k,
-        y: y * k,
-        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
-      })
-    }
-    SdlEvent::MouseWheel { which, x, y, direction, mouse_x, mouse_y, .. } => {
-      let k = mouse_scale(window);
-      let flipped = matches!(direction, sdl3::mouse::MouseWheelDirection::Flipped);
-      let sign = if flipped { 1.0 } else { -1.0 };
-      Some(AlloyEvent::Wheel {
-        pointer_id: which as u64,
-        pointer_type: PointerType::Mouse,
-        x: mouse_x * k,
-        y: mouse_y * k,
-        delta_x: sign * x * 100.0,
-        delta_y: sign * y * 100.0,
-        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
-      })
-    }
-    // SDL touch coordinates are normalized [0, 1]; scale to logical pixels.
-    // touch_id distinguishes multiple touch surfaces, finger_id distinguishes
-    // simultaneous touches on one surface. We key on finger_id and rely on
-    // pointer_type=Touch to disambiguate from mouse; if multi-surface touch
-    // matters later, pointer_id can be (touch_id << 32) | finger_id.
-    SdlEvent::FingerDown { finger_id, x, y, .. } => {
-      let (lw, lh) = touch_window_logical_size(window);
-      Some(AlloyEvent::PointerDown {
-        pointer_id: finger_id,
-        pointer_type: PointerType::Touch,
-        button: 0,
-        x: x * lw,
-        y: y * lh,
-        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
-      })
-    }
-    SdlEvent::FingerMotion { finger_id, x, y, .. } => {
-      let (lw, lh) = touch_window_logical_size(window);
-      Some(AlloyEvent::PointerMove {
-        pointer_id: finger_id,
-        pointer_type: PointerType::Touch,
-        x: x * lw,
-        y: y * lh,
-        rel: None,
-        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
-      })
-    }
-    SdlEvent::FingerUp { finger_id, x, y, .. } => {
-      let (lw, lh) = touch_window_logical_size(window);
-      Some(AlloyEvent::PointerUp {
-        pointer_id: finger_id,
-        pointer_type: PointerType::Touch,
-        button: 0,
-        x: x * lw,
-        y: y * lh,
-        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
-      })
-    }
-    SdlEvent::FingerCanceled { finger_id, x, y, .. } => {
-      let (lw, lh) = touch_window_logical_size(window);
-      Some(AlloyEvent::PointerCancel {
-        pointer_id: finger_id,
-        pointer_type: PointerType::Touch,
-        x: x * lw,
-        y: y * lh,
-        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
-      })
-    }
-    SdlEvent::TextInput { text, .. } => Some(AlloyEvent::TextInput { text }),
-    // Any display's orientation event triggers a re-query of the window's own
-    // display (authoritative, and sidesteps matching display ids); a rotation
-    // elsewhere re-emits an unchanged value, which subscribers dedupe.
-    SdlEvent::Display { display_event: sdl3::event::DisplayEvent::Orientation(_), .. } => {
-      Some(current_orientation_event(window))
-    }
-    // Like the camera events below, these have no sdl3 crate Event variants and
-    // arrive as Unknown, recovered by raw type id.
-    SdlEvent::Unknown { type_, .. } if type_ == sdl3::sys::events::SDL_EVENT_SYSTEM_THEME_CHANGED.0 => {
-      Some(current_system_theme_event())
-    }
-    SdlEvent::Unknown { type_, .. }
-      if type_ == sdl3::sys::events::SDL_EVENT_KEYBOARD_ADDED.0
-        || type_ == sdl3::sys::events::SDL_EVENT_KEYBOARD_REMOVED.0
-        || type_ == sdl3::sys::events::SDL_EVENT_MOUSE_ADDED.0
-        || type_ == sdl3::sys::events::SDL_EVENT_MOUSE_REMOVED.0 =>
-    {
-      Some(current_input_devices_event())
-    }
-    // The sdl3 crate has no Event variants for camera device events, so they
-    // arrive as Unknown and are recovered by raw type id. Approved/denied
-    // (0x1402/0x1403) stay ignored: open_camera polls permission state itself.
-    SdlEvent::Unknown { type_, .. } if type_ == sdl3::sys::events::SDL_EVENT_CAMERA_DEVICE_ADDED.0 => {
-      Some(AlloyEvent::CameraDeviceChange { added: true })
-    }
-    SdlEvent::Unknown { type_, .. } if type_ == sdl3::sys::events::SDL_EVENT_CAMERA_DEVICE_REMOVED.0 => {
-      Some(AlloyEvent::CameraDeviceChange { added: false })
-    }
-    // SDL's drop path doubles as its URL delivery (Cocoa's kAEGetURL handler
-    // and UIKit's openURL send the URL string as a drop file; the Android
-    // activity forwards a warm intent's data the same way). A payload with a
-    // scheme is a link; a real file drop is a path and stays unhandled.
-    SdlEvent::DropFile { filename, .. } => link_from_drop(&filename).map(|link| AlloyEvent::Link { link }),
-    _ => None,
   }
-}
-
-// The link in a drop payload, if it is one: a URI scheme per RFC 3986
-// (a letter, then letters, digits, `+`, `-` or `.`, then `:`) at least two
-// characters long, so a Windows drive path (`C:\...`) is not mistaken for a
-// scheme. Paths (`/...`) and bare names have no scheme and return None.
-pub(crate) fn link_from_drop(payload: &str) -> Option<String> {
-  let colon = payload.find(':')?;
-  let scheme = &payload[..colon];
-  let mut chars = scheme.chars();
-  let first_is_letter = chars.next().is_some_and(|c| c.is_ascii_alphabetic());
-  let rest_valid = chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
-  if scheme.len() >= 2 && first_is_letter && rest_valid {
-    Some(payload.to_string())
-  } else {
-    None
-  }
-}
-
-// A finger sample of Android's own touch path (see touch.rs) as the event
-// SDL's finger events translate to above, which is where every other
-// platform's touch comes from.
-#[cfg(target_os = "android")]
-pub(crate) fn translate_touch(sample: &crate::touch::TouchSample, window: &Window) -> AlloyEvent {
-  use crate::touch::TouchKind;
-  let (lw, lh) = touch_window_logical_size(window);
-  let (pointer_id, pointer_type) = (sample.finger_id, PointerType::Touch);
-  let (x, y) = (sample.x * lw, sample.y * lh);
-  let modifiers = modifiers_from_sdl(sdl_utils::mod_state());
-  match sample.kind {
-    TouchKind::Down => AlloyEvent::PointerDown { pointer_id, pointer_type, button: 0, x, y, modifiers },
-    TouchKind::Move => AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, rel: None, modifiers },
-    TouchKind::Up => AlloyEvent::PointerUp { pointer_id, pointer_type, button: 0, x, y, modifiers },
-    TouchKind::Cancel => AlloyEvent::PointerCancel { pointer_id, pointer_type, x, y, modifiers },
-  }
-}
-
-fn touch_window_logical_size(window: &Window) -> (f32, f32) {
-  let scale = window.display_scale();
-  let (pw, ph) = window.size_in_pixels();
-  (pw as f32 / scale, ph as f32 / scale)
-}
-
-// SDL window units -> JS-facing logical points, for mouse coordinates. On
-// backends where SDL window units are already logical (macOS, Wayland) the
-// ratio is 1.0; where they are physical pixels (Android, X11) it collapses to
-// 1 / display_scale. Derived from the same sizes the resize event uses, so
-// mouse and layout can never disagree by construction.
-fn mouse_scale(window: &Window) -> f32 {
-  let (w, _) = window.size();
-  let (pw, _) = window.size_in_pixels();
-  if w == 0 || pw == 0 {
-    return 1.0;
-  }
-  (pw as f32 / window.display_scale()) / w as f32
 }

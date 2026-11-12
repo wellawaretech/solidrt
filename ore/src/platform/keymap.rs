@@ -1,16 +1,18 @@
 // SDL -> W3C keyboard mapping: turn SDL keycodes/scancodes into the `key` /
 // `code` values defined by the W3C UI Events spec (KeyboardEvent.key /
-// KeyboardEvent.code), so nothing outside this crate ever sees SDL's naming.
+// KeyboardEvent.code), so nothing outside ore ever sees SDL's naming.
 // `key` is the logical, layout-dependent value ("a", "!", "Enter"); `code` is
 // the physical, layout-independent key position ("KeyA", "Digit1",
 // "NumpadEnter").
 
 use sdl3::keyboard::{Keycode, Mod, Scancode};
-use sdl3::sys::keycode::SDL_Keymod;
+use sdl3::sys::keyboard::{SDL_GetKeyFromScancode, SDL_GetModState};
+use sdl3::sys::keycode::{SDL_Keymod, SDLK_UNKNOWN};
+use sdl3::sys::scancode::SDL_Scancode;
 
 /// W3C `KeyboardEvent.code` for a physical key. "Unidentified" when SDL has no
 /// scancode or the key has no standard code value.
-pub(crate) fn w3c_code(scancode: Option<Scancode>) -> &'static str {
+pub(super) fn w3c_code(scancode: Option<Scancode>) -> &'static str {
   use Scancode as S;
   let Some(s) = scancode else { return "Unidentified" };
   match s {
@@ -171,7 +173,7 @@ pub(crate) fn w3c_code(scancode: Option<Scancode>) -> &'static str {
 /// "Shift") come from the keycode; printable keys resolve through the active
 /// keyboard layout with the modifier state applied, so Shift+1 is "!" and
 /// letters carry their produced case. "Unidentified" when nothing matches.
-pub(crate) fn w3c_key(keycode: Option<Keycode>, scancode: Option<Scancode>, keymod: Mod) -> String {
+pub(super) fn w3c_key(keycode: Option<Keycode>, scancode: Option<Scancode>, keymod: Mod) -> String {
   if let Some(k) = keycode {
     if let Some(name) = named_key(k, keymod) {
       return name.to_string();
@@ -183,7 +185,7 @@ pub(crate) fn w3c_key(keycode: Option<Keycode>, scancode: Option<Scancode>, keym
   // flag stays off: with it SDL drops the modifier state, so Shift+c would
   // read "c" and Shift+1 "1".
   if let Some(s) = scancode {
-    if let Some(ch) = crate::sdl_utils::key_from_scancode(s, SDL_Keymod(keymod.bits())).and_then(codepoint_char) {
+    if let Some(ch) = key_from_scancode(s, SDL_Keymod(keymod.bits())).and_then(codepoint_char) {
       return ch.to_string();
     }
   }
@@ -365,4 +367,24 @@ fn codepoint_char(v: u32) -> Option<char> {
     return None;
   }
   char::from_u32(v).filter(|c| !c.is_control())
+}
+
+// The keycode a physical key produces under a modifier state, through the
+// active layout, as SDL's raw codepoint. The crate's `Keycode::from_scancode`
+// wraps the same call but maps the result through its enum of named
+// constants, which has no entry for a shifted letter ("C" is 0x43, not a
+// constant), so a Shift+letter lookup came back None through it. None when
+// SDL knows no key for the scancode.
+fn key_from_scancode(scancode: Scancode, modstate: SDL_Keymod) -> Option<u32> {
+  // SAFETY: plain values in, a plain value out; SDL reads its keymap under
+  // its own lock and the call is safe from any thread.
+  let key = unsafe { SDL_GetKeyFromScancode(SDL_Scancode(scancode as i32), modstate, false) };
+  (key != SDLK_UNKNOWN).then_some(key.0)
+}
+
+/// The keyboard modifier state now, as SDL tracks it.
+pub(super) fn mod_state() -> Mod {
+  // SAFETY: takes no arguments and reads SDL's keyboard state word.
+  let bits = unsafe { SDL_GetModState() }.0;
+  Mod::from_bits(bits).unwrap_or(Mod::NOMOD)
 }

@@ -7,21 +7,25 @@
 //! hosts (lattice) and the marshalling (flux `ore_plugins/`) call it.
 //!
 //! The platform (`platform`: SDL's init and the hints that precede it, on
-//! the host's main thread) and the window-free facilities: the
+//! the host's main thread, the event pump's waker, the lifecycle watch and
+//! the gamepads), the events the pump hands upward (`event`), on Android
+//! the touch side channel (`touch`), and the window-free facilities: the
 //! main-thread bridge, the links (opening one, the app's own scheme
 //! registration and its single-instance hand-off), the locale, the share
 //! sheet, the clipboard, the user folders, the power state, thread
 //! placement, the clock (`time`), the log sink, and the platform
 //! vocabulary of input, display, gamepad and lifecycle types. Its window
 //! part, behind the `window` feature (what needs SDL's video subsystem),
-//! holds the window (`window`: opening it with the headless chain, its
-//! commands, cursors, text input and input device presence), the GL
-//! surface and its context-loss recreation (`gl_surface`, with the GL
-//! library path), the system theme, and the cursor, text input and dialog
-//! vocabulary. On Android it publishes the JavaVM and the activity and is
-//! the JNI way into the activity (`android`). The event pump and the
-//! devices move in from alloy, and forge's and lattice's OS code, as
-//! features touch them, not before (okf/plans/ore-pump-and-window.md).
+//! holds the pump's wait itself (`Platform::wait`: its translation reads
+//! the window), the window (`window`: opening it with the headless chain,
+//! its commands, cursors, text input, input device presence and the
+//! screen keyboard inset), the GL surface and its context-loss recreation
+//! (`gl_surface`, with the GL library path), the system theme, and the
+//! cursor, text input and dialog vocabulary. On Android it publishes the
+//! JavaVM and the activity and is the JNI way into the activity
+//! (`android`). The devices and the rest of the Android glue move in from
+//! alloy, and forge's and lattice's OS code, as features touch them, not
+//! before (okf/plans/ore-pump-and-window.md).
 
 #[cfg(target_os = "android")]
 pub mod android;
@@ -31,6 +35,7 @@ pub mod cursor;
 #[cfg(feature = "window")]
 pub mod dialog;
 pub mod display;
+pub mod event;
 pub mod folders;
 pub mod gamepad;
 #[cfg(feature = "window")]
@@ -51,6 +56,8 @@ pub mod text_input;
 pub mod theme;
 pub mod threads;
 pub mod time;
+#[cfg(target_os = "android")]
+pub mod touch;
 #[cfg(feature = "window")]
 pub mod window;
 

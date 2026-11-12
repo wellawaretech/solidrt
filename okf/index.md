@@ -293,6 +293,12 @@ Shaped, not started.
   On a touch-only Android device the capability layer gains "keyboard" as soon
   as the virtual keyboard opens, so any keyboard-first behavior gated on it
   would switch on for users who have no keyboard.
+- **[The screen keyboard's inset reads 0 on the tablet](backlog/android-keyboard-inset-zero.md)** [2026-11-12]
+  On the SM-T500 (Android 12) the docked screen keyboard covers the lower half
+  of the window, Android reports the IME inset to the activity, yet the app's
+  keyboardHeight stays 0 - the activity's inset listener never reaches ore's
+  keyboard_inset_px; seen on the current build and on the older installed
+  player alike, so it is not a regression of the pump move.
 - **[Reopen a microphone that SDL leaves dead after an Android resume](backlog/android-microphone-dead-after-background.md)** [2026-11-03]
   When Android disconnects the AAudio recording stream while the app is in the
   background, SDL's resume ignores the failed restart and the session delivers

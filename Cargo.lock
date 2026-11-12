@@ -90,8 +90,6 @@ dependencies = [
  "lyon_path",
  "ndk",
  "ndk-sys",
- "objc2-core-foundation",
- "objc2-core-video",
  "ore",
  "rxing",
  "sdl3",
@@ -100,7 +98,6 @@ dependencies = [
  "taffy",
  "unicode-linebreak",
  "unicode-segmentation",
- "windows",
  "zeno",
 ]
 
@@ -3560,12 +3557,16 @@ dependencies = [
  "cc",
  "jni 0.22.4",
  "libc",
+ "libloading 0.9.0",
  "log",
  "ndk",
  "ndk-context",
  "ndk-sys",
+ "objc2-core-foundation",
+ "objc2-core-video",
  "sdl3",
  "tokio",
+ "windows",
  "windows-registry",
  "windows-sys 0.61.2",
 ]

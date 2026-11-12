@@ -14,10 +14,8 @@ mod dialog;
 mod egl_headless;
 mod event;
 mod frame_timestamps;
-mod gamepad;
 mod gpu;
 mod input;
-mod keymap;
 mod liveness;
 mod logging;
 pub mod microphone;
@@ -34,8 +32,6 @@ mod script;
 pub mod spatial;
 mod stepped;
 mod threads;
-#[cfg(target_os = "android")]
-pub mod touch;
 #[cfg(target_os = "android")]
 pub mod video_plane;
 
@@ -67,7 +63,6 @@ pub use context::{CaptureDone, CaptureInfo, Context, Overlay, WindowTap, YuvFram
 pub use dialog::android_result_raw;
 pub use dialog::{dialogs_available, Consumed, DialogStatus, Dialogs};
 pub use event::{AlloyCommand, AlloyEvent, Arrival, EventSender};
-pub use gamepad::{synthetic_axis_name, synthetic_button_name, Gamepads};
 pub use gl::TapRect;
 pub use gpu::{
   check_cube_faces, mip_levels, mip_size, DrawListFacts, GpuBufferLayoutInfo, GpuResources, LostContent, SamplerFilter,
@@ -94,7 +89,7 @@ pub use stepped::SteppedConfig;
 pub use vsync::FramePacing;
 pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
 
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::OnceLock;
 
 /// The GPU behind the process's GL context, as GL names it, with the device
@@ -134,7 +129,7 @@ pub fn gpu_info() -> Option<&'static GpuInfo> {
 }
 
 // The display's nominal refresh rate (f32 bits), published by the event
-// loop each time it queries the display mode, so an out-of-loop reader (the
+// loop at startup and on every rate ore reports, so an out-of-loop reader (the
 // dev-server client info) can report it; 0 until the window exists.
 static REFRESH_RATE: AtomicU32 = AtomicU32::new(0);
 
@@ -149,42 +144,8 @@ pub fn refresh_rate() -> Option<f32> {
   (hz > 0.0).then_some(hz)
 }
 
-// Soft-keyboard (IME) inset height in raw pixels. On Android the platform
-// reports it via JNI (the cdylib re-exports a symbol that calls the setter);
-// elsewhere it stays 0. The event loop reads it each iteration and emits a
-// KeyboardVisibility change when it moves.
-static KEYBOARD_INSET_PX: AtomicI32 = AtomicI32::new(0);
-
-/// Set the current soft-keyboard inset in raw pixels. Called from the platform
-/// (Android JNI); thread-safe.
-pub fn set_keyboard_inset_px(px: i32) {
-  KEYBOARD_INSET_PX.store(px.max(0), Ordering::Relaxed);
-}
-
-/// Current soft-keyboard inset in raw pixels (0 when hidden or unsupported).
-pub fn keyboard_inset_px() -> i32 {
-  KEYBOARD_INSET_PX.load(Ordering::Relaxed)
-}
-
-// Hardware keyboard presence reported by the platform is ore's fact
-// (ore::window::set_hardware_keyboard); these forward to it until lattice's
-// Android native calls ore directly (step 3 of
-// okf/plans/ore-pump-and-window.md).
-
-/// Set whether a hardware keyboard is attached. Called from the platform
-/// (Android JNI); thread-safe.
-pub fn set_hardware_keyboard(present: bool) {
-  ore::window::set_hardware_keyboard(present);
-}
-
-/// Whether the platform reported an attached hardware keyboard (false where
-/// SDL's own device list covers it; see [`set_hardware_keyboard`]).
-pub fn hardware_keyboard() -> bool {
-  ore::window::hardware_keyboard()
-}
-
 // Whether the window is backgrounded. Set at push time of
-// WILL_ENTER_BACKGROUND by the event watch (app.rs), the last moment the
+// WILL_ENTER_BACKGROUND by the lifecycle callback (app.rs), the last moment the
 // platform still listens, and cleared by the raster thread when it runs the
 // return-to-visible rebind (liveness.rs decides that; the raster thread's
 // RebindWindowSurface arm clears). While set, the raster thread does no

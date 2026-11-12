@@ -2,11 +2,13 @@
 //! touch when the JNI call arrives and never reads a batch's historical
 //! samples, while Android delivers a time with every sample. So the
 //! activity's surface (SolidRTSurface.java) hands each finger sample here
-//! with its time, SDL sees no finger at all, and the main loop drains the
-//! queue beside the SDL events (see app.rs). Mouse, pen and the touch
-//! device list stay with SDL.
+//! with its time, SDL sees no finger at all, and the pump drains the
+//! queue beside the SDL events (see `Platform::wait`). Mouse, pen and the
+//! touch device list stay with SDL.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
+
+use crate::platform::Waker;
 use std::time::{Duration, Instant};
 
 // MotionEvent's masked actions, as the surface passes them on.
@@ -35,12 +37,12 @@ pub(crate) struct TouchSample {
 }
 
 static QUEUE: Mutex<Vec<TouchSample>> = Mutex::new(Vec::new());
-static WAKE: Mutex<Option<Arc<dyn Fn() + Send + Sync>>> = Mutex::new(None);
+static WAKER: Mutex<Option<Waker>> = Mutex::new(None);
 
-/// The main loop's wake, so a sample queued while it sleeps on the SDL
-/// event queue is noticed.
-pub(crate) fn set_wake(wake: Option<Arc<dyn Fn() + Send + Sync>>) {
-  *WAKE.lock().expect("touch wake lock poisoned") = wake;
+/// The pump's waker, so a sample queued while it sleeps on the SDL event
+/// queue is noticed. Set once, by `Platform::init`.
+pub(crate) fn set_waker(waker: Waker) {
+  *WAKER.lock().expect("touch waker lock poisoned") = Some(waker);
 }
 
 /// Queue one finger sample. Called on the Android UI thread (the surface's
@@ -63,10 +65,10 @@ pub fn push(pointer_id: i32, action: i32, x: f32, y: f32, time_ns: i64) {
     queue.push(sample);
     queue.len() == 1
   };
-  // One wake per batch: the loop drains the whole queue when it runs.
+  // One wake per batch: the pump drains the whole queue when it runs.
   if first {
-    if let Some(wake) = WAKE.lock().expect("touch wake lock poisoned").as_ref() {
-      wake();
+    if let Some(waker) = WAKER.lock().expect("touch waker lock poisoned").as_ref() {
+      waker.wake();
     }
   }
 }
@@ -86,6 +88,7 @@ fn instant_of(time_ns: i64) -> Instant {
     let mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // CLOCK_MONOTONIC cannot fail on Android; a zero reading would only
     // place the samples far in the future, which the clamp below catches.
+    // SAFETY: the out-pointer points to a live local for the whole call.
     unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) };
     (Instant::now(), now.tv_sec as i64 * 1_000_000_000 + now.tv_nsec as i64)
   });

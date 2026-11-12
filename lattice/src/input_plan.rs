@@ -244,7 +244,7 @@ pub(crate) fn plan(events: Option<&serde_json::Value>, frame_ms: f64) -> Result<
       }
       "gamepad" => {
         // A synthetic pad: level state held until the next set, names
-        // from the mapped vocabulary (see alloy::gamepad).
+        // from the mapped vocabulary (see ore::gamepad).
         let slot_field = || -> Result<usize, String> {
           ev.get("slot")
             .and_then(|v| v.as_u64())
@@ -266,7 +266,7 @@ pub(crate) fn plan(events: Option<&serde_json::Value>, frame_ms: f64) -> Result<
               for b in list {
                 let name = b
                   .as_str()
-                  .and_then(alloy::synthetic_button_name)
+                  .and_then(ore::gamepad::synthetic_button_name)
                   .ok_or_else(|| format!("events[{i}]: unknown gamepad button {b} (south, east, west, north, back, guide, start, leftStick, rightStick, leftShoulder, rightShoulder, dpadUp, dpadDown, dpadLeft, dpadRight)"))?;
                 if !buttons.contains(&name) {
                   buttons.push(name);
@@ -278,7 +278,7 @@ pub(crate) fn plan(events: Option<&serde_json::Value>, frame_ms: f64) -> Result<
               let map =
                 map.as_object().ok_or_else(|| format!("events[{i}]: axes must be an object of name to value"))?;
               for (name, value) in map {
-                let name = alloy::synthetic_axis_name(name).ok_or_else(|| {
+                let name = ore::gamepad::synthetic_axis_name(name).ok_or_else(|| {
                   format!("events[{i}]: unknown gamepad axis {name} (leftX, leftY, rightX, rightY, leftTrigger, rightTrigger)")
                 })?;
                 let value = value

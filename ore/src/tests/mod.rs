@@ -4,6 +4,7 @@ mod input;
 mod link;
 mod locale;
 mod permission;
+mod platform;
 mod power;
 mod share;
 #[cfg(feature = "window")]

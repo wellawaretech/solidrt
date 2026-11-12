@@ -3,7 +3,8 @@
 //! fullscreen, minimize, hide), its cursors, its text input session, the
 //! pointer lock, and its GL context (`create_gl_surface`, and
 //! `recreate_gl` after a context loss). Also the input device presence
-//! facts (keyboard, mouse, touch, the screen keyboard).
+//! facts (keyboard, mouse, touch, the screen keyboard) and the
+//! platform-reported screen keyboard inset.
 //!
 //! Part of ore's window part (the `window` feature). `Window` is not
 //! `Send`, and every method is main thread only: SDL's window calls are
@@ -17,13 +18,14 @@ mod cursors;
 mod open;
 mod surface;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use sdl3::sys::rect::SDL_Rect;
 
 use crate::cursor::{Cursor, CursorFrame};
 use crate::display::{Orientation, Rect};
 use crate::gl_surface::GlSurface;
+use crate::input::InputDevices;
 use crate::text_input::TextInputOptions;
 
 #[cfg(test)]
@@ -531,4 +533,38 @@ pub fn set_hardware_keyboard(present: bool) {
 /// SDL's own device list covers it; see [`set_hardware_keyboard`]).
 pub fn hardware_keyboard() -> bool {
   HARDWARE_KEYBOARD.load(Ordering::Relaxed)
+}
+
+/// The connected input device classes now (see `InputDevices`).
+pub fn input_devices() -> InputDevices {
+  // On Android the SDL touch list over-reports (TV boxes with virtual input
+  // drivers claiming pointer sources), so the fact is gated on the
+  // platform's own touchscreen feature declaration.
+  #[cfg(target_os = "android")]
+  let touch = has_touch_device() && crate::android::has_touchscreen_feature();
+  #[cfg(not(target_os = "android"))]
+  let touch = has_touch_device();
+  InputDevices {
+    keyboard: physical_keyboard(),
+    mouse: has_mouse(),
+    touch,
+    screen_keyboard: has_screen_keyboard_support(),
+  }
+}
+
+// Soft-keyboard (IME) inset height in raw pixels. On Android the platform
+// reports it via JNI (the cdylib re-exports a symbol that calls the setter);
+// elsewhere it stays 0. The pump reads it on every wait and emits a
+// KeyboardVisibility change when it moves.
+static KEYBOARD_INSET_PX: AtomicI32 = AtomicI32::new(0);
+
+/// Set the current soft-keyboard inset in raw pixels. Called from the platform
+/// (Android JNI); thread-safe.
+pub fn set_keyboard_inset_px(px: i32) {
+  KEYBOARD_INSET_PX.store(px.max(0), Ordering::Relaxed);
+}
+
+/// Current soft-keyboard inset in raw pixels (0 when hidden or unsupported).
+pub fn keyboard_inset_px() -> i32 {
+  KEYBOARD_INSET_PX.load(Ordering::Relaxed)
 }

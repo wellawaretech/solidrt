@@ -1,4 +1,4 @@
-use crate::event::link_from_drop;
+use crate::platform::link_from_drop;
 
 #[test]
 fn custom_scheme_is_a_link() {

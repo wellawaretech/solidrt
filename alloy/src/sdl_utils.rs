@@ -1,22 +1,4 @@
-use sdl3::sys::keyboard::{SDL_GetKeyFromScancode, SDL_GetModState};
-use sdl3::sys::keycode::{SDL_Keymod, SDLK_UNKNOWN};
-use sdl3::sys::scancode::SDL_Scancode;
 use sdl3::sys::surface::SDL_Surface;
-
-// The keycode a physical key produces under a modifier state, through the
-// active layout, as SDL's raw codepoint. The crate's `Keycode::from_scancode`
-// wraps the same call but maps the result through its enum of named
-// constants, which has no entry for a shifted letter ("C" is 0x43, not a
-// constant), so a Shift+letter lookup came back None through it. None when
-// SDL knows no key for the scancode.
-pub fn key_from_scancode(scancode: sdl3::keyboard::Scancode, modstate: SDL_Keymod) -> Option<u32> {
-  let key = unsafe { SDL_GetKeyFromScancode(SDL_Scancode(scancode as i32), modstate, false) };
-  (key != SDLK_UNKNOWN).then_some(key.0)
-}
-
-pub fn mod_state() -> sdl3::keyboard::Mod {
-  unsafe { sdl3::keyboard::Mod::from_bits(SDL_GetModState().0).unwrap_or(sdl3::keyboard::Mod::NOMOD) }
-}
 
 // --- Camera (SDL camera subsystem; not exposed by the sdl3 crate) -----------
 //

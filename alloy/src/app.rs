@@ -7,14 +7,15 @@ use crate::backend::{DisplayContext, FrameOutput, GlBinding};
 use crate::context::Context;
 use crate::event::{
   current_input_devices_event, current_orientation_event, current_resize_event, current_system_theme_event,
-  translate_event, AlloyCommand, AlloyEvent,
+  AlloyCommand, AlloyEvent,
 };
 use crate::gl;
 use crate::liveness::SurfaceLiveness;
 use crate::mode::Mode;
 use crate::raster::RasterCmd;
 use crate::stepped::run_stepped_loop;
-use ore::input::PointerType;
+use ore::event::PlatformEvent;
+use ore::lifecycle::Lifecycle;
 use ore::platform::Platform;
 use ore::window::{Backing, Display, Window, WindowConfig};
 
@@ -154,109 +155,6 @@ fn cadence_moved(
   }
 }
 
-// The refresh rate assumed when the display reports none (or 0 Hz).
-const FALLBACK_REFRESH_HZ: f32 = 60.0;
-
-// Refresh rate in Hz of the window's current display, with a 60Hz fallback.
-fn display_refresh_rate(window: &Window) -> f32 {
-  let hz = window.refresh_rate().unwrap_or(FALLBACK_REFRESH_HZ);
-  // Every query publishes the fact for out-of-loop readers (crate::refresh_rate).
-  crate::set_refresh_rate(hz);
-  hz
-}
-
-// Payload-less user event the raster thread pushes onto the SDL queue after
-// presenting a frame, so the main loop's event wait returns immediately
-// instead of at its timeout. It carries nothing: the frame itself travels
-// over the mpsc channel, which the woken loop drains.
-struct FrameReady;
-
-// The platform facts the loop must poll (SDL emits no events for them):
-// screen-keyboard visibility/height, hardware-keyboard presence, power
-// status, and the display refresh rate safety net. One owner: each fact is
-// re-queried on its own cadence and emits an event only on a transition, so
-// consumers see edges instead of level spam.
-struct PlatformWatch {
-  // Screen-keyboard state; transitions emit KeyboardVisibility so the JS
-  // side can react (auto-blur on hide, layout adjustments on show).
-  keyboard_shown: bool,
-  keyboard_height: f32,
-  // Android hardware-keyboard hotplug arrives via JNI (a Configuration
-  // change), not as an SDL keyboard event, so the loop watches the fact and
-  // re-emits InputDevices on change. Elsewhere SDL's own added/removed
-  // events cover hotplug and this never transitions.
-  physical_keyboard: bool,
-  last_power_check: Instant,
-  last_refresh_check: Instant,
-  refresh_rate: f32,
-}
-
-// Power poll cadence.
-//TODO how often do we check? configurable? send on AlloyCommand only?
-const POWER_CHECK_PERIOD: Duration = Duration::from_secs(10);
-// Refresh-rate safety net cadence: catches a rate change the display event
-// might miss (e.g. Android 90 <-> 60Hz without a mode-change event).
-const REFRESH_CHECK_PERIOD: Duration = Duration::from_secs(1);
-
-impl PlatformWatch {
-  fn new(window: &Window) -> Self {
-    PlatformWatch {
-      keyboard_shown: false,
-      keyboard_height: 0.0,
-      physical_keyboard: ore::window::physical_keyboard(),
-      last_power_check: Instant::now(),
-      last_refresh_check: Instant::now(),
-      refresh_rate: display_refresh_rate(window),
-    }
-  }
-
-  // The display refresh rate as last observed; the loop derives its tick
-  // period from this every iteration.
-  fn refresh_rate(&self) -> f32 {
-    self.refresh_rate
-  }
-
-  // Re-query the display mode, emitting on change. The display-event arm
-  // and the periodic safety net both funnel here.
-  fn check_refresh(&mut self, window: &Window) -> Option<AlloyEvent> {
-    let hz = display_refresh_rate(window);
-    if hz == self.refresh_rate {
-      return None;
-    }
-    self.refresh_rate = hz;
-    Some(AlloyEvent::DisplayRefreshRate { hz })
-  }
-
-  // One poll per loop iteration; returns the transition events to send.
-  fn poll(&mut self, window: &Window) -> Vec<AlloyEvent> {
-    let mut events = Vec::new();
-    let shown = window.screen_keyboard_shown();
-    let scale = window.display_scale();
-    let height = crate::keyboard_inset_px() as f32 / scale;
-    if shown != self.keyboard_shown || height != self.keyboard_height {
-      self.keyboard_shown = shown;
-      self.keyboard_height = height;
-      events.push(AlloyEvent::KeyboardVisibility { shown, height });
-    }
-    let physical_keyboard = ore::window::physical_keyboard();
-    if physical_keyboard != self.physical_keyboard {
-      self.physical_keyboard = physical_keyboard;
-      events.push(current_input_devices_event());
-    }
-    if self.last_power_check.elapsed() >= POWER_CHECK_PERIOD {
-      self.last_power_check = Instant::now();
-      events.push(AlloyEvent::PowerStatus { info: ore::power::info() });
-    }
-    if self.last_refresh_check.elapsed() >= REFRESH_CHECK_PERIOD {
-      self.last_refresh_check = Instant::now();
-      if let Some(e) = self.check_refresh(window) {
-        events.push(e);
-      }
-    }
-    events
-  }
-}
-
 // Where ANGLE translates GL (Windows over D3D11, macOS over Metal), a device
 // loss marks the whole EGL display lost and every later EGL call fails with
 // EGL_CONTEXT_LOST until eglTerminate, which SDL issues when the last GL
@@ -312,7 +210,7 @@ impl App {
     self,
     dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<crate::Arrival>) + Send + 'static,
   ) {
-    let App { platform, mut window, display, mode, resampler, user_input_muted } = self;
+    let App { mut platform, mut window, display, mode, resampler, user_input_muted } = self;
     let surface_size = display.surface_size_handle();
 
     let (tx, rx) = mpsc::channel::<FrameOutput>();
@@ -323,21 +221,16 @@ impl App {
     // raster::RasterStats). The loop below reads the queue depth to gate the
     // idle Tick and increments idle_ticks per emitted Tick.
     let stats = Arc::new(crate::raster::RasterStats::new());
+    let waker = platform.waker();
     // Frame wakeup for the interactive loop below: it sleeps on the SDL event
     // queue, so a presented frame must push an event to be noticed before the
     // wait's timeout. The stepped loop presents nothing.
     let wake: Option<Arc<dyn Fn() + Send + Sync>> = if mode.is_headless() {
       None
     } else {
-      let events = platform.sdl().event().expect("Failed to get SDL event subsystem");
-      events.register_custom_event::<FrameReady>().expect("Failed to register frame event");
-      let sender = events.event_sender();
-      Some(Arc::new(move || {
-        sender.push_custom_event(FrameReady).ok();
-      }))
+      let waker = waker.clone();
+      Some(Arc::new(move || waker.wake()))
     };
-    #[cfg(target_os = "android")]
-    crate::touch::set_wake(wake.clone());
     crate::redraw::set_wake(wake.clone());
     let raster =
       display.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.frame_sink(), stats.clone());
@@ -363,52 +256,34 @@ impl App {
     }
     event_tx.send(initial).ok();
 
-    // Timely background delivery on Android: with BLOCK_ON_PAUSE the pump
-    // blocks before the queued background events are drained, so through the
-    // normal path the app would learn about backgrounding only at resume
-    // (device-observed). An event watch runs synchronously on the thread
-    // pushing the event - for the background events that is this thread,
-    // inside the blocking wait - so each transition is forwarded the moment
-    // it is queued. DID_ENTER_BACKGROUND's queued copy still arrives at
-    // resume; consumers tolerate the repeat (see AlloyEvent::Visibility).
-    // The binding must outlive the loop: dropping an EventWatch removes it.
-    //
-    // WILL_ENTER_BACKGROUND is the suspend signal on both mobile platforms
-    // (SDL's Android_OnPause sends it right before the DID event, and its
-    // comment names an event filter at queue time as the place for lifecycle
-    // handling), and the watch is its only source: Android_OnDestroy flushes
-    // the queue before sending Quit, so a queued copy never reaches a
-    // finishing app, and translating the copy would replay the suspend at
-    // resume. The hold is taken here, inside the platform callback, which is
-    // the last moment the platform still listens (see SuspendHold).
-    let watch_event_tx = event_tx.clone();
-    let _event_watch = platform.sdl().event().expect("Failed to get SDL event subsystem").add_event_watch(
-      move |event: sdl3::event::Event| match event {
-        sdl3::event::Event::AppWillEnterBackground { .. } => {
-          // Before the suspend goes out: frames already queued on the raster
-          // thread must stop touching the window from here on (see
-          // WINDOW_BACKGROUNDED in lib.rs).
-          crate::set_window_backgrounded(true);
-          watch_event_tx.send(AlloyEvent::Suspend { hold: ore::lifecycle::SuspendHold::take() }).ok();
+    // The lifecycle transitions, forwarded the moment the platform pushes
+    // them, ahead of the pump (see ore::lifecycle::Lifecycle for why and on
+    // which thread).
+    let lifecycle_event_tx = event_tx.clone();
+    platform.on_lifecycle(move |lifecycle| match lifecycle {
+      Lifecycle::WillBackground(hold) => {
+        // Before the suspend goes out: frames already queued on the raster
+        // thread must stop touching the window from here on (see
+        // WINDOW_BACKGROUNDED in lib.rs).
+        crate::set_window_backgrounded(true);
+        lifecycle_event_tx.send(AlloyEvent::Suspend { hold }).ok();
+      }
+      Lifecycle::DidBackground => {
+        if cfg!(target_os = "android") {
+          crate::audio::device_backgrounded();
         }
-        sdl3::event::Event::AppDidEnterBackground { .. } => {
-          if cfg!(target_os = "android") {
-            crate::audio::device_backgrounded();
-          }
-          watch_event_tx.send(AlloyEvent::Visibility { visible: false }).ok();
+        lifecycle_event_tx.send(AlloyEvent::Visibility { visible: false }).ok();
+      }
+      // SDL has just restarted its audio devices (Android_OnResume runs
+      // the restart right before it sends this event); reopen the
+      // playback device if the restart left it dead (see
+      // audio::device_foregrounded).
+      Lifecycle::DidForeground => {
+        if cfg!(target_os = "android") {
+          crate::audio::device_foregrounded();
         }
-        // SDL has just restarted its audio devices (Android_OnResume runs
-        // the restart right before it sends this event); reopen the
-        // playback device if the restart left it dead (see
-        // audio::device_foregrounded).
-        sdl3::event::Event::AppDidEnterForeground { .. } => {
-          if cfg!(target_os = "android") {
-            crate::audio::device_foregrounded();
-          }
-        }
-        _ => {}
-      },
-    );
+      }
+    });
 
     // Where a platform vsync backend exists (Android today), FrameRendered is
     // deferred to the display's vsync (see vsync.rs) so frame production
@@ -417,10 +292,8 @@ impl App {
     // thread wakes the blocked event wait exactly like the raster thread does
     // after a present. None = present-return pacing, unchanged.
     let vsync = {
-      let sender = platform.sdl().event().expect("Failed to get SDL event subsystem").event_sender();
-      crate::vsync::VsyncSource::start(move || {
-        sender.push_custom_event(FrameReady).ok();
-      })
+      let waker = waker.clone();
+      crate::vsync::VsyncSource::start(move || waker.wake())
     };
     // The vsync frame-release policy (deferred presents, the one outstanding
     // request, the fallback deadline, the signal-delay budget), extracted as
@@ -429,10 +302,15 @@ impl App {
     // vsync::FrameRelease.
     let mut release = crate::vsync::FrameRelease::new(vsync.is_some(), Instant::now());
 
-    let mut event_pump = platform.sdl().event_pump().expect("Failed to get SDL event pump");
-    // None when SDL has no gamepad support on this platform; pads already
-    // plugged in surface through the Added events SDL emits on subsystem init.
-    let mut gamepads = crate::gamepad::Gamepads::new(platform.sdl());
+    // Open the gamepads before the first wait: None when SDL has no gamepad
+    // support on this platform; pads already plugged in surface through the
+    // Added events SDL emits on subsystem init, which that wait drains.
+    platform.gamepads();
+    // The display's refresh rate as last reported: ore's watch reports
+    // changes as DisplayRefreshRate events, and every report is published
+    // for out-of-loop readers (crate::refresh_rate).
+    let mut refresh_rate = window.refresh_rate().unwrap_or(ore::display::DEFAULT_REFRESH_HZ);
+    crate::set_refresh_rate(refresh_rate);
     let mut frame: u64 = 0;
 
     // The refresh count on every frame signal (see present.rs): reference
@@ -512,10 +390,6 @@ impl App {
         );
       }
     };
-    // The polled platform facts (keyboard, power, refresh-rate safety net);
-    // polled at the bottom of each iteration, emitting on transitions.
-    let mut watch = PlatformWatch::new(&window);
-
     let mut fps_last_second = Instant::now();
     let mut fps_frame_count: u32 = 0;
     let mut fps: u32 = 0;
@@ -523,12 +397,6 @@ impl App {
     // input flows: the arrival rate shows whether the platform delivers moves
     // at input-device rate or batched to vsync (drag latency diagnostics).
     let mut pointer_moves: u32 = 0;
-    // Pointer-lock coordinate freeze (web parity): SDL does NOT freeze x/y
-    // in relative mode - it reports a window-clamped simulated position -
-    // so hit testing would follow an invisible point. While locked, mouse
-    // events report the lock point instead; motion continues via rel.
-    let mut pointer_lock_frozen: Option<(f32, f32)> = None;
-    let mut last_mouse: (f32, f32) = (0.0, 0.0);
 
     // Instant of the last frame signal (FrameRendered or Tick). When the UI
     // thread submits nothing for a full refresh period, an idle Tick keeps its
@@ -544,16 +412,15 @@ impl App {
     // each waits on the other's channel - and window close or SIGTERM (which
     // SDL translates into a Quit event) lands in the dead channel and wedges
     // the process until SIGKILL.
-    // SDL's tick base, which its event timestamps count from.
-    let sdl_epoch = ore::time::ticks_epoch();
     'run: loop {
-      let tick_period = Duration::from_secs_f64(1.0 / watch.refresh_rate().max(1.0) as f64);
-      refreshes.set_hz(watch.refresh_rate());
-      // Sleep on the SDL event queue until the next idle-tick deadline: input
-      // wakes it directly and each submitted frame pushes a FrameReady user
-      // event (see Context::submit), so nothing needs polling. The woken-for
-      // event is handled below alongside the rest of the queue; a FrameReady
-      // falls through translate_event as a no-op, its work is the rx drain.
+      let tick_period = Duration::from_secs_f64(1.0 / refresh_rate.max(1.0) as f64);
+      refreshes.set_hz(refresh_rate);
+      // Sleep on the SDL event queue (ore's pump) until the next idle-tick
+      // deadline: input wakes it directly and the raster and vsync threads
+      // push ore's Waker after each present and vsync (see Context::submit),
+      // so nothing needs polling. The woken-for events come back with the
+      // rest of the drained queue and are handled below; a wake translates
+      // to nothing, its work is the rx drain.
       let remaining = match release.wait_deadline() {
         // A present awaits its vsync signal: Ticks are suppressed and the
         // wake comes from the vsync thread, so wait until the fallback
@@ -561,14 +428,7 @@ impl App {
         Some(deadline) => deadline.saturating_duration_since(Instant::now()),
         None => tick_period.saturating_sub(last_frame_signal.elapsed()),
       };
-      let first_event = if remaining.is_zero() {
-        None
-      } else {
-        // SDL waits in whole milliseconds; round up so a sub-millisecond
-        // remainder does not degrade into a spin on zero-length waits.
-        let ms = remaining.as_millis() as u32 + (remaining.as_micros() % 1000 != 0) as u32;
-        event_pump.wait_event_timeout_ms(ms)
-      };
+      let events = platform.wait(remaining, &window);
 
       // Drain the raster thread's frame notifications. Drawing and presenting
       // have already happened over there (it owns the process's single GL
@@ -768,7 +628,7 @@ impl App {
       // (is_muted_input); the level-read pads apply it themselves
       // (Gamepads::set_muted).
       let muted = user_input_muted.load(Ordering::Relaxed);
-      if let Some(g) = gamepads.as_mut() {
+      if let Some(g) = platform.gamepads() {
         g.set_muted(muted);
       }
       // A muted client must not hold the user's mouse captive: their input is
@@ -778,7 +638,6 @@ impl App {
       // check; the app sees a plain unlock and can lock again once unmuted.
       if muted && window.pointer_locked() {
         window.set_pointer_lock(false);
-        pointer_lock_frozen = None;
         event_tx.send(AlloyEvent::PointerLock { locked: false }).ok();
       }
       liveness.begin_pump();
@@ -786,28 +645,10 @@ impl App {
         // One translated input or window event on its way out: `at` is when
         // it happened (the platform's event time, a touch sample's time).
         // False when the embedder is gone.
-        let mut deliver = |mut e: AlloyEvent, at: Instant| -> bool {
+        let mut deliver = |e: AlloyEvent, at: Instant| -> bool {
           // A failed send below means the embedder's event receiver is
           // gone (its producer finished); named here, since the loop then
           // winds the process down without another word.
-
-          // Mouse position bookkeeping and the pointer-lock freeze: while
-          // locked, mouse events carry the lock point (see
-          // pointer_lock_frozen); unlocked, remember the real position as
-          // the next lock's freeze point.
-          match &mut e {
-            AlloyEvent::PointerMove { pointer_type: PointerType::Mouse, x, y, .. }
-            | AlloyEvent::PointerDown { pointer_type: PointerType::Mouse, x, y, .. }
-            | AlloyEvent::PointerUp { pointer_type: PointerType::Mouse, x, y, .. }
-            | AlloyEvent::Wheel { pointer_type: PointerType::Mouse, x, y, .. } => match pointer_lock_frozen {
-              Some((fx, fy)) => {
-                *x = fx;
-                *y = fy;
-              }
-              None => last_mouse = (*x, *y),
-            },
-            _ => {}
-          }
           apply_main_thread_effects(&e, &surface_size);
           if liveness.on_event(&e, Instant::now()) {
             raster.send(RasterCmd::RebindWindowSurface).ok();
@@ -834,30 +675,12 @@ impl App {
           }
           delivered
         };
-        for sdl_event in first_event.into_iter().chain(event_pump.poll_iter()) {
-          if let sdl3::event::Event::Display { display_event, .. } = &sdl_event {
-            use sdl3::event::DisplayEvent;
-            if matches!(display_event, DisplayEvent::CurrentModeChanged | DisplayEvent::DesktopModeChanged) {
-              if let Some(e) = watch.check_refresh(&window) {
-                event_tx.send(e).ok();
-              }
-            }
+        for (e, at) in events {
+          if let PlatformEvent::DisplayRefreshRate { hz } = &e {
+            refresh_rate = *hz;
+            crate::set_refresh_rate(*hz);
           }
-          if let Some(g) = gamepads.as_mut() {
-            g.handle_event(&sdl_event);
-          }
-          let at = ore::time::event_instant(sdl_epoch, sdl_event.get_timestamp());
-          if let Some(e) = translate_event(sdl_event, &window) {
-            if !deliver(e, at) {
-              break 'run;
-            }
-          }
-        }
-        // Android's finger samples arrive beside SDL's queue, each with its
-        // own time (see touch.rs).
-        #[cfg(target_os = "android")]
-        for sample in crate::touch::drain() {
-          if !deliver(crate::event::translate_touch(&sample, &window), sample.at) {
+          if !deliver(AlloyEvent::from(e), at) {
             break 'run;
           }
         }
@@ -934,9 +757,9 @@ impl App {
       // At most one gamepad snapshot per iteration, however many pad events
       // were drained above. The back-button edge follows the snapshot so an
       // app that watches pads sees the final state before the back intent.
-      if let Some(g) = gamepads.as_mut() {
-        if let Some(e) = g.take_snapshot_if_dirty() {
-          event_tx.send(e).ok();
+      if let Some(g) = platform.gamepads() {
+        if let Some(pads) = g.take_snapshot_if_dirty() {
+          event_tx.send(AlloyEvent::Gamepads { pads }).ok();
         }
         if g.take_back_edge() {
           event_tx.send(AlloyEvent::Back).ok();
@@ -951,12 +774,12 @@ impl App {
               raster.send(RasterCmd::RebindWindowSurface).ok();
             }
             event_tx.send(e).ok();
-            event_tx.send(AlloyEvent::DisplayRefreshRate { hz: watch.refresh_rate() }).ok();
+            event_tx.send(AlloyEvent::DisplayRefreshRate { hz: refresh_rate }).ok();
             event_tx.send(current_system_theme_event()).ok();
             event_tx.send(current_input_devices_event()).ok();
             event_tx.send(current_orientation_event(&window)).ok();
-            if let Some(g) = gamepads.as_ref() {
-              event_tx.send(g.snapshot_event()).ok();
+            if let Some(g) = platform.gamepads() {
+              event_tx.send(AlloyEvent::Gamepads { pads: g.snapshot() }).ok();
             }
             // Pointer lock survives an engine reload (window state); the new
             // engine must observe it.
@@ -1044,11 +867,11 @@ impl App {
           AlloyCommand::DropCursor(id) => window.drop_cursor(id),
           // Applied and reported in this iteration: the snapshot above has
           // already run, and a driven session should not wait a tick.
-          AlloyCommand::Gamepad(cmd) => match gamepads.as_mut() {
+          AlloyCommand::Gamepad(cmd) => match platform.gamepads() {
             Some(g) => match g.apply(cmd) {
               Ok(()) => {
-                if let Some(e) = g.take_snapshot_if_dirty() {
-                  event_tx.send(e).ok();
+                if let Some(pads) = g.take_snapshot_if_dirty() {
+                  event_tx.send(AlloyEvent::Gamepads { pads }).ok();
                 }
                 if g.take_back_edge() {
                   event_tx.send(AlloyEvent::Back).ok();
@@ -1063,7 +886,6 @@ impl App {
             // (platform without relative mode), and the answer is the fact
             // the reactive accessor reflects.
             let applied = window.set_pointer_lock(locked);
-            pointer_lock_frozen = if applied { Some(last_mouse) } else { None };
             event_tx.send(AlloyEvent::PointerLock { locked: applied }).ok();
           }
           AlloyCommand::SetTextInputActive(active, options) => {
@@ -1088,10 +910,6 @@ impl App {
             log::warn!("[alloy] a headless window size was requested on an interactive window; ignored");
           }
         }
-      }
-
-      for e in watch.poll(&window) {
-        event_tx.send(e).ok();
       }
     }
   }

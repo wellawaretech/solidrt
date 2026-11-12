@@ -64,8 +64,8 @@ instead of living in a closure alloy registers.
   and answers, `SuspendHold`) is ore's since step 0 (`ore::input`,
   `ore::display`, `ore::gamepad`, `ore::lifecycle`, and under `window`
   `ore::cursor`, `ore::text_input`, `ore::dialog`), and flux and lattice
-  name it there. The synthetic gamepad button and axis names are still
-  alloy's (`gamepad.rs`).
+  name it there. The synthetic gamepad button and axis names are ore's
+  since step 2 (`ore::gamepad`).
 
 ## Done looks like
 
@@ -119,7 +119,12 @@ Taken 2026-11-12. The design note's API sketch is updated to match.
    text input and the GL surface. This replaces the earlier sketch's
    unconditional `platform.window()`. The stepped loop takes the `Window`
    alone. Headless `flux` builds no `Platform`, so the main-thread bridge's
-   "no event loop, run at once" rule stays true.
+   "no event loop, run at once" rule stays true. Amended at step 2: `wait`
+   itself sits under `window` and takes `&Window`, because translating an
+   input or resize event reads the window's scale, size and safe area
+   live, per event. The waker, the lifecycle hook and the gamepads stay
+   feature-free; the windowless host lifts the window-free part of the
+   translation out when it is built.
 5. **The window and GL surface types.** `Window` owns the `SDL_Window`, is
    not `Send`, and every method is main thread only. The GL side is a
    separate `Send` value, `GlSurface`, for the raster thread (what
@@ -279,13 +284,46 @@ Each step is a commit that builds and passes the checks below.
    releases it; the backbuffer multisample request travels as
    `WindowConfig::backbuffer_samples` and ore applies it on Android alone;
    the hardware-keyboard fact (`set_hardware_keyboard`) is ore's now,
-   alloy's function forwards until step 3 moves the native; `recreate_gl`
+   alloy's function forwarded until step 2 repointed the native; `recreate_gl`
    reapplies the icon, the text input session and the pointer lock itself;
    alloy's logger lets `ore` through at every level (it filtered ore's
    lines out before); `Window::sdl_window` is the second lend, for the
    dialog parent, removed in step 3.
 2. **The pump.** `wait`, the `Waker`, `on_lifecycle` with `SuspendHold`,
-   `PlatformWatch`, gamepads, the touch side channel.
+   `PlatformWatch`, gamepads, the touch side channel. Done 2026-11-12,
+   with these calls: `Platform::wait(timeout, &Window)` returns the drained
+   events translated (`ore::event::PlatformEvent`, one variant per fact)
+   with their instants, under the `window` feature (decision 4, amended);
+   `AlloyEvent` keeps its variants and wraps them (`From<PlatformEvent>`),
+   so flux and lattice saw no change; the pointer-lock freeze follows
+   `window.pointer_locked()` at the start of each `wait`, which the mute's
+   forced unlock and a recreated window fall under too; the watch runs at
+   the end of `wait` and reports `DisplayRefreshRate` on change only, so
+   alloy keeps its own copy (initial from the window with
+   `ore::display::DEFAULT_REFRESH_HZ`) and publishes it; the gamepads open
+   on the first `platform.gamepads()` call (before the first `wait`, as
+   the loop did) and the pump feeds them, the snapshot a plain
+   `Vec<Option<GamepadState>>`; `on_lifecycle` is a raw `SDL_AddEventWatch`
+   with a leaked box, since the crate's guard removes the watch on drop;
+   `Platform::init` takes the event subsystem and the pump in every mode
+   (the stepped mode never took them before; a window already initialized
+   SDL's events there, so the main-thread bridge is unchanged); the
+   keyboard inset lives in `ore::window`, and `nativeKeyboardInset`,
+   `nativeHardwareKeyboard` and `nativeTouch` call ore directly, so alloy's
+   forwarders are gone; the `link_from_drop` tests are
+   `ore/src/tests/platform.rs`. Verified on Linux (Wayland) through the
+   dev server with real compositor input: keys with modifiers, mouse
+   motion, text input, a resize, the pointer-lock freeze, a synthetic pad,
+   idle CPU at rest, the close path; the headless suites pass. On the
+   tablet: touch with sample times through `ore::touch`, text input, back,
+   background and resume (the suspend handler runs to completion under the
+   hold, the queued visibility copy arrives at resume), rotation, and the
+   pump thread at 2 to 3 percent CPU at rest (the poll-sentinel guard).
+   On the TV: the 32-bit build starts, the remote arrives as keys and as a
+   raw joystick, back reaches the app. The screen keyboard's height reads
+   0 on the tablet, with the older installed player too, so that is a
+   pre-existing gap (okf/backlog/android-keyboard-inset-zero.md), not this
+   step's. Still open: the macOS and Windows builds.
 3. **Android glue, vsync, dialogs.** The Choreographer source, the video
    plane, the redraw answer, dialogs and their plugin, the natives.
 4. **Devices.** Audio playback, microphone, camera; the lifecycle audio

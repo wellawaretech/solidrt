@@ -178,11 +178,11 @@ fn plan_input(ctx: Ctx<'_>, events: String) -> flux::rquickjs::Result<Vec<Vec<f6
   Ok(waits)
 }
 
-/// The synthetic pads of this engine: alloy's pad table without devices,
+/// The synthetic pads of this engine: ore's pad table without devices,
 /// which a test drives with the same commands the control API sends the
 /// interactive loop. Per engine, so a test starts with no pad seated.
 #[derive(Clone, JsLifetime)]
-struct Pads(#[qjs(skip_trace)] Rc<RefCell<alloy::Gamepads>>);
+struct Pads(#[qjs(skip_trace)] Rc<RefCell<ore::gamepad::Gamepads>>);
 
 /// `inputStep(index)`: send one step of the current plan.
 fn step_input(ctx: Ctx<'_>, index: usize) -> flux::rquickjs::Result<()> {
@@ -201,7 +201,7 @@ fn step_input(ctx: Ctx<'_>, index: usize) -> flux::rquickjs::Result<()> {
       // What the interactive loop does after a command: the snapshot, and
       // the back edge a synthetic "back" press is.
       if let Some(snapshot) = pads.take_snapshot_if_dirty() {
-        stepper.send(snapshot);
+        stepper.send(alloy::AlloyEvent::Gamepads { pads: snapshot });
       }
       if pads.take_back_edge() {
         stepper.send(alloy::AlloyEvent::Back);
@@ -666,7 +666,7 @@ impl ModuleDef for SolTestModule {
     exports.export("settle", Function::new(ctx.clone(), settle)?)?;
     exports.export("until", Function::new(ctx.clone(), until)?)?;
     if ctx.userdata::<Pads>().is_none() {
-      ctx.store_userdata(Pads(Rc::new(RefCell::new(alloy::Gamepads::synthetic())))).expect("store pads");
+      ctx.store_userdata(Pads(Rc::new(RefCell::new(ore::gamepad::Gamepads::synthetic())))).expect("store pads");
     }
     exports.export("link", Function::new(ctx.clone(), link)?)?;
     exports.export("requestedLinks", Function::new(ctx.clone(), requested_links)?)?;

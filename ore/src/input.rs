@@ -122,3 +122,15 @@ pub fn w3c_code_for_key(key: &str) -> &'static str {
     _ => "Unidentified",
   }
 }
+
+/// Connected input device classes. Presence, not traffic: a connected mouse
+/// that never moves still reports true. Read at init and re-read on
+/// keyboard/mouse hotplug; SDL has no touch hotplug events, so touch is
+/// re-queried on those same occasions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InputDevices {
+  pub keyboard: bool,
+  pub mouse: bool,
+  pub touch: bool,
+  pub screen_keyboard: bool,
+}
