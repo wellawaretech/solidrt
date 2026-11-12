@@ -616,10 +616,19 @@ export function createShaderTarget(
  * The render contract is unchanged: the list is input data, so an ordinary
  * (`render: "auto"`) draw target re-renders exactly when its entries or
  * their inputs change - a static scene costs zero passes, and one render is
- * one pass regardless of entry count. `render: "manual"` and `loadOp` work
- * as on `createShaderTarget`. Returns the texture id; frees on owner
- * disposal (opt out with `autoFree: false`), taking its entries with it - the
- * entries' pipelines and buffers are yours and outlive it.
+ * one pass regardless of entry count. A record write to a culled entry
+ * (`cells` with `cull`) under a view that held still re-renders only the
+ * rectangles its records' cull boxes covered before and after, every other
+ * pixel kept (a multisampled target renders in full). That asks the entry's
+ * view (`setDrawRange` `view`, or the spatial core's cull feed) to be exactly
+ * the matrix its vertex stage projects with, clip y down per the pixel
+ * contract, and its records to draw inside their cull boxes plus the cells'
+ * `margin`; a stage drawing past them leaves stale pixels, which the dev
+ * tools' force-full switch (`/force-full-renders`) tells apart.
+ * `render: "manual"` and `loadOp` work as on `createShaderTarget`. Returns
+ * the texture id; frees on owner disposal (opt out with `autoFree: false`),
+ * taking its entries with it - the entries' pipelines and buffers are yours
+ * and outlive it.
  */
 export function createDrawTarget(
   width: number,

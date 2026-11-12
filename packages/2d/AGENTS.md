@@ -127,7 +127,7 @@ mesh out by the antialiasing margin and the sprite's outline and
 mirrors it with the flips, and nothing draws outside the frame. What it
 saves is fragments: a quad around an irregular shape shades its
 transparent corners, and a fill-bound board of such shapes shades its
-screen about twice (measured on an Adreno 610, a Spectre-tile board went
+screen about twice (measured on an Adreno 610, a board of irregular tiles went
 from 25.3 to 18.3 ms of GPU per frame with `unlit()`, 59.5 to 42.0 ms
 with a `surface`). A frame without a mesh draws its quad on any layer;
 a tile layer bakes quads either way; picking stays the frame rect.

@@ -48,6 +48,7 @@ mod spatial_residency;
 mod spatial_rig;
 mod spatial_springs;
 mod spatial_transitions;
+mod target_damage;
 mod text_baseline;
 mod text_gradient;
 mod text_layout;

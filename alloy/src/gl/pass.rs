@@ -99,21 +99,31 @@ pub(super) struct ResolvedDraw<'a> {
 }
 
 /// One group of a mesh pass: an ordered run of draws sharing a viewport, a
-/// clear and the shared params. A pass has one group when a target renders
-/// its own entries over its whole storage (`rect` None: the pass viewport,
-/// no clear of its own - the pass-level clear covers it) and one more per
-/// sub-target drawn into a rectangle of that storage (`rect` Some, in
-/// viewport pixels - which for a target is image space, row 0 = top:
-/// viewport and scissor are set to it, and the rectangle is wiped before
-/// the group's draws - `clear` the color when given, `clear_depth` the
-/// depth to the far plane). The wipe is a covering-triangle DRAW through
-/// the pass's `tile_clear` program, never a scissored glClear: on a tiled
-/// GPU a glClear mid-pass ends the pass and restarts it with a full
-/// load/store of the whole surface, which cost more than the passes the
-/// tiles were merged to save (measured on an Adreno 610). `iResolution`
-/// is the group's size.
+/// scissor, a clear and the shared params. Rectangles are in viewport
+/// pixels, which for a target is image space (row 0 = top). `viewport`
+/// None is the pass viewport, Some a sub-target's rectangle; `scissor`
+/// None draws unconfined with no wipe of its own (a full render's own
+/// entries: the pass-level clear covers them), Some confines the group to
+/// the rectangle and wipes it before the draws - `clear` the color when
+/// given, `clear_depth` the depth to the far plane. A tile group sets both
+/// to the tile; a damage group keeps its owner's viewport and scissors to
+/// one damage rectangle, so it draws the same picture cut down. The wipe
+/// is a covering-triangle DRAW through the pass's `tile_clear` program
+/// (under the group's viewport, cut by the scissor), never a scissored
+/// glClear: on a tiled GPU a glClear mid-pass ends the pass and restarts
+/// it with a full load/store of the whole surface, which cost more than
+/// the passes the tiles were merged to save (measured on an Adreno 610).
+/// `iResolution` is the group's viewport size.
 pub(super) struct DrawGroup<'a> {
-  pub(super) rect: Option<(i32, i32, u32, u32)>,
+  pub(super) viewport: Option<(i32, i32, u32, u32)>,
+  pub(super) scissor: Option<(i32, i32, u32, u32)>,
+  /// Whether the group's draws write their submission-budget gauges
+  /// (gl::slicing). False for a damage group: its draws run under a
+  /// scissor that discards most fragments, so their cost per vertex reads
+  /// low, and a gauge measured there would plan the next full render as one
+  /// submission that runs far past the budget. Such a group plans from the
+  /// gauge and leaves it as it was.
+  pub(super) measure: bool,
   pub(super) clear: Option<[f32; 4]>,
   pub(super) clear_depth: bool,
   pub(super) shared: &'a [(String, ParamValue)],
@@ -157,8 +167,9 @@ pub(super) enum PassDraw<'a> {
     blend: bool,
   },
   /// A mesh target's pass: the pass-level clear once (`clear` = the color,
-  /// absent under loadOp "load" or on a partial render; `clear_depth` = the
-  /// depth buffer too), then the groups in order, each group's draw entries
+  /// absent under loadOp "load" or on a partial render - some tiles, or
+  /// some damage rectangles; `clear_depth` = the depth buffer too), then
+  /// the groups in order, each group's draw entries
   /// in list order with their own program, uniforms, inputs, VAO, and
   /// pipeline blend/depth state. `depth` says the target owns depth storage
   /// (entries may test against it). Each group's `shared` carries the
@@ -166,7 +177,7 @@ pub(super) enum PassDraw<'a> {
   /// entry's own so an entry naming the same uniform overrides the shared
   /// value. `tile_clear` is the program the groups' rectangle wipes draw
   /// with (see `DrawGroup`); None skips those wipes (the owner failed to
-  /// compile it, already logged).
+  /// compile it, already logged, and renders damage in full instead).
   Draws {
     clear: Option<[f32; 4]>,
     clear_depth: bool,
@@ -493,9 +504,10 @@ pub(super) fn run_pass(
         // the list. With loadOp "load" (manual targets only) the color
         // buffer keeps its previous contents - the accumulation unlock -
         // while depth stays per-render scratch and clears with every full
-        // render. A partial render (only some sub-targets redrawn) clears
-        // nothing at the pass level: each group wipes its own rectangle
-        // with a covering draw and the rest of the storage keeps its pixels.
+        // render. A partial render (only some sub-targets or some damage
+        // rectangles redrawn) clears nothing at the pass level: each group
+        // wipes its own rectangle with a covering draw and the rest of the
+        // storage keeps its pixels.
         let prev_vao = gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING);
         let mut prev_clear = [0f32; 4];
         gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut prev_clear);
@@ -533,13 +545,22 @@ pub(super) fn run_pass(
         }
 
         for group in groups {
-          // A sub-target's group: viewport and scissor to its rectangle (the
-          // scissor is what confines the clear; the viewport transforms the
-          // draws), then wipe the rectangle. The whole-target group runs at
-          // the pass viewport with the scissor off.
-          let (gw, gh) = match group.rect {
+          // The group's viewport (a sub-target's rectangle, or the pass's),
+          // then its scissor: the scissor is what confines the wipe and the
+          // draws, the viewport transforms them. A group without a scissor
+          // runs unconfined and wipes nothing.
+          let (gw, gh) = match group.viewport {
             Some((x, y, w, h)) => {
               gl.viewport(x, y, w as i32, h as i32);
+              (w, h)
+            }
+            None => {
+              gl.viewport(origin.0, origin.1, width as i32, height as i32);
+              (width, height)
+            }
+          };
+          match group.scissor {
+            Some((x, y, w, h)) => {
               gl.scissor(x, y, w as i32, h as i32);
               gl.enable(glow::SCISSOR_TEST);
               // The rectangle wipe: a covering triangle writing the clear
@@ -550,7 +571,7 @@ pub(super) fn run_pass(
               if let (Some(program), true) = (tile_clear, group.clear.is_some() || clear_depth) {
                 let color = group.clear.unwrap_or([0.0; 4]);
                 let params = [("uColor".to_string(), ParamValue::Array(color.to_vec()))];
-                apply_program(gl, program, w, h, &params);
+                apply_program(gl, program, gw, gh, &params);
                 gl.color_mask(
                   group.clear.is_some(),
                   group.clear.is_some(),
@@ -571,14 +592,9 @@ pub(super) fn run_pass(
                 gl.color_mask(true, true, true, true);
                 gl.depth_func(glow::LESS);
               }
-              (w, h)
             }
-            None => {
-              gl.viewport(origin.0, origin.1, width as i32, height as i32);
-              gl.disable(glow::SCISSOR_TEST);
-              (width, height)
-            }
-          };
+            None => gl.disable(glow::SCISSOR_TEST),
+          }
           for d in group.draws {
             // Shared params first, the entry's own second: an entry naming the
             // same uniform overwrites the shared value (specific beats general).
@@ -628,7 +644,7 @@ pub(super) fn run_pass(
             gl.bind_vertex_array(Some(d.vao));
             let instances = d.range.instance_count.max(0) as u64;
             vertices += d.range.vertex_count.max(0) as u64 * instances;
-            issue_draw(gl, d);
+            issue_draw(gl, d, group.measure);
           }
         }
 
@@ -742,14 +758,17 @@ unsafe fn draw_range(gl: &glow::Context, d: &ResolvedDraw, range: DrawRange) {
 /// slices, each flushed and waited for, so no submission is predicted to
 /// run past the budget and every slice is measured on the kernel's own
 /// clock. The entry's VAO is bound; the instance-step pointers an instance
-/// slice re-points are restored to the VAO's own before returning.
-unsafe fn issue_draw(gl: &glow::Context, d: &ResolvedDraw) {
+/// slice re-points are restored to the VAO's own before returning. With
+/// `measure` false the draw is planned from the entry's gauge but leaves
+/// it as it was (see `DrawGroup::measure`).
+unsafe fn issue_draw(gl: &glow::Context, d: &ResolvedDraw, measure: bool) {
   let range = d.range;
   let Some(plan) = SlicePlan::plan(range, d.desc.topology, d.program.reads_instance_id()) else {
     draw_range(gl, d, range);
     return;
   };
   match plan.issue(d.gauge.rate()) {
+    Issue::Whole if !measure => draw_range(gl, d, range),
     Issue::Whole => {
       draw_range(gl, d, range);
       let bound = gl.fence_sync(glow::SYNC_GPU_COMMANDS_COMPLETE, 0).ok().map(|fence| Bound {
@@ -765,7 +784,7 @@ unsafe fn issue_draw(gl: &glow::Context, d: &ResolvedDraw) {
         note_bound();
       }
     }
-    Issue::Sliced => issue_slices(gl, d, plan, range),
+    Issue::Sliced => issue_slices(gl, d, plan, range, measure),
   }
 }
 
@@ -774,8 +793,10 @@ unsafe fn issue_draw(gl: &glow::Context, d: &ResolvedDraw) {
 /// of the slice before, the instance pointers re-pointed per slice on the
 /// instance axis. A wait that runs out (`SLICE_WAIT_LIMIT_SECS`) stops the
 /// measuring for this render - the GPU is hung and the present fence
-/// watchdog will say so - while the remaining slices still go out.
-unsafe fn issue_slices(gl: &glow::Context, d: &ResolvedDraw, plan: SlicePlan, range: DrawRange) {
+/// watchdog will say so - while the remaining slices still go out. With
+/// `measure` false the slices are still sized and waited for, but the
+/// gauge keeps its rate (see `DrawGroup::measure`).
+unsafe fn issue_slices(gl: &glow::Context, d: &ResolvedDraw, plan: SlicePlan, range: DrawRange, measure: bool) {
   let label = d.label.unwrap_or("unlabelled");
   let mut hung = false;
   let mut wait_micros = submit_and_wait(gl, &mut hung, label);
@@ -814,7 +835,7 @@ unsafe fn issue_slices(gl: &glow::Context, d: &ResolvedDraw, plan: SlicePlan, ra
   if plan.axis == SliceAxis::Instances {
     point_instances(gl, d, 0);
   }
-  if let (false, Some(rate)) = (hung, meter.rate()) {
+  if let (false, true, Some(rate)) = (hung, measure, meter.rate()) {
     d.gauge.measured(rate, slices, longest);
     let budget_ms = SUBMISSION_BUDGET_MICROS / 1000;
     if d.gauge.log_once() {

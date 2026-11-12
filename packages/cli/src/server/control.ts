@@ -436,6 +436,7 @@ const CONTROL_ENDPOINTS = [
   "/__control__/stats",
   "/__control__/snapshot",
   "/__control__/gpu",
+  "/__control__/force-full-renders",
   "/__control__/debug",
   "/__control__/dialog",
   "/__control__/link",
@@ -555,6 +556,25 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       // whether the driver had it.
       if (query.get("lose") === "1" || query.get("lose") === "true") extra.lose = true
       return handleQuery(query, "gpu", extra)
+    }
+    case "/__control__/force-full-renders": {
+      // The damage debug switch: POST ?active=true renders every draw target
+      // and sub-target that has dirt in full, ?active=false (the default)
+      // lets a culled draw list's write render only the rectangles it
+      // changed; GET reads it. The reply is { active } as the client now
+      // has it. Per client; a client that predates it answers that it does
+      // not support the query.
+      let extra: Record<string, unknown> = {}
+      if (req.method === "POST") {
+        let active = query.get("active")
+        if (active !== "true" && active !== "false") {
+          return Response.json({ error: "Force full renders requires ?active=true or ?active=false" }, { status: 400 })
+        }
+        extra.active = active === "true"
+      } else if (req.method !== "GET") {
+        return Response.json({ error: "Force full renders requires GET or POST" }, { status: 405 })
+      }
+      return handleQuery(query, "force_full_renders", extra)
     }
     case "/__control__/debug": {
       // GET lists the app's registered debug commands; POST calls one, with

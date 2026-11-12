@@ -347,16 +347,23 @@ impl RasterState {
   }
 
   pub(super) fn write_buffer(&mut self, id: u64, data: &[u8], byte_offset: usize) -> Result<(), String> {
-    let buffer = self.buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
-    buffer.write(&self.gl, data, byte_offset).map_err(|e| format!("buffer {}: {e}", describe(id, &buffer.label)))?;
-    // Every pipeline drawing from this buffer re-renders at the next flush,
-    // so geometry-only changes reach the screen even when no new params
-    // arrive. (Marked by target id: buffer ids are their own space.) Manual
-    // targets pick the new geometry up at their next explicit render.
+    self.write_buffer_bytes(id, data, byte_offset)?;
+    // Every pipeline drawing from this buffer re-renders in full at the next
+    // flush, so geometry-only changes reach the screen even when no new
+    // params arrive. (Marked by target id: buffer ids are their own space.)
+    // Manual targets pick the new geometry up at their next explicit render.
     let drawing: Vec<u64> =
       self.shaders.iter().filter(|(_, s)| !s.manual() && s.reads_buffer(id)).map(|(tid, _)| *tid).collect();
     self.dirty.extend(drawing);
     Ok(())
+  }
+
+  /// The GL half of `write_buffer`, dirtying nothing: what a draw list's
+  /// write into its own buffers uses (`write_draw_list`), whose dirt the
+  /// list declares itself.
+  pub(super) fn write_buffer_bytes(&self, id: u64, data: &[u8], byte_offset: usize) -> Result<(), String> {
+    let buffer = self.buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
+    buffer.write(&self.gl, data, byte_offset).map_err(|e| format!("buffer {}: {e}", describe(id, &buffer.label)))
   }
 
   /// `7 (bloom-h)` when texture id 7 carries a label, else `7`: how raster
@@ -400,6 +407,7 @@ impl RasterState {
       .iter()
       .map(|(texture_id, shader)| {
         let (passes, pass_issue_micros, pass_exec_micros, vertices) = shader.pass_stats();
+        let (full_renders, damage_renders, damaged_pixels) = shader.render_stats();
         // A draw target reports its entries in the `draws` list; the flat
         // single-pass fields stay for the fixed kinds, where they describe
         // the one pass - read off its first (only) entry's record.
@@ -450,6 +458,9 @@ impl RasterState {
           pass_issue_micros,
           pass_exec_micros,
           vertices,
+          full_renders,
+          damage_renders,
+          damaged_pixels,
         }
       })
       .collect();

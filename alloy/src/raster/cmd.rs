@@ -8,7 +8,8 @@ use std::sync::mpsc;
 
 use crate::gpu::{
   AttributeTable, BufferIds, DepthStorage, DrawPlacement, DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader,
-  ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, TextureBinding, UniformTable, WindowShader,
+  ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetDirt, TargetSpec, TextureBinding, UniformTable,
+  WindowShader,
 };
 
 /// The adopted handles a draw target create or resize replies with: the
@@ -101,6 +102,16 @@ impl PresentDamage {
       }
     }
   }
+}
+
+/// One write into a draw list's own buffer (`RasterCmd::WriteDrawList`):
+/// owned bytes at an offset (a patch), or the front of a leased staging
+/// block (a rebuild's gather) that moves across the channel and returns to
+/// the UI-side pool through `recycle`, as `RasterCmd::WriteBufferLease`
+/// does.
+pub(crate) enum ListWrite {
+  Bytes { id: u64, data: Vec<u8>, byte_offset: usize },
+  Lease { id: u64, block: Vec<u8>, len: usize, recycle: mpsc::Sender<(u64, Vec<u8>)> },
 }
 
 pub(crate) enum RasterCmd {
@@ -434,13 +445,30 @@ pub(crate) enum RasterCmd {
   /// Create an interleaved vertex buffer from raw bytes.
   CreateBuffer { id: u64, data: Vec<u8>, label: Option<String>, reply: mpsc::Sender<Result<(), String>> },
   /// Overwrite part of a vertex buffer and mark pipelines drawing from it
-  /// dirty.
+  /// dirty (in full).
   WriteBuffer { id: u64, data: Vec<u8>, byte_offset: usize },
   /// Overwrite the front of a vertex buffer from a leased staging block: the
   /// block MOVES across the channel (no copy, like UpdateYuv) and returns to
   /// the UI-side pool via `recycle` once the GL write is issued. `len` is
   /// the published prefix; the block itself is always full buffer size.
   WriteBufferLease { id: u64, block: Vec<u8>, len: usize, recycle: mpsc::Sender<(u64, Vec<u8>)> },
+  /// A draw list's rebuild point for entry (`target`, `draw`; draw 0 is a
+  /// fixed-kind target's single entry): the `writes` into the list's own
+  /// buffers, the new draw range when the list was rebuilt, and the dirt
+  /// they leave on `target` - full, or rectangles in the target's own
+  /// pixels (a sub-target's own space). The writes and the range land
+  /// without dirtying anything; then `target` alone takes `dirt` (a manual
+  /// target only folds, as every entry write). Sound because a list's own
+  /// buffers are read by its own entry alone, so no other target's pixels
+  /// depend on them. A lease block returns to its pool even when its write
+  /// fails. One command per list per point; a per-entry range for a damage
+  /// group would be one more field here, the writes unchanged.
+  WriteDrawList { target: u64, draw: u64, writes: Vec<ListWrite>, range: Option<DrawRange>, dirt: TargetDirt },
+  /// The debug switch behind `Context::set_force_full_renders`: while on,
+  /// every owner (target or sub-target) that has dirt renders in full,
+  /// whatever rectangles that dirt holds; a clean tile in a partial pass
+  /// stays clean.
+  SetForceFullRenders { on: bool },
   /// Forget a draw entry's submission-budget measurement (gl::slicing):
   /// sent by the order registry when an index-stream entry's first real
   /// order lands over the sentinel seed, so a probe that measured a draw of

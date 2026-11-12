@@ -10,6 +10,14 @@
 //! draw; a write that changed neither re-gathers only the records it
 //! touched, at their list positions. Every list is its own: two views of
 //! one population cull and order apart.
+//!
+//! A list's write into its own buffers carries the dirt it leaves on its
+//! target (D8 of okf/design/draw-order-and-culling.md): for a culled list
+//! whose view held still, the boxes of the slots the point touched, as they
+//! were at the last point and as they are now, projected into the target's
+//! pixels (`ListDamage`); in full otherwise. The mirror keeps each changed slot's
+//! box as of the last point for it (`Mirror::old_boxes`). Writes, range and
+//! dirt reach the raster thread as one command (`RasterCmd::WriteDrawList`).
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -17,11 +25,12 @@ use std::time::Instant;
 
 use crate::gpu::{
   check_direction, gather_list, BufferIds, CellBox, CellIndex, DrawList, DrawListFacts, DrawRange, DrawSpec,
-  InstanceOrder, ListChange, ListOrder, OrderKey, OrderScratch, OrderView, RecordExtent, CELL_BOX_FLOATS, MAX_BUFFERS,
+  InstanceOrder, ListChange, ListDamage, ListOrder, OrderKey, OrderScratch, OrderView, RecordExtent, TargetDirt,
+  CELL_BOX_FLOATS, MAX_BUFFERS,
 };
-use crate::raster::RasterCmd;
+use crate::raster::{ListWrite, RasterCmd};
 
-use super::order::{entry_ids, entry_range, instance_strides, InstanceOrders, Mirror};
+use super::order::{entry_ids, entry_range, instance_strides, mark_changed, InstanceOrders, Mirror};
 use super::Context;
 
 /// The records a draw list's own buffers hold at first; they grow by
@@ -32,7 +41,7 @@ const LIST_INITIAL_RECORDS: usize = 256;
 const LIST_BUFFER_LABEL: &str = "draw list";
 
 /// One entry's draw list.
-pub(super) struct ListEntry {
+pub(crate) struct ListEntry {
   // The key the list sorts by (None = slot order) and its direction.
   key: Option<OrderKey>,
   descending: bool,
@@ -75,14 +84,19 @@ pub(super) struct ListEntry {
   rebuilds: u64,
   patches: u64,
   build_ms: f32,
+  // The range the raster thread holds for the entry, as this side last
+  // sent it (`upload_list`, `Context::update_draw`); None until known. A
+  // range update that would send it again is skipped (`hold_range`).
+  held: Option<DrawRange>,
 }
 
-// What the rebuild point did to a list (`ListEntry::refresh`).
-enum Refresh {
+// What the rebuild point did to a list (`ListEntry::refresh`), with the
+// dirt it leaves on the list's target.
+pub(crate) enum Refresh {
   Unchanged,
-  Rebuilt,
+  Rebuilt(TargetDirt),
   // Kept; the records in this span of list positions are re-gathered.
-  Patched(Range<usize>),
+  Patched(Range<usize>, TargetDirt),
 }
 
 impl ListEntry {
@@ -121,13 +135,13 @@ impl ListEntry {
     ids
   }
 
-  pub(super) fn set_instances(&mut self, instances: usize) {
+  pub(crate) fn set_instances(&mut self, instances: usize) {
     self.instances = instances;
   }
 
   /// Take a view: a position key orders by its depth direction, and a
   /// culled list culls under it.
-  pub(super) fn set_view(&mut self, view: OrderView) -> Result<(), String> {
+  pub(crate) fn set_view(&mut self, view: OrderView) -> Result<(), String> {
     if let Some(OrderKey::Projected { offset, .. }) = self.key {
       let Some(direction) = view.direction() else {
         return Err("The view has no depth direction (its w and z rows are zero or not finite)".to_string());
@@ -182,13 +196,71 @@ impl ListEntry {
     }
   }
 
+  // The dirt this point leaves on the list's target (`ListDamage`), read
+  // from the list as it stands before the point updates it: `mirrors`
+  // hold its records and boxes, `target` is its target's size in pixels.
+  // Full while a source has no mirror (a destroyed buffer the entry still
+  // declares: its records read as zero, so every drawn record may change)
+  // and while the list is capped below its visible set (a rebuild moves
+  // untouched slots across the capacity cut).
+  fn damage(
+    &self,
+    mirrors: &HashMap<u64, Mirror>,
+    population: usize,
+    viewport: [f32; 2],
+    target: Option<[f32; 2]>,
+  ) -> TargetDirt {
+    let mirrored =
+      self.strides.iter().zip(self.sources.iter()).all(|(&stride, id)| stride == 0 || mirrors.contains_key(id));
+    if !mirrored || self.capped() {
+      return TargetDirt::Full;
+    }
+    let box_mirror = mirrors.get(&self.sources[self.box_slot]);
+    let old_box = |slot: u32| box_mirror.and_then(|m| m.old_box(slot));
+    ListDamage {
+      index: self.cells.as_ref(),
+      view: self.view.as_ref(),
+      stale: self.stale,
+      built: self.built,
+      population,
+      touched: &self.touched,
+      boxes: box_mirror.map_or(&[][..], |m| &m.boxes[..]),
+      old_box: &old_box,
+      viewport,
+      target,
+    }
+    .dirt()
+  }
+
+  // Whether the list's own buffers hold fewer records than it lists.
+  fn capped(&self) -> bool {
+    self.drawn() < self.list.len()
+  }
+
+  // Whether the raster thread already holds `range` for the entry; when
+  // not, it is recorded as held (the caller sends it).
+  fn hold_range(&mut self, range: DrawRange) -> bool {
+    if self.held == Some(range) {
+      return true;
+    }
+    self.held = Some(range);
+    false
+  }
+
   // Bring the list up to date at the rebuild point: its cells follow the
   // boxes written since the last point and the slots the population
   // gained or lost, and the list rebuilds when it is stale, its
   // population changed, or a write changed its drawn set or a drawn
   // record's key (`DrawList::change`); a write that changed neither is
-  // patched in place.
-  fn refresh(&mut self, mirrors: &HashMap<u64, Mirror>, scratch: &mut OrderScratch, viewport: [f32; 2]) -> Refresh {
+  // patched in place. Either way the result carries the target's dirt,
+  // `target` being its size in pixels.
+  fn refresh(
+    &mut self,
+    mirrors: &HashMap<u64, Mirror>,
+    scratch: &mut OrderScratch,
+    viewport: [f32; 2],
+    target: Option<[f32; 2]>,
+  ) -> Refresh {
     let population = self.instances;
     let key_mirror = mirrors.get(&self.sources[self.key_slot]);
     let box_mirror = mirrors.get(&self.sources[self.box_slot]);
@@ -234,21 +306,117 @@ impl ListEntry {
         ListChange::None => return Refresh::Unchanged,
         ListChange::Patch(at) => {
           self.patches += 1;
-          return Refresh::Patched(at);
+          return Refresh::Patched(at, self.damage(mirrors, population, viewport, target));
         }
         ListChange::Rebuild => {}
       }
     }
+    let mut dirt = self.damage(mirrors, population, viewport, target);
     let started = Instant::now();
     match &self.cells {
       Some(index) => self.list.build(index, boxes, view, viewport, order.as_ref(), scratch),
       None => self.list.build_all(population, order.as_ref(), scratch),
     };
+    // Built past its buffers: until they grow, untouched slots may sit on
+    // either side of the cut.
+    if self.capped() {
+      dirt = TargetDirt::Full;
+    }
     self.stale = false;
     self.built = Some(population);
     self.rebuilds += 1;
     self.build_ms = started.elapsed().as_secs_f32() * 1000.0;
-    Refresh::Rebuilt
+    Refresh::Rebuilt(dirt)
+  }
+}
+
+/// The seam the list tests drive (tests/target_damage.rs).
+#[cfg(test)]
+impl ListEntry {
+  /// A culling list over `lattice` with no own buffers: `strides` and
+  /// `sources` per buffer index (its cull boxes from the first
+  /// instance-step one, read off its records with `extent` or staged by a
+  /// sink), keyed by `key` in buffer `key_slot` when given, `instances`
+  /// records, `capacity` of them drawn at most.
+  #[allow(clippy::too_many_arguments)]
+  pub(crate) fn for_test(
+    key: Option<OrderKey>,
+    key_slot: usize,
+    strides: [usize; MAX_BUFFERS],
+    sources: [u64; MAX_BUFFERS],
+    lattice: crate::spatial::Lattice,
+    extent: Option<RecordExtent>,
+    instances: usize,
+    capacity: usize,
+  ) -> ListEntry {
+    ListEntry {
+      key,
+      descending: false,
+      key_slot,
+      box_slot: strides.iter().position(|&s| s > 0).unwrap_or(key_slot),
+      cells: Some(CellIndex::new(lattice)),
+      extent,
+      strides,
+      sources,
+      private: [0; MAX_BUFFERS],
+      capacity,
+      list: DrawList::default(),
+      view: None,
+      viewport: None,
+      instances,
+      touched: Vec::new(),
+      built: None,
+      stale: true,
+      rebuilds: 0,
+      patches: 0,
+      build_ms: 0.0,
+      held: None,
+    }
+  }
+
+  /// The slots drawn, in draw order.
+  pub(crate) fn listed_slots(&self) -> &[u32] {
+    &self.list.list()[..self.drawn()]
+  }
+}
+
+/// The draw lists' rebuild point without its sends (`flush_draw_lists`):
+/// every mirror's boxes re-read from its records, every list in `lists`
+/// refreshed over `mirrors` (`ListEntry::refresh`, `target_of` giving a
+/// target's size in pixels), then every mirror's changed slots forgotten.
+/// Returns what the point did to each list that changed.
+pub(crate) fn rebuild_point(
+  lists: &mut HashMap<(u64, u64), ListEntry>,
+  mirrors: &mut HashMap<u64, Mirror>,
+  scratch: &mut OrderScratch,
+  target_of: impl Fn(u64) -> Option<[f32; 2]>,
+) -> Vec<((u64, u64), Refresh)> {
+  for mirror in mirrors.values_mut() {
+    mirror.refresh_boxes();
+  }
+  let mut changed = Vec::new();
+  for (&key, list) in lists.iter_mut() {
+    let target = target_of(key.0);
+    let viewport = list.viewport.or(target).unwrap_or([1.0, 1.0]);
+    match list.refresh(mirrors, scratch, viewport, target) {
+      Refresh::Unchanged => {}
+      refresh => changed.push((key, refresh)),
+    }
+  }
+  for mirror in mirrors.values_mut() {
+    mirror.clear_changed();
+  }
+  changed
+}
+
+/// Which mirrors keep old boxes: those some culling list reads its cull
+/// boxes from (`Mirror::set_captures`). Recomputed whenever a list comes,
+/// goes or swaps its buffers.
+fn refresh_box_captures(orders: &mut InstanceOrders) {
+  let sources: HashSet<u64> =
+    orders.lists.values().filter(|l| l.cells.is_some()).map(|l| l.sources[l.box_slot]).collect();
+  for (id, mirror) in orders.mirrors.iter_mut() {
+    mirror.set_captures(sources.contains(id));
   }
 }
 
@@ -258,24 +426,28 @@ impl Mirror {
   // is changed until the next rebuild point. A record written as it was
   // costs the comparison only, so the rebuild point follows what changed,
   // not the range the app marked.
-  fn write_bytes(&mut self, offset: usize, new: &[u8]) {
+  pub(crate) fn write_bytes(&mut self, offset: usize, new: &[u8]) {
     let end = offset + new.len();
     let held = self.held;
-    let bytes = std::sync::Arc::make_mut(&mut self.data);
+    // The fields apart, so a record can be marked (its old box kept) while
+    // the records are held mutably: one copy-on-write per write.
+    let Mirror { data, stride, changed, captures, old_boxes, boxes, .. } = self;
+    let (stride, captures) = (*stride, *captures);
+    let bytes = std::sync::Arc::make_mut(data);
     if bytes.len() < end {
       bytes.resize(end, 0);
     }
-    if self.stride == 0 {
+    if stride == 0 {
       bytes[offset..end].copy_from_slice(new);
     } else {
       let mut at = offset;
       while at < end {
-        let slot = at / self.stride;
-        let next = ((slot + 1) * self.stride).min(end);
+        let slot = at / stride;
+        let next = ((slot + 1) * stride).min(end);
         let src = &new[at - offset..next - offset];
         if at >= held || bytes[at..next] != *src {
           bytes[at..next].copy_from_slice(src);
-          self.changed.mark(slot);
+          mark_changed(changed, old_boxes, boxes, captures, slot);
         }
         at = next;
       }
@@ -284,31 +456,51 @@ impl Mirror {
     self.take_back();
   }
 
+  // A spatial record sink's publish (`Context::list_write_instances`): the
+  // floats [lo, hi) of `values` (the sink's staging, whole, in slot order)
+  // as records, then with `boxes` the cull boxes of the slots they cover.
+  pub(crate) fn write_instances(&mut self, lo: usize, hi: usize, values: &[f32], boxes: Option<&[f32]>) {
+    let bytes: Vec<u8> = values[lo..hi].iter().flat_map(|v| v.to_ne_bytes()).collect();
+    self.write_bytes(lo * 4, &bytes);
+    if let Some(boxes) = boxes {
+      self.write_boxes(lo, hi, boxes);
+    }
+  }
+
   // Take the cull boxes a sink staged for floats [lo, hi) of its records
-  // (`boxes`, whole, in slot order), marking each slot whose box changed.
-  fn write_boxes(&mut self, lo: usize, hi: usize, boxes: &[f32]) {
+  // (`boxes`, whole, in slot order), marking each slot whose box changed
+  // before its box is overwritten (so the slot's first mark keeps the box
+  // it had at the last point, `old_boxes`). A slot the column loses is
+  // marked too: its box goes with it.
+  pub(crate) fn write_boxes(&mut self, lo: usize, hi: usize, boxes: &[f32]) {
     let slots = if self.boxes.len() != boxes.len() {
       0..boxes.len() / CELL_BOX_FLOATS
     } else {
       let floats = (self.stride / 4).max(1);
       lo / floats..hi.div_ceil(floats).min(boxes.len() / CELL_BOX_FLOATS)
     };
-    if self.boxes.len() < boxes.len() {
-      self.boxes.resize(boxes.len(), 0.0);
+    for slot in boxes.len() / CELL_BOX_FLOATS..self.boxes.len() / CELL_BOX_FLOATS {
+      self.mark_slot(slot);
+    }
+    // A slot past the column had no box: it grows by the empty one.
+    let empty = CellBox::EMPTY.floats();
+    while self.boxes.len() < boxes.len() {
+      self.boxes.extend_from_slice(&empty);
     }
     self.boxes.truncate(boxes.len());
     for slot in slots {
       let span = slot * CELL_BOX_FLOATS..(slot + 1) * CELL_BOX_FLOATS;
       if self.boxes[span.clone()] != boxes[span.clone()] {
+        self.mark_slot(slot);
         self.boxes[span.clone()].copy_from_slice(&boxes[span]);
-        self.changed.mark(slot);
       }
     }
   }
 
   // Re-read the cull boxes of the changed slots from the records, on a
-  // buffer whose boxes are its records' own fields (`extent`).
-  fn refresh_boxes(&mut self) {
+  // buffer whose boxes are its records' own fields (`extent`). Every slot
+  // it overwrites is marked already, its old box kept at that mark.
+  pub(crate) fn refresh_boxes(&mut self) {
     let Some(extent) = self.extent else {
       return;
     };
@@ -372,6 +564,7 @@ impl Context {
       rebuilds: 0,
       patches: 0,
       build_ms: 0.0,
+      held: None,
     })
   }
 
@@ -414,6 +607,7 @@ impl Context {
     }
     orders.lists.insert((target, draw), list);
     orders.direct_stale = true;
+    refresh_box_captures(&mut orders);
   }
 
   /// Drop a list that never registered (its create failed).
@@ -475,6 +669,7 @@ impl Context {
     for id in released {
       self.release_mirror(id);
     }
+    refresh_box_captures(&mut self.orders.borrow_mut());
   }
 
   // Hand a buffer no list reads back to the GPU: its records, whole,
@@ -493,7 +688,7 @@ impl Context {
       }
     }
     if mirror.owned {
-      mirror.changed.clear();
+      mirror.clear_changed();
       mirror.boxes = Vec::new();
       mirror.extent = None;
     } else {
@@ -546,12 +741,23 @@ impl Context {
     for id in released {
       self.release_mirror(id);
     }
+    refresh_box_captures(&mut self.orders.borrow_mut());
   }
 
   /// `ids` as the raster thread binds them for entry (`target`, `draw`):
   /// a draw list's own buffers in place of its population's.
   pub(super) fn listed_ids(&self, target: u64, draw: u64, ids: BufferIds) -> BufferIds {
     self.orders.borrow().lists.get(&(target, draw)).map_or(ids, |list| list.listed(ids))
+  }
+
+  /// Whether the raster thread already holds `range` for entry (`target`,
+  /// `draw`)'s draw list, so a range update need not send it (one that
+  /// changed only the population: the list's own command at the next
+  /// rebuild point carries the range and the damage). False for an entry
+  /// without a list, and for a range not held, which is recorded as held:
+  /// the caller sends it.
+  pub(super) fn list_holds_range(&self, target: u64, draw: u64, range: DrawRange) -> bool {
+    self.orders.borrow_mut().lists.get_mut(&(target, draw)).is_some_and(|list| list.hold_range(range))
   }
 
   /// What entry (`target`, `draw`)'s draw list did, for the inventory.
@@ -590,12 +796,7 @@ impl Context {
       return None;
     }
     let direct = orders.direct.contains(&id);
-    let mirror = orders.mirrors.entry(id).or_default();
-    let bytes: Vec<u8> = values[lo..hi].iter().flat_map(|v| v.to_ne_bytes()).collect();
-    mirror.write_bytes(lo * 4, &bytes);
-    if let Some(boxes) = boxes {
-      mirror.write_boxes(lo, hi, boxes);
-    }
+    orders.mirrors.entry(id).or_default().write_instances(lo, hi, values, boxes);
     Some(direct)
   }
 
@@ -638,36 +839,30 @@ impl Context {
     let (rebuilt, patched) = {
       let mut guard = self.orders.borrow_mut();
       let InstanceOrders { lists, mirrors, scratch, .. } = &mut *guard;
-      for mirror in mirrors.values_mut() {
-        mirror.refresh_boxes();
-      }
       let mut rebuilt = Vec::new();
       let mut patched = Vec::new();
-      for (&key, list) in lists.iter_mut() {
-        let viewport = list.viewport.or(viewports.get(&key.0).copied().flatten()).unwrap_or([1.0, 1.0]);
-        match list.refresh(mirrors, scratch, viewport) {
+      for (key, refresh) in rebuild_point(lists, mirrors, scratch, |t| viewports.get(&t).copied().flatten()) {
+        match refresh {
           Refresh::Unchanged => {}
-          Refresh::Rebuilt => rebuilt.push(key),
-          Refresh::Patched(at) => patched.push((key, at)),
+          Refresh::Rebuilt(dirt) => rebuilt.push((key, dirt)),
+          Refresh::Patched(at, dirt) => patched.push((key, at, dirt)),
         }
-      }
-      for mirror in mirrors.values_mut() {
-        mirror.changed.clear();
       }
       (rebuilt, patched)
     };
-    for &(target, draw) in &rebuilt {
+    let (rebuilds, patches) = (rebuilt.len(), patched.len());
+    for ((target, draw), dirt) in rebuilt {
       self.fit_list(target, draw);
-      self.upload_list(target, draw);
+      self.upload_list(target, draw, dirt);
     }
-    for ((target, draw), span) in &patched {
-      self.patch_list(*target, *draw, span.clone());
+    for ((target, draw), span, dirt) in patched {
+      self.patch_list(target, draw, span, dirt);
     }
     let mut orders = self.orders.borrow_mut();
-    orders.counters.list_rebuilds += rebuilt.len() as u64;
-    orders.counters.list_patches += patched.len() as u64;
+    orders.counters.list_rebuilds += rebuilds as u64;
+    orders.counters.list_patches += patches as u64;
     orders.counters.list_visible = orders.lists.values().map(ListEntry::drawn).sum();
-    let worked = !(rebuilt.is_empty() && patched.is_empty());
+    let worked = rebuilds + patches > 0;
     orders.counters.list_ms = if worked { started.elapsed().as_secs_f32() * 1000.0 } else { 0.0 };
   }
 
@@ -712,9 +907,11 @@ impl Context {
   }
 
   // Gather a rebuilt list's visible records from every buffer of the
-  // population into the list's own, and draw them.
-  fn upload_list(&self, target: u64, draw: u64) {
+  // population into the list's own, and draw them: the gathers, the range
+  // and the target's `dirt` as one command.
+  fn upload_list(&self, target: u64, draw: u64, dirt: TargetDirt) {
     let started = Instant::now();
+    let mut writes = Vec::new();
     let range = {
       let mut guard = self.orders.borrow_mut();
       let InstanceOrders { lists, mirrors, .. } = &mut *guard;
@@ -732,20 +929,31 @@ impl Context {
         let len = drawn * stride;
         let mut block = self.write_leases.borrow_mut().take_free(id, list.capacity * stride);
         gather_list(slots, stride, src, &mut block[..len]);
-        self.send(RasterCmd::WriteBufferLease { id, block, len, recycle: self.block_recycle_tx.clone() });
+        writes.push(ListWrite::Lease { id, block, len, recycle: self.block_recycle_tx.clone() });
       }
       list.build_ms += started.elapsed().as_secs_f32() * 1000.0;
-      entry_range(&self.targets.borrow(), target, draw).map(|r| DrawRange { instance_count: drawn as i32, ..r })
+      let range =
+        entry_range(&self.targets.borrow(), target, draw).map(|r| DrawRange { instance_count: drawn as i32, ..r });
+      if range.is_some() {
+        list.held = range;
+      }
+      range
     };
-    if let Some(range) = range {
-      self.send_entry_range(target, draw, range);
+    if writes.is_empty() && range.is_none() {
+      return;
+    }
+    self.send(RasterCmd::WriteDrawList { target, draw, writes, range, dirt });
+    if range.is_some() {
+      self.note_target_content(target);
     }
   }
 
   // Re-gather the records in the span of list positions `span` of a
   // patched list from every buffer of the population into the list's own,
-  // in place: one write per buffer, and the target paints again.
-  fn patch_list(&self, target: u64, draw: u64, span: Range<usize>) {
+  // in place: one write per buffer, sent with the target's `dirt` as one
+  // command, and the target paints again.
+  fn patch_list(&self, target: u64, draw: u64, span: Range<usize>, dirt: TargetDirt) {
+    let mut writes = Vec::new();
     {
       let mut guard = self.orders.borrow_mut();
       let InstanceOrders { lists, mirrors, counters, .. } = &mut *guard;
@@ -765,9 +973,10 @@ impl Context {
         let src: &[u8] = mirrors.get(&list.sources[i]).map_or(&[], |m| &m.data[..m.held]);
         let mut data = vec![0u8; slots.len() * stride];
         gather_list(slots, stride, src, &mut data);
-        self.send(RasterCmd::WriteBuffer { id: list.private[i], data, byte_offset: at.start * stride });
+        writes.push(ListWrite::Bytes { id: list.private[i], data, byte_offset: at.start * stride });
       }
     }
+    self.send(RasterCmd::WriteDrawList { target, draw, writes, range: None, dirt });
     self.note_target_content(target);
   }
 

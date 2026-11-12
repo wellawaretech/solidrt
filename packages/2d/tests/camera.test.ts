@@ -11,7 +11,7 @@
 // <n>` tries others.
 
 import { test } from "flux:test"
-import { checkCamera, projectCamera, unprojectCamera } from "../src/camera.ts"
+import { checkCamera, projectCamera, unprojectCamera, viewMatrices } from "../src/camera.ts"
 import type { CameraUpdate } from "../src/camera.ts"
 
 function range(lo: number, hi: number): number {
@@ -120,6 +120,42 @@ test("projectCamera matches the view-prop oracle and unprojectCamera round-trips
     let back = unprojectCamera(camera, got[0], got[1])
     if (!close(back, [wx, wy])) {
       fail(`round trip drifted at (${wx}, ${wy}) camera ${JSON.stringify(camera)}: back (${back[0]}, ${back[1]})`)
+    }
+  }
+})
+
+test("viewMatrices: proj * view is the vertex stage's clip mapping, y down", () => {
+  // The stages (glsl.ts, tile-pipeline.ts) write clip = screen /
+  // uViewport * 2 - 1 with screen = projectCamera(world), no flip. The
+  // matrices a view pushes must map a world point to the same clip
+  // point: a culled entry's draw list projects its damage rectangles
+  // through them, and a mirrored y would wipe the wrong rows.
+  const SWEEPS = 2000
+  let view = new Float64Array(16)
+  let proj = new Float64Array(16)
+  for (let i = 0; i < SWEEPS; i++) {
+    let camera = {
+      x: range(-2000, 2000),
+      y: range(-2000, 2000),
+      zoom: range(0.1, 8),
+      rotation: range(-7, 7),
+      pivotX: range(-1000, 1000),
+      pivotY: range(-1000, 1000),
+    }
+    let width = Math.round(range(16, 2048))
+    let height = Math.round(range(16, 2048))
+    viewMatrices(camera, width, height, view, proj)
+    let wx = range(-3000, 3000)
+    let wy = range(-3000, 3000)
+    // view * (wx, wy, 0, 1), then proj * that (column-major).
+    let vx = view[0]! * wx + view[4]! * wy + view[12]!
+    let vy = view[1]! * wx + view[5]! * wy + view[13]!
+    let cx = proj[0]! * vx + proj[12]!
+    let cy = proj[5]! * vy + proj[13]!
+    let [sx, sy] = projectCamera(camera, wx, wy)
+    let want: [number, number] = [(sx / width) * 2 - 1, (sy / height) * 2 - 1]
+    if (!close([cx, cy], want)) {
+      fail(`clip mismatch at (${wx}, ${wy}) camera ${JSON.stringify(camera)} ${width}x${height}: got (${cx}, ${cy}), stage (${want[0]}, ${want[1]})`)
     }
   }
 })

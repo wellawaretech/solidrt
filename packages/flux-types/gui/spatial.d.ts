@@ -240,7 +240,12 @@ declare module "flux:spatial" {
      *
      * `"cull"` feeds an entry that culls (`cells: { cull: true }`) on
      * EVERY change of the matrix: the entry then draws only the records
-     * its view meets.
+     * its view meets, and a write to its records re-renders only the
+     * rectangles their boxes cover, projected through that matrix. So the
+     * target's view and projection (setView) must be exactly the clip
+     * mapping the entry's vertex stage applies, y included (clip y down);
+     * a mirrored or lagging matrix leaves stale pixels. An `"order"` feed
+     * lags small turns and moves, so it must never drive a culling entry.
      *
      * On an entry without an instance order the first feed fails (with a
      * warning) and the feed stops; the sink stays. */
@@ -343,7 +348,11 @@ declare module "flux:spatial" {
    * draw sort measures depth against (setDrawSort), and the viewer the
    * residency gate tests regions against (setRegion, createGrid). Read at
    * flush: set it before the flush that should see it, on every camera
-   * move. A target is a texture id, or a key from allocViewKey for a view
+   * move. The view and projection are the clip mapping the target's
+   * vertex stages apply, y included: a culled entry fed from them
+   * (bindDraw `viewFeed: "cull"`) projects its damage rectangles through
+   * `proj * view`, so a flip they lack lands those rectangles mirrored.
+   * A target is a texture id, or a key from allocViewKey for a view
    * without a target (a 2d camera, whose composite pushes its
    * orthographic view and projection on camera change); a viewer that
    * stops (null) wants no region. `root` scopes the viewer to a WORLD

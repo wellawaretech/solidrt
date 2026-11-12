@@ -126,6 +126,7 @@ const QUERY_KINDS: &[&str] = &[
   "tree",
   "snapshot",
   "gpu",
+  "force_full_renders",
   "texture",
   "buffer",
   "debug_list",
@@ -1007,6 +1008,30 @@ async fn try_serve(
                         }
                       } else {
                         gpu_reply(&ctx, id, label.as_deref(), draw)
+                      };
+                      let _ = reply_tx.send(reply);
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
+              Some("force_full_renders") => {
+                // The damage debug switch (D8 of
+                // okf/design/draw-order-and-culling.md): `active` sets it,
+                // its absence reads it; the reply is the switch as it now
+                // stands. Set on the JS thread, where flux reaches the alloy
+                // context, like `gpu`.
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    let active = json.get("active").and_then(|a| a.as_bool());
+                    eh.exec(move |ctx| {
+                      let reply = match flux::gui::inspect::gpu_force_full_renders(&ctx, active) {
+                        Ok(on) => serde_json::json!({"type": "result", "id": id, "data": {"active": on}}).to_string(),
+                        Err(e) => error_reply(id, &e),
                       };
                       let _ = reply_tx.send(reply);
                     });

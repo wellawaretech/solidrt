@@ -90,6 +90,7 @@ impl RasterState {
       pass_only_frames,
       adopted_snapshots,
       guilty_resets,
+      force_full_renders,
       ..
     } = self;
 
@@ -132,6 +133,7 @@ impl RasterState {
     gl::forget_window_samples();
     let mut state = RasterState::new(gl, renderer, binding, surface_size, sink, stats, tx, wake);
     state.guilty_resets = guilty_resets;
+    state.force_full_renders = force_full_renders;
     state.demand_latch = demand_latch;
     state.last_size = last_size;
     state.pass_only_frames = pass_only_frames;

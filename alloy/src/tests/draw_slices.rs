@@ -208,3 +208,22 @@ fn the_instance_id_scan_reads_the_token_outside_comments() {
   assert!(!reads_instance_id("int gl_InstanceID2 = 0; int my_gl_InstanceID = 1;"));
   assert!(!reads_instance_id("in uvec4 iIds0; void main() { uint id = iIds0.x; }"));
 }
+
+#[test]
+fn a_planned_draw_is_unmeasured_until_its_gauge_has_a_rate() {
+  // Six vertices per instance: the floor falls between these two counts.
+  const QUAD: i32 = 6;
+  // Any measured rate, microseconds per vertex.
+  const RATE: f64 = 0.01;
+  let instances = (SLICE_MIN_WORK / QUAD as u64) as i32;
+  let under = DrawRange { first_vertex: 0, vertex_count: QUAD, instance_count: instances };
+  let over = DrawRange { instance_count: instances + 1, ..under };
+  assert!(!SlicePlan::unmeasured(under, Topology::Triangles, false, None), "under the floor nothing is planned");
+  assert!(SlicePlan::unmeasured(over, Topology::Triangles, false, None), "over it, a draw never measured");
+  assert!(!SlicePlan::unmeasured(over, Topology::Triangles, false, Some(RATE)), "a measured draw");
+  let gauge = SliceGauge::new();
+  gauge.measured(RATE, 2, 1);
+  assert!(!SlicePlan::unmeasured(over, Topology::Triangles, false, gauge.rate()));
+  assert!(gauge.reset().is_none(), "no bound was pending");
+  assert!(SlicePlan::unmeasured(over, Topology::Triangles, false, gauge.rate()), "a reset gauge probes again");
+}

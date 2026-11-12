@@ -92,6 +92,7 @@ pub use gpu::{
   CELL_BOX_FLOATS, INDEX_NONE, MAX_BUFFERS, RUN_RAMP_SAMPLES,
 };
 pub use gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
+pub use gpu::{DAMAGE_EDGE_PX, MAX_DAMAGE_SLOTS};
 pub use input::InputState;
 pub use keymap::w3c_code_for_key;
 pub use logging::install_logger;

@@ -1,8 +1,12 @@
 //! Shader/pipeline/draw-target lifecycle and the dirty flush: creating the
 //! target kinds (fragment, pipeline, draw list, sub-target), registering and
-//! adopting their storage into the renderer, the fire-and-forget entry writes,
-//! resize, the copy pass, and flush_dirty's dependency-ordered propagation
-//! over the sampler graph (propagation_order, pure and unit-tested).
+//! adopting their storage into the renderer, the fire-and-forget entry writes
+//! (a draw list's own write among them, which carries its dirt), resize, the
+//! copy pass, and flush_dirty's dependency-ordered propagation over the
+//! sampler graph (propagation_order, pure and unit-tested). A target or
+//! sub-target the flush renders renders in full, from its damage rectangles
+//! (D8 of okf/design/draw-order-and-culling.md), or not at all; one pass per
+//! parent either way.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -11,14 +15,14 @@ use std::sync::atomic::Ordering;
 use crate::renderer::prelude::*;
 use crate::renderer::{ISize, Texture};
 
-use super::{cmd, ensure_copy_program, resolve_entry_buffers, RasterState, RasterStats};
+use super::{cmd, ensure_copy_program, resolve_entry_buffers, DirtySet, ListWrite, RasterState, RasterStats};
 use crate::gl::{
-  take_slice_report, GpuTexture, PassInput, PassTimer, SamplerCache, ShaderProgram, ShaderTexture, Timed,
+  take_slice_report, GpuTexture, GroupDraw, PassInput, PassTimer, SamplerCache, ShaderProgram, ShaderTexture, Timed,
 };
 use crate::gpu::{
-  validate_binding_shapes, validate_params, validate_texture_bindings, BoundTexture, DepthStorage, DrawSpec,
-  ParamValue, PipelineSpec, SamplerState, TargetSpec, TextureBinding, TextureFormat, TextureShape, UniformKind,
-  UniformTable,
+  validate_binding_shapes, validate_params, validate_texture_bindings, BoundTexture, DamageRects, DepthStorage,
+  DrawRange, DrawSpec, ParamValue, PipelineSpec, PxRect, SamplerState, TargetDirt, TargetSpec, TextureBinding,
+  TextureFormat, TextureShape, UniformKind, UniformTable,
 };
 
 impl RasterState {
@@ -47,6 +51,7 @@ impl RasterState {
             None => shader.render(&self.gl, &resolve),
           }
         });
+        shader.record_full_render();
         self.dirty.insert(id);
       }
       None => log::warn!("[alloy] render target failed: shader texture {id} not found"),
@@ -56,15 +61,18 @@ impl RasterState {
   /// Resolve every pending target write: render each shader/pipeline target
   /// whose own state changed, or whose sampled content (transitively) did,
   /// in dependency order - sources before the targets sampling them - then
-  /// clear the dirty set. Called at the points target pixels become
-  /// observable (a drawn frame, an offscreen rasterization, a readback), so
-  /// a chain of targets propagates end to end with each target rendered at
-  /// most once per flush. Manual targets are excluded from the graph: the
-  /// flush never renders one (only RenderTarget does) and never propagates
-  /// through one - a dirty manual id acts as a plain content source, exactly
-  /// like an uploaded texture. That exclusion is what keeps the purity
-  /// invariant honest: everything ordered here is a pure function of its
-  /// inputs, so rendering it zero, one, or many times is indistinguishable.
+  /// clear the dirty set. A target whose only dirt is damage rectangles
+  /// renders inside them alone and keeps its other pixels; anything else
+  /// renders in full (see `flush_dirty_within`). Called at the points
+  /// target pixels become observable (a drawn frame, an offscreen
+  /// rasterization, a readback), so a chain of targets propagates end to
+  /// end with each target rendered at most once per flush. Manual targets
+  /// are excluded from the graph: the flush never renders one (only
+  /// RenderTarget does) and never propagates through one - a dirty manual
+  /// id acts as a plain content source, exactly like an uploaded texture.
+  /// That exclusion is what keeps the purity invariant honest: everything
+  /// ordered here is a pure function of its inputs, so rendering it zero,
+  /// one, or many times is indistinguishable.
   pub(super) fn flush_dirty(&mut self) {
     self.flush_dirty_within(None);
   }
@@ -100,6 +108,16 @@ impl RasterState {
   /// the targets in it only: the rest of the dirty set is left for a later
   /// flush, with the rendered targets' out-of-scope samplers dirtied in
   /// their place (the rendered ones are fresh now).
+  ///
+  /// One model for targets and sub-targets: each dirt owner renders FULL,
+  /// from its RECTANGLES, or not at all (`OwnerFacts::render`), and a
+  /// parent's own rectangles also damage every tile they cross (a wipe of
+  /// the parent's rectangle takes the tile's pixels there with it). A
+  /// parent renders a FULL pass (pass-level clear, its own entries, every
+  /// tile) when it is FULL itself or every tile is; otherwise a partial
+  /// pass: one group per rectangle of its own, then each tile that renders,
+  /// whole or per rectangle, and nothing else. A partial pass with nothing
+  /// to draw is no pass.
   fn flush_dirty_within(&mut self, scope: Option<&HashSet<u64>>) {
     if self.dirty.is_empty() {
       return;
@@ -133,9 +151,19 @@ impl RasterState {
       log::warn!("[alloy] sampling cycle between shader targets [{}]; rendering each once", members.join(", "));
     }
     let affected: HashSet<u64> = order.iter().chain(cyclic.iter()).copied().collect();
-    let changed = |id: &u64| self.dirty.contains(id) || affected.contains(id);
-    let tile_clear =
-      if self.regions.is_empty() { None } else { ensure_tile_clear_program(&self.gl, &mut self.tile_clear_program) };
+    // The rectangle wipes and the tile wipes draw with one program.
+    let tile_clear = if self.regions.is_empty() && !self.dirty.has_rects() {
+      None
+    } else {
+      ensure_tile_clear_program(&self.gl, &mut self.tile_clear_program)
+    };
+    let facts = OwnerFacts {
+      dirty: &self.dirty,
+      affected: &affected,
+      own_sources: &own_sources,
+      force_full: self.force_full_renders,
+      wipe: tile_clear.is_some(),
+    };
     let mut rendered: Vec<u64> = Vec::new();
     for id in order.iter().chain(cyclic.iter()) {
       if scope.is_some_and(|s| !s.contains(id)) {
@@ -147,27 +175,76 @@ impl RasterState {
         continue;
       }
       rendered.push(*id);
+      let tile_ids = self.regions.get(id);
+      // A tile keeps its parent's pixels only as well as the parent's
+      // storage does: its parent's sample count decides for it.
+      let samples = shader.samples();
+      let own = facts.render(*id, shader, samples);
+      let mut tiles: Vec<(&ShaderTexture, OwnerRender)> = tile_ids
+        .into_iter()
+        .flatten()
+        .filter_map(|t| self.shaders.get(t).map(|tile| (tile, facts.render(*t, tile, samples))))
+        .collect();
+      if let OwnerRender::Rects(parent_rects) = &own {
+        for (tile, render) in tiles.iter_mut() {
+          damage_tile(parent_rects, tile, render);
+        }
+      }
+      let full_pass =
+        own == OwnerRender::Full || (!tiles.is_empty() && tiles.iter().all(|(_, r)| *r == OwnerRender::Full));
       let resolve = |bindings: &[TextureBinding], program: &ShaderProgram| {
         resolve_binding_list(&self.textures, &self.samplers, bindings, program)
       };
-      timed_pass(&self.gl, &mut self.pass_timer, &self.stats, &mut self.slice_bounds, *id, shader, || {
-        match self.regions.get(id) {
-          None => shader.render(&self.gl, &resolve),
-          Some(tiles) => {
-            // Full when the parent's own state or inputs changed (its clear
-            // wipes every tile, so every tile redraws), or when every tile
-            // changed anyway (a pass-level clear is cheaper on a tiler than
-            // the full-surface load a no-clear pass implies); otherwise only
-            // the changed tiles, each over its own rectangle.
-            let full = self.dirty.contains(id)
-              || own_sources.get(id).is_some_and(|s| s.iter().any(changed))
-              || tiles.iter().all(changed);
-            let tiles: Vec<&ShaderTexture> =
-              tiles.iter().filter(|t| full || changed(t)).filter_map(|t| self.shaders.get(t)).collect();
-            shader.render_groups(&self.gl, &resolve, full, &tiles, tile_clear.as_deref());
-          }
+      if full_pass {
+        timed_pass(
+          &self.gl,
+          &mut self.pass_timer,
+          &self.stats,
+          &mut self.slice_bounds,
+          *id,
+          shader,
+          || match tile_ids {
+            None => shader.render(&self.gl, &resolve),
+            Some(_) => {
+              let all: Vec<(&ShaderTexture, GroupDraw)> = tiles.iter().map(|(t, _)| (*t, GroupDraw::Full)).collect();
+              shader.render_groups(&self.gl, &resolve, GroupDraw::Full, &all, tile_clear.as_deref());
+            }
+          },
+        );
+        shader.record_full_render();
+        for (tile, _) in &tiles {
+          tile.record_full_render();
         }
+        continue;
+      }
+      let own_rects: &[PxRect] = match &own {
+        OwnerRender::Rects(rects) => rects.rects(),
+        _ => &[],
+      };
+      let drawn: Vec<(&ShaderTexture, GroupDraw)> = tiles
+        .iter()
+        .filter_map(|(tile, render)| match render {
+          OwnerRender::Full => Some((*tile, GroupDraw::Full)),
+          OwnerRender::Rects(rects) => Some((*tile, GroupDraw::Rects(rects.rects()))),
+          OwnerRender::Clean => None,
+        })
+        .collect();
+      if own_rects.is_empty() && drawn.is_empty() {
+        continue;
+      }
+      timed_pass(&self.gl, &mut self.pass_timer, &self.stats, &mut self.slice_bounds, *id, shader, || {
+        shader.render_groups(&self.gl, &resolve, GroupDraw::Rects(own_rects), &drawn, tile_clear.as_deref());
       });
+      if let OwnerRender::Rects(rects) = &own {
+        shader.record_damage_render(rects.area());
+      }
+      for (tile, render) in &tiles {
+        match render {
+          OwnerRender::Full => tile.record_full_render(),
+          OwnerRender::Rects(rects) => tile.record_damage_render(rects.area()),
+          OwnerRender::Clean => {}
+        }
+      }
     }
     match scope {
       None => self.dirty.clear(),
@@ -188,6 +265,58 @@ impl RasterState {
           }
         }
       }
+    }
+  }
+
+  /// Apply a draw list's rebuild point (see `RasterCmd::WriteDrawList`): the
+  /// writes into the list's own buffers and the new range, neither of which
+  /// dirties anything, then `dirt` on `target` alone (a manual target only
+  /// folds, as in `entry_write`). A lease block goes back to its pool
+  /// whether its write landed or not.
+  pub(super) fn write_draw_list(
+    &mut self,
+    target: u64,
+    draw: u64,
+    writes: Vec<ListWrite>,
+    range: Option<DrawRange>,
+    dirt: TargetDirt,
+  ) {
+    for write in writes {
+      match write {
+        ListWrite::Bytes { id, data, byte_offset } => {
+          if let Err(e) = self.write_buffer_bytes(id, &data, byte_offset) {
+            log::warn!("[alloy] draw list write failed: {e}");
+          }
+        }
+        ListWrite::Lease { id, block, len, recycle } => {
+          let written = match block.get(..len) {
+            Some(bytes) => self.write_buffer_bytes(id, bytes, 0),
+            None => Err(format!("buffer {id}: a lease of {} bytes publishes {len}", block.len())),
+          };
+          if let Err(e) = written {
+            log::warn!("[alloy] draw list write failed: {e}");
+          }
+          let _ = recycle.send((id, block));
+        }
+      }
+    }
+    let Some(shader) = self.shaders.get_mut(&target) else {
+      log::warn!("[alloy] draw list update failed: shader texture {target} not found");
+      return;
+    };
+    if let Some(range) = range {
+      // Draw 0 is a fixed-kind target's single entry.
+      let set = if draw == 0 { shader.set_draw(range) } else { shader.set_entry_draw(draw, range) };
+      if let Err(e) = set {
+        log::warn!("[alloy] draw list range update failed: {e}");
+      }
+    }
+    if shader.manual() {
+      return;
+    }
+    match dirt {
+      TargetDirt::Full => self.dirty.insert(target),
+      TargetDirt::Rects(rects) => self.dirty.damage(target, &rects),
     }
   }
 
@@ -692,7 +821,8 @@ impl RasterState {
 
 /// Get (compiling on first use) the tile-clear program (see
 /// `pass::TILE_CLEAR_FRAGMENT`); a compile failure is logged once and the
-/// slot stays empty, so parents render their tiles without the wipe.
+/// slot stays empty, so parents render their tiles without the wipe and
+/// damage renders in full.
 fn ensure_tile_clear_program(gl: &glow::Context, slot: &mut Option<Rc<ShaderProgram>>) -> Option<Rc<ShaderProgram>> {
   if slot.is_none() {
     match ShaderProgram::new_fragment(gl, crate::gl::TILE_CLEAR_FRAGMENT) {
@@ -701,6 +831,98 @@ fn ensure_tile_clear_program(gl: &glow::Context, slot: &mut Option<Rc<ShaderProg
     }
   }
   slot.clone()
+}
+
+/// How one dirt owner (a target, or a sub-target) renders in its pass.
+#[derive(Clone, Debug, PartialEq)]
+enum OwnerRender {
+  /// Wiped and redrawn whole.
+  Full,
+  /// Wiped and redrawn inside these rectangles only, in its own pixels.
+  Rects(DamageRects),
+  /// Not drawn: it keeps its pixels.
+  Clean,
+}
+
+/// What the owner rule reads (`render`), borrowed from one flush.
+struct OwnerFacts<'a> {
+  dirty: &'a DirtySet,
+  affected: &'a HashSet<u64>,
+  own_sources: &'a HashMap<u64, Vec<u64>>,
+  // The debug switch: every owner that has dirt renders in full.
+  force_full: bool,
+  // The rectangle wipe's program compiled: a damage group cannot draw
+  // without its wipe.
+  wipe: bool,
+}
+
+impl OwnerFacts<'_> {
+  fn changed(&self, id: &u64) -> bool {
+    self.dirty.contains(id) || self.affected.contains(id)
+  }
+
+  /// How owner `id` renders in a pass into storage of `samples` samples:
+  /// CLEAN when nothing of its own changed (a parent only affected through
+  /// its tiles); FULL when it is dirty in full or one of its own sources
+  /// changed (a source that re-rendered changes everything it samples),
+  /// or when its rectangles cannot keep the rest of its pixels - a
+  /// multisampled pass, a pass without the wipe program, a fragment target,
+  /// an own draw the budget has not measured yet (it renders in full once),
+  /// the force-full switch, or rectangles over `DAMAGE_FULL_RATIO` of it;
+  /// RECTANGLES otherwise, cut to its size.
+  fn render(&self, id: u64, shader: &ShaderTexture, samples: u32) -> OwnerRender {
+    if !self.changed(&id) {
+      return OwnerRender::Clean;
+    }
+    if self.dirty.is_full(&id) || self.own_sources.get(&id).is_some_and(|s| s.iter().any(|s| self.changed(s))) {
+      return OwnerRender::Full;
+    }
+    let Some(rects) = self.dirty.rects(&id) else {
+      return OwnerRender::Clean;
+    };
+    // A draw the submission budget plans but has never measured renders
+    // in full once: a damage group probes it without recording the
+    // measurement (`DrawGroup::measure`), so damage renders alone would
+    // pay the blocking probe on every render. The full render measures it
+    // and damage renders resume.
+    if self.force_full || samples > 1 || !self.wipe || !shader.is_pipeline() || shader.has_unmeasured_planned_draw() {
+      return OwnerRender::Full;
+    }
+    let (width, height) = shader.size();
+    let mut rects = rects.clone();
+    rects.clip(width, height);
+    if rects.covers(width, height) {
+      OwnerRender::Full
+    } else if rects.is_empty() {
+      OwnerRender::Clean
+    } else {
+      OwnerRender::Rects(rects)
+    }
+  }
+}
+
+/// A parent's damage on one of its tiles: each parent rectangle cut to the
+/// tile's rectangle and moved into the tile's space joins the tile's own
+/// (a FULL tile stays full), then the coverage rule applies to the tile.
+fn damage_tile(parent: &DamageRects, tile: &ShaderTexture, render: &mut OwnerRender) {
+  let Some(region) = tile.region() else { return };
+  let (width, height) = tile.size();
+  let area = PxRect { x: region.x, y: region.y, w: width, h: height };
+  let cut: Vec<PxRect> =
+    parent.rects().iter().filter_map(|r| r.intersect(&area)).map(|r| r.translated(-region.x, -region.y)).collect();
+  if cut.is_empty() {
+    return;
+  }
+  let mut rects = match std::mem::replace(render, OwnerRender::Clean) {
+    OwnerRender::Full => {
+      *render = OwnerRender::Full;
+      return;
+    }
+    OwnerRender::Rects(rects) => rects,
+    OwnerRender::Clean => DamageRects::new(),
+  };
+  rects.extend(cut);
+  *render = if rects.covers(width, height) { OwnerRender::Full } else { OwnerRender::Rects(rects) };
 }
 
 /// The pass-accounting policy around one GPU pass into `target`: the timer
@@ -737,6 +959,24 @@ fn timed_pass(
   }
 }
 
+/// The dirty-id membership `propagation_order` reads: the raster thread's
+/// `DirtySet`, or a plain id set (the unit tests).
+pub(crate) trait DirtyIds {
+  fn is_dirty(&self, id: &u64) -> bool;
+}
+
+impl DirtyIds for HashSet<u64> {
+  fn is_dirty(&self, id: &u64) -> bool {
+    self.contains(id)
+  }
+}
+
+impl DirtyIds for DirtySet {
+  fn is_dirty(&self, id: &u64) -> bool {
+    self.contains(id)
+  }
+}
+
 /// Which shader targets need re-rendering after the contents of the `dirty`
 /// ids changed, given the sampler graph `edges` (target id -> the ids it
 /// samples, with multiplicity): every target that is itself dirty or samples
@@ -745,7 +985,7 @@ fn timed_pass(
 /// Targets on a sampling cycle cannot be ordered and come back in the second
 /// list. Both lists are deterministic (ascending id per Kahn layer) for a
 /// given input. Pure over the id graph, so it unit-tests without GL.
-pub(crate) fn propagation_order(dirty: &HashSet<u64>, edges: &HashMap<u64, Vec<u64>>) -> (Vec<u64>, Vec<u64>) {
+pub(crate) fn propagation_order(dirty: &impl DirtyIds, edges: &HashMap<u64, Vec<u64>>) -> (Vec<u64>, Vec<u64>) {
   use std::collections::BTreeSet;
   // Affected = fixpoint of "dirty target, or samples a dirty/affected id".
   let mut affected: BTreeSet<u64> = BTreeSet::new();
@@ -753,7 +993,7 @@ pub(crate) fn propagation_order(dirty: &HashSet<u64>, edges: &HashMap<u64, Vec<u
     let before = affected.len();
     for (id, sources) in edges {
       if !affected.contains(id)
-        && (dirty.contains(id) || sources.iter().any(|s| dirty.contains(s) || affected.contains(s)))
+        && (dirty.is_dirty(id) || sources.iter().any(|s| dirty.is_dirty(s) || affected.contains(s)))
       {
         affected.insert(*id);
       }

@@ -75,7 +75,8 @@ export type Material = {
   /** Layer pixels the vertex stage may draw beyond a sprite's rect on
    * any side (shaderMaterialClass's `cullMargin`): what a culling layer
    * grows every sprite's cull box by. Absent = 0, the stock stages draw
-   * inside the rect. */
+   * inside the rect. The box is also what a write re-renders, so a stage
+   * drawing past it leaves stale pixels anywhere in the view. */
   cullMargin?: number
   /** Present on materials that own their pipeline (shaderMaterial). */
   dispose?(): void
@@ -138,9 +139,12 @@ export type ShaderMaterialClassOptions = {
    * at most, on any side: a sway, a wobble, a stage that pads the quad. A
    * culling layer (SpriteLayerOptions.cull) grows every sprite's cull box
    * by it, so a sprite whose box is just off screen but whose drawn
-   * geometry reaches in still draws (Godot's `extra_cull_margin`). A
-   * finite, non-negative number; default 0. A stage that moves geometry
-   * by an unbounded amount wants `cull: false` on its layer instead.
+   * geometry reaches in still draws (Godot's `extra_cull_margin`). The
+   * grown box is also what a write to the sprite re-renders, so geometry
+   * drawn past it leaves stale pixels anywhere in the view, not only at
+   * its edge. A finite, non-negative number; default 0. A stage that
+   * moves geometry by an unbounded amount wants `cull: false` on its
+   * layer instead.
    */
   cullMargin?: number
   label?: string

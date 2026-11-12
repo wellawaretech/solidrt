@@ -21,6 +21,7 @@
 mod buffer_age;
 mod cmd;
 mod compose;
+mod dirt;
 mod frame;
 mod offscreen;
 mod recover;
@@ -31,8 +32,9 @@ mod resources;
 mod targets;
 pub(crate) mod window_tap;
 
-pub(crate) use cmd::RasterCmd;
 pub use cmd::{DamageRect, PresentDamage};
+pub(crate) use cmd::{ListWrite, RasterCmd};
+pub(crate) use dirt::DirtySet;
 #[cfg(test)]
 pub(crate) use frame::is_context_lost_error;
 use frame::FrameExit;
@@ -592,16 +594,21 @@ pub(crate) struct RasterState {
   // life. Rc because ShaderProgram release goes through release_program.
   copy_program: Option<Rc<ShaderProgram>>,
   // The tile-clear program (see pass::DrawGroup), compiled on first use by
-  // a parent render with sub-targets.
+  // a flush with sub-targets or rectangle dirt.
   tile_clear_program: Option<Rc<ShaderProgram>>,
   // Texture ids whose content changed (or, for shader targets, whose own
-  // params/bindings/geometry changed) since the last dirty flush. Writes only
-  // mark; flush_dirty renders the affected shader targets in dependency order
-  // at the points pixels become observable (a drawn frame, an offscreen
-  // rasterization, a readback). This is what makes target chains propagate,
-  // and it renders each target at most once per flush no matter how many
-  // writes landed.
-  dirty: HashSet<u64>,
+  // params/bindings/geometry changed) since the last dirty flush, each in
+  // full or, for a draw list's own write, inside rectangles (see dirt.rs).
+  // Writes only mark; flush_dirty renders the affected shader targets in
+  // dependency order at the points pixels become observable (a drawn frame,
+  // an offscreen rasterization, a readback). This is what makes target
+  // chains propagate, and it renders each target at most once per flush no
+  // matter how many writes landed.
+  dirty: DirtySet,
+  // The debug switch (`RasterCmd::SetForceFullRenders`): while on, every
+  // owner (target or sub-target) that has dirt renders in full, whatever
+  // rectangles that dirt holds; a clean tile in a partial pass stays clean.
+  force_full_renders: bool,
   // Sampled content may have changed since the last layer resolve: set by
   // every command except Frame/SetWindowShader (and by any non-clean Frame),
   // cleared by a resolve. While set, a clean-tree frame may not skip its
@@ -822,7 +829,8 @@ impl RasterState {
       render_pipelines: HashMap::new(),
       stages: HashMap::new(),
       buffers: HashMap::new(),
-      dirty: HashSet::new(),
+      dirty: DirtySet::new(),
+      force_full_renders: false,
       regions: HashMap::new(),
       window_shader: None,
       overlay: None,
@@ -1201,6 +1209,12 @@ impl RasterState {
               log::warn!("[alloy] buffer write failed: {e}");
             }
             let _ = recycle.send((id, block));
+          }
+          RasterCmd::WriteDrawList { target, draw, writes, range, dirt } => {
+            self.write_draw_list(target, draw, writes, range, dirt);
+          }
+          RasterCmd::SetForceFullRenders { on } => {
+            self.force_full_renders = on;
           }
           RasterCmd::ResetDrawGauge { target, draw } => {
             if let Some(shader) = self.shaders.get(&target) {

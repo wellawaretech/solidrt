@@ -968,13 +968,25 @@ impl Context {
     // sent is what the entry draws: a packed population's last selection,
     // never more than the range's count, or a draw list's visible records
     // (`drawn_range`).
+    // A draw list's entry skips a range the raster thread already holds:
+    // an update that changed only the population sends the unchanged
+    // drawn count, and the list's own command at the next rebuild point
+    // carries the new range with its damage instead of a full dirt here.
+    // The skip covers the range command alone: a buffer swap re-renders
+    // the target in full on the raster thread, so it notes the content
+    // whether the range went out or not.
     if !order_only || swapped || range_changed {
       let sent = self.drawn_range(target, entry_key, next_range);
-      match draw {
-        None => self.send(RasterCmd::SetDraw { id: target, range: sent }),
-        Some(draw) => self.send(RasterCmd::SetDrawRange { target, draw, range: sent }),
+      let held = self.list_holds_range(target, entry_key, sent);
+      if !held {
+        match draw {
+          None => self.send(RasterCmd::SetDraw { id: target, range: sent }),
+          Some(draw) => self.send(RasterCmd::SetDrawRange { target, draw, range: sent }),
+        }
       }
-      self.note_target_content(target);
+      if swapped || !held {
+        self.note_target_content(target);
+      }
     }
     // On an indexed entry a direction, view or LOD change re-sorts right
     // here: core re-sorts its key column and writes the ids when the order

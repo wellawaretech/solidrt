@@ -28,9 +28,10 @@ The architecture of an area and the decisions behind it, kept current. Read befo
   Unity and Godot separate storage, visibility and order; the decision that a
   population the app writes is drawn per view from a draw list built over its
   visible set, never from a buffer kept in cull or key order; facts in alloy,
-  the culling default in lattice. Read before touching gpu/order.rs,
-  context/order.rs, the spatial order pass or feed, or a 2d layer's orderBy or
-  cells.
+  the culling default in lattice; and damage, a write to a culled view's drawn
+  record re-rendering only its boxes. Read before touching gpu/order.rs,
+  gpu/damage.rs, context/order.rs, the spatial order pass or feed, or a 2d
+  layer's orderBy or cells.
 - **[Frame timing](design/frame-timing.md)** [2026-09-21]
   The clocks and cadences of a SolidRT client in one place - how a frame
   signal is produced per platform and pacing mode, how display refreshes are
@@ -610,14 +611,14 @@ Shaped, not started.
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an sol doctor helper
   rather than an engine feature.
-- **[Damage rectangles for flush-rendered draw targets](backlog/gpu-target-damage.md)** [2026-11-05]
-  A flush-rendered target re-renders in full when any of its inputs changes,
-  however small the area the change affects, because a target is dirty or not
-  and nothing says where on it a change lands; the sub-target partial path
-  already renders rectangles and keeps the rest, and a draw list already knows
-  which records a write touched and their boxes, so the missing piece is
-  damage rectangles on a target's next render, derived by the draw list first
-  and declared by an app only once a second consumer is decided.
+- **[Damage rectangles - the window side and app-declared damage](backlog/gpu-target-damage.md)** [2026-11-05]
+  A draw target re-renders only its damage rectangles now (fed by culled draw
+  lists), but the window still repaints the whole leaf that shows it, and no
+  app can declare damage for a write the core cannot derive; the window side
+  maps a target's rectangles through the showing leaf (worth nothing where the
+  window takes the multisampled fast path, as on the SM-T500), feed 2, a core
+  verb, waits for a consumer to be decided, and the built path is still to be
+  timed and checked on a tiler.
 - **[Animate gradient colors](backlog/gradient-color-transition.md)** [2026-09-27]
   A gradient-valued `color` never animates (the color lane reads a gradient as
   not animatable), so a lit fill snaps on a theme switch where a solid fill
@@ -1053,6 +1054,13 @@ Shaped, not started.
   pattern, Windows and macOS through wry), Linux on Wayland has no plane and
   needs either "unavailable" or a WPE texture lane, and the use case decides
   the scope.
+- **[A size prop on window](backlog/window-size-prop.md)** [2026-11-11]
+  An app cannot choose its window size at start or change it while running;
+  the start size is the `--size` flag (default 1280x720, fixed for a packed
+  app) and `<window>` has only title, fullscreen and shader, so a `size` prop
+  applied through a new platform command is the missing piece, with the start
+  size best carried by the packed manifest to avoid a resize flash.
+  Desktop-only.
 - **[Dev-tooling storage in XDG base directories instead of one home dotdir](backlog/xdg-storage-layout.md)** [2026-08-13]
   Dev state lives in ~/.solidrt/ (servers/<port>/, clients/client<M>/), chosen
   2026-08-13 for one rule on every platform. XDG splits by purpose instead -
@@ -2281,6 +2289,14 @@ Finished, kept for the reasoning.
   EXT_multisampled_render_to_texture, explicit MSAA renderbuffer + resolve
   blit elsewhere - verified on Linux; the in-tile flavor awaits an Android
   run.
+- **[Damage rectangles for flush-rendered draw targets, fed by culled draw lists](done/gpu-target-damage-draw-lists.md)** [2026-11-11]
+  Landed 2026-11-11 - a draw target's or sub-target's pending dirt is full or
+  a few pixel rectangles, one model on both threads; a culled draw list
+  derives the rectangles of a write from its records' cull boxes before and
+  after, through its view, and the target renders only inside them; facts per
+  target in /gpu and a force-full debug switch; the 2d views' matrix made
+  y-down to match their vertex stage. Left open, the window side, app-declared
+  damage and a timing of the built path on a tiler.
 - **[Dependency propagation between GPU targets](done/gpu-target-dependency-propagation.md)** [2026-07-31]
   A target sampling another target keeps a stale frame forever unless its own
   params are written; the API accepts the binding and then quietly stops
@@ -3638,6 +3654,15 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   stylesheet question asks, and the constraint on anything more is fixed - no
   cascade, no selectors, or the reactive seam and repaint-boundary model stop
   holding.
+- **[Target damage measurements on the Adreno 610](notes/target-damage-measurements.md)** [2026-11-11]
+  What a partial render of a draw target costs against a full one on the
+  SM-T500, measured with a tiled rig before the damage mechanism was built and
+  with the built path after it - pass time follows the redrawn area with no
+  large fixed cost for the no-clear pass, a damage render of one sprite's box
+  costs 0.6 to 0.7 ms where the full pass costs 16.7 to 35.0 ms, the press
+  frame sits 2.5 ms of GPU above an idle frame where a full pass sits 14 to 32
+  ms above it, and the tablet's window backbuffer is 4x multisampled, so the
+  window side of damage saves nothing there.
 - **[Terminal input and raw mode under flux](notes/terminal-raw-mode.md)** [2026-08-26]
   What a process that reads its own terminal has to know - crossterm's raw
   mode clears output post-processing on Unix (bare newlines staircase), stdin

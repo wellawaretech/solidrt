@@ -17,7 +17,7 @@ use super::entry::{
 use super::pass::{run_pass, DrawGroup, PassDraw, PassInput, ResolvedDraw};
 use super::prev_framebuffer;
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
-use super::slicing::SliceGauge;
+use super::slicing::{SliceGauge, SlicePlan};
 use super::storage::{
   attach_cube_face, attach_storage, create_cube_storage, create_depth_texture, create_mesh_storage,
   create_target_texture, make_msaa, DepthAttachment, MeshStorage, Msaa,
@@ -29,6 +29,7 @@ use crate::gpu::vocab::{
   blend_name, cull_name, merge_bindings, validate_order, BufferLayout, DrawPlacement, DrawRange, ParamValue,
   PipelineDesc, TextureBinding,
 };
+use crate::gpu::PxRect;
 
 /// A sub-target's place in its parent: a draw target created with
 /// `into` renders into a rectangle of `parent`'s storage instead of owning
@@ -43,6 +44,15 @@ pub struct Region {
   pub x: i32,
   pub y: i32,
   pub label: Option<String>,
+}
+
+/// How one owner draws in a mesh pass (`ShaderTexture::render_groups`): in
+/// full, or only inside damage rectangles in its own pixel space (a
+/// sub-target's origin at its own top-left corner).
+#[derive(Clone, Copy)]
+pub enum GroupDraw<'a> {
+  Full,
+  Rects(&'a [PxRect]),
 }
 
 /// The registries a target rebuild resolves its registered pipelines and
@@ -95,6 +105,13 @@ pub struct ShaderTexture {
   /// GPU-side execution time of those passes, microseconds, credited by the
   /// owner as timer queries retire (see PassTimer).
   pass_exec_micros: Cell<u64>,
+  /// Cumulative renders of this target (a sub-target: of its rectangle) in
+  /// full, renders from damage rectangles, and the pixels those rectangles
+  /// covered, recorded by the owner per pass (see raster::targets). Kept
+  /// across resize and rebuild like the pass counters.
+  full_renders: Cell<u64>,
+  damage_renders: Cell<u64>,
+  damaged_pixels: Cell<u64>,
   /// Some = a sub-target (see `Region`): `fbo` and `target` are the
   /// parent's names, borrowed for bookkeeping only - never rendered through
   /// here (the parent renders the tile as a group of its own pass) and
@@ -160,6 +177,9 @@ impl ShaderTexture {
         vertices: Cell::new(0),
         pass_issue_micros: Cell::new(0),
         pass_exec_micros: Cell::new(0),
+        full_renders: Cell::new(0),
+        damage_renders: Cell::new(0),
+        damaged_pixels: Cell::new(0),
         cube: false,
         region: None,
         format: TextureFormat::Rgba8,
@@ -269,6 +289,9 @@ impl ShaderTexture {
         vertices: Cell::new(0),
         pass_issue_micros: Cell::new(0),
         pass_exec_micros: Cell::new(0),
+        full_renders: Cell::new(0),
+        damage_renders: Cell::new(0),
+        damaged_pixels: Cell::new(0),
         cube: false,
         region: None,
         format: TextureFormat::Rgba8,
@@ -312,6 +335,9 @@ impl ShaderTexture {
       vertices: Cell::new(0),
       pass_issue_micros: Cell::new(0),
       pass_exec_micros: Cell::new(0),
+      full_renders: Cell::new(0),
+      damage_renders: Cell::new(0),
+      damaged_pixels: Cell::new(0),
       cube: false,
       region: None,
       format,
@@ -355,6 +381,9 @@ impl ShaderTexture {
       vertices: Cell::new(0),
       pass_issue_micros: Cell::new(0),
       pass_exec_micros: Cell::new(0),
+      full_renders: Cell::new(0),
+      damage_renders: Cell::new(0),
+      damaged_pixels: Cell::new(0),
       cube: true,
       region: None,
       format,
@@ -406,6 +435,9 @@ impl ShaderTexture {
       vertices: Cell::new(0),
       pass_issue_micros: Cell::new(0),
       pass_exec_micros: Cell::new(0),
+      full_renders: Cell::new(0),
+      damage_renders: Cell::new(0),
+      damaged_pixels: Cell::new(0),
       cube: false,
       region: Some(Region { parent: parent_id, x, y, label }),
       format: parent.format,
@@ -906,6 +938,36 @@ impl ShaderTexture {
     (self.passes.get(), self.pass_issue_micros.get(), self.pass_exec_micros.get(), self.vertices.get())
   }
 
+  /// Whether one of this target's own entries holds a draw the submission
+  /// budget plans but has never measured (`SlicePlan::unmeasured`). A
+  /// damage render of such a target would probe that draw with blocking
+  /// slices on every render without measuring it, so the owner renders
+  /// it in full once, which measures it.
+  pub fn has_unmeasured_planned_draw(&self) -> bool {
+    self.mesh().is_some_and(|m| {
+      m.entries.iter().any(|e| {
+        SlicePlan::unmeasured(e.draw, e.pipeline.desc.topology, e.pipeline.program.reads_instance_id(), e.gauge.rate())
+      })
+    })
+  }
+
+  /// Record one render of this target in full (see `full_renders`).
+  pub fn record_full_render(&self) {
+    self.full_renders.set(self.full_renders.get() + 1);
+  }
+
+  /// Record one render from damage rectangles covering `pixels`.
+  pub fn record_damage_render(&self, pixels: u64) {
+    self.damage_renders.set(self.damage_renders.get() + 1);
+    self.damaged_pixels.set(self.damaged_pixels.get() + pixels);
+  }
+
+  /// (cumulative full renders, damage renders, damaged pixels), for
+  /// resource introspection.
+  pub fn render_stats(&self) -> (u64, u64, u64) {
+    (self.full_renders.get(), self.damage_renders.get(), self.damaged_pixels.get())
+  }
+
   /// Recreate the render target at a new size - and, with `samples`, over
   /// new multisample storage at that count (1 = none) - keeping the
   /// compiled programs, FBO, entries, and draw state; the caller re-renders
@@ -1155,6 +1217,9 @@ impl ShaderTexture {
     sub.vertices.set(self.vertices.get());
     sub.pass_issue_micros.set(self.pass_issue_micros.get());
     sub.pass_exec_micros.set(self.pass_exec_micros.get());
+    sub.full_renders.set(self.full_renders.get());
+    sub.damage_renders.set(self.damage_renders.get());
+    sub.damaged_pixels.set(self.damaged_pixels.get());
     Ok(sub)
   }
 
@@ -1172,6 +1237,9 @@ impl ShaderTexture {
       vertices: Cell::new(self.vertices.get()),
       pass_issue_micros: Cell::new(self.pass_issue_micros.get()),
       pass_exec_micros: Cell::new(self.pass_exec_micros.get()),
+      full_renders: Cell::new(self.full_renders.get()),
+      damage_renders: Cell::new(self.damage_renders.get()),
+      damaged_pixels: Cell::new(self.damaged_pixels.get()),
       cube: self.cube,
       region: None,
       format: self.format,
@@ -1402,7 +1470,7 @@ impl ShaderTexture {
         run_pass(gl, Some(self.fbo), (0, 0), self.width, self.height, None, draw);
         self.resolve(gl);
       }
-      TargetKind::Mesh(_) => self.render_groups(gl, resolve, true, &[], None),
+      TargetKind::Mesh(_) => self.render_groups(gl, resolve, GroupDraw::Full, &[], None),
     }
   }
 
@@ -1435,69 +1503,128 @@ impl ShaderTexture {
       gl.bind_framebuffer(glow::FRAMEBUFFER, super::prev_framebuffer(prev_fbo));
     }
     let edge = crate::gpu::texture::mip_size(self.width, lvl);
-    self.pass_groups(gl, resolve, true, &[], None, edge, edge);
+    self.pass_groups(gl, resolve, GroupDraw::Full, &[], None, edge, edge);
     if level.is_none() {
       self.resolve(gl);
     }
   }
 
   /// Render a mesh target's pass with its sub-targets as groups (see
-  /// `DrawGroup`): with `full`, the pass-level clear, the target's own
-  /// entries over the whole storage, then every tile in `tiles`; without
-  /// it, only the tiles in `tiles`, each clearing its own rectangle, and
-  /// nothing else touched - the partial render that keeps clean tiles'
-  /// pixels. One pass either way. `tiles` are this target's sub-targets
-  /// (`region().parent` = this target); the owner picks which.
+  /// `DrawGroup`). With `own` Full: the pass-level clear, the target's own
+  /// entries over the whole storage, then every tile in `tiles` (each given
+  /// as Full). Otherwise a partial render with no pass-level clear: one
+  /// group of the target's own entries per rectangle of `own` (the pass
+  /// viewport, scissored to the rectangle and wiped first), then each tile
+  /// in `tiles` - Full over its whole rectangle, Rects as one group per
+  /// rectangle (the tile's viewport, scissored to the rectangle moved into
+  /// the parent's space and wiped first) - and nothing else touched: every
+  /// other pixel keeps what it held. One pass either way. `tiles` are this
+  /// target's sub-targets (`region().parent` = this target); the owner
+  /// picks which and how. The rectangle wipes draw with `tile_clear`; an
+  /// owner without it renders damage in full instead.
   pub fn render_groups(
     &self,
     gl: &glow::Context,
     resolve: &dyn Fn(&[TextureBinding], &ShaderProgram) -> Vec<PassInput>,
-    full: bool,
-    tiles: &[&ShaderTexture],
+    own: GroupDraw,
+    tiles: &[(&ShaderTexture, GroupDraw)],
     tile_clear: Option<&ShaderProgram>,
   ) {
-    self.pass_groups(gl, resolve, full, tiles, tile_clear, self.width, self.height);
+    self.pass_groups(gl, resolve, own, tiles, tile_clear, self.width, self.height);
     self.resolve(gl);
   }
 
   /// The pass of `render_groups` over a `width` x `height` viewport (the
   /// storage's size, or one mip level's edge for a cube face render into
   /// a level), without the content-write tail: the caller resolves.
+  #[allow(clippy::too_many_arguments)]
   fn pass_groups(
     &self,
     gl: &glow::Context,
     resolve: &dyn Fn(&[TextureBinding], &ShaderProgram) -> Vec<PassInput>,
-    full: bool,
-    tiles: &[&ShaderTexture],
+    own: GroupDraw,
+    tiles: &[(&ShaderTexture, GroupDraw)],
     tile_clear: Option<&ShaderProgram>,
     width: u32,
     height: u32,
   ) {
     let Some(mesh) = self.mesh() else { return };
-    let own: Vec<ResolvedDraw> = if full { mesh.resolved_draws(resolve) } else { Vec::new() };
+    let (full, own_rects) = match own {
+      GroupDraw::Full => (true, &[][..]),
+      GroupDraw::Rects(rects) => (false, rects),
+    };
+    let own_draws: Vec<ResolvedDraw> =
+      if full || !own_rects.is_empty() { mesh.resolved_draws(resolve) } else { Vec::new() };
     let tile_draws: Vec<Vec<ResolvedDraw>> =
-      tiles.iter().map(|t| t.mesh().map(|m| m.resolved_draws(resolve)).unwrap_or_default()).collect();
-    let mut groups: Vec<DrawGroup> = Vec::with_capacity(tiles.len() + 1);
+      tiles.iter().map(|(t, _)| t.mesh().map(|m| m.resolved_draws(resolve)).unwrap_or_default()).collect();
+    let mut groups: Vec<DrawGroup> = Vec::with_capacity(tiles.len() + own_rects.len() + 1);
     if full {
-      groups.push(DrawGroup { rect: None, clear: None, clear_depth: false, shared: &mesh.shared_params, draws: &own });
+      groups.push(DrawGroup {
+        viewport: None,
+        scissor: None,
+        measure: true,
+        clear: None,
+        clear_depth: false,
+        shared: &mesh.shared_params,
+        draws: &own_draws,
+      });
     }
-    for (tile, draws) in tiles.iter().zip(tile_draws.iter()) {
+    // A damage group is the same picture cut down: the pass viewport (so
+    // `iResolution` stays the target's size), the scissor to the
+    // rectangle, wiped to the target's clear color and the far plane.
+    for r in own_rects {
+      groups.push(DrawGroup {
+        viewport: None,
+        scissor: Some((r.x, r.y, r.w, r.h)),
+        measure: false,
+        clear: Some(mesh.clear_color),
+        clear_depth: true,
+        shared: &mesh.shared_params,
+        draws: &own_draws,
+      });
+    }
+    for ((tile, draw), draws) in tiles.iter().zip(tile_draws.iter()) {
       let (Some(region), Some(tile_mesh)) = (tile.region(), tile.mesh()) else { continue };
       // Image space is viewport space here (row 0 = top, see `Region`): no
-      // flip. In a full render of a parent with no entries of its own the
-      // pass-level clear already wiped the rectangle (depth included), so
-      // the tile only re-clears when its color differs from the parent's;
-      // otherwise (a partial render, or own entries that may have painted
-      // and depth-written the rectangle) the tile wipes both.
-      let covered = full && own.is_empty();
-      let same_color = mesh.clear_color == tile_mesh.clear_color;
-      groups.push(DrawGroup {
-        rect: Some((region.x, region.y, tile.width, tile.height)),
-        clear: (!covered || !same_color).then_some(tile_mesh.clear_color),
-        clear_depth: !covered,
-        shared: &tile_mesh.shared_params,
-        draws,
-      });
+      // flip.
+      let rect = (region.x, region.y, tile.width, tile.height);
+      match draw {
+        GroupDraw::Full => {
+          // In a full render of a parent with no entries of its own the
+          // pass-level clear already wiped the rectangle (depth included),
+          // so the tile only re-clears when its color differs from the
+          // parent's; otherwise (a partial render, or own entries that may
+          // have painted and depth-written the rectangle) the tile wipes
+          // both.
+          let covered = full && own_draws.is_empty();
+          let same_color = mesh.clear_color == tile_mesh.clear_color;
+          groups.push(DrawGroup {
+            viewport: Some(rect),
+            scissor: Some(rect),
+            measure: true,
+            clear: (!covered || !same_color).then_some(tile_mesh.clear_color),
+            clear_depth: !covered,
+            shared: &tile_mesh.shared_params,
+            draws,
+          });
+        }
+        // The tile's own picture cut down: its viewport, the scissor to
+        // each rectangle moved from the tile's space into the parent's.
+        GroupDraw::Rects(rects) => {
+          for r in rects.iter() {
+            let moved = r.translated(region.x, region.y);
+            groups.push(DrawGroup {
+              viewport: Some(rect),
+              scissor: Some((moved.x, moved.y, moved.w, moved.h)),
+              measure: false,
+              clear: Some(tile_mesh.clear_color),
+              clear_depth: true,
+              shared: &tile_mesh.shared_params,
+              draws,
+            });
+          }
+        }
+      }
     }
     let draw = PassDraw::Draws {
       clear: (full && !mesh.load).then_some(mesh.clear_color),

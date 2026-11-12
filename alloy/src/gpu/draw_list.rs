@@ -18,7 +18,9 @@
 //! A write that leaves the list's membership and keys as they were
 //! (`DrawList::change`) patches the records it touched at their list
 //! positions instead of rebuilding: a moved record that stays in view
-//! costs its own bytes, as on an unculled entry.
+//! costs its own bytes, as on an unculled entry. What either leaves on
+//! the view's target is derived beside it, from the touched records' boxes
+//! before and after (`ListDamage`, gpu/damage.rs).
 //!
 //! The cost follows the visible set, not the population. This module knows
 //! nothing about buffers, entries or threads (the Context does).
@@ -84,7 +86,12 @@ impl CellIndex {
 
   /// Box `slot` of `boxes` as the index sees it: grown by its margin.
   pub fn read(&self, boxes: &[f32], slot: usize) -> CellBox {
-    CellBox::read(boxes, slot).grown(self.margin)
+    self.grow(CellBox::read(boxes, slot))
+  }
+
+  /// Box `b` as the index sees it: grown by its margin.
+  pub fn grow(&self, b: CellBox) -> CellBox {
+    b.grown(self.margin)
   }
 
   /// The lattice the index cuts by.

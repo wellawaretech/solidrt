@@ -13,7 +13,7 @@ use alloy::rendertree::{Match, NodeQuery, Point};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, Exception, Function, Object, Value};
 
-use crate::alloy_plugins::inspect::{gpu_record, node_record, outline as outline_text};
+use crate::alloy_plugins::inspect::{gpu_force_full_renders, gpu_record, node_record, outline as outline_text};
 use crate::alloy_plugins::tree::with_tree;
 
 pub const MODULE_NAME: &str = "flux:test/gui";
@@ -122,6 +122,14 @@ fn gpu(ctx: Ctx<'_>, label: Option<String>, draw: Option<u64>) -> rquickjs::Resu
     .map_err(|e| Exception::throw_message(&ctx, &format!("flux:test/gui gpu: {e}")))
 }
 
+/// `forceFullRenders(active)`: the damage debug switch (see
+/// `inspect::gpu_force_full_renders`), set when `active` is a boolean, read
+/// when null; the switch as it now stands.
+fn force_full_renders(ctx: Ctx<'_>, active: Option<bool>) -> rquickjs::Result<bool> {
+  gpu_force_full_renders(&ctx, active)
+    .map_err(|e| Exception::throw_message(&ctx, &format!("flux:test/gui forceFullRenders: {e}")))
+}
+
 pub struct GuiTestModule;
 
 impl ModuleDef for GuiTestModule {
@@ -133,6 +141,7 @@ impl ModuleDef for GuiTestModule {
     decl.declare("path")?;
     decl.declare("hit")?;
     decl.declare("gpu")?;
+    decl.declare("forceFullRenders")?;
     Ok(())
   }
 
@@ -144,6 +153,7 @@ impl ModuleDef for GuiTestModule {
     exports.export("path", Function::new(ctx.clone(), path)?)?;
     exports.export("hit", Function::new(ctx.clone(), hit)?)?;
     exports.export("gpu", Function::new(ctx.clone(), gpu)?)?;
+    exports.export("forceFullRenders", Function::new(ctx.clone(), force_full_renders)?)?;
     Ok(())
   }
 }

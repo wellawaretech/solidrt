@@ -244,7 +244,9 @@ queries are untouched.
   a floored marker just past the edge still draws when zoomed out. Hull
   meshes and outlines draw inside the rect, so they need no margin. A
   custom vertex stage that moves geometry beyond the rect declares its
-  material's `cullMargin` (materials.md).
+  material's `cullMargin` (materials.md): the box is also what a write
+  re-renders (Cost), so a stage drawing past it leaves stale pixels
+  anywhere in the view, not only at its edge.
 - Cost. A record write costs its range, as on a plain layer. A write
   to a sprite that stays drawn, with its `orderBy` key unchanged,
   rewrites only that sprite in each view's list. A frame where a view
@@ -252,10 +254,20 @@ queries are untouched.
   changed, rebuilds that view's list from the visible sprites: its cost
   follows the screen, not the world. Several views each keep their own
   list. The cell size hardly matters (256 to 1024 px cells measured the
-  same); the default is 512 px.
+  same); the default is 512 px. On the GPU, a frame whose writes change a
+  few sprites under a camera that held still re-renders only the
+  rectangles their boxes covered before and after, and keeps the rest of
+  the view's pixels: one sprite pulsing costs its box, not the view. A
+  camera move, a size, tint or params write, more than 64 sprites
+  written at once, or damage over half the view re-renders the view in
+  full, and so does every write to a layer with `cull: false`. A view
+  whose draw reaches 65,536 vertex-instances (sprites times their
+  vertices) renders in full once more, at its first change, while the
+  submission budget measures it.
 - Check it with the GPU inventory (`get_gpu_resources`): a culled
   view's entry reports `list: { population, visible, rebuilds,
-  patches, buildMs }`.
+  patches, buildMs }`, and its target `fullRenders`, `damageRenders`
+  and `damagedPixels` (packages/cli agents/debugging.md).
 
 ## Regions
 
@@ -353,6 +365,12 @@ extent, or a sprite near a cell edge pops in late.
   fractional (rounding it to design pixels makes motion step at the
   rounding rate, not the frame rate), and a game that wants whole-pixel
   scrolling snaps its own camera.
+- Stale pixels in a culled view after a write (a trail, a sprite half
+  old and half new) mean a damage rectangle missed what the vertex stage
+  drew: almost always a custom stage drawing past its material's
+  `cullMargin`. Confirm with the dev tools' force-full switch
+  (`set_force_full_renders` over MCP, `app.forceFullRenders(true)` in a
+  test): if the pixels come right under it, raise the margin.
 - Every view's camera rotation is IN-SHADER (uCameraRot, the tile view's
   stage included) on purpose: rotating a view's OUTPUT leaf instead is
   wrong - the output is viewport-sized with the camera already applied,

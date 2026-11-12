@@ -1,6 +1,6 @@
 ---
 title: Draw order and culling
-description: How the core orders what a target draws - the entry order between draw entries (3d's queues), the instance order inside one entry (splats, ordered record populations), and view culling of a population - measured against how Unity and Godot separate storage, visibility and order; the decision that a population the app writes is drawn per view from a draw list built over its visible set, never from a buffer kept in cull or key order; facts in alloy, the culling default in lattice. Read before touching gpu/order.rs, context/order.rs, the spatial order pass or feed, or a 2d layer's orderBy or cells.
+description: How the core orders what a target draws - the entry order between draw entries (3d's queues), the instance order inside one entry (splats, ordered record populations), and view culling of a population - measured against how Unity and Godot separate storage, visibility and order; the decision that a population the app writes is drawn per view from a draw list built over its visible set, never from a buffer kept in cull or key order; facts in alloy, the culling default in lattice; and damage, a write to a culled view's drawn record re-rendering only its boxes. Read before touching gpu/order.rs, gpu/damage.rs, context/order.rs, the spatial order pass or feed, or a 2d layer's orderBy or cells.
 created: 2026-11-07
 ---
 
@@ -26,7 +26,9 @@ sort thread), `alloy/src/context/order.rs` (the registry, the mirrors,
 the publish hooks, the cell readers), `packages/3d/src/scene.ts` (queues
 and `renderOrder`), `packages/3d/src/mesh.ts` and `splat.ts` (the
 indexed order and the hand-off), `packages/2d/src/records.ts`,
-`layer.ts` and `views.ts` (`orderBy`, `cells`, the views).
+`layer.ts` and `views.ts` (`orderBy`, `cells`, the views), and for
+damage `alloy/src/gpu/damage.rs` (`ListDamage`) and
+`alloy/src/raster/targets.rs` (`flush_dirty_within`).
 
 ## Vocabulary
 
@@ -42,7 +44,9 @@ indexed order and the hand-off), `packages/2d/src/records.ts`,
 - **Mirror.** The core's slot-order copy of a population's records,
   kept by `context/order.rs`.
 - **View.** A camera over a target. The spatial core feeds an entry its
-  view as the node's model-to-clip matrix (the order feed).
+  view as the node's model-to-clip matrix (the order feed, or the cull
+  feed on every change for a culled entry). It is the matrix the entry's
+  vertex stage projects with (D8).
 - **Visible set.** The records of a population whose boxes a view
   meets.
 - **Draw list.** A view's records to draw, in draw order: the visible
@@ -191,10 +195,10 @@ instead of 30,703; the cost of a patch follows the write's span.
 
 | | write | frame with a change | frame without |
 |---|---|---|---|
-| unordered, not culled (`cull: false`) | the dirty range uploaded | - | nothing |
-| culled and/or ordered, drawn set and keys kept | the dirty range into the mirror | per view: the written drawn records re-gathered in place | nothing |
-| culled and/or ordered, view moved or drawn set or key changed | the dirty range into the mirror | per view: cull, sort, gather of the visible set | nothing |
-| ordered, everything visible, keys moving | the dirty range into the mirror | per view: sort and gather of the population | nothing |
+| unordered, not culled (`cull: false`) | the dirty range uploaded | the target re-renders in full | nothing |
+| culled and/or ordered, drawn set and keys kept | the dirty range into the mirror | per view: the written drawn records re-gathered in place; a culled view's target re-renders inside their boxes (D8), an ordered one in full | nothing |
+| culled and/or ordered, view moved or drawn set or key changed | the dirty range into the mirror | per view: cull, sort, gather of the visible set; the target re-renders in full after a view move, inside the written records' boxes otherwise when culled (D8) | nothing |
+| ordered, everything visible, keys moving | the dirty range into the mirror | per view: sort and gather of the population; the target in full | nothing |
 
 The last row is what every engine pays for a fully visible sorted set
 (Godot re-sorts all y-sort children every frame); culling is what makes
@@ -257,13 +261,79 @@ node layer reads `renderOrder` from its sprite records and, for the y
 key, each hit's world y from the core (`worldMatrix`), the pose its key
 buffer holds.
 
+### D8. A write to a drawn record costs its box, not the target
+
+A culled view's target re-renders only where a write can have changed
+it. At the rebuild point the list knows the slots the write touched;
+each one's cull box as it was at the last point and as it is now,
+through the list's view, is a rectangle of the target. The target's dirt
+is those rectangles, and the raster thread renders the target through
+the partial path inside them alone: each wiped (color and depth) and the
+whole entry list redrawn under its scissor, every other pixel kept. The
+cost of a sparse write's frame follows the records' boxes. On the
+Adreno 610 a damage render of one sprite's box costs 0.59 to 0.71 ms
+where the full pass of the same target costs 16.7 to 35.0 ms, with no
+large fixed cost for the no-clear pass
+([target-damage-measurements](../notes/target-damage-measurements.md)).
+A patch, a rebuild and a population change through the instance count
+are alike: a record that moved, changed key, joined or left the drawn
+set changes only its own box.
+
+It renders in full whenever no rectangle can be trusted: a change of
+the view, the viewport, or the list's sort key or direction, a list that
+does not cull (no boxes: `cull: false`, or an ordered list alone), more
+than 64 touched
+slots, a box with a corner at or behind the eye, rectangles over half
+the target, a multisampled target, a pass without its wipe program, any
+dirtying that is not the list's own write (a params write, an entry
+change, a re-rendered source), and once, at its first change, a target
+holding a draw over the slicing floor (65,536 vertex-instances) that the
+submission budget has not measured yet, so the full render measures it. Rectangles merge where they meet and collapse to their bounding
+rectangle past 4. A list on a sub-target and a parent with tiles take the
+same model ([gpu-target-damage-draw-lists](../done/gpu-target-damage-draw-lists.md)).
+
+Two contracts carry it, and nothing checks either:
+
+- **The view is the vertex stage's matrix.** The view a culling list is
+  fed is the matrix its records are drawn with, to within a pixel. A
+  frustum test is symmetric in y, so culling cannot tell a mirrored
+  matrix from the right one; damage can, and a mirrored rectangle wipes
+  rows the write never touched and leaves the changed ones stale. The 2d
+  views fed a y-up projection beside y-down vertex stages until damage
+  showed it; `viewMatrices` is y-down now and `tests/camera.test.ts`
+  pins it to the stage. The gated order feed lags small turns and moves,
+  so it must never drive a culling list; 3d feeds only order lists, which
+  carry no cells.
+- **The cull box bounds what a record draws.** Culling took that trust
+  already: a vertex stage that moves geometry past its material's
+  declared `cullMargin` is culled early at the view's edge. Under damage
+  the same mistake shows anywhere in the view, as stale pixels where the
+  geometry was or now is outside the box. The force-full switch
+  (`/force-full-renders`, the MCP `set_force_full_renders`, reported as
+  `forceFullRenders` in `/gpu`) diagnoses it: stale
+  pixels that go away under it name a wrong rectangle. Alloy reports
+  per target how it rendered (`fullRenders`, `damageRenders`,
+  `damagedPixels` in `/gpu`).
+
+Rejected: a coarse cell grid to merge rectangles into. A ring-shaped
+reveal is a few hundred writes, past the slot cap and full anyway, and
+four merged rectangles cover a sparse write.
+
 ## Known limits and open items
 
 - A cull box is the record's rect, grown by its screen-size reach and
   by the material's `cullMargin` (cells `margin`, Godot's
   `extra_cull_margin`): a vertex stage that moves geometry further than
-  its declared margin is culled early at a view's edge. An unbounded
-  move wants `cull: false`.
+  its declared margin is culled early at a view's edge, and leaves stale
+  pixels anywhere in the view after a write (D8). An unbounded move
+  wants `cull: false`.
+- Damage (D8) redraws the target's whole entry list once per rectangle,
+  so its vertex work multiplies by the rectangle count (at most 4). A
+  per-rectangle sub-list of the records that meet it, queried from the
+  cells and drawn at an instance offset, is the better form; alloy has
+  no instance-offset draw. The window still repaints the whole leaf
+  showing a damaged target, and a layer drawn directly stays full:
+  [gpu-target-damage](../backlog/gpu-target-damage.md).
 - [2d-sprite-layer-view-relative-records](../backlog/2d-sprite-layer-view-relative-records.md):
   views of one sprite layer far apart share one f32 origin. Decided: a
   list's gather writes each drawn record's position relative to its own
@@ -334,3 +404,6 @@ its bench: `probes/record-layer-order-probe.tsx`,
   measured on the tablet board (notes:
   [per-view-draw-lists](../notes/per-view-draw-lists.md)).
 - [splats](splats.md): the index stream, the sort thread, packed runs.
+- [gpu-target-damage-draw-lists](../done/gpu-target-damage-draw-lists.md):
+  D8 built, damage rectangles fed by the draw lists, and the 2d view
+  matrix made the vertex stage's.

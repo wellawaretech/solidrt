@@ -27,8 +27,12 @@ mod window_tap;
 pub use capture::{CaptureDone, CaptureInfo};
 pub use texture::YuvFrameSink;
 
+#[cfg(test)]
+pub(crate) use draw_list::{rebuild_point, ListEntry, Refresh};
 use mirror::{PipelineMirror, SubTargetMirror, TargetMirror};
 use order::InstanceOrders;
+#[cfg(test)]
+pub(crate) use order::Mirror;
 use texture::YuvGroup;
 pub use window_tap::WindowTap;
 
@@ -175,6 +179,8 @@ pub struct Context {
   /// When the spatial core last flushed: the interval a placed voice
   /// glides over to the next flush's values (context/spatial.rs).
   spatial_flushed_at: Cell<Option<Instant>>,
+  /// The damage debug switch as last sent (`set_force_full_renders`).
+  force_full_renders: Cell<bool>,
 }
 
 /// An overlay declaration (see `Context::set_overlay`): the
@@ -240,6 +246,7 @@ impl Context {
       frame_wake,
       spatial: RefCell::new(Spatial::new()),
       spatial_flushed_at: Cell::new(None),
+      force_full_renders: Cell::new(false),
     }
   }
 
@@ -280,6 +287,25 @@ impl Context {
   /// the raster thread is gone.
   pub fn lose_context(&self) -> Result<bool, String> {
     self.rpc(|reply| RasterCmd::LoseContext { reply })
+  }
+
+  /// The damage debug switch (D8 of okf/design/draw-order-and-culling.md):
+  /// while on, every owner (target or sub-target) that has dirt renders in
+  /// full, whatever damage rectangles that dirt holds (a clean tile in a
+  /// partial pass stays clean); off (the default) a draw list's write
+  /// renders only the rectangles it damaged. Stale pixels that go away
+  /// under it name a wrong rectangle: a vertex stage drawing past its
+  /// declared cull margin. Fire-and-forget on the ordered channel, so it
+  /// applies from the next flush.
+  pub fn set_force_full_renders(&self, on: bool) {
+    self.force_full_renders.set(on);
+    self.send(RasterCmd::SetForceFullRenders { on });
+  }
+
+  /// The damage debug switch as this context last sent it
+  /// (`set_force_full_renders`); off until set.
+  pub fn force_full_renders(&self) -> bool {
+    self.force_full_renders.get()
   }
 
   /// Blocking RPC: send a command carrying a reply sender and wait for the

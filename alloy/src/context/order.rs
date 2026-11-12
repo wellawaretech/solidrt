@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::gpu::{
-  materialize_indices, materialize_indices_through, order_packed, order_permutation, BufferIds, BufferStride,
+  materialize_indices, materialize_indices_through, order_packed, order_permutation, BufferIds, BufferStride, CellBox,
   DrawRange, InstanceOrder, KeyColumn, OrderCounters, OrderScratch, OrderView, OrderWorker, PackedJob, RecordExtent,
   RunTable, Selection, SortJob, StepMode, MAX_BUFFERS,
 };
@@ -110,21 +110,36 @@ pub(super) struct ChangedSlots {
   slots: Vec<u32>,
   // One bit per slot: whether it is in `slots`.
   seen: Vec<u64>,
+  // Per slot, where it sits in `slots`: valid while its `seen` bit is set.
+  at: Vec<u32>,
 }
 
 // Bits per word of a `ChangedSlots` set.
 const SEEN_BITS: usize = 64;
 
 impl ChangedSlots {
-  pub(super) fn mark(&mut self, slot: usize) {
+  /// Mark `slot` changed; true when it was not marked yet.
+  pub(super) fn mark(&mut self, slot: usize) -> bool {
     let (w, bit) = (slot / SEEN_BITS, 1u64 << (slot % SEEN_BITS));
     if self.seen.len() <= w {
       self.seen.resize(w + 1, 0);
     }
     if self.seen[w] & bit == 0 {
       self.seen[w] |= bit;
+      if self.at.len() <= slot {
+        self.at.resize(slot + 1, 0);
+      }
+      self.at[slot] = self.slots.len() as u32;
       self.slots.push(slot as u32);
+      return true;
     }
+    false
+  }
+
+  /// Where `slot` sits in `slots`; None when it is not marked.
+  pub(super) fn position(&self, slot: usize) -> Option<usize> {
+    let marked = self.seen.get(slot / SEEN_BITS).is_some_and(|w| w & (1u64 << (slot % SEEN_BITS)) != 0);
+    marked.then(|| self.at[slot] as usize)
   }
 
   pub(super) fn slots(&self) -> &[u32] {
@@ -144,7 +159,7 @@ impl ChangedSlots {
 }
 
 #[derive(Default)]
-pub(super) struct Mirror {
+pub(crate) struct Mirror {
   // Shared with a sort job in flight (an index mirror never changes after
   // its hand-off; a write onto a list mirror makes its own copy).
   pub(super) data: Arc<Vec<u8>>,
@@ -176,8 +191,20 @@ pub(super) struct Mirror {
   // A list buffer's record stride in bytes (its instance layout's).
   pub(super) stride: usize,
   // A list buffer's records changed since the last rebuild point: those a
-  // write left different, not every record it covered.
+  // write left different, not every record it covered. Marked through
+  // `mark_changed` alone, which keeps `old_boxes` beside it.
   pub(super) changed: ChangedSlots,
+  // Whether the mirror is the box column of a culling list
+  // (`set_captures`): only then are old boxes kept.
+  pub(super) captures: bool,
+  // While `captures`: the cull box each slot of `changed` had at the last
+  // rebuild point, parallel to `changed.slots()` (`CELL_BOX_FLOATS` per
+  // slot; the empty box for a slot past the column), what a write's damage
+  // takes as the record's old place. Captured at the slot's first mark
+  // since the point, and every box overwrite marks before it overwrites,
+  // so at that first mark the column still holds the box the slot had at
+  // the point. Empty while the mirror does not capture.
+  pub(super) old_boxes: Vec<f32>,
   // A list buffer's slot-order cull boxes (`CELL_BOX_FLOATS` per record):
   // what the spatial record sinks staged beside the records, or `extent`
   // read off them.
@@ -238,8 +265,48 @@ impl Mirror {
       return;
     }
     for slot in bytes.start / self.stride..bytes.end.div_ceil(self.stride) {
-      self.changed.mark(slot);
+      self.mark_slot(slot);
     }
+  }
+
+  /// Mark `slot` changed since the last rebuild point (see
+  /// `mark_changed`).
+  pub(crate) fn mark_slot(&mut self, slot: usize) {
+    mark_changed(&mut self.changed, &mut self.old_boxes, &self.boxes, self.captures, slot);
+  }
+
+  /// The rebuild point: forget the changed slots and their old boxes.
+  pub(crate) fn clear_changed(&mut self) {
+    self.changed.clear();
+    self.old_boxes.clear();
+  }
+
+  /// Make the mirror keep old boxes (`on`: it is the box column of a
+  /// culling list) or stop. Slots marked before the capture started take
+  /// the box the column holds now, so the parallel arrays stay whole: a
+  /// list that starts reading this column was attached or swapped onto it
+  /// since the last point, has no build over it yet, and renders in full.
+  pub(super) fn set_captures(&mut self, on: bool) {
+    if on == self.captures {
+      return;
+    }
+    self.captures = on;
+    self.old_boxes.clear();
+    if on {
+      for &slot in self.changed.slots() {
+        self.old_boxes.extend_from_slice(&CellBox::read(&self.boxes, slot as usize).floats());
+      }
+    }
+  }
+
+  /// The box `slot` had at the last rebuild point when the mirror marked it
+  /// since then; None for an unmarked slot, or on a mirror that keeps no
+  /// old boxes.
+  pub(crate) fn old_box(&self, slot: u32) -> Option<CellBox> {
+    if !self.captures {
+      return None;
+    }
+    self.changed.position(slot as usize).map(|i| CellBox::read(&self.old_boxes, i))
   }
 
   /// Seed a list mirror with the buffer's current contents, every record
@@ -249,6 +316,51 @@ impl Mirror {
     let mut mirror = Mirror { data: Arc::new(data), held, published: held, stride, ..Mirror::default() };
     mirror.mark(0..held);
     mirror
+  }
+}
+
+/// The seam the mirror tests drive (tests/target_damage.rs): a list mirror
+/// over `data` in `stride`-byte records, its boxes read off the records
+/// with `extent` (None: staged by a sink, `write_boxes`), every slot
+/// changed as at an attach; and its box column.
+#[cfg(test)]
+impl Mirror {
+  pub(crate) fn for_list(data: Vec<u8>, stride: usize, extent: Option<RecordExtent>) -> Mirror {
+    let mut mirror = Mirror::seeded(data, stride);
+    mirror.extent = extent;
+    mirror.set_captures(true);
+    mirror
+  }
+
+  pub(crate) fn box_column(&self) -> &[f32] {
+    &self.boxes
+  }
+
+  /// The slots marked since the last point, in mark order.
+  pub(crate) fn changed_slots(&self) -> &[u32] {
+    self.changed.slots()
+  }
+
+  /// The records held, and their byte count.
+  pub(crate) fn record_bytes(&self) -> (&[u8], usize) {
+    (&self.data, self.held)
+  }
+}
+
+/// Mark `slot` of a list mirror changed since the last rebuild point; at
+/// its first mark since then, on a mirror that `captures`, keep the box
+/// `boxes` holds for it in `old_boxes` (see `Mirror::old_boxes`). The one
+/// doorway every mark of a list mirror goes through; a free function over
+/// the fields so a write can mark while it holds the records mutably.
+pub(super) fn mark_changed(
+  changed: &mut ChangedSlots,
+  old_boxes: &mut Vec<f32>,
+  boxes: &[f32],
+  captures: bool,
+  slot: usize,
+) {
+  if changed.mark(slot) && captures {
+    old_boxes.extend_from_slice(&CellBox::read(boxes, slot).floats());
   }
 }
 

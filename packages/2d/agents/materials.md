@@ -101,7 +101,9 @@ order, so nothing sorts.
   every cull box by it, so a sprite whose rect is just off screen but
   whose drawn quad reaches in still draws (Godot's
   `extra_cull_margin`). Without it such a sprite vanishes early at the
-  view's edge; an unbounded move wants `cull: false` on its layer.
+  view's edge, and a write to it re-renders only its box, leaving stale
+  pixels where the quad drew outside it (views.md, View culling); an
+  unbounded move wants `cull: false` on its layer.
   `tests/materials.test.tsx` pins all three tiers, the
   style streams through growth and shift, the params, the resample,
   the tile bake and the throws.

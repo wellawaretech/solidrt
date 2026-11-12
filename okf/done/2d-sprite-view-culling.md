@@ -49,7 +49,8 @@ its visible sprites costs (here about 36 ms instead of 41.6, still short
 of 60 fps). The rest of a drag frame is the view pass and the window
 composite, which every camera move pays because a view is a plain target
 re-rendered under its camera; that cost is not this item's
-(the retained-render side is [gpu-target-damage](../backlog/gpu-target-damage.md)).
+(the retained-render side is [gpu-target-damage-draw-lists](gpu-target-damage-draw-lists.md),
+with what is left in [gpu-target-damage](../backlog/gpu-target-damage.md)).
 
 The decision of 2026-09-06 in 2d-baked-layers held that an off-screen
 record costs one degenerate quad and leaves nothing to win at tens of

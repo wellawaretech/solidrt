@@ -31,8 +31,17 @@ pub struct App {
   user_input_muted: Arc<AtomicBool>,
 }
 
+/// The Wayland app id (X11 class) every window carries. A compositor tiles an
+/// ordinary resizable window and a client cannot ask to float, so a user's
+/// window rule matches this stable id to float the window instead of the
+/// executable name, which differs per binary.
+const WINDOW_APP_ID: &str = "solidrt";
+
 pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   let (width, height) = (size.width as u32, size.height as u32);
+
+  // Must precede the video subsystem: SDL reads it when it creates a window.
+  sdl3::hint::set("SDL_APP_ID", WINDOW_APP_ID);
 
   // Keep touch and mouse streams separate. Without this, SDL synthesizes
   // mouse events from touches (and vice versa) using SDL_TOUCH_MOUSEID

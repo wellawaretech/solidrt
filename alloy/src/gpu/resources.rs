@@ -256,6 +256,16 @@ pub struct GpuPipelineInfo {
   /// submitted, from the draw ranges at issue: a big instance count beside
   /// a small index count as one number, before any timer is read.
   pub vertices: u64,
+  /// Cumulative renders of this target (or sub-target) in full: its whole
+  /// rectangle wiped and redrawn, in a full pass or as a whole tile of a
+  /// partial one.
+  pub full_renders: u64,
+  /// Cumulative renders from damage rectangles: only the pixels inside
+  /// the rectangles its dirt held were wiped and redrawn, the rest kept.
+  pub damage_renders: u64,
+  /// The pixels those damage renders covered, summed: the area of every
+  /// rectangle rendered.
+  pub damaged_pixels: u64,
   /// Some = a sub-target: it renders into a rectangle of another draw
   /// target's storage and has no texture entry of its own (its passes are
   /// counted on the parent).

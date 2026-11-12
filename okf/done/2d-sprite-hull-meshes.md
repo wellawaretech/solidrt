@@ -220,8 +220,8 @@ Built as shaped, with these deviations and decisions:
 - **No gate first.** The go/no-go A/B was dropped as a precondition (the
   vertex side is about 5k invocations against millions of fragments) and
   run afterwards instead, on the SM-T500 (Adreno 610) with the cadence
-  hold off: a scratch board of 600 Spectre tiles (Tile(1, 1), straight
-  edges, 48.6% of its frame, so quads 2.06x the shape as on the measured
+  hold off: a scratch board of 600 irregular tiles (straight edges, each
+  48.6% of its frame, so quads 2.06x the shape as on the measured
   board; the 8-point mesh is 1.23x) over a full-window record layer,
   2000 x 1200 target texels. View pass GPU per frame, two ABAB rounds
   each, skin about 24 C:

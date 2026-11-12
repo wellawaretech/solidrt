@@ -350,6 +350,16 @@ export interface TestApp {
    */
   gpu(options?: { label?: string; draw?: number }): Record<string, unknown>
   /**
+   * The damage debug switch, the control API's `/force-full-renders`: with
+   * `true` every draw target and sub-target that has dirt renders in full;
+   * with `false` (the default) a culled draw list's write renders only the
+   * rectangles it changed; with no argument it is read. Returns the switch
+   * as it now stands. It applies from the next frame's flush; every test
+   * starts with it off. A picture that differs between the two names a
+   * wrong damage rectangle.
+   */
+  forceFullRenders(active?: boolean): boolean
+  /**
    * The performance statistics, as the control API's `/stats` reports
    * them (agents/debugging.md): the latest frame's figures, the `window`
    * summary over the frames the test ran (`windowMs`, or `windowFrames`
@@ -732,6 +742,10 @@ let app: TestApp = {
     return JSON.parse(result)
   },
   gpu: (options = {}) => JSON.parse(gui.gpu(options.label ?? null, options.draw ?? null)),
+  forceFullRenders(active) {
+    if (active !== undefined && typeof active !== "boolean") throw new TypeError(`forceFullRenders: pass true, false or nothing, got ${active}`)
+    return gui.forceFullRenders(active ?? null)
+  },
   stats: (options = {}) => JSON.parse(queryStats(options.windowMs ?? null, options.windowFrames ?? null)),
   find: query => findIn(() => null, query),
   findAll: query => search(null, query).map(found => fixed(found.id, `${describeQuery(query)} (${describeNode(found)})`)),

@@ -65,7 +65,7 @@ pub(crate) use staging::UploadStaging;
 pub(crate) use storage::create_layer_target;
 pub(crate) use tap::TapReadback;
 pub use tap::TapRect;
-pub(crate) use target::{RebuildRegistries, ShaderTexture};
+pub(crate) use target::{GroupDraw, RebuildRegistries, ShaderTexture};
 pub(crate) use texture::{warm_compare_sampler, GpuTexture, SamplerCache};
 pub(crate) use timing::{PassTimer, Timed};
 

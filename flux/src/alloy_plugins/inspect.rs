@@ -321,6 +321,19 @@ pub fn gpu_lose_context(ctx: &rquickjs::Ctx<'_>) -> Result<bool, String> {
   Ok(forced)
 }
 
+/// The damage debug switch (`alloy::Context::set_force_full_renders`): set
+/// when `active` is given, then read back; the dev tools'
+/// `/force-full-renders` and `flux:test/gui` `forceFullRenders`.
+pub fn gpu_force_full_renders(ctx: &rquickjs::Ctx<'_>, active: Option<bool>) -> Result<bool, String> {
+  let Some(atx) = super::alloy_context(ctx) else {
+    return Err("no alloy context".to_string());
+  };
+  if let Some(on) = active {
+    atx.set_force_full_renders(on);
+  }
+  Ok(atx.force_full_renders())
+}
+
 pub fn gpu_record(
   ctx: &rquickjs::Ctx<'_>,
   label: Option<&str>,
@@ -373,6 +386,12 @@ pub fn gpu_record(
         // rate); issueMs is raster-thread occupancy, execMs is GPU-side
         // duration from timer queries (0 on a context without them).
         "passes": p.passes,
+        // Cumulative too, on targets and sub-targets alike: renders in
+        // full, renders from damage rectangles, and the pixels those
+        // rectangles covered.
+        "fullRenders": p.full_renders,
+        "damageRenders": p.damage_renders,
+        "damagedPixels": p.damaged_pixels,
         "issueMs": p.pass_issue_micros / 1000,
         "execMs": p.pass_exec_micros / 1000,
         "textures": p.textures.iter().map(binding_json).collect::<serde_json::Map<_, _>>(),
@@ -569,6 +588,9 @@ pub fn gpu_record(
     "textures": keep(textures), "buffers": keep(buffers), "pipelines": keep(pipelines),
     "renderPipelines": keep(render_pipelines), "programs": keep(programs),
     "groups": label_groups(&res, label),
+    // The damage debug switch: true while every changed target renders in
+    // full (it outlives a reload).
+    "forceFullRenders": atx.force_full_renders(),
   });
   if let (Some(ws), None) = (&res.window_shader, label) {
     data["windowShader"] = serde_json::json!({

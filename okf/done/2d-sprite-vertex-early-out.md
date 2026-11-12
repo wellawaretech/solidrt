@@ -133,12 +133,12 @@ least three distinct points by construction, and `sprite-mesh.test.ts`
 checks this and the padding on every random mesh.
 
 Measured on the same tablet (Galaxy Tab A7, schedutil on all 8 cores,
-thermal status 0, battery 24 C, USB power), with the boards of
-`../demo/tiles` on 0.0.86. Only `glsl.ts` and `sprite-mesh.ts` were
+thermal status 0, battery 24 C, USB power), with two record
+layers on 0.0.86. Only `glsl.ts` and `sprite-mesh.ts` were
 swapped. Each row is three runs of the scripted drag, each after a
-fresh reload of the same deal, and the runs agreed within 0.2 ms:
+fresh reload of the same scene, and the runs agreed within 0.2 ms:
 
-| 30,703 records (nuts board) | GPU per frame | view pass | outside the pass |
+| 30,703 records | GPU per frame | view pass | outside the pass |
 |---|---|---|---|
 | hulls, 0.0.86 | 46.6 ms | 27.1 ms | 19.5 ms |
 | hulls, size test only | 43.5 ms | 27.1 ms | 16.4 ms |
@@ -146,7 +146,7 @@ fresh reload of the same deal, and the runs agreed within 0.2 ms:
 | quads, 0.0.86 | 43.0 ms | 32.0 ms | 11.0 ms |
 | quads, size test | 43.0 ms | 32.1 ms | 10.9 ms |
 
-| 613 records (large board) | GPU per frame | view pass | outside the pass |
+| 613 records | GPU per frame | view pass | outside the pass |
 |---|---|---|---|
 | hulls, 0.0.86 | 36.5 ms | 27.3 ms | 9.2 ms |
 | hulls, both | 36.0 ms | 27.2 ms | 8.8 ms |

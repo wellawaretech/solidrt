@@ -1262,7 +1262,15 @@ declare module "flux:gpu" {
    * "render twice = render once" still holds and the default `render:
    * "auto"` target re-renders exactly when its entries or their inputs
    * change - a static scene costs zero passes, however many entries it
-   * holds, and one render is ONE pass however many entries it draws.
+   * holds, and one render is ONE pass however many entries it draws. A
+   * record write to a culled entry (`cells` with `cull`) under a view that
+   * held still re-renders only the rectangles its records' cull boxes
+   * covered before and after, and keeps every other pixel (a multisampled
+   * target renders in full). That asks the entry's view to be exactly the
+   * matrix its vertex stage projects with (clip y down, the pixel
+   * contract) and its records to draw inside their cull boxes plus the
+   * cells' `margin`: a stage drawing past them leaves stale pixels, which
+   * the dev tools' force-full switch (`/force-full-renders`) tells apart.
    * `render: "manual"`, `loadOp: "load"` and `samples` compose exactly as
    * on {@link createShaderTarget}. With no entries a render is the clear
    * alone.

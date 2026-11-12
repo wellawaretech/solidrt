@@ -2,14 +2,16 @@
 //! thread's Context mirrors and the raster thread's executors. Draw-state
 //! vocabulary and validators (`vocab`), the command/introspection shapes
 //! (`spec`, `resources`), device ceilings (`limits`), buffer write leases
-//! (`lease`), instance ordering (`order`), and the texture/sampling
-//! vocabulary plus the UI-side registry (`texture`).
+//! (`lease`), instance ordering (`order`), a target's damage rectangles
+//! (`damage`), and the texture/sampling vocabulary plus the UI-side
+//! registry (`texture`).
 //!
 //! No GL here, by design: nothing in this module takes a `glow::Context`,
 //! so the "sol-ui has zero GL" thread contract is visible in the module
 //! graph. The GL executors these shapes drive - programs, passes, targets,
 //! buffers, the sampler cache - live in `gl/`, raster-thread-only.
 
+mod damage;
 mod draw_list;
 mod glyphs;
 mod lease;
@@ -21,6 +23,9 @@ pub(crate) mod spec;
 pub(crate) mod texture;
 pub(crate) mod vocab;
 
+#[cfg(test)]
+pub use damage::{project_box, BoxDamage, MAX_DAMAGE_RECTS};
+pub use damage::{DamageRects, ListDamage, PxRect, TargetDirt, DAMAGE_EDGE_PX, MAX_DAMAGE_SLOTS};
 pub use draw_list::{gather_list, CellIndex, DrawList, ListChange, ListOrder};
 pub use glyphs::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use lease::WriteLeases;

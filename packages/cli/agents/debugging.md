@@ -252,13 +252,58 @@ when exactly one client is connected.
   `population` (the records it draws from), `visible` (what its view
   drew, also its `instanceCount`), `rebuilds`, `patches` (writes
   re-gathered in place, the list kept) and `buildMs` (the last
-  rebuild's cull, sort and gather). `groups` sums the textures and buffers by
+  rebuild's cull, sort and gather). Every target and sub-target reports
+  how it rendered, cumulative like `passes`: `fullRenders` (renders that
+  wiped and redrew its whole rectangle), `damageRenders` (renders from
+  damage rectangles: only the pixels inside them wiped and redrawn, the
+  rest kept) and `damagedPixels` (the area of those rectangles, summed).
+  A write to the records of a culled draw list under a view that held
+  still (records added or removed through the instance count included) is
+  a damage render whose rectangles are each touched record's cull box
+  before and after the write, projected into the target (merged where
+  they touch, at most 4, past that their bounding rectangle); everything
+  else renders in full: a camera move, a params write, a layer drawn
+  without `cull`, a multisampled target, damage over half the target, a
+  write touching more than 64 records, and once, the first time it
+  changes, a target holding a draw of 65,536 vertex-instances or more
+  that the submission budget has not measured yet (the full render
+  measures it). So a sparse write that grows `fullRenders` pays the
+  whole target, and a damage render's `damagedPixels` delta should be
+  about the size of the boxes that changed. A parent with sub-targets
+  renders one pass either way (its `passes`). When the parent's own
+  content renders in full, or every one of its tiles does, it is a full
+  pass: the parent and every one of its tiles count a full render.
+  Otherwise the parent counts a damage render if rectangles of its own
+  changed and nothing if only tiles did, and each tile counts its own
+  full or damage render, a clean tile nothing. Each damage rectangle
+  redraws the target's whole entry list under a scissor, so
+  `verticesPerFrame` stays what a full pass submits, times the rectangle
+  count. The reply's top-level `forceFullRenders` is the switch below:
+  true means every changed target renders in full, whatever its damage.
+  `groups` sums the textures and buffers by
   exact label (`textures`, `textureBytes`, `buffers`, `bufferBytes`,
   `bytes`): a consumer that labels every resource it creates (a tile
   layer's chunks under the layer's label) reads its footprint as one
   number before and after a residency change; it is what is ALLOCATED
   under the label, pooled idle targets included (`/stats` `app.poolHeld`
   says how many ids wait in pools).
+- POST `/force-full-renders?active=true|false` - the damage debug switch
+  (the `set_force_full_renders` tool); GET reads it, and so does `/gpu`
+  (`forceFullRenders`). `{ active }` back. On, every
+  target and sub-target that has dirt renders in full, its damage
+  rectangles ignored; off (the default) damage renders as above. The
+  diagnosis for stale pixels in a culled view (a trail, a sprite half
+  old and half new): if they go away with it on, a damage rectangle
+  missed pixels the records draw - typically a vertex stage that moves
+  geometry past its material's declared `cullMargin`, or a view fed to
+  the list that is not the matrix its vertex stage projects with. The
+  picture with it on is the reference: freeze the clock, run the same
+  steps both ways, and compare `/texture` reads byte for byte. It
+  applies from the next flush, survives a reload and a context loss
+  (every app test engine starts with it off), and costs a full pass per
+  changed target, so switch it off when done. A
+  client runtime that predates it answers that it does not support the
+  query.
 - `/buffer?id=<bufferId>&offset=<n>&length=<n>&as=<f32|u16|u8>` - vertex
   buffer contents (default f32; reads cap at 64 KiB).
 - `/stats?window=<ms>` (or `?frames=<n>`, the last n frames that changed

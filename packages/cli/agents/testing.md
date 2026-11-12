@@ -48,6 +48,10 @@ Prefer the cheapest reader that proves the behavior, and stop there:
    misses, the app's own `registerStat` counters, the frame window).
    "Does the shadow pass run" is a count, not a lighting experiment;
    "did the chunk come from the pool" is a hit count, not a timing.
+   "Did a write render only its rectangles" is a target's `damageRenders`
+   against its `fullRenders`; `app.forceFullRenders(true)` is the
+   `/force-full-renders` switch, so the same steps run under it give the
+   reference picture (every test starts with it off).
 4. Pixels. `locator.pixel(x, y)` and `locator.pixels()`, drawn now with no
    time passing. The last resort, for what only the picture shows (a
    shader, a gradient, a blend); they depend on the GPU.

@@ -128,6 +128,15 @@ impl SlicePlan {
     plan.sliceable().then_some(plan)
   }
 
+  /// Whether a draw is one the budget plans (`plan`) that its gauge has
+  /// not measured yet (`rate` None): its next render probes it with
+  /// blocking slices. The question the owner rule asks before a damage
+  /// render, which probes without recording the measurement
+  /// (`DrawGroup::measure`); the same plan and rate `issue_draw` reads.
+  pub(crate) fn unmeasured(range: DrawRange, topology: Topology, reads_instance_id: bool, rate: Option<f64>) -> bool {
+    rate.is_none() && SlicePlan::plan(range, topology, reads_instance_id).is_some()
+  }
+
   /// The draw's work in vertices: units times the vertices per unit.
   pub(crate) fn work(&self) -> u64 {
     self.units * self.unit_work

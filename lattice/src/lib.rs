@@ -1203,6 +1203,10 @@ fn ui_thread(
         if let (Some(store), Some(app_id)) = (storage::get(), &current_app_id) {
           test_host::empty_sandbox(store, app_id);
         }
+        // The damage debug switch is the context's and outlives an engine:
+        // a test that set it and was torn down before its own reset would
+        // otherwise leave every later test rendering in full.
+        atx.set_force_full_renders(false);
       }
       let render_tree = RenderTree::new();
       let platform = platform.clone();

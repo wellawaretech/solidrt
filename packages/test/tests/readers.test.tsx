@@ -367,6 +367,8 @@ test("pixel reads what a node paints, where a transition stands", async app => {
 test("gpu is the inventory the control API reports", async app => {
   await app.mount(() => <text>plain</text>)
   let inventory = app.gpu()
-  expect(Object.keys(inventory).sort()).toEqual(["buffers", "groups", "pipelines", "programs", "renderPipelines", "textures"])
+  expect(Object.keys(inventory).sort()).toEqual(["buffers", "forceFullRenders", "groups", "pipelines", "programs", "renderPipelines", "textures"])
+  // The damage debug switch beside the inventory, off at a test's start.
+  expect(inventory.forceFullRenders).toBe(false)
   expect(app.gpu({ label: "no such label" }).textures).toEqual([])
 })

@@ -125,6 +125,15 @@ export function cameraParams(camera: CameraState, origin: readonly [number, numb
  * planar grid (`cell: [w, h, 0]`) is tested by its x/y extent alone.
  * Internal - views.ts pushes it on every camera, size or oversample
  * write.
+ *
+ * `proj * view` is exactly the vertex stages' world -> clip mapping
+ * (glsl.ts, tile-pipeline.ts: `screen / uViewport * 2 - 1`), clip y
+ * DOWN like the screen (core gpu.ts pixel contract), no flip. A culled
+ * layer's entries are fed this matrix as the view their draw list culls
+ * under and projects its damage rectangles through, so a flip here
+ * would mirror those rectangles top to bottom (tests/camera.test.ts
+ * pins the agreement). The gate, the LOD view and the listener read
+ * only y-symmetric or view-only parts of it.
  */
 export function viewMatrices(camera: CameraState, width: number, height: number, view: Float64Array, proj: Float64Array): void {
   let zoom = camera.zoom
@@ -141,7 +150,7 @@ export function viewMatrices(camera: CameraState, width: number, height: number,
   view[15] = 1
   proj.fill(0)
   proj[0] = 2 / width
-  proj[5] = -2 / height
+  proj[5] = 2 / height
   proj[10] = -1
   proj[15] = 1
 }

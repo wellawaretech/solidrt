@@ -75,4 +75,14 @@ declare module "flux:test/gui" {
    * full (matrix-valued ones are elided elsewhere).
    */
   export function gpu(label: string | null, draw: number | null): string
+
+  /**
+   * The damage debug switch, the control API's `/force-full-renders`:
+   * `true` renders every draw target and sub-target that has dirt in full,
+   * `false` (the default) lets a culled draw list's write render only the
+   * rectangles it changed, `null` reads it. Returns the switch as it now
+   * stands. Applies from the next flush; every test engine starts with it
+   * off.
+   */
+  export function forceFullRenders(active: boolean | null): boolean
 }
