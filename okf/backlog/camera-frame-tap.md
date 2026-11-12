@@ -65,7 +65,7 @@ thread, where the pump does them today.
 pub struct CameraFrame {
   /// Increases by one per frame the camera produced; a gap is a dropped frame.
   pub seq: u64,
-  /// SDL's capture timestamp, on the SDL tick timeline (`sdl_utils::ticks_epoch`).
+  /// SDL's capture timestamp, on the SDL tick timeline (`ore::time::ticks_epoch`).
   pub timestamp_ns: u64,
   pub width: u32,
   pub height: u32,

@@ -192,10 +192,11 @@ Measured with a throwaway crate linking `sdl3 =0.19.0`
 
 ## The main loop
 
-The interactive loop (`App::run` in `alloy/src/app.rs`) is one function
-with five jobs:
+The split landed 2026-11-12 (okf/done/ore-pump-and-window.md); the
+table's "Before" column records the state before it. The interactive loop
+(`App::run` in `alloy/src/app.rs`) is one function with five jobs:
 
-| Job | Today | Layer |
+| Job | Before | Layer |
 |---|---|---|
 | Wait and drain: `wait_event_timeout_ms`, `poll_iter`, `translate_event`, the Android touch side channel, the background event watch, the `PlatformWatch` polls (keyboard, power, refresh rate), gamepads | raw SDL in the loop | OS |
 | Wake: `FrameReady` pushed by the raster and vsync threads | SDL custom event | OS (mechanism) |
@@ -211,18 +212,21 @@ inverted callback framework:
 ```rust
 impl Platform {
   // The pump: SDL_WaitEventTimeout plus the drain, translated and
-  // timestamped; runs queued main-thread callbacks as SDL does.
-  fn wait(&mut self, timeout: Duration) -> impl Iterator<Item = (PlatformEvent, Instant)>;
-  // Any thread: wake the wait (FrameReady today).
+  // timestamped; runs queued main-thread callbacks as SDL does. Behind the
+  // `window` feature: translation reads the window's scale, size and safe
+  // area, per event.
+  fn wait(&mut self, timeout: Duration, window: &Window) -> Vec<(PlatformEvent, Instant)>;
+  // Any thread: wake the wait (the raster and vsync threads).
   fn waker(&self) -> Waker;
   // Synchronous lifecycle (the Android background watch), on the pushing
   // thread. WillBackground carries the suspend hold, taken by the OS layer.
-  fn on_lifecycle(&self, f: impl Fn(Lifecycle) + Send + Sync);
-  fn display_vsync(&self) -> Option<VsyncSource>; // Choreographer
+  fn on_lifecycle(&self, f: impl Fn(Lifecycle) + Send + Sync + 'static);
   // The `window` feature. The window is its own value: a windowless host
   // builds a Platform and never opens one.
-  fn open_window(&self, ...) -> Result<Window, String>;
+  fn open_window(&self, config: WindowConfig<'_>) -> Result<Window, String>;
 }
+// The Choreographer is the feature-free module `ore::display_vsync`: a
+// `Source` opened on the thread that waits on it.
 
 impl Window {
   // title, icon, cursor, lock, text input, ...
@@ -233,13 +237,13 @@ impl Window {
 }
 ```
 
-alloy's loop is today's loop with `platform.wait(remaining)` in place of
-`event_pump.wait_event_timeout_ms(ms)` and the `poll_iter` drain, and
-`window.set_title(..)` in place of the SDL calls. Blocking on
+alloy's loop is the old loop with `platform.wait(remaining, &window)` in
+place of `event_pump.wait_event_timeout_ms(ms)` and the `poll_iter` drain,
+and `window.set_title(..)` in place of the SDL calls. Blocking on
 the queue, the pushed wake and the send-then-wake ordering stay as they
 are.
 
-- Into the OS layer, all platform normalization: `translate_event`
+- Into the OS layer went all platform normalization: `translate_event`
   (`event.rs`), the pointer-lock coordinate freeze (SDL does not freeze
   x/y in relative mode), the touch side channel (`touch.rs`),
   `PlatformWatch`, gamepads, cursors, the Choreographer source (`vsync.rs`'s
@@ -247,12 +251,12 @@ are.
   and, inside the GL surface, the CVDisplayLink swap pacer
   (`display_link.rs`: the macOS swap waits on it; it is not a vsync
   source).
-- Stays in alloy: `FrameRelease`, cadence, refresh counting, the idle
+- Stayed in alloy: `FrameRelease`, cadence, refresh counting, the idle
   tick, liveness, redraw, the input mute and the resampler, the stepped
   loop.
 - Gone from alloy: every `sdl3::` type, and the `cfg(target_os =
   "android")` lines in the loop. The audio device hooks on background and
-  foreground become the OS layer's own business, since the audio device
+  foreground became the OS layer's own business, since the audio device
   lives there.
 
 This is rule 5 of the platform-layering memory: alloy is facts-based,
@@ -304,21 +308,17 @@ wants panning sets it directly with `setPan`.
 
 OS integration is spread over three crates:
 
-- **alloy**: the SDL pump and window (above), the audio device and the
-  mixer, the microphone, the camera, the power poll and the theme event
-  (the queries are ore's), `barcode.rs` (rxing, portable: forge). The
-  clipboard moved to ore (okf/done/clipboard-image.md); power, the theme,
-  thread placement and the Android JNI glue did too
-  (okf/done/ore-first-moves.md). The dialogs, the video plane, the redraw
-  answer and the vsync source are ore's (okf/plans/ore-pump-and-window.md).
+- **alloy**: names no SDL type since okf/done/ore-pump-and-window.md.
+  What remains of the migration there is the mixer (`alloy/src/audio/`)
+  and `barcode.rs` (rxing, portable), both to forge.
 - **forge**: content providers, process facts, subprocess, tty, the
   AMediaCodec decoder's JNI side, the WAV decoder in place of
   `SDL_LoadWAV`. `process::home_dir` delegates to `ore::folders::home_dir`
   (still a slice of `SDL_GetUserFolder` rebuilt from
   `HOME`/`USERPROFILE`).
-- **lattice**: nothing of the storage roots: the pref path is
-  `ore::folders::pref_dir`. One SDL hint for the GL library load on macOS
-  (`gl_libs.rs`) stays until the window part moves.
+- **lattice**: builds `ore::Platform` on the main thread before alloy or
+  forge start, and reaches ore for host concerns only. Nothing of the
+  storage roots: the pref path is `ore::folders::pref_dir`.
 
 A headless `flux` script has no per-app data directory, no locale, no
 power info and cannot open a link.
@@ -393,8 +393,10 @@ What the set says:
   `.so` files into it, so the Java side cannot change per app or per
   runtime (okf/backlog/android-per-app-libraries.md).
 - **Permissions**: one model across camera, microphone, location,
-  notifications and exact alarms; today `request_android_permission` in
-  alloy serves the camera and microphone only.
+  notifications and exact alarms; today `ore::permission::request` holds
+  the microphone alone. The camera's prompt is SDL's own at the device
+  open, read back through `ore::camera::Camera::permission`, and whether a
+  backend prompts at all is `ore::camera::permission_prompts`.
 - **Web shapes**: per feature, the standard name and the simplified
   contract (the solidrt lens), recorded in its backlog item.
 
@@ -420,20 +422,23 @@ New work lands right first; existing code moves when a feature touches
 it, not as a big-bang refactor.
 
 1. **Landing zone.** Create the OS crate with the main-thread bridge and
-   its first facilities, opening a link and locale. SDL init stays in
-   alloy for now: the OS crate's first facilities are window-free SDL
-   calls that work without alloy's context, and headless `flux` initializes
-   what it needs on its main thread, which is also its JS thread.
+   its first facilities, opening a link and locale. SDL init stayed in
+   alloy then (it is `ore::Platform::init` since
+   okf/done/ore-pump-and-window.md): the OS crate's first facilities are
+   window-free SDL calls that work without alloy's context, and headless
+   `flux` initializes what it needs on its main thread, which is also its
+   JS thread.
 2. **Rule.** Rewrite the placement rule (all six places are listed in
    okf/done/ore-landing-zone.md, work step 6): new
    work that reaches SDL or the OS goes into the OS crate; nothing new of
    that kind lands in alloy, forge or lattice.
-3. **Moves, as features touch them.** The pump and window interface (the
-   biggest single piece, mechanical, not a redesign), the audio device and
-   camera (with the mixer to forge), the Android glue, the pref-path
-   calls, forge's OS modules, `barcode.rs` to forge. The scheme
-   registration and the single-instance hand-off (`links.rs`) moved with
-   the link facility (okf/done/ore-landing-zone.md).
+3. **Moves, as features touch them.** Landed: the pump and window
+   interface, the audio device, the camera and the microphone, the Android
+   glue and the pref-path calls moved (okf/done/ore-first-moves.md,
+   okf/done/ore-pump-and-window.md). The scheme registration and the
+   single-instance hand-off (`links.rs`) moved with the link facility
+   (okf/done/ore-landing-zone.md). Remaining: the mixer to forge, forge's
+   OS modules, `barcode.rs` to forge.
 4. **Windowless run mode**, its own backlog item, before push, alarms or
    background sync.
 
@@ -446,8 +451,6 @@ it, not as a big-bang refactor.
   okf/backlog/android-per-app-libraries.md.
 - The SDL main thread: confirm that the first `SDL_Init` fixes it (the
   bridge's wake and run are confirmed, see "The main loop").
-- SDL init ownership once the window moves: the OS layer inits every
-  subsystem, on the host's main thread.
 - The windowless Android start: whether SDL's native library loads and
   initializes without `SDLActivity`, or the windowless host uses only our
   own JNI.

@@ -103,7 +103,7 @@ non-XR app shows in a headset.
 The Android glue builds without a headset but is first tested on one:
 the manifest entries that mark a VR app (the VR intent category, the
 head-tracking feature), the instance created from the Java VM and the
-activity (SDL3 hands both out; wrappers in `alloy/src/sdl_utils.rs`),
+activity (`ore::android` publishes both in ndk-context),
 whether SDL's own surface coexists with the session, what happens when
 the headset comes off or the system menu opens, refresh-rate selection,
 and performance.
@@ -129,7 +129,7 @@ and performance.
 ## Involves
 
 alloy (an `xr` module, a `DisplayContext` variant, the raster thread's
-submit path, a pacing source), `sdl_utils.rs` (Android activity and JNI
-wrappers), the lattice Android build (a VR manifest variant and the
+submit path, a pacing source), ore (the Android activity and JNI glue),
+the lattice Android build (a VR manifest variant and the
 loader), thin marshalling in `flux/src/alloy_plugins/`, `@solidrt/3d`
 (the pose camera and an XR rig), core (the quad-layer surface), docs.

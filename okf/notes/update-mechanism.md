@@ -247,8 +247,8 @@ territory. So the data-root resolution should resolve `cache/` to the
 platform cache dir on mobile instead of a subdir of the data root. On
 Android that is `SDL_GetAndroidCachePath()` (SDL_system.h, alongside the
 internal/external storage paths): SDL exposes it and sdl3-sys binds it,
-only the safe sdl3 crate has no wrapper, so it is a one-line sdl_utils
-call and NOT the JNI hop an earlier revision of this note assumed.
+only the safe sdl3 crate has no wrapper, so it is a one-line `sdl3::sys`
+call in ore and NOT the JNI hop an earlier revision of this note assumed.
 Caches are self-contained and refetchable, so the split loses nothing.
 
 The tree is IDENTICAL under every data root (decided; REVISED

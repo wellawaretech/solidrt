@@ -332,7 +332,7 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   swallowed one frame interval and made the decision depend on the order a
   frame and the resume crossed the channel in. `pause(at_ns)` and
   `resume(at_ns)` on the feeders' timeline (SDL ticks, from
-  `sdl_utils::ticks_ns`) make it exact: an input stamped inside the pause
+  `ore::time::ticks_ns`) make it exact: an input stamped inside the pause
   is dropped however late it arrives, and the excluded time is the
   difference of the two stamps.
 - **Unstamped frames take the nominal step.** The test camera (and any

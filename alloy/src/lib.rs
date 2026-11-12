@@ -1,6 +1,5 @@
 pub mod color;
 mod gl;
-pub mod sdl_utils;
 
 mod app;
 pub mod audio;
@@ -35,8 +34,6 @@ pub mod yuv;
 
 #[cfg(test)]
 mod tests;
-
-pub use sdl3;
 
 pub use app::{setup, App};
 pub use backend::DisplayContext;

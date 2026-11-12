@@ -19,7 +19,7 @@ SDL3 exposes it directly: `SDL_RumbleGamepad(pad, low, high, ms)` (two
 motor intensities 0..65535 and a duration, replacing any rumble in
 progress; 0/0 stops it) and `SDL_RumbleGamepadTriggers` for pads with
 trigger motors. The sdl3 crate wraps the first; check the second, and add
-the `sdl_utils.rs` wrapper if it is missing.
+a `sdl3::sys` call in `ore::gamepad` if it is missing.
 
 ## Shape
 

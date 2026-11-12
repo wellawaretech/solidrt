@@ -106,18 +106,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   could not build; the embed moves to a program crate (runtime/, the stock
   program and the shape of every custom one), the CLI package ships the
   bundles, and a custom runtime embeds them from its node_modules.
-- **[Move SDL out of alloy - the pump, the window, the GL surface and the devices into ore](plans/ore-pump-and-window.md)** [2026-11-12]
-  The biggest piece of okf/design/platform-layering.md still in alloy, widened
-  so the end state is compiler-checked - the platform vocabulary types first,
-  then SDL init and hints, the window and the GL surface with its loss
-  recovery, the event pump and its translation, the lifecycle watch, gamepads,
-  the Android touch, vsync and view glue, the dialogs, and the audio,
-  microphone and camera devices move into ore behind a `Platform` (a
-  plain-function pump, a waker, a lifecycle hook) and an owned `Window`
-  (commands, cursors, text input, a GL surface), until alloy keeps only the
-  frame loop, the pacing facts, the stepped loop and the mixer and drops its
-  `sdl3` dependency. Six steps, each a commit that builds; the mixer to forge,
-  forge's OS code and the windowless host stay their own items.
 - **[Spatial audio - emitter and listener nodes on the spatial core](plans/spatial-audio-emitters.md)** [2026-08-30]
   A playback bound to a spatial node (or a fixed position) and heard by a
   listener (a node, or a target's view - the camera), the core writing its
@@ -690,6 +678,12 @@ Shaped, not started.
   frame while the app keeps presenting partial frames, so on screen it reads
   as a logic bug (entities drawn after the throwing line vanish) and the only
   trace is a log line the reader has to think to look for.
+- **[Build and run the SDL move into ore on macOS and Windows](backlog/ore-pump-macos-windows-verification.md)** [2026-11-13]
+  The move of SDL out of alloy into ore (the window, the GL surface and its
+  loss recovery, the pump, the devices) was verified on Linux, the tablet and
+  the TV only; macOS and Windows never built or ran after it, so the bundled
+  GL library load, the recreated window after a context loss and the macOS
+  swap pacer are unconfirmed there.
 - **[Coalesce the per-event syncs of writes made outside a frame](backlog/outside-frame-sync-coalescing.md)** [2026-10-06]
   A pointer move handler that moves a sprite or a mesh flushes its layer or
   scene once per dispatched move, because every event is its own JS entry with
@@ -2567,6 +2561,18 @@ Finished, kept for the reasoning.
   the placement rule in all six places in the same change, and rename the MCP
   open_link tool to send_link; existing code moves later, as features touch
   it."
+- **[Move SDL out of alloy - the pump, the window, the GL surface and the devices into ore](done/ore-pump-and-window.md)** [2026-11-13]
+  The biggest piece of okf/design/platform-layering.md still in alloy, widened
+  so the end state is compiler-checked - the platform vocabulary types first,
+  then SDL init and hints, the window and the GL surface with its loss
+  recovery, the event pump and its translation, the lifecycle watch, gamepads,
+  the Android touch, vsync and view glue, the dialogs, and the audio,
+  microphone and camera devices move into ore behind a `Platform` (a
+  plain-function pump, a waker, a lifecycle hook) and an owned `Window`
+  (commands, cursors, text input, a GL surface), until alloy keeps only the
+  frame loop, the pacing facts, the stepped loop and the mixer and drops its
+  `sdl3` dependency. Six steps, each a commit that builds; the mixer to forge,
+  forge's OS code and the windowless host stay their own items.
 - **[overflow + viewBox clips the wrong rectangle](done/overflow-viewbox-clip.md)** [2026-08-08]
   The overflow clip rect took the element's box extent as a raw number and
   applied it in the child's design (pre-viewBox) space, so a magnifying fit

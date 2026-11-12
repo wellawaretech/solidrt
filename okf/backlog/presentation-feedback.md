@@ -50,7 +50,7 @@ needs. Driver support is the question: likely absent on the TV's Mali
 r20p0, present on the Adreno 610 tablet and the Pixel 7 to be confirmed by
 listing the client context's extensions first. Access through SDL's EGL
 handles (`SDL_EGL_GetCurrentDisplay`, `SDL_EGL_GetWindowSurface`) in
-`sdl_utils.rs`.
+`ore::gl_surface`.
 
 **Wayland, `wp_presentation`.** The compositor answers each committed
 frame with the presentation time, the refresh duration and the sequence

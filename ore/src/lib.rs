@@ -30,7 +30,7 @@
 //! vocabulary. On Android it publishes the JavaVM and the activity and is
 //! the JNI way into the activity (`android`). forge's and lattice's OS code
 //! moves in as features touch it, not before
-//! (okf/plans/ore-pump-and-window.md).
+//! (okf/design/platform-layering.md, Migration).
 
 #[cfg(target_os = "android")]
 pub mod android;

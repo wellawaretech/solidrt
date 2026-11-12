@@ -90,7 +90,7 @@ struct Session {
   /// starting.
   request: Option<OpenRequest>,
   /// When the session was opened (restarted when a deferred open gets its
-  /// device); drives `INIT_DEADLINE` and the Linux `PENDING_DEADLINE`.
+  /// device); drives `INIT_DEADLINE` and `PENDING_DEADLINE`.
   opened_at: std::time::Instant,
   /// Permission granted; the producer starts and the texture is created on
   /// the first frame, since the upright size depends on the per-frame
@@ -113,21 +113,16 @@ struct Session {
 }
 
 /// How long a session may sit `Pending` before it is failed and the device
-/// released. Linux only: neither Linux backend ever shows a consent prompt, so
-/// Pending this long is always a wedged backend, not a user deciding - SDL's
-/// pipewire backend reports permission only when the pw stream starts
-/// streaming and silently swallows the stream ERROR state, so a failed
-/// negotiation stays PENDING forever (observed with a working webcam,
-/// 2026-08-01). Without the deadline the open() promise never settles, the JS
-/// side has no handle to close, and the device stays held until the engine
-/// exits ("Camera already opened" on every retry). On Android/macOS/Windows
-/// Pending legitimately means the OS permission dialog is up, so no deadline
-/// there.
-#[cfg(target_os = "linux")]
+/// released. Applied only where the backend shows no consent prompt
+/// (`ore::camera::permission_prompts()` false), since there a long Pending is
+/// a wedged backend, not a user deciding. Without the deadline the open()
+/// promise never settles, the JS side has no handle to close, and the device
+/// stays held until the engine exits ("Camera already opened" on every
+/// retry).
 const PENDING_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// How long an open may wait for the camera subsystem to come up before the
-/// session is failed. Every platform, unlike `PENDING_DEADLINE`: init never
+/// session is failed. Every backend, unlike `PENDING_DEADLINE`: init never
 /// waits on the user (no platform prompts at init, only at open), so past
 /// this it is a wedged backend - on a Raspberry Pi 4 the v4l2 backend never
 /// returns (see `ore::camera::start`). A healthy init takes
@@ -394,8 +389,10 @@ impl crate::context::Context {
         let noted = session.producer.is_some() && self.pump_tap(session);
         // Still Pending covers both "no permission" and "approved but no
         // first frame": either way the backend never delivered.
-        #[cfg(target_os = "linux")]
-        if matches!(session.status, CameraStatus::Pending) && session.opened_at.elapsed() >= PENDING_DEADLINE {
+        if matches!(session.status, CameraStatus::Pending)
+          && !ore::camera::permission_prompts()
+          && session.opened_at.elapsed() >= PENDING_DEADLINE
+        {
           log::warn!(
             "[camera] start timed out after {}s (backend delivered neither permission nor a frame); closing",
             PENDING_DEADLINE.as_secs()

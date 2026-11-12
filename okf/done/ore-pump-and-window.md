@@ -2,6 +2,7 @@
 title: Move SDL out of alloy - the pump, the window, the GL surface and the devices into ore
 description: The biggest piece of okf/design/platform-layering.md still in alloy, widened so the end state is compiler-checked - the platform vocabulary types first, then SDL init and hints, the window and the GL surface with its loss recovery, the event pump and its translation, the lifecycle watch, gamepads, the Android touch, vsync and view glue, the dialogs, and the audio, microphone and camera devices move into ore behind a `Platform` (a plain-function pump, a waker, a lifecycle hook) and an owned `Window` (commands, cursors, text input, a GL surface), until alloy keeps only the frame loop, the pacing facts, the stepped loop and the mixer and drops its `sdl3` dependency. Six steps, each a commit that builds; the mixer to forge, forge's OS code and the windowless host stay their own items.
 created: 2026-11-12
+completed: 2026-11-13
 ---
 
 # Move SDL out of alloy: the pump, the window, the GL surface and the devices into ore
@@ -413,7 +414,27 @@ Each step is a commit that builds and passes the checks below.
    ..."), ore's crate doc, and the backlog items that link the moved files
    by path (android-keyboard-capability, desktop-widget-window,
    window-size-prop, android-microphone-dead-after-background,
-   ios-port-readiness).
+   ios-port-readiness). Done 2026-11-13, with these calls:
+   `iostream_from_reader` and its test went (no in-tree user) rather than
+   moving; the camera's Linux-only `PENDING_DEADLINE` lost its cfg and is
+   applied where `ore::camera::permission_prompts()` is false, a fact keyed
+   on SDL's camera driver name (v4l2 and pipewire never prompt; any other
+   or not yet known backend may, so it gets no deadline) rather than on
+   the OS; `present_fence_probe` stays in alloy, rewritten over
+   `Platform::init`, `open_window`, `create_gl_surface` and a zero-timeout
+   `Platform::wait` as its drain, and runs its four phases as before;
+   `event_time_probe` moved to `ore/examples/` unchanged, since it measures
+   SDL's raw event timestamp against the receipt, which a rewrite over
+   `event_instant` would hide; alloy's stale member `Cargo.lock` (from the
+   restructure, unused in the workspace) went too; the test that read
+   "SDL's" error text is named for the surface's. Alloy's remaining
+   `cfg(target_os)` lines are `frame_timestamps.rs`, `egl_headless.rs` and
+   the `cfg!` list of `RECOVERY_RECREATES_WINDOW` (decision 6). Verified:
+   `cargo tree -p alloy --depth 1` names no `sdl3`; the alloy, ore (with
+   and without `window`) and flux suites pass; `camera_dump` opens the
+   webcam and saves frames; `make client` builds.
+   The macOS and Windows builds and runs, still open after steps 1 to 4,
+   are okf/backlog/ore-pump-macos-windows-verification.md.
 
 Tests of moved code move with it into `ore/src/tests/` (`keymap.rs`,
 `dialog.rs`, the SDL half of `context_loss.rs`); alloy keeps its

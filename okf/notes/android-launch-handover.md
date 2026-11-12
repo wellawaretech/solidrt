@@ -57,5 +57,5 @@ TPM171E TV (Android 8, API 26) while building
 - jni 0.22's `EnvUnowned::with_env` creates no JNI frame. On a thread that
   never returns to Java (SDL's), every local reference made inside it
   stays until the thread ends, unless the code makes its own frame
-  (`with_local_frame`) or deletes it. `sdl_utils::with_android_activity`
+  (`with_local_frame`) or deletes it. `ore::android::with_activity`
   does both since 2026-11-01.

@@ -552,7 +552,7 @@ pub fn physical_keyboard() -> bool {
 static HARDWARE_KEYBOARD: AtomicBool = AtomicBool::new(false);
 
 /// Set from the platform (the Android JNI native, forwarded by alloy until
-/// step 3 of okf/plans/ore-pump-and-window.md); thread-safe.
+/// step 3 of okf/done/ore-pump-and-window.md); thread-safe.
 pub fn set_hardware_keyboard(present: bool) {
   HARDWARE_KEYBOARD.store(present, Ordering::Relaxed);
 }

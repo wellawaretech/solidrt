@@ -8,9 +8,10 @@ use crate::raster::is_context_lost_error;
 use crate::raster::note_guilty_reset;
 
 #[test]
-fn sdl_error_text_names_a_lost_context() {
-  // SDL's swap and make-current errors carry the EGL error name (measured
-  // on ANGLE/D3D11 after a device removal).
+fn surface_error_text_names_a_lost_context() {
+  // The GL surface's swap and make-current error text (what ore's GlSurface
+  // reports) carries the EGL error name (measured on ANGLE/D3D11 after a
+  // device removal).
   assert!(is_context_lost_error(
     "unable to show color buffer in an OS-native window (call to eglSwapBuffers failed, reporting an error of EGL_CONTEXT_LOST)"
   ));

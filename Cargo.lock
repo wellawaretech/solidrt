@@ -89,7 +89,6 @@ dependencies = [
  "lyon_path",
  "ore",
  "rxing",
- "sdl3",
  "skrifa",
  "svgtypes",
  "taffy",

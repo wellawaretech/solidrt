@@ -8,7 +8,6 @@ name = "basic"
 
 [target.'cfg(target_os = "android")'.dependencies]
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys"] }
-sdl3 = { version = "=0.20.0", features = ["build-from-source"] }
 
 # clock_gettime(CLOCK_MONOTONIC) on Android for the frame timestamp clock
 # (frame_timestamps.rs).
@@ -21,18 +20,15 @@ libc = "=0.2.191"
 [target.'cfg(all(target_os = "android", target_arch = "arm"))'.dependencies]
 impellers = { version = "=0.4.3", features = ["bindgen_live"] }
 
-# Desktop targets build SDL statically (build-from-source-static).
+# Desktop targets link Impeller statically (static_link).
 [target.'cfg(target_os = "macos")'.dependencies]
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
 
 [dependencies]
 log = { workspace = true }

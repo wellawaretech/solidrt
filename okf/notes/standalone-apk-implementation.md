@@ -22,7 +22,7 @@ Everything below shipped 2026-09-01 and was verified on a real arm64 device
   (checked-in dev key), icon.ts (hand-assembled 1x1 background PNG),
   apk.ts (`patchApk` orchestrator).
 - Runtime: `not(go)` SDL_main split in lattice/src/lib.rs boots
-  `assets/app.solapp` in place via `alloy::sdl_utils::packed_asset_location`
+  `assets/app.solapp` in place via `ore::android::packed_asset_location`
   (JNI `sourceDir` + AAssetManager fd for offset/len) and
   `forge::trailer::read_at`; shared loader in lattice/src/payload.rs.
 - Android: SolidRTActivity (src/main) + per-flavor MainActivity subclasses;

@@ -26,8 +26,8 @@ hidden; `keyboardVisibility`/`keyboardHeight` already exists as a signal, so
 the ingredients are there.
 
 **(b) `SDL_HasKeyboard` may return true on touch-only Android.** It feeds the
-sticky inputDevices event through `has_keyboard`
-([alloy/src/sdl_utils.rs:62](../../alloy/src/sdl_utils.rs)). Read SDL's Android
+sticky inputDevices event through ore's `has_keyboard`
+([ore/src/window.rs](../../ore/src/window.rs)). Read SDL's Android
 backend and check whether it calls `SDL_AddKeyboard` unconditionally.
 
 ## How to tell them apart
@@ -39,8 +39,8 @@ Devices already claims a keyboard before any typing, (b) is in play.
 If presence is the one misreporting, the choice is to fix detection on Android
 (a JNI `Configuration.keyboard == KEYBOARD_QWERTY` query) or to stop letting
 presence win for keyboard on Android and rely on usage alone. Note
-`sdl_utils.rs:80` already ORs `has_keyboard()` with a separate
-`hardware_keyboard()` signal, so part of the machinery for the first option may
-exist.
+`ore::window::input_devices` already ORs `has_keyboard()` with a separate
+`hardware_keyboard()` signal (through `physical_keyboard`), so part of the
+machinery for the first option may exist.
 
 Source: root TODO.md, migrated 2026-08-14.

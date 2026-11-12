@@ -46,21 +46,22 @@ restarts by itself) reopens nothing.
 
 ## What it involves
 
-The playback workaround (`device_foregrounded` in
-`alloy/src/audio/device.rs`) is the model: after a resume, a stream that
+The playback workaround (the resume check `foregrounded` in
+`ore/src/audio.rs`, run from ore's lifecycle watch) is the model: after a resume, a stream that
 does not deliver within a window is destroyed and opened again on the same
 state. What is different for the microphone:
 
 - **Several streams.** Each session owns its own recording stream
-  (`Source::Device` in `alloy/src/microphone/mod.rs`), each a logical device
-  on a physical one. SDL closes the physical device, and so ends its wedged
+  (`Source::Device` in `alloy/src/microphone/mod.rs`, which holds an
+  `ore::audio::Recording`), each a logical device on a physical one. SDL closes the physical device, and so ends its wedged
   device thread, only when its last logical device closes. So the reopen
   must destroy every session's stream on that physical device before it
   opens any of them again. Reopening one session while another stays open
   on the same device keeps the dead device.
 - **The thread.** The sessions live in a `RefCell` on the UI thread, while
-  the resume is seen on the main thread (the event watch in
-  `alloy/src/app.rs`). Either the main thread only marks the resume (an
+  the resume is seen on the main thread (ore's lifecycle watch,
+  `Platform::on_lifecycle` in `ore/src/platform.rs`, where
+  okf/done/ore-pump-and-window.md lands the reopen). Either the main thread only marks the resume (an
   atomic, as `TRANSITIONS` does for playback) and the UI thread checks and
   reopens, for example from `pump_microphone`/`read_microphone`, or the
   session state moves behind a lock. The first keeps the registry as it is.

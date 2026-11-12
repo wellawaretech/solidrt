@@ -14,7 +14,7 @@ use std::time::Duration;
 use sdl3::sys::camera::{
   SDL_AcquireCameraFrame, SDL_Camera, SDL_CameraID, SDL_CameraPermissionState, SDL_CameraPosition, SDL_CameraSpec,
   SDL_CloseCamera, SDL_GetCameraFormat, SDL_GetCameraName, SDL_GetCameraPermissionState, SDL_GetCameraPosition,
-  SDL_GetCameraSupportedFormats, SDL_GetCameras, SDL_OpenCamera, SDL_ReleaseCameraFrame,
+  SDL_GetCameraSupportedFormats, SDL_GetCameras, SDL_GetCurrentCameraDriver, SDL_OpenCamera, SDL_ReleaseCameraFrame,
 };
 use sdl3::sys::init::{SDL_InitSubSystem, SDL_INIT_CAMERA};
 use sdl3::sys::pixels::{SDL_COLORSPACE_SRGB, SDL_PIXELFORMAT_MJPG, SDL_PIXELFORMAT_RGBA32};
@@ -149,6 +149,39 @@ fn subsystem_init() -> bool {
   // on its worker, and no other SDL_InitSubSystem call may race it (see
   // `start`).
   unsafe { SDL_InitSubSystem(SDL_INIT_CAMERA) }
+}
+
+/// Whether opening a camera on this backend can show a consent prompt the
+/// user answers, so a `Pending` permission may be a person deciding. False
+/// means a long `Pending` is a wedged backend, and an embedder may fail the
+/// open after a deadline.
+///
+/// Neither Linux backend ever shows a consent prompt. SDL's pipewire backend
+/// reports permission only when the pw stream starts streaming and silently
+/// swallows the stream ERROR state, so a failed negotiation stays PENDING
+/// forever (observed with a working webcam, 2026-08-01). On Android, macOS
+/// and Windows, Pending legitimately means the OS permission dialog is up.
+///
+/// Before the subsystem is up (`start` not yet `Ready`) no backend is known,
+/// and the answer is true. The default leans toward "a prompt may be up": a
+/// backend this function does not know gets no deadline rather than a wrong
+/// one.
+pub fn permission_prompts() -> bool {
+  // SAFETY: SDL_GetCurrentCameraDriver takes no arguments and is thread
+  // safe; it returns a static NUL-terminated string, or null when the camera
+  // subsystem is not initialized, and the string is copied out at once.
+  let name = unsafe {
+    let raw = SDL_GetCurrentCameraDriver();
+    (!raw.is_null()).then(|| std::ffi::CStr::from_ptr(raw).to_string_lossy().into_owned())
+  };
+  prompts_for_driver(name.as_deref())
+}
+
+/// The prompt fact for an SDL camera driver name (None: no driver yet).
+pub(crate) fn prompts_for_driver(name: Option<&str>) -> bool {
+  // SDL's Linux camera backends; neither has a consent prompt. Every other
+  // name, known or new, may prompt.
+  !matches!(name, Some("v4l2" | "pipewire"))
 }
 
 /// Which way a camera faces.

@@ -15,9 +15,9 @@ rediscover them. It is not a plan for the port.
 
 ## Seams the port fills
 
-- **The suspend hold.** `alloy::SuspendHold` (alloy/src/event.rs) is taken
-  by the event watch inside the platform callback at `WILL_ENTER_BACKGROUND`
-  and dropped when the suspend hook answers or times out. On iOS its
+- **The suspend hold.** `ore::lifecycle::SuspendHold` (ore/src/lifecycle.rs)
+  is taken inside ore's lifecycle watch, in the platform callback at
+  `WILL_ENTER_BACKGROUND`, and dropped when the suspend hook answers or times out. On iOS its
   implementation is a UIKit background task assertion: begin in `take`, end
   in `Drop`, and end again in the expiration handler. The hook's deadline
   (`SUSPEND_HOOK_DEADLINE` in lattice/src/lib.rs, 10 s) must sit inside what
@@ -35,8 +35,9 @@ rediscover them. It is not a plan for the port.
   wording; which one is the port's call, made against what iOS actually
   restores by then.
 - **No GPU work in the background.** iOS kills an app that touches the GPU
-  while backgrounded. `WINDOW_BACKGROUNDED` (alloy/src/lib.rs, from the same
-  `WILL_ENTER_BACKGROUND` watch) already stops window frames; the port also
+  while backgrounded. `WINDOW_BACKGROUNDED` (alloy/src/lib.rs, set by the closure alloy
+  registers with `Platform::on_lifecycle`, at the same
+  `WILL_ENTER_BACKGROUND`) already stops window frames; the port also
   has to hold the offscreen work that still runs at the top of the raster
   `frame` (`flush_dirty`, shader-target writes) and any texture uploads
   queued behind it.

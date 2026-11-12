@@ -6,7 +6,7 @@ created: 2026-11-12
 
 # The TV reports file dialogs as available and answers every request with a cancel
 
-Seen 2026-11-12 while verifying step 3 of okf/plans/ore-pump-and-window.md
+Seen 2026-11-12 while verifying step 3 of okf/done/ore-pump-and-window.md
 on the TV (TPM171E, Android TV 8, the 32-bit build):
 
 - `SolidRTActivity.dialogsAvailable` resolves `ACTION_OPEN_DOCUMENT` with

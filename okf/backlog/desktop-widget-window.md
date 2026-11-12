@@ -20,11 +20,12 @@ TV they do nothing, because there the app is the whole screen.
 
 **Undecorated** and **always on top** can change while the window is open:
 `SDL_SetWindowBordered` (the sdl3 crate's `Window::set_bordered`) and
-`SDL_SetWindowAlwaysOnTop` (missing from the sdl3 crate, so a wrapper goes
-in `alloy/src/sdl_utils.rs`). They are plain `<window>` props on the
+`SDL_SetWindowAlwaysOnTop` (missing from the sdl3 crate, so a `sdl3::sys`
+call goes in `ore::window`). They are plain `<window>` props on the
 `title`/`fullscreen` path: the element sends an `AlloyCommand`
 ([kinds/window.rs](../../alloy/src/rendertree/kinds/window.rs)) and the
-platform loop applies it ([app.rs](../../alloy/src/app.rs), `SetFullscreen`).
+platform loop applies it on ore's `Window` ([app.rs](../../alloy/src/app.rs),
+`SetFullscreen`).
 
 **Drag-to-move region**: on Wayland only the compositor can move a
 window, and only when it is asked during a pointer press. So the portable
@@ -42,15 +43,18 @@ way:
 - `SDL_WINDOW_TRANSPARENT` exists only as a creation flag (set it with
   `WindowBuilder::set_window_flags`), and the GL config needs alpha bits.
   Today only Android requests alpha
-  ([gl/context.rs](../../alloy/src/gl/context.rs), `set_alpha_size`).
-- The window is created in `setup_video` before any JS runs. In the dev
+  ([ore/src/window/open.rs](../../ore/src/window/open.rs), `set_alpha_size`).
+- The window is opened by `ore::window::open` from alloy's `setup` before
+  any JS runs. In the dev
   player one window serves the launcher and every app it loads. So an app's
   declaration either goes in the package.json `solidrt` config, read
   before the window is made (a packed app), or the runtime recreates the
   window when an app asks for it. The context-loss recovery already
   rebuilds the window and its GL context (`RECOVERY_RECREATES_WINDOW`,
   app.rs) and could be the mechanism. Every recreation path (that one, and
-  the single-sample retry in `setup_video`) must keep the flags.
+  the single-sample retry in
+  [ore/src/window/open.rs](../../ore/src/window/open.rs)) must keep the
+  flags.
 - Every path to the screen must keep alpha. The frame draw clears to
   transparent black, but a window shader pass clears to opaque black
   first ([gl/pass.rs](../../alloy/src/gl/pass.rs)). The offscreen rig

@@ -6,7 +6,7 @@ created: 2026-11-12
 
 # The screen keyboard's inset reads 0 on the tablet
 
-Seen 2026-11-12 while verifying step 2 of okf/plans/ore-pump-and-window.md
+Seen 2026-11-12 while verifying step 2 of okf/done/ore-pump-and-window.md
 on the maintainer's tablet (SM-T500, Android 12, display scale 1.5):
 
 - A focused field with `onTextInput`, tapped, opens the docked Samsung
@@ -21,7 +21,7 @@ on the maintainer's tablet (SM-T500, Android 12, display scale 1.5):
   `keyboardHeight()` never moves and content never lifts.
 - The older release player installed on the same tablet (built before the
   pump move) reports the same 0, so the gap predates
-  okf/plans/ore-pump-and-window.md step 2.
+  okf/done/ore-pump-and-window.md step 2.
 
 So the Java side never calls `nativeKeyboardInset` with a nonzero value, or
 calls it with 0: `SolidRTActivity` sets `setOnApplyWindowInsetsListener` on

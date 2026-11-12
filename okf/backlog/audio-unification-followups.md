@@ -16,7 +16,7 @@ Each entry is small on its own; pick one, give it its own item if it grows.
   rendered the first ~140 ms of a cold device ahead of real time, and the
   speaker path below SDL is what `AUDIO_OUTPUT_LATENCY_US` guesses at (60
   ms, TV-tuned). AAudio has `getTimestamp`, CoreAudio and WASAPI the like;
-  an SDL-side wrapper in `sdl_utils.rs` would need SDL to expose it first
+  an SDL-side call in `ore::audio` would need SDL to expose it first
   (upstream ask), else the constant becomes the app setting the
   `forge/src/video/audio.rs` comment already names.
 - **`PcmSinkHandle::position_at_us` is unused.** The callback publishes

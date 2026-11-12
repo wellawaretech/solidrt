@@ -54,11 +54,11 @@ The `title`/`fullscreen` path, one more prop:
   [properties/window.rs](../../flux/src/alloy_plugins/properties/window.rs):
   decode and validate (finite, positive, whole numbers; throw in dev).
 - The platform loop applies it next to `SetFullscreen`
-  ([app.rs](../../alloy/src/app.rs)) with `Window::set_size`. The resulting
-  `AlloyEvent::Resize` feeds layout as it does for a user drag. This stays
-  in alloy although CLAUDE.md moves alloy's SDL window to ore "as features
-  touch it": ore has no window part yet, and moving the whole window is not
-  this item.
+  ([app.rs](../../alloy/src/app.rs)) on ore's `Window`. The command is
+  applied by alloy's loop, so the new size call is a `Window::set_size`
+  method in [ore/src/window.rs](../../ore/src/window.rs) and one arm in
+  alloy's loop. The resulting `AlloyEvent::Resize` feeds layout as it does
+  for a user drag.
 - `WindowProps` in types.d.ts and flux-types, the read-back in
   [properties/read.rs](../../flux/src/alloy_plugins/properties/read.rs), the
   docs and the core AGENTS.md.
@@ -84,7 +84,7 @@ The `title`/`fullscreen` path, one more prop:
      from the manifest or the flag, and the prop only changes it while
      running.
 - **Centering.** The window is created with `position_centered()`
-  ([app.rs](../../alloy/src/app.rs), `setup_video`). A resize applied
+  ([ore/src/window/open.rs](../../ore/src/window/open.rs)). A resize applied
   after creation grows from the top-left corner on X11, Windows and macOS,
   so a prop at mount leaves the window off-center. Either re-center when
   the first size is applied, or let option 3 above make the question moot.
