@@ -64,6 +64,6 @@ the hat's and the cape's render pixel-identical (0 of 921600 pixels
 differ, tolerance 0); the grafted brim and plume match hand-socketed
 references on the body's Head within 2/255; the shifted-bind piece
 throws; disposing the hat leaves the cape identical and the body's rows
-at their own count. The heroes-v2 demo migration (delete
+at their own count. The character demo's migration (delete
 `bindRigs`/`poseRigs`, one `bindSkeleton` per worn piece) is the
 consumer's side and closes its feedback items 11 and 15.

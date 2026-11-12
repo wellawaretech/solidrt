@@ -60,6 +60,9 @@ network itself, starts after a short buffer and never needs the whole file.
   just past the 40 ms threshold (Findings).
 - Not yet run on either device: memory under the byte cap at a high
   bitrate.
+- Closed 2026-11-12. The close-during-stall hold went with the no-join
+  close (okf/done/video-texture-off-frame-loop.md); its TV re-read and the
+  high-bitrate memory check are filed in tiny.md (Runtime).
 
 ## Two modes
 

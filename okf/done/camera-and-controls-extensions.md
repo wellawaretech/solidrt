@@ -1,6 +1,6 @@
 ---
 title: Camera and controls extensions
-description: The orbit control's gap against the reference set, shaped under okf/design/camera-controls.md - a push through a model (the fly demo's ask, which a bounded dolly can never do), zoom-to-cursor and a dynamic pivot built into the component, an orbit point off the view axis, a follow source with Cinemachine's framing, an occlusion constraint, a shake lane, the map preset and double-tap to focus; with the survey of Three, camera-controls, Babylon, Cinemachine and Godot verified against current sources.
+description: The orbit control's gap against the reference set, shaped under okf/design/camera-controls.md - a push through a model (a long-model demo's ask, which a bounded dolly can never do), zoom-to-cursor and a dynamic pivot built into the component, an orbit point off the view axis, a follow source with Cinemachine's framing, an occlusion constraint, a shake lane, the map preset and double-tap to focus; with the survey of Three, camera-controls, Babylon, Cinemachine and Godot verified against current sources.
 created: 2026-09-17
 ---
 
@@ -14,7 +14,7 @@ frame is [3d-first-person-reference-frame](3d-first-person-reference-frame.md).
 
 ## Symptom
 
-In the fly connectome demo (a long brain plus nerve cord model) a
+In a demo with one long, thin model (a brain plus its nerve cord) a
 two-finger pinch always heads for one point and stops there. The user
 wants the pinch to **move through the model** in a direction, "a move,
 not a zoom", to reach any region of it.
@@ -26,7 +26,7 @@ it; and the distance clamps at `minDistance`, where `anchored()` derives
 the target from the ratio that survived clamping, so the target stops
 too ("once distance pins at a clamp the target stops moving too").
 
-The demo's stopgap today (`demoes/fly/src/index.tsx`, marked TEMPORARY
+The demo's stopgap today (its entry, outside the repo, marked TEMPORARY
 and pointing here) bypasses the control's axes: a `push` gesture on the
 input map moves the target along the screen ray under the fingers by a
 fixed world step per octave through `orbit.set`, and a `turn` gesture
@@ -126,7 +126,7 @@ control; the shared framing and lane math is written once in core (the
    that would cross `minDistance` moves eye and target together by the
    overflow, along the view axis, or along the anchor ray when the step
    is anchored; `maxDistance` the same outward. Speed is continuous
-   across the floor. The fly demo's `push` gesture goes; `orbitBindings`
+   across the floor. The demo's `push` gesture goes; `orbitBindings`
    is unchanged (the pinch and the wheel are still `zoom`).
 2. **Built-in anchor and pivot.** `anchor?: "pick" | "plane" | false` on
    `<OrbitCamera>`: the component builds `zoomAnchor` from `scene.pick`
@@ -140,7 +140,7 @@ control; the shared framing and lane math is written once in core (the
 3. **Orbit point off the view axis.** The offset lane
    (`offset` in viewport fractions, the design's lane) plus
    `setOrbitPoint(point)`: target to the point, offset set so the picture
-   does not change. The fly demo's `turn` gesture goes: a drag after a
+   does not change. The demo's `turn` gesture goes: a drag after a
    push orbits the model's centre through the ordinary `rotate` axis.
 4. **Follow source with framing.** `follow(point)` / `unfollow()` on the
    control (the 2d verbs); `follow?: { damping, deadZone, softZone,
@@ -169,7 +169,7 @@ control; the shared framing and lane math is written once in core (the
    defaults (anchor on, push off, follow off) and show them in
    `orbitBindings`' docs and the pick example; `orbit.test.ts` covers
    the push, the lanes, the follow framing and the occlusion return;
-   the fly demo moves to the built-ins and its TEMPORARY block goes.
+   the demo moves to the built-ins and its TEMPORARY block goes.
 
 Not in this item: a trackball/arcball control and object manipulation
 controls (`ideas.md` lines); the first-person reference frame (its own
@@ -179,8 +179,9 @@ item); shots and blends (`ideas.md`, shaped after the pipeline lands).
 
 - Items 1 to 8 landed 2026-09-22 with the shared core module
   (`packages/core/src/camera-control.ts`), the view's projection
-  methods and `mapBindings`; item 9's fly demo migration is the open
-  step (the demo lives in `~/solidrt/demoes`, done with the user).
+  methods and `mapBindings`; item 9's demo migration (outside the repo)
+  is the open step, tracked under Known limits in
+  okf/design/camera-controls.md. Closed 2026-11-12.
 - The push along the anchor's ray keeps the anchor's pixel exactly:
   moving the eye along the eye-to-anchor line leaves the anchor on the
   same screen ray, so an anchored pinch through a model never drifts.

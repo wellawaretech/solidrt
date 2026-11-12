@@ -38,7 +38,7 @@ records are present from creation casts from a cold start.
 
 A scene whose receivers are the first comparison users in the process,
 with every shadow caster at record count 0 during the first frames (the
-tower-toppling demo publishes its first bricks a few frames after
+physics demo publishes its first bricks a few frames after
 mount): the shadow atlas holds only its clear when the scene's `phong()`
 program first samples it, that program is poisoned, and no shadow lands
 on the ground until an engine swap compiles the material again. A reload

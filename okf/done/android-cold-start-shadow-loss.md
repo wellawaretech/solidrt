@@ -1,6 +1,6 @@
 ---
 title: A record-mesh caster that starts empty casts no shadow after a cold start on Android
-description: On the SM-T500 the tower-toppling demo casts no shadows when the Player starts cold, while a reload of the same app, or any 3d scene run before it in the same process, shows them; the trigger is a shadow tile whose every caster had record count 0 at creation and got its records in the first frames, and nothing short of a new engine recovers it.
+description: On the SM-T500 a physics demo (a tower of bricks) casts no shadows when the Player starts cold, while a reload of the same app, or any 3d scene run before it in the same process, shows them; the trigger is a shadow tile whose every caster had record count 0 at creation and got its records in the first frames, and nothing short of a new engine recovers it.
 created: 2026-10-06
 completed: 2026-10-06
 ---
@@ -9,7 +9,7 @@ completed: 2026-10-06
 
 ## Symptom
 
-The tower-toppling demo on its own runtime, launched fresh on the SM-T500
+The physics demo on its own runtime, launched fresh on the SM-T500
 tablet (Adreno 610, `am start -S` of the Player, the launcher engine then
 the demo engine): the tower casts no shadow on the ground. The same app
 reloaded in place (`/reload`, an engine swap) casts. The same app loaded

@@ -32,8 +32,8 @@ list, reads the pixels back to the CPU, and uploads them again as a
 registered texture, returning the id. Both callers then immediately read
 that texture back down and destroy it:
 
-- JS `captureSnapshot` (flux/src/plugins/gui/gpu.rs) - projects/linux
-  bakes its terminal glyph atlas by capturing 64 laid-out cells per batch,
+- JS `captureSnapshot` (flux/src/plugins/gui/gpu.rs) - a terminal-emulator
+  project outside the repo bakes its glyph atlas by capturing 64 laid-out cells per batch,
   calling `readTexture` on each, keeping the red channel as coverage, then
   `destroyTexture`.
 - MCP `get_snapshot` (lattice/src/go/connection.rs `request_snapshot`) -

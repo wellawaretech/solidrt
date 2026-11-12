@@ -83,7 +83,7 @@ and the vertical option without a client.
   frame-lengths of animation time (readings of 18.7 and 20.6 frames for
   N = 20); single steps do. Compare per-step deltas, or pose against
   delivered within one run, never a batch against arithmetic.
-- Dota (heroes-v2) rigs never turn through clips (every net yaw under a
+- Dota rigs (the character demo) never turn through clips (every net yaw under a
   degree; Lina's run is authored in place with zero drift) - a game
   cannot assume clips carry travel, so a controller path that treats
   `rootDelta()` as one optional input is the one that works everywhere.

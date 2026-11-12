@@ -9,7 +9,7 @@
 //! In the headless mode the clock is the virtual frame time: the embedder
 //! sets it before each frame it steps (`set_virtual_ns`),
 //! `now_ns` reads it, and `stepped` says so, so a producer never sleeps
-//! against it (okf/plans/video-texture-off-frame-loop.md, section 8).
+//! against it (okf/done/video-texture-off-frame-loop.md, section 8).
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::OnceLock;

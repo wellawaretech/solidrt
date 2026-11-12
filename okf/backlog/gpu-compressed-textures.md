@@ -494,8 +494,8 @@ answered yet; ask before building.
    forms, inside the APK's assets for an APK. Where it goes per output
    form is a packaging decision.
 2. **Sponza: which asset.** The user called the Khronos sample on disk
-   (`~/solidrt/demoes/sponza/model/Sponza`) "a very old version", and
-   separately pointed at that demo for its lighting. Whether the size
+   "a very old version", and separately pointed at a Sponza viewer
+   outside the repo for its lighting. Whether the size
    figures should be redone on another asset was asked and not
    answered. What does not depend on the asset (a quarter of the
    texture memory, the load path) is measured.
@@ -530,7 +530,7 @@ The order is a suggestion put to the user, not yet confirmed.
    Khronos KTX guide and glTF-Transform (ETC1S 0.75 for color, UASTC
    0.9 for normal and data; `data` was first ETC1S on a recommendation
    made before that guidance was looked up). The comparison images
-   were made in the Sponza demo's scene (`probes/sponza-compare/`) and
+   were made in the Sponza scene (`probes/sponza-compare/`) and
    live in a session scratchpad, so they are gone; remake them for the
    judgment. `encodeTexture`'s own default of 0.5 was picked before
    anyone knew quality drives RDO, and effort is upstream's default,
@@ -803,8 +803,8 @@ asset:
 | `.sol3m` | | 49569 KiB | 37102 KiB | 46637 KiB |
 
 Texture bytes are 90.7 MB either way. The two bakes against the
-uncompressed one, rendered in the Sponza demo's own scene
-(`probes/sponza-compare/`, a copy of its sources run on the repo's
+uncompressed one, rendered in the Sponza scene
+(`probes/sponza-compare/`, a copy of a viewer's sources run on the repo's
 packages, five fixed poses, clock frozen), PSNR of the rendered frame:
 
 | pose | `data` as ETC1S | defaults |

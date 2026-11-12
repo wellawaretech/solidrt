@@ -299,7 +299,7 @@ collide with open work:
   (steps 0 and 2).
 - okf/done/renderer-seam.md: `gl/context.rs`, `backend.rs`, the public
   surface of `event.rs` (steps 0 and 1).
-- okf/plans/video-texture-off-frame-loop.md and okf/plans/video-streaming.md:
+- okf/done/video-texture-off-frame-loop.md and okf/done/video-streaming.md:
   the wake closure in `app.rs`, `video_plane.rs` (steps 2 and 3).
 
 ## Checks

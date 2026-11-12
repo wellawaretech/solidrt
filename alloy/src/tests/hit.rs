@@ -142,8 +142,8 @@ fn overflow_gate_is_box_space_under_minifying_design_size() {
   // overflow + designSize on one view, design LARGER than the box (fit scale
   // 0.5). The overflow clip means the layout box; measured in design units it
   // would cut at half the box and reject content in the visible bottom-right
-  // quadrant (okf/backlog/overflow-viewbox-clip.md, the paper-crane/unimog
-  // defect - this is the hit-side mirror of the paint fix).
+  // quadrant (okf/done/overflow-viewbox-clip.md, the paper-crane defect -
+  // this is the hit-side mirror of the paint fix).
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();

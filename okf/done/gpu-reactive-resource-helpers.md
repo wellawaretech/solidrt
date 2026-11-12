@@ -11,7 +11,7 @@ Shipped 2026-07-23. @solidrt/core's gpu helpers supported exactly one
 lifetime: free when the creating owner is disposed - wrong for resources
 rebuilt on a signal change inside a long-lived component (each rebuild
 stacked another onCleanup on the component owner: a leak until unmount, then
-a double-free against manual destroys). The linux-terminal resize feature hit
+a double-free against manual destroys). A terminal-emulator project's resize feature hit
 exactly this and had to drop to raw flux:gpu imports.
 
 Both additions from the write-up, in packages/core/src/gpu.ts:

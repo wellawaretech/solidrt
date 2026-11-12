@@ -6,7 +6,7 @@
 // transport turns into buffering (transport.rs). Commands to the reader
 // (a seek, a track change, close) interrupt a blocked read through the
 // source's handle, so pause, seek and close stay prompt during a stall
-// (okf/plans/video-streaming.md).
+// (okf/done/video-streaming.md).
 //
 // Epochs have one owner, the reader's state, and do not care what bumped
 // them: a seek here, a discontinuity later. The consumer bumps the epoch

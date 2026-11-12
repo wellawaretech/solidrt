@@ -23,7 +23,7 @@ deciding what ships:
   linked binary (1732 KiB with it, 448 KiB without) and is configured out
   in forge/build.rs.
 - **Compressed textures cost about 1.8 MB** as landed
-  ([gpu-compressed-textures](../plans/gpu-compressed-textures.md)):
+  ([gpu-compressed-textures](../backlog/gpu-compressed-textures.md)):
   encoder and transcoder both in every runtime, for now.
 
 This item is the list of ways down. Nothing here is started.

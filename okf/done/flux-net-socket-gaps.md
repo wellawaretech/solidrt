@@ -7,7 +7,7 @@ completed: 2026-07-27
 
 # flux:net socket gaps
 
-Motivation (linux VM, 2026-07-23): projects/linux now runs a full NAT
+Motivation (linux VM, 2026-07-23): a terminal-emulator project outside the repo runs a full NAT
 gateway for its riscv64 guest - TinyEMU's virtio-net feeds an in-wasm
 slirp (cartridge/net.c), and a thin JS shuttle services its socket
 imports with flux:net. Building that surfaced three API gaps, in

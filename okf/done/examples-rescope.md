@@ -49,8 +49,7 @@ Three audiences, three homes:
   actually is. Serving from it still works and still typechecks (it gets
   a minimal scaffold-shaped tsconfig); git never sees it.
 
-Truly product-scale apps (e.g. `~/solidrt/projects/*`) stay outside the
-repo; in-repo example apps are the middle tier - realistic but small
+Truly product-scale apps stay outside the repo; in-repo example apps are the middle tier - realistic but small
 enough to maintain against every API change in the same commit.
 
 **Flat, not layer subfolders.** `examples/<app>/`, no `examples/core/` /

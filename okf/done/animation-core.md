@@ -78,11 +78,11 @@ rig, baked crossfading clips, release client): jsMs 0.04 at 60 fps with
 ZERO frame subscriptions, against ~3.7 ms/frame the JS tier cost one
 59-joint character. Usage and traps: `packages/3d/AGENTS.md`.
 
-The 2026-08-31 rung-1 measurement that argued the priority (heroes-v2:
-~3.7 ms/frame to sample 177 channels for ONE character) is recorded in
-the heroes-v2 feedback file, item 12.
+The 2026-08-31 rung-1 measurement that argued the priority (the character
+demo: ~3.7 ms/frame to sample 177 channels for ONE character) is recorded
+in that demo's feedback file, item 12.
 
-Stage 2 - skinning: DONE 2026-09-02, built FIRST (the heroes-v2
+Stage 2 - skinning: DONE 2026-09-02, built FIRST (the character demo's
 measurement showed the palette walk plus its ordering workarounds
 outweighed sampling): the `TextureSlot` sink landed in spatial
 (`bind_texture_slot`: per-node `{texture, row, post}`, group-level

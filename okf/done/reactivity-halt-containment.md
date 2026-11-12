@@ -6,12 +6,12 @@ created: 2026-07-17
 
 # Reactivity halt containment
 
-App-port postmortem (2026-07-16) item 1.1, severity critical: one uncaught
-error reaching the scheduler bricks every app permanently. Both observed
-triggers were fixed (fontStyle no longer throws; image errors surface to the
-nearest `<Errored>`), but any app could still be killed by a single unclaimed
-error. Decided 2026-08-23 and built the same day; the reset path awaits a
-client build to verify (see Status).
+Found 2026-07-16, severity critical: one uncaught error reaching the
+scheduler bricks every app permanently. Both observed triggers were fixed
+(fontStyle no longer throws; image errors surface to the nearest
+`<Errored>`), but any app could still be killed by a single unclaimed
+error. Decided 2026-08-23 and built the same day; the reset path's check on
+a client is a tiny item (see Status).
 
 ## How the halt worked
 
@@ -97,8 +97,10 @@ plus the error window itself, which /tree and /snapshot show.
 - Verified on the current client: contained error and recovery (the text
   keeps "ok", the counter next to it keeps counting), the root boundary on a
   user effect throw and on a mount-time error, /snapshot of the error window.
-- Pending a client build (setRoot is native): Reset swapping the app's
-  window back in, and a second error after a reset.
+- Not verified: Reset swapping the app's window back in, and a second
+  error after a reset. `setRoot` has shipped in every client build since
+  2026-08-25; the check is one app test, filed in tiny.md (Core). Closed
+  2026-11-12 with that item open.
 
 ## Non-goals
 

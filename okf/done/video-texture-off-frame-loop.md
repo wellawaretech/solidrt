@@ -44,7 +44,8 @@ close during a stall, ten clip switches; the texture path's 60 s audio
 clip with 0 skipped, the 50 and 25 fps cadences, standing demand alone.
 NOT done: the TV (its census, lip sync by ear on avsync.webm through a
 texture), and per-push demand, which was not built, so the A/B of section
-4 is standing demand against the pump only.
+4 is standing demand against the pump only. Closed 2026-11-12 with the TV
+checks filed in tiny.md (Runtime) and per-push demand in ideas.md.
 
 ## What this does not change
 

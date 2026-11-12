@@ -22,7 +22,7 @@ uBones palettes are core-composed at the spatial flush since 2026-09-02), the re
 `loadGltf`/`loadModel`, and the bake: `sol tool 3d/model` writes the same
 parse as a `.sol3m` container whose payload is the GPU layout.
 
-The measurement that shaped the two-layer split, unimog (32k vertices, 21
+The measurement that shaped the two-layer split, a vehicle model (32k vertices, 21
 parts, 6 PNGs), release client on Linux: `parseGltf` on flux 124 ms
 against 22 ms under bun; the whole baked `loadModel` 40 ms, of which the
 six PNG decodes are ~31 ms. So the interpreter's interleave-and-bake loop
@@ -40,7 +40,7 @@ with its decoder plugins) and Unity (glTFast) take every one of them.
 
 - **Compressed meshes.** KTX2/Basis textures load since 2026-09-29
   (`KHR_texture_basisu`, transcoded on the device:
-  [gpu-compressed-textures](../plans/gpu-compressed-textures.md)).
+  [gpu-compressed-textures](../backlog/gpu-compressed-textures.md)).
   Blender exports Draco by default, so real-world files still bounce off
   the parser with a clear error on their meshes. Three (DRACOLoader, MeshoptDecoder,
   KTX2Loader) and Unity (glTFast) decode all three; Godot's importer

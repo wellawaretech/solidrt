@@ -102,10 +102,10 @@ One fixed scheme for every module a runtime adds: `runtime:`.
 - docs/runtime "Native code" (the module example, the scheme and its
   shape, the capability line, `types/physics.d.ts`) and
   `lattice/examples/custom_runtime.rs` (`runtime:whoami`) use the scheme.
-- Outside the repo: the tower-toppling demo moved to `runtime:physics3d`
+- Outside the repo: the physics demo moved to `runtime:physics3d`
   and `runtime:physics2d` (runtime, app, types, Makefile, AGENTS.md); its
   `Program` migration is a separate owed item, so it was not built. The
-  vision demo vendors lattice at tag 0.0.72, which has the old rule, so it
+  other custom-runtime demo vendors lattice at tag 0.0.72, which has the old rule, so it
   stays on `flux:yolo` with its TODO naming `runtime:yolo` until its tag
   moves.
 - Not run: `sol pack` and a derived APK with a `runtime:*` module. Both go

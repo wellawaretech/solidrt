@@ -95,28 +95,10 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   unloaded (HLOD), streaming sources beyond cameras, and the handler lifecycle
   (load, abort, sliced build, unload, retain, state) in core so a 2d
   population handler is the same machinery one dimension down.
-- **[Camera and controls extensions](plans/camera-and-controls-extensions.md)** [2026-09-17]
-  The orbit control's gap against the reference set, shaped under
-  okf/design/camera-controls.md - a push through a model (the fly demo's ask,
-  which a bounded dolly can never do), zoom-to-cursor and a dynamic pivot
-  built into the component, an orbit point off the view axis, a follow source
-  with Cinemachine's framing, an occlusion constraint, a shake lane, the map
-  preset and double-tap to focus; with the survey of Three, camera-controls,
-  Babylon, Cinemachine and Godot verified against current sources.
 - **[Client storage and bundle updates](plans/client-storage-updates.md)** [2026-07-20]
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
   assets in the manifest, then signed OTA."
-- **[Compressed textures - KTX2 shipped, ETC2 or BC7 on the device](plans/gpu-compressed-textures.md)** [2026-07-30]
-  One shipped payload (Basis Universal in KTX2, baked with our own encoder)
-  transcoded at load to the device's native block format - ETC2 on GLES 3.0
-  targets, BC7 where the BPTC extension is reported; built end to end (device
-  formats, the codec with zstd, the model bake and loader, texture settings
-  per application, attribution) and verified on Linux, Windows and Android;
-  settings per file are built (compression on by default, a list of glob
-  entries that raise or exempt files, glob matching and a scan in flux); next
-  are compressed textures outside a model, after the build stage is designed,
-  then the memory a load leaves behind.
 - **[Make a lattice git dependency build at a release tag](plans/lattice-tag-dependency-bundles.md)** [2026-10-11]
   A custom runtime depends on lattice by git tag, but the library embedded two
   bundles the JavaScript toolchain generates (untracked since v0.0.71), so
@@ -136,11 +118,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   frame loop, the pacing facts, the stepped loop and the mixer and drops its
   `sdl3` dependency. Six steps, each a commit that builds; the mixer to forge,
   forge's OS code and the windowless host stay their own items.
-- **[Reactivity halt containment](plans/reactivity-halt-containment.md)** [2026-07-17]
-  One unclaimed error used to halt the whole app for good; decided and built
-  as a root error boundary around the app's window (error window with reset)
-  plus per-node containment in the renderer's effect/insert exports, with the
-  verified mechanics and the measured cost.
 - **[Spatial audio - emitter and listener nodes on the spatial core](plans/spatial-audio-emitters.md)** [2026-08-30]
   A playback bound to a spatial node (or a fixed position) and heard by a
   listener (a node, or a target's view - the camera), the core writing its
@@ -177,22 +154,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   surfaced as `record()` in flux:video; recording to a file first, the window
   as a second source, video chat over p2p as the later consumer of the same
   pipe.
-- **[Stream video from an HTTP source on the plane](plans/video-streaming.md)** [2026-09-13]
-  Client-initiated streaming - open(url) plays a WebM served over HTTP on the
-  Android plane with buffering, seek by Range and a cancel-safe close, built
-  on a generic forge byte source and a reader thread that the texture player's
-  browser-style rework reuses; live streams are deferred as an explicit
-  latency option.
-- **[Move the texture video player off the frame loop](plans/video-texture-off-frame-loop.md)** [2026-09-22]
-  The texture player selects and uploads its frames inside the JS tick on the
-  UI's clock, and predates the transport the plane player got - no reader, no
-  anchor, no buffering, no seek, and a ~10% frame drop on audio-clocked
-  streams. Browser style is one shared worker for both players over a
-  presenter trait, decoded frames pushed to alloy with a due time on a clock
-  both sides share, a raster-side latch against the frame's presentation
-  deadline, standing demand held by alloy, close that never joins on either
-  player, and the JS tick deleted. Presentation stays at the UI's cadence; a
-  shared surface is a shared clock.
 - **[Documentation website](plans/website.md)** [2026-07-16]
   "A monorepo website/ generated statically by a flux script: section nav, a
   Core-first Start page, and generate-what-we-can content (API reference from
@@ -579,6 +540,16 @@ Shaped, not started.
   create per region enter; GL allows compressed storage with per-level
   glCompressedTexSubImage2D, so the lift is a GL path and a plugin contract,
   not a design change.
+- **[Compressed textures - KTX2 shipped, ETC2 or BC7 on the device](backlog/gpu-compressed-textures.md)** [2026-07-30]
+  One shipped payload (Basis Universal in KTX2, baked with our own encoder)
+  transcoded at load to the device's native block format - ETC2 on GLES 3.0
+  targets, BC7 where the BPTC extension is reported; built end to end (device
+  formats, the codec with zstd, the model bake and loader, texture settings
+  per application, attribution) and verified on Linux, Windows and Android;
+  settings per file are built (compression on by default, a list of glob
+  entries that raise or exempt files, glob matching and a scan in flux); next
+  are compressed textures outside a model, after the build stage is designed,
+  then the memory a load leaves behind.
 - **[Depth func option](backlog/gpu-depth-func.md)** [2026-08-11]
   The depth comparison is fixed at LESS with no override, which blocks
   equal-depth multi-pass tricks (LEQUAL) and reversed-z; Three's
@@ -1539,11 +1510,11 @@ Finished, kept for the reasoning.
   is not public. Expose it on ViewOptions, and widen depth "texture" to the
   scene's own target so a depth-reading post effect has an input.
 - **[A record-mesh caster that starts empty casts no shadow after a cold start on Android](done/android-cold-start-shadow-loss.md)** [2026-10-06]
-  On the SM-T500 the tower-toppling demo casts no shadows when the Player
-  starts cold, while a reload of the same app, or any 3d scene run before it
-  in the same process, shows them; the trigger is a shadow tile whose every
-  caster had record count 0 at creation and got its records in the first
-  frames, and nothing short of a new engine recovers it.
+  On the SM-T500 a physics demo (a tower of bricks) casts no shadows when the
+  Player starts cold, while a reload of the same app, or any 3d scene run
+  before it in the same process, shows them; the trigger is a shadow tile
+  whose every caster had record count 0 at creation and got its records in the
+  first frames, and nothing short of a new engine recovers it.
 - **[Measure the frame's GPU time on Android from EGL frame timestamps](done/android-frame-gpu-time-from-egl-timestamps.md)** [2026-09-21]
   On the SM-T500 the TIME_ELAPSED query around the window draw read the frame
   interval (32 ms at a two-refresh cadence, 46-52 at three) for a frame whose
@@ -1717,6 +1688,14 @@ Finished, kept for the reasoning.
   the command silently no-ops while still returning a plausible payload; the
   object form is unaffected, and reading the transport end to end does not
   show where the second encoding is added, so the first move is a live repro.
+- **[Camera and controls extensions](done/camera-and-controls-extensions.md)** [2026-09-17]
+  The orbit control's gap against the reference set, shaped under
+  okf/design/camera-controls.md - a push through a model (a long-model demo's
+  ask, which a bounded dolly can never do), zoom-to-cursor and a dynamic pivot
+  built into the component, an orbit point off the view axis, a follow source
+  with Cinemachine's framing, an occlusion constraint, a shake lane, the map
+  preset and double-tap to focus; with the survey of Three, camera-controls,
+  Babylon, Cinemachine and Godot verified against current sources.
 - **[captureSnapshot on detached (d-*) nodes](done/capture-detached-nodes.md)** [2026-07-29]
   A d-* node is drawn but has no layout entry, so every capture of one
   rejected as zero-sized; captures now size from the node's painted box,
@@ -2575,11 +2554,11 @@ Finished, kept for the reasoning.
   The overflow clip rect took the element's box extent as a raw number and
   applied it in the child's design (pre-viewBox) space, so a magnifying fit
   escaped the clip entirely and a minifying one cropped content early.
-  Reported three times across four months (marble-fox F1, paper-crane 1, the
-  unimog postmortem that supplied the root cause) with no dedicated item until
-  now. Fixed 2026-08-08 - the clip is emitted in box space, under the user
-  chain before the fit, on both the paint and hit paths, pinned at both
-  scales.
+  Reported three times across four months (marble-fox F1, paper-crane 1, a
+  vehicle demo's postmortem that supplied the root cause) with no dedicated
+  item until now. Fixed 2026-08-08 - the clip is emitted in box space, under
+  the user chain before the fit, on both the paint and hit paths, pinned at
+  both scales.
 - **[Children drawn outside their parent's box are not hit-testable](done/overflow-visible-hit-testing.md)** [2026-09-24]
   A parent's bounds check gates descent into its children as well as its own
   hit, so a child painted outside the parent's layout box under overflow
@@ -2748,6 +2727,11 @@ Finished, kept for the reasoning.
   kept answering, because the render subscription lives in onSettled and a
   halted mount never settles; closed by render()'s root error boundary, which
   settles the mount and shows the error window instead of halting.
+- **[Reactivity halt containment](done/reactivity-halt-containment.md)** [2026-07-17]
+  One unclaimed error used to halt the whole app for good; decided and built
+  as a root error boundary around the app's window (error window with reset)
+  plus per-node containment in the renderer's effect/insert exports, with the
+  verified mechanics and the measured cost.
 - **[Move the recording feeder loops out of the flux plugin](done/record-feeders-out-of-flux.md)** [2026-11-05]
   The video and audio feeder threads of `record` (flux:video) are pump logic
   in a plugin; move them to forge's recorder over a plain value the alloy taps
@@ -2815,9 +2799,8 @@ Finished, kept for the reasoning.
   sol only knew the stock binaries, so one more module meant a fork; lattice
   now takes Modules on its entry, the stock main is lattice::main, sol takes a
   project's own runtime from a package.json key and derives its Android APKs
-  from the stock ones; the tower-toppling demo's Rapier physics
-  (flux:physics3d and flux:physics2d, stepping in the frame tick) is the
-  worked example.
+  from the stock ones; a physics demo's Rapier physics (flux:physics3d and
+  flux:physics2d, stepping in the frame tick) is the worked example.
 - **[Give runtime modules a namespace of their own](done/runtime-module-namespace.md)** [2026-10-11]
   A custom runtime could register a module only under a flux:* name, so an
   app's own module read as a platform module, would collide with a built-in
@@ -3265,6 +3248,22 @@ Finished, kept for the reasoning.
   on itself, so the picture starts ahead of the sound until the clock
   correction catches up, and the forge test asserting the audio anchor fails
   intermittently on CI.
+- **[Stream video from an HTTP source on the plane](done/video-streaming.md)** [2026-09-13]
+  Client-initiated streaming - open(url) plays a WebM served over HTTP on the
+  Android plane with buffering, seek by Range and a cancel-safe close, built
+  on a generic forge byte source and a reader thread that the texture player's
+  browser-style rework reuses; live streams are deferred as an explicit
+  latency option.
+- **[Move the texture video player off the frame loop](done/video-texture-off-frame-loop.md)** [2026-09-22]
+  The texture player selects and uploads its frames inside the JS tick on the
+  UI's clock, and predates the transport the plane player got - no reader, no
+  anchor, no buffering, no seek, and a ~10% frame drop on audio-clocked
+  streams. Browser style is one shared worker for both players over a
+  presenter trait, decoded frames pushed to alloy with a due time on a clock
+  both sides share, a raster-side latch against the frame's presentation
+  deadline, standing demand held by alloy, close that never joins on either
+  player, and the JS tick deleted. Presentation stays at the UI's cadence; a
+  shared surface is a shared clock.
 - **[A JS-bound app under VsyncLocked gets two frame signals per present](done/vsync-locked-js-bound-double-signal.md)** [2026-09-21]
   When the JS thread builds a frame for longer than the fallback deadline
   (~1.6 periods), FrameRelease gives the in-flight window up, idle Ticks
@@ -3461,9 +3460,9 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   silently-black invalid colors are fixed as of 2026-08-06 (see status note).
   Remaining gaps are zero tests and docs teaching nonexistent props.
 - **[Custom runtime findings](notes/custom-runtime-findings.md)** [2026-10-06]
-  What building the tower-toppling physics runtime taught about cdylib
-  exports, the frame protocol's demand gate, publishes as demand, and the
-  module's cost on desktop and on the SM-T500 tablet.
+  What building a physics demo's runtime taught about cdylib exports, the
+  frame protocol's demand gate, publishes as demand, and the module's cost on
+  desktop and on the SM-T500 tablet.
 - **[Declarative GPU surface](notes/declarative-gpu.md)** [2026-08-03]
   Survey of declarative GPU prior art against the current texture/gpu API;
   conclusion is a Shader component as sugar, subtree effects as the real gap,

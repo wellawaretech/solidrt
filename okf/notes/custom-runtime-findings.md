@@ -1,6 +1,6 @@
 ---
 title: Custom runtime findings
-description: What building the tower-toppling physics runtime taught about cdylib exports, the frame protocol's demand gate, publishes as demand, and the module's cost on desktop and on the SM-T500 tablet.
+description: What building a physics demo's runtime taught about cdylib exports, the frame protocol's demand gate, publishes as demand, and the module's cost on desktop and on the SM-T500 tablet.
 created: 2026-10-06
 ---
 

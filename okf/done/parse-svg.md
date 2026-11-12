@@ -85,7 +85,7 @@ The consumer wraps draws in a `<d-view>`:
 - Scale, fluid boxes: OPEN, choice to be made when picked up. Fluid-sized
   `<svg>` usage is real - emoji faces at `width="95%"` inside percent-sized
   `aspectRatio` cells (`sandbox/emojis/src/index.tsx`), plus Fluent-emoji
-  uses in product apps (heroes/animals) - and there JS never knows the pixel
+  uses in product apps - and there JS never knows the pixel
   size, so transform arithmetic cannot replace the element. Options: (a) a
   `viewBox` prop on view/d-view - renderer-side uniform scale-to-fit +
   center + intrinsic measure, essentially old `Svg::build`/`Svg::measure`

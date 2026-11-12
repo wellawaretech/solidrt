@@ -283,7 +283,7 @@ The A/B ran, twice:
 - 2ed4c8f (2-thread-GL era, "v0.0.29"): connects to the current dev
   server, but current-core bundles fail (`sol:app` module missing) - no
   app measurement; not needed, because:
-- **v0.0.22 exactly** (heroes' pinned version, worktree ~/solidrt/tmp/v0022,
+- **v0.0.22 exactly** (an app's pinned version, worktree ~/solidrt/tmp/v0022,
   its own launcher animation as the workload): **~7.3 fps** - the same
   ceiling as today's engine. Fresh TV reboot: ~5.7 fps. TV firmware:
   unchanged since 2021-11-08 (no OTA between the "fluent era" and now).
@@ -292,7 +292,7 @@ So every engine revision ever measured on this TV presents at ~6-14 fps,
 the firmware never changed, a reboot changes nothing, and every userspace
 lever is exhausted. Conclusion: the Philips 49PUS7803's MTK SurfaceFlinger
 latches external GL app layers at ~6-7 Hz as a standing platform behavior.
-The remembered fluency ("emoji/heroes app, long ago") most likely belongs
+The remembered fluency ("the emoji and character apps, long ago") most likely belongs
 to a different device (the SM-T500 tablet runs the identical scene
 vsync-locked at 59.9 fps, desktop at 61) - no configuration has ever been
 found in which this TV does better. Treat the TV as a ~12 fps target and
@@ -429,7 +429,7 @@ both directions:
 
 This finally explains the history: the PRE-REFACTOR engine was a classic
 blocking-swap continuous loop (Kodi's pattern - queue always fed), so the
-TV stayed in the fast state: the remembered fluent emoji/heroes sessions
+TV stayed in the fast state: the remembered fluent sessions of those apps
 on this TV were REAL. The 3-thread refactor made production vsync-gated
 (choreographer waits before each frame), which on this display is exactly
 the pattern that locks slow. Every content-level and buffer-level lever

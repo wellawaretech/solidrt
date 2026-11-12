@@ -9,7 +9,7 @@ completed: 2026-09-03
 
 ## Symptom
 
-Leaving heroes-v2 for the launcher, the log fills with one line per frame,
+Leaving the character demo for the launcher, the log fills with one line per frame,
 forever:
 
 ```

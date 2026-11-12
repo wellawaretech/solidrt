@@ -6,7 +6,7 @@
 //! decoded pictures go to. Engine-free and sink-agnostic: the plane player
 //! feeds the due time to `releaseOutputBufferAtTime`, and the texture player
 //! pushes the frame with it to the compositor's latch, both from the one
-//! worker in worker.rs (okf/plans/video-texture-off-frame-loop.md). Building
+//! worker in worker.rs (okf/done/video-texture-off-frame-loop.md). Building
 //! the anchor inside one player would have the other duplicate it, which is
 //! why it lives here.
 

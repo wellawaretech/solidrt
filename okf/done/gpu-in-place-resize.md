@@ -7,7 +7,7 @@ completed: 2026-07-30
 
 # In-place GPU resize
 
-Shipped 2026-07-23. Motivated by the linux-terminal project's window-resize
+Shipped 2026-07-23. Motivated by a terminal-emulator project's window-resize
 feature: every GPU object baked its size at creation, so resizing the cell
 grid meant rebuilding three data textures plus the shader, swapping the new
 shader id into `<texture src>` via a signal, and hand-managing disposal of the
@@ -37,8 +37,8 @@ replace-at-id via `rerender_samplers_of`), context.rs (`resize_texture`,
 `resize_shader_texture`), flux gui/gpu.rs bindings, flux-types gpu.d.ts,
 core gpu.ts re-exports, docs/core.md.
 
-Verified 2026-07-23 against a locally built client: the linux-terminal
-project (external, ~/solidrt/projects/linux) rewritten onto the new API -
+Verified 2026-07-23 against a locally built client: a terminal-emulator
+project (outside the repo) rewritten onto the new API -
 resize effect collapsed to resizeTexture x3 + screen.resize + setShaderSize +
 repaint, deleting the shaderId signal, manual destroys, and the raw flux:gpu
 import split. Live drag-resize (shrink + widen) kept the same texture node

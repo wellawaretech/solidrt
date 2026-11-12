@@ -275,7 +275,7 @@ the whole surface end to end and produced five fixes, all landed:
   the style via the new `Element::style()` accessor; round-trip pinned in
   flux/src/tests/properties.rs on the report's exact overflow+viewBox combo.
   (Only the tooling half lives here; the clip defect itself is
-  [[overflow-viewbox-clip]], root-caused by the unimog postmortem and fixed
+  [[overflow-viewbox-clip]], root-caused by a vehicle demo's postmortem and fixed
   2026-08-08.)
 - The unknown-query-kind reply no longer leaks Rust debug formatting
   (`Some("input")`); it names the kind and the client's own runtime version

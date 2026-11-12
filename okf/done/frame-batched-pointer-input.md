@@ -74,7 +74,7 @@ raw per-event pinch ratios with zero filtering) works: by the time it runs,
 all pointers are the same age and nothing paints mid-batch.
 
 lattice has the per-pointer half of this but not the cross-pointer half,
-and the gap is measurable. Filed 2026-08-09 after the unimog demo's orbit
+and the gap is measurable. Filed 2026-08-09 after a vehicle demo's orbit
 camera shipped pinch/pan (see `packages/core/src/transform.ts`, whose
 header documents the observed noise).
 
@@ -103,7 +103,7 @@ Each pointer's move still crosses to JS as its own event
 (`flux::gui::input::dispatch` per pointer; `packages/core/src/window.ts`
 dispatches each along the hit path). With two fingers down, every event a
 recognizer sees is one fresh position paired with the other finger's
-one-frame-stale one. Captured on a tablet (unimog demo, ~130Hz combined):
+one-frame-stale one. Captured on a tablet (the vehicle demo, ~130Hz combined):
 
 - A mathematically smooth two-finger slide with constant separation
   measures a span that alternates 0.98x / 1.02x on consecutive events -
@@ -122,7 +122,7 @@ views) re-inherits the problem unless it uses createTransform.
 
 Mouse-side, the gate bounds the queue but not the dispatch rate: moves
 drain as fast as the JS thread runs them, each with a hit test and handler
-walk, and apps that render per move event (the unimog demo's push-on-move)
+walk, and apps that render per move event (the vehicle demo's push-on-move)
 paint at input rate rather than frame rate.
 
 ## Shape

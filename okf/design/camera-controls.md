@@ -8,8 +8,8 @@ created: 2026-09-22
 
 Camera questions have come back in every package: the 2d controller and
 its conventions, the orbit damping and clamp item, glide and fit, the
-first-person boost and reference frame, and now the fly demo's push
-through a model. Each answered its own question against its own
+first-person boost and reference frame, and now a long-model demo's push
+through its model. Each answered its own question against its own
 references, and the answers started to diverge: the 2d control has a
 follow with a dead zone, the 3d one has none; the 3d control has anchor
 hooks, the 2d one anchors itself; both copy the same ease constants.
@@ -49,7 +49,7 @@ needs them.
   (Leaflet, MapLibre, tldraw) for the pan-zoom half of 2d.
 
 The survey of what each ships, verified against current sources, is in
-[camera-and-controls-extensions](../plans/camera-and-controls-extensions.md).
+[camera-and-controls-extensions](../done/camera-and-controls-extensions.md).
 
 ## Vocabulary
 
@@ -131,7 +131,7 @@ What each control implements (the shared math is
 | Push | `camera()` is the final camera | `camera()` is the final camera | pose plus the shake |
 
 Landed 2026-09-22 through
-[camera-and-controls-extensions](../plans/camera-and-controls-extensions.md)
+[camera-and-controls-extensions](../done/camera-and-controls-extensions.md)
 (orbit) and [2d-camera-framing](../done/2d-camera-framing.md) (2d); the
 first-person reference frame is its own item
 ([3d-first-person-reference-frame](../backlog/3d-first-person-reference-frame.md)).
@@ -235,7 +235,7 @@ the distance and pushes the target position instead"). The eye's speed
 is continuous across the floor, so a pinch through a model never stalls
 and never lurches. Rejected: always-push (no reference does it; a dolly
 that ends at the subject is the right default for a viewer), and the
-fly demo's fixed world step per octave (speed does not scale with the
+long-model demo's fixed world step per octave (speed does not scale with the
 subject, so it is either a crawl outside the model or a leap inside).
 
 **Zoom to cursor is built in where the projection is; the pivot
@@ -328,9 +328,9 @@ conventions note for the units.
 
 ## Known limits and open items
 
-- The fly demo (`~/solidrt/demoes/fly`) still carries its hand-rolled
+- The long-model demo (outside the repo) still carries its hand-rolled
   push and turn; it moves to `push` and `setOrbitPoint` with the user
-  ([camera-and-controls-extensions](../plans/camera-and-controls-extensions.md),
+  ([camera-and-controls-extensions](../done/camera-and-controls-extensions.md),
   item 9).
 - A `<Shot>`'s picks and raycasts (`anchor`, `occlusion`) resolve
   through the owner's actual camera, which is the shot's own only while

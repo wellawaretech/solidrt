@@ -1,6 +1,6 @@
 ---
 title: overflow + viewBox clips the wrong rectangle
-description: The overflow clip rect took the element's box extent as a raw number and applied it in the child's design (pre-viewBox) space, so a magnifying fit escaped the clip entirely and a minifying one cropped content early. Reported three times across four months (marble-fox F1, paper-crane 1, the unimog postmortem that supplied the root cause) with no dedicated item until now. Fixed 2026-08-08 - the clip is emitted in box space, under the user chain before the fit, on both the paint and hit paths, pinned at both scales.
+description: The overflow clip rect took the element's box extent as a raw number and applied it in the child's design (pre-viewBox) space, so a magnifying fit escaped the clip entirely and a minifying one cropped content early. Reported three times across four months (marble-fox F1, paper-crane 1, a vehicle demo's postmortem that supplied the root cause) with no dedicated item until now. Fixed 2026-08-08 - the clip is emitted in box space, under the user chain before the fit, on both the paint and hit paths, pinned at both scales.
 created: 2026-08-08
 completed: 2026-08-08
 ---
@@ -10,13 +10,13 @@ completed: 2026-08-08
 Promoted out of the feedback reports 2026-08-08. The defect had been reported
 three times across four months while living only in `[open]` feedback lines
 and a follow-up note in [[mcp-verification-surface]] - which is likely why it
-kept coming back rather than getting fixed (the unimog postmortem's
+kept coming back rather than getting fixed (the vehicle demo postmortem's
 observation, and the reason this file exists).
 
 ## The rule
 
-Verified in both directions by the unimog postmortem
-(`~/solidrt/demoes/unimog/POSTMORTEM.md`, headless probes on 0.0.46-12):
+Verified in both directions by a vehicle demo's postmortem (outside the
+repo, headless probes on 0.0.46-12):
 
 > The `overflow` clip rectangle takes its extent from the element's box **as a
 > raw number** and applies it in the child's **design (pre-`viewBox`)
@@ -29,7 +29,7 @@ extent is wrong, and the sign of the error flips with `s`:
 | `s` | Clip extent vs design space | Symptom |
 | --- | --- | --- |
 | `> 1` (magnifying) | too large | nothing clips; content escapes the box |
-| `< 1` (minifying) | too small | content cropped early (the unimog: 75% of the scene in 75% of the window) |
+| `< 1` (minifying) | too small | content cropped early (the vehicle demo: 75% of the scene in 75% of the window) |
 | `= 1` (no viewBox) | exact | correct - why `overflow` works everywhere else |
 
 The `s > 1` direction also explains the two puzzling details in the first
@@ -49,7 +49,7 @@ overhang past the raw box *number* in design units before anything clips).
   the trigger; overflow alone clips fine; viewBox on an inner view clips
   fine), and noted the failing combination is exactly the documented
   fixed-aspect authoring shape.
-- The unimog postmortem (2026-08-08) - the `s < 1` direction, previously
+- The vehicle demo's postmortem (2026-08-08) - the `s < 1` direction, previously
   unseen, which with both directions in hand gave the root cause. A minimal
   two-direction reproducer and the `<texture>` unit-contract probes are in
   the postmortem.
@@ -123,7 +123,7 @@ now resolve against the border box on every path, closing the View half of
 
 - The tooling gap that made the bug undiagnosable (`props: true` omitting
   `overflow`) was fixed under [[mcp-verification-surface]] 2026-08-08.
-- The unimog postmortem's remaining recommendations are separate asks,
+- The vehicle demo postmortem's remaining recommendations are separate asks,
   unfiled as of this writing: a paint-time warning when a painted rect
   exceeds its clip box, a painted-extent/`clipped` flag in
   `get_render_tree`, the `Scene` width/`pixelRatio` split in `@solidrt/3d`,

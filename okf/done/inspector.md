@@ -103,7 +103,7 @@ runtimes.
 Side value: the inspector leans hard on our weakest surfaces (tree widgets
 with disclosure, dense tables, virtualized lists, text-heavy layout). It is
 a canary that finds core gaps fast - which is why it lives in-repo and
-builds against HEAD rather than in `~/solidrt/projects/`.
+builds against HEAD rather than outside the repo.
 
 ## State
 

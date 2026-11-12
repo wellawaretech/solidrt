@@ -21,5 +21,5 @@ cannot mount during the initial render; open them after mount". No parking
 or deferred-flush mechanism will be built.
 
 Residual note: the throw still lands inside reactive scopes (Show/memo), so
-until okf/plans/reactivity-halt-containment.md is resolved it surfaces as an
+until okf/done/reactivity-halt-containment.md is resolved it surfaces as an
 uncaught error like any other component throw.

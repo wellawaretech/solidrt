@@ -46,7 +46,7 @@ frame keeps presenting.
 
 ## Fix
 
-render() wraps the app in an error boundary (okf/plans/
+render() wraps the app in an error boundary (okf/done/
 reactivity-halt-containment.md). A mount-time error resolves the boundary
 to the error window instead of halting, the flush settles, the render
 subscription is installed, and `/snapshot` of the (error) window answers:

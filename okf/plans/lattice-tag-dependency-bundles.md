@@ -95,9 +95,9 @@ them from the program:
 - [x] `make client` and `make runtime` green on Linux, zero warnings, and
       `bun run sol test` green on the new binaries (689 tests, 99 files);
       the Android goals change only the staged file name and are not run.
-- [ ] The two custom runtimes outside the repo (tower-toppling, vision)
-      move to `Program` once the first release with this is out; until
-      then the vision app stays on its vendoring script.
+- [ ] The two custom runtimes outside the repo (the physics demo and a
+      second app) move to `Program` once the first release with this is
+      out; until then the second app stays on its vendoring script.
 
 ## Done looks like
 

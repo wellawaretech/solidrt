@@ -9,7 +9,7 @@ completed: 2026-10-13
 
 Closed unfinished 2026-10-13: superseded by custom runtimes
 ([runtime-extension-modules](runtime-extension-modules.md)). Physics is a
-module an app's own runtime crate adds, not a core one, and the tower-toppling
+module an app's own runtime crate adds, not a core one, and the physics
 demo's `runtime:physics3d` / `runtime:physics2d` (Rapier, outside the repo) is
 the working instance. Both decisions below dissolve: the module lives in the
 app's crate, and only an app that links it pays its binary size. The world

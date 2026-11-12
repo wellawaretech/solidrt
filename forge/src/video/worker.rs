@@ -8,7 +8,7 @@
 // for the instance the previous player has yet to release), the caller
 // reads state from atomics, and close sends a command and returns - the
 // worker drops everything it owned on its way out and marks the exit
-// (okf/plans/video-texture-off-frame-loop.md).
+// (okf/done/video-texture-off-frame-loop.md).
 //
 // What differs between a plane, a buffer-mode codec and a software decoder
 // is the `Presenter` below: how a coded frame gets in, how a decoded picture

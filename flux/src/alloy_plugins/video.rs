@@ -13,7 +13,7 @@
 //! anything on the JS thread or in the frame loop: demux, decode, the
 //! clock, frame selection and audio are the worker's, and the raster thread
 //! latches the texture player's due frame at each frame's presentation
-//! deadline (okf/plans/video-texture-off-frame-loop.md). This module joins
+//! deadline (okf/done/video-texture-off-frame-loop.md). This module joins
 //! the pieces: a plane open creates the plane and hands it to the player,
 //! whose worker owns it from then on and drops it after the codec has
 //! released the surface; a texture open creates the texture and hands the
@@ -29,7 +29,7 @@
 //! comes off the JS thread, and the promise settles when the player exists,
 //! the open fails, the `signal` aborts or `OPEN_TIMEOUT_MS` passes.
 //! Failures, at open and mid-stream, are `VideoError`s with a `kind` the
-//! app keys on (okf/plans/video-streaming.md).
+//! app keys on (okf/done/video-streaming.md).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

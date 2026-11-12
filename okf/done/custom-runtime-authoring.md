@@ -8,7 +8,7 @@ created: 2026-10-11
 
 Done 2026-10-11. [runtime-extension-modules](runtime-extension-modules.md)
 made a custom runtime possible and deferred its scaffolding "until a second
-project wants it"; the vision demo was that project, and what setting one
+project wants it"; a second custom-runtime app was that project, and what setting one
 up and shipping it ran into is below, with what closed it. The tag
 dependency itself is
 [lattice-tag-dependency-bundles](../plans/lattice-tag-dependency-bundles.md),
@@ -29,7 +29,7 @@ alias) was done the same day, before this.
   wrote and the docs did not describe.
 - **Building: the four goals lived in lattice's Makefiles**, mixed with the
   checkout's release machinery, so a custom runtime rewrote them (the
-  vision demo's build.sh, the tower demo's Makefile), each with its own
+  second app's build.sh, the physics demo's Makefile), each with its own
   drift.
 - **Shipping: the docs left out** the staging folder names (`<triple>`
   read as a Rust triple; sol looks for the npm platform name), the C++

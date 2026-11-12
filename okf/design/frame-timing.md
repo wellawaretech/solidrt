@@ -262,7 +262,7 @@ it. Four designs have been tried or considered, in this order:
    hop, while running at a fraction of real speed in between. The timer
    split (D3) was the first casualty of this lag; the Sponza fly-through
    on a Pixel 7 at 21 fps was the second ([timer-deadlines-lag-frame-timeline],
-   `~/solidrt/demoes/sponza/SOLIDRT-FEEDBACK.md` item 28).
+   a Sponza viewer's feedback report, outside the repo, item 28).
 
 The decision, 2026-09-21, implemented the same day
 ([frame-signal-refresh-count]): the platform reports **how many refreshes

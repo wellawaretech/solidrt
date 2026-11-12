@@ -1,6 +1,6 @@
 ---
 title: Register app-specific native modules without forking the runtime
-description: The route for native code is a custom runtime build, but lattice built its engine with no way to hand modules in, the stock main was not reusable and sol only knew the stock binaries, so one more module meant a fork; lattice now takes Modules on its entry, the stock main is lattice::main, sol takes a project's own runtime from a package.json key and derives its Android APKs from the stock ones; the tower-toppling demo's Rapier physics (flux:physics3d and flux:physics2d, stepping in the frame tick) is the worked example.
+description: The route for native code is a custom runtime build, but lattice built its engine with no way to hand modules in, the stock main was not reusable and sol only knew the stock binaries, so one more module meant a fork; lattice now takes Modules on its entry, the stock main is lattice::main, sol takes a project's own runtime from a package.json key and derives its Android APKs from the stock ones; a physics demo's Rapier physics (flux:physics3d and flux:physics2d, stepping in the frame tick) is the worked example.
 created: 2026-10-03
 completed: 2026-10-06
 ---
@@ -92,9 +92,9 @@ prerequisite.
 - **Docs.** The "Native code" section of `docs/runtime/index.md` shows the
   manifest, the entry files, the staging layout, the key and the traps.
 
-## The worked example: the tower-toppling physics
+## The worked example: the physics demo
 
-`~/solidrt/demoes/tower-toppling/runtime/` (outside the repo): a crate over
+The demo's runtime crate (outside the repo): a crate over
 lattice with `flux:physics3d` and `flux:physics2d`, Rapier 0.36 in both
 dimensions, replacing the demo's wasm crate and its isolate worker. Each
 module is a core of native types (`physics3d/mod.rs`: a `PhysicsWorld`,
@@ -175,8 +175,8 @@ only).
    move, a frozen clock stepping a shot one frame per `step` snapshot and
    holding it between), the bench numbers are in Findings, the 2d screen
    runs the same way, and `sol pack` wrote a single-file app over the
-   production runtime that starts and runs. The runtime crate is at
-   `~/solidrt/demoes/tower-toppling/runtime/`, outside the repo.
+   production runtime that starts and runs. The runtime crate lives
+   with the demo, outside the repo.
 4. Android: `make -C runtime android` cross-builds both libraries (after the
    two cmake traps in Traps), and sol derives the Player and runner APKs
    from the stock ones with them, re-versioned (`1.0+r<hash>` over the

@@ -18,7 +18,7 @@ editor keeps the imported form beside it and redoes it when the source
 or its settings change. Three leaves it to a command-line tool
 (glTF-Transform, the KTX tools), which is where we are.
 
-From [gpu-compressed-textures](../plans/gpu-compressed-textures.md),
+From [gpu-compressed-textures](../backlog/gpu-compressed-textures.md),
 decided 2026-09-30 to be a plan of its own. It was an ideas.md line
 waiting "on an actual transform to exist"; compressed textures are that
 transform.

@@ -6,7 +6,7 @@ import { RUNTIME_DIST, RUNTIME_TARGET, RUNTIME_TYPES, renderRuntime, runtimeCrat
 
 test("the crate is named after the app", () => {
   expect(runtimeCrate("my-app")).toBe("my-app-runtime")
-  expect(runtimeCrate("@acme/Vision.App")).toBe("vision-app-runtime")
+  expect(runtimeCrate("@acme/Photo.App")).toBe("photo-app-runtime")
   expect(runtimeCrate("3d-demo")).toBe("app-3d-demo-runtime")
   expect(runtimeCrate("")).toBe("app-runtime")
 })
