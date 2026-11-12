@@ -24,20 +24,30 @@ pub(crate) struct DamageLedger {
   // Nodes whose on-screen pixels may differ from the last painted frame;
   // resolved against the elements' last_extent cells by the caller.
   damaged: HashSet<u64>,
+  // Window rectangles (logical px) whose pixels may differ, noted already
+  // resolved: the part of a texture node a content change stayed inside
+  // (RenderTree::texture_content_changed), smaller than the node's extent.
+  damaged_area: cull::Extent,
   damaged_full: bool,
   // The damage the last painted frame resolved to, for stats and the
   // raster pass. A reuse frame does not write it: nothing was painted.
   frame_damage: FrameDamage,
   // Backdrop-filter regions as of the last paint walk (window space + blur
   // reach). Both resolves widen any damage rect touching one to the whole
-  // panel, walk or no walk.
+  // panel and the blur's reach past it, walk or no walk.
   backdrop_regions: Vec<BackdropRegion>,
 }
 
 impl DamageLedger {
   /// Starts fully damaged: nothing has been painted yet.
   pub(crate) fn new() -> Self {
-    Self { damaged: HashSet::new(), damaged_full: true, frame_damage: FrameDamage::Full, backdrop_regions: Vec::new() }
+    Self {
+      damaged: HashSet::new(),
+      damaged_area: cull::Extent::Empty,
+      damaged_full: true,
+      frame_damage: FrameDamage::Full,
+      backdrop_regions: Vec::new(),
+    }
   }
 
   /// Note that a node's on-screen pixels may differ from the last painted
@@ -53,18 +63,35 @@ impl DamageLedger {
     self.damaged.insert(id);
   }
 
+  /// Note that the pixels inside `area`, a window extent as of the last
+  /// paint walk, may differ from the last painted frame: damage smaller
+  /// than any node's extent. A node that moved since that walk carries its
+  /// own damage: its old extent, from its cell or, under a Recording
+  /// boundary that moved since it recorded, the outermost Recording
+  /// boundary's above it (composite::damaged_extent), and its new one, which together cover
+  /// the area where it was and where it is.
+  pub(crate) fn note_area(&mut self, area: cull::Extent) {
+    if self.damaged_full {
+      return;
+    }
+    self.damaged_area = self.damaged_area.union(area);
+  }
+
   /// Degrade the frame being accumulated to full damage (resize, re-root).
   pub(crate) fn all(&mut self) {
     self.damaged_full = true;
     self.damaged.clear();
+    self.damaged_area = cull::Extent::Empty;
   }
 
   /// Drain the accumulated damage for the frame being resolved: the damaged
-  /// node ids, and whether the frame is fully damaged regardless of them.
-  pub(crate) fn take(&mut self) -> (Vec<u64>, bool) {
+  /// node ids, the window area noted beside them, and whether the frame is
+  /// fully damaged regardless of both.
+  pub(crate) fn take(&mut self) -> (Vec<u64>, cull::Extent, bool) {
     let full = self.damaged_full;
     self.damaged_full = false;
-    (self.damaged.drain().collect(), full)
+    let area = std::mem::replace(&mut self.damaged_area, cull::Extent::Empty);
+    (self.damaged.drain().collect(), area, full)
   }
 
   /// The damage the last painted frame resolved to (`resolve_walk` writes it).
@@ -103,9 +130,16 @@ impl DamageLedger {
 // A backdrop panel re-filters what lies beneath it, so a change within the
 // blur's reach of a panel changes the panel's own pixels too - the repaint
 // rect must grow to cover the whole panel, or the blit leaves its edge
-// stale. An unmappable region (non-2D transform) makes any damage full-frame
-// rather than risking that. Iterates because one panel's growth can reach
-// another; bounded by the region count.
+// stale. And past the panel by the blur's reach: a patch draws nothing
+// outside itself (the rig's clip leaves cleared pixels there, the patch
+// layer ends there), and a patch whose edge is the panel's draws the
+// panel's edge pixels unlike a whole frame does (a band at the panel's
+// edges, packages/2d/tests/target-damage.test.tsx, backdrop case). Grown
+// by the reach, the patch's edge stays clear of the panel, and every pixel
+// the blur can read is drawn inside the patch. An unmappable region
+// (non-2D transform) makes any damage full-frame rather than risking that.
+// Iterates because one panel's growth can reach another; bounded by the
+// region count.
 pub(crate) fn expand_damage_for_backdrops(damage: cull::Extent, regions: &[BackdropRegion]) -> cull::Extent {
   if regions.is_empty() {
     return damage;
@@ -121,8 +155,9 @@ pub(crate) fn expand_damage_for_backdrops(damage: cull::Extent, regions: &[Backd
     let mut grew = false;
     for entry in regions {
       let Some((region, reach)) = entry else { continue };
-      if current.intersects(&region.inflate(*reach, *reach)) && !current.contains_rect(region) {
-        current = current.union(region);
+      let read = region.inflate(*reach, *reach);
+      if current.intersects(&read) && !current.contains_rect(&read) {
+        current = current.union(&read);
         grew = true;
       }
     }

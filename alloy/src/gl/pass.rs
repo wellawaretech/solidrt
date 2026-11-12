@@ -365,6 +365,26 @@ pub fn composite_program_over_window(
   run_pass(gl, window, origin, width, height, None, draw);
 }
 
+/// Replace the window framebuffer's pixels (`window` as in
+/// `render_program_to_window`) inside `scissor` with `program`'s output,
+/// drawn over the viewport rectangle at `origin` of `size` (all GL
+/// bottom-up coordinates): no clear, no blending - the patch layer's copy
+/// into the window (`RasterState::draw_window_patch`), which places the
+/// whole layer at the patch and keeps the write to the patch. Nothing
+/// outside `scissor` is written.
+pub fn copy_program_into_window(
+  gl: &glow::Context,
+  program: &ShaderProgram,
+  window: Option<glow::Framebuffer>,
+  origin: (i32, i32),
+  size: (u32, u32),
+  scissor: (i32, i32, i32, i32),
+  textures: &[PassInput],
+) {
+  let draw = PassDraw::Fullscreen { program, params: &[], textures, vertex_count: 3, clear: None, blend: false };
+  run_pass(gl, window, origin, size.0, size.1, Some(scissor), draw);
+}
+
 /// Run one fullscreen draw of `program` into `fbo` (None = the default
 /// framebuffer), no clear: the covering triangle writes every pixel. The
 /// in-tile MSAA resolve consumes its resolved texture through this instead of
@@ -387,7 +407,8 @@ pub fn render_program_to_fbo(
 
 /// Run one pass into `fbo` (None = the default framebuffer) at viewport
 /// `origin` + `width` x `height` (origin is (0, 0) for every whole-target
-/// pass; only the overlay composite positions a sub-rectangle): neutralize
+/// pass; only the overlay composite and the patch copy position a
+/// sub-rectangle): neutralize
 /// every piece of fixed-function state that could clip or blend the output
 /// away, execute the draw(s), and restore all of it. The save/restore set
 /// must stay exhaustive: the renderer runs full render passes on this same
@@ -445,7 +466,8 @@ pub(super) fn run_pass(
     gl.color_mask(true, true, true, true);
     gl.depth_range_f32(0.0, 1.0);
 
-    // A caller-confined pass (the partial-repaint resolve copy): the draw
+    // A caller-confined pass (the partial-repaint resolve copy, the patch
+    // layer's copy): the draw
     // writes only inside `scissor` (GL bottom-up coordinates). Applied after
     // the neutralize above; undone with the box restored below.
     if let Some((sx, sy, sw, sh)) = scissor {

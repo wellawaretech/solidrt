@@ -130,6 +130,32 @@ fn force_full_renders(ctx: Ctx<'_>, active: Option<bool>) -> rquickjs::Result<bo
     .map_err(|e| Exception::throw_message(&ctx, &format!("flux:test/gui forceFullRenders: {e}")))
 }
 
+/// `patchWindow(active)`: the headless patch switch
+/// (`alloy::Context::set_patch_headless_window`), set when `active` is
+/// `true` (the rig), `false` (off) or `"layer"` (the patch layer), read
+/// when null; the switch as it now stands, in the same values.
+fn patch_window<'js>(ctx: Ctx<'js>, active: Option<Value<'js>>) -> rquickjs::Result<Value<'js>> {
+  let Some(atx) = crate::alloy_plugins::alloy_context(&ctx) else {
+    return Err(Exception::throw_message(&ctx, "flux:test/gui patchWindow: no alloy context"));
+  };
+  if let Some(active) = active.filter(|v| !v.is_null() && !v.is_undefined()) {
+    let patch = match (active.as_bool(), active.as_string().map(|s| s.to_string()).transpose()?) {
+      (Some(false), _) => alloy::HeadlessPatch::Off,
+      (Some(true), _) => alloy::HeadlessPatch::Rig,
+      (None, Some(s)) if s == "layer" => alloy::HeadlessPatch::Layer,
+      _ => {
+        return Err(Exception::throw_type(&ctx, "flux:test/gui patchWindow: pass true, false, \"layer\" or null"));
+      }
+    };
+    atx.set_patch_headless_window(patch);
+  }
+  match atx.patch_headless_window() {
+    alloy::HeadlessPatch::Off => Ok(Value::new_bool(ctx, false)),
+    alloy::HeadlessPatch::Rig => Ok(Value::new_bool(ctx, true)),
+    alloy::HeadlessPatch::Layer => Ok(rquickjs::String::from_str(ctx, "layer")?.into_value()),
+  }
+}
+
 pub struct GuiTestModule;
 
 impl ModuleDef for GuiTestModule {
@@ -142,6 +168,7 @@ impl ModuleDef for GuiTestModule {
     decl.declare("hit")?;
     decl.declare("gpu")?;
     decl.declare("forceFullRenders")?;
+    decl.declare("patchWindow")?;
     Ok(())
   }
 
@@ -154,6 +181,7 @@ impl ModuleDef for GuiTestModule {
     exports.export("hit", Function::new(ctx.clone(), hit)?)?;
     exports.export("gpu", Function::new(ctx.clone(), gpu)?)?;
     exports.export("forceFullRenders", Function::new(ctx.clone(), force_full_renders)?)?;
+    exports.export("patchWindow", Function::new(ctx.clone(), patch_window)?)?;
     Ok(())
   }
 }

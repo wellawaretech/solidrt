@@ -107,7 +107,9 @@ impl<'d> PendingFrame<'d> {
           // is resolved without a walk - only GPU-content changes land on
           // this path, and their nodes' extents are current.
           let (w, h) = platform.window_size();
-          let damage = composite::resolve_reuse_damage(tree, crate::renderer::Size::new(w, h));
+          let window = crate::renderer::Size::new(w, h);
+          let damage = composite::resolve_reuse_damage(tree, window);
+          let damage_px = damage.area(window);
           alloy.submit_clean(
             c.dl.clone(),
             crate::PresentDamage::from_frame(damage, platform.display_scale()),
@@ -119,7 +121,7 @@ impl<'d> PendingFrame<'d> {
           // requested frame lands in this path) is not stranded until the
           // next rebuild.
           composite::release_retired_textures(tree, alloy);
-          return Ok(Commit::Reused { content_changed });
+          return Ok(Commit::Reused { content_changed, damage_px });
         }
       }
     }
@@ -136,8 +138,10 @@ pub enum Commit<'d> {
   /// The retained display list was resubmitted; the frame is done.
   /// `content_changed` says whether GPU writes since the last frame changed
   /// pixels behind it (a layer or shader app's every frame): the picture
-  /// moved even though the tree did not.
-  Reused { content_changed: bool },
+  /// moved even though the tree did not. `damage_px` is the window area
+  /// those writes damaged, in logical px^2 (`PaintStats::damage_px` of a
+  /// frame with no paint walk).
+  Reused { content_changed: bool, damage_px: f32 },
   /// Something changed: sequence the builder to produce the frame.
   Build(FrameBuilder<'d>),
 }

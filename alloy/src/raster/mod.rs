@@ -21,7 +21,6 @@
 mod buffer_age;
 mod cmd;
 mod compose;
-mod dirt;
 mod frame;
 mod offscreen;
 mod recover;
@@ -32,14 +31,19 @@ mod resources;
 mod targets;
 pub(crate) mod window_tap;
 
-pub use cmd::{DamageRect, PresentDamage};
+#[cfg(test)]
+pub(crate) use buffer_age::window_patch_refusal;
+pub use cmd::{DamageRect, HeadlessPatch, PresentDamage};
 pub(crate) use cmd::{ListWrite, RasterCmd};
-pub(crate) use dirt::DirtySet;
+#[cfg(test)]
+pub(crate) use compose::overlay_repair;
 #[cfg(test)]
 pub(crate) use frame::is_context_lost_error;
 use frame::FrameExit;
-use repaint::DamageTracker;
+pub(crate) use repaint::DamageTracker;
 pub(crate) use repaint::WindowRoute;
+#[cfg(test)]
+pub(crate) use repaint::{patch_layer_fit, stepped_patch, FakeSurface, LayerFit, WindowBuffer};
 #[cfg(test)]
 pub(crate) use targets::propagation_order;
 pub use window_tap::TapSize;
@@ -57,7 +61,7 @@ use crate::gl::{
   release_buffer, release_pipeline, release_program, EntryBuffers, GpuBuffer, GpuTexture, PassTimer, RenderPipeline,
   SamplerCache, ShaderProgram, ShaderTexture,
 };
-use crate::gpu::{BufferIds, GpuLimits, WindowShader};
+use crate::gpu::{BufferIds, DirtySet, GpuLimits, WindowShader};
 use crate::gpu::{SamplerState, TextureFormat, TextureShape};
 
 /// Counters shared between the raster thread, the frame loop, and the UI
@@ -149,8 +153,10 @@ pub struct RasterStats {
   /// and reports as absent.
   pub(crate) timer_queries: AtomicBool,
   /// Presents that drew only a damage patch over an aged back buffer
-  /// (partial repaint, okf/done/partial-repaint.md); the verification
-  /// signal that stage 2 is engaging.
+  /// (partial repaint, okf/done/partial-repaint.md), and headless frames
+  /// that did over the window target under the patch switch
+  /// (`Context::set_patch_headless_window`); the verification signal that
+  /// stage 2 is engaging.
   pub(crate) partial_presents: AtomicU64,
   /// Video frames latched into a YUV texture at a frame (see yuv.rs).
   pub(crate) video_latched: AtomicU64,
@@ -245,7 +251,8 @@ pub struct RasterCounters {
   /// microseconds - the work no frame-phase timing sees.
   pub cmd_micros: u64,
   /// Presents that drew only a damage patch over an aged back buffer
-  /// (partial repaint); stays 0 where buffer age is unavailable.
+  /// (partial repaint), and headless frames under the patch switch that
+  /// did over the window target; stays 0 where buffer age is unavailable.
   pub partial_presents: u64,
   /// Video frames latched, skipped and latched late (see `RasterStats`).
   pub video_latched: u64,
@@ -477,6 +484,15 @@ pub(crate) struct RasterState {
   // a window, whose framebuffer is FBO 0; None headless until the first
   // frame or readback.
   window_target: Option<LayerTarget>,
+  // The layer a patch-layer frame draws its patch into
+  // (`draw_window_patch`), its patch in the bottom-left corner. Grown to
+  // hold every patch it meets, so patches that alternate between sizes
+  // reuse one layer, and allocated again at the patch's size once it has
+  // been far larger than the patch for a run of frames
+  // (`repaint::patch_layer_fit`, which `patch_layer_oversized` counts
+  // for); gone with the context on a loss, like every layer here.
+  patch_layer: Option<LayerTarget>,
+  patch_layer_oversized: u32,
   // Consecutive failed presents; a short streak confirms context loss.
   present_failures: u32,
   // Instant of the last slow-frame warning, for the 1/s rate limit.
@@ -609,6 +625,17 @@ pub(crate) struct RasterState {
   // owner (target or sub-target) that has dirt renders in full, whatever
   // rectangles that dirt holds; a clean tile in a partial pass stays clean.
   force_full_renders: bool,
+  // The test switch (`RasterCmd::SetPatchHeadlessWindow`): while not
+  // `Off`, a headless frame is routed like a windowed one over the window
+  // target, a back buffer of age 1 while `window_target_held`, its patch
+  // through the rig or the patch layer as the switch says.
+  patch_headless_window: HeadlessPatch,
+  // Whether the headless window target holds the last drawn frame whole:
+  // false while fresh (allocated, cleared) and after a frame that did not
+  // draw, so a patch never lands on pixels that are not the last frame's.
+  // A window shader or an overlay change folds its own repair into the
+  // damage (compose.rs), for this target and a window's aged buffers alike.
+  window_target_held: bool,
   // Sampled content may have changed since the last layer resolve: set by
   // every command except Frame/SetWindowShader (and by any non-clean Frame),
   // cleared by a resolve. While set, a clean-tree frame may not skip its
@@ -799,6 +826,8 @@ impl RasterState {
       last_size: ISize::new(0, 0),
       sink,
       window_target: None,
+      patch_layer: None,
+      patch_layer_oversized: 0,
       present_failures: 0,
       slow_frame_log: None,
       last_frame_gpu_micros: None,
@@ -831,6 +860,8 @@ impl RasterState {
       buffers: HashMap::new(),
       dirty: DirtySet::new(),
       force_full_renders: false,
+      patch_headless_window: HeadlessPatch::Off,
+      window_target_held: false,
       regions: HashMap::new(),
       window_shader: None,
       overlay: None,
@@ -1215,6 +1246,9 @@ impl RasterState {
           }
           RasterCmd::SetForceFullRenders { on } => {
             self.force_full_renders = on;
+          }
+          RasterCmd::SetPatchHeadlessWindow { patch } => {
+            self.patch_headless_window = patch;
           }
           RasterCmd::ResetDrawGauge { target, draw } => {
             if let Some(shader) = self.shaders.get(&target) {

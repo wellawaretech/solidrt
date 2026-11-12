@@ -65,6 +65,9 @@ pub struct FrameRecord {
   /// (see rendertree composite PaintStats); with nodes_painted, the paint
   /// activity of the frame, which the latest-frame stats lose on a reuse.
   pub backdrops_prepainted: u32,
+  /// The window area the frame damaged, in logical px^2 (PaintStats): the
+  /// paint walk's, or what a reused frame's content writes resolved to.
+  pub damage_px: f32,
   /// The raster counters as they stood when the frame was recorded; two
   /// records give a rate over the frames between them.
   pub raster: RasterCounters,
@@ -107,6 +110,10 @@ pub struct WindowSummary {
   pub text_layers: u32,
   /// The widest paint walk in the window.
   pub nodes_painted_max: u32,
+  /// The window area damaged, summed over the window's frames (logical
+  /// px^2): over one frame, that frame's damage, where the latest-frame
+  /// `damagePx` reads 0 as soon as a skipped frame follows.
+  pub damage_px: f64,
   /// Region enters and leaves the residency gate delivered between the
   /// window's first and last record (0 with one record).
   pub region_enters: u64,
@@ -285,6 +292,7 @@ impl FrameHistory {
       backdrops_prepainted: frames.iter().map(|r| r.backdrops_prepainted).sum(),
       text_layers: frames.iter().map(|r| r.counters.text_layers).sum(),
       nodes_painted_max: frames.iter().map(|r| r.nodes_painted).max().unwrap_or(0),
+      damage_px: frames.iter().map(|r| r.damage_px as f64).sum(),
       region_enters: frames.last().map_or(0, |l| l.residency.enters.saturating_sub(frames[0].residency.enters)),
       region_leaves: frames.last().map_or(0, |l| l.residency.leaves.saturating_sub(frames[0].residency.leaves)),
       raster_rates,

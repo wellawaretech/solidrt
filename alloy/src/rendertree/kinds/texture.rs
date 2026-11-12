@@ -1,13 +1,16 @@
 use super::PaintState;
+use crate::gpu::PxRect;
 use crate::renderer::prelude::*;
 use crate::renderer::{
   ColorSource, DisplayListBuilder, Matrix, Point, Rect, RoundingRadii, Size, TextureSampling, TileMode,
 };
+use crate::rendertree::cull;
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{
   base_style, replaced_size, Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
 };
+use std::cell::Cell;
 use taffy::{Display, Style};
 
 // CSS object-fit semantics: how the source pixels map to the element box.
@@ -54,6 +57,84 @@ pub fn fit_rects(fit: TextureFit, src: Rect, dst: Rect) -> (Rect, Rect) {
   (src_out, dst_out)
 }
 
+// How far past a changed texel a draw of the texture shows the change, in
+// texels: linear filtering blends each texel into the pixels of its
+// neighbours.
+const CONTENT_SAMPLE_REACH_TEXELS: f32 = 1.0;
+
+// What a content rectangle mapped to the window grows by on every side, in
+// logical px: the box offset that rounds the node's origin onto a device
+// pixel (under one) and the rasterization edge.
+const CONTENT_EDGE_PX: f32 = 1.0;
+
+/// How the last paint walk that built a texture node drew it: the source
+/// rectangle it took (texels, after the fit's crop), the rectangle of its
+/// box frame that one landed on, and that frame's map. Under no Recording
+/// boundary the map is to the window. Built inside a Recording boundary's
+/// record walk, it is to that boundary's frame (cull::RecordingFrame), and
+/// `within` names the boundary: a replay is not walked, so the build's
+/// window position goes stale, but its place in the recording holds until
+/// the boundary records again. What turns a change inside rectangles of
+/// the texture into window damage smaller than the node
+/// (`RenderTree::texture_content_changed`), which composes the current map
+/// to the window from it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shown {
+  pub src: Rect,
+  pub dst: Rect,
+  /// The nearest Recording boundary the build was recorded inside; None
+  /// under none.
+  pub within: Option<u64>,
+  /// The box frame's map to the frame of `within`, to the window under
+  /// none; None where it is not known (not 2d, a boundary frame with no
+  /// inverse).
+  pub to_frame: cull::WindowMap,
+}
+
+impl Shown {
+  /// The window extent of what the draw shows of `rects`, rectangles of the
+  /// texture's pixels (image space, top-left origin), with `map` the box
+  /// frame's current map to the window: each grown by the filter's reach,
+  /// cut to the source rectangle, scaled onto the destination, mapped to
+  /// the window (its bounding box under a rotation) and grown by the edge.
+  /// Empty when the draw shows none of them (all outside a crop). None for
+  /// a source rectangle with no area, and the caller falls back to the
+  /// whole node.
+  pub fn window_extent(&self, map: &euclid::default::Transform2D<f32>, rects: &[PxRect]) -> Option<cull::Extent> {
+    let (sw, sh) = (self.src.size.width, self.src.size.height);
+    if sw <= 0.0 || sh <= 0.0 {
+      return None;
+    }
+    let (sx, sy) = (self.dst.size.width / sw, self.dst.size.height / sh);
+    let reach = CONTENT_SAMPLE_REACH_TEXELS;
+    let mut extent = cull::Extent::Empty;
+    for r in rects {
+      let texels = Rect::new(
+        Point::new(r.x as f32 - reach, r.y as f32 - reach),
+        Size::new(r.w as f32 + 2.0 * reach, r.h as f32 + 2.0 * reach),
+      );
+      let Some(seen) = texels.intersection(&self.src) else { continue };
+      let local = Rect::new(
+        Point::new(
+          self.dst.origin.x + (seen.origin.x - self.src.origin.x) * sx,
+          self.dst.origin.y + (seen.origin.y - self.src.origin.y) * sy,
+        ),
+        Size::new(seen.size.width * sx, seen.size.height * sy),
+      );
+      let window = map.outer_transformed_rect(&local).inflate(CONTENT_EDGE_PX, CONTENT_EDGE_PX);
+      extent = extent.union(cull::Extent::Bounded(window));
+    }
+    Some(extent)
+  }
+
+  /// The window extent of the whole draw, with `map` the box frame's
+  /// current map to the window: the destination rectangle mapped and grown
+  /// by the edge. What a change of all of the texture shows as.
+  pub fn drawn_extent(&self, map: &euclid::default::Transform2D<f32>) -> cull::Extent {
+    cull::Extent::Bounded(map.outer_transformed_rect(&self.dst).inflate(CONTENT_EDGE_PX, CONTENT_EDGE_PX))
+  }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Texture {
   pub texture_id: Option<u64>,
@@ -80,6 +161,13 @@ pub struct Texture {
   // - and ignores the color's RGB, any color source, and the stroke fields.
   // See examples/texture_paint.rs, which asserts each of those.
   pub paint: PaintState,
+  // How the last paint walk that built the node placed its draw (`Shown`);
+  // None until a walk builds it, and after one that found no texture.
+  // Written by the build, so a node inside a recording a walk replays
+  // keeps the value of the walk that recorded it, stated relative to that
+  // recording's frame. Read back for a node whose every boundary above is
+  // a Recording one, and no view above it blurs.
+  pub shown: Cell<Option<Shown>>,
 }
 
 impl Texture {
@@ -93,6 +181,7 @@ impl Texture {
 
 impl Buildable for Texture {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
+    self.shown.set(None);
     let Some(tex_id) = self.texture_id else {
       return;
     };
@@ -100,6 +189,24 @@ impl Buildable for Texture {
       log::warn!("[texture] build: tex_id={} not in registry", tex_id);
       return;
     };
+    let src_rect = self.source_rect(entry.width(), entry.height());
+    let x = self.x.unwrap_or(0.0);
+    let y = self.y.unwrap_or(0.0);
+    let w = self.w.unwrap_or(ctx.size.width);
+    let h = self.h.unwrap_or(ctx.size.height);
+    let dst_rect = Rect::new(Point::new(x, y), Size::new(w, h));
+    let (src_rect, dst_rect) = fit_rects(self.fit, src_rect, dst_rect);
+    // A texture has no matrix of its own, so the frame the walk is in is
+    // its box frame. Kept ahead of the handle check: the placement needs
+    // only the entry's size, and a node that draws nothing damages nothing
+    // anyone sees. Inside a recording the map is stated relative to the
+    // recording's frame, where the draw stays put.
+    let (within, to_frame) = match ctx.recording {
+      Some((id, frame)) => (Some(id), cull::map_relative(&ctx.to_window, &frame)),
+      None => (None, ctx.to_window),
+    };
+    self.shown.set(Some(Shown { src: src_rect, dst: dst_rect, within, to_frame }));
+
     // No renderer handle, nothing to draw: a non-2D shape, or a draw target
     // of a format other than rgba8 (sampler-only, see TextureEntry::handle).
     let Some(handle) = &entry.handle else {
@@ -111,13 +218,6 @@ impl Buildable for Texture {
       return;
     };
 
-    let src_rect = self.source_rect(entry.width(), entry.height());
-    let x = self.x.unwrap_or(0.0);
-    let y = self.y.unwrap_or(0.0);
-    let w = self.w.unwrap_or(ctx.size.width);
-    let h = self.h.unwrap_or(ctx.size.height);
-    let dst_rect = Rect::new(Point::new(x, y), Size::new(w, h));
-    let (src_rect, dst_rect) = fit_rects(self.fit, src_rect, dst_rect);
     // `to_paint`, not `to_paint_in`: the draw ignores color sources, so
     // resolving a box-relative gradient would build one per frame for nothing.
     let paint = self.paint.to_paint();

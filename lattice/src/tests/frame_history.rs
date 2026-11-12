@@ -13,6 +13,16 @@ fn history(records: &[FrameRecord]) -> FrameHistory {
 }
 
 #[test]
+fn damage_sums_over_the_window() {
+  // Sample areas, logical px^2: a small patch, a clean frame, a larger one.
+  let at = |at_ms: f64, damage_px: f32| FrameRecord { damage_px, ..record(at_ms, 1.0, 0, 0) };
+  let h = history(&[at(100.0, 400.0), at(200.0, 0.0), at(300.0, 2500.0)]);
+  assert_eq!(h.summarize(Window::Frames(3), 1000.0).expect("three frames").damage_px, 2900.0);
+  // Over one frame it is that frame's damage.
+  assert_eq!(h.summarize(Window::Frames(1), 1000.0).expect("last frame").damage_px, 2500.0);
+}
+
+#[test]
 fn capture_frames_stay_out_of_the_timing_figures() {
   let stalled = FrameRecord { captures: 1, ..record(300.0, 120.0, 30, 0) };
   let h = history(&[record(100.0, 1.0, 10, 0), record(200.0, 2.0, 20, 0), stalled]);

@@ -611,14 +611,13 @@ Shaped, not started.
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an sol doctor helper
   rather than an engine feature.
-- **[Damage rectangles - the window side and app-declared damage](backlog/gpu-target-damage.md)** [2026-11-05]
-  A draw target re-renders only its damage rectangles now (fed by culled draw
-  lists), but the window still repaints the whole leaf that shows it, and no
-  app can declare damage for a write the core cannot derive; the window side
-  maps a target's rectangles through the showing leaf (worth nothing where the
-  window takes the multisampled fast path, as on the SM-T500), feed 2, a core
-  verb, waits for a consumer to be decided, and the built path is still to be
-  timed and checked on a tiler.
+- **[Damage rectangles declared by an app (feed 2) - no consumer yet](backlog/gpu-target-damage.md)** [2026-11-05]
+  A draw target re-renders only its damage rectangles (fed by culled draw
+  lists) and the window follows them; what is left is a core verb for a write
+  the core cannot derive, whose constraint is settled (the write itself says
+  it is covered) but which no consumer needs today - the proposal is to build
+  none until one of two named consumers exists, and the reasons each candidate
+  falls away are recorded here.
 - **[Animate gradient colors](backlog/gradient-color-transition.md)** [2026-09-27]
   A gradient-valued `color` never animates (the color lane reads a gradient as
   not animatable), so a lit fill snaps on a theme switch where a solid fill
@@ -2297,6 +2296,16 @@ Finished, kept for the reasoning.
   target in /gpu and a force-full debug switch; the 2d views' matrix made
   y-down to match their vertex stage. Left open, the window side, app-declared
   damage and a timing of the built path on a tiler.
+- **[Damage rectangles reach the window - a damaged target damages only what the node showing it shows of them](done/gpu-target-damage-window.md)** [2026-11-12]
+  Landed 2026-11-12 - a content change carries its dirt (full or rectangles,
+  the raster thread's model) to the tree, and a texture node maps the
+  rectangles through its fit, source rectangle and window map into window
+  damage; a press on a full-window view damages 5,214 px of 921,600 on the
+  desktop client and every frame of it is a partial present; content under
+  Recording boundaries damages where it shows now, composed up the boundaries'
+  frames; the damage area reported for reused frames and in the stats window;
+  a headless patch switch and window-pixel tests that compare a patched window
+  with a whole redraw.
 - **[Dependency propagation between GPU targets](done/gpu-target-dependency-propagation.md)** [2026-07-31]
   A target sampling another target keeps a stale frame forever unless its own
   params are written; the API accepts the binding and then quietly stops
@@ -3662,7 +3671,15 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   costs 0.6 to 0.7 ms where the full pass costs 16.7 to 35.0 ms, the press
   frame sits 2.5 ms of GPU above an idle frame where a full pass sits 14 to 32
   ms above it, and the tablet's window backbuffer is 4x multisampled, so the
-  window side of damage saves nothing there.
+  window side of damage saves nothing there; on a desktop client the window
+  side takes a press from the whole window to 5,214 px a frame; on the
+  multisampled window, three ways to declare the damage region to the driver
+  were measured (a press frame on the tablet from 24.7 ms of GPU to 18.0, 19.9
+  and 19.4 ms, on a Mali-T860 TV from 4.2 to 1.3, 3.5 and 2.8 ms), and the
+  patch drawn into a layer and copied into the window scissored to the patch
+  ships (one layer kept between frames, at least the patch's size and bounded,
+  where the measured variant used a layer of the patch's own size), since the
+  fastest renders outside the region, which the extension leaves undefined.
 - **[Terminal input and raw mode under flux](notes/terminal-raw-mode.md)** [2026-08-26]
   What a process that reads its own terminal has to know - crossterm's raw
   mode clears output post-processing on Unix (bare newlines staircase), stdin

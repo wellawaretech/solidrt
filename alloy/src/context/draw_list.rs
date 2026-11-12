@@ -942,9 +942,10 @@ impl Context {
     if writes.is_empty() && range.is_none() {
       return;
     }
+    let noted = range.is_some().then(|| dirt.clone());
     self.send(RasterCmd::WriteDrawList { target, draw, writes, range, dirt });
-    if range.is_some() {
-      self.note_target_content(target);
+    if let Some(dirt) = noted {
+      self.note_target_content_dirt(target, &dirt);
     }
   }
 
@@ -976,8 +977,8 @@ impl Context {
         writes.push(ListWrite::Bytes { id: list.private[i], data, byte_offset: at.start * stride });
       }
     }
+    self.note_target_content_dirt(target, &dirt);
     self.send(RasterCmd::WriteDrawList { target, draw, writes, range: None, dirt });
-    self.note_target_content(target);
   }
 
   // Recompute which list buffers an entry draws directly (an entry with

@@ -94,10 +94,12 @@ pub fn paint_phase(
 
   // Partial repaint: the damaged ids' last_extent cells still hold their
   // extents as of the LAST walk - the old half of the damage union (where
-  // pixels must be erased). The walk below rewrites the cells; the second
-  // pass after it reads the new half. Taken after layout_phase so the ids
-  // noted by set_unrounded_layout (relayout-shifted nodes) are included.
-  let (damaged, damage_full) = tree.damage_ledger().take();
+  // pixels must be erased), read through damaged_extent, which stands the
+  // outermost repaint boundary in for a cell a reused cache left stale. The
+  // walk below rewrites the cells; the second pass after it reads the new
+  // half. Taken after layout_phase so the ids noted by
+  // set_unrounded_layout (relayout-shifted nodes) are included.
+  let (damaged, damaged_area, damage_full) = tree.damage_ledger().take();
   let size = Size::new(width, height);
   let window_rect = Rect::new(Point::zero(), size);
   tree.node(root_id).last_extent.set(cull::Extent::Bounded(window_rect));
@@ -122,7 +124,8 @@ pub fn paint_phase(
     ctx.cull = Some(window_rect);
     ctx.to_window = Some(euclid::default::Transform2D::identity());
 
-    let mut damage = cull::Extent::Empty;
+    // The area noted beside the ids is in window space already.
+    let mut damage = damaged_area;
     if !damage_full {
       for &id in &damaged {
         damage = damage.union(damaged_extent(tree, id));
@@ -225,12 +228,12 @@ pub(crate) fn release_retired_textures(tree: &mut RenderTree, alloy: &crate::Con
 /// reuse path (PendingFrame::commit): the tree is unchanged since the last
 /// walk, so a damaged id's cell is both its old and its new extent. Only
 /// GPU-content damage lands here - texture nodes whose pixels changed behind
-/// an unchanged display list (texture_content_changed notes them without a
-/// revision bump).
+/// an unchanged display list (texture_content_changed notes them, or the
+/// window area of the part that changed, without a revision bump).
 pub fn resolve_reuse_damage(tree: &mut RenderTree, window: Size) -> FrameDamage {
-  let (damaged, full) = tree.damage_ledger().take();
+  let (damaged, area, full) = tree.damage_ledger().take();
   let window_rect = Rect::new(Point::zero(), window);
-  let mut damage = cull::Extent::Empty;
+  let mut damage = area;
   if !full {
     for &id in &damaged {
       damage = damage.union(damaged_extent(tree, id));
@@ -243,9 +246,14 @@ pub fn resolve_reuse_damage(tree: &mut RenderTree, window: Size) -> FrameDamage 
 // considered (a span, drawn by its text; a node born under a culled parent)
 // has an Empty cell and borrows the nearest ancestor's - conservative, and
 // the ascent ends at the root, whose cell is the window. A destroyed id
-// contributes nothing: its removal already noted the parent.
+// contributes nothing: its removal already noted the parent. Under a
+// Recording boundary that moved since it recorded, or under a snapshot
+// boundary, the node's cell may be where the walk that made the cache
+// left it, not where the cache shows it: the outermost repaint boundary's
+// cell stands in (RenderTree::boundary_stand_in), the same before the
+// walk, after it, and on a reuse frame.
 fn damaged_extent(tree: &RenderTree, id: u64) -> cull::Extent {
-  let mut current = Some(id);
+  let mut current = Some(tree.boundary_stand_in(id).unwrap_or(id));
   while let Some(cur) = current {
     let Some(element) = tree.try_node(cur) else { return cull::Extent::Empty };
     match element.last_extent.get() {
@@ -612,17 +620,20 @@ fn isolated_walk<'a>(
 // walk descends to the capture nodes. The cache itself is untouched - the
 // caller still composites it - so a capture never re-rasterizes a snapshot
 // or rotates a shader history. No-op unless a pending capture is inside.
+// Returns whether it walked: the walk writes the cells inside at the
+// boundary's current place.
 pub(super) fn service_captures_under_cache<'a>(
   scene: &'a RenderTree,
   node_id: u64,
   ctx: &mut BuildContext<'a>,
   hoist: Hoist,
-) {
+) -> bool {
   if !capture_pending_within(scene, node_id, ctx.alloy) {
-    return;
+    return false;
   }
   let mut sub = DisplayListBuilder::new(None);
   isolated_walk(scene, node_id, ctx, &mut sub, hoist);
+  true
 }
 
 // Repaint-boundary gate: a boundary subtree's paint result is retained (as a
@@ -708,6 +719,13 @@ fn build_recursive<'a>(
         Some(m) => Hoist::Full(m),
         None => Hoist::None,
       };
+      // The frame the recording's content is in, past what the composite
+      // applies around it (cull::RecordingFrame), noted on every visit,
+      // replay or record, so content damage under the boundary follows it
+      // wherever it has moved or scrolled. The record walk below states
+      // what it draws relative to it.
+      let frame = cull::map_past_box(&ctx.to_window, hoisted.as_ref().map(|(m, _)| m), hoisted.and_then(|(_, s)| s));
+      scene.note_recording_frame(node_id, ctx.recording, frame);
       // The density the recording's content made for one scale (text
       // layers, floored strokes) is judged at: the grid scale inside the
       // boundary's own matrix, what its texts read as their composite scale
@@ -767,7 +785,11 @@ fn build_recursive<'a>(
             scene.note_scale_wait(node_id);
             ctx.platform.request_frame();
           }
-          service_captures_under_cache(scene, node_id, ctx, hoist);
+          // A capture's walk moves the cells inside to where the boundary
+          // is now, which need not be where it recorded.
+          if service_captures_under_cache(scene, node_id, ctx, hoist) {
+            scene.note_recording_walked(node_id);
+          }
           // Panels baked inside the recording re-filter the live window at
           // replay, but the walk is not entering the subtree to push their
           // regions: push one in their place - the boundary's subtree
@@ -799,7 +821,10 @@ fn build_recursive<'a>(
       ctx.scale_at_rest = outer_rest || settled;
       let mut sub = DisplayListBuilder::new(None);
       let cull = ctx.cull.take();
+      let outer_recording = ctx.recording.replace((node_id, frame));
+      scene.note_recording_recorded(node_id);
       record_node(scene, node_id, ctx, &mut sub, hoist);
+      ctx.recording = outer_recording;
       ctx.cull = cull;
       ctx.scale_at_rest = outer_rest;
       if let Some(dl) = sub.build() {
@@ -1050,14 +1075,11 @@ pub(super) fn record_node<'a>(
   // extents must describe. Unlike the cull rect it is never suspended
   // inside boundary recordings - a recording replays at the walk's current
   // window position this frame. The grid map follows the same ops into the
-  // child frame, from the box grid (see above).
+  // child frame, from the box grid (see above). The matrix and the scroll
+  // are one step (cull::map_past_box), the very one a Recording boundary's
+  // frame is computed by (build_recursive).
   let saved_map = ctx.to_window;
-  if let Some(own) = &own {
-    ctx.to_window = cull::map_through(&ctx.to_window, own);
-  }
-  if let Some(s) = scroll {
-    ctx.to_window = cull::map_translate(&ctx.to_window, -s);
-  }
+  ctx.to_window = cull::map_past_box(&ctx.to_window, own.as_ref(), scroll);
   if let Some(fit) = &view_fit {
     ctx.to_window = cull::map_through(&ctx.to_window, fit);
   }

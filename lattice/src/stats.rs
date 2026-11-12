@@ -256,7 +256,8 @@ impl Stats {
   }
 
   /// Record the frame's paint walk counts (see the field): the rebuild's, or
-  /// zero for a reused or skipped frame.
+  /// zero for a reused or skipped frame, but for a reused frame's damage
+  /// area.
   pub fn record_paint(&mut self, paint_stats: PaintStats) {
     self.paint_stats = paint_stats;
   }

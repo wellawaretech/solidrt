@@ -85,4 +85,18 @@ declare module "flux:test/gui" {
    * off.
    */
   export function forceFullRenders(active: boolean | null): boolean
+
+  /**
+   * The headless patch switch, for tests of window damage: `true` makes
+   * each headless frame redraw only its damage over the window's last
+   * frame and keep the rest, as a single-sample window patches its back
+   * buffer (through the rig); `"layer"` does the same through the patch
+   * layer, as a multisampled window does (the patch grown to whole size
+   * steps, one over half the window drawn whole); `false` (the default)
+   * redraws the whole window every frame; `null` reads it. A resize, a
+   * full damage and a window shader still redraw the whole window.
+   * Returns the switch as it now stands. Applies from the next frame;
+   * every test engine starts with it off.
+   */
+  export function patchWindow(active: boolean | "layer" | null): boolean | "layer"
 }

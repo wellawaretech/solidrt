@@ -110,9 +110,15 @@ fn backdrop_regions_widen_damage() {
   assert_eq!(far, Extent::Bounded(rect(500.0, 500.0, 10.0, 10.0)));
 
   // Damage just outside the panel but inside the blur's reach pulls the
-  // whole panel into the repaint rect.
+  // whole panel into the repaint rect, and the blur's reach past it: the
+  // blur at the panel's edge reads that far out, and a patch draws nothing
+  // outside itself.
   let near = expand_damage_for_backdrops(Extent::Bounded(rect(90.0, 110.0, 5.0, 5.0)), &[Some(panel)]);
-  assert_eq!(near, Extent::Bounded(rect(90.0, 100.0, 210.0, 80.0).union(&rect(90.0, 110.0, 5.0, 5.0))));
+  assert_eq!(near, Extent::Bounded(rect(88.0, 88.0, 224.0, 104.0)));
+
+  // Damage inside the panel the same: the panel and its reach.
+  let inside = expand_damage_for_backdrops(Extent::Bounded(rect(150.0, 120.0, 5.0, 5.0)), &[Some(panel)]);
+  assert_eq!(inside, Extent::Bounded(rect(88.0, 88.0, 224.0, 104.0)));
 
   // One panel's growth can reach a second panel (iteration).
   let chained = expand_damage_for_backdrops(

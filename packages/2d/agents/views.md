@@ -257,7 +257,10 @@ queries are untouched.
   same); the default is 512 px. On the GPU, a frame whose writes change a
   few sprites under a camera that held still re-renders only the
   rectangles their boxes covered before and after, and keeps the rest of
-  the view's pixels: one sprite pulsing costs its box, not the view. A
+  the view's pixels: one sprite pulsing costs its box, not the view. On
+  a desktop window the `<texture>` showing the view then repaints only
+  those rectangles too (`damagePx` in the stats); an Android window
+  redraws whole whatever changed. A
   camera move, a size, tint or params write, more than 64 sprites
   written at once, or damage over half the view re-renders the view in
   full, and so does every write to a layer with `cull: false`. A view

@@ -397,6 +397,22 @@ fn capture<'js>(ctx: Ctx<'js>, node: u64) -> flux::rquickjs::Result<Object<'js>>
   pixels_object(&ctx, info)
 }
 
+/// `windowPixels()`: the window as the last frame left it, as `{ width,
+/// height, data }` (the shape of `capture`, the whole window). Nothing is
+/// painted and no frame runs: the headless window target is read as it
+/// stands, so the pixels a patched frame kept are in it
+/// (`alloy::Context::set_patch_headless_window`). Throws while a frame is
+/// pending.
+fn window_pixels<'js>(ctx: Ctx<'js>) -> flux::rquickjs::Result<Object<'js>> {
+  free_frame(&ctx, "windowPixels()")?;
+  let throw = |message: &str| Exception::throw_message(&ctx, &format!("sol:test windowPixels: {message}"));
+  let Some(alloy) = flux::gui::alloy_context(&ctx) else {
+    return Err(throw("no window in this test; mount the app first"));
+  };
+  let (width, height, pixels) = alloy.read_window().map_err(|e| throw(&e))?;
+  pixels_object(&ctx, alloy::CaptureInfo { pixels, width, height })
+}
+
 /// `settle(maxMs, frames)`: run frames until the app is at rest
 /// (settle.rs): nothing in flight, no timer due, no frame demanded. With
 /// `frames` false, until its work is done whatever animates: nothing in
@@ -624,6 +640,7 @@ impl ModuleDef for SolTestModule {
     decl.declare("debug")?;
     decl.declare("stats")?;
     decl.declare("capture")?;
+    decl.declare("windowPixels")?;
     decl.declare("painted")?;
     decl.declare("camera")?;
     decl.declare("microphone")?;
@@ -659,6 +676,7 @@ impl ModuleDef for SolTestModule {
     exports.export("debug", Function::new(ctx.clone(), debug)?)?;
     exports.export("stats", Function::new(ctx.clone(), stats)?)?;
     exports.export("capture", Function::new(ctx.clone(), capture)?)?;
+    exports.export("windowPixels", Function::new(ctx.clone(), window_pixels)?)?;
     exports.export("painted", Function::new(ctx.clone(), painted)?)?;
     exports.export("camera", Function::new(ctx.clone(), camera)?)?;
     exports.export("microphone", Function::new(ctx.clone(), microphone)?)?;

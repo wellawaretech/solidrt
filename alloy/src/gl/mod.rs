@@ -41,8 +41,8 @@ pub(crate) use draw::{
 pub(crate) use entry::EntryBuffers;
 pub(crate) use glyphs::{render_glyphs, GlyphRig};
 pub(crate) use pass::{
-  composite_program_over_window, render_program_to_fbo, render_program_to_window, take_vertices, PassInput,
-  TILE_CLEAR_FRAGMENT,
+  composite_program_over_window, copy_program_into_window, render_program_to_fbo, render_program_to_window,
+  take_vertices, PassInput, TILE_CLEAR_FRAGMENT,
 };
 pub(crate) use program::{
   compile_stage, delete_stage, release_pipeline, release_program, CompiledStage, RenderPipeline, ShaderProgram,

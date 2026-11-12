@@ -336,11 +336,13 @@ impl RenderInner {
         // display list at 60 Hz showed PNT 350%) and its boundary counts as
         // current.
         let mut b = match frame.commit().expect("Failed to submit display list") {
-          Commit::Reused { content_changed } => {
+          Commit::Reused { content_changed, damage_px } => {
             let mut s = stats.borrow_mut();
             s.note_reused();
             s.record_frame(stats::FramePhases::default());
-            s.record_paint(rendertree::composite::PaintStats::default());
+            // No paint walk ran; the damage the content writes resolved to
+            // is the one paint fact a reused frame has.
+            s.record_paint(rendertree::composite::PaintStats { damage_px, ..Default::default() });
             // GPU content presented through the reused display list (a layer
             // write, a shader param, an upload) still changed the picture - a
             // sprite app's every frame is one. Record it, with the render
@@ -353,6 +355,7 @@ impl RenderInner {
                 period_ms: render_frame.period_ms,
                 js_ms,
                 total_ms: js_ms,
+                damage_px,
                 raster: atx.raster_counters(),
                 targets: atx.target_counters(),
                 residency: atx.spatial().residency_stats(),
@@ -414,6 +417,7 @@ impl RenderInner {
             counters,
             nodes_painted: paint_stats.nodes_painted,
             backdrops_prepainted: paint_stats.backdrops_prepainted,
+            damage_px: paint_stats.damage_px,
             raster: atx.raster_counters(),
             targets: atx.target_counters(),
             residency: atx.spatial().residency_stats(),

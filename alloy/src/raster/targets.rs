@@ -15,14 +15,14 @@ use std::sync::atomic::Ordering;
 use crate::renderer::prelude::*;
 use crate::renderer::{ISize, Texture};
 
-use super::{cmd, ensure_copy_program, resolve_entry_buffers, DirtySet, ListWrite, RasterState, RasterStats};
+use super::{cmd, ensure_copy_program, resolve_entry_buffers, ListWrite, RasterState, RasterStats};
 use crate::gl::{
   take_slice_report, GpuTexture, GroupDraw, PassInput, PassTimer, SamplerCache, ShaderProgram, ShaderTexture, Timed,
 };
 use crate::gpu::{
   validate_binding_shapes, validate_params, validate_texture_bindings, BoundTexture, DamageRects, DepthStorage,
-  DrawRange, DrawSpec, ParamValue, PipelineSpec, PxRect, SamplerState, TargetDirt, TargetSpec, TextureBinding,
-  TextureFormat, TextureShape, UniformKind, UniformTable,
+  DirtySet, DrawRange, DrawSpec, ParamValue, PipelineSpec, PxRect, SamplerState, TargetDirt, TargetSpec,
+  TextureBinding, TextureFormat, TextureShape, UniformKind, UniformTable,
 };
 
 impl RasterState {

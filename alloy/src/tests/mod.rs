@@ -36,6 +36,7 @@ mod pixel_snap;
 mod present;
 mod release;
 mod renderer;
+mod repaint;
 mod resample;
 mod router;
 mod spatial;

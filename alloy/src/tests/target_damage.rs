@@ -1,9 +1,9 @@
 use crate::context::Mirror;
+use crate::gpu::DirtySet;
 use crate::gpu::{
   project_box, BoxDamage, CellBox, CellIndex, DamageRects, ListDamage, OrderView, PxRect, RecordExtent, TargetDirt,
   CELL_BOX_FLOATS, MAX_DAMAGE_RECTS, MAX_DAMAGE_SLOTS,
 };
-use crate::raster::DirtySet;
 use crate::spatial::Lattice;
 
 // The target and view size of the projection cases, in pixels and world

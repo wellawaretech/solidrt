@@ -28,7 +28,7 @@ mod mode;
 pub mod motion;
 mod present;
 mod raster;
-pub use raster::{DamageRect, PresentDamage, RasterCounters, TargetCounters};
+pub use raster::{DamageRect, HeadlessPatch, PresentDamage, RasterCounters, TargetCounters};
 pub mod redraw;
 pub mod renderer;
 pub mod rendertree;
@@ -92,7 +92,7 @@ pub use gpu::{
   CELL_BOX_FLOATS, INDEX_NONE, MAX_BUFFERS, RUN_RAMP_SAMPLES,
 };
 pub use gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
-pub use gpu::{DAMAGE_EDGE_PX, MAX_DAMAGE_SLOTS};
+pub use gpu::{PxRect, DAMAGE_EDGE_PX, MAX_DAMAGE_SLOTS};
 pub use input::InputState;
 pub use keymap::w3c_code_for_key;
 pub use logging::install_logger;

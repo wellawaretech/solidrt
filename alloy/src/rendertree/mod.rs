@@ -19,7 +19,7 @@ pub use frame::{Commit, FrameBuilder, FrameDriver, PendingFrame};
 pub use hit::{EventInterest, HitConfig, PointerEvents};
 pub use kinds::{
   fit_rects, FilterState, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle,
-  ShadowState, Texture, TextureFit, View, Window, DEFAULT_STROKE_WIDTH,
+  ShadowState, Shown, Texture, TextureFit, View, Window, DEFAULT_STROKE_WIDTH,
 };
 pub use layout::{base_style, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
@@ -69,6 +69,12 @@ pub struct BuildContext<'a> {
   /// for the damage-extent cells; None past a non-2D matrix (see
   /// cull::WindowMap). Never suspended inside boundary recordings.
   pub to_window: cull::WindowMap,
+  /// The Recording boundary whose recording the walk is recording now, the
+  /// nearest one: its id and its frame's map to the window
+  /// (cull::RecordingFrame). A texture's build states its draw relative to
+  /// that frame (kinds::Shown). Set by the boundary's record walk and put
+  /// back after it, like `to_window`; None outside any.
+  pub recording: Option<(u64, cull::WindowMap)>,
   /// The transform from the walk's current frame to the device pixels of
   /// the target being rasterized, for the paint-time snap of axis-aligned
   /// boxes (see grid.rs): the window's through the display scale, a
@@ -152,6 +158,7 @@ impl<'a> BuildContext<'a> {
       content: Rect::new(Point::zero(), Size::default()),
       cull: None,
       to_window: None,
+      recording: None,
       grid: grid::GridMap::default(),
       pixel_snap_off: false,
       raster_root: false,

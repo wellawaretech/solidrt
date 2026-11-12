@@ -1,80 +1,38 @@
 ---
-title: Damage rectangles - the window side and app-declared damage
-description: A draw target re-renders only its damage rectangles now (fed by culled draw lists), but the window still repaints the whole leaf that shows it, and no app can declare damage for a write the core cannot derive; the window side maps a target's rectangles through the showing leaf (worth nothing where the window takes the multisampled fast path, as on the SM-T500), feed 2, a core verb, waits for a consumer to be decided, and the built path is still to be timed and checked on a tiler.
+title: Damage rectangles declared by an app (feed 2) - no consumer yet
+description: A draw target re-renders only its damage rectangles (fed by culled draw lists) and the window follows them; what is left is a core verb for a write the core cannot derive, whose constraint is settled (the write itself says it is covered) but which no consumer needs today - the proposal is to build none until one of two named consumers exists, and the reasons each candidate falls away are recorded here.
 created: 2026-11-05
 ---
 
-# Damage rectangles: the window side and declared damage
+# Damage rectangles declared by an app (feed 2)
 
-The first half is built:
+Built so far:
 [gpu-target-damage-draw-lists](../done/gpu-target-damage-draw-lists.md)
 (the mechanism, feed 1 from culled draw lists, the facts, the force-full
-switch), its decision and contract in
-[draw-order-and-culling](../design/draw-order-and-culling.md) D8, its
+switch) and
+[gpu-target-damage-window](../done/gpu-target-damage-window.md) (the
+window follows the rectangles through the node showing the target). The
+decision and contract are in
+[draw-order-and-culling](../design/draw-order-and-culling.md) D8, the
 measurements in
 [target-damage-measurements](../notes/target-damage-measurements.md).
-This item is what is left.
+This item is what is left: feed 2.
 
 ## Symptom
 
-A culled 2d view where one sprite animates now renders only that
-sprite's rectangle into its target. Two costs stay whole:
-
-- **The window repaint.** A content change behind a texture id damages
-  the whole box of every node that shows it
-  (`RenderTree::texture_content_changed`), so a full-window view damages
-  the whole window every frame of the animation. On the SM-T500, a
-  press frame whose pass redraws one sprite's box (0.59 to 0.71 ms)
-  still sits 2.5 ms of GPU above an idle frame, the composite of the
-  full-window leaf included
-  ([target-damage-measurements](../notes/target-damage-measurements.md)).
-- **Writes the core cannot derive.** Only a culled draw list knows where
-  its writes land. A layer drawn directly (a record layer without
-  `cull`), a tile layer re-bake, a shadow tile and a persistent texture
-  driven by draw entries all re-render in full on any write.
-
-## What exists
-
-- **Target damage**, built: a target's or sub-target's pending dirt is
-  full or a few rectangles; a rectangle-dirty owner renders through the
-  partial path inside them alone (`flush_dirty_within` in
-  `alloy/src/raster/targets.rs`). Feed 1 derives the rectangles in
-  `alloy/src/gpu/damage.rs` (`ListDamage`).
-- **The window damage**: `texture_content_changed`, resolved without a
-  walk on the reuse path by `resolve_reuse_damage`, and partial repaint
-  patching the window from it
-  ([partial-repaint](../done/partial-repaint.md)). The damage is the
-  whole leaf. A window whose default framebuffer is multisampled takes
-  the fast path, which never patches (`window_fast_path`,
-  `DamageTracker::route`). The SM-T500's window backbuffer is 4x
-  multisampled (resolved in tile at the swap), so it takes the fast path:
-  the window side would save nothing there.
+Only a culled draw list knows where its writes land. Every other write
+re-renders its target in full: a layer drawn directly (a record layer
+without `cull`), a shadow tile, a persistent texture driven by draw
+entries.
 
 ## Shape of the fix
 
-### The window side
-
-A content change carries the target's rectangles to the tree, and
-`texture_content_changed` damages each rectangle mapped through the
-showing leaf (its fit, its source rectangle, its transform; anything not
-2d is the whole box) in place of the whole node. A full target dirt is
-the whole node, as today. This is the part
-[live-texture-content-damage](live-texture-content-damage.md) shares.
-That item's index from texture id to the nodes showing it exists
-(`texture_referencers`); what it has left is content latched on the
-raster thread, after the frame's damage is resolved, and the fast path.
-Measure first which devices take the fast path: on one that does, this
-part buys nothing.
-
-### Feed 2: declared by an app
-
-Not built until one of the consumers below is decided. A core verb in
-`@solidrt/core/gpu` states it: "this write changed the target only
-inside these rectangles." The contract is explicit: pixels outside the
-declared damage are taken as unchanged, and a wrong claim leaves stale
-pixels, the trade every dirty-rect system makes. The force-full switch
-(`/force-full-renders`) diagnoses a wrong claim as it does a wrong cull
-box.
+A core verb in `@solidrt/core/gpu` states it: "this write changed the
+target only inside these rectangles." The contract is explicit: pixels
+outside the declared damage are taken as unchanged, and a wrong claim
+leaves stale pixels, the trade every dirty-rect system makes. The
+force-full switch (`/force-full-renders`) diagnoses a wrong claim as it
+does a wrong cull box.
 
 One constraint is settled, because the fallback rule depends on it: the
 write itself must say it is covered. A buffer write dirties every target
@@ -88,26 +46,47 @@ write (it dirties its targets with no rectangle of its own), the
 rectangles are declared per target (one buffer can feed several views),
 and an unmarked write stays full. A covered write with no rectangle for a
 target is the claim that nothing changed there. The rectangles enter the
-same dirt model feed 1 uses (`DirtySet::damage`).
+same dirt model feed 1 uses, on both threads (`DirtySet::damage`,
+`Context::note_content_dirt`), so the window side comes with it.
 
-### Consumers
+## Proposal: build nothing until a consumer exists
 
-Each needs feed 2 and is its own decision; none is implied by the
-mechanism.
+Each candidate was looked at on 2026-11-12. None needs the verb today.
 
-- A record layer drawn directly (`cull` off), whose JS loop knows which
-  records it rewrote. Or a list kept for the boxes alone, with no
-  culling: the layer API's default to choose (D5 of the design).
-- A tile layer re-bake of only the changed cells of a dirty chunk,
-  instead of the chunk in full, so the bake budget covers more change per
-  frame.
-- A 3d shadow tile updated only where a dynamic caster moved. The tile is
-  a sub-target, which the dirt model already covers; the rectangle is
-  wiped and every caster that meets it redrawn. A cached map of the
-  static casters to restore from (HDRP's cached shadows) is a different
-  mechanism and not this one.
-- Persistent textures driven by draw entries: fog of war, decals, paint
-  layers, a minimap reveal.
+- **A record layer drawn directly.** `cull: true` on the layer is the
+  answer and it exists: the list then derives the rectangles itself, with
+  no claim an app can get wrong. The record layer's default is `cull:
+  false` for the loop that rewrites every record each frame (D5), and
+  that loop gains nothing from damage either: every record changed. A
+  layer where a few records change and that wants no culling is not a
+  case anyone has.
+- **A tile layer re-bake of only the changed cells.** Ruled out by how
+  the bake works. Chunk targets are `render: "manual"`, and a re-bake
+  goes into a retired target from the pool, never into the one the
+  frames in flight sample
+  ([2d-tile-world-frame-hitches](2d-tile-world-frame-hitches.md)): the
+  target a bake draws into does not hold the chunk's last pixels, so
+  there is nothing to keep outside a rectangle. The chunks also carry a
+  mip chain, regenerated whole. A partial bake would need the copy
+  forward of the old pixels that the pool was built to avoid.
+- **A 3d shadow tile updated where a dynamic caster moved.** The one
+  candidate with a real shape: the tile is a sub-target, the dirt model
+  covers it, and the rectangle is the caster's bounds in light space,
+  before and after. It is unmeasured: nothing says what share of a
+  frame the shadow pass of a mostly static scene takes on the low-end
+  baseline. It is its own item, measurement first
+  ([3d-low-end-gpu-performance](3d-low-end-gpu-performance.md) is where
+  that figure would come from), and it may be better served by a culled
+  list in light space (feed 1) than by a declared rectangle.
+- **Persistent textures driven by draw entries** (fog of war, decals,
+  paint layers, a minimap reveal). No package offers one. The verb
+  would come with that API, shaped by it.
+
+So the trigger to build feed 2 is one of two: the shadow pass measured
+as a bottleneck with a caster's light-space rectangle cheaper to state
+than a list, or a persistent-texture API in a package. Until then the
+constraint above is the whole design, and the verb is additive when it
+comes (an absent declaration keeps meaning full).
 
 ## Known limits of what is built
 
@@ -119,7 +98,19 @@ mechanism.
   records the whole-list redraw measures 0.22 ms more than a per-tile
   list on the SM-T500.
 - A layer drawn directly (no `cull`) has no boxes, so every write renders
-  in full (feed 2, or a list kept for the boxes).
+  in full (`cull: true`, above).
+- The window follows the rectangles only where the window patches: a
+  single-sample backbuffer, which is every desktop platform and no
+  Android device. Under Recording boundaries it follows them where the
+  node shows now, composed up the boundaries' frames. A node under a
+  snapshot boundary or under a view with a blur filter, a target with a
+  mip chain and a map that is not 2d damage the whole node (the
+  outermost boundary or blurring view, under one).
+- The window damage of a frame is one rectangle. A target keeps up to 4
+  damage rectangles, but the window takes the bounding box of all that
+  changed in the frame. Two sprites that change in opposite corners of a
+  full-window view repaint nearly the whole window. This is the window
+  damage model, not a gap of target damage.
 - The wipe and the clear bytes are verified on desktop GL and on the
   Adreno 610, not on ANGLE.
 - An owner holding a draw over the slicing floor (65,536
@@ -142,15 +133,12 @@ mechanism.
 
 ## Open questions
 
-- The shape of feed 2's verb, inside the constraint above: an option on
-  the write verbs, or a bracket around a group of writes.
-- Which devices take the window fast path, and so whether the window
-  side pays anywhere a damaged target is the bottleneck.
+- The shape of the verb, inside the constraint above: an option on the
+  write verbs, or a bracket around a group of writes. Left for the first
+  consumer to settle.
 
 ## Done looks like
 
-1. The window side: a damaged target damages only the corresponding
-   part of the leaf that shows it, `damagePx` following the rectangle,
-   measured on a device that does not take the fast path.
-2. Feed 2, with a JS test over the verb, when a consumer for it is
-   decided.
+Feed 2, with a JS test over the verb, when a consumer for it is decided;
+or this item closed as not needed, its limits moved to the design
+document.

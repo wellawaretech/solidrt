@@ -8,8 +8,9 @@ completed: 2026-11-11
 # Damage rectangles, fed by culled draw lists
 
 Steps 1 and 2 of the item as it was shaped (the measurement, then the
-mechanism with feed 1). What is left of it, the window side and feed 2,
-is [gpu-target-damage](../backlog/gpu-target-damage.md). The decision and
+mechanism with feed 1). The window side followed
+([gpu-target-damage-window](gpu-target-damage-window.md)); feed 2 is
+what is left, in [gpu-target-damage](../backlog/gpu-target-damage.md). The decision and
 its contract are in
 [draw-order-and-culling](../design/draw-order-and-culling.md), D8.
 

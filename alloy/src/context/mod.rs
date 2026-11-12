@@ -7,7 +7,9 @@ use std::time::Instant;
 
 use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
-use crate::gpu::{AttributeTable, GpuLimits, GpuResources, ShaderStage, TextureRegistry, UniformTable, WriteLeases};
+use crate::gpu::{
+  AttributeTable, DirtySet, GpuLimits, GpuResources, ShaderStage, TextureRegistry, UniformTable, WriteLeases,
+};
 use crate::microphone::MicrophoneRegistry;
 use crate::raster::{RasterCmd, RasterCounters, RasterSender, RasterStats};
 use crate::spatial::Spatial;
@@ -103,9 +105,12 @@ pub struct Context {
   // note_content). GPU writes produce no rendertree damage of their own, and
   // baked snapshot boundaries are the one consumer that goes stale for it -
   // the frame build drains this set (take_content_changes) and turns it into
-  // exactly that damage (RenderTree::texture_content_changed). A HashSet, so
-  // a per-frame write burst on one target costs one insert probe per write.
-  content_changes: RefCell<HashSet<u64>>,
+  // exactly that damage (RenderTree::texture_content_changed). Each id
+  // carries its dirt, full or the rectangles a draw list's write stayed
+  // inside (the model the raster thread renders from, gpu/dirt.rs), which
+  // the tree maps through the nodes showing the texture into window damage.
+  // A per-frame write burst on one target costs one probe per write.
+  content_changes: RefCell<DirtySet>,
   // UI-side mirror of the raster thread's program registry: program id ->
   // active uniforms (from the LinkProgram reply). Programs are their own id
   // space (like buffers), separate from texture ids.
@@ -181,6 +186,8 @@ pub struct Context {
   spatial_flushed_at: Cell<Option<Instant>>,
   /// The damage debug switch as last sent (`set_force_full_renders`).
   force_full_renders: Cell<bool>,
+  /// The headless patch switch as last sent (`set_patch_headless_window`).
+  patch_headless_window: Cell<crate::raster::HeadlessPatch>,
 }
 
 /// An overlay declaration (see `Context::set_overlay`): the
@@ -219,7 +226,7 @@ impl Context {
       manual_targets: RefCell::new(HashSet::new()),
       sub_targets: RefCell::new(HashMap::new()),
       depth_ids: RefCell::new(HashMap::new()),
-      content_changes: RefCell::new(HashSet::new()),
+      content_changes: RefCell::new(DirtySet::new()),
       program_uniforms: RefCell::new(HashMap::new()),
       program_attributes: RefCell::new(HashMap::new()),
       next_program_id: Cell::new(1),
@@ -247,6 +254,7 @@ impl Context {
       spatial: RefCell::new(Spatial::new()),
       spatial_flushed_at: Cell::new(None),
       force_full_renders: Cell::new(false),
+      patch_headless_window: Cell::new(crate::raster::HeadlessPatch::Off),
     }
   }
 
@@ -306,6 +314,31 @@ impl Context {
   /// (`set_force_full_renders`); off until set.
   pub fn force_full_renders(&self) -> bool {
     self.force_full_renders.get()
+  }
+
+  /// The headless patch switch, for tests of window damage: while not
+  /// `Off`, a headless frame reaches the window target the way a windowed
+  /// frame reaches a back buffer, redrawing only its damage and keeping the
+  /// rest of the last frame's pixels; the target is a back buffer of age 1.
+  /// `Rig` patches through the rig, as a single-sample window does; `Layer`
+  /// through the patch layer, as a multisampled window does (its patch
+  /// grown to whole size steps, a patch over the size threshold drawn
+  /// whole). A resize, a fresh target, a full damage, a window shader and
+  /// anything else uncertain still redraw the whole window, as the windowed
+  /// route decides. `Off` (the default), every headless frame redraws the
+  /// whole window, which any reader of a headless window counts on. A wrong
+  /// damage rectangle then shows in the window's pixels (`read_window`):
+  /// the same steps with the switch off give the reference. Fire-and-forget
+  /// on the ordered channel, so it applies from the next frame.
+  pub fn set_patch_headless_window(&self, patch: crate::raster::HeadlessPatch) {
+    self.patch_headless_window.set(patch);
+    self.send(RasterCmd::SetPatchHeadlessWindow { patch });
+  }
+
+  /// The headless patch switch as this context last sent it
+  /// (`set_patch_headless_window`); `Off` until set.
+  pub fn patch_headless_window(&self) -> crate::raster::HeadlessPatch {
+    self.patch_headless_window.get()
   }
 
   /// Blocking RPC: send a command carrying a reply sender and wait for the

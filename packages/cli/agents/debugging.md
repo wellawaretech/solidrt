@@ -401,7 +401,34 @@ when exactly one client is connected.
   `saveLayers`, and
   the paints that leave a tiled GPU's cheap path, `blends` (not
   source-over) and `gradients`; ops inside a reused repaint-boundary
-  recording are not re-recorded and not counted. `window.targets` splits
+  recording are not re-recorded and not counted. `damagePx` is the window
+  area the latest frame damaged (logical px squared: 0 for a skipped
+  frame, the window's area for a whole repaint) and `window.damagePx` its
+  sum over the window's frames, so `?frames=1` reads the last frame that
+  changed the picture; `partialPresents` counts the presents that patched
+  the window from that damage instead of redrawing it, through the rig on
+  a single-sample window or through the patch layer on a multisampled
+  one (in a test, also the headless frames `app.patchWindow` patched). A
+  write to a culled
+  layer damages only where the node showing its view shows the written
+  rectangles: a press that damages the whole node there means the
+  force-full switch, a change noted in full (a camera move, a params
+  write, a resize), a mip chain on the target, or a snapshot boundary or
+  a blur filter over the node (a recording boundary keeps the
+  rectangles, wherever it moved). A raster-side fallback (a multisampled
+  target, an unmeasured draw, coverage over half) renders the target in
+  full, counted in `fullRenders`, but does not widen the window damage. A
+  window whose backbuffer is multisampled (every Android device) patches
+  only where its display offers `EGL_KHR_partial_update` (the client
+  logs `Multisampled window patches on` once, at its first multisampled
+  frame, or `Multisampled window patches off:` with the reason: the
+  switch, the extension or the buffer age missing, or a damage region
+  the driver refused, which turns them off for the context after a
+  `Damage region refused:` warning naming the EGL error), and draws whole
+  for a patch over half the window, under a window tap, after a frame
+  that declared its region and did not present (until every buffer is
+  redrawn whole), and with `SOLIDRT_WINDOW_PATCH=off` set, the switch
+  that turns its patches off for a measurement. `window.targets` splits
   the pass figures per draw target that rendered in the window (`label` as
   created, `id` 0 = node shaders): `passesPerFrame`,
   `gpuPassIssueMsPerFrame`, `gpuPassExecMsPerFrame` (absent without timer

@@ -132,6 +132,13 @@ declare module "sol:test" {
    */
   export function capture(node: number): { width: number; height: number; data: Uint8Array }
   /**
+   * The whole window as the last frame left it (the shape of `capture`):
+   * nothing is painted and no frame runs, so the pixels a patched frame
+   * kept are in it (`patchWindow` of `flux:test/gui`). Throws while a
+   * frame is pending.
+   */
+  export function windowPixels(): { width: number; height: number; data: Uint8Array }
+  /**
    * Run one frame with a capture of `node` queued ahead of it, so the
    * frame's own paint services it: fulfills, once the frame has run, with
    * what that frame drew of the node (the shape of `capture`). Written

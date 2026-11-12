@@ -160,9 +160,10 @@ fn pingpong_via_barriers_is_legal() {
 // --- content_closure: which targets' pixels change when a source's do -------
 
 fn closure(s: &HashMap<u64, HashMap<(u64, String), u64>>, manual: &[u64], root: u64) -> HashSet<u64> {
-  let mut changes = HashSet::from([root]);
+  let mut changes = crate::gpu::DirtySet::new();
+  changes.insert(root);
   content_closure(s, &barriers(manual), root, &mut changes);
-  changes
+  changes.ids()
 }
 
 #[test]
@@ -192,6 +193,18 @@ fn content_resumes_from_a_stepped_manual_root() {
 fn content_diamond_collects_each_target_once() {
   let s = sources(&[(2, &[1]), (3, &[1]), (4, &[2, 3])]);
   assert_eq!(closure(&s, &[], 1), HashSet::from([1, 2, 3, 4]));
+}
+
+#[test]
+fn content_widens_a_sampler_noted_inside_rectangles() {
+  // 2 samples 1 and was noted inside a rectangle (its own list's write):
+  // a change of 1 changes all of 2, and reaches 3 through it.
+  let s = sources(&[(2, &[1]), (3, &[2])]);
+  let mut changes = crate::gpu::DirtySet::new();
+  changes.damage(2, &[crate::gpu::PxRect { x: 0, y: 0, w: 4, h: 4 }]);
+  changes.insert(1);
+  content_closure(&s, &barriers(&[]), 1, &mut changes);
+  assert!(changes.is_full(&2) && changes.is_full(&3));
 }
 
 #[test]

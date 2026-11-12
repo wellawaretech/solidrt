@@ -13,12 +13,15 @@
 // move and the twin drawn without culling render in full. A sprite layer
 // and a record layer: at oversample 1 and 2, under a rotated, zoomed and
 // pivoted camera on a view that is not square, through a population change,
-// and over two views of one layer.
+// and over two views of one layer. Then the window side: the node showing
+// a view damages the window only where the rectangles land in it, and the
+// window a patched frame leaves is the window a whole redraw draws.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
+import { createSignal, Show } from "@solidrt/core"
 import type { DecodedImage } from "@solidrt/core"
-import { readTexture } from "@solidrt/core/gpu"
+import { compileShader, destroyShader, glsl, linkProgram, readTexture } from "@solidrt/core/gpu"
 import { addSprite, createAtlas, createRecordLayer, createSpriteLayer, destroy, setSprite } from "../src/index.ts"
 import type { CameraUpdate, SpriteHandle as Sprite, ViewHandle } from "../src/index.ts"
 
@@ -306,6 +309,375 @@ for (let kind of ["sprites", "records"] as const) {
     }
   })
 }
+
+// The window side: the node showing a view damages the window only where
+// the write's rectangles land in it, not over its whole box. One culled
+// layer alone (a twin drawn without culling renders in full, and so
+// damages its whole node), its view shown SHOWN_SCALE times its size, so
+// the rectangles go through the node's fit. `damagePx` is the frame's
+// window damage in logical px^2.
+const SHOWN_SCALE = 2
+// What a mapped rectangle grows by on each side in the window, logical px:
+// the filter's texel through the fit, the window edge pixel, and the
+// outward rounding.
+const WINDOW_SLACK = SHOWN_SCALE + 2
+
+for (let kind of ["sprites", "records"] as const) {
+  let what = kind === "sprites" ? "sprite" : "record"
+  test(`a ${what} write damages the window only where the node shows its rectangles`, async app => {
+    let label = `${kind}-window`
+    let view!: ViewHandle
+    let sprite!: Sprite
+    await app.mount(() => {
+      let atlas = createAtlas(ATLAS, { label: label + "-atlas" })
+      let opts = { capacity: GRID * GRID, label, cull: { cellSize: CELL } }
+      let layer = kind === "sprites" ? createSpriteLayer([atlas], opts) : createRecordLayer([atlas], opts)
+      view = layer.createView({ width: VIEW, height: VIEW, clearColor: [0, 0, 0, 0], label: label + "-view" })
+      for (let i = 0; i < GRID; i++) {
+        for (let j = 0; j < GRID; j++) {
+          let added = addSprite(layer, { x: i * STEP + STEP / 2, y: j * STEP + STEP / 2, w: SPRITE, h: SPRITE, tint: tint(i, j) })
+          if (i === COLUMN && j === ROW) sprite = added
+        }
+      }
+      return <texture src={view.texture} width={VIEW * SHOWN_SCALE} height={VIEW * SHOWN_SCALE} />
+    })
+    await app.frame(2)
+    // Of the last frame that changed the picture (the stats window over
+    // one frame): the latest-frame figure reads 0 once a skipped frame
+    // follows.
+    let damagePx = () => (app.stats({ windowFrames: 1 }).window as { damagePx: number }).damagePx
+    let node = (VIEW * SHOWN_SCALE) ** 2
+    let x = COLUMN * STEP + STEP / 2
+
+    // The two boxes (old and new, NUDGE apart), through the node's scale.
+    let before = facts(app, label + "-view")
+    setSprite(sprite, { x: x + NUDGE, tint: WHITE })
+    await app.frame()
+    expect(facts(app, label + "-view").damageRenders).toBe(before.damageRenders + 1)
+    let box = SPRITE * SHOWN_SCALE
+    let reach = (SPRITE + NUDGE + 2 * EDGE_SLACK) * SHOWN_SCALE + 2 * WINDOW_SLACK
+    expect(damagePx()).toBeGreaterThanOrEqual(box * box)
+    expect(damagePx()).toBeLessThanOrEqual(reach * (box + 2 * EDGE_SLACK * SHOWN_SCALE + 2 * WINDOW_SLACK))
+    expect(damagePx()).toBeLessThan(node * SPARSE_SHARE)
+
+    // Under the switch the same write is a full render, and the whole node.
+    expect(app.forceFullRenders(true)).toBe(true)
+    setSprite(sprite, { x, tint: tint(COLUMN, ROW) })
+    await app.frame()
+    expect(damagePx()).toBeGreaterThanOrEqual(node)
+    expect(app.forceFullRenders(false)).toBe(false)
+
+    // A camera move renders in full: the whole node again.
+    view.setCamera({ x: STEP * 2, y: STEP })
+    await app.frame()
+    expect(damagePx()).toBeGreaterThanOrEqual(node)
+  })
+}
+
+// The window's pixels under partial repaint: a headless frame redraws the
+// whole window unless the patch switch (`app.patchWindow`) has it redraw
+// only its damage over the last frame and keep the rest, as a window
+// patches its back buffer: through the rig as a single-sample window does
+// (`true`), or through the patch layer as a multisampled one does
+// (`"layer"`), every case on both. So a damage rectangle in the wrong
+// place, or a patch drawn off its place, shows in the window. Each case
+// runs one sequence of steps twice on identical
+// scenes, first patched, then with every frame redrawn whole, reads the
+// window after every step (`app.windowPixels`, the window as the frame
+// left it; a node's pixels are painted afresh), and requires the same
+// bytes at every step. In the patched run a write must change the window
+// (else the compare proves nothing), every checked frame must be a patch
+// (`partialPresents`), and its damage must stay inside its bound. One
+// culled sprite layer alone in each scene: a `cull: false` twin renders in
+// full and damages its whole node.
+
+// How the node shows the view: well under half its size (minified, no mip
+// chain: the one-texel filter reach in rendertree::Shown is what is
+// checked), at its size, at SHOWN_SCALE.
+const MINIFIED = 0.25
+// How far the repaint boundary moves after its first frame, logical px.
+const BOUNDARY_MOVE = 40
+// A blur radius for the blurring view, logical px: any with a reach.
+const BLUR = 3
+// The share of the node's area a write's window damage stays under where
+// the rectangles map to the window (the patch is a few sprite boxes).
+const PATCH_SHARE = 0.05
+// The share of the window's area a frame that damages its whole node
+// stays under: the node is far smaller than the window, so the frame
+// still patches.
+const WINDOW_SHARE = 0.5
+
+// The frosted panel over the node in the backdrop case, logical px: it
+// holds the written sprite's old and new boxes, grid sprites end at its
+// left and top edges, outside it, within the blur's reach, and its sides
+// are whole patch-layer steps, so a patch is the panel itself on both
+// routes.
+const PANEL_X = 88
+const PANEL_Y = 24
+const PANEL_W = 128
+const PANEL_H = 64
+// The panel's backdrop blur radius, logical px: any with a reach, small
+// enough that the blur is not drawn downsampled.
+const BACKDROP_BLUR = 4
+// The window the cases run in, logical px (the test host's default), and
+// where the corner case places the node: the written sprite's nudged box
+// (view px 108 to 124 across, 40 to 56 down) ends at the window's
+// bottom-right corner.
+const WINDOW_SIZE: [number, number] = [1280, 720]
+const SPRITE_RIGHT = COLUMN * STEP + STEP / 2 + NUDGE + SPRITE / 2
+const SPRITE_BOTTOM = ROW * STEP + STEP / 2 + SPRITE / 2
+
+// What a checked frame's window damage must be: a few sprite boxes, the
+// whole node (a blur spreads the change, full dirt wins), the frosted
+// panel at least (a change under it re-filters it), or only some of the
+// window (the node is cut by the window's edge).
+type Bound = "rects" | "node" | "panel" | "some"
+// A step of a sequence: what it does to the scene, and whether its frame
+// is checked (it writes, so the window must change, and it must patch
+// inside its bound).
+type WindowStep = { act: (s: WindowScene) => void; check?: Bound }
+// How the scene wraps the node: bare, in a repaint boundary (a
+// recording) the steps can move, in a view with a blur filter, under a
+// frosted panel (a backdrop blur), or bare at the window's bottom-right
+// corner.
+type Wrap = "bare" | "boundary" | "blur" | "backdrop" | "corner"
+// `only` runs the case along one patch route alone.
+type WindowCase = { name: string; scale: number; wrap: Wrap; steps: WindowStep[]; only?: Patch }
+type WindowScene = { view: ViewHandle; sprite: Sprite; move: (by: number) => void }
+// The routes a patch takes to the window, as the patch switch names them.
+type Patch = true | "layer"
+const PATCH_ROUTES: { name: string; patch: Patch }[] = [
+  { name: "rig", patch: true },
+  { name: "patch layer", patch: "layer" },
+]
+
+let nudged: WindowStep = { act: s => setSprite(s.sprite, { x: COLUMN * STEP + STEP / 2 + NUDGE, tint: WHITE }), check: "rects" }
+let restored: WindowStep = { act: s => setSprite(s.sprite, { x: COLUMN * STEP + STEP / 2, tint: tint(COLUMN, ROW) }), check: "rects" }
+
+const WINDOW_CASES: WindowCase[] = [
+  { name: "magnified", scale: SHOWN_SCALE, wrap: "bare", steps: [nudged, restored] },
+  { name: "minified", scale: MINIFIED, wrap: "bare", steps: [nudged, restored] },
+  // The move replays the recording; the writes after it land where it moved.
+  { name: "boundary", scale: 1, wrap: "boundary", steps: [{ act: s => s.move(BOUNDARY_MOVE) }, nudged, restored] },
+  { name: "blur", scale: 1, wrap: "blur", steps: [{ ...nudged, check: "node" }, { ...restored, check: "node" }] },
+  // A write and a camera move in one frame: the move's full dirt wins.
+  {
+    name: "camera",
+    scale: 1,
+    wrap: "bare",
+    steps: [{
+      act: s => {
+        nudged.act(s)
+        s.view.setCamera({ x: STEP * 2, y: STEP })
+      },
+      check: "node",
+    }],
+  },
+  // A write under a frosted panel re-filters the panel, whose blur reads
+  // the window past the panel's edges.
+  { name: "backdrop", scale: 1, wrap: "backdrop", steps: [{ ...nudged, check: "panel" }, { ...restored, check: "panel" }] },
+  // A large patch (the whole node, many layer steps wide) and then small
+  // ones: the patch layer is larger than the patch, and the patch changes
+  // size between frames.
+  { name: "large then small", scale: 1, wrap: "bare", only: "layer", steps: [{ act: s => s.view.setCamera({ x: STEP * 2, y: STEP }), check: "node" }, nudged, restored] },
+  // The same at the window's bottom-right corner, where the layer, larger
+  // than the small patch there, lands past the window's edge.
+  {
+    name: "corner",
+    scale: 1,
+    wrap: "corner",
+    steps: [
+      { act: s => s.view.setCamera({ x: STEP * 2, y: STEP }), check: "some" },
+      { act: s => s.view.setCamera({ x: 0, y: 0 }), check: "some" },
+      nudged,
+      restored,
+    ],
+  },
+]
+
+// One scene of a case: the culled layer over the grid, its view shown at
+// the case's scale, wrapped as the case says. Hands its handles to `out`.
+function windowScene(c: WindowCase, run: number, out: (s: WindowScene) => void) {
+  let label = `window-${c.name}-${run}`
+  let atlas = createAtlas(ATLAS, { label: label + "-atlas" })
+  let layer = createSpriteLayer([atlas], { capacity: GRID * GRID, label, cull: { cellSize: CELL } })
+  let view = layer.createView({ width: VIEW, height: VIEW, clearColor: [0, 0, 0, 0], label: label + "-view" })
+  let sprite!: Sprite
+  for (let i = 0; i < GRID; i++) {
+    for (let j = 0; j < GRID; j++) {
+      let added = addSprite(layer, { x: i * STEP + STEP / 2, y: j * STEP + STEP / 2, w: SPRITE, h: SPRITE, tint: tint(i, j) })
+      if (i === COLUMN && j === ROW) sprite = added
+    }
+  }
+  let [offset, setOffset] = createSignal(0)
+  out({ view, sprite, move: setOffset })
+  let side = VIEW * c.scale
+  let shown = <texture src={view.texture} width={side} height={side} />
+  if (c.wrap === "boundary") return <view repaintBoundary x={offset()} y={offset()}>{shown}</view>
+  if (c.wrap === "blur") return <view filter={{ blur: BLUR }}>{shown}</view>
+  if (c.wrap === "backdrop") {
+    return (
+      <view>
+        {shown}
+        <view position="absolute" left={PANEL_X} top={PANEL_Y} width={PANEL_W} height={PANEL_H} backdropFilter={{ blur: BACKDROP_BLUR }} />
+      </view>
+    )
+  }
+  if (c.wrap === "corner") {
+    return (
+      <view position="absolute" left={WINDOW_SIZE[0] - SPRITE_RIGHT} top={WINDOW_SIZE[1] - SPRITE_BOTTOM}>
+        {shown}
+      </view>
+    )
+  }
+  return shown
+}
+
+// The window after every step of `c`, on a scene of its own, with the
+// patch switch `patched`; in a patched run each checked frame is checked.
+async function windowRun(app: TestApp, c: WindowCase, scene: () => WindowScene, patched: Patch | false): Promise<Pixels[]> {
+  expect(app.patchWindow(patched)).toBe(patched)
+  let damagePx = () => (app.stats({ windowFrames: 1 }).window as { damagePx: number }).damagePx
+  // Read after the window, whose read follows the frame on the raster
+  // thread's queue.
+  let patches = () => app.stats().partialPresents as number
+  let windows = [app.windowPixels()]
+  for (let step of c.steps) {
+    let before = patches()
+    step.act(scene())
+    await app.frame()
+    let window = app.windowPixels()
+    if (!patched) {
+      expect(patches()).toBe(before)
+    } else if (step.check !== undefined) {
+      expect(changedRows(windows[windows.length - 1]!, window)).not.toBe(null)
+      expect(patches()).toBe(before + 1)
+      let node = (VIEW * c.scale) ** 2
+      if (step.check === "rects") {
+        expect(damagePx()).toBeGreaterThan(0)
+        expect(damagePx()).toBeLessThan(node * PATCH_SHARE)
+      } else if (step.check === "panel" || step.check === "some") {
+        expect(damagePx()).toBeGreaterThanOrEqual(step.check === "panel" ? PANEL_W * PANEL_H : 1)
+        expect(damagePx()).toBeLessThan(window.width * window.height * WINDOW_SHARE)
+      } else {
+        expect(damagePx()).toBeGreaterThanOrEqual(node)
+        expect(damagePx()).toBeLessThan(window.width * window.height * WINDOW_SHARE)
+      }
+    }
+    windows.push(window)
+  }
+  return windows
+}
+
+// The two runs of `c` on a mounted app: patched along `patch` on scene 0,
+// then whole on scene 1 (`setRun(1)` swaps it in), the same window after
+// every step.
+async function patchedMatchesWhole(
+  app: TestApp,
+  c: WindowCase,
+  patch: Patch,
+  scenes: WindowScene[],
+  setRun: (run: number) => void,
+) {
+  await app.frame(2)
+  let patchedRun = await windowRun(app, c, () => scenes[0]!, patch)
+  // The second scene, identical, every frame redrawn whole.
+  expect(app.patchWindow(false)).toBe(false)
+  setRun(1)
+  await app.frame(2)
+  let wholeRun = await windowRun(app, c, () => scenes[1]!, false)
+  patchedRun.forEach((window, i) => sameBytes(window, wholeRun[i]!))
+}
+
+for (let route of PATCH_ROUTES) {
+  for (let c of WINDOW_CASES) {
+    if (c.only !== undefined && c.only !== route.patch) continue
+    test(`a patched window matches a whole redraw: ${c.name} (${route.name})`, async app => {
+      let [run, setRun] = createSignal(0)
+      let scenes: WindowScene[] = []
+      await app.mount(() => (
+        <view>
+          <Show when={run() === 0} fallback={windowScene(c, 1, s => (scenes[1] = s))}>
+            {windowScene(c, 0, s => (scenes[0] = s))}
+          </Show>
+        </view>
+      ))
+      await patchedMatchesWhole(app, c, route.patch, scenes, setRun)
+    }, { size: WINDOW_SIZE })
+  }
+}
+
+// The window shader's covering triangle, its v flipped so the frame lands
+// upright (packages/core/examples/window-shader.tsx).
+let COVER = glsl`#version 300 es
+  precision highp float;
+  out vec2 vUV;
+  void main() {
+    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+    vUV = vec2(p.x, 1.0 - p.y);
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+  }
+`
+// A window shader that inverts the frame's colors: a shaded pixel a frame
+// keeps after the shader is gone differs from an unshaded one.
+let INVERT = glsl`
+  uniform sampler2D uSource;
+  in vec2 vUV;
+  void main() {
+    vec4 c = texture(uSource, vUV);
+    fragColor = vec4(vec3(1.0) - c.rgb, 1.0);
+  }
+`
+
+// A window shader on, then off, over one small write per frame: while it
+// is on every frame redraws whole, and the frame that drops it must too,
+// or the window keeps the shaded pixels outside the write. The writes
+// after it patch again.
+for (let route of PATCH_ROUTES) {
+  test(`a patched window matches a whole redraw: a window shader on and off (${route.name})`, async app => {
+    let [run, setRun] = createSignal(0)
+    let [shaded, setShaded] = createSignal(false)
+    let scenes: WindowScene[] = []
+    let shade = (on: boolean, step: WindowStep): WindowStep => ({
+      act: s => {
+        setShaded(on)
+        step.act(s)
+      },
+    })
+    let c: WindowCase = {
+      name: "shader",
+      scale: 1,
+      wrap: "bare",
+      steps: [shade(true, nudged), shade(true, restored), shade(false, nudged), restored, nudged],
+    }
+    await app.mount(() => {
+      let vs = compileShader("vertex", COVER)
+      let fs = compileShader("fragment", INVERT, { header: true })
+      let program = linkProgram(vs, fs, { label: "invert" })
+      destroyShader(vs)
+      destroyShader(fs)
+      return (
+        <window shader={shaded() ? { program } : null}>
+          <Show when={run() === 0} fallback={windowScene(c, 1, s => (scenes[1] = s))}>
+            {windowScene(c, 0, s => (scenes[0] = s))}
+          </Show>
+        </window>
+      )
+    })
+    await patchedMatchesWhole(app, c, route.patch, scenes, setRun)
+  })
+}
+
+// The switch is the alloy context's and outlives a test engine; the test
+// host turns it off ahead of every test, so a test torn down with it on
+// cannot leave the next one patching its window.
+test("a test may leave the patch switch on", app => {
+  expect(app.patchWindow(true)).toBe(true)
+})
+
+test("the next test starts with the patch switch off", app => {
+  expect(app.patchWindow()).toBe(false)
+})
 
 // The switch is the alloy context's and outlives a test engine; the test
 // host turns it off ahead of every test, so a test torn down with it on

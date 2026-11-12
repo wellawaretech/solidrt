@@ -318,7 +318,7 @@ impl<'a> Frame<'a> {
     let Frame { pending, tree, platform, atx, present_at, frame } = self;
     let commit = pending.commit(&mut tree.borrow_mut(), platform, atx, present_at, frame)?;
     Ok(match commit {
-      rendertree::Commit::Reused { content_changed } => Commit::Reused { content_changed },
+      rendertree::Commit::Reused { content_changed, damage_px } => Commit::Reused { content_changed, damage_px },
       rendertree::Commit::Build(builder) => Commit::Build(Build { builder, tree, platform, atx, present_at, frame }),
     })
   }
@@ -328,8 +328,9 @@ impl<'a> Frame<'a> {
 pub enum Commit<'a> {
   /// The retained display list was resubmitted; the frame is done.
   /// `content_changed` says whether GPU writes since the last frame changed
-  /// the picture behind it (a layer or shader app's every frame).
-  Reused { content_changed: bool },
+  /// the picture behind it (a layer or shader app's every frame), and
+  /// `damage_px` the window area they damaged, in logical px^2.
+  Reused { content_changed: bool, damage_px: f32 },
   /// Something changed: sequence the build to produce the frame.
   Build(Build<'a>),
 }

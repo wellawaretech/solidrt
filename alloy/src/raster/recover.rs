@@ -91,6 +91,7 @@ impl RasterState {
       adopted_snapshots,
       guilty_resets,
       force_full_renders,
+      patch_headless_window,
       ..
     } = self;
 
@@ -134,6 +135,7 @@ impl RasterState {
     let mut state = RasterState::new(gl, renderer, binding, surface_size, sink, stats, tx, wake);
     state.guilty_resets = guilty_resets;
     state.force_full_renders = force_full_renders;
+    state.patch_headless_window = patch_headless_window;
     state.demand_latch = demand_latch;
     state.last_size = last_size;
     state.pass_only_frames = pass_only_frames;

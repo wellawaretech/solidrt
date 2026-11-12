@@ -720,12 +720,13 @@ fn bounding_box_size_exact_under_moving_identity_scale_ancestor() {
 
 // --- texture_content_changed: GPU content writes as snapshot damage ---------
 
-use std::collections::HashSet;
+use crate::gpu::{DirtySet, NodeShader};
 
-use crate::gpu::NodeShader;
-
-fn ids(list: &[u64]) -> HashSet<u64> {
-  list.iter().copied().collect()
+// A content change of every id in `list`, each in full.
+fn ids(list: &[u64]) -> DirtySet {
+  let mut changes = DirtySet::new();
+  changes.extend(list.iter().copied());
+  changes
 }
 
 // A snapshot-boundary view over a texture leaf showing registry id `tex`.

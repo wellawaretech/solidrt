@@ -227,6 +227,7 @@ fn window_json(
   put("backdropsPrepainted", w.backdrops_prepainted.into());
   put("textLayers", w.text_layers.into());
   put("nodesPaintedMax", w.nodes_painted_max.into());
+  put("damagePx", (w.damage_px.round() as i64).into());
   put("regionEnters", w.region_enters.into());
   put("regionLeaves", w.region_leaves.into());
   put(

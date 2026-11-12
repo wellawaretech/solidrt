@@ -54,7 +54,17 @@ Prefer the cheapest reader that proves the behavior, and stop there:
    reference picture (every test starts with it off).
 4. Pixels. `locator.pixel(x, y)` and `locator.pixels()`, drawn now with no
    time passing. The last resort, for what only the picture shows (a
-   shader, a gradient, a blend); they depend on the GPU.
+   shader, a gradient, a blend); they depend on the GPU. "Is the window
+   damage right" is a window compare: a headless frame redraws the whole
+   window, and `app.patchWindow(true)` has each frame redraw only its
+   damage and keep the rest, as a window patches its back buffer through
+   the rig; `app.patchWindow("layer")` does the same through the patch
+   layer, as a multisampled (Android) window does. Run a window case
+   under both.
+   `app.windowPixels()` reads the window as the last frame left it (no
+   paint, no frame; `pixels()` paints afresh). Run the same steps patched
+   and then on an identical scene unpatched, read the window after each,
+   and require the same bytes (every test starts with the switch off).
 
 Test behavior through what a user perceives: tap the button the user taps,
 assert the text the user reads. Reach into state only to put the app

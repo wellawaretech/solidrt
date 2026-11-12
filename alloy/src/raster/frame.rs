@@ -8,9 +8,9 @@ use std::sync::atomic::Ordering;
 
 use crate::renderer::{DisplayList, ISize};
 
-use super::repaint::WindowRoute;
+use super::repaint::{WindowBuffer, WindowRoute};
 use super::{
-  DamageRect, FrameSink, PresentDamage, RasterState, PRESENT_FAILURE_EXIT_THRESHOLD, PRESENT_FENCE_DEPTH,
+  FrameSink, HeadlessPatch, PresentDamage, RasterState, PRESENT_FAILURE_EXIT_THRESHOLD, PRESENT_FENCE_DEPTH,
   PRESENT_FENCE_LOSS_SECS, PRESENT_FENCE_TIMEOUT_NS,
 };
 
@@ -147,12 +147,7 @@ impl RasterState {
     // last frame's composite would stack.
     let mut own_damage = self.damage.take();
     if let Some(ov) = &self.overlay {
-      own_damage = own_damage.union(PresentDamage::Rect(DamageRect {
-        x: ov.decl.x,
-        y: ov.decl.y,
-        width: ov.decl.width as i32,
-        height: ov.decl.height as i32,
-      }));
+      own_damage = own_damage.union(super::compose::overlay_damage(&ov.decl));
     }
     // The window framebuffer: FBO 0, or the headless window target at this
     // frame's size. A target that cannot be allocated (a size past the
@@ -166,13 +161,46 @@ impl RasterState {
     };
     let target_ok = window.is_some() || !self.sink.headless();
     // The in-tile fast path is FBO 0's own: an owned target is single-sample
-    // and goes through the rig.
-    let fast_path = window.is_none() && gl::window_fast_path(&self.gl);
+    // and goes through the rig, its patch through the patch layer only
+    // under the test switch's layer mode.
+    let headless = self.sink.headless();
+    let buffer = if window.is_none() && gl::window_fast_path(&self.gl) {
+      WindowBuffer::Multisampled
+    } else if headless && self.patch_headless_window == HeadlessPatch::Layer {
+      WindowBuffer::HeadlessLayer
+    } else {
+      WindowBuffer::SingleSample
+    };
     // A headless frame is read in full (the window, any node of it) and the
     // window shader redraws its whole layer; neither frame kind may be
-    // pruned to a patch.
-    let patch_barred = self.sink.headless() || self.window_shader.is_some();
-    let mut route = self.damage.route(own_damage, size, fast_path, patch_barred);
+    // pruned to a patch. Except a headless one under the patch switch
+    // (`Context::set_patch_headless_window`): its window target persists,
+    // a back buffer of age 1 while it holds the last frame. The shader
+    // term stays: a shaded frame draws the whole window whatever the
+    // route, so a patch route would miscount it in partialPresents, and
+    // the plain draw a failed pass falls back to must redraw whole over
+    // buffers that hold shaded frames. A multisampled window under a
+    // window tap draws whole too: the tap reads the window after the
+    // frame, and outside a declared damage region the driver may never
+    // have loaded the pixels it would read.
+    //
+    // A backgrounded window has no surface to draw to (see
+    // WINDOW_BACKGROUNDED in lib.rs): the frame is dropped like an undrawn
+    // one, its damage kept for the frame that follows the return-to-visible
+    // rebind. Such a frame, like one with no target or of zero size, is
+    // known not to draw before it is routed: it is barred from a patch, so
+    // no damage region is declared for a frame that reaches no swap.
+    let backgrounded = crate::window_backgrounded();
+    let undrawable = backgrounded || !target_ok || size.width <= 0 || size.height <= 0;
+    let patch_barred = (headless && self.patch_headless_window == HeadlessPatch::Off)
+      || self.window_shader.is_some()
+      || (buffer == WindowBuffer::Multisampled && !self.window_taps.is_empty())
+      || undrawable;
+    let known_age = headless.then_some(if self.window_target_held { 1 } else { 0 });
+    // The route declares a multisampled window's patch to the driver as
+    // the frame's damage region, so nothing may draw to the window before
+    // it; everything before this point draws offscreen.
+    let mut route = self.damage.route(own_damage, size, buffer, patch_barred, known_age);
     let wait_start = std::time::Instant::now();
     let prep_ms = wait_start.duration_since(prep_start).as_secs_f32() * 1000.0;
     self.await_present_fence()?;
@@ -187,16 +215,18 @@ impl RasterState {
     } else {
       self.pass_timer.begin(&self.gl);
     }
-    // A backgrounded window has no surface to draw to (see WINDOW_BACKGROUNDED
-    // in lib.rs): the frame is dropped like an undrawn one, its damage kept
-    // for the frame that follows the return-to-visible rebind.
-    let backgrounded = crate::window_backgrounded();
-    let drawn = !backgrounded && target_ok && self.draw_to_window(&dl, size, route, window);
+    // Asked again: the window may have gone to the background since the
+    // route. A frame that draws nothing after a declaration (that, or a
+    // failed draw) or does not present leaves the region declared;
+    // `not_presented` hears of it.
+    let drawn = !crate::window_backgrounded() && target_ok && self.draw_to_window(&dl, size, route, window);
     self.pass_timer.end(&self.gl, Timed::Frame);
     let draw_ms = draw_start.elapsed().as_secs_f32() * 1000.0;
     // The overlay composites over the finished frame (shaded or not), so a
     // headless window readback carries it too. Excluded from draw_ms: it is
-    // diagnostics, not the app's frame cost.
+    // diagnostics, not the app's frame cost. Its rectangle is in the
+    // frame's own damage, so a patch-layer frame's patch (and the damage
+    // region declared from it) contains every pixel it writes.
     if drawn {
       self.draw_overlay(size, window);
       // The frame as it goes to the window, for the window taps: the read
@@ -209,6 +239,16 @@ impl RasterState {
     // wait) and publishes its completion the way a present's fence does.
     if drawn && self.sink.headless() {
       self.finish_gpu_work(frame);
+    }
+    // What the headless window target holds now: the last frame, when it
+    // drew. A window shader's or an overlay's change folds the damage that
+    // repairs it (compose.rs), as for a window's aged buffers. A patched
+    // frame counts like a present that patched.
+    if headless {
+      self.window_target_held = drawn;
+      if drawn && route.is_patch() {
+        self.stats.partial_presents.fetch_add(1, Ordering::Relaxed);
+      }
     }
     if self.sink == FrameSink::Window {
       let present_start = std::time::Instant::now();
@@ -225,10 +265,13 @@ impl RasterState {
               // event-driven rebind). Redraw against the rebound surface and
               // present again; the retry's outcome feeds the failure threshold
               // honestly (fail, rebind, fail again = a dead swapchain). The
-              // fresh surface preserves nothing, so the retry draws in full.
+              // fresh surface preserves nothing, so the retry draws in full;
+              // a region the failed frame declared may outlive a rebind that
+              // kept the surface, and the tracker then distrusts the buffer
+              // the retry presents (`invalidated`).
               self.damage.invalidated();
               own_damage = PresentDamage::Full;
-              route = WindowRoute::whole(fast_path);
+              route = WindowRoute::whole(buffer);
               if self.draw_to_window(&dl, size, route, window) {
                 match self.present(frame) {
                   Presented::Yes => presented = true,

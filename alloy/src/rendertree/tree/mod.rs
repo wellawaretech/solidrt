@@ -10,10 +10,13 @@ use std::collections::{HashMap, HashSet};
 
 use taffy::NodeId;
 
+use crate::gpu::DirtySet;
+use crate::rendertree::cull;
 use crate::rendertree::damage::DamageLedger;
 use crate::rendertree::transitions::Transitions;
 use crate::rendertree::{
-  BoundaryMode, Damage, Element, ElementKind, FrameDamage, PaintCache, Rect, RunOverrides, Size, TextRun, ATOM_CHAR,
+  BoundaryMode, Damage, Element, ElementKind, FrameDamage, PaintCache, Rect, RunOverrides, Shown, Size, TextRun,
+  Texture, ATOM_CHAR,
 };
 
 pub struct RenderTree {
@@ -41,6 +44,12 @@ pub struct RenderTree {
   // from motion (text::raster_scale): the frame start gives each a Compose
   // damage, caches intact, so the walk reaches it.
   scale_waits: RefCell<HashSet<u64>>,
+  // Recording boundaries' frames as the last walk that reached each saw
+  // them (cull::RecordingFrame): what content damage under a replayed
+  // recording composes its window position from. Written on every visit of
+  // a Recording boundary (composite::build_recursive), dropped when the
+  // node is destroyed or stops being one.
+  recording_frames: RefCell<HashMap<u64, cull::RecordingFrame>>,
   // Nodes referencing any texture-registry id (Element::references_textures):
   // texture elements with a source, views whose shader samples extra texture
   // inputs. Keeps texture_content_changed and the destroy sweep at
@@ -86,6 +95,7 @@ impl RenderTree {
       released_snapshot_textures: RefCell::new(Vec::new()),
       text_layers: RefCell::new(HashSet::new()),
       scale_waits: RefCell::new(HashSet::new()),
+      recording_frames: RefCell::new(HashMap::new()),
       texture_referencers: HashSet::new(),
       damage: DamageLedger::new(),
       reflowed: Vec::new(),
@@ -98,6 +108,14 @@ impl RenderTree {
       self.texture_referencers.insert(node_id);
     } else {
       self.texture_referencers.remove(&node_id);
+    }
+  }
+
+  // A node that is no Recording boundary after a write has no frame to
+  // keep (`recording_frames`).
+  fn reconcile_recording_frame(&mut self, node_id: u64) {
+    if !self.nodes.get(&node_id).is_some_and(|e| e.repaint_boundary == BoundaryMode::Recording) {
+      self.recording_frames.get_mut().remove(&node_id);
     }
   }
 
@@ -350,6 +368,7 @@ impl RenderTree {
   pub fn edit(&mut self, id: u64, f: impl FnOnce(&mut Element) -> Damage) {
     let damage = f(self.node_mut(id));
     self.reconcile_texture_referencer(id);
+    self.reconcile_recording_frame(id);
     self.reconcile_slide(id);
     self.apply_damage(id, damage);
     self.sync_span_parent(id);
@@ -427,6 +446,7 @@ impl RenderTree {
     // Even on Err: the closure may have mutated before failing, and the
     // referencer index must track element state, not the damage outcome.
     self.reconcile_texture_referencer(id);
+    self.reconcile_recording_frame(id);
     self.reconcile_slide(id);
     let damage = result?;
     self.apply_damage(id, damage);
@@ -567,6 +587,7 @@ impl RenderTree {
       self.texture_referencers.remove(&node_id);
       self.text_layers.borrow_mut().remove(&node_id);
       self.scale_waits.borrow_mut().remove(&node_id);
+      self.recording_frames.get_mut().remove(&node_id);
       if let Some(id) = element.snapshot_texture_id.get() {
         self.released_snapshot_textures.borrow_mut().push(id);
       }
@@ -617,6 +638,81 @@ impl RenderTree {
   /// `take_scale_waits`).
   pub fn note_scale_wait(&self, node_id: u64) {
     self.scale_waits.borrow_mut().insert(node_id);
+  }
+
+  /// A Recording boundary was visited by the paint walk: its frame's map to
+  /// the window is `frame`, and `enclosing` the recording the walk was
+  /// recording when it got there (BuildContext::recording), which this
+  /// boundary's replay is part of. The frame it was recorded at stands.
+  pub(crate) fn note_recording_frame(
+    &self,
+    node_id: u64,
+    enclosing: Option<(u64, cull::WindowMap)>,
+    frame: cull::WindowMap,
+  ) {
+    let mut frames = self.recording_frames.borrow_mut();
+    let recorded = frames.get(&node_id).and_then(|f| f.recorded);
+    let entry = cull::RecordingFrame {
+      within: enclosing.map(|(id, _)| id),
+      to_window: frame,
+      to_within: enclosing.and_then(|(_, outer)| cull::map_relative(&frame, &outer)),
+      recorded,
+    };
+    frames.insert(node_id, entry);
+  }
+
+  /// The walk that visited Recording boundary `node_id` records it: the
+  /// frame noted for this visit is the one its recording is made at.
+  pub(crate) fn note_recording_recorded(&self, node_id: u64) {
+    if let Some(frame) = self.recording_frames.borrow_mut().get_mut(&node_id) {
+      frame.recorded = Some(frame.to_window);
+    }
+  }
+
+  /// The node whose cell stands for damaged node `id`'s window extent, when
+  /// it is not `id` itself: the outermost repaint boundary above it, of
+  /// any kind, where a boundary on the way may show its cached content
+  /// somewhere else than the cells inside say. A Recording boundary does
+  /// where it moved since it recorded or has no frame noted
+  /// (`RecordingFrame::moved_since_recorded`); a snapshot boundary keeps no
+  /// frame and always counts as moved. A reused cache is not walked, so the
+  /// cells inside it keep the walk that made it, while the outermost
+  /// boundary of any kind has a parent outside every cache, whose loop
+  /// writes its cell on every walk. None under no boundary, or under
+  /// Recording boundaries alone that each show their recording where it
+  /// was made, and the cells inside are where they show. Asked for damaged
+  /// nodes only (composite::damaged_extent).
+  pub(crate) fn boundary_stand_in(&self, id: u64) -> Option<u64> {
+    let frames = self.recording_frames.borrow();
+    let mut outermost = None;
+    let mut moved = false;
+    let mut current = self.try_node(id).and_then(|e| e.parent);
+    while let Some(cur) = current {
+      let Some(element) = self.try_node(cur) else { break };
+      match element.repaint_boundary {
+        BoundaryMode::Recording => {
+          outermost = Some(cur);
+          moved |= frames.get(&cur).is_none_or(cull::RecordingFrame::moved_since_recorded);
+        }
+        BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa => {
+          outermost = Some(cur);
+          moved = true;
+        }
+        BoundaryMode::None => {}
+      }
+      current = element.parent;
+    }
+    outermost.filter(|_| moved)
+  }
+
+  /// A walk entered Recording boundary `node_id`'s replayed subtree without
+  /// recording it (a capture's walk) and wrote the cells inside at the
+  /// boundary's current frame: the recorded frame no longer says where
+  /// they are, so the boundary counts as moved until it records again.
+  pub(crate) fn note_recording_walked(&self, node_id: u64) {
+    if let Some(frame) = self.recording_frames.borrow_mut().get_mut(&node_id) {
+      frame.recorded = None;
+    }
   }
 
   /// The nodes waiting for the next frame's look, taken once per frame by
@@ -798,36 +894,56 @@ impl RenderTree {
 
   /// GPU-side content changed behind these texture ids - target re-renders,
   /// uploads, copies, camera frames - with no tree damage of their own
-  /// (Context::take_content_changes is the source). Live texture references
-  /// need nothing: the resubmitted display list samples the fresh pixels at
-  /// the raster flush. The one consumer that goes stale is baked pixels, so
-  /// this damages exactly the referencing nodes and leaves everything else
-  /// alone. Two reference shapes, two costs: a texture element under a
-  /// snapshot boundary is IN the bake and re-rasterizes
-  /// (`invalidate_paint`); a boundary shader sampling the id as an extra
-  /// input only needs its pass re-run over the still-valid snapshot, so it
-  /// gets the params-write treatment (`mark_shader_dirty` + Compose damage:
-  /// ancestor recordings repaint, the bake survives). Bumps the revision
-  /// only on a hit: a frame whose GPU writes touch no snapshot boundary
-  /// keeps the present-only reuse path. Returns whether anything was
-  /// invalidated.
-  pub fn texture_content_changed(&mut self, ids: &HashSet<u64>) -> bool {
-    if ids.is_empty() {
+  /// (Context::take_content_changes is the source), each in full or inside
+  /// rectangles of its own pixels. Live texture references need nothing to
+  /// show it: the resubmitted display list samples the fresh pixels at the
+  /// raster flush. Two things follow from it.
+  ///
+  /// Window damage, for partial repaint: every texture element showing a
+  /// changed id shows new pixels, tree damage or not, on the present-only
+  /// reuse path too. A full change damages the node. A change inside
+  /// rectangles damages only what the node shows of them
+  /// (`content_extent`), and the node where that is not known. Under
+  /// Recording boundaries alone the same holds where the node shows now,
+  /// composed up the boundaries' frames (`content_reach`), and a full change
+  /// damages the node's drawn box there, not the boundary. Under a snapshot
+  /// boundary, or under a view whose filter blurs, or where a map on the
+  /// way is not known, the node is the outermost boundary or blurring view
+  /// above it, damaged whole (`content_reach` says why).
+  ///
+  /// Baked pixels, the one consumer that goes stale. Two reference shapes,
+  /// two costs: a texture element under a snapshot boundary is IN the bake
+  /// and re-rasterizes (`invalidate_paint`); a boundary shader sampling the
+  /// id as an extra input only needs its pass re-run over the still-valid
+  /// snapshot, so it gets the params-write treatment (`mark_shader_dirty` +
+  /// Compose damage: ancestor recordings repaint, the bake survives). Bumps
+  /// the revision only on such a hit: a frame whose GPU writes touch no
+  /// snapshot boundary keeps the present-only reuse path. Returns whether
+  /// anything was invalidated.
+  pub fn texture_content_changed(&mut self, changes: &DirtySet) -> bool {
+    if changes.is_empty() {
       return false;
     }
     let mut bake_hits: Vec<u64> = Vec::new();
     let mut shader_hits: Vec<u64> = Vec::new();
-    // Every referencer displaying a changed id shows new pixels at its
-    // rect, tree damage or not - partial repaint needs those rects even on
-    // the present-only reuse path.
-    let mut content_hits: Vec<u64> = Vec::new();
+    // Per node showing a changed id: the node whose extent stands for its
+    // pixels, with the window extent the change stays inside; None is that
+    // whole node.
+    let mut content_hits: Vec<(u64, Option<cull::Extent>)> = Vec::new();
     for &id in &self.texture_referencers {
       let Some(element) = self.nodes.get(&id) else { continue };
       match &element.kind {
         ElementKind::Texture(t) => {
-          if let Some(tex) = t.texture_id.filter(|t| ids.contains(t)) {
-            content_hits.push(id);
-            if self.under_snapshot_boundary(id, tex) {
+          if let Some(tex) = t.texture_id.filter(|t| changes.contains(t)) {
+            let reach = self.content_reach(id, t, tex);
+            let shown = match (changes.rects(&tex), reach.placed) {
+              (Some(rects), Some((shown, map))) => shown.window_extent(&map, rects.rects()),
+              (None, Some((shown, map))) if reach.bounded => Some(shown.drawn_extent(&map)),
+              _ => None,
+            };
+            let extent = shown.and_then(|shown| self.content_extent(reach.node, shown));
+            content_hits.push((reach.node, extent));
+            if reach.baked {
               bake_hits.push(id);
             }
           }
@@ -837,7 +953,7 @@ impl RenderTree {
         // are irrelevant here.
         ElementKind::View(v) => {
           if matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa)
-            && v.shader.as_ref().is_some_and(|s| s.textures.iter().any(|b| ids.contains(&b.id)))
+            && v.shader.as_ref().is_some_and(|s| s.textures.iter().any(|b| changes.contains(&b.id)))
           {
             shader_hits.push(id);
           }
@@ -845,8 +961,11 @@ impl RenderTree {
         _ => {}
       }
     }
-    for id in &content_hits {
-      self.note_damage(*id);
+    for (node, extent) in content_hits {
+      match extent {
+        Some(extent) => self.damage.note_area(extent),
+        None => self.note_damage(node),
+      }
     }
     if bake_hits.is_empty() && shader_hits.is_empty() {
       return false;
@@ -866,26 +985,103 @@ impl RenderTree {
     true
   }
 
-  /// Whether `node_id` or any ancestor is a snapshot repaint boundary - the
-  /// probe that keeps texture_content_changed off everything else. Boundary
-  /// MODE, not cache presence: a declared boundary that has not baked yet has
-  /// nothing stale (the invalidation is a no-op then), and mode is plain
-  /// element state.
-  /// A boundary whose own vended texture (`snapshot_texture`) is the changed
-  /// id is excluded: its rasterization IS the change, and invalidating it
-  /// would re-rasterize every frame.
-  fn under_snapshot_boundary(&self, node_id: u64, texture_id: u64) -> bool {
+  // One walk up from texture node `node_id` (`texture`), showing
+  // `texture_id`, for the facts a content change needs (`ContentReach`).
+  //
+  // The node whose extent stands for the texture's pixels in a damage
+  // resolve is the outermost node on it or above it that is a repaint
+  // boundary or a view whose filter blurs (`blurs_subtree`); the node
+  // itself under none. That extent is current: the outermost boundary's
+  // own is written by its parent's loop on every walk, where a replayed
+  // recording is not walked and the extents under it are those of the
+  // walk that recorded it.
+  //
+  // Where the texture shows now, when that is known: the box frame's map
+  // to the window. Under no boundary, the one the last walk built it with
+  // (`Shown`). Under Recording boundaries alone, composed up their frames
+  // (cull::RecordingFrame): the build's map to the frame of the nearest
+  // boundary, each boundary's map to the next one's, then the outermost
+  // one's to the window, every boundary frame as the last walk reaching it
+  // wrote it. That holds wherever the boundaries moved or scrolled since:
+  // a recording is fixed inside its frame, and its replay draws it there.
+  // Each link must name the boundary the walk finds next; a link to
+  // another (a capture's walk built the node outside the recording that
+  // replays, a boundary came or went) breaks the chain, and the outermost
+  // node is damaged whole. So does a snapshot boundary on the way (its
+  // raster is resampled, maybe shaded, at composite) and a blur (it
+  // spreads each changed pixel of its subtree by its reach, and only the
+  // filtered view's own extent is grown by it, cull::envelope).
+  //
+  // Baked is the nearest snapshot boundary's word: boundary MODE, not cache
+  // presence (a declared boundary that has not baked yet has nothing
+  // stale, the invalidation is a no-op then, and mode is plain element
+  // state). A boundary whose own vended texture (`snapshot_texture`) is
+  // the changed id does not count: its rasterization IS the change, and
+  // invalidating it would re-rasterize every frame.
+  fn content_reach(&self, node_id: u64, texture: &Texture, texture_id: u64) -> ContentReach {
+    let shown = texture.shown.get();
+    let mut reach = ContentReach { node: node_id, baked: false, placed: None, bounded: false };
+    let mut snapshot_seen = false;
+    // A snapshot or a blur on the way, or a broken chain: the map is not
+    // known.
+    let mut lost = shown.is_none();
+    // The chain so far: the box frame's map to the frame of `within`, the
+    // boundary the walk must meet next, and to the window once it is None.
+    let mut map = shown.and_then(|s| s.to_frame);
+    let mut within = shown.and_then(|s| s.within);
+    let frames = self.recording_frames.borrow();
     let mut current = Some(node_id);
     while let Some(id) = current {
-      let Some(element) = self.try_node(id) else {
-        return false;
-      };
-      if matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa) {
-        return element.snapshot_texture_id.get() != Some(texture_id);
+      let Some(element) = self.try_node(id) else { break };
+      let blurs = blurs_subtree(element);
+      if !matches!(element.repaint_boundary, BoundaryMode::None) || blurs {
+        reach.node = id;
       }
+      match element.repaint_boundary {
+        BoundaryMode::Recording => {
+          reach.bounded = true;
+          match frames.get(&id) {
+            Some(frame) if !lost && within == Some(id) => {
+              // On to the next boundary's frame, or to the window from
+              // the outermost one.
+              let next = if frame.within.is_some() { frame.to_within } else { frame.to_window };
+              map = map.zip(next).map(|(m, f)| m.then(&f));
+              within = frame.within;
+            }
+            _ => lost = true,
+          }
+        }
+        BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa => {
+          lost = true;
+          if !snapshot_seen {
+            snapshot_seen = true;
+            reach.baked = element.snapshot_texture_id.get() != Some(texture_id);
+          }
+        }
+        BoundaryMode::None => {}
+      }
+      lost |= blurs;
       current = element.parent;
     }
-    false
+    if !lost && within.is_none() {
+      reach.placed = shown.zip(map);
+    }
+    reach
+  }
+
+  // `shown`, the window extent of what texture node `node_id`'s draw shows
+  // of a change, cut to the extent of `reach_node`, the node that stands for
+  // its pixels (`content_reach`): the node itself, or the outermost
+  // Recording boundary above it, whose extent the last walk wrote. None
+  // where that extent is not bounded, and the whole node is damaged.
+  fn content_extent(&self, reach_node: u64, shown: cull::Extent) -> Option<cull::Extent> {
+    let cull::Extent::Bounded(own) = self.try_node(reach_node)?.last_extent.get() else {
+      return None;
+    };
+    match shown {
+      cull::Extent::Bounded(r) => Some(r.intersection(&own).map_or(cull::Extent::Empty, cull::Extent::Bounded)),
+      extent => Some(extent),
+    }
   }
 
   /// Texture registry ids referenced by any live element, attached or
@@ -913,4 +1109,23 @@ impl RenderTree {
     }
     ids
   }
+}
+
+// What one walk up from a texture node finds (`RenderTree::content_reach`):
+// the node whose extent stands for the texture's pixels, whether a
+// snapshot boundary bakes them, where the node shows now when that is
+// known (its draw, and its box frame's map to the window), and whether a
+// Recording boundary is on the way.
+struct ContentReach {
+  node: u64,
+  baked: bool,
+  placed: Option<(Shown, euclid::default::Transform2D<f32>)>,
+  bounded: bool,
+}
+
+// Whether a view's filter paints past the subtree it filters: a blur with
+// a reach. The color operations map each pixel onto itself, so a filter
+// of only those keeps every changed pixel where it was.
+fn blurs_subtree(element: &Element) -> bool {
+  matches!(&element.kind, ElementKind::View(v) if v.active_filter().is_some_and(|f| f.blur_outset() > 0.0))
 }

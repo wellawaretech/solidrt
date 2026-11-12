@@ -292,6 +292,34 @@ submission budget has not measured yet, so the full render measures it. Rectangl
 rectangle past 4. A list on a sub-target and a parent with tiles take the
 same model ([gpu-target-damage-draw-lists](../done/gpu-target-damage-draw-lists.md)).
 
+The window follows the target. The content change the frame takes
+carries the same dirt, and a texture node showing the target damages the
+window only where it shows the rectangles: each through the node's fit,
+source rectangle and window map
+([gpu-target-damage-window](../done/gpu-target-damage-window.md)).
+Under Recording boundaries the map is composed up the boundaries'
+frames, so a moved or scrolled boundary damages where the node shows
+now. It is the whole node (the outermost one, under one) under a
+snapshot boundary or under a view with a blur filter, for a target with
+a mip chain, and under a map that is not 2d. A test checks the window's
+pixels: a headless frame under the patch switch patches the window
+target as a window patches its back buffer, through the rig or through
+the patch layer, and the bytes must match a whole redraw. The window is
+patched from that damage on a single-sample backbuffer (every desktop
+platform) through the rig, and on a multisampled one (every Android
+device) through the patch layer where the display offers
+`EGL_KHR_partial_update`: the patch is declared as the frame's damage
+region, drawn into the corner of the patch layer (one layer kept between
+frames, at least the stepped patch's size, bounded: far larger than the
+patch for a run of frames, it is allocated again at the patch's size)
+and copied into the window by a copy scissored to the patch. A backdrop
+panel the damage touches pulls the panel and the blur's reach past it
+into the patch. The window damage is one rectangle,
+the bounding box of all that changed in the frame: two sprites that
+change in opposite corners repaint nearly the whole window.
+On a desktop client a press on a full-window view damages 5,214 px a
+frame of 921,600.
+
 Two contracts carry it, and nothing checks either:
 
 - **The view is the vertex stage's matrix.** The view a culling list is
@@ -331,8 +359,8 @@ four merged rectangles cover a sparse write.
   so its vertex work multiplies by the rectangle count (at most 4). A
   per-rectangle sub-list of the records that meet it, queried from the
   cells and drawn at an instance offset, is the better form; alloy has
-  no instance-offset draw. The window still repaints the whole leaf
-  showing a damaged target, and a layer drawn directly stays full:
+  no instance-offset draw. A layer drawn directly stays full; damage
+  declared by an app is shaped and has no consumer:
   [gpu-target-damage](../backlog/gpu-target-damage.md).
 - [2d-sprite-layer-view-relative-records](../backlog/2d-sprite-layer-view-relative-records.md):
   views of one sprite layer far apart share one f32 origin. Decided: a

@@ -3,8 +3,8 @@
 //! vocabulary and validators (`vocab`), the command/introspection shapes
 //! (`spec`, `resources`), device ceilings (`limits`), buffer write leases
 //! (`lease`), instance ordering (`order`), a target's damage rectangles
-//! (`damage`), and the texture/sampling vocabulary plus the UI-side
-//! registry (`texture`).
+//! (`damage`) and the pending dirt they sit in (`dirt`), and the
+//! texture/sampling vocabulary plus the UI-side registry (`texture`).
 //!
 //! No GL here, by design: nothing in this module takes a `glow::Context`,
 //! so the "sol-ui has zero GL" thread contract is visible in the module
@@ -12,6 +12,7 @@
 //! buffers, the sampler cache - live in `gl/`, raster-thread-only.
 
 mod damage;
+mod dirt;
 mod draw_list;
 mod glyphs;
 mod lease;
@@ -26,6 +27,7 @@ pub(crate) mod vocab;
 #[cfg(test)]
 pub use damage::{project_box, BoxDamage, MAX_DAMAGE_RECTS};
 pub use damage::{DamageRects, ListDamage, PxRect, TargetDirt, DAMAGE_EDGE_PX, MAX_DAMAGE_SLOTS};
+pub use dirt::{Dirt, DirtySet};
 pub use draw_list::{gather_list, CellIndex, DrawList, ListChange, ListOrder};
 pub use glyphs::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use lease::WriteLeases;

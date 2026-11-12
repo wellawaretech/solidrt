@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { camera as installCamera, capture, clipboard as readClipboard, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, requestedLinks, requestedShares, microphone as installMicrophone, painted as paintFrame, setClipboard as putClipboard, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowReady } from "sol:test"
+import { camera as installCamera, capture, clipboard as readClipboard, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, requestedLinks, requestedShares, microphone as installMicrophone, painted as paintFrame, setClipboard as putClipboard, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowPixels as readWindow, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
@@ -359,6 +359,28 @@ export interface TestApp {
    * wrong damage rectangle.
    */
   forceFullRenders(active?: boolean): boolean
+  /**
+   * The headless patch switch, for a test of window damage: with `true`
+   * each frame redraws only the window area it damaged and keeps the rest
+   * of the last frame's pixels, as a single-sample window patches its back
+   * buffer; with `"layer"` the same through the patch layer, as a
+   * multisampled window (every Android device) patches it: the patch grows
+   * to whole 64 px steps, and one over half the window redraws whole; with
+   * `false` (the default) every frame redraws the whole window; with no
+   * argument it is read. Returns the switch as it now stands. It applies
+   * from the next frame; every test starts with it off. A resize, a full
+   * damage and a window shader still redraw the whole window. The same
+   * steps run patched and whole, `windowPixels()` read after each, give
+   * the same bytes unless a damage rectangle is wrong.
+   */
+  patchWindow(active?: boolean | "layer"): boolean | "layer"
+  /**
+   * The whole window as the last frame left it: nothing is painted and no
+   * frame runs, so what a patched frame kept (`patchWindow`) is read as it
+   * stands, where `pixels()` and `painted()` paint a node afresh. Throws
+   * while a frame is pending.
+   */
+  windowPixels(): Pixels
   /**
    * The performance statistics, as the control API's `/stats` reports
    * them (agents/debugging.md): the latest frame's figures, the `window`
@@ -746,6 +768,11 @@ let app: TestApp = {
     if (active !== undefined && typeof active !== "boolean") throw new TypeError(`forceFullRenders: pass true, false or nothing, got ${active}`)
     return gui.forceFullRenders(active ?? null)
   },
+  patchWindow(active) {
+    if (active !== undefined && typeof active !== "boolean" && active !== "layer") throw new TypeError(`patchWindow: pass true, false, "layer" or nothing, got ${active}`)
+    return gui.patchWindow(active ?? null)
+  },
+  windowPixels: () => readWindow(),
   stats: (options = {}) => JSON.parse(queryStats(options.windowMs ?? null, options.windowFrames ?? null)),
   find: query => findIn(() => null, query),
   findAll: query => search(null, query).map(found => fixed(found.id, `${describeQuery(query)} (${describeNode(found)})`)),

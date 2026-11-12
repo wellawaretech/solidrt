@@ -9,7 +9,9 @@ use crate::renderer::{DisplayList, ISize};
 
 use super::offscreen::flip_for_fbo;
 use super::repaint::WindowRoute;
-use super::{ensure_copy_program, LayerTarget, OverlayState, RasterState, WindowShaderState};
+use super::{
+  ensure_copy_program, DamageRect, LayerTarget, OverlayState, PresentDamage, RasterState, WindowShaderState,
+};
 use crate::gl;
 use crate::gl::release_program;
 use crate::gl::PassInput;
@@ -26,7 +28,8 @@ impl RasterState {
   /// the window shader's layer: every frame reaches it as a rig resolve or
   /// a pass, never as a direct renderer draw, so the rig carries the depth
   /// and stencil. A fresh target starts cleared, so a readback before any
-  /// frame is defined.
+  /// frame is defined, and holds no frame a patch could land on
+  /// (`window_target_held`).
   pub(super) fn window_framebuffer(&mut self, size: ISize) -> Result<Option<glow::NativeFramebuffer>, String> {
     if !self.sink.headless() {
       return Ok(None);
@@ -42,6 +45,7 @@ impl RasterState {
       let (tex, fbo) = crate::gl::create_layer_target(&self.gl, width, height, [0.0, 0.0, 0.0, 0.0])
         .map_err(|e| format!("headless window target {width}x{height}: {e}"))?;
       self.window_target = Some(LayerTarget { tex, fbo, width, height });
+      self.window_target_held = false;
     }
     Ok(self.window_target.as_ref().map(|t| t.fbo))
   }
@@ -79,6 +83,17 @@ impl RasterState {
         // pass failure is a diagnostic, not a black window.
         Err(e) => log::warn!("[alloy] window shader pass failed: {e}; drawing without it"),
       }
+    }
+    // The patch layer is this state's; the fast path and the rig are the
+    // window draw's.
+    if let WindowRoute::PatchLayer(patch) = route {
+      return match self.draw_window_patch(dl, size, patch, window) {
+        Ok(()) => true,
+        Err(e) => {
+          log::warn!("[alloy] window patch draw failed: {e}; skipping frame");
+          false
+        }
+      };
     }
     match gl::render_display_list_to_window(
       &self.gl,
@@ -212,6 +227,10 @@ impl RasterState {
   /// second figure refresh redraws into it), and mark it stale so the next
   /// frame re-rasterizes. None frees everything.
   pub(super) fn set_overlay(&mut self, overlay: Option<crate::context::Overlay>) {
+    let old = self.overlay.as_ref().map(|o| overlay_rect(&o.decl));
+    if let Some(repair) = overlay_repair(old, overlay.as_ref().map(overlay_rect)) {
+      self.damage.fold(repair);
+    }
     let mut layer = self.overlay.take().and_then(|old| old.layer);
     // Free the retained layer on clear, and on a size change (reallocated at
     // the next frame's rasterize); a same-size redeclaration redraws into it.
@@ -285,6 +304,97 @@ impl RasterState {
     crate::gl::composite_program_over_window(&self.gl, &program, window, origin, width, height, &[input]);
   }
 
+  /// A patch-layer frame (`WindowRoute::PatchLayer`): draw the part of
+  /// `dl` inside `patch` into the patch layer (through the rig, at the
+  /// patch's size, into the layer's bottom-left corner; the layer is kept
+  /// between frames, at least the patch's size, bounded by
+  /// `repaint::patch_layer_fit`) and replace the
+  /// pixels of the window framebuffer (`window`, see `window_framebuffer`)
+  /// there with it. Every stage follows the patch, and nothing is rendered
+  /// into the window outside it: the copy is scissored to the patch. The
+  /// layer is drawn unflipped, in the window's own bottom-up convention,
+  /// as the overlay's is. An empty patch draws nothing.
+  fn draw_window_patch(
+    &mut self,
+    dl: &DisplayList,
+    size: ISize,
+    patch: DamageRect,
+    window: Option<glow::NativeFramebuffer>,
+  ) -> Result<(), String> {
+    if patch.width <= 0 || patch.height <= 0 {
+      return Ok(());
+    }
+    let (width, height) = (patch.width as u32, patch.height as u32);
+    // A patch that fits draws into the corner of the layer there is, so
+    // patches alternating between sizes reallocate nothing once the layer
+    // holds the larger; a layer far larger than its patches for a run of
+    // frames is allocated again at the patch's size.
+    let (fit, oversized) = super::repaint::patch_layer_fit(
+      self.patch_layer.as_ref().map(|l| (l.width, l.height)),
+      (width, height),
+      self.patch_layer_oversized,
+    );
+    self.patch_layer_oversized = oversized;
+    if let super::repaint::LayerFit::Allocate(layer_width, layer_height) = fit {
+      if let Some(old) = self.patch_layer.take() {
+        unsafe {
+          glow::HasContext::delete_framebuffer(&self.gl, old.fbo);
+          glow::HasContext::delete_texture(&self.gl, old.tex);
+        }
+      }
+      let (tex, fbo) = crate::gl::create_layer_target(&self.gl, layer_width, layer_height, [0.0, 0.0, 0.0, 0.0])
+        .map_err(|e| format!("patch layer {layer_width}x{layer_height}: {e}"))?;
+      self.patch_layer = Some(LayerTarget { tex, fbo, width: layer_width, height: layer_height });
+    }
+    let layer = self.patch_layer.as_ref().expect("layer ensured above");
+    // The layer's old pixels are dead: the resolve below writes every pixel
+    // of its patch-sized corner (the in-tile copy's covering triangle and
+    // the explicit blit both span the corner whole), and the copy into the
+    // window samples the corner only (it is scissored to the patch). The
+    // invalidate lets a tiler skip loading and storing the rest.
+    if crate::gl::supports_invalidate(&self.gl) {
+      unsafe {
+        let prev_fbo = glow::HasContext::get_parameter_i32(&self.gl, glow::FRAMEBUFFER_BINDING);
+        glow::HasContext::bind_framebuffer(&self.gl, glow::FRAMEBUFFER, Some(layer.fbo));
+        glow::HasContext::invalidate_framebuffer(&self.gl, glow::FRAMEBUFFER, &[glow::COLOR_ATTACHMENT0]);
+        glow::HasContext::bind_framebuffer(
+          &self.gl,
+          glow::FRAMEBUFFER,
+          std::num::NonZeroU32::new(prev_fbo as u32).map(glow::NativeFramebuffer),
+        );
+      }
+    }
+    use crate::renderer::prelude::*;
+    let mut moved = crate::renderer::DisplayListBuilder::new(None);
+    moved.translate(-(patch.x as f32), -(patch.y as f32));
+    moved.draw_display_list(dl, 1.0);
+    let moved = moved.build().ok_or_else(|| "empty patch display list".to_string())?;
+    gl::render_display_list_to_layer(
+      &self.gl,
+      &mut self.renderer,
+      &mut self.offscreen_rig,
+      &moved,
+      ISize::new(width as i64, height as i64),
+      layer.fbo,
+    )?;
+    let program = ensure_copy_program(&self.gl, &mut self.copy_program)?;
+    // The whole layer lands with its corner on the patch, 1:1; the scissor
+    // keeps the copy to the patch itself.
+    let origin = (patch.x, size.height as i32 - (patch.y + patch.height));
+    let scissor = (origin.0, origin.1, patch.width, patch.height);
+    let input = PassInput::d2("uSrc", layer.tex, None);
+    crate::gl::copy_program_into_window(
+      &self.gl,
+      &program,
+      window,
+      origin,
+      (layer.width, layer.height),
+      scissor,
+      &[input],
+    );
+    Ok(())
+  }
+
   /// Apply a SetWindowShader command. A redeclaration with the same program
   /// keeps the retained layer and just adopts the new params/textures/vertex
   /// count (the per-frame params path); a different program releases the old
@@ -310,12 +420,18 @@ impl RasterState {
     let program = program.clone();
     self.clear_window_shader();
     self.window_shader = Some(WindowShaderState { spec, program, layer: None, prev_layer: None });
+    // Every frame under a shader redraws whole, but the ring records only
+    // the tree's delta of each: a new program and its removal fold full
+    // damage in, so no aged buffer keeps the other program's pixels.
+    self.damage.fold(PresentDamage::Full);
   }
 
   /// Free the window shader state: the layer's GL objects die here (they were
   /// never adopted or registered), the program only if nothing else holds it.
+  /// The back buffers hold shaded frames: full damage folds in.
   fn clear_window_shader(&mut self) {
     if let Some(state) = self.window_shader.take() {
+      self.damage.fold(PresentDamage::Full);
       for layer in [state.layer, state.prev_layer].into_iter().flatten() {
         unsafe {
           glow::HasContext::delete_framebuffer(&self.gl, layer.fbo);
@@ -325,4 +441,29 @@ impl RasterState {
       release_program(&self.gl, state.program);
     }
   }
+}
+
+/// The window rectangle an overlay is composited over, as damage: the
+/// pixels under it re-raster every frame it is installed for, since it is
+/// blended over the frame (frame.rs), and once more where it leaves.
+pub(super) fn overlay_damage(overlay: &crate::context::Overlay) -> PresentDamage {
+  PresentDamage::Rect(overlay_rect(overlay))
+}
+
+// The window rectangle an overlay is composited over.
+fn overlay_rect(overlay: &crate::context::Overlay) -> DamageRect {
+  DamageRect { x: overlay.x, y: overlay.y, width: overlay.width as i32, height: overlay.height as i32 }
+}
+
+/// The damage an overlay's new declaration folds in, from the rectangle
+/// of the one installed (`old`, None before the first) and the new one's
+/// (`new`, None for a removal). A frame's own damage holds the overlay's
+/// rectangle only while it is installed, and the back buffers still show
+/// it where it was: a removed, moved or resized overlay folds its old
+/// rectangle in, which the ring then carries to every aged buffer. Nothing
+/// for a first install, or a new declaration over the same rectangle (its
+/// content changed: the frame's own damage holds the rectangle).
+pub(crate) fn overlay_repair(old: Option<DamageRect>, new: Option<DamageRect>) -> Option<PresentDamage> {
+  let old = old?;
+  (new != Some(old)).then_some(PresentDamage::Rect(old))
 }

@@ -28,6 +28,20 @@ use crate::gpu::{SamplerState, TextureBox, TextureFormat, TextureRect, TextureSh
 // the logical->physical scale rounding at the patch edges.
 const DAMAGE_PAD_PX: i32 = 1;
 
+/// The test switch behind `Context::set_patch_headless_window`: how a
+/// headless frame reaches the window target. `Off` (the default) redraws
+/// the whole window every frame. `Rig` redraws only the frame's damage
+/// over the target's last frame, through the rig, as a single-sample
+/// window patches its back buffer. `Layer` does the same through the patch
+/// layer, as a multisampled window does (`WindowRoute::PatchLayer`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HeadlessPatch {
+  #[default]
+  Off,
+  Rig,
+  Layer,
+}
+
 /// An integer damage rectangle in physical pixels, top-left origin,
 /// non-empty by construction (width/height >= 1).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -469,6 +483,11 @@ pub(crate) enum RasterCmd {
   /// whatever rectangles that dirt holds; a clean tile in a partial pass
   /// stays clean.
   SetForceFullRenders { on: bool },
+  /// The test switch behind `Context::set_patch_headless_window`: while not
+  /// `Off`, a headless frame redraws only its damage over the window
+  /// target's last frame, as a windowed frame does over a back buffer of
+  /// age 1, along the route the switch names.
+  SetPatchHeadlessWindow { patch: HeadlessPatch },
   /// Forget a draw entry's submission-budget measurement (gl::slicing):
   /// sent by the order registry when an index-stream entry's first real
   /// order lands over the sentinel seed, so a probe that measured a draw of

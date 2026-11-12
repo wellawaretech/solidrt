@@ -22,6 +22,6 @@ pub use paint::{Gradient, GradientStop, GradientUnits, PaintState, DEFAULT_STROK
 pub use path::Path;
 pub use rect::Rectangle;
 pub use shadow::ShadowState;
-pub use texture::{fit_rects, Texture, TextureFit};
+pub use texture::{fit_rects, Shown, Texture, TextureFit};
 pub use view::{OriginCoord, View};
 pub use window::Window;

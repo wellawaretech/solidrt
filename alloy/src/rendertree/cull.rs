@@ -65,6 +65,82 @@ pub(crate) fn map_translate(map: &WindowMap, v: Vector) -> WindowMap {
   map.map(|m| m.pre_translate(v))
 }
 
+/// `map`, a node's slot frame's, past its own matrix and its scroll: the
+/// map of its scrolled box frame, where a fit and the children follow. The
+/// one step the record walk takes (composite::record_node) and the one a
+/// Recording boundary's frame is (`RecordingFrame`): what a boundary
+/// hoists is exactly its matrix and its scroll, so the two cannot differ.
+pub(crate) fn map_past_box(map: &WindowMap, own: Option<&Matrix>, scroll: Option<Vector>) -> WindowMap {
+  let mut map = *map;
+  if let Some(own) = own {
+    map = map_through(&map, own);
+  }
+  if let Some(s) = scroll {
+    map = map_translate(&map, -s);
+  }
+  map
+}
+
+// The smallest scale a frame's map may have on its smaller axis to be
+// inverted for `map_relative`, judged as the determinant over the frame's
+// linear part's Frobenius norm (the smaller singular value to within a
+// factor of sqrt 2, on the side that rejects more). The inverse divides
+// the window coordinates' f32 error by that axis's scale, whatever the
+// other axis's is, so past about 1/100 a relative map of content a
+// thousand px from the window origin is off by more than a hundredth of a
+// px, and a boundary that scales back up without recording again replays
+// that error at full size.
+const MIN_FRAME_SCALE: f32 = 1.0e-2;
+
+/// `map`, one frame's map to the window, as a map to another frame whose
+/// map to the window is `frame`: `map` then the inverse of `frame`. None
+/// where either is not known or `frame` has no accurate inverse (a zero
+/// or nearly zero scale on either axis, MIN_FRAME_SCALE).
+pub(crate) fn map_relative(map: &WindowMap, frame: &WindowMap) -> WindowMap {
+  let frame = (*frame)?;
+  let norm = (frame.m11 * frame.m11 + frame.m12 * frame.m12 + frame.m21 * frame.m21 + frame.m22 * frame.m22).sqrt();
+  if frame.determinant().abs() < MIN_FRAME_SCALE * norm {
+    return None;
+  }
+  let inverse = frame.inverse()?;
+  Some((*map)?.then(&inverse))
+}
+
+/// Where a Recording boundary's cached content lands, as the last walk that
+/// reached the boundary saw it (RenderTree::note_recording_frame). The
+/// content is recorded in the boundary's scrolled box frame
+/// (`map_past_box`): the composite applies the matrix and the scroll
+/// around the cached display list (boundary::draw_cached_recording), and
+/// everything inside that frame is the recording's own, fixed until it is
+/// recorded again. So what a texture inside showed when the recording was
+/// made, stated relative to this frame, is where it shows now, wherever
+/// the boundary has moved or scrolled since; and every walk that reaches
+/// the boundary, replay or record, writes this frame afresh without
+/// entering the subtree.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RecordingFrame {
+  /// The Recording boundary nearest above, whose recording this one's
+  /// replay sits in; None under none.
+  pub within: Option<u64>,
+  /// The frame's map to the window.
+  pub to_window: WindowMap,
+  /// The frame's map to the frame of `within` (`map_relative`); None
+  /// under none, or where it is not known.
+  pub to_within: WindowMap,
+  /// `to_window` as of the walk that last recorded the boundary; None
+  /// while no walk has recorded it since the entry was made.
+  pub recorded: Option<WindowMap>,
+}
+
+impl RecordingFrame {
+  /// Whether the boundary shows its recording somewhere else than where
+  /// it was recorded, or no record is known: the cells of the nodes inside
+  /// it, which a replay does not write, are then not where they show.
+  pub(crate) fn moved_since_recorded(&self) -> bool {
+    self.recorded != Some(self.to_window)
+  }
+}
+
 impl Extent {
   pub(crate) fn union(self, other: Extent) -> Extent {
     match (self, other) {

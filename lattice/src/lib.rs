@@ -1205,8 +1205,11 @@ fn ui_thread(
         }
         // The damage debug switch is the context's and outlives an engine:
         // a test that set it and was torn down before its own reset would
-        // otherwise leave every later test rendering in full.
+        // otherwise leave every later test rendering in full. The headless
+        // patch switch the same: on, it would take every later test's
+        // window off the whole redraw its readers count on.
         atx.set_force_full_renders(false);
+        atx.set_patch_headless_window(alloy::HeadlessPatch::Off);
       }
       let render_tree = RenderTree::new();
       let platform = platform.clone();
