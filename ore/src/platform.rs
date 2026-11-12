@@ -118,7 +118,7 @@ impl Platform {
       // device rate and drops it, so the mixer runs (positions advance,
       // playbacks end) on a box without a sound card, and a test run plays
       // nothing through the speakers of one that has. Read when the audio
-      // subsystem is first initialized (alloy's audio/device.rs), so it is
+      // subsystem is first initialized (crate::audio), so it is
       // set here, before SDL starts anything.
       sdl3::hint::set("SDL_AUDIO_DRIVER", "dummy");
     }
@@ -176,7 +176,8 @@ impl Platform {
 
   /// Call `f` on every lifecycle transition (see `Lifecycle`), synchronously
   /// on the thread pushing SDL's app event, before the pump sees it. The
-  /// suspend hold is taken inside the platform callback, ahead of `f`. `f`
+  /// suspend hold is taken inside the platform callback, ahead of `f`, and
+  /// ore's own lifecycle handling (the audio resume check) runs there too. `f`
   /// must be quick and must not call back into the pump. The watch lives
   /// for the process: it is never removed, and `f` is never dropped.
   ///
@@ -307,6 +308,10 @@ unsafe extern "C" fn lifecycle_watch(userdata: *mut c_void, event: *mut sdl3::sy
   // SAFETY: `userdata` is the Box leaked in `on_lifecycle`, never freed
   // while the watch is installed, and only read here (the closure is Sync).
   let f = unsafe { &*userdata.cast::<Box<dyn Fn(Lifecycle) + Send + Sync>>() };
+  // ore's own hook first: the Android audio resume check (crate::audio).
+  if std::panic::catch_unwind(AssertUnwindSafe(|| crate::audio::on_lifecycle(&lifecycle))).is_err() {
+    log::error!("[ore] the audio lifecycle hook panicked");
+  }
   if std::panic::catch_unwind(AssertUnwindSafe(|| f(lifecycle))).is_err() {
     log::error!("[ore] the lifecycle callback panicked");
   }

@@ -8,7 +8,6 @@
 //! and one that polls at all never gets near the edge. Closing the session
 //! wakes every waiter, so a consumer's thread ends with the microphone.
 
-use std::ffi::c_void;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -158,21 +157,6 @@ impl SampleRing {
   pub(crate) fn reader(&self) -> MicrophoneTap {
     let cursor = self.0.lock().produced;
     MicrophoneTap { ring: self.0.clone(), cursor }
-  }
-
-  /// This clone as a pointer for a C callback's userdata. The clone lives
-  /// until `from_raw` takes it back.
-  pub(crate) fn into_raw(self) -> *mut c_void {
-    Arc::into_raw(self.0) as *mut c_void
-  }
-
-  /// The clone behind a pointer from `into_raw`. Dropping the result releases
-  /// it; a borrow that must not (a callback) wraps it in `ManuallyDrop`.
-  ///
-  /// # Safety
-  /// `ptr` came from `into_raw` and has not been taken back.
-  pub(crate) unsafe fn from_raw(ptr: *mut c_void) -> SampleRing {
-    SampleRing(unsafe { Arc::from_raw(ptr as *const RingShared) })
   }
 }
 

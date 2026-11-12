@@ -1,3 +1,4 @@
+mod audio;
 mod clipboard;
 #[cfg(feature = "window")]
 mod dialog;

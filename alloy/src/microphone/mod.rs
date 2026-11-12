@@ -1,9 +1,9 @@
-//! Microphone capture via the SDL audio subsystem.
+//! Microphone capture through ore's recording device (`ore::audio`).
 //!
-//! A session opens a recording device bound to an SDL audio stream that
-//! converts to mono f32 at the requested sample rate, and its one output is
-//! a `SampleRing` (ring.rs): SDL's audio thread drains the stream into it
-//! from the stream's put callback, and every consumer reads the ring by a
+//! A session opens a recording device that converts to mono f32 at the
+//! requested sample rate, and its one output is a `SampleRing` (ring.rs):
+//! the device's audio thread drains what it captured into it from the
+//! capture callback, and every consumer reads the ring by a
 //! cursor of its own - the session's own reader behind JS `read()`, and the
 //! `MicrophoneTap`s a module (a speech recognizer, say) takes on any thread.
 //! The ring holds a bounded window, so an unread session costs a fixed
@@ -13,7 +13,7 @@
 //! while the RECORD_AUDIO prompt is up: the permission is asked for without
 //! blocking (SDL's own recording open asks with a blocking callback and
 //! would hold the opening thread behind the dialog), and the opener polls
-//! `pump_microphone` on its own cadence, which performs the SDL open once
+//! `pump_microphone` on its own cadence, which performs the device open once
 //! granted (`Ready`, or `Failed` with SDL's message) and closes the ring on
 //! a denial (`Denied`, every reader wakes with `Closed`). The ring exists
 //! from the open, so a tap taken while Pending hears from the grant. Every
@@ -22,29 +22,19 @@
 //!
 //! A test installs a clip as the microphone (`install_test_microphone`):
 //! the device list is that one microphone, every open at the clip's rate is
-//! a session with no SDL stream whose ring holds the clip from the open, and
+//! a session with no device whose ring holds the clip from the open, and
 //! a later install pushes the new clip into every open test session.
 
 mod ring;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::{c_int, c_void};
-use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicI8, Ordering};
 use std::sync::Arc;
-use std::sync::OnceLock;
 
+use ore::audio::{MicrophoneInfo, Recording};
 pub(crate) use ring::SampleRing;
 pub use ring::{MicRead, MicWait, MicrophoneTap, RING_SECONDS};
-use sdl3::sys::audio::SDL_AudioStream;
-
-use crate::sdl_utils;
-
-pub struct MicrophoneInfo {
-  pub id: u32,
-  pub name: String,
-}
 
 /// The one device id the test microphone answers to.
 const TEST_MICROPHONE_ID: u32 = 0;
@@ -79,10 +69,9 @@ enum Source {
   /// A permission request on its way: the device to open once it is
   /// granted, and the answer the callback writes.
   Requested { device: Option<u32>, answer: Arc<AtomicI8> },
-  /// A recording device: the stream SDL converts on, drained into the ring
-  /// from its put callback, which holds `callback_ring`, a ring clone the
-  /// close releases once the stream is destroyed.
-  Device { stream: *mut SDL_AudioStream, callback_ring: *mut c_void },
+  /// A recording device, drained into the ring from its capture callback,
+  /// which owns a ring clone; held for its drop, which closes the device.
+  Device { _recording: Recording },
   /// The installed test clip, pushed at the open and at every later install.
   Test,
   /// Nothing: the session was denied or failed, and its ring is closed.
@@ -99,16 +88,11 @@ struct Session {
 }
 
 impl Drop for Session {
-  // The one order that is safe with the callback: mark the ring closed
-  // (readers wake with Closed), destroy the stream (SDL waits for a callback
-  // in progress and fires none after), then let go of the ring clone the
-  // callback held.
+  // Mark the ring closed (readers wake with Closed). The source drops
+  // after: a recording device closes its stream first (no callback runs
+  // after) and then drops the callback with its ring clone.
   fn drop(&mut self) {
     self.ring.close();
-    if let Source::Device { stream, callback_ring } = self.source {
-      sdl_utils::audio_stream_destroy(stream);
-      drop(unsafe { SampleRing::from_raw(callback_ring) });
-    }
   }
 }
 
@@ -117,17 +101,6 @@ pub struct MicrophoneRegistry {
   sessions: RefCell<HashMap<u64, Session>>,
   next_id: RefCell<u64>,
   test: RefCell<Option<TestClip>>,
-}
-
-/// Lazy one-time SDL audio subsystem init (first list/open call).
-fn ensure_init() -> Result<(), String> {
-  static INIT: OnceLock<bool> = OnceLock::new();
-  let ok = *INIT.get_or_init(sdl_utils::audio_subsystem_init);
-  if ok {
-    Ok(())
-  } else {
-    Err(format!("audio subsystem init failed: {}", sdl_utils::sdl_error()))
-  }
 }
 
 /// Ask for the microphone without waiting; the answer lands in the
@@ -143,40 +116,19 @@ fn request_record_permission() -> Result<Arc<AtomicI8>, String> {
   Ok(answer)
 }
 
-/// Open the recording device bound to a stream drained into `ring`; the
-/// capture runs when this returns.
+/// Open the recording device, drained into `ring` from its capture
+/// callback (on the device's audio thread, the ring's lock a copy long);
+/// the capture runs when this returns.
 fn open_device(device: Option<u32>, sample_rate: u32, ring: &SampleRing) -> Result<Source, String> {
-  let callback_ring = ring.clone().into_raw();
-  let stream = sdl_utils::audio_open_recording_stream(device, sample_rate, Some(on_captured), callback_ring);
-  if stream.is_null() {
-    drop(unsafe { SampleRing::from_raw(callback_ring) });
-    return Err(format!("failed to open microphone: {}", sdl_utils::sdl_error()));
-  }
-  if !sdl_utils::audio_stream_resume(stream) {
-    let err = format!("failed to start capture: {}", sdl_utils::sdl_error());
-    sdl_utils::audio_stream_destroy(stream);
-    drop(unsafe { SampleRing::from_raw(callback_ring) });
-    return Err(err);
-  }
-  Ok(Source::Device { stream, callback_ring })
-}
-
-/// SDL's put callback on a recording stream: runs on SDL's audio thread with
-/// the stream's lock held, after the device put data in. Drains the stream
-/// into the ring (SDL allows the get inside the callback; the ring's lock is
-/// a copy long). Must not panic: a panic across the C boundary aborts.
-unsafe extern "C" fn on_captured(
-  userdata: *mut c_void,
-  stream: *mut SDL_AudioStream,
-  _additional: c_int,
-  _total: c_int,
-) {
-  let ring = ManuallyDrop::new(unsafe { SampleRing::from_raw(userdata) });
-  let available = sdl_utils::audio_stream_available(stream);
-  if available <= 0 {
-    return;
-  }
-  ring.push_with(available as usize / 4, |scratch| sdl_utils::audio_stream_read_f32(stream, scratch).max(0) as usize);
+  let ring = ring.clone();
+  let recording = Recording::open(device, sample_rate, move |captured| {
+    let available = captured.available();
+    if available == 0 {
+      return;
+    }
+    ring.push_with(available, |scratch| captured.read(scratch));
+  })?;
+  Ok(Source::Device { _recording: recording })
 }
 
 impl crate::context::Context {
@@ -184,14 +136,7 @@ impl crate::context::Context {
     if self.microphones.test.borrow().is_some() {
       return vec![MicrophoneInfo { id: TEST_MICROPHONE_ID, name: "Test microphone".to_string() }];
     }
-    if let Err(e) = ensure_init() {
-      log::warn!("[microphone] {e}");
-      return Vec::new();
-    }
-    sdl_utils::audio_recording_ids()
-      .into_iter()
-      .map(|id| MicrophoneInfo { id, name: sdl_utils::audio_device_name(id) })
-      .collect()
+    ore::audio::recording_devices()
   }
 
   /// Open a microphone session delivering mono f32 samples at `sample_rate`.
@@ -200,8 +145,8 @@ impl crate::context::Context {
   /// is `Pending` while a permission prompt is up (Android), which the
   /// opener polls with `pump_microphone`, and `Ready` at once everywhere
   /// else. Err for what fails before any prompt: a rate of 0, a test clip at
-  /// another rate, the audio subsystem, and on a platform without a prompt
-  /// the device open itself.
+  /// another rate, the permission request, and on a platform without a
+  /// prompt the device open itself (the audio subsystem with it).
   pub fn open_microphone(&self, device: Option<u32>, sample_rate: u32) -> Result<u64, String> {
     if sample_rate == 0 {
       return Err("sample rate must be above 0 Hz".to_string());
@@ -213,9 +158,6 @@ impl crate::context::Context {
       Some(_) => true,
       None => false,
     };
-    if !is_test {
-      ensure_init()?;
-    }
     let ring = SampleRing::new(sample_rate, ore::time::ticks_ns());
     let reader = ring.reader();
     let (source, status) = if is_test {
@@ -248,7 +190,7 @@ impl crate::context::Context {
 
   /// Advance one session, for its opener polling on its own cadence: a
   /// permission answer takes the session out of `Pending`, a grant by the
-  /// SDL open (`Ready`, or `Failed` when the device refuses), a denial by
+  /// device open (`Ready`, or `Failed` when the device refuses), a denial by
   /// closing the ring (`Denied`). The session stays registered either way,
   /// until its owner closes it. Returns the status after the step; None for
   /// a closed session.
@@ -314,7 +256,7 @@ impl crate::context::Context {
 
   /// Make a clip the microphone, for tests: the device list is that one
   /// microphone, every open at the clip's rate from now on is a session
-  /// holding the clip from the open, with no SDL stream, and every open test
+  /// holding the clip from the open, with no device, and every open test
   /// session hears the clip now. Err for a rate of 0 or a rate that differs
   /// from an open test session's.
   pub fn install_test_microphone(&self, sample_rate: u32, samples: Vec<f32>) -> Result<(), String> {

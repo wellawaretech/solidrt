@@ -15,9 +15,11 @@
 //! (`redraw`, Android's surface asks), and the window-free facilities: the
 //! main-thread bridge, the links (opening one, the app's own scheme
 //! registration and its single-instance hand-off), the locale, the share
-//! sheet, the clipboard, the user folders, the power state, thread
-//! placement, the clock (`time`), the log sink, and the platform
-//! vocabulary of input, display, gamepad and lifecycle types. Its window
+//! sheet, the clipboard, the audio devices (`audio`: the playback device,
+//! the converter, the recording device), the camera (`camera`), the user
+//! folders, the power state, thread placement, the clock (`time`), the log
+//! sink, and the platform vocabulary of input, display, gamepad and
+//! lifecycle types. Its window
 //! part, behind the `window` feature (what needs SDL's video subsystem),
 //! holds the pump's wait itself (`Platform::wait`: its translation reads
 //! the window), the window (`window`: opening it with the headless chain,
@@ -26,12 +28,14 @@
 //! (`gl_surface`, with the GL library path), the system theme, the file
 //! dialogs with their session (`dialog`), and the cursor and text input
 //! vocabulary. On Android it publishes the JavaVM and the activity and is
-//! the JNI way into the activity (`android`). The devices move in from
-//! alloy, and forge's and lattice's OS code, as features touch them, not
-//! before (okf/plans/ore-pump-and-window.md).
+//! the JNI way into the activity (`android`). forge's and lattice's OS code
+//! moves in as features touch it, not before
+//! (okf/plans/ore-pump-and-window.md).
 
 #[cfg(target_os = "android")]
 pub mod android;
+pub mod audio;
+pub mod camera;
 pub mod clipboard;
 #[cfg(feature = "window")]
 pub mod cursor;

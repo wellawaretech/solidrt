@@ -1,10 +1,10 @@
 //! Sound playback: one mixer for clips, streamed tracks, PCM sinks and
-//! video audio, rendered in SDL's device callback with sample-accurate
-//! automation (okf/plans/audio-unification.md).
+//! video audio, rendered in ore's playback device callback with
+//! sample-accurate automation (okf/plans/audio-unification.md).
 //!
 //! The pieces: `engine` is the realtime core (the voice table, buses, the
-//! master, ramps, pan, the mix), SDL-free; `device` is the SDL device
-//! stream whose get callback runs the engine, and the SDL converter each
+//! master, ramps, pan, the mix), platform-free; `device` is ore's playback
+//! device whose render callback runs the engine, and ore's converter each
 //! voice resamples through; `ring` carries frames from a producer thread
 //! to the callback; `stream` is the decode thread filling streaming clips'
 //! rings. This module is the registry the control thread (UI/JS) talks to:
@@ -30,7 +30,6 @@ use engine::{clamp_rate, pcm_all_finite, Command, Ramp, Slot, Source, Voice, SLO
 pub use engine::{Pcm, VoiceShared, MAX_BUSES, MAX_LIVE_TRACKS, OPEN_CUTOFF_HZ};
 
 use device::Device;
-pub(crate) use device::{device_backgrounded, device_foregrounded};
 use ring::{RingConsumer, RingProducer, RingShared};
 use stream::{Decoder, StreamControl};
 
@@ -735,8 +734,9 @@ impl crate::context::Context {
   /// The mixer's counters, for stats.
   pub fn audio_stats(&self) -> Option<AudioStats> {
     let device = self.audio.device.borrow();
-    let shared = &device.as_ref()?.shared;
-    let (engine, render_max_nanos, device_queued_frames) = shared.stats();
+    let device = device.as_ref()?;
+    let shared = &device.shared;
+    let (engine, render_max_nanos, device_queued_frames) = shared.stats(device.playback.queued_frames());
     Some(AudioStats {
       live_voices: engine.live_voices,
       underruns: engine.underruns,

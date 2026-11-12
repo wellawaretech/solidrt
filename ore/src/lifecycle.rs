@@ -35,7 +35,8 @@ pub enum Lifecycle {
   DidBackground,
   /// DID_ENTER_FOREGROUND: on Android, SDL has just restarted its audio
   /// devices (Android_OnResume runs the restart right before it sends this
-  /// event).
+  /// event), and ore reopens the playback device here if the restart left
+  /// it dead (see crate::audio).
   DidForeground,
 }
 

@@ -359,7 +359,7 @@ pub enum AlloyEvent {
   //     calls SDL_CameraDisconnected, v4l2 mis-gates removals on a device class
   //     that is 0 on remove (a one-line fix, written up in okf/upstream/ and
   //     not filed upstream yet). We take SDL's own backend order, v4l2 first
-  //     and pipewire as its fallback: see camera_subsystem_init.
+  //     and pipewire as its fallback: see the subsystem init in ore::camera.
   //   - macOS/Windows: no camera hotplug at all (upstream FIXMEs, not wired),
   //     so neither add nor remove arrives.
   CameraDeviceChange {

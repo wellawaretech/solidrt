@@ -1,52 +1,32 @@
-// The mixer's SDL side: one stream bound to the default playback device,
-// pulled by SDL's get callback on its audio thread, where the engine
-// renders; and the per-voice converter (an unbound SDL audio stream used
-// as resampler and channel converter). Opened once, kept for the process
-// lifetime: the device outlives app runs, as the SDL_mixer device did.
-// The one exception is the Android resume check below, which reopens the
-// stream on the same mixer state when SDL leaves it dead.
+// The mixer's device side: ore's playback device, pulling on its audio
+// thread, where the engine renders; and the per-voice converter (ore's
+// unbound converter stream, used as resampler and channel converter).
+// Opened once, kept for the process lifetime: the device outlives app runs,
+// as the SDL_mixer device did. ore's Android resume check reopens the
+// device stream on the same mixer state when the platform leaves it dead.
 //
-// The callback holds the stream's lock while it runs and may put into that
-// same stream (SDL's documented contract for a get callback). It takes the
-// engine's mutex, which only it ever locks, and tries the command and
-// retired vectors' locks: a miss defers them to the next block rather than
-// blocking the audio thread on the control thread.
+// The render callback runs inside the device's pull and puts into it. It
+// takes the engine's mutex, which only it ever locks, and tries the command
+// and retired vectors' locks: a miss defers them to the next block rather
+// than blocking the audio thread on the control thread.
 
-use std::ffi::c_void;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-
-use sdl3::sys::audio::SDL_AudioStream;
+use std::time::Instant;
 
 use super::engine::{Command, Converter, Engine, EngineStats, Voice, SCRATCH_FRAMES};
-use crate::sdl_utils;
 
-/// The device rate assumed when SDL cannot say (it converts to the real
-/// one either way).
-const FALLBACK_DEVICE_RATE: u32 = 48_000;
 /// Every source the mixer plays is mono or stereo.
 const MAX_SOURCE_CHANNELS: usize = 2;
 /// The mix is stereo.
 const OUTPUT_CHANNELS: u16 = 2;
-/// How long the device callback has after a return to the foreground to
-/// pull before the device stream counts as dead and is reopened: many
-/// device buffers (AAudio's run 10 to 20 ms), so a slow restart is not
-/// taken for a dead one.
-const RESUME_PULL_WINDOW: Duration = Duration::from_millis(500);
 
-// The open device, for the lifecycle hooks below: they run on the main
-// thread, away from the registry. Set at open.
-static OPEN: Mutex<Option<Arc<Shared>>> = Mutex::new(None);
-// Bumped on every background and foreground transition, so a pending
-// resume check knows the app left again before it ran.
-static TRANSITIONS: AtomicU64 = AtomicU64::new(0);
-
-/// Everything the callback and the control thread share about the open
-/// device. Leaked into the callback's userdata for the process lifetime.
+/// Everything the render callback and the control thread share about the
+/// open device. Held by the callback for the process lifetime.
 pub(crate) struct Shared {
   pub(crate) device_rate: u32,
-  /// The device's buffer size in frames, as SDL reported it at open.
+  /// The device's buffer size in frames, as the platform reported it at
+  /// open.
   pub(crate) device_frames: u32,
   engine: Mutex<Engine>,
   /// Control thread pushes, callback swaps out and applies.
@@ -59,18 +39,7 @@ pub(crate) struct Shared {
   epoch: Instant,
   /// The longest `render` pass in nanoseconds since last read.
   render_max_nanos: AtomicU64,
-  /// The device stream, for reading its queue from the control thread
-  /// (thread-safe on SDL's side); set at open and replaced by `reopen`,
-  /// which holds the lock across the swap. The callback never takes it.
-  stream: Mutex<StreamPtr>,
-  /// Callback runs so far: the resume check's sign of a live device.
-  pulls: AtomicU64,
 }
-
-struct StreamPtr(*mut SDL_AudioStream);
-
-// Only used through SDL's thread-safe stream calls, under the lock.
-unsafe impl Send for StreamPtr {}
 
 struct Scratch {
   mix: Vec<f32>,
@@ -100,27 +69,17 @@ impl Shared {
   }
 
   /// The engine's counters, the longest render pass since last asked, and
-  /// the device stream's queue (frames rendered and not yet consumed by the
-  /// device: how far positions lead the speaker before the hardware's own
-  /// latency).
-  pub(crate) fn stats(&self) -> (EngineStats, u64, u64) {
+  /// `queued`, the device stream's queue the caller read (frames rendered
+  /// and not yet consumed by the device: how far positions lead the speaker
+  /// before the hardware's own latency).
+  pub(crate) fn stats(&self, queued: u64) -> (EngineStats, u64, u64) {
     let stats = self.engine.lock().expect("audio engine lock poisoned").stats();
-    let queued = Self::queued_frames(self.stream.lock().expect("audio stream lock poisoned").0);
     (stats, self.render_max_nanos.swap(0, Ordering::AcqRel), queued)
-  }
-
-  /// Frames the device stream holds, rendered and unconsumed (the stream
-  /// is at the device's own format, so nothing waits in conversion).
-  fn queued_frames(stream: *mut SDL_AudioStream) -> u64 {
-    if stream.is_null() {
-      return 0;
-    }
-    sdl_utils::audio_stream_queued_bytes(stream).max(0) as u64 / (4 * OUTPUT_CHANNELS as u64)
   }
 
   // The callback's body: apply what the control thread sent, render what
   // the device asks for in scratch-sized passes, hand back the retired.
-  fn pull(&self, stream: *mut SDL_AudioStream, additional_bytes: i32) {
+  fn pull(&self, pull: &mut ore::audio::Pull<'_>) {
     let started = Instant::now();
     let mut scratch = match self.scratch.try_lock() {
       Ok(scratch) => scratch,
@@ -137,13 +96,13 @@ impl Shared {
     // What the device stream still holds of earlier blocks: rendered,
     // unheard. Everything rendered in this pull is what the device asked
     // for now, so it counts as played.
-    let lead = Self::queued_frames(stream);
-    let mut remaining = (additional_bytes.max(0) as usize) / (4 * OUTPUT_CHANNELS as usize);
+    let lead = pull.lead_frames();
+    let mut remaining = pull.frames();
     while remaining > 0 {
       let frames = remaining.min(SCRATCH_FRAMES);
       let block = &mut mix[..frames * OUTPUT_CHANNELS as usize];
       engine.render(block, now, lead);
-      sdl_utils::audio_stream_put_f32(stream, block);
+      pull.put(block);
       remaining -= frames;
     }
     engine.take_retired(retired);
@@ -156,81 +115,19 @@ impl Shared {
     let took = started.elapsed().as_nanos() as u64;
     self.render_max_nanos.fetch_max(took, Ordering::AcqRel);
   }
-
-  /// Destroy the device stream and open a new one on the default playback
-  /// device, pulling into this same state. Destroying the only stream on
-  /// the device closes SDL's physical device and ends its device thread.
-  fn reopen(self: &Arc<Self>) {
-    let mut stream = self.stream.lock().expect("audio stream lock poisoned");
-    sdl_utils::audio_stream_destroy(stream.0);
-    // The callback's reference, leaked at open, is still alive: the new
-    // stream takes the same userdata.
-    let userdata = Arc::as_ptr(self) as *mut c_void;
-    stream.0 = sdl_utils::audio_open_playback_stream(self.device_rate, OUTPUT_CHANNELS, Some(on_pull), userdata);
-    if stream.0.is_null() {
-      log::warn!("[alloy::audio] Reopen playback device: {}", sdl_utils::sdl_error());
-      return;
-    }
-    if !sdl_utils::audio_stream_resume(stream.0) {
-      log::warn!("[alloy::audio] Resume reopened device stream: {}", sdl_utils::sdl_error());
-    }
-  }
 }
 
-unsafe extern "C" fn on_pull(userdata: *mut c_void, stream: *mut SDL_AudioStream, additional: i32, _total: i32) {
-  // The userdata is a leaked Arc<Shared>: alive for the process.
-  let shared = &*(userdata as *const Shared);
-  shared.pulls.fetch_add(1, Ordering::AcqRel);
-  shared.pull(stream, additional);
-}
-
-/// The app went to the background (Android). Cancels a pending resume
-/// check.
-pub(crate) fn device_backgrounded() {
-  TRANSITIONS.fetch_add(1, Ordering::AcqRel);
-}
-
-/// The app came back to the foreground (Android): reopen the device stream
-/// if it does not pull again within `RESUME_PULL_WINDOW`. Works around SDL's
-/// AAudio backend, which ignores a failed restart of a stream Android
-/// disconnected while it was paused and then never pulls again
-/// (okf/upstream/sdl-android-aaudio-resume-disconnected-never-recovers.md).
-/// Runs on the main thread, inside SDL's event watch: the check waits on a
-/// thread of its own.
-pub(crate) fn device_foregrounded() {
-  let transition = TRANSITIONS.fetch_add(1, Ordering::AcqRel) + 1;
-  let Some(shared) = OPEN.lock().expect("audio open device lock poisoned").clone() else {
-    return;
-  };
-  let pulls = shared.pulls.load(Ordering::Acquire);
-  let spawned = std::thread::Builder::new().name("sol-audio-resume".into()).spawn(move || {
-    std::thread::sleep(RESUME_PULL_WINDOW);
-    if TRANSITIONS.load(Ordering::Acquire) != transition || shared.pulls.load(Ordering::Acquire) != pulls {
-      return;
-    }
-    log::warn!("[alloy::audio] Playback device did not restart after resume; reopening it");
-    shared.reopen();
-  });
-  if let Err(e) = spawned {
-    log::warn!("[alloy::audio] Spawn resume check: {e}");
-  }
-}
-
-/// The open device: the shared state, which holds the SDL stream on it.
+/// The open device: the shared state the render callback holds, and ore's
+/// playback device pulling it.
 pub(crate) struct Device {
   pub(crate) shared: Arc<Shared>,
+  pub(crate) playback: ore::audio::Playback,
 }
 
 impl Device {
   /// Open the default playback device at its own rate and start pulling.
   pub(crate) fn open() -> Result<Device, String> {
-    if !sdl_utils::audio_subsystem_init() {
-      return Err(format!("audio subsystem init failed: {}", sdl_utils::sdl_error()));
-    }
-    let (device_rate, device_frames) = match sdl_utils::audio_playback_device_format() {
-      Some((rate, _, frames)) if rate > 0 => (rate, frames),
-      _ => (FALLBACK_DEVICE_RATE, 0),
-    };
+    let (device_rate, device_frames) = ore::audio::default_playback_format()?;
     let shared = Arc::new(Shared {
       device_rate,
       device_frames,
@@ -244,84 +141,46 @@ impl Device {
       }),
       epoch: Instant::now(),
       render_max_nanos: AtomicU64::new(0),
-      stream: Mutex::new(StreamPtr(std::ptr::null_mut())),
-      pulls: AtomicU64::new(0),
     });
-    // The callback's reference: never released, like the device.
-    let userdata = Arc::into_raw(Arc::clone(&shared)) as *mut c_void;
-    let stream = sdl_utils::audio_open_playback_stream(device_rate, OUTPUT_CHANNELS, Some(on_pull), userdata);
-    if stream.is_null() {
-      unsafe { drop(Arc::from_raw(userdata as *const Shared)) };
-      return Err(format!("failed to open audio device: {}", sdl_utils::sdl_error()));
-    }
-    shared.stream.lock().expect("audio stream lock poisoned").0 = stream;
-    if !sdl_utils::audio_stream_resume(stream) {
-      log::warn!("[alloy::audio] resume device stream: {}", sdl_utils::sdl_error());
-    }
-    *OPEN.lock().expect("audio open device lock poisoned") = Some(Arc::clone(&shared));
-    Ok(Device { shared })
+    let playback = ore::audio::Playback::open(OUTPUT_CHANNELS, {
+      let shared = Arc::clone(&shared);
+      move |pull| shared.pull(pull)
+    })?;
+    Ok(Device { shared, playback })
   }
 
   /// A converter from a source's (rate, channels) to the device's stereo.
   pub(crate) fn converter(&self, sample_rate: u32, channels: u16) -> Result<Box<dyn Converter>, String> {
-    let stream = sdl_utils::audio_stream_create((sample_rate, channels), (self.shared.device_rate, OUTPUT_CHANNELS));
-    if stream.is_null() {
-      return Err(format!("failed to create audio converter: {}", sdl_utils::sdl_error()));
-    }
-    Ok(Box::new(SdlConverter { stream }))
+    let converter = ore::audio::Converter::new((sample_rate, channels), (self.shared.device_rate, OUTPUT_CHANNELS))?;
+    Ok(Box::new(converter))
   }
 }
 
-impl Drop for Device {
-  fn drop(&mut self) {
-    // Never reached (the registry keeps the device for the process), but a
-    // dropped device must not leave SDL pulling into a freed engine.
-    OPEN.lock().expect("audio open device lock poisoned").take();
-    let mut stream = self.shared.stream.lock().expect("audio stream lock poisoned");
-    sdl_utils::audio_stream_destroy(stream.0);
-    stream.0 = std::ptr::null_mut();
-  }
-}
-
-/// An unbound SDL audio stream as a voice's resampler. Created and
-/// destroyed on the control thread; put/get/flush on the audio thread (all
-/// thread-safe on SDL's side, and only the audio thread touches a live one).
-struct SdlConverter {
-  stream: *mut SDL_AudioStream,
-}
-
-unsafe impl Send for SdlConverter {}
-
-impl Converter for SdlConverter {
+/// ore's unbound converter stream as a voice's resampler. Created and
+/// dropped on the control thread; put/get/flush on the audio thread (only
+/// the audio thread touches a live one).
+impl Converter for ore::audio::Converter {
   fn put(&mut self, samples: &[f32]) {
-    sdl_utils::audio_stream_put_f32(self.stream, samples);
+    ore::audio::Converter::put(self, samples);
   }
 
   fn flush(&mut self) {
-    sdl_utils::audio_stream_flush(self.stream);
+    ore::audio::Converter::flush(self);
   }
 
   fn available(&self) -> usize {
-    sdl_utils::audio_stream_available(self.stream).max(0) as usize / (4 * OUTPUT_CHANNELS as usize)
+    ore::audio::Converter::available(self)
   }
 
   fn get(&mut self, out: &mut [f32]) -> usize {
-    let frames = out.len() / OUTPUT_CHANNELS as usize;
-    let samples = sdl_utils::audio_stream_read_f32(self.stream, &mut out[..frames * OUTPUT_CHANNELS as usize]);
-    samples.max(0) as usize / OUTPUT_CHANNELS as usize
+    ore::audio::Converter::get(self, out)
   }
 
   fn set_ratio(&mut self, ratio: f32) {
-    sdl_utils::audio_stream_set_frequency_ratio(self.stream, ratio);
+    ore::audio::Converter::set_ratio(self, ratio);
   }
 
   fn clear(&mut self) {
-    sdl_utils::audio_stream_clear(self.stream);
-  }
-}
-
-impl Drop for SdlConverter {
-  fn drop(&mut self) {
-    sdl_utils::audio_stream_destroy(self.stream);
+    ore::audio::Converter::clear(self);
   }
 }

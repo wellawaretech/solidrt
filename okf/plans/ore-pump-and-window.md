@@ -362,7 +362,49 @@ Each step is a commit that builds and passes the checks below.
    once (pre-existing, see okf/backlog/android-tv-dialog-stub.md). Still
    open: the macOS and Windows builds.
 4. **Devices.** Audio playback, microphone, camera; the lifecycle audio
-   restarts become ore's.
+   restarts become ore's. Done 2026-11-12, with these calls: `ore::audio`
+   is feature-free and holds three values, `Playback` (the default device
+   at its own rate, pulling a render callback that answers a `Pull`: the
+   frames asked, the lead the stream still holds, and `put`), `Converter`
+   (the unbound stream, in frames) and `Recording` (mono f32 at the opened
+   rate, pushing a `Captured` the callback reads from; its drop destroys
+   the stream before it drops the callback, so the callback may own a
+   ring clone), plus `recording_devices` and `default_playback_format`,
+   which alloy reads before it builds the shared mixer state its callback
+   captures; alloy implements its `Converter` trait for ore's type and the
+   mixer's loop over the pull is unchanged; the Android resume check (the
+   open device, the transition counter, the pull window, the reopen) runs
+   from ore's lifecycle watch ahead of the host's closure, so the loop's
+   last two `cfg!(android)` lines are gone. `ore::camera` is feature-free:
+   `start` (the non-blocking subsystem init with its worker and both
+   wedge comments), `devices` with `CameraInfo` and `Facing` (flux names
+   them from ore), `Camera::open(id, width, height)` choosing the
+   uncompressed native spec nearest the size (the format knowledge moved
+   with it), `permission`, `frame_period`, `acquire`, and a `Frame` that
+   is released on drop and answers its rotation and its RGBA32 rows (the
+   surface's own, or converted into a scratch). alloy keeps the session
+   state machines, the deadlines, the default size, the producer's poll
+   cadence and the rotation. `MicrophoneInfo` and `CameraInfo` are ore's
+   types now, built by alloy for the test microphone and the still camera
+   too. `camera_dump` was rewritten over `ore::camera` here, since its
+   wrappers went. `sdl_utils.rs` keeps `sdl_error` and
+   `iostream_from_reader` (no in-tree user) for step 5. ore's tests: the
+   converter's counts and a pull on the dummy driver. Verified on Linux
+   through the dev server with a probe: the mixer opens the device at its
+   rate, a looping tone reaches the sink at exactly the level asked
+   (captured from the sink monitor), no underruns; a microphone session
+   delivers its sample rate's worth of samples per second and reopens on
+   a reload; a UVC webcam lists, opens at its native format, streams at
+   30 fps into the app's texture with no skipped upload, and a clip
+   recorded from the camera and the webcam's microphone plays back with
+   its audio; the rewritten `camera_dump` saves real frames through the
+   conversion path. On the tablet, with the new build: the device opens
+   at 44.1 kHz, a looping tone plays, and after 30 s in the background
+   and a resume AAudio restarts the stream at once (requestStart returns
+   0) and the mixer renders on every stats read after; the reopen itself
+   stays untriggered, as before the move, because this Android 12 device
+   has no freezer to disconnect the stream (the Pixel 7 repro in the
+   upstream note). Still open: the macOS and Windows builds.
 5. **Cleanup.** Remove `sdl3` from `alloy/Cargo.toml`, delete
    `sdl_utils.rs` and `pub use sdl3`; update the three examples that use
    SDL directly (`event_time_probe`, `present_fence_probe`, `camera_dump`);

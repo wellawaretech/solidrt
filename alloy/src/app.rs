@@ -267,20 +267,10 @@ impl App {
         lifecycle_event_tx.send(AlloyEvent::Suspend { hold }).ok();
       }
       Lifecycle::DidBackground => {
-        if cfg!(target_os = "android") {
-          crate::audio::device_backgrounded();
-        }
         lifecycle_event_tx.send(AlloyEvent::Visibility { visible: false }).ok();
       }
-      // SDL has just restarted its audio devices (Android_OnResume runs
-      // the restart right before it sends this event); reopen the
-      // playback device if the restart left it dead (see
-      // audio::device_foregrounded).
-      Lifecycle::DidForeground => {
-        if cfg!(target_os = "android") {
-          crate::audio::device_foregrounded();
-        }
-      }
+      // ore handles the audio restart here (see ore::audio).
+      Lifecycle::DidForeground => {}
     });
 
     // Where a platform vsync backend exists (Android today), FrameRendered is

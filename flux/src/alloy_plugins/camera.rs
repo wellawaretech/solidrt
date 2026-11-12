@@ -17,7 +17,8 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use alloy::camera::{CameraFacing, CameraStatus};
+use alloy::camera::CameraStatus;
+use ore::camera::Facing;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
@@ -95,11 +96,11 @@ impl ModuleDef for CameraModule {
   }
 }
 
-fn facing_str(facing: CameraFacing) -> &'static str {
+fn facing_str(facing: Facing) -> &'static str {
   match facing {
-    CameraFacing::Front => "front",
-    CameraFacing::Back => "back",
-    CameraFacing::Unknown => "unknown",
+    Facing::Front => "front",
+    Facing::Back => "back",
+    Facing::Unknown => "unknown",
   }
 }
 
@@ -118,7 +119,7 @@ fn list_impl(ctx: Ctx<'_>) -> rquickjs::Result<Array<'_>> {
 
 fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Result<Promise<'js>> {
   let mut device: Option<u32> = None;
-  let mut facing: Option<CameraFacing> = None;
+  let mut facing: Option<Facing> = None;
   let mut width: Option<u32> = None;
   let mut height: Option<u32> = None;
   let mut scan_qr = false;
@@ -126,8 +127,8 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
     device = opts.get("camera")?;
     let f: Option<String> = opts.get("facing")?;
     facing = match f.as_deref() {
-      Some("front") => Some(CameraFacing::Front),
-      Some("back") => Some(CameraFacing::Back),
+      Some("front") => Some(Facing::Front),
+      Some("back") => Some(Facing::Back),
       Some(other) => return Err(throw_str(&ctx, &format!("openCamera: unknown facing '{other}'"))),
       None => None,
     };
