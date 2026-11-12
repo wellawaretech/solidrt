@@ -5,7 +5,7 @@
 //! Impeller (`impeller`), the only module in the workspace that names the
 //! `impellers` crate. A replacement is a second module beside it that
 //! implements the same traits; the aliases below switch under a cfg while
-//! it reaches parity (okf/plans/renderer-seam.md), and nothing outside this
+//! it reaches parity (okf/done/renderer-seam.md), and nothing outside this
 //! module changes.
 //!
 //! In a test build the recording types also keep a plain-data log of what

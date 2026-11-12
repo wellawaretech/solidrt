@@ -81,7 +81,7 @@ Earlier same-day findings, still valid:
 
 Same TV, same probes, same method (`/clock?scale=5`, a 10 s `/stats`
 window, `frames` over `windowMs`), release clients: the last build before
-the renderer seam (okf/plans/renderer-seam.md) and the first one after it,
+the renderer seam (okf/done/renderer-seam.md) and the first one after it,
 installed back to back.
 
 | static field | client | frames / 10 s | sustained fps | missedPresents |

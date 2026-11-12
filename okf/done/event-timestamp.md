@@ -2,6 +2,7 @@
 title: Input events carry a timeStamp
 description: PointerEvent carries no timestamp, so the velocity tracker, double-tap and the 2d and 3d dispatchers stamp events with performance.now() at handler time - a wall read that inherits the handler's execution jitter and cannot be stepped by a test or by sol render. Give every input event a timeStamp on an input reading of the paced clock (counted refreshes like the animation timeline, no suspension skip, the arrival time for an event that lands between frames), move package logic off performance.now(), and keep performance.now() for measuring work only. Prerequisite of the test harness's app layer.
 created: 2026-09-29
+completed: 2026-11-12
 ---
 
 # Input events carry a timeStamp
@@ -22,13 +23,15 @@ riding the wrong clock.
 
 ## Where this stands (2026-09-30)
 
-Two layers. The first (the input reading, `timeStamp` on every event,
-package logic off `performance.now()`) is built, verified on the desktop
-client and two Android devices, and committed. The second,
-[Real sample times](#real-sample-times-decided-2026-09-30), is built,
-uncommitted, and verified on the desktop client and both Android devices
-with synthetic and injected input; what is owed is a real finger (see
-there). The
+Two layers, both built and committed (2026-09-30). The first (the input
+reading, `timeStamp` on every event, package logic off
+`performance.now()`) is verified on the desktop client and two Android
+devices. The second,
+[Real sample times](#real-sample-times-decided-2026-09-30), is verified
+on the desktop client and both Android devices with synthetic and
+injected input, and by a real finger at the refresh rate. One finger
+check is owed, filed in [tiny.md](../tiny.md): a rest before the lift
+with the app held near 15 fps. The
 bullets and measurements below describe the first layer; where they say a
 move carries its slot's time or an arrival its arrival time, the second
 layer replaced that with the event's own time.
@@ -372,7 +375,7 @@ The rest rule in `packages/core/src/velocity.ts` does not change: the
 up's stamp minus the last moved sample's stamp is the true rest at any
 frame rate.
 
-Built 2026-09-30, uncommitted:
+Built and committed 2026-09-30:
 
 - alloy: events travel in an envelope with their time (`Arrival`,
   `EventSender::send_at`); the pump takes SDL's event timestamp
@@ -420,7 +423,7 @@ Found while building, not in the design above:
 - A cancelled touch (`ACTION_CANCEL`) is not passed on, as before: SDL's
   cancel event was never translated, so a pointer the system takes over
   stays down. Unchanged here; filed as
-  [touch-cancel](../backlog/touch-cancel.md).
+  [touch-cancel](touch-cancel.md).
 - A synthetic touch drag (the control API) is resampled like a finger's,
   so a position read mid-drag can be an interpolated one; the up flushes
   the last position.
@@ -480,7 +483,8 @@ Known limits and what is owed:
   and contact pressure or size at the lift is the signal that could
   separate a roll-off from a flick (Android only, not built).
 - Not done with a finger: a rest before the lift with the app held near
-  15 fps (verified with synthetic input only).
+  15 fps (verified with synthetic input only). Filed in
+  [tiny.md](../tiny.md).
 - Below API 34 Android sample times are whole milliseconds.
 - Far below the refresh rate the velocity window holds two or three
   samples (one move per frame plus the flush). All raw samples on the

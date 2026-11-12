@@ -1,6 +1,6 @@
 Alloy is the window's scene and its rendering: Impeller for 2D paint, behind
 the renderer seam in `src/renderer/` (the one module that names the
-`impellers` crate, see okf/plans/renderer-seam.md); glow as the single
+`impellers` crate, see okf/done/renderer-seam.md); glow as the single
 trusted GL path; the rendertree - Alloy's own scene graph with taffy-based
 layout (cached), hit testing and pointer routing, damage tracking, and
 compositing; and frame timing. It still drives SDL3 for the

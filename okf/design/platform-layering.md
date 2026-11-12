@@ -215,26 +215,38 @@ impl Platform {
   fn wait(&mut self, timeout: Duration) -> impl Iterator<Item = (PlatformEvent, Instant)>;
   // Any thread: wake the wait (FrameReady today).
   fn waker(&self) -> Waker;
-  // Synchronous lifecycle (the Android background watch), on the pushing thread.
+  // Synchronous lifecycle (the Android background watch), on the pushing
+  // thread. WillBackground carries the suspend hold, taken by the OS layer.
   fn on_lifecycle(&self, f: impl Fn(Lifecycle) + Send + Sync);
-  fn window(&mut self) -> &mut Window;   // title, icon, cursor, lock, text input, ...
-  fn display_vsync(&self) -> Option<VsyncSource>; // Choreographer, CVDisplayLink
-  fn recreate_gl(&mut self, ...) -> Result<GlBinding, String>;
+  fn display_vsync(&self) -> Option<VsyncSource>; // Choreographer
+  // The `window` feature. The window is its own value: a windowless host
+  // builds a Platform and never opens one.
+  fn open_window(&mut self, ...) -> Result<Window, String>;
+}
+
+impl Window {
+  // title, icon, cursor, lock, text input, ...
+  fn gl_surface(&mut self) -> Result<GlSurface, String>; // Send, for the raster thread
+  // After a context loss. Whether the window must go too is a driver
+  // fact, so the renderer says it.
+  fn recreate_gl(&mut self, recreate_window: bool) -> Result<GlSurface, String>;
 }
 ```
 
 alloy's loop is today's loop with `platform.wait(remaining)` in place of
 `event_pump.wait_event_timeout_ms(ms)` and the `poll_iter` drain, and
-`platform.window().set_title(..)` in place of the SDL calls. Blocking on
+`window.set_title(..)` in place of the SDL calls. Blocking on
 the queue, the pushed wake and the send-then-wake ordering stay as they
 are.
 
 - Into the OS layer, all platform normalization: `translate_event`
   (`event.rs`), the pointer-lock coordinate freeze (SDL does not freeze
   x/y in relative mode), the touch side channel (`touch.rs`),
-  `PlatformWatch`, gamepads, cursors, the Choreographer and CVDisplayLink
-  sources (`vsync.rs` backends, `display_link.rs`), window and GL setup
-  (`setup_video`, `recover_gl`'s SDL half).
+  `PlatformWatch`, gamepads, cursors, the Choreographer source (`vsync.rs`'s
+  backend), window and GL setup (`setup_video`, `recover_gl`'s SDL half)
+  and, inside the GL surface, the CVDisplayLink swap pacer
+  (`display_link.rs`: the macOS swap waits on it; it is not a vsync
+  source).
 - Stays in alloy: `FrameRelease`, cadence, refresh counting, the idle
   tick, liveness, redraw, the input mute and the resampler, the stepped
   loop.

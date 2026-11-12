@@ -15,7 +15,7 @@ Where it is dropped:
 
 - Android: `alloy/src/touch.rs` passes on down, move and up and returns
   on `ACTION_CANCEL` (kept as SDL's path had it when the touch path
-  became ours, okf/plans/event-timestamp.md). The activity's surface
+  became ours, okf/done/event-timestamp.md). The activity's surface
   already forwards the cancel with every pointer's position. The
   platform sends one when a system gesture takes the touch over (the
   back swipe, the notification shade), on palm rejection, and when the

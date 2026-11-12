@@ -23,7 +23,7 @@ them up.
 
 ## What Impeller still does
 
-Since the renderer seam (okf/plans/renderer-seam.md, 2026-10-20) the call
+Since the renderer seam (okf/done/renderer-seam.md, 2026-10-20) the call
 surface is no longer something to count: it is the contract in
 `alloy/src/renderer/contract.rs`, one trait per renderer type, and
 `alloy/src/renderer/impeller.rs` is the only file that names the

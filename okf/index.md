@@ -107,16 +107,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
   assets in the manifest, then signed OTA."
-- **[Input events carry a timeStamp](plans/event-timestamp.md)** [2026-09-29]
-  PointerEvent carries no timestamp, so the velocity tracker, double-tap and
-  the 2d and 3d dispatchers stamp events with performance.now() at handler
-  time - a wall read that inherits the handler's execution jitter and cannot
-  be stepped by a test or by sol render. Give every input event a timeStamp on
-  an input reading of the paced clock (counted refreshes like the animation
-  timeline, no suspension skip, the arrival time for an event that lands
-  between frames), move package logic off performance.now(), and keep
-  performance.now() for measuring work only. Prerequisite of the test
-  harness's app layer.
 - **[Compressed textures - KTX2 shipped, ETC2 or BC7 on the device](plans/gpu-compressed-textures.md)** [2026-07-30]
   One shipped payload (Basis Universal in KTX2, baked with our own encoder)
   transcoded at load to the device's native block format - ETC2 on GLES 3.0
@@ -139,14 +129,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   as a root error boundary around the app's window (error window with reset)
   plus per-node containment in the renderer's effect/insert exports, with the
   verified mechanics and the measured cost.
-- **[A renderer seam in alloy, the first step to replacing Impeller](plans/renderer-seam.md)** [2026-10-19]
-  The rendertree, the flux plugins and the lattice overlay call Impeller's
-  display-list builder directly, and the raster side calls Impeller and passes
-  its textures around (60 files name impellers); own vocabulary types plus
-  opaque builder, list, path and texture types owned by one cfg-selected
-  renderer module confine Impeller to that module with no visible change and
-  no added per-op cost, so a replacement can be built as a second
-  implementation and Impeller deleted.
 - **[Spatial audio - emitter and listener nodes on the spatial core](plans/spatial-audio-emitters.md)** [2026-08-30]
   A playback bound to a spatial node (or a fixed position) and heard by a
   listener (a node, or a target's view - the camera), the core writing its
@@ -708,16 +690,18 @@ Shaped, not started.
   frame while the app keeps presenting partial frames, so on screen it reads
   as a logic bug (entities drawn after the throwing line vanish) and the only
   trace is a log line the reader has to think to look for.
-- **[Move the SDL pump, the window and the GL surface into ore](backlog/ore-pump-and-window.md)** [2026-11-12]
-  The biggest piece of okf/design/platform-layering.md still in alloy - SDL
-  init and hints, the event pump and its translation, the Android touch side
-  channel, the lifecycle watch, gamepads, the window and its commands,
-  cursors, text input, the GL window and context with its loss recovery, the
-  Android vsync and view glue - moves behind one ore `Platform` (a
-  plain-function pump, a waker, a lifecycle hook, a window, a vsync source, a
-  GL surface) so alloy keeps only the frame loop, the pacing facts and the
-  stepped loop and names no SDL type for the window; audio, camera and
-  microphone devices stay for their own move.
+- **[Move SDL out of alloy - the pump, the window, the GL surface and the devices into ore](backlog/ore-pump-and-window.md)** [2026-11-12]
+  The biggest piece of okf/design/platform-layering.md still in alloy, widened
+  so the end state is compiler-checked - the platform vocabulary types first,
+  then SDL init and hints, the window and the GL surface with its loss
+  recovery, the event pump and its translation, the lifecycle watch, gamepads,
+  the Android touch, vsync and view glue, the dialogs, and the audio,
+  microphone and camera devices move into ore behind a `Platform` (a
+  plain-function pump, a waker, a lifecycle hook) and an owned `Window`
+  (commands, cursors, text input, a GL surface), until alloy keeps only the
+  frame loop, the pacing facts, the stepped loop and the mixer and drops its
+  `sdl3` dependency. Six steps, each a commit that builds; the mixer to forge,
+  forge's OS code and the windowless host stay their own items.
 - **[Coalesce the per-event syncs of writes made outside a frame](backlog/outside-frame-sync-coalescing.md)** [2026-10-06]
   A pointer move handler that moves a sprite or a mesh flushes its layer or
   scene once per dispatched move, because every event is its own JS entry with
@@ -1905,6 +1889,16 @@ Finished, kept for the reasoning.
   Events dispatched in one run-loop drain run without a microtask flush
   between them, so a handler reads stale signal values written by the previous
   event - lost edits, intermittent state corruption.
+- **[Input events carry a timeStamp](done/event-timestamp.md)** [2026-11-12]
+  PointerEvent carries no timestamp, so the velocity tracker, double-tap and
+  the 2d and 3d dispatchers stamp events with performance.now() at handler
+  time - a wall read that inherits the handler's execution jitter and cannot
+  be stepped by a test or by sol render. Give every input event a timeStamp on
+  an input reading of the paced clock (counted refreshes like the animation
+  timeline, no suspension skip, the arrival time for an event that lands
+  between frames), move package logic off performance.now(), and keep
+  performance.now() for measuring work only. Prerequisite of the test
+  harness's app layer.
 - **[Examples re-scope and tsconfigs](done/examples-rescope.md)** [2026-07-25]
   "The examples taxonomy settles: packages examples are agent-facing, root
   examples/ are human-facing apps, scratch moves to a gitignored sandbox,
@@ -2791,6 +2785,14 @@ Finished, kept for the reasoning.
   the host's display scale, and wrote frames into the data sandbox; closed by
   the offscreen video driver (hidden-window fallback), a pinned scale-1
   playback resize event, and --out/-o.
+- **[A renderer seam in alloy, the first step to replacing Impeller](done/renderer-seam.md)** [2026-10-20]
+  The rendertree, the flux plugins and the lattice overlay call Impeller's
+  display-list builder directly, and the raster side calls Impeller and passes
+  its textures around (60 files name impellers); own vocabulary types plus
+  opaque builder, list, path and texture types owned by one cfg-selected
+  renderer module confine Impeller to that module with no visible change and
+  no added per-op cost, so a replacement can be built as a second
+  implementation and Impeller deleted.
 - **[Root layer - render the app into a texture effects can read](done/root-layer-effects.md)** [2026-07-27]
   Invert the frame so the app draws into the offscreen MSAA rig and resolves
   into a sampleable layer texture composited to a single-sample window, giving

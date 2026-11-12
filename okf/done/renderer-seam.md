@@ -2,6 +2,7 @@
 title: A renderer seam in alloy, the first step to replacing Impeller
 description: The rendertree, the flux plugins and the lattice overlay call Impeller's display-list builder directly, and the raster side calls Impeller and passes its textures around (60 files name impellers); own vocabulary types plus opaque builder, list, path and texture types owned by one cfg-selected renderer module confine Impeller to that module with no visible change and no added per-op cost, so a replacement can be built as a second implementation and Impeller deleted.
 created: 2026-10-19
+completed: 2026-10-20
 ---
 
 # A renderer seam in alloy
@@ -232,9 +233,10 @@ after step 5: the TV run from
 [display-list-op-cost](../backlog/display-list-op-cost.md) on a release
 client.
 
-## Status 2026-10-20
+## Outcome 2026-10-20
 
-Built, uncommitted. `alloy/src/renderer/` holds `vocab.rs`, `contract.rs`,
+Landed in two commits, "Decouple Impeller" and "Follow-up Impeller
+decoupling". `alloy/src/renderer/` holds `vocab.rs`, `contract.rs`,
 `impeller.rs` and the aliases; `impellers` is named by `impeller.rs` alone,
 which `make renderer-seam-check` enforces (also a CI step). Call sites
 import `crate::renderer::prelude::*` for the trait methods and the aliases

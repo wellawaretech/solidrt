@@ -166,7 +166,7 @@ fn zero_refreshes_advance_nothing() {
   assert!((clock.now_ms() - before).abs() < EPS, "a zero count moved the animation reading");
 }
 
-// The input reading (okf/plans/event-timestamp.md): an instant has one
+// The input reading (okf/done/event-timestamp.md): an instant has one
 // reading, whichever tick it is read after and however late that tick ran.
 // The reading is placed against the signal's grid instant, which advances
 // by the counted refreshes, not against the instant the tick executed.

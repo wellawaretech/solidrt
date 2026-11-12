@@ -46,7 +46,7 @@ pub enum Advance {
 //   backgrounded fires on the resume tick, browser-style (one-shots once
 //   each; intervals collapse to one fire per advance).
 // - the input reading, what an input event's `timeStamp` is
-//   (okf/plans/event-timestamp.md): neither of the two above can carry it.
+//   (okf/done/event-timestamp.md): neither of the two above can carry it.
 //   Like the animation reading it advances by counted refreshes. Like the
 //   timer reading it lives through a suspension (two taps on either side
 //   of a background stretch are far apart) and it has a reading for any

@@ -564,7 +564,7 @@ Open: listed above.
 [frame-driver-pacing-contract]: ../backlog/frame-driver-pacing-contract.md
 [presentation-feedback]: ../backlog/presentation-feedback.md
 [idle-onframe-tick-rate]: ../done/idle-onframe-tick-rate.md
-[event-timestamp]: ../plans/event-timestamp.md
+[event-timestamp]: ../done/event-timestamp.md
 [android-refresh-rate-change-unobserved]: ../backlog/android-refresh-rate-change-unobserved.md
 [pacing-budget-samples-swap-throttle]: ../backlog/pacing-budget-samples-swap-throttle.md
 [transition-clock-startup-anchor]: ../done/transition-clock-startup-anchor.md

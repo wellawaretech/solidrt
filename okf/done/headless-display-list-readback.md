@@ -83,7 +83,7 @@ branch. The flux gui tests and the lattice overlay link alloy without it.
 
 ## What it involves
 
-The renderer seam (okf/plans/renderer-seam.md) is what makes it small: the
+The renderer seam (okf/done/renderer-seam.md) is what makes it small: the
 rendertree draws only through the contract traits of
 `alloy/src/renderer/contract.rs`, under the aliases of `renderer/mod.rs`.
 
@@ -153,7 +153,7 @@ pay for themselves on the next paint rule.
 
 ## Related
 
-- okf/plans/renderer-seam.md: the contract the log hangs on, and the own
+- okf/done/renderer-seam.md: the contract the log hangs on, and the own
   op list it left out of scope.
 - okf/notes/replacing-impeller.md: the renderer whose list could be read
   without the log.
