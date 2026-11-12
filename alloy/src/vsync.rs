@@ -5,15 +5,11 @@
 // idle. start() returns None on platforms without a backend; the main loop
 // then keeps present-return pacing.
 //
-// Backends: Android (AChoreographer, below). iOS would slot in here via
-// SDL_SetiOSAnimationCallback (CADisplayLink) when iOS support lands. macOS
-// deliberately has none: its display link paces the swap instead
-// (ore's gl_surface/display_link.rs), because CVDisplayLink calls back mid-period rather than
-// at the vsync and does not fit this request/answer contract. This module is
-// the only ndk / ndk-sys consumer in the tree; if SDL ships its own
-// choreographer API (libsdl-org/SDL#15013, milestone 3.8.0), reimplement the
-// Android backend on that and drop both deps - callers only speak
-// request()/try_take().
+// Backend: ore's display_vsync (Android's Choreographer today; iOS would be
+// a second backend there). macOS deliberately has none: its display link
+// paces the swap instead (ore's gl_surface/display_link.rs), because
+// CVDisplayLink calls back mid-period rather than at the vsync and does not
+// fit this request/answer contract.
 
 use std::cell::Cell;
 use std::sync::mpsc;
@@ -54,20 +50,17 @@ impl VsyncSource {
   /// `wake` runs on the backend thread after each signal is queued, so a main
   /// loop blocked on the SDL event queue notices (same pattern as the raster
   /// thread's post-present wake).
-  #[allow(unused_variables)]
   pub fn start(wake: impl Fn() + Send + 'static) -> Option<VsyncSource> {
-    #[cfg(target_os = "android")]
-    {
-      let (req_tx, req_rx) = mpsc::channel::<(u64, Duration)>();
-      let (signal_tx, signal_rx) = mpsc::channel::<(u64, std::time::Instant)>();
-      std::thread::Builder::new()
-        .name("sol-vsync".into())
-        .spawn(move || android::run(req_rx, signal_tx, wake))
-        .expect("Failed to spawn vsync thread");
-      Some(VsyncSource { req_tx, signal_rx, generation: Cell::new(0) })
+    if !ore::display_vsync::available() {
+      return None;
     }
-    #[cfg(not(target_os = "android"))]
-    None
+    let (req_tx, req_rx) = mpsc::channel::<(u64, Duration)>();
+    let (signal_tx, signal_rx) = mpsc::channel::<(u64, std::time::Instant)>();
+    std::thread::Builder::new()
+      .name("sol-vsync".into())
+      .spawn(move || run(req_rx, signal_tx, wake))
+      .expect("Failed to spawn vsync thread");
+    Some(VsyncSource { req_tx, signal_rx, generation: Cell::new(0) })
   }
 
   /// Arm one frame callback; the matching signal arrives via `try_take` after
@@ -560,83 +553,29 @@ impl FrameRelease {
   }
 }
 
-#[cfg(target_os = "android")]
-mod android {
-  use std::cell::Cell;
-  use std::sync::mpsc;
-
-  pub fn run(
-    req_rx: mpsc::Receiver<(u64, std::time::Duration)>,
-    signal_tx: mpsc::Sender<(u64, std::time::Instant)>,
-    wake: impl Fn(),
-  ) {
-    // The choreographer instance is per-thread and requires that thread to
-    // own a looper; callbacks are dispatched from this thread's poll calls.
-    let looper = ndk::looper::ThreadLooper::prepare();
-    let choreographer = unsafe { ndk_sys::AChoreographer_getInstance() };
-    if choreographer.is_null() {
-      log::warn!("[alloy] no choreographer on this device; vsync pacing disabled");
+// The vsync thread: one display vsync per request, answered with the
+// request's generation and the vsync's instant, then the wake.
+fn run(req_rx: mpsc::Receiver<(u64, Duration)>, signal_tx: mpsc::Sender<(u64, std::time::Instant)>, wake: impl Fn()) {
+  // Bound to this thread (the choreographer is per thread). None on a
+  // device without one: every request is then answered at once.
+  let source = ore::display_vsync::Source::open();
+  while let Ok((mut generation, mut delay)) = req_rx.recv() {
+    // A burst of requests collapses into one callback answering the latest
+    // generation: the consumer flushes everything pending on each signal.
+    while let Ok((g, d)) = req_rx.try_recv() {
+      generation = g;
+      delay = d;
     }
-    // The vsync instant of the callback that fired, None until it does.
-    let fired: Cell<Option<std::time::Instant>> = Cell::new(None);
-    while let Ok((mut generation, mut delay)) = req_rx.recv() {
-      // A burst of requests collapses into one callback answering the latest
-      // generation: the consumer flushes everything pending on each signal.
-      while let Ok((g, d)) = req_rx.try_recv() {
-        generation = g;
-        delay = d;
-      }
-      let mut vsync = None;
-      if !choreographer.is_null() {
-        fired.set(None);
-        unsafe {
-          ndk_sys::AChoreographer_postFrameCallback(
-            choreographer,
-            Some(frame_callback),
-            &fired as *const Cell<Option<std::time::Instant>> as *mut core::ffi::c_void,
-          );
-        }
-        while fired.get().is_none() {
-          if looper.poll_once().is_err() {
-            // A broken looper cannot dispatch the callback; answer now
-            // instead of stalling frame production (= present-return pacing).
-            log::warn!("[alloy] vsync looper poll failed; answering without vsync");
-            break;
-          }
-        }
-        vsync = fired.get();
-        if vsync.is_some() && !delay.is_zero() {
-          std::thread::sleep(delay);
-        }
-      }
-      // No choreographer, or a broken looper: the answer instant is the
-      // best reference there is.
-      let vsync = vsync.unwrap_or_else(std::time::Instant::now);
-      if signal_tx.send((generation, vsync)).is_err() {
-        return;
-      }
-      wake();
+    let vsync = source.as_ref().and_then(|s| s.wait_vsync());
+    if vsync.is_some() && !delay.is_zero() {
+      std::thread::sleep(delay);
     }
-  }
-
-  // Runs on the vsync thread, inside looper.poll_once(). The frame time is
-  // CLOCK_MONOTONIC nanoseconds; it becomes an Instant by subtracting its
-  // age (read on the same clock, here, before the pacing delay adds to it).
-  // It is the reference the refresh count is taken from: on the vsync grid
-  // rather than delay-plus-wake later. Note the value is the app's wake-up
-  // time, a constant Display.getAppVsyncOffsetNanos() off a true vsync; a
-  // constant phase offset does not change a refresh COUNT, so it is not
-  // corrected here. A consumer needing the absolute vsync phase takes it
-  // from the video plane's sampler (VideoPlaneView.java), which applies the
-  // correction at its source.
-  unsafe extern "C" fn frame_callback(frame_time_nanos: core::ffi::c_long, data: *mut core::ffi::c_void) {
-    let mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    let age_ns = if libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) == 0 {
-      (now.tv_sec as i64 * 1_000_000_000 + now.tv_nsec as i64 - frame_time_nanos as i64).max(0)
-    } else {
-      0
-    };
-    let vsync = std::time::Instant::now() - std::time::Duration::from_nanos(age_ns as u64);
-    (*(data as *const Cell<Option<std::time::Instant>>)).set(Some(vsync));
+    // No source, or a broken looper: the answer instant is the best
+    // reference there is.
+    let vsync = vsync.unwrap_or_else(std::time::Instant::now);
+    if signal_tx.send((generation, vsync)).is_err() {
+      return;
+    }
+    wake();
   }
 }

@@ -1,11 +1,10 @@
-// The file dialog session (`alloy::Dialogs`, reached through
-// `flux::gui::dialogs`) as the control API and the test verb spell it: an
+// The file dialog session (`ore::dialog::Session`, reached through
+// `flux::dialog::session`) as the control API and the test verb spell it: an
 // answer parsed from JSON, a request and the session's state encoded to
 // JSON. The words are the web pickers' and the harness's (`DialogRequest`
 // and `DialogAnswer` in `@solidrt/test`).
 
-use alloy::DialogStatus;
-use ore::dialog::{DialogAnswer, DialogKind, DialogRequest, Picked};
+use ore::dialog::{DialogAnswer, DialogKind, DialogRequest, DialogStatus, Picked};
 
 /// Parse an answer as the harness and the control API spell it: `{ files:
 /// [path, ...] }` (a string, or `{ path, name }` to name it), `{ directory:

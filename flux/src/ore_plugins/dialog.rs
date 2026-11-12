@@ -1,17 +1,15 @@
 //! `flux:dialog`: the system file dialogs, a thin marshaling layer over
-//! `alloy::Dialogs`, the session this engine keeps. `openFiles`, `saveFile`
-//! and `openDirectory` each resolve to `flux:fs` handles (a cancel is an
-//! empty list or null, never an error); the session decides whether the
-//! platform's dialog shows (through `AlloyCommand::ShowDialog`, a command
-//! answered through a responder once the user is done) or an answer a
-//! test or an agent gave ahead is taken. A call holds the engine as work in flight
-//! until it is answered, so `settle` waits on it. The option words are the
+//! `ore::dialog::Session`, the session this engine keeps. `openFiles`,
+//! `saveFile` and `openDirectory` each resolve to `flux:fs` handles (a
+//! cancel is an empty list or null, never an error); the session decides
+//! whether the platform's dialog shows (ore shows it over its main-thread
+//! bridge and answers through a responder once the user is done) or an
+//! answer a test or an agent gave ahead is taken. A call holds the engine
+//! as work in flight until it is answered, so `settle` waits on it. The option words are the
 //! web pickers' (`multiple`, `suggestedName`, `startIn`, `types`), the
 //! result is the one file model the runtime has.
 
 use std::future::Future;
-use std::rc::Rc;
-use std::sync::mpsc::{SendError, Sender};
 use std::sync::Arc;
 
 use rquickjs::module::{Declarations, Exports, ModuleDef};
@@ -19,37 +17,35 @@ use rquickjs::promise::Promised;
 use rquickjs::{Array, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Value};
 use tokio::sync::oneshot;
 
-use alloy::{AlloyCommand, Dialogs};
-use ore::dialog::{DialogAnswer, DialogError, DialogFilter, DialogKind, DialogRequest, DialogResponder};
+use ore::dialog::{DialogAnswer, DialogError, DialogFilter, DialogKind, DialogRequest, DialogResponder, Session};
 
 use crate::plugins::js_error::named_error;
 use crate::plugins::marshal::OptArg;
 
-struct Inner {
-  cmd_tx: Sender<AlloyCommand>,
-  dialogs: Arc<Dialogs>,
-}
+/// The capability the file dialogs are listed under, only where the
+/// platform can show one (`ore::dialog::available`), or where the session
+/// answers only: a fact of the surface, not of the build, so it is not in
+/// `GUI_CAPABILITIES`.
+pub(crate) const CAPABILITY: &str = "dialog";
 
 #[derive(Clone, JsLifetime)]
-struct DialogPluginState(#[qjs(skip_trace)] Rc<Inner>);
+struct DialogState(#[qjs(skip_trace)] Arc<Session>);
 
-/// Store the dialog plugin state in userdata. Runs at engine init, before
-/// any module import; the `flux:dialog` module surface reads it.
-pub(crate) fn store_state(ctx: &Ctx<'_>, cmd_tx: Sender<AlloyCommand>) {
-  ctx
-    .store_userdata(DialogPluginState(Rc::new(Inner { cmd_tx, dialogs: Dialogs::new() })))
-    .expect("store dialog state");
+/// Store the dialog session in userdata. Runs at engine init, before any
+/// module import; the `flux:dialog` module surface reads it.
+pub(crate) fn store_state(ctx: &Ctx<'_>) {
+  ctx.store_userdata(DialogState(Session::new())).expect("store dialog state");
 }
 
-fn state(ctx: &Ctx<'_>) -> Rc<Inner> {
-  ctx.userdata::<DialogPluginState>().expect("dialog state").0.clone()
+fn state(ctx: &Ctx<'_>) -> Arc<Session> {
+  ctx.userdata::<DialogState>().expect("dialog state").0.clone()
 }
 
 /// This engine's dialog session, for the embedder's test verb and control
 /// surface (an answer in the user's place, the state). None before the GUI
 /// is installed.
-pub fn dialogs(ctx: &Ctx<'_>) -> Option<Arc<Dialogs>> {
-  ctx.userdata::<DialogPluginState>().map(|s| s.0.dialogs.clone())
+pub fn session(ctx: &Ctx<'_>) -> Option<Arc<Session>> {
+  ctx.userdata::<DialogState>().map(|s| s.0.clone())
 }
 
 /// Never show a dialog in this engine: every call waits on the session's
@@ -58,12 +54,12 @@ pub fn dialogs(ctx: &Ctx<'_>) -> Option<Arc<Dialogs>> {
 /// whether or not the platform could show one: an app that gates on it
 /// takes its dialog path under test, where the test answers.
 pub fn set_answers_only(ctx: &Ctx<'_>) {
-  let Some(dialogs) = dialogs(ctx) else {
+  let Some(session) = session(ctx) else {
     return;
   };
-  dialogs.set_answers_only();
-  if !alloy::dialogs_available() {
-    crate::add_capability(ctx, super::DIALOG_CAPABILITY);
+  session.set_answers_only();
+  if !ore::dialog::available() {
+    crate::add_capability(ctx, CAPABILITY);
   }
 }
 
@@ -109,8 +105,8 @@ fn throw(ctx: &Ctx<'_>, api: &str, message: &str) -> rquickjs::Error {
 }
 
 /// A string the platform receives as a C string: a NUL inside it could not
-/// reach the dialog, and SDL would refuse the whole request after the
-/// responder was handed over, so it is refused here, up front.
+/// reach the dialog, and ore would refuse the whole request only once it
+/// was begun, so it is refused here, up front.
 fn no_nul<'js>(ctx: &Ctx<'js>, api: &str, what: &str, value: Option<String>) -> rquickjs::Result<Option<String>> {
   match value {
     Some(s) if s.contains('\0') => Err(throw(ctx, api, &format!("{what} must not contain a NUL character"))),
@@ -195,26 +191,19 @@ fn open_directory_impl<'js>(
 }
 
 /// Begin a request with the session and await its answer, holding the
-/// engine meanwhile. The session shows the platform's dialog through the
-/// command channel when it decides to.
+/// engine meanwhile. The session shows the platform's dialog when it
+/// decides to.
 fn begin<'js>(ctx: &Ctx<'js>, kind: Kind, request: DialogRequest) -> Promised<impl Future<Output = Settled>> {
-  let state = state(ctx);
+  let session = state(ctx);
   let hold = crate::pending::PendingOps::of(ctx).in_flight("dialog");
   let (tx, rx) = oneshot::channel();
   let respond: DialogResponder = Box::new(move |answer| {
     tx.send(answer).ok();
   });
-  let cmd_tx = state.cmd_tx.clone();
-  state.dialogs.begin(request, respond, move |request, respond| {
-    if let Err(SendError(AlloyCommand::ShowDialog { respond, .. })) =
-      cmd_tx.send(AlloyCommand::ShowDialog { request, respond })
-    {
-      respond(Err(DialogError::Failed("dialog: platform loop is gone".to_string())));
-    }
-  });
+  session.begin(request, respond);
   Promised(async move {
     let answer =
-      rx.await.unwrap_or_else(|_| Err(DialogError::Failed("dialog: platform loop did not answer".to_string())));
+      rx.await.unwrap_or_else(|_| Err(DialogError::Failed("dialog: the platform did not answer".to_string())));
     drop(hold);
     Settled { kind, answer }
   })

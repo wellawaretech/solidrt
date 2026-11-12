@@ -77,8 +77,6 @@ pub(crate) fn run_stepped_loop(
         publish(&current);
         event_tx.send(crate::event::headless_resize_event(&current)).ok();
       }
-      // No surface to show one on.
-      AlloyCommand::ShowDialog { respond, .. } => respond(Err(ore::dialog::DialogError::Unavailable)),
       _ => {}
     }
   }

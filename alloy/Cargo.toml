@@ -9,18 +9,9 @@ name = "basic"
 [target.'cfg(target_os = "android")'.dependencies]
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys"] }
 sdl3 = { version = "=0.20.0", features = ["build-from-source"] }
-# The activity calls still made here (the dialogs, the video plane, the
-# redraw answer), through ore's JNI way into the activity (ore::android).
-jni = "=0.22.4"
-# AChoreographer vsync callbacks for frame pacing (src/vsync.rs, the sole
-# consumer): ndk provides the safe looper wrapper, ndk-sys the raw
-# choreographer calls the safe crate does not cover. Both drop if SDL ships
-# its own choreographer API (libsdl-org/SDL#15013, milestone 3.8.0).
-ndk = { version = "=0.9.0", default-features = false }
-ndk-sys = "=0.6.0"
 
-# clock_gettime(CLOCK_MONOTONIC) on Android for the touch, vsync and frame
-# timestamp clocks (touch.rs, vsync.rs, frame_timestamps.rs).
+# clock_gettime(CLOCK_MONOTONIC) on Android for the frame timestamp clock
+# (frame_timestamps.rs).
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.191"
 
@@ -48,7 +39,7 @@ log = { workspace = true }
 # The OS layer, with its window part: the platform (SDL's init, built by the
 # host), the window and the GL surface the raster thread draws through, the
 # platform types the events and commands carry (input, cursors, text input,
-# dialogs, power, the theme), the clock, the log sink and thread placement.
+# power, the theme), the clock, the log sink and thread placement.
 ore = { workspace = true, features = ["window"] }
 # GLES bindings loaded from SDL's GL proc-address. Replaces the hand-written
 # transmute FFI in gl.rs and the former wgpu texture-allocation layer; Impeller

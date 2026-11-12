@@ -273,13 +273,13 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeVideoPlaneLost(
   _env: *mut core::ffi::c_void,
   _class: *mut core::ffi::c_void,
 ) {
-  alloy::video_plane::set_lost();
+  ore::video_plane::set_lost();
 }
 
 // Receives a file dialog's answer from SolidRTActivity (the activity's
 // result, on the Android UI thread): the picked document URIs with their
 // display names, both empty on a cancel. The arrays are forwarded opaque;
-// alloy reads them with its JNI binding.
+// ore reads them with its JNI binding.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeDialogResult(
@@ -289,7 +289,7 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeDialogResult(
   uris: *mut core::ffi::c_void,
   names: *mut core::ffi::c_void,
 ) {
-  alloy::android_result_raw(env, id, uris, names);
+  ore::dialog::android_result_raw(env, id, uris, names);
 }
 
 // Receives a share sheet's outcome from SolidRTActivity (on the Android UI
@@ -316,7 +316,7 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeVideoPlaneVsync(
   _class: *mut core::ffi::c_void,
   frame_time_ns: i64,
 ) {
-  alloy::video_plane::set_vsync_ns(frame_time_ns);
+  ore::video_plane::set_vsync_ns(frame_time_ns);
 }
 
 // Receives one finger sample from SolidRTSurface (Android UI thread): the
@@ -338,7 +338,7 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTSurface_nativeTouch(
 
 // Receives a held redraw from SolidRTSurface (Android UI thread): the
 // platform shows the window only once the surface has a frame built after
-// this ask; alloy answers with the generation (see alloy's redraw.rs).
+// this ask; ore answers with the generation (see ore's redraw.rs).
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_com_solidrt_app_SolidRTSurface_nativeRedrawNeeded(
@@ -346,7 +346,7 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTSurface_nativeRedrawNeeded(
   _class: *mut core::ffi::c_void,
   generation: core::ffi::c_int,
 ) {
-  alloy::redraw::request(generation as i32);
+  ore::redraw::request(generation as i32);
 }
 
 // --- End Android entry point ------------------------------
@@ -1417,7 +1417,7 @@ fn ui_thread(
           .userdata(stepper.clone())
           .plugin(|ctx| stepped_engine(&ctx))
           // A test's dialogs are answered by the harness, never shown.
-          .plugin(|ctx| flux::gui::dialog::set_answers_only(&ctx)),
+          .plugin(|ctx| flux::dialog::set_answers_only(&ctx)),
         None => builder,
       };
       // A render engine: the stepper, the wall taken out and Math.random

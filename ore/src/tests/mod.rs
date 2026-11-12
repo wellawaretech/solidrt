@@ -1,4 +1,6 @@
 mod clipboard;
+#[cfg(feature = "window")]
+mod dialog;
 mod folders;
 mod input;
 mod link;

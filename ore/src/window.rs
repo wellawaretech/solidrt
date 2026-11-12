@@ -18,9 +18,10 @@ mod cursors;
 mod open;
 mod surface;
 
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 
 use sdl3::sys::rect::SDL_Rect;
+use sdl3::sys::video::SDL_Window;
 
 use crate::cursor::{Cursor, CursorFrame};
 use crate::display::{Orientation, Rect};
@@ -104,6 +105,28 @@ pub struct Window {
 /// The window is held for its life; only a failed recreate empties it.
 const WINDOW_HELD: &str = "the window is held for its life";
 
+/// The live window's handle, the parent the dialogs show on
+/// (`crate::dialog`): set when a `Window` is built and again when
+/// `recreate_gl` builds a new one, cleared before the window it names is
+/// destroyed. Null while there is no window. Written and read on the main
+/// thread only, where the window lives and the dialogs show, so a handle
+/// read here names a window that is still alive.
+static DIALOG_PARENT: AtomicPtr<SDL_Window> = AtomicPtr::new(std::ptr::null_mut());
+
+/// The parent for a dialog shown now (see `DIALOG_PARENT`); null while
+/// there is no window. Main thread only. The desktop dialogs' alone: an
+/// Android dialog is the activity's.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn dialog_parent() -> *mut SDL_Window {
+  DIALOG_PARENT.load(Ordering::Relaxed)
+}
+
+// Stop naming `window` as the dialog parent, before it is destroyed; a
+// parent another window already took stays.
+fn clear_dialog_parent(window: &sdl3::video::Window) {
+  let _ = DIALOG_PARENT.compare_exchange(window.raw(), std::ptr::null_mut(), Ordering::Relaxed, Ordering::Relaxed);
+}
+
 impl Window {
   fn new(
     video: sdl3::VideoSubsystem,
@@ -111,6 +134,7 @@ impl Window {
     gl_context: Option<sdl3::video::GLContext>,
     backing: Backing,
   ) -> Window {
+    DIALOG_PARENT.store(window.raw(), Ordering::Relaxed);
     Window {
       cursors: cursors::Cursors::default(),
       gl_context,
@@ -320,6 +344,7 @@ impl Window {
       // SDL_DestroyWindow: the last GL window unloads the GL library, which
       // terminates the lost EGL display; the next GL window initializes it
       // afresh.
+      clear_dialog_parent(&old);
       drop(old);
       let mut builder = self.video.window(&title, width, height);
       builder.opengl().position(x, y).high_pixel_density().resizable();
@@ -352,6 +377,7 @@ impl Window {
       // SAFETY: a live window; takes a plain flag.
       unsafe { sdl3::sys::mouse::SDL_SetWindowRelativeMouseMode(self.held().raw(), true) };
     }
+    DIALOG_PARENT.store(self.held().raw(), Ordering::Relaxed);
     Ok(surface)
   }
 
@@ -368,12 +394,14 @@ impl Window {
     // context alive for every use of the surface (see GlSurface).
     Ok(GlSurface::new(window, unsafe { context.raw() }))
   }
+}
 
-  /// Transitional, step 1 only: the dialog parent (alloy/src/dialog.rs).
-  /// Removed in step 3 of okf/plans/ore-pump-and-window.md.
-  #[doc(hidden)]
-  pub fn sdl_window(&self) -> &sdl3::video::Window {
-    self.held()
+impl Drop for Window {
+  // The fields drop after this, in their declared order (see `Window`).
+  fn drop(&mut self) {
+    if let Some(window) = &self.window {
+      clear_dialog_parent(window);
+    }
   }
 }
 

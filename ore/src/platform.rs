@@ -149,6 +149,9 @@ impl Platform {
     // sample queued while the pump sleeps wakes it.
     #[cfg(target_os = "android")]
     crate::touch::set_waker(waker.clone());
+    // Android's held redraws arrive the same way (see redraw.rs); set on
+    // every platform, where nothing asks, so the loop needs no cfg.
+    crate::redraw::set_waker(waker.clone());
     let event_pump = sdl.event_pump().map_err(|e| format!("SDL event pump: {e}"))?;
     let epoch = crate::time::ticks_epoch();
 

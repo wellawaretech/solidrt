@@ -1,5 +1,4 @@
-use alloy::DialogStatus;
-use ore::dialog::{DialogError, DialogFilter, DialogKind, DialogRequest, Picked};
+use ore::dialog::{DialogError, DialogFilter, DialogKind, DialogRequest, DialogStatus, Picked};
 
 use crate::dialog::{parse_answer, request_json, status_json};
 

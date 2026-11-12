@@ -72,13 +72,6 @@ pub enum AlloyCommand {
   // the applied state.
   SetPointerLock(bool),
   SetTextInputActive(bool, TextInputOptions),
-  // A system file dialog (dialog.rs): shown from the loop thread with the
-  // app window as its parent, answered through the responder once the user
-  // is done, from whatever thread the platform answers on. A cancel is an
-  // empty answer. The stepped loop has no surface to show one on and
-  // answers unavailable at once. Whether a dialog shows at all is the
-  // session's call (dialog::Dialogs): a test's answer takes its place.
-  ShowDialog { request: ore::dialog::DialogRequest, respond: ore::dialog::DialogResponder },
   // Leave the app at the OS level without ending it: SDL's minimize, which
   // on Android routes to Activity.moveTaskToBack - what the system itself
   // does for back at the root since Android 12 (the process stays, the

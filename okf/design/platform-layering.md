@@ -306,11 +306,11 @@ OS integration is spread over three crates:
 
 - **alloy**: the SDL pump and window (above), the audio device and the
   mixer, the microphone, the camera, the power poll and the theme event
-  (the queries are ore's), the activity calls of the dialogs, the video
-  plane and the redraw answer (through `ore::android::with_activity`),
-  `barcode.rs` (rxing, portable: forge), gamepads, dialogs. The clipboard
-  moved to ore (okf/done/clipboard-image.md); power, the theme, thread
-  placement and the Android JNI glue did too (okf/done/ore-first-moves.md).
+  (the queries are ore's), `barcode.rs` (rxing, portable: forge). The
+  clipboard moved to ore (okf/done/clipboard-image.md); power, the theme,
+  thread placement and the Android JNI glue did too
+  (okf/done/ore-first-moves.md). The dialogs, the video plane, the redraw
+  answer and the vsync source are ore's (okf/plans/ore-pump-and-window.md).
 - **forge**: content providers, process facts, subprocess, tty, the
   AMediaCodec decoder's JNI side, the WAV decoder in place of
   `SDL_LoadWAV`. `process::home_dir` delegates to `ore::folders::home_dir`

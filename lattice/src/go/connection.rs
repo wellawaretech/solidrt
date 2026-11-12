@@ -1624,10 +1624,10 @@ fn clipboard_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
   serde_json::json!({"type": "result", "id": id, "data": {"clipboard": crate::clipboard::held_json(ctx)}}).to_string()
 }
 
-/// The file dialog state (the engine's `alloy::Dialogs` session, as
+/// The file dialog state (the engine's `ore::dialog::Session`, as
 /// dialog.rs spells it). Runs on the JS thread.
 fn dialog_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
-  let status = flux::gui::dialog::dialogs(ctx).map(|dialogs| dialogs.status()).unwrap_or_default();
+  let status = flux::dialog::session(ctx).map(|dialogs| dialogs.status()).unwrap_or_default();
   serde_json::json!({"type": "result", "id": id, "data": crate::dialog::status_json(&status)}).to_string()
 }
 
@@ -1635,7 +1635,7 @@ fn dialog_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
 /// else it is queued for the next call. Runs on the JS thread.
 fn dialog_answer_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, answer: serde_json::Value) -> String {
   let outcome = crate::dialog::parse_answer(&answer).and_then(|picked| {
-    flux::gui::dialog::dialogs(ctx)
+    flux::dialog::session(ctx)
       .map(|dialogs| dialogs.answer(picked, None))
       .ok_or_else(|| "no gui in this engine".to_string())
   });

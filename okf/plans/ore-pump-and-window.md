@@ -325,7 +325,42 @@ Each step is a commit that builds and passes the checks below.
    pre-existing gap (okf/backlog/android-keyboard-inset-zero.md), not this
    step's. Still open: the macOS and Windows builds.
 3. **Android glue, vsync, dialogs.** The Choreographer source, the video
-   plane, the redraw answer, dialogs and their plugin, the natives.
+   plane, the redraw answer, dialogs and their plugin, the natives. Done
+   2026-11-12, with these calls: the Choreographer is `ore::display_vsync`
+   (`available`, and a `Source` opened on the thread that waits, whose
+   `wait_vsync` arms one callback and answers the vsync instant),
+   feature-free; alloy keeps `VsyncSource` with the `sol-vsync` thread, the
+   request and generation protocol and the delay, so `vsync.rs` has no cfg
+   line left and alloy's manifest lost `ndk` and `ndk-sys`;
+   `ore::video_plane` and `ore::redraw` compile on every platform (`active`
+   and the redraw's `take` and `answer` everywhere, the plane and the JNI
+   under Android), and the redraw's wake is the pump's own waker, set in
+   `Platform::init`; the dialogs are `ore::dialog::Session` (the `Dialogs`
+   session, in the shape of the link and share sessions), whose `begin`
+   shows over `ore::main_thread` itself, so `AlloyCommand::ShowDialog` is
+   gone; the desktop show calls `sdl3::sys::dialog` with the parent handle
+   `ore::window` keeps for the live window (set at open and recreate,
+   cleared on drop), because the bridge callback has no window to borrow;
+   availability is probed by `open_window` (an interactive display and a
+   platform backend); the flux plugin is `ore_plugins/dialog.rs` behind
+   `gui`, reached as `flux::dialog`; the four natives forward to ore, and
+   `alloy::android_result_raw` and `Window::sdl_window` are gone; alloy's
+   manifest lost `jni`. Verified on Linux (Wayland) through the dev server:
+   the portal file chooser shows over the bridge, a cancel answers, and a
+   second request while one is open is refused; the desktop pick decode is
+   reviewed, not exercised (the portal could not be driven to a pick from
+   outside). On the tablet, with the new build: a document pick comes back
+   as a content URI with its name, a cancel answers, the held redraw is
+   answered at launch (no timeout warning in logcat), the video plane plays
+   and ends when the activity backgrounds, the pump idles below 2 percent,
+   and the pacing counters read as the step 2 build's (6 against 12 missed
+   presents at the 28 s mark after a warm launch; a cold first launch after
+   the install counts more). On the TV, the 32-bit build starts and
+   connects, a warm launch answers its held redraw (the cold dev-server
+   launch outlives the 5 s hold, as the step 2 build did), and a dialog
+   request resolves to the TV's document-picker stub, which cancels at
+   once (pre-existing, see okf/backlog/android-tv-dialog-stub.md). Still
+   open: the macOS and Windows builds.
 4. **Devices.** Audio playback, microphone, camera; the lifecycle audio
    restarts become ore's.
 5. **Cleanup.** Remove `sdl3` from `alloy/Cargo.toml`, delete

@@ -34,7 +34,7 @@ const RESIZE_SETTLE: Duration = Duration::from_millis(500);
 // thread picks up the current surface before that frame arrives.
 //
 // Held redraws: a platform that will not show the window until the surface
-// has a frame (Android's SurfaceView, see redraw.rs) asks with a
+// has a frame (Android's SurfaceView, see ore's redraw.rs) asks with a
 // generation, and the answer is the first swap of a frame built after the
 // ask. A frame already in flight was built before it (the old size, or the
 // surface before a recreate), so it does not count: the request waits for

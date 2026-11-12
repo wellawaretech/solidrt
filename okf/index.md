@@ -330,6 +330,11 @@ Shaped, not started.
   windows redraw in 50 ms to 300 ms; the frame itself builds in about 60 ms,
   so most of the wait comes before the UI thread starts it. Since held
   redraws, the screen stays frozen for that whole time.
+- **[The TV reports file dialogs as available and answers every request with a cancel](backlog/android-tv-dialog-stub.md)** [2026-11-12]
+  On the Philips TPM171E (Android TV 8) ACTION_OPEN_DOCUMENT resolves to the
+  TV framework's stub package, so dialogsAvailable reads true, the capability
+  is listed, and showDialog launches a picker that returns a cancel at once -
+  the app sees an empty pick instead of NotSupportedError.
 - **[Android TV on Google Play](backlog/android-tv-play-distribution.md)** [2026-09-27]
   Play offers an app on TVs only after a form-factor opt-in and a TV quality
   review, not by app category; a `tv` key in package.json makes TV an explicit

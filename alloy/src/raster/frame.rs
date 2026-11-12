@@ -476,7 +476,7 @@ impl RasterState {
     // making while a video is on screen. Only while a plane exists; a paused
     // plane pays it for nothing, which is a refinement, not a defect
     // (okf/notes/android-video-plane-compositing.md).
-    if crate::video_plane_active() {
+    if ore::video_plane::active() {
       self.finish_gpu_work(frame);
     }
     // The id this swap's buffer is queued under, asked before the swap.

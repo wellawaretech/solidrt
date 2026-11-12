@@ -9,7 +9,10 @@
 //! The platform (`platform`: SDL's init and the hints that precede it, on
 //! the host's main thread, the event pump's waker, the lifecycle watch and
 //! the gamepads), the events the pump hands upward (`event`), on Android
-//! the touch side channel (`touch`), and the window-free facilities: the
+//! the touch side channel (`touch`), the display's vsync source
+//! (`display_vsync`, Android's Choreographer), the video plane beneath the
+//! window (`video_plane`, Android's), the held redraw and its answer
+//! (`redraw`, Android's surface asks), and the window-free facilities: the
 //! main-thread bridge, the links (opening one, the app's own scheme
 //! registration and its single-instance hand-off), the locale, the share
 //! sheet, the clipboard, the user folders, the power state, thread
@@ -20,10 +23,10 @@
 //! the window), the window (`window`: opening it with the headless chain,
 //! its commands, cursors, text input, input device presence and the
 //! screen keyboard inset), the GL surface and its context-loss recreation
-//! (`gl_surface`, with the GL library path), the system theme, and the
-//! cursor, text input and dialog vocabulary. On Android it publishes the
-//! JavaVM and the activity and is the JNI way into the activity
-//! (`android`). The devices and the rest of the Android glue move in from
+//! (`gl_surface`, with the GL library path), the system theme, the file
+//! dialogs with their session (`dialog`), and the cursor and text input
+//! vocabulary. On Android it publishes the JavaVM and the activity and is
+//! the JNI way into the activity (`android`). The devices move in from
 //! alloy, and forge's and lattice's OS code, as features touch them, not
 //! before (okf/plans/ore-pump-and-window.md).
 
@@ -35,6 +38,7 @@ pub mod cursor;
 #[cfg(feature = "window")]
 pub mod dialog;
 pub mod display;
+pub mod display_vsync;
 pub mod event;
 pub mod folders;
 pub mod gamepad;
@@ -49,6 +53,7 @@ pub mod main_thread;
 pub mod permission;
 pub mod platform;
 pub mod power;
+pub mod redraw;
 pub mod share;
 #[cfg(feature = "window")]
 pub mod text_input;
@@ -58,6 +63,7 @@ pub mod threads;
 pub mod time;
 #[cfg(target_os = "android")]
 pub mod touch;
+pub mod video_plane;
 #[cfg(feature = "window")]
 pub mod window;
 

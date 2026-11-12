@@ -32,6 +32,8 @@ pub use forge::process::{arch, platform};
 pub use forge::seek::{SeekableRead, SeekableReader};
 pub use forge_plugins::process::{ProcessArgs, ProcessExit};
 pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
+#[cfg(feature = "gui")]
+pub use ore_plugins::dialog;
 pub use ore_plugins::link;
 pub use pending::{describe_in_flight, hold_engine, in_flight, settled, Hold};
 pub use plugins::add_capability;
@@ -73,8 +75,8 @@ pub fn capabilities() -> Vec<&'static str> {
   #[cfg(feature = "gui")]
   caps.extend_from_slice(alloy_plugins::GUI_CAPABILITIES);
   #[cfg(feature = "gui")]
-  if alloy::dialogs_available() {
-    caps.push(alloy_plugins::DIALOG_CAPABILITY);
+  if ore::dialog::available() {
+    caps.push(ore_plugins::dialog::CAPABILITY);
   }
   #[cfg(feature = "gui")]
   if ore::clipboard::image_available() {

@@ -8,7 +8,6 @@ mod composite;
 mod context_loss;
 mod cull;
 mod damage;
-mod dialog;
 mod draw_list;
 mod draw_slices;
 mod effects;

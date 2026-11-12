@@ -6,11 +6,10 @@
 //! for its lifetime). The activity's static helpers on `SolidRTActivity`
 //! are what a facility calls through it.
 //!
-//! `with_activity` and `java_strings` are public for the crates whose
-//! activity calls have not moved here yet (alloy's dialogs, video plane and
-//! redraw answer, forge's content providers). They hand out `jni` types,
-//! which no ore contract does; they go back to crate-private when those
-//! calls move.
+//! `with_activity` and `java_strings` are public for forge's content
+//! providers only, whose activity calls have not moved here yet. They hand
+//! out `jni` types, which no ore contract does; they go back to
+//! crate-private when those calls move.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;

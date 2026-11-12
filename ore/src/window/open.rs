@@ -8,12 +8,16 @@ use super::{Backing, Display, Window, WindowConfig};
 /// Open the window `config` asks for (see `Display`). A GL window comes
 /// back with its context created and current on this thread;
 /// `Window::create_gl_surface` releases it for the drawing thread.
+/// Once the window exists, the dialogs' availability is probed for it: a
+/// hidden or offscreen surface is one no dialog could attach to.
 pub(crate) fn open(sdl: &sdl3::Sdl, config: WindowConfig<'_>) -> Result<Window, String> {
-  match config.display {
+  let window = match config.display {
     Display::Interactive => open_gl(sdl, &config, true),
     Display::Hidden => open_gl(sdl, &config, false),
     Display::Offscreen => open_offscreen(sdl, &config),
-  }
+  }?;
+  crate::dialog::set_available(config.display == Display::Interactive && crate::dialog::platform_available());
+  Ok(window)
 }
 
 // The headless mode wants no display at all: SDL's offscreen video driver

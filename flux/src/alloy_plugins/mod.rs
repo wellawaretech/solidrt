@@ -6,7 +6,6 @@
 
 pub mod audio;
 pub mod camera;
-pub mod dialog;
 pub mod events;
 pub mod font;
 pub mod frame;
@@ -219,8 +218,9 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   alloy.set_frame_request_latch(platform.frame_request_handle());
   // navigator.clipboard is a web-standard surface (standards_plugins) over
   // ore; it needs the windowing platform's video subsystem, so it installs
-  // here at the gui seam and a headless flux has none.
-  let dialog_cmd_tx = alloy_cmd_tx.clone();
+  // here at the gui seam and a headless flux has none. flux:dialog
+  // (ore_plugins) needs the window too, and installs here for the same
+  // reason.
   // The render tree and the capture/render devices are all `flux:*` modules
   // (registered below); only the web-standard rAF stays a global. The shared
   // host state goes in first; the plugins with data of their own store it
@@ -255,7 +255,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
       crate::standards_plugins::clipboard::store_state(&ctx);
       crate::standards_plugins::clipboard::init_clipboard(&ctx);
     })
-    .plugin(move |ctx| dialog::store_state(&ctx, dialog_cmd_tx))
+    .plugin(|ctx| crate::ore_plugins::dialog::store_state(&ctx))
     .plugin(register_capabilities)
     .module("flux:rendertree", tree::RenderTreeModule)
     .module("flux:camera", camera::CameraModule)
@@ -264,7 +264,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .module("flux:gpu", gpu::GpuModule)
     .module("flux:spatial", spatial::SpatialModule)
     .module("flux:font", font::FontModule)
-    .module("flux:dialog", dialog::DialogModule);
+    .module("flux:dialog", crate::ore_plugins::dialog::DialogModule);
   #[cfg(feature = "video")]
   let builder = builder.plugin(|ctx| video::store_state(&ctx)).module("flux:video", video::VideoModule);
   #[cfg(feature = "video-encode")]
@@ -288,11 +288,6 @@ pub const GUI_CAPABILITIES: &[&str] = &[
 #[cfg(not(feature = "video"))]
 pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "spatial", "font"];
 
-/// The capability the file dialogs are listed under, only where the
-/// platform can show one (`alloy::dialogs_available`): a fact of the
-/// surface, not of the build, so it is not in `GUI_CAPABILITIES`.
-pub const DIALOG_CAPABILITY: &str = "dialog";
-
 /// List the gui capability names in `Flux.capabilities`; a plugin, since
 /// `install` is the gui-feature seam. "clipboard-image" is a fact of the
 /// platform (`ore::clipboard::image_available`), listed here rather than
@@ -303,8 +298,8 @@ fn register_capabilities(ctx: Ctx<'_>) {
   for name in GUI_CAPABILITIES {
     crate::add_capability(&ctx, name);
   }
-  if alloy::dialogs_available() {
-    crate::add_capability(&ctx, DIALOG_CAPABILITY);
+  if ore::dialog::available() {
+    crate::add_capability(&ctx, crate::ore_plugins::dialog::CAPABILITY);
   }
   if ore::clipboard::image_available() {
     crate::add_capability(&ctx, crate::standards_plugins::clipboard::IMAGE_CAPABILITY);

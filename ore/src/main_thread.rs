@@ -1,6 +1,5 @@
 //! The main-thread bridge: the one way to run a main-thread-only call
-//! (`SDL_OpenURL`, the clipboard, and later the dialogs) from any
-//! thread.
+//! (`SDL_OpenURL`, the clipboard, the dialogs) from any thread.
 //!
 //! It is `SDL_RunOnMainThread`. On the main thread, or while SDL has no
 //! event loop (headless flux never starts one, and runs its JS on its main

@@ -72,7 +72,6 @@ pub fn setup(platform: Platform, title: &str, size: ISize, mode: Mode) -> App {
     open_gl(&platform, config(Display::Interactive))
   };
   let (window, display) = opened.expect("Failed to set up video");
-  crate::dialog::probe(mode.is_headless());
   crate::set_video_driver(window.video_driver());
   App { platform, window, display, mode, resampler, user_input_muted }
 }
@@ -231,7 +230,6 @@ impl App {
       let waker = waker.clone();
       Some(Arc::new(move || waker.wake()))
     };
-    crate::redraw::set_wake(wake.clone());
     let raster =
       display.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.frame_sink(), stats.clone());
 
@@ -439,7 +437,7 @@ impl App {
         match rx.try_recv() {
           Ok(FrameOutput::Presented { at, ready_at, gpu_micros, demanded, frame: built, swapped }) => {
             if let Some(generation) = liveness.on_present(built, swapped) {
-              crate::redraw::answer(generation);
+              ore::redraw::answer(generation);
             }
             fps_frame_count += 1;
             // The frame's work time (see cadence.rs): its signal's emission
@@ -685,9 +683,9 @@ impl App {
           }
         }
       }
-      // A held redraw (see redraw.rs), taken after this iteration's events so
+      // A held redraw (see ore's redraw.rs), taken after this iteration's events so
       // the rebinds they caused are queued ahead of the frame that answers.
-      if let Some(generation) = crate::redraw::take() {
+      if let Some(generation) = ore::redraw::take() {
         liveness.on_redraw_requested(generation);
       }
       // Flush presents deferred to vsync or to a cadence-hold slot end -
@@ -896,9 +894,6 @@ impl App {
             } else {
               window.stop_text_input();
             }
-          }
-          AlloyCommand::ShowDialog { request, respond } => {
-            crate::dialog::show(window.sdl_window(), request, respond);
           }
           AlloyCommand::Background => {
             if let Err(e) = window.minimize() {

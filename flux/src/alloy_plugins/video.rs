@@ -632,20 +632,19 @@ fn open_plane_player(
   audio: Option<Box<dyn forge::video::AudioSink>>,
   fit: PlaneFit,
 ) -> Result<(Player, Kind), StreamError> {
-  use alloy::video_plane::{PlaneFit as AlloyFit, VideoPlane};
   use forge::video::transport::VsyncGrid;
+  use ore::video_plane::{PlaneFit as OreFit, VideoPlane};
 
   let fit = match fit {
-    PlaneFit::Contain => AlloyFit::Contain,
-    PlaneFit::Cover => AlloyFit::Cover,
+    PlaneFit::Contain => OreFit::Contain,
+    PlaneFit::Cover => OreFit::Cover,
   };
   let plane = VideoPlane::create(info.width, info.height, fit).map_err(|e| StreamError::new(ErrorKind::NoPlane, e))?;
   // The display's vsync grid: the period the plane read from the display,
   // the phase from the samples its view keeps reporting.
-  let vsync = plane
-    .refresh_period_ns()
-    .map(|period_ns| VsyncGrid { period_ns, sample_ns: Box::new(alloy::video_plane::vsync_ns) });
-  let lost = Box::new(alloy::video_plane::lost);
+  let vsync =
+    plane.refresh_period_ns().map(|period_ns| VsyncGrid { period_ns, sample_ns: Box::new(ore::video_plane::vsync_ns) });
+  let lost = Box::new(ore::video_plane::lost);
   let window = plane.native_window().clone();
   let player =
     forge::video::open_plane(reader, window, Box::new(plane), vsync, audio, lost).map_err(StreamError::decode)?;
@@ -811,7 +810,7 @@ fn finished_impl(ctx: Ctx<'_>, id: u64) -> bool {
 
 #[cfg(target_os = "android")]
 fn plane_lost(kind: &Kind) -> bool {
-  matches!(kind, Kind::Plane) && alloy::video_plane::lost()
+  matches!(kind, Kind::Plane) && ore::video_plane::lost()
 }
 
 #[cfg(not(target_os = "android"))]

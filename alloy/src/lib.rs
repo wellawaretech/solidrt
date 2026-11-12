@@ -10,7 +10,6 @@ mod cadence;
 pub mod camera;
 pub mod clock;
 mod context;
-mod dialog;
 mod egl_headless;
 mod event;
 mod frame_timestamps;
@@ -24,7 +23,6 @@ pub mod motion;
 mod present;
 mod raster;
 pub use raster::{DamageRect, HeadlessPatch, PresentDamage, RasterCounters, TargetCounters};
-pub mod redraw;
 pub mod renderer;
 pub mod rendertree;
 pub mod resample;
@@ -32,21 +30,6 @@ mod script;
 pub mod spatial;
 mod stepped;
 mod threads;
-#[cfg(target_os = "android")]
-pub mod video_plane;
-
-/// Whether a video plane is presenting beneath the window, false on every
-/// platform that has none. The raster thread's present path reads it.
-pub(crate) fn video_plane_active() -> bool {
-  #[cfg(target_os = "android")]
-  {
-    video_plane::active()
-  }
-  #[cfg(not(target_os = "android"))]
-  {
-    false
-  }
-}
 mod vsync;
 pub mod yuv;
 
@@ -59,9 +42,6 @@ pub use app::{setup, App};
 pub use backend::DisplayContext;
 pub use cadence::CadenceHold;
 pub use context::{CaptureDone, CaptureInfo, Context, Overlay, WindowTap, YuvFrameSink};
-#[cfg(target_os = "android")]
-pub use dialog::android_result_raw;
-pub use dialog::{dialogs_available, Consumed, DialogStatus, Dialogs};
 pub use event::{AlloyCommand, AlloyEvent, Arrival, EventSender};
 pub use gl::TapRect;
 pub use gpu::{

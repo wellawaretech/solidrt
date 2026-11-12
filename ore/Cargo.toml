@@ -5,8 +5,8 @@ edition = "2021"
 
 [features]
 # The window part of ore: what needs SDL's video subsystem (the window and
-# its GL surface, the system theme, the cursor, text input and dialog
-# types, the GL library path). Enabled by alloy, flux's gui and lattice;
+# its GL surface, the system theme, the file dialogs, the cursor and text
+# input types, the GL library path). Enabled by alloy, flux's gui and lattice;
 # headless flux leaves it out.
 window = ["dep:objc2-core-video", "dep:objc2-core-foundation", "dep:windows", "dep:libloading"]
 
@@ -15,14 +15,18 @@ window = ["dep:objc2-core-video", "dep:objc2-core-foundation", "dep:windows", "d
 [target.'cfg(target_os = "android")'.dependencies]
 sdl3 = { version = "=0.20.0", features = ["build-from-source"] }
 # The activity's helpers (src/android.rs: the share sheet, the touchscreen
-# feature, the packed asset lookup), over JNI on the process-wide JavaVM and
-# activity that src/android.rs publishes in ndk-context; alloy's and
-# forge's pins, so the unified build compiles no extra crate.
+# feature, the packed asset lookup; src/dialog/android.rs: the document
+# intents), over JNI on the process-wide JavaVM and activity that
+# src/android.rs publishes in ndk-context; the jni pin is forge's, so the
+# unified build compiles no extra crate.
 jni = "=0.22.4"
 ndk-context = "=0.1.1"
 # The APK's AAssetManager for the packed asset lookup (src/android.rs): ndk
-# the safe asset wrapper, ndk-sys the raw AAssetManager_fromJava. alloy's
-# pins.
+# the safe asset wrapper, ndk-sys the raw AAssetManager_fromJava. The
+# display vsync source (src/display_vsync.rs): ndk the thread's looper,
+# ndk-sys the raw AChoreographer_* calls the safe crate does not cover; both
+# drop there if SDL ships its own choreographer API (libsdl-org/SDL#15013).
+# The video plane's NativeWindow (src/video_plane.rs), ndk's. forge's pins.
 ndk = { version = "=0.9.0", default-features = false }
 ndk-sys = "=0.6.0"
 
@@ -73,8 +77,9 @@ windows-registry = "=0.6.1"
 windows-sys = { version = "=0.61.2", features = ["Win32_System_Threading"] }
 
 # setpriority/gettid, sched_setattr and sched_setaffinity (Android/Linux)
-# and QoS classes (macOS) for thread placement (src/threads.rs); alloy's
-# and forge's pin.
+# and QoS classes (macOS) for thread placement (src/threads.rs), and
+# clock_gettime(CLOCK_MONOTONIC) on Android for the touch and vsync frame-time
+# clocks (src/touch.rs, src/display_vsync.rs); alloy's and forge's pin.
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.191"
 

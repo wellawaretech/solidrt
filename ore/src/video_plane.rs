@@ -1,40 +1,48 @@
 //! The Android video plane: a SurfaceView beneath SDL's surface that a
 //! hardware decoder renders straight into, composited by SurfaceFlinger
-//! under the (translucent) UI. alloy owns it because alloy owns the window
-//! and the JNI seam to the activity; the decoder is forge's and takes the
-//! plane's `NativeWindow` as a plain platform handle. One plane at a time.
+//! under the (translucent) UI. ore owns it as the JNI seam to the activity;
+//! the decoder is forge's and takes the plane's `NativeWindow` as a plain
+//! platform handle. One plane at a time. Only Android has a plane: on every
+//! other platform `active` is the whole module, and it is false.
 //! See okf/done/android-video-punch-through.md.
 
+#[cfg(target_os = "android")]
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
+#[cfg(target_os = "android")]
 use ndk::native_window::NativeWindow;
 
 // Set from the activity (JNI) when the system destroyed the plane's surface
 // under us - the activity went to the background. Reset at creation. A
 // static rather than a field so the report has somewhere to land whatever
 // thread it arrives on; there is one plane at a time.
+#[cfg(target_os = "android")]
 static PLANE_LOST: AtomicBool = AtomicBool::new(false);
 
 // The latest Choreographer frame time (CLOCK_MONOTONIC ns) the plane view
 // reported, one per display frame while a plane is attached: the phase of
 // the display's vsync grid. 0 = no sample yet (reset at creation). A static
 // for the same reason as PLANE_LOST.
+#[cfg(target_os = "android")]
 static PLANE_VSYNC_NS: AtomicI64 = AtomicI64::new(0);
 
 // Whether a plane exists right now. The raster thread reads it to decide
 // whether the window's buffer must carry finished GPU work (see `active`);
 // a static for the same reason as PLANE_LOST, and read from the raster
 // thread rather than the one that owns the plane.
+#[cfg(target_os = "android")]
 static PLANE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// Report that the platform destroyed the video plane's surface. Called
 /// from the activity (Android JNI); thread-safe.
+#[cfg(target_os = "android")]
 pub fn set_lost() {
   PLANE_LOST.store(true, Ordering::Relaxed);
 }
 
 /// Whether the platform destroyed the current plane's surface (see
 /// `VideoPlane::lost`). Any thread: the decoder's worker samples it.
+#[cfg(target_os = "android")]
 pub fn lost() -> bool {
   PLANE_LOST.load(Ordering::Relaxed)
 }
@@ -43,13 +51,22 @@ pub fn lost() -> bool {
 /// commits the plane and the window together, so while this is true the
 /// window's buffer must not carry unfinished GPU work into that commit -
 /// it would hold the video frame sharing it
-/// (okf/notes/android-video-plane-compositing.md). Any thread.
+/// (okf/notes/android-video-plane-compositing.md). Any thread; false on
+/// every platform that has none.
 pub fn active() -> bool {
-  PLANE_ACTIVE.load(Ordering::Relaxed)
+  #[cfg(target_os = "android")]
+  {
+    PLANE_ACTIVE.load(Ordering::Relaxed)
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    false
+  }
 }
 
 /// Report one display vsync time (a Choreographer frame time, CLOCK_MONOTONIC
 /// ns). Called from the plane view (Android JNI, UI thread); thread-safe.
+#[cfg(target_os = "android")]
 pub fn set_vsync_ns(ns: i64) {
   PLANE_VSYNC_NS.store(ns, Ordering::Relaxed);
 }
@@ -57,6 +74,7 @@ pub fn set_vsync_ns(ns: i64) {
 /// The most recent vsync time reported for the plane, on the decoder's
 /// release clock (CLOCK_MONOTONIC ns); None before the first sample. Any
 /// thread.
+#[cfg(target_os = "android")]
 pub fn vsync_ns() -> Option<i64> {
   match PLANE_VSYNC_NS.load(Ordering::Relaxed) {
     0 => None,
@@ -66,6 +84,7 @@ pub fn vsync_ns() -> Option<i64> {
 
 /// How the video's picture fits the window on the plane (the compositor's
 /// scale, free): letterboxed inside it, or cropped to fill it.
+#[cfg(target_os = "android")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlaneFit {
   Contain,
@@ -73,7 +92,9 @@ pub enum PlaneFit {
 }
 
 // VideoPlaneView.FIT_* on the Java side.
+#[cfg(target_os = "android")]
 const FIT_CONTAIN: i32 = 0;
+#[cfg(target_os = "android")]
 const FIT_COVER: i32 = 1;
 
 /// A live video plane. Dropping it removes the view from the activity;
@@ -82,6 +103,7 @@ const FIT_COVER: i32 = 1;
 /// (both go through `SDL_GetAndroidJNIEnv`, which attaches the calling
 /// thread, and Java's `destroyVideoPlane` posts to its UI thread), so a
 /// decoder's worker may own it and drop it after its codec.
+#[cfg(target_os = "android")]
 pub struct VideoPlane {
   window: NativeWindow,
   refresh_period_ns: i64,
@@ -91,6 +113,7 @@ pub struct VideoPlane {
   view: jni::objects::Global<jni::objects::JObject<'static>>,
 }
 
+#[cfg(target_os = "android")]
 impl VideoPlane {
   /// Create the plane sized for a `video_width` x `video_height` picture.
   /// Blocks (on any thread; SDL attaches it to the JVM) until the surface
@@ -125,6 +148,8 @@ impl VideoPlane {
       // 0.3), which name the same ABI types in different crates. The
       // NativeWindow holds its own reference to the surface; the local
       // Surface ref goes with the env frame.
+      // SAFETY: `env` is this thread's live JNI env and `surface` a live
+      // local reference to an android.view.Surface, both valid for the call.
       let window = unsafe { NativeWindow::from_surface(env.get_raw() as *mut _, surface.as_raw() as *mut _) };
       let global = env.new_global_ref(&view)?;
       Ok(window.map(|w| (w, global, refresh_period_ns)))
@@ -155,6 +180,7 @@ impl VideoPlane {
   }
 }
 
+#[cfg(target_os = "android")]
 impl Drop for VideoPlane {
   fn drop(&mut self) {
     PLANE_ACTIVE.store(false, Ordering::Relaxed);
@@ -168,13 +194,14 @@ impl Drop for VideoPlane {
       Ok(())
     });
     if let Err(e) = result {
-      log::warn!("[alloy] video plane teardown: {e}");
+      log::warn!("[ore] Video plane teardown: {e}");
     }
   }
 }
 
+#[cfg(target_os = "android")]
 fn with_activity<T>(
   f: impl FnOnce(&mut jni::Env<'_>, &jni::objects::JObject<'_>) -> Result<T, jni::errors::Error>,
 ) -> Result<T, String> {
-  ore::android::with_activity("video plane", f)
+  crate::android::with_activity("video plane", f)
 }

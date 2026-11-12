@@ -349,7 +349,7 @@ fn dialog<'js>(ctx: Ctx<'js>, answer: String) -> flux::rquickjs::Result<Promise<
   let picked = serde_json::from_str::<serde_json::Value>(&answer)
     .map_err(|e| throw(&format!("the answer is not JSON: {e}")))
     .and_then(|json| crate::dialog::parse_answer(&json).map_err(|e| throw(&e)))?;
-  let Some(dialogs) = flux::gui::dialog::dialogs(&ctx) else {
+  let Some(dialogs) = flux::dialog::session(&ctx) else {
     return Err(throw("no gui in this engine"));
   };
   let (promise, resolve, _reject) = ctx.promise()?;

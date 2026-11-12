@@ -27,9 +27,9 @@ default = ["compile"]
 compile = []
 # The alloy-backed GUI marshalling layer (flux::gui): render-tree / texture /
 # raf / camera / microphone bindings. Pulls alloy (SDL + Impeller + GL) and
-# ore's window part (the cursor, text input and dialog types the bindings
-# marshal). Off by default so the headless flux runtime and its bins stay
-# GUI-free; lattice turns it on.
+# ore's window part (the cursor and text input types the bindings marshal,
+# and the file dialogs flux:dialog marshals). Off by default so the headless
+# flux runtime and its bins stay GUI-free; lattice turns it on.
 gui = ["dep:alloy", "dep:taffy", "dep:serde_json", "forge/audio", "ore/window"]
 # flux:video (behind forge/video): not a cargo default; see forge/Cargo.toml.
 video = ["forge/video"]
