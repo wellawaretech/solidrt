@@ -8,18 +8,27 @@
 //!
 //! Its first facilities are window-free: the main-thread bridge, the
 //! links (opening one, the app's own scheme registration and its
-//! single-instance hand-off), the locale, the share sheet and the
-//! clipboard. The window, the event pump, the devices and the Android
-//! glue move in from alloy, forge and lattice as features touch them,
-//! not before.
+//! single-instance hand-off), the locale, the share sheet, the
+//! clipboard, the user folders, the power state and thread placement.
+//! Its window part, behind the `window` feature (what needs SDL's video
+//! subsystem), holds the system theme. On Android it publishes the JavaVM
+//! and the activity and is the JNI way into the activity (`android`). The
+//! window, the event pump and the devices move in from alloy, forge and
+//! lattice as features touch them, not before.
 
 #[cfg(target_os = "android")]
-mod android;
+pub mod android;
 pub mod clipboard;
+pub mod folders;
 pub mod link;
 pub mod locale;
 pub mod main_thread;
+pub mod permission;
+pub mod power;
 pub mod share;
+#[cfg(feature = "window")]
+pub mod theme;
+pub mod threads;
 
 #[cfg(test)]
 mod tests;

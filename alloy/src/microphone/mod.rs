@@ -31,9 +31,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{c_int, c_void};
 use std::mem::ManuallyDrop;
-#[cfg(target_os = "android")]
 use std::sync::atomic::{AtomicI8, Ordering};
-#[cfg(target_os = "android")]
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -59,7 +57,7 @@ struct TestClip {
 
 #[derive(Clone)]
 pub enum MicrophoneStatus {
-  /// Waiting for the OS permission prompt (Android's RECORD_AUDIO).
+  /// Waiting for the user's answer to the permission prompt.
   Pending,
   /// Capturing, mono f32 at `sample_rate`.
   Ready { sample_rate: u32 },
@@ -72,18 +70,14 @@ pub enum MicrophoneStatus {
 
 /// What a permission request has answered so far: nothing yet, granted,
 /// or denied. The callback writes it, the pump reads it.
-#[cfg(target_os = "android")]
 const PERMISSION_PENDING: i8 = 0;
-#[cfg(target_os = "android")]
 const PERMISSION_GRANTED: i8 = 1;
-#[cfg(target_os = "android")]
 const PERMISSION_DENIED: i8 = -1;
 
 /// Where a session's samples come from.
 enum Source {
   /// A permission request on its way: the device to open once it is
   /// granted, and the answer the callback writes.
-  #[cfg(target_os = "android")]
   Requested { device: Option<u32>, answer: Arc<AtomicI8> },
   /// A recording device: the stream SDL converts on, drained into the ring
   /// from its put callback, which holds `callback_ring`, a ring clone the
@@ -92,7 +86,6 @@ enum Source {
   /// The installed test clip, pushed at the open and at every later install.
   Test,
   /// Nothing: the session was denied or failed, and its ring is closed.
-  #[cfg(target_os = "android")]
   Ended,
 }
 
@@ -137,25 +130,16 @@ fn ensure_init() -> Result<(), String> {
   }
 }
 
-/// SDL's answer to a permission request: runs once, on the activity's
-/// thread, and hands the `Arc` the request lent it back. Must not panic: a
-/// panic across the C boundary aborts.
-#[cfg(target_os = "android")]
-unsafe extern "C" fn on_permission(userdata: *mut c_void, _permission: *const std::ffi::c_char, granted: bool) {
-  let answer = unsafe { Arc::from_raw(userdata as *const AtomicI8) };
-  answer.store(if granted { PERMISSION_GRANTED } else { PERMISSION_DENIED }, Ordering::Release);
-}
-
-/// Ask Android for RECORD_AUDIO without waiting; the answer lands in the
-/// returned cell (`PERMISSION_PENDING` until then).
-#[cfg(target_os = "android")]
+/// Ask for the microphone without waiting; the answer lands in the
+/// returned cell (`PERMISSION_PENDING` until then). A platform with no
+/// prompt, or a permission already held, may have answered on return.
 fn request_record_permission() -> Result<Arc<AtomicI8>, String> {
   let answer = Arc::new(AtomicI8::new(PERMISSION_PENDING));
-  let lent = Arc::into_raw(answer.clone()) as *mut c_void;
-  if !sdl_utils::request_android_permission(c"android.permission.RECORD_AUDIO", Some(on_permission), lent) {
-    drop(unsafe { Arc::from_raw(lent as *const AtomicI8) });
-    return Err(format!("could not request the microphone permission: {}", sdl_utils::sdl_error()));
-  }
+  let answered = answer.clone();
+  ore::permission::request(ore::permission::Permission::Microphone, move |granted| {
+    answered.store(if granted { PERMISSION_GRANTED } else { PERMISSION_DENIED }, Ordering::Release);
+  })
+  .map_err(|e| format!("could not request the microphone permission: {e}"))?;
   Ok(answer)
 }
 
@@ -239,13 +223,14 @@ impl crate::context::Context {
       ring.push(&test.as_ref().expect("test clip checked above").samples);
       (Source::Test, MicrophoneStatus::Ready { sample_rate })
     } else {
-      #[cfg(target_os = "android")]
-      {
-        (Source::Requested { device, answer: request_record_permission()? }, MicrophoneStatus::Pending)
-      }
-      #[cfg(not(target_os = "android"))]
-      {
+      // Ask first, open once granted. An answer that is already in (no
+      // prompt on this platform, or the permission is held) opens here;
+      // any other is the pump's to act on.
+      let answer = request_record_permission()?;
+      if answer.load(Ordering::Acquire) == PERMISSION_GRANTED {
         (open_device(device, sample_rate, &ring)?, MicrophoneStatus::Ready { sample_rate })
+      } else {
+        (Source::Requested { device, answer }, MicrophoneStatus::Pending)
       }
     };
     let sid = {
@@ -270,7 +255,6 @@ impl crate::context::Context {
   pub fn pump_microphone(&self, sid: u64) -> Option<MicrophoneStatus> {
     let mut sessions = self.microphones.sessions.borrow_mut();
     let session = sessions.get_mut(&sid)?;
-    #[cfg(target_os = "android")]
     if let Source::Requested { device, answer } = &session.source {
       let (device, sample_rate) = (*device, session.reader.sample_rate());
       let status = match answer.load(Ordering::Acquire) {

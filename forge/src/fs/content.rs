@@ -3,10 +3,10 @@
 //! operation is a JNI call into a static helper of the activity's class
 //! (`contentOpen`, `contentStat`, `contentDisplayName`, `contentChildren`,
 //! `contentDelete` on `SolidRTActivity`), on whatever thread it is made from
-//! (the thread is attached to the VM for its lifetime). The JavaVM and the
-//! activity are the process-wide ones the platform (alloy) publishes in
-//! ndk-context at startup; a process without them has no content providers
-//! to reach, and nothing hands it a content URI. A document opens as a
+//! (the thread is attached to the VM for its lifetime), through ore's JNI way
+//! into the activity (`ore::android`). The JavaVM and the activity are the
+//! process-wide ones published in ndk-context; a process without them has
+//! no content providers to reach, and nothing hands it a content URI. A document opens as a
 //! descriptor the resolver hands out, which becomes a plain `File`; a folder
 //! (a tree URI) lists its children through DocumentsContract, each child as
 //! the tree-scoped document URI that opens it.
@@ -14,6 +14,7 @@
 use std::os::fd::FromRawFd;
 
 use jni::objects::{JObject, JObjectArray, JString, JValue};
+use ore::android::{java_strings, with_activity};
 
 use super::{DirEntry, OpenMode, StatInfo};
 
@@ -28,26 +29,6 @@ fn mode_str(mode: OpenMode) -> &'static str {
   }
 }
 
-/// Run `f` with a JNI env on this thread and the activity, the thread
-/// attached to the VM.
-fn with_activity<T>(
-  what: &str,
-  f: impl FnOnce(&mut jni::Env<'_>, &JObject<'_>) -> Result<T, jni::errors::Error>,
-) -> Result<T, String> {
-  let context = ndk_context::android_context();
-  if context.vm().is_null() || context.context().is_null() {
-    return Err(format!("no Android context for the {what}"));
-  }
-  let vm = unsafe { jni::JavaVM::from_raw(context.vm().cast()) };
-  vm.attach_current_thread(|env| {
-    // The activity is a global reference the platform keeps for the process;
-    // this wrapper does not own it.
-    let activity = unsafe { JObject::from_raw(env, context.context().cast()) };
-    f(env, &activity)
-  })
-  .map_err(|e: jni::errors::Error| format!("{what} JNI call failed: {e}"))
-}
-
 fn java_string(env: &mut jni::Env<'_>, value: JObject<'_>) -> Result<String, jni::errors::Error> {
   if value.is_null() {
     return Ok(String::new());
@@ -56,20 +37,6 @@ fn java_string(env: &mut jni::Env<'_>, value: JObject<'_>) -> Result<String, jni
   let chars = string.mutf8_chars(env)?;
   let owned = chars.to_str().into_owned();
   Ok(owned)
-}
-
-/// The strings of a Java `String[]`, in order.
-fn java_strings(
-  env: &mut jni::Env<'_>,
-  array: &JObjectArray<'_, JString<'_>>,
-) -> Result<Vec<String>, jni::errors::Error> {
-  let len = array.len(env)?;
-  let mut out = Vec::with_capacity(len);
-  for i in 0..len {
-    let element = array.get_element(env, i)?;
-    out.push(element.mutf8_chars(env)?.to_str().into_owned());
-  }
-  Ok(out)
 }
 
 pub(super) fn open(uri: &str, mode: OpenMode) -> Result<std::fs::File, String> {

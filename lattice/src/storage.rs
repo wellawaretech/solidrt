@@ -195,7 +195,7 @@ fn checked_component(name: Option<&str>, what: &str) -> String {
 /// created by SDL if missing. The packed app's client root (app = its id),
 /// the player's (app = "go"). None without a writable location.
 pub(crate) fn pref_dir(app: &str) -> Option<PathBuf> {
-  match alloy::sdl3::filesystem::get_pref_path("SolidRT", app) {
+  match ore::folders::pref_dir("SolidRT", app) {
     Ok(dir) => Some(dir),
     Err(e) => {
       log::warn!("[sol] no writable pref path: {e}");

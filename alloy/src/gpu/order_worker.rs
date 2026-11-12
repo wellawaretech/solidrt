@@ -137,10 +137,10 @@ impl OrderWorker {
     let counting = running.clone();
     let thread = std::thread::Builder::new().name("sol-order".into()).spawn(move || {
       // The sort's duration is the order's lag behind the camera, so the
-      // thread takes a latency worker's placement: a performance core,
-      // below the frame tier (sdl_utils::latency_worker_thread_priority),
+      // thread takes a burst worker's placement: a performance core,
+      // below the frame tier (ore::threads::place_burst_worker),
       // re-asserted per job because a cpuset move drops a pin.
-      let placement = crate::sdl_utils::latency_worker_thread_priority();
+      let placement = ore::threads::place_burst_worker();
       let mut scratch = OrderScratch::default();
       while let Ok(mut job) = job_rx.recv() {
         placement.reassert();

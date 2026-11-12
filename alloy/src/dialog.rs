@@ -128,7 +128,7 @@ fn platform_available() -> bool {
 
 #[cfg(target_os = "android")]
 fn platform_available() -> bool {
-  match crate::sdl_utils::with_android_activity("dialog availability", |env, activity| {
+  match ore::android::with_activity("dialog availability", |env, activity| {
     let class = env.get_object_class(activity)?;
     env.call_static_method(&class, jni::jni_str!("dialogsAvailable"), jni::jni_sig!("()Z"), &[])?.z()
   }) {
@@ -458,7 +458,7 @@ mod android {
       DialogKind::OpenDirectory => (KIND_OPEN_DIRECTORY, false, None),
     };
     let patterns: Vec<String> = request.filters.iter().map(super::sdl_pattern).collect();
-    let launched = crate::sdl_utils::with_android_activity("dialog", |env, activity| {
+    let launched = ore::android::with_activity("dialog", |env, activity| {
       let empty = env.new_string("")?;
       let filters = jni::objects::JObjectArray::<jni::objects::JString>::new(env, patterns.len(), &empty)?;
       for (i, pattern) in patterns.iter().enumerate() {
@@ -543,7 +543,7 @@ mod android {
     let outcome = unowned
       .with_env(|env| -> Result<Vec<String>, jni::errors::Error> {
         let array = unsafe { jni::objects::JObjectArray::<jni::objects::JString>::from_raw(env, array) };
-        crate::sdl_utils::java_strings(env, &array)
+        ore::android::java_strings(env, &array)
       })
       .into_outcome();
     match outcome {

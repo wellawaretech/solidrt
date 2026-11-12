@@ -89,10 +89,10 @@ dependencies = [
  "lyon_algorithms",
  "lyon_path",
  "ndk",
- "ndk-context",
  "ndk-sys",
  "objc2-core-foundation",
  "objc2-core-video",
+ "ore",
  "rxing",
  "sdl3",
  "skrifa",
@@ -101,7 +101,6 @@ dependencies = [
  "unicode-linebreak",
  "unicode-segmentation",
  "windows",
- "windows-sys 0.61.2",
  "zeno",
 ]
 
@@ -1476,10 +1475,10 @@ dependencies = [
  "libc",
  "log",
  "ndk",
- "ndk-context",
  "ndk-sys",
  "netdev 0.46.3",
  "notify",
+ "ore",
  "path-clean",
  "percent-encoding",
  "reqwest 0.12.28",
@@ -3560,11 +3559,15 @@ version = "0.0.0"
 dependencies = [
  "cc",
  "jni 0.22.4",
+ "libc",
  "log",
+ "ndk",
  "ndk-context",
+ "ndk-sys",
  "sdl3",
  "tokio",
  "windows-registry",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

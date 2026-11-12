@@ -21,7 +21,7 @@ pub fn provision(app_id: &str, libs: &[(String, Vec<u8>)]) {
     return;
   }
   let app_id = if crate::storage::safe_component(app_id) { app_id } else { "default" };
-  let dir = match alloy::sdl3::filesystem::get_pref_path("SolidRT", app_id) {
+  let dir = match ore::folders::pref_dir("SolidRT", app_id) {
     Ok(dir) => dir.join("cache").join("gl"),
     Err(e) => {
       log::warn!("[sol] no writable pref path for GL libraries: {e}");

@@ -55,10 +55,10 @@ pub fn rss() -> u64 {
 }
 
 /// The current user's home directory, or `None` when the environment does not
-/// name one (HOME on unix, USERPROFILE on Windows).
+/// name one; delegates to `ore::folders::home_dir` (HOME on unix, USERPROFILE
+/// on Windows).
 pub fn home_dir() -> Option<String> {
-  let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-  std::env::var(var).ok().filter(|v| !v.is_empty())
+  ore::folders::home_dir()
 }
 
 /// The path of the running executable, or `None` when the OS cannot name it

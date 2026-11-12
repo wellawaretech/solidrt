@@ -8,7 +8,7 @@
 //! layer; forge calls ore where a capability touches the OS. The OS code
 //! forge still holds (AMediaCodec in `video`, the content providers in
 //! `fs`, the terminal in `tty`, reaching the OS directly, on Android through
-//! the JavaVM and activity alloy publishes in ndk-context at startup) moves
+//! the JavaVM and activity ore publishes in ndk-context at startup) moves
 //! to ore when a feature touches it; new OS code does not land here. See
 //! CLAUDE.md, Projects, and okf/design/platform-layering.md. Code here
 //! names no `rquickjs` / `'js` types; a pure-Rust host could use it

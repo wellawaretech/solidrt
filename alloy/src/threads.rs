@@ -49,8 +49,8 @@ pub(crate) fn run_context(
   // created on. Everything GL arrives over the command channel (raster.rs).
   let spawn_raster = std::thread::Builder::new().name("sol-raster".into()).spawn(move || {
     // Display priority so background processes cannot preempt a frame
-    // mid-flight; see sdl_utils::frame_thread_priority.
-    crate::sdl_utils::frame_thread_priority(true);
+    // mid-flight; see ore::threads::raise.
+    ore::threads::raise(ore::threads::Tier::Deadline);
     assert!(binding.bind(), "GL make-current failed on raster thread: {}", binding.error());
     // The swap interval belongs to the current-context binding, so it must be
     // set on this thread, not where the context was created. Blocking this
@@ -85,7 +85,7 @@ pub(crate) fn run_context(
   let spawn_ui = std::thread::Builder::new().name("sol-ui".into()).stack_size(UI_THREAD_STACK_SIZE).spawn(move || {
     // Same display-priority rationale as the raster thread, one tier lower
     // (the raster thread owns the present deadline).
-    crate::sdl_utils::frame_thread_priority(false);
+    ore::threads::raise(ore::threads::Tier::Interactive);
     closure(Arc::new(Context::new(raster_tx, stats, context_wake)));
     // The embedder's producer returned: the run loop winds the process
     // down once it notices, so say so here, where the cause lives.

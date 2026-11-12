@@ -92,6 +92,9 @@ wasm-native = ["wasm", "dep:wasmtime"]
 
 [dependencies]
 log = { workspace = true }
+# The OS layer: forge calls it where a capability touches the OS, process
+# facts first (forge::process::home_dir).
+ore = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }
 # The HTTP stack behind `http`: the client with TLS, the server, bodies.
 # `http2` is crate-wide: the media source clients (src/source.rs) offer h2
@@ -206,10 +209,10 @@ ndk = { version = "=0.9.0", default-features = false, features = ["media", "api-
 ndk-sys = { version = "=0.6.0", optional = true }
 # forge::fs's content providers (src/fs/content.rs): the ContentResolver
 # behind a `content://` URI a file dialog picked, reached over JNI on the
-# process-wide JavaVM and activity alloy publishes in ndk-context. The same
-# pins as alloy's, so the unified build compiles no extra crate.
+# process-wide JavaVM and activity, through ore's JNI way into the activity
+# (ore::android). The same pin as ore's and alloy's, so the unified build
+# compiles no extra crate.
 jni = "=0.22.4"
-ndk-context = "=0.1.1"
 
 # The native wasm engine behind `wasm-native`, on the targets Cranelift has
 # a backend for and that allow runtime codegen; build.rs mirrors this

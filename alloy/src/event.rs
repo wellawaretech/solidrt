@@ -4,6 +4,11 @@ use sdl3::keyboard::Scancode;
 
 use crate::sdl_utils;
 
+// The power and theme facts AlloyEvent carries, ore's types re-exported as
+// part of its contract, so a consumer of the events names alloy, not ore.
+pub use ore::power::{PowerInfo, PowerState};
+pub use ore::theme::SystemTheme;
+
 pub enum AlloyCommand {
   EmitInitEvents,
   // Register the demand gate's frame-request latch (rendertree
@@ -538,7 +543,7 @@ pub enum AlloyEvent {
     text: String,
   },
   PowerStatus {
-    info: sdl_utils::PowerInfo,
+    info: PowerInfo,
   },
   // Emitted when the on-screen keyboard visibility or size changes. SDL does
   // not provide an event for this, so it is detected by polling
@@ -565,7 +570,7 @@ pub enum AlloyEvent {
   // OS-level dark/light preference. Emitted at init and whenever the OS theme
   // changes; Unknown on platforms that do not report one.
   SystemTheme {
-    theme: sdl_utils::SystemTheme,
+    theme: SystemTheme,
   },
   // Connected input device classes. Presence, not traffic: a connected mouse
   // that never moves still reports true. Emitted at init and on keyboard/mouse
@@ -609,7 +614,7 @@ pub enum AlloyEvent {
 }
 
 pub(crate) fn current_system_theme_event() -> AlloyEvent {
-  AlloyEvent::SystemTheme { theme: sdl_utils::system_theme() }
+  AlloyEvent::SystemTheme { theme: ore::theme::system_theme() }
 }
 
 pub(crate) fn current_input_devices_event() -> AlloyEvent {
@@ -617,7 +622,7 @@ pub(crate) fn current_input_devices_event() -> AlloyEvent {
   // drivers claiming pointer sources), so the fact is gated on the
   // platform's own touchscreen feature declaration.
   #[cfg(target_os = "android")]
-  let touch = !sdl3::touch::num_touch_devices().is_empty() && sdl_utils::has_touchscreen_feature();
+  let touch = !sdl3::touch::num_touch_devices().is_empty() && ore::android::has_touchscreen_feature();
   #[cfg(not(target_os = "android"))]
   let touch = !sdl3::touch::num_touch_devices().is_empty();
   AlloyEvent::InputDevices {

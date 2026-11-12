@@ -708,6 +708,16 @@ Shaped, not started.
   frame while the app keeps presenting partial frames, so on screen it reads
   as a logic bug (entities drawn after the throwing line vanish) and the only
   trace is a log line the reader has to think to look for.
+- **[Move the SDL pump, the window and the GL surface into ore](backlog/ore-pump-and-window.md)** [2026-11-12]
+  The biggest piece of okf/design/platform-layering.md still in alloy - SDL
+  init and hints, the event pump and its translation, the Android touch side
+  channel, the lifecycle watch, gamepads, the window and its commands,
+  cursors, text input, the GL window and context with its loss recovery, the
+  Android vsync and view glue - moves behind one ore `Platform` (a
+  plain-function pump, a waker, a lifecycle hook, a window, a vsync source, a
+  GL surface) so alloy keeps only the frame loop, the pacing facts and the
+  stepped loop and names no SDL type for the window; audio, camera and
+  microphone devices stay for their own move.
 - **[Coalesce the per-event syncs of writes made outside a frame](backlog/outside-frame-sync-coalescing.md)** [2026-10-06]
   A pointer move handler that moves a sprite or a mesh flushes its layer or
   scene once per dispatched move, because every event is its own JS entry with
@@ -2546,6 +2556,17 @@ Finished, kept for the reasoning.
   Two gaps the third-dimension demo hand-rolls around createOrbitCamera - an
   eased wheel zoom (Three's enableDamping) and a distance-dependent elevation
   floor (a clampPose hook beside the pan-only clampTarget).
+- **[User folders, thread placement, the Android glue, power and the theme moved into ore](done/ore-first-moves.md)** [2026-11-12]
+  Landed 2026-11-12 - the pref path and home dir (`ore::folders`), power
+  (`ore::power`), the system theme (`ore::theme`, the first resident of ore's
+  new `window` feature), thread placement (`ore::threads`, named by what the
+  OS gives - `Tier::Deadline`, `Tier::Interactive`, a burst worker), the
+  Android JNI glue (`ore::android`, with a publish of ndk-context that runs
+  once and that every activity call makes itself) and the permission request,
+  one call on every platform (`ore::permission`) left alloy, lattice and
+  forge; alloy and forge gained their first edge to ore, alloy lost
+  windows-sys and ndk-context, forge lost ndk-context, and lattice no longer
+  calls SDL for its storage roots.
 - **[ore landing zone - the OS layer crate, the link facility first](done/ore-landing-zone.md)** [2026-11-04]
   "Start the platform-layering design (okf/design/platform-layering.md):
   create the `ore` crate with the main-thread bridge and its first facilities

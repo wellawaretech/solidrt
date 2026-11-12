@@ -3,15 +3,26 @@ name = "ore"
 version = "0.0.0"
 edition = "2021"
 
+[features]
+# The window part of ore: what needs SDL's video subsystem (the system
+# theme). Enabled through alloy; headless flux leaves it out.
+window = []
+
 # SDL, built from source as alloy builds it: per target, the same pin and
 # features, so the two crates unify on one SDL in a GUI build.
 [target.'cfg(target_os = "android")'.dependencies]
 sdl3 = { version = "=0.20.0", features = ["build-from-source"] }
-# The activity's helpers (src/android.rs: the share sheet), over JNI on the
-# process-wide JavaVM and activity alloy publishes in ndk-context; alloy's
-# and forge's pins, so the unified build compiles no extra crate.
+# The activity's helpers (src/android.rs: the share sheet, the touchscreen
+# feature, the packed asset lookup), over JNI on the process-wide JavaVM and
+# activity that src/android.rs publishes in ndk-context; alloy's and
+# forge's pins, so the unified build compiles no extra crate.
 jni = "=0.22.4"
 ndk-context = "=0.1.1"
+# The APK's AAssetManager for the packed asset lookup (src/android.rs): ndk
+# the safe asset wrapper, ndk-sys the raw AAssetManager_fromJava. alloy's
+# pins.
+ndk = { version = "=0.9.0", default-features = false }
+ndk-sys = "=0.6.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
@@ -34,6 +45,17 @@ tokio = { workspace = true, features = ["io-util"] }
 # Windows DNS config).
 [target.'cfg(windows)'.dependencies]
 windows-registry = "=0.6.1"
+# GetCurrentThread/SetThreadPriority for the frame tiers (src/threads.rs),
+# the Windows half of what libc covers on unix. Already in the graph via
+# tokio/rustix/socket2, and socket2 already enables this feature, so the
+# unified build compiles no extra crate.
+windows-sys = { version = "=0.61.2", features = ["Win32_System_Threading"] }
+
+# setpriority/gettid, sched_setattr and sched_setaffinity (Android/Linux)
+# and QoS classes (macOS) for thread placement (src/threads.rs); alloy's
+# and forge's pin.
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.191"
 
 [build-dependencies]
 # Locates the target C compiler so the macOS build can link

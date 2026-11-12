@@ -74,7 +74,8 @@ pub use dialog::{
 };
 pub use event::{
   AlloyCommand, AlloyEvent, Arrival, Cursor, CursorFrame, CursorImage, CursorShape, EventSender, GamepadState,
-  Modifiers, Orientation, PointerType, SuspendHold, TextCapitalization, TextInputOptions, TextInputType,
+  Modifiers, Orientation, PointerType, PowerInfo, PowerState, SuspendHold, SystemTheme, TextCapitalization,
+  TextInputOptions, TextInputType,
 };
 pub use gamepad::{synthetic_axis_name, synthetic_button_name, GamepadCommand, Gamepads};
 pub use gl::TapRect;

@@ -38,7 +38,7 @@ pub(crate) fn take() -> Option<i32> {
 /// reached the surface.
 pub(crate) fn answer(generation: i32) {
   #[cfg(target_os = "android")]
-  if let Err(e) = crate::sdl_utils::with_android_activity("redraw answer", |env, activity| {
+  if let Err(e) = ore::android::with_activity("redraw answer", |env, activity| {
     let class = env.get_object_class(activity)?;
     env.call_static_method(
       &class,

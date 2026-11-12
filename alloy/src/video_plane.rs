@@ -176,5 +176,5 @@ impl Drop for VideoPlane {
 fn with_activity<T>(
   f: impl FnOnce(&mut jni::Env<'_>, &jni::objects::JObject<'_>) -> Result<T, jni::errors::Error>,
 ) -> Result<T, String> {
-  crate::sdl_utils::with_android_activity("video plane", f)
+  ore::android::with_activity("video plane", f)
 }

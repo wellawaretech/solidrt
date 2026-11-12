@@ -61,7 +61,7 @@ SDL is the OS abstraction library, and `ore` is the one crate that names it for 
 
 # Projects
 ## Rust
-- `ore` the OS layer, the platform boundary: every OS facility, one contract each (today the main-thread bridge, opening a link, the locale, the share sheet and the clipboard). It wraps SDL where SDL reaches and our own native code (JNI, Win32, Objective-C, D-Bus) where it stops, and depends on nothing of ours. Read okf/design/platform-layering.md before placing any platform or OS feature
+- `ore` the OS layer, the platform boundary: every OS facility, one contract each (today the main-thread bridge, opening a link, the locale, the share sheet, the clipboard, the user folders, power, thread placement, the Android JNI glue and, behind its `window` feature, the system theme). It wraps SDL where SDL reaches and our own native code (JNI, Win32, Objective-C, D-Bus) where it stops, and depends on nothing of ours. Read okf/design/platform-layering.md before placing any platform or OS feature
 - `alloy` the window's scene and its rendering: the renderer and raster thread, GL (glow) and Impeller, the rendertree (layout, hit testing, compositing), the spatial core and frame timing (`FrameRelease`, cadence, refresh counting, liveness). alloy is facts-based: it reports facts and carries out what lattice chooses; policy is lattice's. It still holds the SDL window, the event pump and the device subsystems (audio device, camera, file dialogs) and the Android glue; they move to ore as features touch them
 - `forge` portable capabilities, the same code on every platform (HTTP, fs, sqlite, subprocess, p2p, decoders, ...): it calls ore where a capability touches the OS, and names no scripting-engine types. Its existing OS code (content providers, the AMediaCodec decoder's JNI side, the tty) moves to ore as features touch it
 - `flux` embeds a JavaScript runtime built on QuickJS; its plugins marshal the forge cores, the ore facilities and the alloy GUI
@@ -84,8 +84,9 @@ lattice. A feature with two halves (a dialog shows in alloy, the picked
 document reads in forge) puts each half where its question says, and the
 halves meet on a plain value (a location string, a NativeWindow, decoded
 PCM), never on a trait one crate exposes for another to implement behind a
-global. On Android, alloy publishes the JavaVM and the activity once in
-ndk-context at startup; forge and ore read them there.
+global. On Android, ore publishes the JavaVM and the activity once in
+ndk-context (`ore::android::init_context`, which alloy calls at startup);
+forge and ore read them there.
 
 ## JavaScript
 - `packages/core` SolidRT core, linking SolidJS and Lattice

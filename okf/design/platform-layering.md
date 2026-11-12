@@ -97,7 +97,7 @@ lattice reaches ore for host concerns only, never for features:
   to the engine as a plain value (`OwnScheme`), which the app-facing
   registration (`registerProtocolHandler` in `flux:link`) reads;
 - storage roots: the per-app user folders (`storage.rs` and `gl_libs.rs`
-  call `get_pref_path` today).
+  call `ore::folders::pref_dir`).
 
 App-facing facilities (opening a link, locale, notifications, ...) never
 pass through lattice: they reach JS through `ore_plugins/` in flux. Routing
@@ -293,19 +293,20 @@ wants panning sets it directly with `setPan`.
 OS integration is spread over three crates:
 
 - **alloy**: the SDL pump and window (above), the audio device and the
-  mixer, the microphone, the camera, power info, the thread helpers
-  (`thread_nice`, `performance_cores`, `pin_thread_to`; libc and Win32, no
-  SDL), the Android JNI glue (`with_android_activity`, `java_strings`,
-  `init_android_context`, `packed_asset_location`), `barcode.rs` (rxing,
-  portable: forge), gamepads, dialogs. The clipboard moved to ore
-  (okf/done/clipboard-image.md).
+  mixer, the microphone, the camera, the power poll and the theme event
+  (the queries are ore's), the activity calls of the dialogs, the video
+  plane and the redraw answer (through `ore::android::with_activity`),
+  `barcode.rs` (rxing, portable: forge), gamepads, dialogs. The clipboard
+  moved to ore (okf/done/clipboard-image.md); power, the theme, thread
+  placement and the Android JNI glue did too (okf/done/ore-first-moves.md).
 - **forge**: content providers, process facts, subprocess, tty, the
-  AMediaCodec decoder's JNI side, `process::home_dir` (a slice of
-  `SDL_GetUserFolder` rebuilt from `HOME`/`USERPROFILE`), the WAV decoder
-  in place of `SDL_LoadWAV`.
-- **lattice**: the pref path for the storage roots (`storage.rs`) and the
-  GL library cache (`gl_libs.rs`), both calling
-  `sdl3::filesystem::get_pref_path` directly.
+  AMediaCodec decoder's JNI side, the WAV decoder in place of
+  `SDL_LoadWAV`. `process::home_dir` delegates to `ore::folders::home_dir`
+  (still a slice of `SDL_GetUserFolder` rebuilt from
+  `HOME`/`USERPROFILE`).
+- **lattice**: nothing of the storage roots: the pref path is
+  `ore::folders::pref_dir`. One SDL hint for the GL library load on macOS
+  (`gl_libs.rs`) stays until the window part moves.
 
 A headless `flux` script has no per-app data directory, no locale, no
 power info and cannot open a link.

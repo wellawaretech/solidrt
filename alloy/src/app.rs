@@ -90,10 +90,11 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   }
 
   let sdl_context = sdl3::init().expect("Failed to initialize SDL3");
-  // On Android, hand SDL's JNI env + activity to ndk-context so JNI-using deps
-  // (iroh's network monitoring via flux:p2p) can reach the Android context.
+  // On Android, publish the JavaVM and the activity in ndk-context so
+  // JNI-using deps (iroh's network monitoring via flux:p2p) can reach the
+  // Android context. A no-op when the host already did.
   #[cfg(target_os = "android")]
-  crate::sdl_utils::init_android_context();
+  ore::android::init_context();
 
   // The headless mode wants no display at all: SDL's offscreen video driver
   // backs the window with an EGL pbuffer, so `sol render` and `sol test` run
@@ -354,7 +355,7 @@ impl PlatformWatch {
     }
     if self.last_power_check.elapsed() >= POWER_CHECK_PERIOD {
       self.last_power_check = Instant::now();
-      events.push(AlloyEvent::PowerStatus { info: crate::sdl_utils::get_power_info() });
+      events.push(AlloyEvent::PowerStatus { info: ore::power::info() });
     }
     if self.last_refresh_check.elapsed() >= REFRESH_CHECK_PERIOD {
       self.last_refresh_check = Instant::now();

@@ -1,5 +1,4 @@
-use alloy::sdl_utils::{PowerState, SystemTheme};
-use alloy::{AlloyEvent, Modifiers, Orientation};
+use alloy::{AlloyEvent, Modifiers, Orientation, PowerState, SystemTheme};
 use rquickjs::{Array, Function, Null, Object};
 
 use crate::{emit_event, emit_sticky, has_listeners, ExecHandle};
