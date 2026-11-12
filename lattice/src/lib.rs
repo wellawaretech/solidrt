@@ -169,7 +169,7 @@ impl ExitPolicy {
 const QUIT_HOOK_DEADLINE: std::time::Duration = std::time::Duration::from_millis(700);
 #[cfg(not(target_os = "android"))]
 const QUIT_HOOK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
-// Suspend: bounded by what the suspend hold buys (see alloy::SuspendHold).
+// Suspend: bounded by what the suspend hold buys (see ore::lifecycle::SuspendHold).
 // iOS grants a background task about 30 s; Android keeps a backgrounded
 // process running anyway. A finishing Android activity gets onDestroy's
 // Quit within this window, and the quit hook waits for the suspend work
@@ -990,7 +990,7 @@ fn ui_thread(
               input_state_events.set_pointer_pos((*pointer_type, *pointer_id), *x, *y);
               input_state_events.set_modifiers(*modifiers);
               // Touch pointers end at release or cancel; mouse pointers persist.
-              if *pointer_type == alloy::PointerType::Touch {
+              if *pointer_type == ore::input::PointerType::Touch {
                 input_state_events.remove_pointer((*pointer_type, *pointer_id));
               }
             }

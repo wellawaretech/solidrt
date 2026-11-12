@@ -4,9 +4,10 @@
 // tree and preloaded from there before SDL initializes. On Windows SDL's later
 // LoadLibrary-by-name resolves to the already-loaded modules; dyld does not
 // match a bare leaf name against an image loaded from another path, so on
-// macOS SDL is additionally pointed at the extracted files through its
-// library-path hints. Only Windows and macOS ship GL libraries (ANGLE) with
-// the runner; elsewhere this module is a no-op and the CLI embeds nothing.
+// macOS the window's GL loader is additionally pointed at the extracted files
+// by full path (ore::gl::set_library_path). Only Windows and macOS ship GL
+// libraries (ANGLE) with the runner; elsewhere this module is a no-op and the
+// CLI embeds nothing.
 //
 // Everything here fails soft: on any error the libraries simply are not
 // preloaded, window creation fails as it would have anyway, and alloy's error
@@ -58,20 +59,20 @@ pub fn provision(app_id: &str, libs: &[(String, Vec<u8>)]) {
       }
     }
     #[cfg(target_os = "macos")]
-    if let Some(hint) = sdl_library_hint(name) {
-      alloy::sdl3::hint::set(hint, &path.to_string_lossy());
+    if let Some(library) = gl_library(name) {
+      ore::gl::set_library_path(library, &path);
     }
   }
 }
 
-/// The SDL hint that names the full path of a GL library, so SDL loads exactly
-/// the extracted file instead of dlopen-ing a bare name (SDL_HINT_EGL_LIBRARY /
-/// SDL_HINT_OPENGL_LIBRARY).
+/// The GL library an extracted file is, by its file name, so the window
+/// loads exactly that file by full path instead of dlopen-ing a bare name.
+/// None for a file the window does not load by path.
 #[cfg(target_os = "macos")]
-fn sdl_library_hint(name: &str) -> Option<&'static str> {
+fn gl_library(name: &str) -> Option<ore::gl::GlLibrary> {
   match name {
-    "libEGL.dylib" => Some("SDL_EGL_LIBRARY"),
-    "libGLESv2.dylib" => Some("SDL_OPENGL_LIBRARY"),
+    "libEGL.dylib" => Some(ore::gl::GlLibrary::Egl),
+    "libGLESv2.dylib" => Some(ore::gl::GlLibrary::Gles),
     _ => None,
   }
 }

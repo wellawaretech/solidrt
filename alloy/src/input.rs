@@ -1,5 +1,5 @@
-use crate::event::Modifiers;
 use crate::rendertree::PointerKey;
+use ore::input::Modifiers;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 

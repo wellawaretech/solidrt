@@ -13,7 +13,8 @@ use alloy::rendertree::text::{prepare_units, Fallback, PreparedColumns, Prepared
 use alloy::rendertree::{
   AnimValue, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, Rect, RenderTree, Text, Window,
 };
-use alloy::{AlloyCommand, CursorFrame, CursorImage};
+use alloy::AlloyCommand;
+use ore::cursor::{CursorFrame, CursorImage};
 
 thread_local! {
   // setProperty (FFI prop write) calls since the last frame. Bumped in the
@@ -546,26 +547,26 @@ fn render(ctx: Ctx<'_>) {
 }
 
 fn set_text_input_active(ctx: Ctx<'_>, active: bool, hints: OptArg<Object<'_>>) {
-  let mut options = alloy::TextInputOptions::default();
+  let mut options = ore::text_input::TextInputOptions::default();
   if let Some(h) = hints.0 {
     if let Ok(v) = h.get::<_, String>("type") {
       options.input_type = match v.as_str() {
-        "text" => Some(alloy::TextInputType::Text),
-        "name" => Some(alloy::TextInputType::Name),
-        "email" => Some(alloy::TextInputType::Email),
-        "username" => Some(alloy::TextInputType::Username),
-        "password" => Some(alloy::TextInputType::PasswordHidden),
-        "number" => Some(alloy::TextInputType::Number),
-        "pin" => Some(alloy::TextInputType::NumberPasswordHidden),
+        "text" => Some(ore::text_input::TextInputType::Text),
+        "name" => Some(ore::text_input::TextInputType::Name),
+        "email" => Some(ore::text_input::TextInputType::Email),
+        "username" => Some(ore::text_input::TextInputType::Username),
+        "password" => Some(ore::text_input::TextInputType::PasswordHidden),
+        "number" => Some(ore::text_input::TextInputType::Number),
+        "pin" => Some(ore::text_input::TextInputType::NumberPasswordHidden),
         _ => None,
       };
     }
     if let Ok(v) = h.get::<_, String>("capitalize") {
       options.capitalize = match v.as_str() {
-        "none" => Some(alloy::TextCapitalization::None),
-        "sentences" => Some(alloy::TextCapitalization::Sentences),
-        "words" => Some(alloy::TextCapitalization::Words),
-        "letters" => Some(alloy::TextCapitalization::Letters),
+        "none" => Some(ore::text_input::TextCapitalization::None),
+        "sentences" => Some(ore::text_input::TextCapitalization::Sentences),
+        "words" => Some(ore::text_input::TextCapitalization::Words),
+        "letters" => Some(ore::text_input::TextCapitalization::Letters),
         _ => None,
       };
     }

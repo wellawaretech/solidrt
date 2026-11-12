@@ -1,5 +1,6 @@
 use crate::rendertree::*;
-use crate::{Cursor, CursorShape, Modifiers, PointerType};
+use ore::cursor::{Cursor, CursorShape};
+use ore::input::{Modifiers, PointerType};
 
 // Scene for every test: root 1 (200x200) with child 2 at (10,20) 100x100 and
 // child 3 at (120,20) 60x60. (50,50) hits [1,2]; (150,50) hits [1,3].

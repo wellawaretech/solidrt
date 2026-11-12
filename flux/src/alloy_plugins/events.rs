@@ -1,4 +1,8 @@
-use alloy::{AlloyEvent, Modifiers, Orientation, PowerState, SystemTheme};
+use alloy::AlloyEvent;
+use ore::display::Orientation;
+use ore::input::Modifiers;
+use ore::power::PowerState;
+use ore::theme::SystemTheme;
 use rquickjs::{Array, Function, Null, Object};
 
 use crate::{emit_event, emit_sticky, has_listeners, ExecHandle};

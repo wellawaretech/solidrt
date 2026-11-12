@@ -4,10 +4,14 @@ use sdl3::keyboard::Scancode;
 
 use crate::sdl_utils;
 
-// The power and theme facts AlloyEvent carries, ore's types re-exported as
-// part of its contract, so a consumer of the events names alloy, not ore.
-pub use ore::power::{PowerInfo, PowerState};
-pub use ore::theme::SystemTheme;
+use ore::cursor::{Cursor, CursorFrame};
+use ore::display::Orientation;
+use ore::gamepad::GamepadState;
+use ore::input::{Modifiers, PointerType};
+use ore::lifecycle::SuspendHold;
+use ore::power::PowerInfo;
+use ore::text_input::TextInputOptions;
+use ore::theme::SystemTheme;
 
 pub enum AlloyCommand {
   EmitInitEvents,
@@ -63,7 +67,7 @@ pub enum AlloyCommand {
   // state, disconnect. Applied by the pad owner on the loop's thread, which
   // is where SDL's pads live, so a synthetic pad takes a slot and reaches
   // the snapshot exactly as a physical one does (see gamepad::Gamepads).
-  Gamepad(crate::gamepad::GamepadCommand),
+  Gamepad(ore::gamepad::GamepadCommand),
   // Relative mouse mode (pointer lock): SDL hides the cursor, confines it
   // to the window, and mouse motion reports hardware deltas while absolute
   // positions freeze. The loop answers with AlloyEvent::PointerLock carrying
@@ -76,7 +80,7 @@ pub enum AlloyCommand {
   // empty answer. The stepped loop has no surface to show one on and
   // answers unavailable at once. Whether a dialog shows at all is the
   // session's call (dialog::Dialogs): a test's answer takes its place.
-  ShowDialog { request: crate::dialog::DialogRequest, respond: crate::dialog::DialogResponder },
+  ShowDialog { request: ore::dialog::DialogRequest, respond: ore::dialog::DialogResponder },
   // Leave the app at the OS level without ending it: SDL's minimize, which
   // on Android routes to Activity.moveTaskToBack - what the system itself
   // does for back at the root since Android 12 (the process stays, the
@@ -92,246 +96,28 @@ pub enum AlloyCommand {
   SetHeadlessWindow { width: u32, height: u32, scale: f32 },
 }
 
-// The mouse cursor, in the CSS `cursor` vocabulary through the SolidRT lens:
-// a platform shape (the CSS keywords SDL has a system cursor for), an image
-// the embedder registered (CreateCursor), or hidden (CSS `none`). The
-// rendertree stores one per element, the router resolves the hovered path's
-// innermost (rendertree/router.rs), and the loop applies it via SDL. SDL's
-// cursor type never leaves this crate (the same boundary rule as keys, see
-// `crate::keymap`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Cursor {
-  System(CursorShape),
-  Custom(u64),
-  Hidden,
-}
-
-impl Default for Cursor {
-  fn default() -> Self {
-    Cursor::System(CursorShape::Default)
+// The display orientation SDL reports, translated at the loop like keys and
+// cursors.
+fn orientation_from_sdl(o: sdl3::video::Orientation) -> Orientation {
+  use sdl3::video::Orientation as Sdl;
+  match o {
+    Sdl::Landscape => Orientation::Landscape,
+    Sdl::LandscapeFlipped => Orientation::LandscapeFlipped,
+    Sdl::Portrait => Orientation::Portrait,
+    Sdl::PortraitFlipped => Orientation::PortraitFlipped,
+    Sdl::Unknown => Orientation::Unknown,
   }
 }
 
-// The platform-provided cursor shapes, named as CSS names them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum CursorShape {
-  Default,
-  Text,
-  Wait,
-  Crosshair,
-  Progress,
-  NwseResize,
-  NeswResize,
-  EwResize,
-  NsResize,
-  Move,
-  NotAllowed,
-  Pointer,
-  NwResize,
-  NResize,
-  NeResize,
-  EResize,
-  SeResize,
-  SResize,
-  SwResize,
-  WResize,
-}
-
-impl CursorShape {
-  pub(crate) fn to_sdl(self) -> sdl3::sys::mouse::SDL_SystemCursor {
-    use sdl3::sys::mouse::SDL_SystemCursor as Sdl;
-    match self {
-      CursorShape::Default => Sdl::DEFAULT,
-      CursorShape::Text => Sdl::TEXT,
-      CursorShape::Wait => Sdl::WAIT,
-      CursorShape::Crosshair => Sdl::CROSSHAIR,
-      CursorShape::Progress => Sdl::PROGRESS,
-      CursorShape::NwseResize => Sdl::NWSE_RESIZE,
-      CursorShape::NeswResize => Sdl::NESW_RESIZE,
-      CursorShape::EwResize => Sdl::EW_RESIZE,
-      CursorShape::NsResize => Sdl::NS_RESIZE,
-      CursorShape::Move => Sdl::MOVE,
-      CursorShape::NotAllowed => Sdl::NOT_ALLOWED,
-      CursorShape::Pointer => Sdl::POINTER,
-      CursorShape::NwResize => Sdl::NW_RESIZE,
-      CursorShape::NResize => Sdl::N_RESIZE,
-      CursorShape::NeResize => Sdl::NE_RESIZE,
-      CursorShape::EResize => Sdl::E_RESIZE,
-      CursorShape::SeResize => Sdl::SE_RESIZE,
-      CursorShape::SResize => Sdl::S_RESIZE,
-      CursorShape::SwResize => Sdl::SW_RESIZE,
-      CursorShape::WResize => Sdl::W_RESIZE,
-    }
-  }
-}
-
-// One image of a cursor frame: straight-alpha RGBA8, tightly packed. The
-// first image of a frame is the 1x representation; any others are HiDPI
-// alternates the platform picks per display scale by their size ratio to the
-// first (a 64x64 alternate of a 32x32 base serves 2x).
-#[derive(Clone, Debug)]
-pub struct CursorImage {
-  pub width: u32,
-  pub height: u32,
-  pub rgba: Vec<u8>,
-}
-
-// One frame of a cursor: its images and how long it shows, in milliseconds
-// (0 holds the frame, which ends a one-shot animation on it; a static cursor
-// is one frame). Every frame of a cursor has the same 1x size.
-#[derive(Clone, Debug)]
-pub struct CursorFrame {
-  pub images: Vec<CursorImage>,
-  pub duration_ms: u32,
-}
-
-// Orientation of the display the window is on (DisplayOrientation).
-// Translated from SDL at the loop, like keys and cursors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Orientation {
-  Unknown,
-  Landscape,
-  LandscapeFlipped,
-  Portrait,
-  PortraitFlipped,
-}
-
-impl Orientation {
-  fn from_sdl(o: sdl3::video::Orientation) -> Self {
-    use sdl3::video::Orientation as Sdl;
-    match o {
-      Sdl::Landscape => Orientation::Landscape,
-      Sdl::LandscapeFlipped => Orientation::LandscapeFlipped,
-      Sdl::Portrait => Orientation::Portrait,
-      Sdl::PortraitFlipped => Orientation::PortraitFlipped,
-      Sdl::Unknown => Orientation::Unknown,
-    }
-  }
-}
-
-// IME/session configuration for SetTextInputActive(true), mirroring SDL's
-// text-input properties; a None knob keeps SDL's default. Only meaningful
-// when activating - deactivation ignores it.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct TextInputOptions {
-  pub input_type: Option<TextInputType>,
-  pub capitalize: Option<TextCapitalization>,
-  pub autocorrect: Option<bool>,
-  pub multiline: Option<bool>,
-}
-
-// SDL_TextInputType, minus nothing: the OS keyboard's semantic layout and
-// masking for the session.
-#[derive(Clone, Copy, Debug)]
-pub enum TextInputType {
-  Text,
-  Name,
-  Email,
-  Username,
-  PasswordHidden,
-  PasswordVisible,
-  Number,
-  NumberPasswordHidden,
-  NumberPasswordVisible,
-}
-
-// SDL_Capitalization: what the IME auto-capitalizes. SDL's default for plain
-// text is Sentences, which is exactly wrong for identifiers and terminals.
-#[derive(Clone, Copy, Debug)]
-pub enum TextCapitalization {
-  None,
-  Sentences,
-  Words,
-  Letters,
-}
-
-// Pointer kind. Combined with a u64 pointer_id, uniquely identifies an
-// active pointer. Mouse and touch IDs come from disjoint SDL ID spaces,
-// so they share a numeric range only by accident; pointer_type
-// discriminates them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PointerType {
-  Mouse,
-  Touch,
-  Pen,
-}
-
-impl PointerType {
-  pub fn as_str(self) -> &'static str {
-    match self {
-      PointerType::Mouse => "mouse",
-      PointerType::Touch => "touch",
-      PointerType::Pen => "pen",
-    }
-  }
-}
-
-// Keyboard modifier state at the time of an event. `meta` is Cmd on
-// macOS, Win on Windows, Super on Linux. Matches the names browsers
-// expose via KeyboardEvent / PointerEvent (shiftKey, ctrlKey, ...).
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Modifiers {
-  pub shift: bool,
-  pub ctrl: bool,
-  pub alt: bool,
-  pub meta: bool,
-}
-
-impl From<sdl3::keyboard::Mod> for Modifiers {
-  fn from(m: sdl3::keyboard::Mod) -> Self {
-    use sdl3::keyboard::Mod;
-    Self {
-      shift: m.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD),
-      ctrl: m.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD),
-      alt: m.intersects(Mod::LALTMOD | Mod::RALTMOD),
-      meta: m.intersects(Mod::LGUIMOD | Mod::RGUIMOD),
-    }
-  }
-}
-
-// One connected gamepad's current state. `buttons` holds the names of the
-// currently-pressed buttons (SDL3 positional names: "south", "dpadUp", ...);
-// `axes` holds every axis as (name, value) with sticks in -1..1 and triggers
-// in 0..1. `mapped` is false for joysticks without an SDL controller-database
-// entry: those still report, but their names are positional guesses following
-// the W3C standard-mapping button/axis order, not device-verified.
-#[derive(Clone)]
-pub struct GamepadState {
-  pub id: u32,
-  pub name: String,
-  pub buttons: Vec<&'static str>,
-  pub axes: Vec<(&'static str, f32)>,
-  pub mapped: bool,
-}
-
-// Held while the app's suspend handlers run: the platform's permission to
-// keep executing after it has asked the app to background. Taken by the event
-// watch at push time of WILL_ENTER_BACKGROUND (the last moment the platform
-// still listens), carried inside AlloyEvent::Suspend, and released when the
-// last clone drops - the embedder drops it once the handlers finished or
-// their deadline passed. iOS is the platform that needs it: a UIApplication
-// background task assertion begun in the delegate callback keeps every thread
-// running for the system's budget (about 30 s) instead of freezing the
-// process moments after the callback returns; that assertion is this guard's
-// implementation when the iOS port lands. Android does not freeze a
-// backgrounded task's process, so the hold has nothing to do there, and
-// desktop never suspends.
-#[derive(Clone)]
-pub struct SuspendHold {
-  _platform: std::sync::Arc<SuspendHoldInner>,
-}
-
-struct SuspendHoldInner;
-
-impl SuspendHold {
-  pub fn take() -> Self {
-    Self { _platform: std::sync::Arc::new(SuspendHoldInner) }
-  }
-}
-
-impl Drop for SuspendHoldInner {
-  fn drop(&mut self) {
-    // No platform assertion to end yet (see SuspendHold).
+// SDL's modifier bits as the modifier state an event carries: either side's
+// key sets the flag.
+pub(crate) fn modifiers_from_sdl(m: sdl3::keyboard::Mod) -> Modifiers {
+  use sdl3::keyboard::Mod;
+  Modifiers {
+    shift: m.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD),
+    ctrl: m.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD),
+    alt: m.intersects(Mod::LALTMOD | Mod::RALTMOD),
+    meta: m.intersects(Mod::LGUIMOD | Mod::RGUIMOD),
   }
 }
 
@@ -636,7 +422,7 @@ pub(crate) fn current_input_devices_event() -> AlloyEvent {
 pub(crate) fn current_orientation_event(window: &sdl3::video::Window) -> AlloyEvent {
   let orientation = window
     .get_display()
-    .map(|d| Orientation::from_sdl(sdl3::video::Orientation::from_ll(d.get_orientation())))
+    .map(|d| orientation_from_sdl(sdl3::video::Orientation::from_ll(d.get_orientation())))
     .unwrap_or(Orientation::Unknown);
   AlloyEvent::DisplayOrientation { orientation }
 }
@@ -706,7 +492,7 @@ fn is_back_trigger(scancode: Option<Scancode>, keymod: sdl3::keyboard::Mod) -> b
   if scancode == Some(Scancode::AcBack) {
     return true;
   }
-  let m: Modifiers = keymod.into();
+  let m = modifiers_from_sdl(keymod);
   let chord_mod = if cfg!(target_os = "macos") { m.meta } else { m.ctrl };
   chord_mod && m.shift && scancode == Some(Scancode::Backspace)
 }
@@ -741,7 +527,7 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         down: true,
         key: crate::keymap::w3c_key(keycode, scancode, keymod),
         code: crate::keymap::w3c_code(scancode),
-        modifiers: keymod.into(),
+        modifiers: modifiers_from_sdl(keymod),
         repeat,
       })
     }
@@ -756,7 +542,7 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         down: false,
         key: crate::keymap::w3c_key(keycode, scancode, keymod),
         code: crate::keymap::w3c_code(scancode),
-        modifiers: keymod.into(),
+        modifiers: modifiers_from_sdl(keymod),
         repeat,
       })
     }
@@ -802,7 +588,7 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         x: x * k,
         y: y * k,
         rel: Some((xrel * k, yrel * k)),
-        modifiers: sdl_utils::mod_state().into(),
+        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
       })
     }
     SdlEvent::MouseButtonDown { which, mouse_btn, x, y, .. } => {
@@ -814,7 +600,7 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         button,
         x: x * k,
         y: y * k,
-        modifiers: sdl_utils::mod_state().into(),
+        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
       })
     }
     SdlEvent::MouseButtonUp { which, mouse_btn, x, y, .. } => {
@@ -826,7 +612,7 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         button,
         x: x * k,
         y: y * k,
-        modifiers: sdl_utils::mod_state().into(),
+        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
       })
     }
     SdlEvent::MouseWheel { which, x, y, direction, mouse_x, mouse_y, .. } => {
@@ -840,7 +626,7 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         y: mouse_y * k,
         delta_x: sign * x * 100.0,
         delta_y: sign * y * 100.0,
-        modifiers: sdl_utils::mod_state().into(),
+        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
       })
     }
     // SDL touch coordinates are normalized [0, 1]; scale to logical pixels.
@@ -856,7 +642,7 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         button: 0,
         x: x * lw,
         y: y * lh,
-        modifiers: sdl_utils::mod_state().into(),
+        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
       })
     }
     SdlEvent::FingerMotion { finger_id, x, y, .. } => {
@@ -867,7 +653,7 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         x: x * lw,
         y: y * lh,
         rel: None,
-        modifiers: sdl_utils::mod_state().into(),
+        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
       })
     }
     SdlEvent::FingerUp { finger_id, x, y, .. } => {
@@ -878,7 +664,7 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         button: 0,
         x: x * lw,
         y: y * lh,
-        modifiers: sdl_utils::mod_state().into(),
+        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
       })
     }
     SdlEvent::FingerCanceled { finger_id, x, y, .. } => {
@@ -888,7 +674,7 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         pointer_type: PointerType::Touch,
         x: x * lw,
         y: y * lh,
-        modifiers: sdl_utils::mod_state().into(),
+        modifiers: modifiers_from_sdl(sdl_utils::mod_state()),
       })
     }
     SdlEvent::TextInput { text, .. } => Some(AlloyEvent::TextInput { text }),
@@ -955,7 +741,7 @@ pub(crate) fn translate_touch(sample: &crate::touch::TouchSample, window: &sdl3:
   let (lw, lh) = touch_window_logical_size(window);
   let (pointer_id, pointer_type) = (sample.finger_id, PointerType::Touch);
   let (x, y) = (sample.x * lw, sample.y * lh);
-  let modifiers = sdl_utils::mod_state().into();
+  let modifiers = modifiers_from_sdl(sdl_utils::mod_state());
   match sample.kind {
     TouchKind::Down => AlloyEvent::PointerDown { pointer_id, pointer_type, button: 0, x, y, modifiers },
     TouchKind::Move => AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, rel: None, modifiers },

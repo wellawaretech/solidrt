@@ -521,7 +521,7 @@ fn set_paused_impl(ctx: Ctx<'_>, id: u64, paused: bool) {
   }
   entry.paused = paused;
   if let Some(recorder) = &entry.recorder {
-    let now_ns = alloy::sdl_utils::ticks_ns();
+    let now_ns = ore::time::ticks_ns();
     if paused {
       recorder.pause(now_ns);
     } else {

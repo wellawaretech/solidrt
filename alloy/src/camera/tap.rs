@@ -17,7 +17,7 @@ pub struct CameraFrame {
   /// frame.
   pub seq: u64,
   /// SDL's capture timestamp, on the SDL tick timeline
-  /// (`sdl_utils::ticks_epoch` places it as an `Instant`).
+  /// (`ore::time::ticks_epoch` places it as an `Instant`).
   pub timestamp_ns: u64,
   pub width: u32,
   pub height: u32,

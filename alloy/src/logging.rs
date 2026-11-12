@@ -15,7 +15,7 @@ impl log::Log for SdlLogger {
   }
   fn log(&self, record: &log::Record) {
     if self.enabled(record.metadata()) {
-      sdl3::log::log(&format!("{}", record.args()));
+      ore::logging::write(&format!("{}", record.args()));
     }
   }
   fn flush(&self) {}

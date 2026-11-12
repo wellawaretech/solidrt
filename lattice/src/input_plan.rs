@@ -28,7 +28,7 @@ const DRAG_DEFAULT_MS: u64 = 300;
 /// pads live.
 pub(crate) enum Injected {
   Event(alloy::AlloyEvent),
-  Gamepad(alloy::GamepadCommand),
+  Gamepad(ore::gamepad::GamepadCommand),
 }
 
 /// What passes before a step is sent: at least `ms` of time and at least
@@ -71,7 +71,9 @@ pub(crate) struct Step {
 /// sets how many moves a drag has. Everything is validated upfront: any
 /// invalid event rejects the whole sequence before a single event is sent.
 pub(crate) fn plan(events: Option<&serde_json::Value>, frame_ms: f64) -> Result<Vec<Step>, String> {
-  use alloy::{AlloyEvent, GamepadCommand, Modifiers, PointerType};
+  use alloy::AlloyEvent;
+  use ore::gamepad::GamepadCommand;
+  use ore::input::{Modifiers, PointerType};
   let arr = events.and_then(|e| e.as_array()).ok_or("events must be an array")?;
   if arr.is_empty() {
     return Err("events must not be empty".into());
@@ -115,7 +117,7 @@ pub(crate) fn plan(events: Option<&serde_json::Value>, frame_ms: f64) -> Result<
         let make = |down: bool| AlloyEvent::Key {
           down,
           key: key.to_string(),
-          code: alloy::w3c_code_for_key(key),
+          code: ore::input::w3c_code_for_key(key),
           modifiers,
           repeat: false,
         };

@@ -4,7 +4,8 @@
 // JSON. The words are the web pickers' and the harness's (`DialogRequest`
 // and `DialogAnswer` in `@solidrt/test`).
 
-use alloy::{DialogAnswer, DialogKind, DialogRequest, DialogStatus, Picked};
+use alloy::DialogStatus;
+use ore::dialog::{DialogAnswer, DialogKind, DialogRequest, Picked};
 
 /// Parse an answer as the harness and the control API spell it: `{ files:
 /// [path, ...] }` (a string, or `{ path, name }` to name it), `{ directory:

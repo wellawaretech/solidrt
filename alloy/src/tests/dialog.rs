@@ -1,8 +1,7 @@
 use std::sync::mpsc;
 
-use crate::dialog::{
-  name_of_path, sdl_pattern, set_available, DialogError, DialogFilter, DialogKind, DialogRequest, Dialogs, Picked,
-};
+use crate::dialog::{name_of_path, sdl_pattern, set_available, Dialogs};
+use ore::dialog::{DialogError, DialogFilter, DialogKind, DialogRequest, Picked};
 
 #[test]
 fn filter_pattern_joins_extensions_for_sdl() {

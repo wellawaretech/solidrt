@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use super::hit::{locals_along_path, path_diff, DefaultHitTester, EventInterest, HitEntry, HitTester};
 use super::{Point, RenderTree};
-use crate::{Cursor, Modifiers, PointerType};
+use ore::cursor::Cursor;
+use ore::input::{Modifiers, PointerType};
 
 pub type PointerKey = (PointerType, u64);
 

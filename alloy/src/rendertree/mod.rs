@@ -34,7 +34,7 @@ pub use transitions::{
 pub use tree::{Match, NodeMatch, NodeQuery, NodeSnapshot, RenderTree, SlideRemaining};
 
 use crate::renderer::DisplayListBuilder;
-use crate::Cursor;
+use ore::cursor::Cursor;
 use std::cell::{Cell, RefCell};
 use taffy::{AvailableSpace, Position, Style};
 

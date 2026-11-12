@@ -40,7 +40,8 @@ pub fn apply_font_options(node: &mut alloy::rendertree::Text, name: &str, value:
 
 use std::sync::mpsc::Sender;
 
-use alloy::{AlloyCommand, Cursor, CursorShape};
+use alloy::AlloyCommand;
+use ore::cursor::{Cursor, CursorShape};
 use taffy::style::Position;
 
 use crate::alloy_plugins::value::PropValue;

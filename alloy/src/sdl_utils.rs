@@ -48,8 +48,8 @@ pub fn physical_keyboard() -> bool {
 // SDL_StartTextInput, so the typed variant goes through the raw properties
 // API; unset options keep SDL's defaults (notably capitalization defaults to
 // Sentences for plain text).
-pub fn start_text_input_with_options(window: &sdl3::video::Window, opts: &crate::TextInputOptions) {
-  use crate::{TextCapitalization, TextInputType};
+pub fn start_text_input_with_options(window: &sdl3::video::Window, opts: &ore::text_input::TextInputOptions) {
+  use ore::text_input::{TextCapitalization, TextInputType};
   use sdl3::sys::keyboard::*;
   use sdl3::sys::properties::*;
 
@@ -152,10 +152,10 @@ pub fn create_system_cursor(shape: SDL_SystemCursor) -> Result<OwnedCursor, Stri
   owned_cursor(unsafe { SDL_CreateSystemCursor(shape) })
 }
 
-/// A cursor from straight-alpha RGBA8 frames (crate::CursorFrame): one frame
+/// A cursor from straight-alpha RGBA8 frames (ore::cursor::CursorFrame): one frame
 /// is a color cursor, more an animated one. SDL copies every image during
 /// the call; the platform picks a frame's HiDPI alternate by size ratio.
-pub fn create_image_cursor(frames: &[crate::CursorFrame], hot_x: u32, hot_y: u32) -> Result<OwnedCursor, String> {
+pub fn create_image_cursor(frames: &[ore::cursor::CursorFrame], hot_x: u32, hot_y: u32) -> Result<OwnedCursor, String> {
   if frames.is_empty() {
     return Err("cursor has no frames".to_string());
   }
@@ -192,7 +192,7 @@ pub fn create_image_cursor(frames: &[crate::CursorFrame], hot_x: u32, hot_y: u32
 // The frame's 1x surface with its alternates attached. An attachment holds
 // its own reference, so each alternate is released here; the pixels behind
 // every surface stay borrowed from the frame until the base is destroyed.
-fn frame_surface(frame: &crate::CursorFrame) -> Result<*mut SDL_Surface, String> {
+fn frame_surface(frame: &ore::cursor::CursorFrame) -> Result<*mut SDL_Surface, String> {
   let (first, alternates) = frame.images.split_first().ok_or_else(|| "cursor frame has no image".to_string())?;
   let base = rgba_surface(first.width, first.height, &first.rgba)?;
   for image in alternates {
@@ -256,34 +256,6 @@ pub fn window_safe_area(window: &sdl3::video::Window) -> SDL_Rect {
 
 pub fn window_display_scale(window: &sdl3::video::Window) -> f32 {
   unsafe { SDL_GetWindowDisplayScale(window.raw()) }
-}
-
-/// The instant an SDL event timestamp stands for. SDL stamps events in
-/// nanoseconds on its own tick base (the platform's event time where the
-/// backend has one, the receipt in the pump otherwise, never later than
-/// now); `epoch` is that base as an Instant (see `ticks_epoch`).
-pub fn event_instant(epoch: std::time::Instant, timestamp_ns: u64) -> std::time::Instant {
-  // Windows is the exception: its event time is the message tick, which
-  // moves in steps of the system timer, coarser than the receipt. Input is
-  // not batched on a desktop and the pump blocks on the queue, so the
-  // receipt is the better reading there.
-  if cfg!(target_os = "windows") {
-    return std::time::Instant::now();
-  }
-  (epoch + std::time::Duration::from_nanos(timestamp_ns)).min(std::time::Instant::now())
-}
-
-/// Now on SDL's tick timeline, ns since `ticks_epoch`: what SDL stamps
-/// camera frames with, and what a session's open is stamped with.
-pub fn ticks_ns() -> u64 {
-  unsafe { sdl3::sys::timer::SDL_GetTicksNS() }
-}
-
-/// SDL's tick base as an Instant: the instant SDL_GetTicksNS counts from.
-pub fn ticks_epoch() -> std::time::Instant {
-  let now = std::time::Instant::now();
-  let ticks = unsafe { sdl3::sys::timer::SDL_GetTicksNS() };
-  now.checked_sub(std::time::Duration::from_nanos(ticks)).unwrap_or(now)
 }
 
 pub fn mod_state() -> sdl3::keyboard::Mod {

@@ -52,8 +52,10 @@ flux = { workspace = true, default-features = false, features = ["gui", "compile
 # `go` implies). Already in the tree via flux.
 forge = { workspace = true }
 # The OS layer, for the host's own concerns: the single-instance link
-# hand-off and the app's scheme identity it hands the engine.
-ore = { workspace = true }
+# hand-off and the app's scheme identity it hands the engine. The window
+# part for the platform types the renderer host names (cursors, text input,
+# dialogs) and the GL library path (src/gl_libs.rs).
+ore = { workspace = true, features = ["window"] }
 half = "=2.7.1"
 rquickjs = { workspace = true }
 # taffy stays: the properties plugins assign taffy Style directly. The render

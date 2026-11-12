@@ -4,7 +4,8 @@ use sdl3::joystick::{HatState, Joystick, JoystickId};
 // GamepadSubsystem is only exported at the crate root (sdl3::gamepad::* is private)
 use sdl3::{GamepadSubsystem, JoystickSubsystem};
 
-use crate::event::{AlloyEvent, GamepadState};
+use crate::event::AlloyEvent;
+use ore::gamepad::{GamepadCommand, GamepadState};
 
 // Semantic names for the JS-facing snapshot. SDL's own string names are the
 // controller-mapping-format ones ("a", "dpup", ...), which conflate position
@@ -137,27 +138,6 @@ pub fn synthetic_axis_name(name: &str) -> Option<&'static str> {
   AXES.iter().map(|&(_, n)| n).find(|&n| n == name)
 }
 
-/// What the dev tools ask of the pad owner (AlloyCommand::Gamepad).
-/// Names are the static vocabulary above, checked by the sender through
-/// `synthetic_button_name`/`synthetic_axis_name`.
-#[derive(Clone, Debug, PartialEq)]
-pub enum GamepadCommand {
-  /// Seat a synthetic pad: in `slot`, or the lowest free one as SDL's do.
-  Connect {
-    slot: Option<usize>,
-    name: String,
-  },
-  /// Hold this state until the next Set: level, as a physical pad's is.
-  Set {
-    slot: usize,
-    buttons: Vec<&'static str>,
-    axes: Vec<(&'static str, f32)>,
-  },
-  Disconnect {
-    slot: usize,
-  },
-}
-
 // Instance ids for synthetic pads: far above anything SDL hands out, so a
 // synthetic pad never aliases a physical one in slot_of.
 const SYNTHETIC_ID_BASE: u32 = 1 << 30;
@@ -173,7 +153,7 @@ struct SyntheticPad {
 // A connected pad: opened through SDL's gamepad API when the device has a
 // controller-database mapping (semantic button positions are then reliable),
 // or through the raw joystick API otherwise - SDL refuses to guess a layout
-// it doesn't know, but for lua64's purposes a plain 2-button stick is a pad.
+// it doesn't know, but for an app's purposes a plain 2-button stick is a pad.
 //
 // A mapped pad also keeps a raw joystick handle to the same device (SDL
 // refcounts the open): Android's auto-mapping is built from a hasKeys probe

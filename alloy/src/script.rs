@@ -4,7 +4,8 @@
 // transitions; more variants are expected to join `ScriptEvent` as scripting
 // grows beyond the keyboard.
 
-use crate::event::{AlloyEvent, Modifiers};
+use crate::event::AlloyEvent;
+use ore::input::Modifiers;
 
 #[derive(Clone, Debug)]
 pub struct ScriptEvent {
@@ -21,7 +22,7 @@ impl ScriptEvent {
       key: self.key.clone(),
       // Scripts record logical keys only; reconstruct the US-layout position,
       // "Unidentified" where there is no single one.
-      code: crate::keymap::w3c_code_for_key(&self.key),
+      code: ore::input::w3c_code_for_key(&self.key),
       modifiers: Modifiers::default(),
       repeat: false,
     }

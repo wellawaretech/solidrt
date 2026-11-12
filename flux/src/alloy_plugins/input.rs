@@ -2,7 +2,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use alloy::rendertree::{PointerRouter, RoutedKind, RoutedPointer};
-use alloy::{AlloyCommand, Cursor, Modifiers};
+use alloy::AlloyCommand;
+use ore::cursor::Cursor;
+use ore::input::Modifiers;
 use rquickjs::{Array, Ctx, JsLifetime, Object};
 
 use crate::emit_event;

@@ -44,11 +44,11 @@ instead of living in a closure alloy registers.
   `setup_video`; `run` holds the `sdl3::Sdl`, the `Window`, the event pump,
   the event watch, `PlatformWatch`, the gamepads, the window commands and
   `recover_gl`, next to the frame signals that really are alloy's.
-- Alloy names `sdl3` or `sdl_utils` in 20 source files, 3 examples and its
-  manifest. `lattice` and `flux` reach through alloy for SDL
-  (`alloy::sdl3::hint::set` in `lattice/src/gl_libs.rs`,
-  `alloy::sdl_utils::ticks_ns` in `flux/src/alloy_plugins/record.rs`), and
-  `alloy::sdl3` is a public re-export (`alloy/src/lib.rs`).
+- Alloy names `sdl3` or `sdl_utils` in 17 source files, 3 examples and its
+  manifest, and `alloy::sdl3` is a public re-export (`alloy/src/lib.rs`).
+  `lattice` and `flux` no longer reach through alloy for SDL: since step 0
+  `lattice/src/gl_libs.rs` calls `ore::gl::set_library_path` and
+  `flux/src/alloy_plugins/record.rs` calls `ore::time::ticks_ns`.
 - The window and the GL context are one knot: `setup_video` calls
   `gl::configure_opengl` before it builds the window and
   `DisplayContext::new_opengl(&window)` after, `recover_gl` replaces both in
@@ -59,11 +59,13 @@ instead of living in a closure alloy registers.
   `nativeVideoPlaneLost`, `nativeVideoPlaneVsync`, `nativeDialogResult` (on
   the activity) and `nativeTouch`, `nativeRedrawNeeded` (on the surface).
   `nativeShareResult` already forwards to ore.
-- The platform vocabulary (keys and modifiers, pointer types, gamepad
-  commands and names, text input options, cursor frames, dialog requests,
-  `SuspendHold`) is defined in alloy and used from `flux/src/alloy_plugins/`
-  (`events.rs`, `tree.rs`, `dialog.rs`, `video.rs`) and from lattice
-  (`input_plan.rs`, `plugins/test.rs`, `dialog.rs`, `go/connection.rs`).
+- The platform vocabulary (keys and modifiers, pointer types, orientation,
+  gamepad state and commands, text input options, cursors, dialog requests
+  and answers, `SuspendHold`) is ore's since step 0 (`ore::input`,
+  `ore::display`, `ore::gamepad`, `ore::lifecycle`, and under `window`
+  `ore::cursor`, `ore::text_input`, `ore::dialog`), and flux and lattice
+  name it there. The synthetic gamepad button and axis names are still
+  alloy's (`gamepad.rs`).
 
 ## Done looks like
 
@@ -260,7 +262,9 @@ Each step is a commit that builds and passes the checks below.
 0. **Vocabulary and leaves.** The platform types, the time module, the log
    sink, a hint call for `gl_libs.rs`. flux and lattice import `ore::`;
    the two outside edges into `alloy::sdl3` and `alloy::sdl_utils` are gone.
-   No behavior changes.
+   No behavior changes. Done 2026-11-12. The synthetic button and axis
+   names stay in alloy until step 2, because they derive from the SDL
+   button and axis tables.
 1. **Init, window, GL surface, recovery.** `ore::Platform` and
    `open_window`, the headless chain, `GlSurface` with the swap pacer,
    `recreate_gl`, cursors, text input, keyboard and mouse presence. lattice

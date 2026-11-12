@@ -68,16 +68,9 @@ pub use cadence::CadenceHold;
 pub use context::{CaptureDone, CaptureInfo, Context, Overlay, WindowTap, YuvFrameSink};
 #[cfg(target_os = "android")]
 pub use dialog::android_result_raw;
-pub use dialog::{
-  dialogs_available, Consumed, DialogAnswer, DialogError, DialogFilter, DialogKind, DialogRequest, DialogResponder,
-  DialogStatus, Dialogs, Picked,
-};
-pub use event::{
-  AlloyCommand, AlloyEvent, Arrival, Cursor, CursorFrame, CursorImage, CursorShape, EventSender, GamepadState,
-  Modifiers, Orientation, PointerType, PowerInfo, PowerState, SuspendHold, SystemTheme, TextCapitalization,
-  TextInputOptions, TextInputType,
-};
-pub use gamepad::{synthetic_axis_name, synthetic_button_name, GamepadCommand, Gamepads};
+pub use dialog::{dialogs_available, Consumed, DialogStatus, Dialogs};
+pub use event::{AlloyCommand, AlloyEvent, Arrival, EventSender};
+pub use gamepad::{synthetic_axis_name, synthetic_button_name, Gamepads};
 pub use gl::TapRect;
 pub use gpu::{
   check_cube_faces, mip_levels, mip_size, DrawListFacts, GpuBufferLayoutInfo, GpuResources, LostContent, SamplerFilter,
@@ -95,7 +88,6 @@ pub use gpu::{
 pub use gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use gpu::{PxRect, DAMAGE_EDGE_PX, MAX_DAMAGE_SLOTS};
 pub use input::InputState;
-pub use keymap::w3c_code_for_key;
 pub use logging::install_logger;
 pub use mode::Mode;
 pub use present::{CountTally, Counted, RefreshCounter, RefreshCounting, SignalLedger, SignalRecord};

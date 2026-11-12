@@ -9,26 +9,43 @@
 //! Its first facilities are window-free: the main-thread bridge, the
 //! links (opening one, the app's own scheme registration and its
 //! single-instance hand-off), the locale, the share sheet, the
-//! clipboard, the user folders, the power state and thread placement.
-//! Its window part, behind the `window` feature (what needs SDL's video
-//! subsystem), holds the system theme. On Android it publishes the JavaVM
-//! and the activity and is the JNI way into the activity (`android`). The
-//! window, the event pump and the devices move in from alloy, forge and
-//! lattice as features touch them, not before.
+//! clipboard, the user folders, the power state, thread placement, the
+//! clock (`time`), the log sink, and the platform vocabulary of input,
+//! display, gamepad and lifecycle types. Its window part, behind the
+//! `window` feature (what needs SDL's video subsystem), holds the system
+//! theme, the cursor, text input and dialog vocabulary, and the GL library
+//! path. On Android it publishes the JavaVM and the activity and is the JNI
+//! way into the activity (`android`). The window, the event pump and the
+//! devices move in from alloy, forge and lattice as features touch them,
+//! not before.
 
 #[cfg(target_os = "android")]
 pub mod android;
 pub mod clipboard;
+#[cfg(feature = "window")]
+pub mod cursor;
+#[cfg(feature = "window")]
+pub mod dialog;
+pub mod display;
 pub mod folders;
+pub mod gamepad;
+#[cfg(feature = "window")]
+pub mod gl;
+pub mod input;
+pub mod lifecycle;
 pub mod link;
 pub mod locale;
+pub mod logging;
 pub mod main_thread;
 pub mod permission;
 pub mod power;
 pub mod share;
 #[cfg(feature = "window")]
+pub mod text_input;
+#[cfg(feature = "window")]
 pub mod theme;
 pub mod threads;
+pub mod time;
 
 #[cfg(test)]
 mod tests;

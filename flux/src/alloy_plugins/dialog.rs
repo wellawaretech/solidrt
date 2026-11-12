@@ -19,9 +19,8 @@ use rquickjs::promise::Promised;
 use rquickjs::{Array, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Value};
 use tokio::sync::oneshot;
 
-use alloy::{
-  AlloyCommand, DialogAnswer, DialogError, DialogFilter, DialogKind, DialogRequest, DialogResponder, Dialogs,
-};
+use alloy::{AlloyCommand, Dialogs};
+use ore::dialog::{DialogAnswer, DialogError, DialogFilter, DialogKind, DialogRequest, DialogResponder};
 
 use crate::plugins::js_error::named_error;
 use crate::plugins::marshal::OptArg;

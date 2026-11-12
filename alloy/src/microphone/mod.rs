@@ -216,7 +216,7 @@ impl crate::context::Context {
     if !is_test {
       ensure_init()?;
     }
-    let ring = SampleRing::new(sample_rate, sdl_utils::ticks_ns());
+    let ring = SampleRing::new(sample_rate, ore::time::ticks_ns());
     let reader = ring.reader();
     let (source, status) = if is_test {
       let test = self.microphones.test.borrow();

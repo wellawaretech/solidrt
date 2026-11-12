@@ -23,7 +23,6 @@ mod gpu_validate;
 mod grid;
 mod hit;
 mod inspect;
-mod keymap;
 mod layout;
 mod layout_slides;
 mod line;

@@ -2,7 +2,7 @@ use taffy::style::Overflow;
 
 use super::cull::Extent;
 use super::{Element, ElementKind, Point, Rect, RenderTree, Size, Vector};
-use crate::Cursor;
+use ore::cursor::Cursor;
 
 /// Controls whether an element participates in hit testing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

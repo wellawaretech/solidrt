@@ -1,4 +1,4 @@
-use crate::keymap::w3c_code_for_key;
+use crate::input::w3c_code_for_key;
 
 #[test]
 fn letters_map_case_insensitively() {

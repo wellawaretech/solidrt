@@ -231,7 +231,7 @@ impl RasterState {
       self.draw_overlay(size, window);
       // The frame as it goes to the window, for the window taps: the read
       // is asynchronous, completed at the next frame.
-      self.issue_window_taps(window, (width, height), crate::sdl_utils::ticks_ns());
+      self.issue_window_taps(window, (width, height), ore::time::ticks_ns());
     }
     // A frame that is not presented has no present fence to retire it: a
     // headless or capture frame is read back, and the readback would sync

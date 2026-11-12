@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
-use crate::{AlloyEvent, Modifiers, PointerType};
+use crate::AlloyEvent;
+use ore::input::{Modifiers, PointerType};
 
 use crate::resample::{Resampler, SharedResampler};
 

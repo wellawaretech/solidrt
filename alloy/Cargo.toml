@@ -58,8 +58,9 @@ sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
 
 [dependencies]
 log = { workspace = true }
-# The OS layer, with its window part (the system theme): power, thread
-# placement and the theme the events carry.
+# The OS layer, with its window part: the platform types the events and
+# commands carry (input, cursors, text input, dialogs, power, the theme),
+# the clock, the log sink and thread placement.
 ore = { workspace = true, features = ["window"] }
 # GLES bindings loaded from SDL's GL proc-address. Replaces the hand-written
 # transmute FFI in gl.rs and the former wgpu texture-allocation layer; Impeller

@@ -1,5 +1,6 @@
 mod clipboard;
 mod folders;
+mod input;
 mod link;
 mod locale;
 mod permission;

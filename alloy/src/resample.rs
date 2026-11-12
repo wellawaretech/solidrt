@@ -2,7 +2,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::{AlloyEvent, Modifiers, PointerType};
+use crate::AlloyEvent;
+use ore::input::{Modifiers, PointerType};
 
 /// Pointer-move resampling against the frame clock: ALL pointer types buffer
 /// their moves here, each sample with the time the platform gave it, and

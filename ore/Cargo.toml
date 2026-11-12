@@ -5,7 +5,8 @@ edition = "2021"
 
 [features]
 # The window part of ore: what needs SDL's video subsystem (the system
-# theme). Enabled through alloy; headless flux leaves it out.
+# theme, the cursor, text input and dialog types, the GL library path).
+# Enabled by alloy, flux's gui and lattice; headless flux leaves it out.
 window = []
 
 # SDL, built from source as alloy builds it: per target, the same pin and

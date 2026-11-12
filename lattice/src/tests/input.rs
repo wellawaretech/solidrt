@@ -2,7 +2,9 @@
 // the events that are sent and what passes between them.
 
 use crate::input_plan::{plan, Injected, Step, Wait};
-use alloy::{AlloyEvent, GamepadCommand, PointerType};
+use alloy::AlloyEvent;
+use ore::gamepad::GamepadCommand;
+use ore::input::PointerType;
 use serde_json::json;
 
 // The frame interval the plans here are made for.

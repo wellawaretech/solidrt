@@ -7,13 +7,15 @@ use crate::backend::{DisplayContext, FrameOutput, GlBinding};
 use crate::context::Context;
 use crate::event::{
   current_input_devices_event, current_orientation_event, current_resize_event, current_system_theme_event,
-  translate_event, AlloyCommand, AlloyEvent, TextInputOptions,
+  translate_event, AlloyCommand, AlloyEvent,
 };
 use crate::gl;
 use crate::liveness::SurfaceLiveness;
 use crate::mode::Mode;
 use crate::raster::RasterCmd;
 use crate::stepped::run_stepped_loop;
+use ore::input::PointerType;
+use ore::text_input::TextInputOptions;
 
 pub struct App {
   sdl_context: sdl3::Sdl,
@@ -583,7 +585,7 @@ impl App {
           // thread must stop touching the window from here on (see
           // WINDOW_BACKGROUNDED in lib.rs).
           crate::set_window_backgrounded(true);
-          watch_event_tx.send(AlloyEvent::Suspend { hold: crate::event::SuspendHold::take() }).ok();
+          watch_event_tx.send(AlloyEvent::Suspend { hold: ore::lifecycle::SuspendHold::take() }).ok();
         }
         sdl3::event::Event::AppDidEnterBackground { .. } => {
           if cfg!(target_os = "android") {
@@ -747,7 +749,7 @@ impl App {
     // SDL translates into a Quit event) lands in the dead channel and wedges
     // the process until SIGKILL.
     // SDL's tick base, which its event timestamps count from.
-    let sdl_epoch = crate::sdl_utils::ticks_epoch();
+    let sdl_epoch = ore::time::ticks_epoch();
     'run: loop {
       let tick_period = Duration::from_secs_f64(1.0 / watch.refresh_rate().max(1.0) as f64);
       refreshes.set_hz(watch.refresh_rate());
@@ -1009,10 +1011,10 @@ impl App {
           // pointer_lock_frozen); unlocked, remember the real position as
           // the next lock's freeze point.
           match &mut e {
-            AlloyEvent::PointerMove { pointer_type: crate::PointerType::Mouse, x, y, .. }
-            | AlloyEvent::PointerDown { pointer_type: crate::PointerType::Mouse, x, y, .. }
-            | AlloyEvent::PointerUp { pointer_type: crate::PointerType::Mouse, x, y, .. }
-            | AlloyEvent::Wheel { pointer_type: crate::PointerType::Mouse, x, y, .. } => match pointer_lock_frozen {
+            AlloyEvent::PointerMove { pointer_type: PointerType::Mouse, x, y, .. }
+            | AlloyEvent::PointerDown { pointer_type: PointerType::Mouse, x, y, .. }
+            | AlloyEvent::PointerUp { pointer_type: PointerType::Mouse, x, y, .. }
+            | AlloyEvent::Wheel { pointer_type: PointerType::Mouse, x, y, .. } => match pointer_lock_frozen {
               Some((fx, fy)) => {
                 *x = fx;
                 *y = fy;
@@ -1059,7 +1061,7 @@ impl App {
           if let Some(g) = gamepads.as_mut() {
             g.handle_event(&sdl_event);
           }
-          let at = crate::sdl_utils::event_instant(sdl_epoch, sdl_event.get_timestamp());
+          let at = ore::time::event_instant(sdl_epoch, sdl_event.get_timestamp());
           if let Some(e) = translate_event(sdl_event, &window) {
             if !deliver(e, at) {
               break 'run;
