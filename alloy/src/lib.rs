@@ -10,10 +10,7 @@ mod cadence;
 pub mod camera;
 pub mod clock;
 mod context;
-mod cursor;
 mod dialog;
-#[cfg(target_os = "macos")]
-mod display_link;
 mod egl_headless;
 mod event;
 mod frame_timestamps;
@@ -111,7 +108,7 @@ pub struct GpuInfo {
 }
 
 // Platform facts fixed at startup, for a dev tool asking what machine it is
-// looking at: the SDL video driver (set by setup_video) and the GL strings
+// looking at: the SDL video driver (set at setup from the window) and the GL strings
 // (set by the raster thread once its context exists). Each is set once and
 // read from any thread; a reader that comes first sees None.
 static VIDEO_DRIVER: OnceLock<String> = OnceLock::new();
@@ -169,23 +166,21 @@ pub fn keyboard_inset_px() -> i32 {
   KEYBOARD_INSET_PX.load(Ordering::Relaxed)
 }
 
-// Hardware keyboard presence reported by the platform. SDL's Android backend
-// never registers keyboards (SDL_HasKeyboard is permanently false there), so
-// the platform reports the Configuration fact via JNI, same route as the
-// keyboard inset. Elsewhere this stays false and SDL's own device list is
-// authoritative; readers OR the two.
-static HARDWARE_KEYBOARD: AtomicBool = AtomicBool::new(false);
+// Hardware keyboard presence reported by the platform is ore's fact
+// (ore::window::set_hardware_keyboard); these forward to it until lattice's
+// Android native calls ore directly (step 3 of
+// okf/plans/ore-pump-and-window.md).
 
 /// Set whether a hardware keyboard is attached. Called from the platform
 /// (Android JNI); thread-safe.
 pub fn set_hardware_keyboard(present: bool) {
-  HARDWARE_KEYBOARD.store(present, Ordering::Relaxed);
+  ore::window::set_hardware_keyboard(present);
 }
 
 /// Whether the platform reported an attached hardware keyboard (false where
 /// SDL's own device list covers it; see [`set_hardware_keyboard`]).
 pub fn hardware_keyboard() -> bool {
-  HARDWARE_KEYBOARD.load(Ordering::Relaxed)
+  ore::window::hardware_keyboard()
 }
 
 // Whether the window is backgrounded. Set at push time of

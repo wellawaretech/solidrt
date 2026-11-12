@@ -191,6 +191,11 @@ impl GlBinding for HeadlessEglBinding {
   fn error(&self) -> String {
     self.0.egl.get_error().map(|e| e.to_string()).unwrap_or_else(|| "no EGL error".into())
   }
+
+  /// No EGL display of SDL's behind this context: nothing to ask.
+  fn device_probe(&self) -> ore::gl_surface::DeviceProbe {
+    ore::gl_surface::DeviceProbe::none()
+  }
 }
 
 /// The sample count of the calling thread's current EGL draw surface, from

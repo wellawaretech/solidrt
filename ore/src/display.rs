@@ -11,3 +11,13 @@ pub enum Orientation {
   Portrait,
   PortraitFlipped,
 }
+
+/// A rectangle in integer units (the window's safe area, in logical
+/// points): its top-left corner and its size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Rect {
+  pub x: i32,
+  pub y: i32,
+  pub width: i32,
+  pub height: i32,
+}

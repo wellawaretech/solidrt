@@ -40,19 +40,22 @@ fn draw(mut builder: DisplayListBuilder, ctx: &Context, t: f32) -> DisplayList {
 }
 
 fn main() {
-  let _ = alloy::setup("Alloy demo", ISize::new(1200, 800), alloy::Mode::Run).run(|ctx, _cmd_tx, _event_rx| {
-    let mut t = 0.0f32;
-    let mut frame = 0u64;
-    loop {
-      let builder = DisplayListBuilder::new(None);
-      let dl = draw(builder, &ctx, t);
-      if ctx.submit(dl, alloy::PresentDamage::Full, std::time::Instant::now(), frame).is_err() {
-        break;
-      }
-      frame += 1;
+  let platform = ore::platform::Platform::init(ore::platform::PlatformConfig { app_id: "solidrt", headless: false })
+    .expect("Failed to initialize the platform");
+  let _ =
+    alloy::setup(platform, "Alloy demo", ISize::new(1200, 800), alloy::Mode::Run).run(|ctx, _cmd_tx, _event_rx| {
+      let mut t = 0.0f32;
+      let mut frame = 0u64;
+      loop {
+        let builder = DisplayListBuilder::new(None);
+        let dl = draw(builder, &ctx, t);
+        if ctx.submit(dl, alloy::PresentDamage::Full, std::time::Instant::now(), frame).is_err() {
+          break;
+        }
+        frame += 1;
 
-      t += 0.05;
-      std::thread::sleep(Duration::from_millis(16));
-    }
-  });
+        t += 0.05;
+        std::thread::sleep(Duration::from_millis(16));
+      }
+    });
 }

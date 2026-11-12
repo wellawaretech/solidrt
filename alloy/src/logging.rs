@@ -3,7 +3,12 @@ struct SdlLogger;
 impl log::Log for SdlLogger {
   fn enabled(&self, metadata: &log::Metadata) -> bool {
     let t = metadata.target();
-    if t.starts_with("alloy") || t.starts_with("flux") || t.starts_with("forge") || t.starts_with("lattice") {
+    if t.starts_with("alloy")
+      || t.starts_with("flux")
+      || t.starts_with("forge")
+      || t.starts_with("lattice")
+      || t.starts_with("ore")
+    {
       // Our own crates log at every level.
       true
     } else {

@@ -372,6 +372,12 @@ pub(crate) const PROFILE: &str = match option_env!("SOLIDRT_PROFILE") {
   }
 };
 
+/// The Wayland app id (X11 class) every window carries. A compositor tiles an
+/// ordinary resizable window and a client cannot ask to float, so a user's
+/// window rule matches this stable id to float the window instead of the
+/// executable name, which differs per binary.
+const APP_ID: &str = "solidrt";
+
 /// QuickJS call-stack soft limit. Sits below the UI thread's native stack (see
 /// alloy gl::run_context) so deep recursion throws a clean "Maximum call stack
 /// size exceeded" instead of overflowing the OS stack. Tunable down per-app later.
@@ -1778,7 +1784,12 @@ fn start_with(
     alloy::Mode::Stepped(stepped) => Some(stepped.fps),
     alloy::Mode::Run => None,
   };
-  let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
+  // SDL's first init, on this (the main) thread, before alloy or forge start
+  // anything (okf/design/platform-layering.md).
+  let platform =
+    ore::platform::Platform::init(ore::platform::PlatformConfig { app_id: APP_ID, headless: mode.is_headless() })
+      .expect("Failed to initialize the platform");
+  let app = alloy::setup(platform, "SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
   let Hosts { test, render, errors } = hosts;
   let test_passed = Arc::new(AtomicBool::new(true));

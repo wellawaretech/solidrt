@@ -442,8 +442,8 @@ pub(crate) struct RasterState {
   // The context's reset status and the forced-loss hook (see gl/robustness.rs).
   robustness: gl::Robustness,
   // The GPU device behind the context, asked why it went away when a loss
-  // is reported (see gl/device_loss.rs).
-  device: gl::DeviceProbe,
+  // is reported (see ore's gl_surface/device_loss.rs).
+  device: ore::gl_surface::DeviceProbe,
   // Set by a context recovery, cleared by the UI thread's Resync: while
   // set, frames and handle-carrying commands are refused, since what they
   // carry belongs to the dead context (okf/done/gpu-context-loss.md).
@@ -808,7 +808,7 @@ impl RasterState {
     stats.timer_queries.store(pass_timer.supported(), Ordering::Relaxed);
     let glyph_rig = gl::GlyphRig::new(&gl);
     let robustness = gl::Robustness::load(&gl, &*binding);
-    let device = gl::DeviceProbe::resolve();
+    let device = binding.device_probe();
     RasterState {
       gl,
       renderer,

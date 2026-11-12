@@ -221,12 +221,12 @@ impl Platform {
   fn display_vsync(&self) -> Option<VsyncSource>; // Choreographer
   // The `window` feature. The window is its own value: a windowless host
   // builds a Platform and never opens one.
-  fn open_window(&mut self, ...) -> Result<Window, String>;
+  fn open_window(&self, ...) -> Result<Window, String>;
 }
 
 impl Window {
   // title, icon, cursor, lock, text input, ...
-  fn gl_surface(&mut self) -> Result<GlSurface, String>; // Send, for the raster thread
+  fn create_gl_surface(&mut self) -> Result<GlSurface, String>; // Send, for the raster thread
   // After a context loss. Whether the window must go too is a driver
   // fact, so the renderer says it.
   fn recreate_gl(&mut self, recreate_window: bool) -> Result<GlSurface, String>;

@@ -62,6 +62,7 @@ pub(crate) fn run_context(
     }
 
     let gl = crate::gl::create_gl_context(&*binding);
+    crate::gl::probe_msrtt(&gl, &*binding);
     let renderer = crate::gl::create_renderer(&*binding);
     unsafe {
       let vendor = gl.get_parameter_string(glow::VENDOR);

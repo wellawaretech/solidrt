@@ -4,10 +4,11 @@ version = "0.0.0"
 edition = "2021"
 
 [features]
-# The window part of ore: what needs SDL's video subsystem (the system
-# theme, the cursor, text input and dialog types, the GL library path).
-# Enabled by alloy, flux's gui and lattice; headless flux leaves it out.
-window = []
+# The window part of ore: what needs SDL's video subsystem (the window and
+# its GL surface, the system theme, the cursor, text input and dialog
+# types, the GL library path). Enabled by alloy, flux's gui and lattice;
+# headless flux leaves it out.
+window = ["dep:objc2-core-video", "dep:objc2-core-foundation", "dep:windows", "dep:libloading"]
 
 # SDL, built from source as alloy builds it: per target, the same pin and
 # features, so the two crates unify on one SDL in a GUI build.
@@ -27,12 +28,31 @@ ndk-sys = "=0.6.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
+# CVDisplayLink for the macOS swap pacer (src/gl_surface/display_link.rs): the
+# ANGLE-Metal swap does not block, so the window swap waits for the link's
+# tick, as SDL's own CGL path does. Generated CoreVideo bindings from the
+# objc2 family, the same publisher and version as the objc2-* crates already
+# in the client's graph (sysinfo, netdev, iroh); objc2-core-foundation for
+# the CFRetained handle. Four functions used.
+objc2-core-video = { version = "=0.3.2", default-features = false, features = ["CVBase", "CVReturn", "CVDisplayLink", "CVHostTime"], optional = true }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
+# GetDeviceRemovedReason on the D3D11 device behind ANGLE, for the context-
+# loss log line (src/gl_surface/device_loss.rs): the DXGI_ERROR_* names and the COM
+# interface. Already in the client's graph (iroh's netwatch pulls it), so
+# the unified build compiles no extra crate.
+windows = { version = "=0.62.2", features = ["Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi"], optional = true }
+
+# A reference of our own on ANGLE's GL libraries for the process life
+# (pin_gl_libraries in src/window/open.rs), so a window recreated after a
+# context loss does not unload and reload them. alloy's pin.
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+libloading = { version = "=0.9.0", optional = true }
 
 [dependencies]
 log = { workspace = true }

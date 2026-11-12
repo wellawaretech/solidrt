@@ -2,19 +2,19 @@
 //! eglSwapBuffers at once whatever the swap interval (measured 2026-09-25 on
 //! an M1 at 60 Hz: 1575 presents/s, present 0.0 ms, window in front or
 //! display asleep alike), and SDL's own display-link pacing lives on its
-//! native CGL path, which the GLES driver alloy forces (gl::configure_opengl)
-//! never takes. This is that pacing reproduced one layer up, the way
-//! SDL_cocoaopengl.m does it: the link's callback counts ticks and signals a
-//! condvar, and the window swap waits for the next tick before it swaps. The
-//! swap then blocks once per refresh like Mesa's and D3D11's, and macOS is
-//! an ordinary SwapPaced desktop above it (okf/design/frame-timing.md,
-//! "Frame signal, macOS").
+//! native CGL path, which the GLES driver ore forces (configure_opengl in
+//! window/open.rs) never takes. This is that pacing reproduced one layer
+//! up, the way SDL_cocoaopengl.m does it: the link's callback counts ticks
+//! and signals a condvar, and the window swap waits for the next tick
+//! before it swaps. The swap then blocks once per refresh like Mesa's and
+//! D3D11's, and macOS is an ordinary SwapPaced desktop above it
+//! (okf/design/frame-timing.md, "Frame signal, macOS").
 //!
 //! Only the tick count matters here, never the callback's phase: the link
 //! calls back mid-period, about one and a half periods before the vsync it
 //! prepares for (measured: output vsync 24.7 ms ahead at a 16.67 ms period),
-//! which is what made the request/answer vsync chain of vsync.rs (built for
-//! the Choreographer, whose callback is the vsync) the wrong fit.
+//! which is what made the request/answer vsync chain of alloy's vsync.rs
+//! (built for the Choreographer, whose callback is the vsync) the wrong fit.
 //!
 //! CVDisplayLink is deprecated by Apple (macOS 15) for CADisplayLink on
 //! NSView/NSWindow/NSScreen and the binding carries that deprecation; it
@@ -32,7 +32,7 @@ use objc2_core_video::{kCVReturnSuccess, CVDisplayLink, CVOptionFlags, CVReturn,
 
 // Upper bound on one wait for a tick: with the display asleep the callbacks
 // stop, and the swap goes ahead at this cadence instead of stalling the
-// raster thread (and every frame behind it) until the display wakes.
+// drawing thread (and every frame behind it) until the display wakes.
 const TICK_WAIT_TIMEOUT: Duration = Duration::from_millis(100);
 
 // The callback's hand-off to the swapping thread: ticks counted, one per
@@ -42,10 +42,10 @@ struct Ticks {
   tick: Condvar,
 }
 
-/// One running display link, owned by the raster thread's window binding and
-/// created there at the first swap. It runs for the binding's life, idle
+/// One running display link, owned by the drawing thread's GL surface and
+/// created there at the first swap. It runs for the surface's life, idle
 /// frames included, as SDL's does: the callback is an increment and a notify
-/// on CoreVideo's thread, and stopping it from a raster thread that has no
+/// on CoreVideo's thread, and stopping it from a drawing thread that has no
 /// idle hook would cost more than it saves.
 pub(crate) struct SwapPacer {
   link: CFRetained<CVDisplayLink>,
@@ -53,37 +53,43 @@ pub(crate) struct SwapPacer {
 }
 
 // The link is a CoreFoundation object driven from CoreVideo's own thread;
-// this handle only starts, stops and waits on it, and lives on the raster
-// thread inside the (Send) window binding.
+// this handle only starts, stops and waits on it, and lives on the drawing
+// thread inside the (Send) GL surface.
+// SAFETY: see above; the ticks are an Arc over a Mutex and a Condvar.
 unsafe impl Send for SwapPacer {}
 
 impl SwapPacer {
   /// The link over the active displays, running. None (logged) when the
   /// machine has none or CoreVideo refuses; the swap then paces nothing and
-  /// the release floor holds the refresh rate (vsync.rs).
+  /// the release floor holds the refresh rate (alloy's vsync.rs).
   pub(crate) fn start() -> Option<SwapPacer> {
     let mut raw: *mut CVDisplayLink = std::ptr::null_mut();
+    // SAFETY: `raw` is a valid out-parameter for the created link.
     let status = unsafe { CVDisplayLink::create_with_active_cg_displays(NonNull::from(&mut raw)) };
     let Some(ptr) = NonNull::new(raw).filter(|_| status == kCVReturnSuccess) else {
-      log::warn!("[alloy] no display link on this machine ({status}); the swap paces nothing");
+      log::warn!("[ore] no display link on this machine ({status}); the swap paces nothing");
       return None;
     };
+    // SAFETY: a successful create hands over one +1 reference, which the
+    // CFRetained takes.
     let link = unsafe { CFRetained::from_raw(ptr) };
     let ticks = Arc::new(Ticks { count: Mutex::new(0), tick: Condvar::new() });
     // The callback's reference to the ticks is a leaked Arc: the link lives
     // for the process, so nothing ever reconstructs it.
     let user = Arc::into_raw(ticks.clone()) as *mut core::ffi::c_void;
+    // SAFETY: `output` matches the callback signature and `user` is the
+    // leaked Arc it reads, alive for the process.
     let status = unsafe { link.set_output_callback(Some(output), user) };
     if status != kCVReturnSuccess {
-      log::warn!("[alloy] display link callback rejected ({status}); the swap paces nothing");
+      log::warn!("[ore] display link callback rejected ({status}); the swap paces nothing");
       return None;
     }
     let status = link.start();
     if status != kCVReturnSuccess {
-      log::warn!("[alloy] display link start failed ({status}); the swap paces nothing");
+      log::warn!("[ore] display link start failed ({status}); the swap paces nothing");
       return None;
     }
-    log::info!("[alloy] swap paced on the display link");
+    log::info!("[ore] swap paced on the display link");
     Some(SwapPacer { link, ticks })
   }
 
@@ -117,6 +123,7 @@ unsafe extern "C-unwind" fn output(
   _flags_out: NonNull<CVOptionFlags>,
   user: *mut core::ffi::c_void,
 ) -> CVReturn {
+  // SAFETY: `user` is the Arc leaked in `start`, never freed.
   let ticks = unsafe { &*(user as *const Ticks) };
   *ticks.count.lock().expect("display link tick mutex poisoned") += 1;
   ticks.tick.notify_all();

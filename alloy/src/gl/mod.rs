@@ -11,7 +11,6 @@
 
 mod buffer;
 mod context;
-mod device_loss;
 mod draw;
 mod entry;
 mod glyphs;
@@ -29,11 +28,7 @@ mod texture;
 mod timing;
 
 pub(crate) use buffer::{release_buffer, GpuBuffer};
-pub(crate) use context::{
-  configure_opengl, create_gl_context, create_renderer, create_window_gl_context, drop_window_multisampling,
-  query_limits, setup_opengl_platform, SdlGlBinding,
-};
-pub(crate) use device_loss::DeviceProbe;
+pub(crate) use context::{create_gl_context, create_renderer, query_limits, WindowBinding};
 pub(crate) use draw::{
   render_display_list_into_texture, render_display_list_to_layer, render_display_list_to_texture,
   render_display_list_to_window,
@@ -51,7 +46,8 @@ pub(crate) use program::{
 pub(crate) use program::{declared_uniform_names, reads_instance_id};
 pub(crate) use readback::{flip_rows, read_texture_pixels, read_window_pixels};
 pub(crate) use rig::{
-  forget_window_samples, msrtt, supports_invalidate, window_fast_path, window_samples, MsrttFns, OffscreenRig,
+  forget_window_samples, msrtt, probe_msrtt, supports_invalidate, window_fast_path, window_samples, MsrttFns,
+  OffscreenRig, MSAA_SAMPLES,
 };
 #[cfg(test)]
 pub(crate) use robustness::reset_status_entry;

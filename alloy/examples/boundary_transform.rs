@@ -162,7 +162,9 @@ const MAGENTA_PX: (u8, u8, u8, u8) = (255, 0, 255, 255);
 const EMPTY_PX: (u8, u8, u8, u8) = (0, 0, 0, 0);
 
 fn main() {
-  let app = alloy::setup("boundary transform", ISize::new(600, 400), alloy::Mode::Run);
+  let platform = ore::platform::Platform::init(ore::platform::PlatformConfig { app_id: "solidrt", headless: false })
+    .expect("Failed to initialize the platform");
+  let app = alloy::setup(platform, "boundary transform", ISize::new(600, 400), alloy::Mode::Run);
   let _ = app.run(|ctx, _cmd_tx, _event_rx| {
     let platform = PlatformContext::new(Vec::new());
     platform.set_window_size(W as f32, H as f32);

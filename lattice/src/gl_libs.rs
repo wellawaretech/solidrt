@@ -5,9 +5,9 @@
 // LoadLibrary-by-name resolves to the already-loaded modules; dyld does not
 // match a bare leaf name against an image loaded from another path, so on
 // macOS the window's GL loader is additionally pointed at the extracted files
-// by full path (ore::gl::set_library_path). Only Windows and macOS ship GL
-// libraries (ANGLE) with the runner; elsewhere this module is a no-op and the
-// CLI embeds nothing.
+// by full path (ore::gl_surface::set_library_path). Only Windows and macOS
+// ship GL libraries (ANGLE) with the runner; elsewhere this module is a no-op
+// and the CLI embeds nothing.
 //
 // Everything here fails soft: on any error the libraries simply are not
 // preloaded, window creation fails as it would have anyway, and alloy's error
@@ -60,7 +60,7 @@ pub fn provision(app_id: &str, libs: &[(String, Vec<u8>)]) {
     }
     #[cfg(target_os = "macos")]
     if let Some(library) = gl_library(name) {
-      ore::gl::set_library_path(library, &path);
+      ore::gl_surface::set_library_path(library, &path);
     }
   }
 }
@@ -69,10 +69,10 @@ pub fn provision(app_id: &str, libs: &[(String, Vec<u8>)]) {
 /// loads exactly that file by full path instead of dlopen-ing a bare name.
 /// None for a file the window does not load by path.
 #[cfg(target_os = "macos")]
-fn gl_library(name: &str) -> Option<ore::gl::GlLibrary> {
+fn gl_library(name: &str) -> Option<ore::gl_surface::GlLibrary> {
   match name {
-    "libEGL.dylib" => Some(ore::gl::GlLibrary::Egl),
-    "libGLESv2.dylib" => Some(ore::gl::GlLibrary::Gles),
+    "libEGL.dylib" => Some(ore::gl_surface::GlLibrary::Egl),
+    "libGLESv2.dylib" => Some(ore::gl_surface::GlLibrary::Gles),
     _ => None,
   }
 }

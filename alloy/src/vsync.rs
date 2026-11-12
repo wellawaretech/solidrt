@@ -8,7 +8,7 @@
 // Backends: Android (AChoreographer, below). iOS would slot in here via
 // SDL_SetiOSAnimationCallback (CADisplayLink) when iOS support lands. macOS
 // deliberately has none: its display link paces the swap instead
-// (display_link.rs), because CVDisplayLink calls back mid-period rather than
+// (ore's gl_surface/display_link.rs), because CVDisplayLink calls back mid-period rather than
 // at the vsync and does not fit this request/answer contract. This module is
 // the only ndk / ndk-sys consumer in the tree; if SDL ships its own
 // choreographer API (libsdl-org/SDL#15013, milestone 3.8.0), reimplement the
@@ -346,7 +346,7 @@ impl FrameRelease {
       // inside its slot defers to the slot end as a timer deadline. With a
       // hold the slot is the cadence hold's; at hold 1 it is one period,
       // and the deferral is the floor that keeps a swap which does not
-      // block (ANGLE-Metal without its display link, display_link.rs; the
+      // block (ANGLE-Metal without its display link, ore's gl_surface/display_link.rs; the
       // next such driver) at the refresh rate instead of running unbounded.
       // A blocking swap returns about a period after the last one, inside
       // the slack, and is not deferred.

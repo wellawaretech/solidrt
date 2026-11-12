@@ -66,9 +66,10 @@ pub fn unpack_size(packed: u64) -> (u32, u32) {
 
 /// The raster thread's handle onto the process's single GL context: how it
 /// binds it, presents through it, and resolves GL entry points. Interactive
-/// runs bind through SDL (window + GLContext); a headless run on a stack
-/// whose SDL offscreen driver cannot go headless binds a bare EGL pbuffer
-/// (see egl_headless.rs). Every method runs on the raster thread.
+/// runs bind through ore's GL surface (ore::gl_surface::GlSurface); a
+/// headless run on a stack whose SDL offscreen driver cannot go headless
+/// binds a bare EGL pbuffer (see egl_headless.rs). Every method runs on the
+/// raster thread.
 pub(crate) trait GlBinding: Send {
   /// Make the context current on the calling thread. Also used to rebind
   /// after the surface underneath changed, so it must re-execute the bind
@@ -87,6 +88,9 @@ pub(crate) trait GlBinding: Send {
   fn set_swap_interval(&self) -> bool;
   fn proc_address(&self, name: &std::ffi::CStr) -> *const std::ffi::c_void;
   fn error(&self) -> String;
+  /// The GPU device behind the context, resolved now (the context current),
+  /// asked why it went away when a loss is reported.
+  fn device_probe(&self) -> ore::gl_surface::DeviceProbe;
 }
 
 /// The display context behind the raster thread. GL (through ANGLE where the
@@ -94,11 +98,10 @@ pub(crate) trait GlBinding: Send {
 /// okf/research/graphics-backend-strategy.md.
 pub enum DisplayContext {
   Gl {
-    /// The SDL window handle the raster thread presents to. Raw because the
-    /// sdl3 Window type is neither Send nor clonable; the Window itself lives
-    /// in App on the main thread for the whole run.
-    window_raw: *mut sdl3::sys::video::SDL_Window,
-    gl_context: sdl3::video::GLContext,
+    /// ore's handle onto the window's GL context, which the raster thread
+    /// binds and presents through; the window and the context themselves
+    /// live in App on the main thread for the whole run.
+    surface: ore::gl_surface::GlSurface,
     /// See `pack_size`.
     surface_size: Arc<AtomicU64>,
   },
@@ -109,8 +112,9 @@ pub enum DisplayContext {
 }
 
 impl DisplayContext {
-  pub fn new_opengl(window: &sdl3::video::Window) -> Result<Self, Box<dyn std::error::Error>> {
-    gl::setup_opengl_platform(window)
+  /// The window's GL surface, at the window's size in pixels.
+  pub fn new_gl(surface: ore::gl_surface::GlSurface, (w, h): (u32, u32)) -> Self {
+    DisplayContext::Gl { surface, surface_size: Arc::new(AtomicU64::new(pack_size(w, h))) }
   }
 
   pub fn new_egl_pbuffer(width: u32, height: u32) -> Result<Self, String> {
@@ -130,7 +134,7 @@ impl DisplayContext {
   }
 
   pub(crate) fn run_context(
-    &self,
+    self,
     closure: impl FnOnce(Arc<Context>) + Send + 'static,
     tx: mpsc::Sender<FrameOutput>,
     wake: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -138,11 +142,9 @@ impl DisplayContext {
     stats: Arc<crate::raster::RasterStats>,
   ) -> crate::raster::RasterSender {
     let (binding, surface_size): (Box<dyn GlBinding>, _) = match self {
-      DisplayContext::Gl { window_raw, gl_context, surface_size } => {
-        (Box::new(gl::SdlGlBinding::new(*window_raw, gl_context)), surface_size.clone())
-      }
+      DisplayContext::Gl { surface, surface_size } => (Box::new(gl::WindowBinding::new(surface)), surface_size),
       DisplayContext::EglPbuffer { egl, surface_size } => {
-        (Box::new(crate::egl_headless::HeadlessEglBinding(egl.clone())), surface_size.clone())
+        (Box::new(crate::egl_headless::HeadlessEglBinding(egl)), surface_size)
       }
     };
     crate::threads::run_context(binding, surface_size, closure, tx, wake, sink, stats)

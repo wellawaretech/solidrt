@@ -121,6 +121,7 @@ impl RasterState {
       log::warn!("[alloy] set swap interval failed: {}", binding.error());
     }
     let gl = gl::create_gl_context(&*binding);
+    gl::probe_msrtt(&gl, &*binding);
     let renderer = gl::create_renderer(&*binding);
     unsafe {
       use glow::HasContext;

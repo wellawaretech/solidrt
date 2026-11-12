@@ -15,12 +15,13 @@ use crate::mode::Mode;
 use crate::raster::RasterCmd;
 use crate::stepped::run_stepped_loop;
 use ore::input::PointerType;
-use ore::text_input::TextInputOptions;
+use ore::platform::Platform;
+use ore::window::{Backing, Display, Window, WindowConfig};
 
 pub struct App {
-  sdl_context: sdl3::Sdl,
-  window: sdl3::video::Window,
-  platform: DisplayContext,
+  platform: Platform,
+  window: Window,
+  display: DisplayContext,
   mode: Mode,
   // Pointer-move resampler the run loop feeds (see resample.rs): moves are
   // consumed into it at the pump and never travel as events. The embedder
@@ -33,48 +34,16 @@ pub struct App {
   user_input_muted: Arc<AtomicBool>,
 }
 
-/// The Wayland app id (X11 class) every window carries. A compositor tiles an
-/// ordinary resizable window and a client cannot ask to float, so a user's
-/// window rule matches this stable id to float the window instead of the
-/// executable name, which differs per binary.
-const WINDOW_APP_ID: &str = "solidrt";
-
-pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
+/// Open the run's window on `platform` (initialized by the host on this, the
+/// main thread) and the display context the raster thread draws through.
+pub fn setup(platform: Platform, title: &str, size: ISize, mode: Mode) -> App {
   let (width, height) = (size.width as u32, size.height as u32);
 
-  // Must precede the video subsystem: SDL reads it when it creates a window.
-  sdl3::hint::set("SDL_APP_ID", WINDOW_APP_ID);
-
-  // Keep touch and mouse streams separate. Without this, SDL synthesizes
-  // mouse events from touches (and vice versa) using SDL_TOUCH_MOUSEID
-  // as `which`, which would arrive on our mouse arm and be misclassified
-  // as PointerType::Mouse with a sentinel pointer_id.
-  sdl3::hint::set("SDL_TOUCH_MOUSE_EVENTS", "0");
-  sdl3::hint::set("SDL_MOUSE_TOUCH_EVENTS", "0");
-  // Image cursors follow the display scale where SDL does that itself
-  // (Windows; macOS and Wayland always do). Must precede any cursor creation.
-  sdl3::hint::set("SDL_MOUSE_DPI_SCALE_CURSORS", "1");
-  // For the headless fallback below, force 1:1 pixel mapping so the hidden
-  // window is exactly the requested size in physical pixels regardless of
-  // display scale.
   if mode.is_headless() {
-    sdl3::hint::set("SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY", "1");
     // The process clock is the host's virtual frame time from before any
     // app code runs (see clock.rs), so a producer opened at mount already
     // schedules on it.
     crate::clock::set_virtual_ns(0);
-  }
-  // On Android SDL's event wait (SDL_WaitEventTimeout) never blocks with
-  // the poll sentinel enabled: every pump pushes a sentinel event, every
-  // pushed event sends the Android lifecycle WAKE, and that WAKE is what
-  // the wait's semaphore blocks on, so the wait spins through its whole
-  // timeout (SDL 3.4.10 through 3.4.18 and main, measured 100% CPU on an idle app; see
-  // okf/upstream/sdl-android-wait-event-poll-sentinel-spin.md). Without
-  // the sentinel the pump pushes nothing of its own and the wait blocks.
-  // The sentinel only bounds a poll drain against an event flood, and the
-  // loop below drains one queue per iteration.
-  if cfg!(target_os = "android") {
-    sdl3::hint::set("SDL_POLL_SENTINEL", "0");
   }
 
   // A panic in the `run` closure (the sol-ui thread) would otherwise strand
@@ -91,143 +60,62 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
     }));
   }
 
-  let sdl_context = sdl3::init().expect("Failed to initialize SDL3");
-  // On Android, publish the JavaVM and the activity in ndk-context so
-  // JNI-using deps (iroh's network monitoring via flux:p2p) can reach the
-  // Android context. A no-op when the host already did.
-  #[cfg(target_os = "android")]
-  ore::android::init_context();
-
-  // The headless mode wants no display at all: SDL's offscreen video driver
-  // backs the window with an EGL pbuffer, so `sol render` and `sol test` run
-  // in CI, over SSH, on any headless box - and its fake display has no scale
-  // to inherit. Where the driver fails only because the GL stack lacks EGL
-  // device enumeration (ANGLE never implements it), the same pbuffer is
-  // built without SDL's video subsystem (egl_headless.rs) behind SDL's dummy
-  // driver, which still provides the Window the run's size is read from.
-  // Anything else falls back to the interactive path's hidden window on the
-  // real display. Whichever surface results only keeps the context current:
-  // a headless frame is drawn into a framebuffer the raster thread owns at
-  // the headless window's size (raster::RasterState::window_framebuffer),
-  // so the surface's own size and content never matter after setup. Each
-  // failed attempt dropped its video subsystem handles, so setting the hint
-  // and re-entering setup re-initializes video on the next driver.
   let resampler = crate::resample::SharedResampler::new();
   let user_input_muted = Arc::new(AtomicBool::new(false));
-  if mode.is_headless() {
-    // No sound either: SDL's dummy audio driver takes the mix at the
-    // device rate and drops it, so the mixer runs (positions advance,
-    // playbacks end) on a box without a sound card, and a test run plays
-    // nothing through the speakers of one that has. Read when the audio
-    // subsystem is first initialized (audio/device.rs), so it is set here,
-    // ahead of every path below.
-    sdl3::hint::set("SDL_AUDIO_DRIVER", "dummy");
-    sdl3::hint::set("SDL_VIDEO_DRIVER", "offscreen");
-    crate::dialog::probe(true);
-    match setup_video(&sdl_context, title, (width, height), &mode) {
-      Ok((window, platform)) => return App { sdl_context, window, platform, mode, resampler, user_input_muted },
-      Err(e) if e.contains("EXT_device_enumeration") || e.contains("eglQueryDevicesEXT") => {
-        log::info!("[alloy] offscreen video driver needs EGL device enumeration, which this GL stack (ANGLE) does not provide; using a headless EGL context");
-        sdl3::hint::set("SDL_VIDEO_DRIVER", "dummy");
-        match setup_headless(&sdl_context, title, (width, height)) {
-          Ok((window, platform)) => return App { sdl_context, window, platform, mode, resampler, user_input_muted },
-          Err(e) => log::warn!("[alloy] headless EGL context unavailable ({e}); falling back to a hidden window"),
-        }
-      }
-      Err(e) => log::warn!("[alloy] offscreen video driver unavailable ({e}); falling back to a hidden window"),
-    }
-    sdl3::hint::set("SDL_VIDEO_DRIVER", "");
-  }
-
-  let (window, platform) = setup_video(&sdl_context, title, (width, height), &mode).expect("Failed to set up video");
-  crate::dialog::probe(false);
-  App { sdl_context, window, platform, mode, resampler, user_input_muted }
-}
-
-// On platforms where GLES comes from ANGLE's shipped libraries, SDL's "Could
-// not initialize OpenGL / GLES library" almost always means those libraries
-// were not found. Name them and where they were expected, instead of leaving
-// the raw SDL error as the only clue.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-fn gl_library_hint(err: &str) -> String {
-  if !err.contains("Could not initialize OpenGL / GLES library") {
-    return String::new();
-  }
-  #[cfg(target_os = "windows")]
-  let names = ["libEGL.dll", "libGLESv2.dll"];
-  #[cfg(target_os = "macos")]
-  let names = ["libEGL.dylib", "libGLESv2.dylib"];
-  let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(std::path::Path::to_path_buf)) else {
-    return String::new();
-  };
-  let missing: Vec<&str> = names.iter().filter(|name| !dir.join(name).exists()).copied().collect();
-  if missing.is_empty() {
-    format!(" ({} are present next to the executable but failed to load)", names.join(" and "))
+  // The window backbuffer's multisampling, where the platform honors it
+  // (ore decides where: see WindowConfig::backbuffer_samples).
+  let config = |display| WindowConfig { title, width, height, display, backbuffer_samples: gl::MSAA_SAMPLES as u32 };
+  let opened = if mode.is_headless() {
+    open_headless(&platform, config, (width, height))
   } else {
-    format!(" ({} not found next to the executable; the runtime needs ANGLE's GL libraries)", missing.join(" and "))
-  }
-}
-
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn gl_library_hint(_err: &str) -> String {
-  String::new()
-}
-
-fn setup_video(
-  sdl_context: &sdl3::Sdl,
-  title: &str,
-  (width, height): (u32, u32),
-  mode: &Mode,
-) -> Result<(sdl3::video::Window, DisplayContext), String> {
-  let video = sdl_context.video().map_err(|e| format!("video subsystem: {e}"))?;
-  // Platform fact worth having in every log: input behavior (pointer lock,
-  // warp, coordinate spaces) differs per driver (wayland vs x11/XWayland).
-  log::info!("[alloy] video driver: {}", video.current_video_driver());
-  crate::set_video_driver(video.current_video_driver().to_string());
-
-  gl::configure_opengl(&video);
-
-  let mut builder = video.window(title, width, height);
-  builder.opengl().position_centered().high_pixel_density();
-  // A headless window is hidden and fixed-size: keeping it non-resizable
-  // stops the compositor from negotiating a different surface size on a
-  // scaled display, which would diverge from the requested dimensions.
-  if !mode.is_headless() {
-    builder.resizable();
-  }
-  let mut window = match builder.build() {
-    Ok(window) => window,
-    // No window config with a multisampled backbuffer on this EGL (the
-    // Android emulator's GLES translator offers none): a single-sample
-    // window instead, every frame through the rig and its resolve (see
-    // gl::rig::window_samples). The attribute stays cleared, so a window
-    // recreated after a context loss matches.
-    Err(e) if gl::drop_window_multisampling(&video) => {
-      log::warn!("[alloy] GL window creation failed ({e}); retrying with a single-sample backbuffer");
-      builder.build().map_err(|e| format!("window creation: {e}{}", gl_library_hint(&e.to_string())))?
-    }
-    Err(e) => return Err(format!("window creation: {e}{}", gl_library_hint(&e.to_string()))),
+    open_gl(&platform, config(Display::Interactive))
   };
-  if mode.is_headless() {
-    window.hide();
-  }
-
-  let platform = DisplayContext::new_opengl(&window).map_err(|e| format!("GL setup: {e}"))?;
-  Ok((window, platform))
+  let (window, display) = opened.expect("Failed to set up video");
+  crate::dialog::probe(mode.is_headless());
+  crate::set_video_driver(window.video_driver());
+  App { platform, window, display, mode, resampler, user_input_muted }
 }
 
-// The headless mode on SDL's dummy video driver: a windowless Window (no GL
-// flag: the dummy driver loads no GL library) at the requested size, plus an
-// EGL pbuffer context created outside SDL. See egl_headless.rs.
-fn setup_headless(
-  sdl_context: &sdl3::Sdl,
-  title: &str,
+// A GL window and the display context over its GL surface.
+fn open_gl(platform: &Platform, config: WindowConfig<'_>) -> Result<(Window, DisplayContext), String> {
+  let mut window = platform.open_window(config)?;
+  let surface = window.create_gl_surface()?;
+  let display = DisplayContext::new_gl(surface, window.size_in_pixels());
+  Ok((window, display))
+}
+
+// The headless mode wants no display at all: ore's offscreen window (see
+// ore::window::Display::Offscreen for its chain) backs the context with an
+// EGL pbuffer, so `sol render` and `sol test` run in CI, over SSH, on any
+// headless box. Where that window comes without GL (the dummy driver, on a
+// GL stack without EGL device enumeration: ANGLE), the same pbuffer is
+// built outside SDL (egl_headless.rs); and where that fails too, the run
+// falls back to a hidden window on the real display. Whichever surface
+// results only keeps the context current: a headless frame is drawn into a
+// framebuffer the raster thread owns at the headless window's size
+// (raster::RasterState::window_framebuffer), so the surface's own size and
+// content never matter after setup.
+fn open_headless<'a>(
+  platform: &Platform,
+  config: impl Fn(Display) -> WindowConfig<'a>,
   (width, height): (u32, u32),
-) -> Result<(sdl3::video::Window, DisplayContext), String> {
-  let video = sdl_context.video().map_err(|e| format!("video subsystem: {e}"))?;
-  let window = video.window(title, width, height).hidden().build().map_err(|e| format!("window creation: {e}"))?;
-  let platform = DisplayContext::new_egl_pbuffer(width, height)?;
-  Ok((window, platform))
+) -> Result<(Window, DisplayContext), String> {
+  let mut window = platform.open_window(config(Display::Offscreen))?;
+  if window.backing() == Backing::Gl {
+    let surface = window.create_gl_surface()?;
+    let display = DisplayContext::new_gl(surface, window.size_in_pixels());
+    return Ok((window, display));
+  }
+  match DisplayContext::new_egl_pbuffer(width, height) {
+    Ok(display) => Ok((window, display)),
+    Err(e) => {
+      log::warn!("[alloy] headless EGL context unavailable ({e}); falling back to a hidden window");
+      // The dummy driver's window goes first: dropping its video subsystem
+      // handle lets the next open initialize video on the real display.
+      drop(window);
+      open_gl(platform, config(Display::Hidden))
+    }
+  }
 }
 
 // Interactive loop only: the stepped loop publishes its window's size itself
@@ -266,10 +154,12 @@ fn cadence_moved(
   }
 }
 
+// The refresh rate assumed when the display reports none (or 0 Hz).
+const FALLBACK_REFRESH_HZ: f32 = 60.0;
+
 // Refresh rate in Hz of the window's current display, with a 60Hz fallback.
-fn display_refresh_rate(window: &sdl3::video::Window) -> f32 {
-  let hz =
-    window.get_display().and_then(|d| d.get_mode()).map(|m| m.refresh_rate).ok().filter(|&hz| hz > 0.0).unwrap_or(60.0);
+fn display_refresh_rate(window: &Window) -> f32 {
+  let hz = window.refresh_rate().unwrap_or(FALLBACK_REFRESH_HZ);
   // Every query publishes the fact for out-of-loop readers (crate::refresh_rate).
   crate::set_refresh_rate(hz);
   hz
@@ -309,11 +199,11 @@ const POWER_CHECK_PERIOD: Duration = Duration::from_secs(10);
 const REFRESH_CHECK_PERIOD: Duration = Duration::from_secs(1);
 
 impl PlatformWatch {
-  fn new(window: &sdl3::video::Window) -> Self {
+  fn new(window: &Window) -> Self {
     PlatformWatch {
       keyboard_shown: false,
       keyboard_height: 0.0,
-      physical_keyboard: crate::sdl_utils::physical_keyboard(),
+      physical_keyboard: ore::window::physical_keyboard(),
       last_power_check: Instant::now(),
       last_refresh_check: Instant::now(),
       refresh_rate: display_refresh_rate(window),
@@ -328,7 +218,7 @@ impl PlatformWatch {
 
   // Re-query the display mode, emitting on change. The display-event arm
   // and the periodic safety net both funnel here.
-  fn check_refresh(&mut self, window: &sdl3::video::Window) -> Option<AlloyEvent> {
+  fn check_refresh(&mut self, window: &Window) -> Option<AlloyEvent> {
     let hz = display_refresh_rate(window);
     if hz == self.refresh_rate {
       return None;
@@ -338,19 +228,17 @@ impl PlatformWatch {
   }
 
   // One poll per loop iteration; returns the transition events to send.
-  fn poll(&mut self, sdl_context: &sdl3::Sdl, window: &sdl3::video::Window) -> Vec<AlloyEvent> {
+  fn poll(&mut self, window: &Window) -> Vec<AlloyEvent> {
     let mut events = Vec::new();
-    if let Ok(video) = sdl_context.video() {
-      let shown = video.text_input().is_screen_keyboard_shown(window);
-      let scale = crate::sdl_utils::window_display_scale(window);
-      let height = crate::keyboard_inset_px() as f32 / scale;
-      if shown != self.keyboard_shown || height != self.keyboard_height {
-        self.keyboard_shown = shown;
-        self.keyboard_height = height;
-        events.push(AlloyEvent::KeyboardVisibility { shown, height });
-      }
+    let shown = window.screen_keyboard_shown();
+    let scale = window.display_scale();
+    let height = crate::keyboard_inset_px() as f32 / scale;
+    if shown != self.keyboard_shown || height != self.keyboard_height {
+      self.keyboard_shown = shown;
+      self.keyboard_height = height;
+      events.push(AlloyEvent::KeyboardVisibility { shown, height });
     }
-    let physical_keyboard = crate::sdl_utils::physical_keyboard();
+    let physical_keyboard = ore::window::physical_keyboard();
     if physical_keyboard != self.physical_keyboard {
       self.physical_keyboard = physical_keyboard;
       events.push(current_input_devices_event());
@@ -369,41 +257,6 @@ impl PlatformWatch {
   }
 }
 
-/// The run loop's window, in a slot the context-loss recovery can empty and
-/// refill (see `recover_gl`); everywhere else it reads as the window.
-struct HeldWindow(Option<sdl3::video::Window>);
-
-impl HeldWindow {
-  fn take(mut self) -> sdl3::video::Window {
-    self.0.take().expect("the window is held for the loop's life")
-  }
-
-  /// Replace the window through `f`, which takes the old one (and destroys
-  /// it before making the new, where that order matters). On an error the
-  /// slot stays empty: the caller ends the process.
-  fn replace_with(
-    &mut self,
-    f: impl FnOnce(sdl3::video::Window) -> Result<sdl3::video::Window, String>,
-  ) -> Result<(), String> {
-    let old = self.0.take().expect("the window is held for the loop's life");
-    self.0 = Some(f(old)?);
-    Ok(())
-  }
-}
-
-impl std::ops::Deref for HeldWindow {
-  type Target = sdl3::video::Window;
-  fn deref(&self) -> &sdl3::video::Window {
-    self.0.as_ref().expect("the window is held for the loop's life")
-  }
-}
-
-impl std::ops::DerefMut for HeldWindow {
-  fn deref_mut(&mut self) -> &mut sdl3::video::Window {
-    self.0.as_mut().expect("the window is held for the loop's life")
-  }
-}
-
 // Where ANGLE translates GL (Windows over D3D11, macOS over Metal), a device
 // loss marks the whole EGL display lost and every later EGL call fails with
 // EGL_CONTEXT_LOST until eglTerminate, which SDL issues when the last GL
@@ -418,66 +271,23 @@ impl std::ops::DerefMut for HeldWindow {
 const RECOVERY_RECREATES_WINDOW: bool = cfg!(any(target_os = "windows", target_os = "macos", target_os = "android"));
 
 /// A fresh GL context for the raster thread after a loss, on this window or
-/// a recreated one (see RECOVERY_RECREATES_WINDOW): the old context is
-/// destroyed (the raster thread released it), the new one created and
-/// released for the raster thread to bind, the surface size republished.
-/// Interactive runs only: a headless surface has nothing to recreate.
-fn recover_gl(
-  sdl_context: &sdl3::Sdl,
-  window: &mut HeldWindow,
-  platform: &mut Option<DisplayContext>,
-  surface_size: &Arc<AtomicU64>,
-) -> Result<Box<dyn GlBinding>, String> {
-  match platform.take() {
-    Some(DisplayContext::Gl { .. }) => {}
-    Some(DisplayContext::EglPbuffer { .. }) | None => {
-      return Err("the headless surface has no GL context to recreate".to_string());
-    }
+/// a recreated one (see RECOVERY_RECREATES_WINDOW): ore destroys the old
+/// context (the raster thread released it), creates the new one released
+/// for the raster thread to bind and reapplies what was set on the window;
+/// here the surface size is republished. Interactive runs only: a headless
+/// surface has nothing to recreate.
+fn recover_gl(window: &mut Window, surface_size: &Arc<AtomicU64>) -> Result<Box<dyn GlBinding>, String> {
+  if window.backing() != Backing::Gl {
+    return Err("the headless surface has no GL context to recreate".to_string());
   }
-  // The old context went with the display context just dropped
-  // (SDL_GL_DestroyContext; it was current nowhere).
-  if RECOVERY_RECREATES_WINDOW {
-    let video = sdl_context.video().map_err(|e| format!("video subsystem: {e}"))?;
-    window.replace_with(|old| {
-      let title = old.title().to_string();
-      let (width, height) = old.size();
-      let (x, y) = old.position();
-      let fullscreen = old.fullscreen_state() != sdl3::video::FullscreenType::Off;
-      let maximized = old.is_maximized();
-      // SDL_DestroyWindow: the last GL window unloads the GL library, which
-      // terminates the lost EGL display; the next GL window initializes it
-      // afresh.
-      drop(old);
-      let mut builder = video.window(&title, width, height);
-      builder.opengl().position(x, y).high_pixel_density().resizable();
-      let mut window = builder.build().map_err(|e| format!("window recreation: {e}"))?;
-      if maximized && !window.maximize() {
-        log::warn!("[alloy] recreated window: maximize failed: {}", crate::sdl_utils::sdl_error());
-      }
-      if fullscreen {
-        if let Err(e) = window.set_fullscreen(true) {
-          log::warn!("[alloy] recreated window: set_fullscreen failed: {e}");
-        }
-      }
-      Ok(window)
-    })?;
-  }
-  let gl_context = gl::create_window_gl_context(window)?;
-  if !unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(window.raw(), std::ptr::null_mut()) } {
-    return Err(format!(
-      "Failed to release the recovered GL context on the main thread: {}",
-      crate::sdl_utils::sdl_error()
-    ));
-  }
+  let surface = window.recreate_gl(RECOVERY_RECREATES_WINDOW)?;
   let (w, h) = window.size_in_pixels();
   surface_size.store(crate::backend::pack_size(w, h), Ordering::Release);
-  let binding: Box<dyn GlBinding> = Box::new(gl::SdlGlBinding::new(window.raw(), &gl_context));
-  *platform = Some(DisplayContext::Gl { window_raw: window.raw(), gl_context, surface_size: surface_size.clone() });
   log::info!(
     "[alloy] GL context recreated{} at {w}x{h}",
     if RECOVERY_RECREATES_WINDOW { " with the window" } else { "" }
   );
-  Ok(binding)
+  Ok(Box::new(gl::WindowBinding::new(surface)))
 }
 
 impl App {
@@ -502,12 +312,8 @@ impl App {
     self,
     dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<crate::Arrival>) + Send + 'static,
   ) {
-    let App { sdl_context, window, platform, mode, resampler, user_input_muted } = self;
-    // Both held in slots the context-loss recovery can empty and refill
-    // (recover_gl): the window where the GL stack needs a new one, the
-    // display context always.
-    let mut window = HeldWindow(Some(window));
-    let surface_size = platform.surface_size_handle();
+    let App { platform, mut window, display, mode, resampler, user_input_muted } = self;
+    let surface_size = display.surface_size_handle();
 
     let (tx, rx) = mpsc::channel::<FrameOutput>();
     let (event_tx, event_rx) = mpsc::channel::<crate::Arrival>();
@@ -523,7 +329,7 @@ impl App {
     let wake: Option<Arc<dyn Fn() + Send + Sync>> = if mode.is_headless() {
       None
     } else {
-      let events = sdl_context.event().expect("Failed to get SDL event subsystem");
+      let events = platform.sdl().event().expect("Failed to get SDL event subsystem");
       events.register_custom_event::<FrameReady>().expect("Failed to register frame event");
       let sender = events.event_sender();
       Some(Arc::new(move || {
@@ -534,17 +340,15 @@ impl App {
     crate::touch::set_wake(wake.clone());
     crate::redraw::set_wake(wake.clone());
     let raster =
-      platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.frame_sink(), stats.clone());
+      display.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.frame_sink(), stats.clone());
 
     // Surface-liveness policy (rebind + repaint across the surface
     // lifecycle; see liveness.rs). The latch half arrives later via
     // AlloyCommand::SetFrameRequestLatch.
     let mut liveness = SurfaceLiveness::new();
 
-    let mut platform = Some(platform);
-
     if let Mode::Stepped(stepped) = mode {
-      run_stepped_loop(window.take(), cmd_rx, event_tx, stepped, surface_size);
+      run_stepped_loop(window, cmd_rx, event_tx, stepped, surface_size);
       // Nothing may be drawing when the window drops: dropping it unloads
       // the EGL library, and the embedder exits the process right after,
       // which would pull the driver out from under a draw still encoding.
@@ -578,7 +382,7 @@ impl App {
     // resume. The hold is taken here, inside the platform callback, which is
     // the last moment the platform still listens (see SuspendHold).
     let watch_event_tx = event_tx.clone();
-    let _event_watch = sdl_context.event().expect("Failed to get SDL event subsystem").add_event_watch(
+    let _event_watch = platform.sdl().event().expect("Failed to get SDL event subsystem").add_event_watch(
       move |event: sdl3::event::Event| match event {
         sdl3::event::Event::AppWillEnterBackground { .. } => {
           // Before the suspend goes out: frames already queued on the raster
@@ -613,7 +417,7 @@ impl App {
     // thread wakes the blocked event wait exactly like the raster thread does
     // after a present. None = present-return pacing, unchanged.
     let vsync = {
-      let sender = sdl_context.event().expect("Failed to get SDL event subsystem").event_sender();
+      let sender = platform.sdl().event().expect("Failed to get SDL event subsystem").event_sender();
       crate::vsync::VsyncSource::start(move || {
         sender.push_custom_event(FrameReady).ok();
       })
@@ -625,10 +429,10 @@ impl App {
     // vsync::FrameRelease.
     let mut release = crate::vsync::FrameRelease::new(vsync.is_some(), Instant::now());
 
-    let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
+    let mut event_pump = platform.sdl().event_pump().expect("Failed to get SDL event pump");
     // None when SDL has no gamepad support on this platform; pads already
     // plugged in surface through the Added events SDL emits on subsystem init.
-    let mut gamepads = crate::gamepad::Gamepads::new(&sdl_context);
+    let mut gamepads = crate::gamepad::Gamepads::new(platform.sdl());
     let mut frame: u64 = 0;
 
     // The refresh count on every frame signal (see present.rs): reference
@@ -724,15 +528,7 @@ impl App {
     // so hit testing would follow an invisible point. While locked, mouse
     // events report the lock point instead; motion continues via rel.
     let mut pointer_lock_frozen: Option<(f32, f32)> = None;
-    // The cursors this loop has created (system shapes on first use, image
-    // cursors on CreateCursor), owned here for as long as SDL may show them.
-    let mut cursors = crate::cursor::Cursors::default();
     let mut last_mouse: (f32, f32) = (0.0, 0.0);
-    // Window state a context-loss recovery carries into a recreated window
-    // (recover_gl): the icon as last set, and the text input session while
-    // one is active, with the options it was started with.
-    let mut window_icon: Option<(u32, u32, Vec<u8>)> = None;
-    let mut text_input: Option<TextInputOptions> = None;
 
     // Instant of the last frame signal (FrameRendered or Tick). When the UI
     // thread submits nothing for a full refresh period, an idle Tick keeps its
@@ -844,7 +640,7 @@ impl App {
           // else runs until it draws again. A None answer ends the process
           // on the raster side, as a confirmed loss always did.
           Ok(FrameOutput::ContextLost { detail, reply }) => {
-            let recovered = recover_gl(&sdl_context, &mut window, &mut platform, &surface_size);
+            let recovered = recover_gl(&mut window, &surface_size);
             let binding = match recovered {
               Ok(binding) => Some(binding),
               Err(e) => {
@@ -856,20 +652,9 @@ impl App {
             reply.send(binding).ok();
             if recovered {
               // The window the raster thread draws into now may be a new
-              // one: re-apply what the loop set on the old (the icon, the
-              // text input session, the pointer lock), and let the liveness
+              // one: ore re-applied what was set on the old (the icon, the
+              // text input session, the pointer lock); let the liveness
               // policy repaint it like any surface that came back.
-              if let Some((w, h, rgba)) = &window_icon {
-                if let Err(e) = crate::sdl_utils::set_window_icon(&window, *w, *h, rgba) {
-                  log::debug!("set_window_icon failed: {e}");
-                }
-              }
-              if let Some(options) = &text_input {
-                crate::sdl_utils::start_text_input_with_options(&window, options);
-              }
-              if pointer_lock_frozen.is_some() {
-                sdl_context.mouse().set_relative_mouse_mode(&window, true);
-              }
               let e = current_resize_event(&window);
               apply_main_thread_effects(&e, &surface_size);
               if liveness.on_event(&e, Instant::now()) {
@@ -991,8 +776,8 @@ impl App {
       // app releases the lock on is itself a muted keydown - without this the
       // mouse is stuck until the mute lifts. The SDL read is the transition
       // check; the app sees a plain unlock and can lock again once unmuted.
-      if muted && sdl_context.mouse().relative_mouse_mode(&window) {
-        sdl_context.mouse().set_relative_mouse_mode(&window, false);
+      if muted && window.pointer_locked() {
+        window.set_pointer_lock(false);
         pointer_lock_frozen = None;
         event_tx.send(AlloyEvent::PointerLock { locked: false }).ok();
       }
@@ -1175,7 +960,7 @@ impl App {
             }
             // Pointer lock survives an engine reload (window state); the new
             // engine must observe it.
-            event_tx.send(AlloyEvent::PointerLock { locked: sdl_context.mouse().relative_mouse_mode(&window) }).ok();
+            event_tx.send(AlloyEvent::PointerLock { locked: window.pointer_locked() }).ok();
             event_tx.send(AlloyEvent::CadenceHold { policy: cadence.policy(), hold: cadence.hold() }).ok();
           }
           AlloyCommand::SetFrameRequestLatch(latch) => {
@@ -1238,26 +1023,25 @@ impl App {
             }
           }
           AlloyCommand::RaiseWindow => {
-            if !window.raise() {
-              log::warn!("raise_window failed: {}", sdl3::get_error());
+            if let Err(e) = window.raise() {
+              log::warn!("raise_window failed: {e}");
             }
           }
           AlloyCommand::SetIcon { width, height, rgba } => {
             // Debug, not warn: macOS reports failure on every app switch
             // because the platform has no window icons at all.
-            if let Err(e) = crate::sdl_utils::set_window_icon(&window, width, height, &rgba) {
+            if let Err(e) = window.set_icon(width, height, &rgba) {
               log::debug!("set_window_icon failed: {e}");
             }
-            window_icon = Some((width, height, rgba));
           }
           AlloyCommand::SetFullscreen(fs) => {
             if let Err(e) = window.set_fullscreen(fs) {
               log::warn!("set_fullscreen failed: {e}");
             }
           }
-          AlloyCommand::SetCursor(cursor) => cursors.apply(cursor),
-          AlloyCommand::CreateCursor { id, frames, hot_x, hot_y } => cursors.register(id, &frames, hot_x, hot_y),
-          AlloyCommand::DropCursor(id) => cursors.unregister(id),
+          AlloyCommand::SetCursor(cursor) => window.set_cursor(cursor),
+          AlloyCommand::CreateCursor { id, frames, hot_x, hot_y } => window.register_cursor(id, &frames, hot_x, hot_y),
+          AlloyCommand::DropCursor(id) => window.drop_cursor(id),
           // Applied and reported in this iteration: the snapshot above has
           // already run, and a driven session should not wait a tick.
           AlloyCommand::Gamepad(cmd) => match gamepads.as_mut() {
@@ -1275,37 +1059,28 @@ impl App {
             None => log::warn!("[alloy] synthetic gamepad ignored: no gamepad subsystem"),
           },
           AlloyCommand::SetPointerLock(locked) => {
-            let mouse = sdl_context.mouse();
-            mouse.set_relative_mouse_mode(&window, locked);
             // Report the applied state, not the request: SDL can refuse
             // (platform without relative mode), and the answer is the fact
             // the reactive accessor reflects.
-            let applied = mouse.relative_mouse_mode(&window);
+            let applied = window.set_pointer_lock(locked);
             pointer_lock_frozen = if applied { Some(last_mouse) } else { None };
             event_tx.send(AlloyEvent::PointerLock { locked: applied }).ok();
           }
           AlloyCommand::SetTextInputActive(active, options) => {
-            text_input = active.then_some(options);
-            if let Ok(video) = sdl_context.video() {
-              if active {
-                // SDL's default policy ("auto": show the screen keyboard
-                // unless SDL_HasKeyboard) is blind on Android, which never
-                // registers keyboards; feed it the platform fact so an
-                // attached hardware keyboard suppresses the on-screen one.
-                let hint = if crate::sdl_utils::physical_keyboard() { "false" } else { "auto" };
-                sdl3::hint::set("SDL_ENABLE_SCREEN_KEYBOARD", hint);
-                crate::sdl_utils::start_text_input_with_options(&window, &options);
-              } else {
-                video.text_input().stop(&window);
-              }
+            // ore feeds SDL's screen keyboard policy the platform's
+            // keyboard fact first (see Window::start_text_input).
+            if active {
+              window.start_text_input(&options);
+            } else {
+              window.stop_text_input();
             }
           }
           AlloyCommand::ShowDialog { request, respond } => {
-            crate::dialog::show(&window, request, respond);
+            crate::dialog::show(window.sdl_window(), request, respond);
           }
           AlloyCommand::Background => {
-            if !window.minimize() {
-              log::warn!("[alloy] background (minimize) failed: {}", crate::sdl_utils::sdl_error());
+            if let Err(e) = window.minimize() {
+              log::warn!("[alloy] background (minimize) failed: {e}");
             }
           }
           // The interactive window is sized by the user (stepped.rs).
@@ -1315,7 +1090,7 @@ impl App {
         }
       }
 
-      for e in watch.poll(&sdl_context, &window) {
+      for e in watch.poll(&window) {
         event_tx.send(e).ok();
       }
     }

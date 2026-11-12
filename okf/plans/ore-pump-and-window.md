@@ -47,7 +47,7 @@ instead of living in a closure alloy registers.
 - Alloy names `sdl3` or `sdl_utils` in 17 source files, 3 examples and its
   manifest, and `alloy::sdl3` is a public re-export (`alloy/src/lib.rs`).
   `lattice` and `flux` no longer reach through alloy for SDL: since step 0
-  `lattice/src/gl_libs.rs` calls `ore::gl::set_library_path` and
+  `lattice/src/gl_libs.rs` calls `ore::gl_surface::set_library_path` and
   `flux/src/alloy_plugins/record.rs` calls `ore::time::ticks_ns`.
 - The window and the GL context are one knot: `setup_video` calls
   `gl::configure_opengl` before it builds the window and
@@ -269,7 +269,21 @@ Each step is a commit that builds and passes the checks below.
    `open_window`, the headless chain, `GlSurface` with the swap pacer,
    `recreate_gl`, cursors, text input, keyboard and mouse presence. lattice
    builds the `Platform`. For this one step ore lends alloy's pump the SDL
-   event handle it still needs; the next step removes that.
+   event handle it still needs; the next step removes that. Done
+   2026-11-12, with these calls: the module is `ore::gl_surface` (GL
+   itself stays alloy's; only the SDL side of the surface moved); lattice
+   builds the `Platform` and alloy's `setup` opens the window, because the
+   headless chain's middle step (the EGL pbuffer) is alloy's; `open_window`
+   creates the context so a context failure on the offscreen driver still
+   falls through to the hidden window, and `create_gl_surface` only
+   releases it; the backbuffer multisample request travels as
+   `WindowConfig::backbuffer_samples` and ore applies it on Android alone;
+   the hardware-keyboard fact (`set_hardware_keyboard`) is ore's now,
+   alloy's function forwards until step 3 moves the native; `recreate_gl`
+   reapplies the icon, the text input session and the pointer lock itself;
+   alloy's logger lets `ore` through at every level (it filtered ore's
+   lines out before); `Window::sdl_window` is the second lend, for the
+   dialog parent, removed in step 3.
 2. **The pump.** `wait`, the `Waker`, `on_lifecycle` with `SuspendHold`,
    `PlatformWatch`, gamepads, the touch side channel.
 3. **Android glue, vsync, dialogs.** The Choreographer source, the video

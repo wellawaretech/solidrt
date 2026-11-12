@@ -23,7 +23,7 @@ pub(super) fn prev_renderbuffer(name: i32) -> Option<glow::NativeRenderbuffer> {
 /// path AA; it relies on the target framebuffer being multisampled. The
 /// window itself is created single-sample and gets its anti-aliasing from
 /// the rig's resolve (see `render_display_list_to_window`).
-pub(super) const MSAA_SAMPLES: i32 = 4;
+pub(crate) const MSAA_SAMPLES: i32 = 4;
 
 /// Retained GL objects for rig rasterization, owned by the raster thread and
 /// shared by every rig draw: the window frame itself, snapshot boundaries,
@@ -98,7 +98,7 @@ void main() {
 /// and a few ms per 1080p window frame on the 2017 MediaTek TV
 /// (okf/backlog/android-surface-swap-latency.md). None when the extension is
 /// not advertised; desktop GL lacks it and its bandwidth does not miss it.
-/// Call on the raster thread with the GL context current.
+/// Loaded by `probe_msrtt` on the raster thread with the GL context current.
 pub(crate) struct MsrttFns {
   pub(crate) framebuffer_texture_2d_multisample:
     unsafe extern "C" fn(target: u32, attachment: u32, textarget: u32, texture: u32, level: i32, samples: i32),
@@ -106,22 +106,37 @@ pub(crate) struct MsrttFns {
     unsafe extern "C" fn(target: u32, samples: i32, internalformat: u32, width: i32, height: i32),
 }
 
-pub(crate) fn msrtt() -> Option<&'static MsrttFns> {
-  static FNS: std::sync::OnceLock<Option<MsrttFns>> = std::sync::OnceLock::new();
-  FNS
-    .get_or_init(|| unsafe {
-      if !sdl3::sys::video::SDL_GL_ExtensionSupported(c"GL_EXT_multisampled_render_to_texture".as_ptr()) {
-        return None;
-      }
-      let ftm = sdl3::sys::video::SDL_GL_GetProcAddress(c"glFramebufferTexture2DMultisampleEXT".as_ptr())?;
-      let rsm = sdl3::sys::video::SDL_GL_GetProcAddress(c"glRenderbufferStorageMultisampleEXT".as_ptr())?;
-      log::info!("[alloy] MSAA uses EXT_multisampled_render_to_texture (in-tile resolve)");
-      Some(MsrttFns {
+static MSRTT: std::sync::OnceLock<Option<MsrttFns>> = std::sync::OnceLock::new();
+
+/// Load the MsrttFns from the context current on the raster thread, through
+/// the binding's proc-address. Once per process: a later call (after a
+/// context recovery) keeps the first answer, as the probe always did.
+pub(crate) fn probe_msrtt(gl: &glow::Context, binding: &dyn crate::backend::GlBinding) {
+  MSRTT.get_or_init(|| {
+    if !gl.supported_extensions().contains("GL_EXT_multisampled_render_to_texture") {
+      return None;
+    }
+    let ftm = binding.proc_address(c"glFramebufferTexture2DMultisampleEXT");
+    let rsm = binding.proc_address(c"glRenderbufferStorageMultisampleEXT");
+    if ftm.is_null() || rsm.is_null() {
+      return None;
+    }
+    log::info!("[alloy] MSAA uses EXT_multisampled_render_to_texture (in-tile resolve)");
+    // SAFETY: both are the non-null entry points of the advertised
+    // extension, whose signatures are exactly the MsrttFns field types.
+    Some(unsafe {
+      MsrttFns {
         framebuffer_texture_2d_multisample: std::mem::transmute(ftm),
         renderbuffer_storage_multisample: std::mem::transmute(rsm),
-      })
+      }
     })
-    .as_ref()
+  });
+}
+
+/// The entry points `probe_msrtt` loaded; None when the extension is absent
+/// (or before the probe ran).
+pub(crate) fn msrtt() -> Option<&'static MsrttFns> {
+  MSRTT.get().and_then(Option::as_ref)
 }
 
 impl OffscreenRig {
@@ -312,7 +327,7 @@ static WINDOW_SAMPLES: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI
 
 /// FBO 0's multisample count, queried once per window-surface binding.
 /// Positive when the window backbuffer itself is multisampled (Android
-/// requests this, see configure_opengl); the driver then resolves in-tile
+/// requests this through WindowConfig::backbuffer_samples); the driver then resolves in-tile
 /// at swap and plain window frames skip the rig entirely.
 pub(crate) fn window_samples(gl: &glow::Context) -> i32 {
   let cached = WINDOW_SAMPLES.load(std::sync::atomic::Ordering::Relaxed);

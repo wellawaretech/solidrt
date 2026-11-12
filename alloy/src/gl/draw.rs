@@ -321,7 +321,7 @@ pub(crate) fn render_display_list_to_window(
   // patch can never meet the fast path.
   match route {
     WindowRoute::PatchLayer(_) => Err("a patch-layer route is drawn through the patch layer".to_string()),
-    // Multisampled-backbuffer fast path (Android, see configure_opengl): the
+    // Multisampled-backbuffer fast path (Android, see ore's window/open.rs): the
     // driver multisamples FBO 0 inside tile memory and resolves at swap, so
     // the frame draws straight into the window - no rig pass, no resolve
     // copy, and MSAA costs almost nothing. The layer variant below still goes

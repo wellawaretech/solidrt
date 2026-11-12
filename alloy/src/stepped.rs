@@ -42,11 +42,11 @@ impl HeadlessWindow {
 // those, the embedder may set another size and scale (a test's window),
 // published to the raster thread the way a window resize is (the surface
 // size atomic, read at the next frame or readback) and told to the app as a
-// resize. The SDL window itself is never drawn to headless; it is held so
+// resize. The window itself is never drawn to headless; it is held so
 // the surface keeping the context current outlives every draw. Returns when
 // the embedder is done and has dropped its command sender.
 pub(crate) fn run_stepped_loop(
-  window: sdl3::video::Window,
+  window: ore::window::Window,
   cmd_rx: mpsc::Receiver<AlloyCommand>,
   event_tx: crate::EventSender,
   config: SteppedConfig,

@@ -12,6 +12,7 @@ use ore::lifecycle::SuspendHold;
 use ore::power::PowerInfo;
 use ore::text_input::TextInputOptions;
 use ore::theme::SystemTheme;
+use ore::window::Window;
 
 pub enum AlloyCommand {
   EmitInitEvents,
@@ -94,19 +95,6 @@ pub enum AlloyCommand {
   // by the user and ignores it. The products must be whole pixels (the
   // sender validates). The next EmitInitEvents restores the run's window.
   SetHeadlessWindow { width: u32, height: u32, scale: f32 },
-}
-
-// The display orientation SDL reports, translated at the loop like keys and
-// cursors.
-fn orientation_from_sdl(o: sdl3::video::Orientation) -> Orientation {
-  use sdl3::video::Orientation as Sdl;
-  match o {
-    Sdl::Landscape => Orientation::Landscape,
-    Sdl::LandscapeFlipped => Orientation::LandscapeFlipped,
-    Sdl::Portrait => Orientation::Portrait,
-    Sdl::PortraitFlipped => Orientation::PortraitFlipped,
-    Sdl::Unknown => Orientation::Unknown,
-  }
 }
 
 // SDL's modifier bits as the modifier state an event carries: either side's
@@ -408,34 +396,30 @@ pub(crate) fn current_input_devices_event() -> AlloyEvent {
   // drivers claiming pointer sources), so the fact is gated on the
   // platform's own touchscreen feature declaration.
   #[cfg(target_os = "android")]
-  let touch = !sdl3::touch::num_touch_devices().is_empty() && ore::android::has_touchscreen_feature();
+  let touch = ore::window::has_touch_device() && ore::android::has_touchscreen_feature();
   #[cfg(not(target_os = "android"))]
-  let touch = !sdl3::touch::num_touch_devices().is_empty();
+  let touch = ore::window::has_touch_device();
   AlloyEvent::InputDevices {
-    keyboard: sdl_utils::physical_keyboard(),
-    mouse: sdl_utils::has_mouse(),
+    keyboard: ore::window::physical_keyboard(),
+    mouse: ore::window::has_mouse(),
     touch,
-    screen_keyboard: sdl_utils::has_screen_keyboard_support(),
+    screen_keyboard: ore::window::has_screen_keyboard_support(),
   }
 }
 
-pub(crate) fn current_orientation_event(window: &sdl3::video::Window) -> AlloyEvent {
-  let orientation = window
-    .get_display()
-    .map(|d| orientation_from_sdl(sdl3::video::Orientation::from_ll(d.get_orientation())))
-    .unwrap_or(Orientation::Unknown);
-  AlloyEvent::DisplayOrientation { orientation }
+pub(crate) fn current_orientation_event(window: &Window) -> AlloyEvent {
+  AlloyEvent::DisplayOrientation { orientation: window.orientation() }
 }
 
-pub(crate) fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
+pub(crate) fn current_resize_event(window: &Window) -> AlloyEvent {
   let (w, h) = window.size_in_pixels();
-  let scale = sdl_utils::window_display_scale(window);
-  let r = sdl_utils::window_safe_area(window);
+  let scale = window.display_scale();
+  let r = window.safe_area();
   AlloyEvent::Resize {
     size: ISize::new((w as f32 / scale) as i64, (h as f32 / scale) as i64),
     safe_area: Rect::new(
       crate::renderer::Point::new(r.x as f32, r.y as f32),
-      crate::renderer::Size::new(r.w as f32, r.h as f32),
+      crate::renderer::Size::new(r.width as f32, r.height as f32),
     ),
     display_scale: scale,
   }
@@ -512,7 +496,7 @@ pub(crate) fn is_muted_input(event: &AlloyEvent) -> bool {
   }
 }
 
-pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window) -> Option<AlloyEvent> {
+pub(crate) fn translate_event(sdl_event: SdlEvent, window: &Window) -> Option<AlloyEvent> {
   match sdl_event {
     SdlEvent::Quit { .. } => Some(AlloyEvent::Quit),
     // iOS applicationWillTerminate (Android sends it alongside Quit at
@@ -565,12 +549,12 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
     }
     SdlEvent::Window { win_event: sdl3::event::WindowEvent::Exposed, .. } => Some(AlloyEvent::Exposed),
     SdlEvent::Window { win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h), .. } => {
-      let display_scale = sdl_utils::window_display_scale(window);
+      let display_scale = window.display_scale();
       let size = ISize::new((w as f32 / display_scale) as i64, (h as f32 / display_scale) as i64);
-      let r = sdl_utils::window_safe_area(window);
+      let r = window.safe_area();
       let safe_area = Rect::new(
         crate::renderer::Point::new(r.x as f32, r.y as f32),
-        crate::renderer::Size::new(r.w as f32, r.h as f32),
+        crate::renderer::Size::new(r.width as f32, r.height as f32),
       );
       Some(AlloyEvent::Resize { size, safe_area, display_scale })
     }
@@ -736,7 +720,7 @@ pub(crate) fn link_from_drop(payload: &str) -> Option<String> {
 // SDL's finger events translate to above, which is where every other
 // platform's touch comes from.
 #[cfg(target_os = "android")]
-pub(crate) fn translate_touch(sample: &crate::touch::TouchSample, window: &sdl3::video::Window) -> AlloyEvent {
+pub(crate) fn translate_touch(sample: &crate::touch::TouchSample, window: &Window) -> AlloyEvent {
   use crate::touch::TouchKind;
   let (lw, lh) = touch_window_logical_size(window);
   let (pointer_id, pointer_type) = (sample.finger_id, PointerType::Touch);
@@ -750,8 +734,8 @@ pub(crate) fn translate_touch(sample: &crate::touch::TouchSample, window: &sdl3:
   }
 }
 
-fn touch_window_logical_size(window: &sdl3::video::Window) -> (f32, f32) {
-  let scale = sdl_utils::window_display_scale(window);
+fn touch_window_logical_size(window: &Window) -> (f32, f32) {
+  let scale = window.display_scale();
   let (pw, ph) = window.size_in_pixels();
   (pw as f32 / scale, ph as f32 / scale)
 }
@@ -761,11 +745,11 @@ fn touch_window_logical_size(window: &sdl3::video::Window) -> (f32, f32) {
 // ratio is 1.0; where they are physical pixels (Android, X11) it collapses to
 // 1 / display_scale. Derived from the same sizes the resize event uses, so
 // mouse and layout can never disagree by construction.
-fn mouse_scale(window: &sdl3::video::Window) -> f32 {
+fn mouse_scale(window: &Window) -> f32 {
   let (w, _) = window.size();
   let (pw, _) = window.size_in_pixels();
   if w == 0 || pw == 0 {
     return 1.0;
   }
-  (pw as f32 / sdl_utils::window_display_scale(window)) / w as f32
+  (pw as f32 / window.display_scale()) / w as f32
 }
