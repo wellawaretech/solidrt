@@ -599,6 +599,12 @@ Shaped, not started.
   not animatable), so a lit fill snaps on a theme switch where a solid fill
   cross-fades; interpolate gradients that share a kind and stop count, stop
   colors in oklab and positions linearly, and keep snapping for the rest.
+- **[Device haptics](backlog/haptics.md)** [2026-11-12]
+  An app cannot make the device's actuator respond, so a tap, a toggle, an
+  error or a game hit can be seen and heard but not felt. One platform-neutral
+  model (feedback named by intent, waveforms as intensity/sharpness envelopes,
+  a support query) built on Android now through our own JNI, shaped so iOS,
+  macOS and Windows slot in later without changing the API.
 - **[Color math is unreachable headless](backlog/headless-color-math.md)** [2026-08-19]
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components

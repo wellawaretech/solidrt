@@ -46,5 +46,7 @@ collision already plays a sound.
 
 ## Not in this item
 
-Custom haptic waveforms (SDL_haptic effects), phone vibration, force
-feedback on wheels.
+Custom haptic waveforms (SDL_haptic effects), the device's own actuator
+([haptics](haptics.md): feedback by intent and envelopes, our own JNI
+rather than SDL; keep intensity 0..1 and durations in ms the same
+vocabulary as here), force feedback on wheels.

@@ -342,7 +342,7 @@ covers; the web name to borrow, if any.
 | Desktop widget window | yes | no | no | window flags | none |
 | Locale | no | no | no | `SDL_GetPreferredLocales` | `navigator.languages` |
 | Power and battery | no | no | no | `SDL_GetPowerInfo` | Battery Status |
-| Vibration | no | no | Android permission | none (haptic is for devices) | `navigator.vibrate` |
+| Device haptics | no | no | Android permission | one-shot only (`SDL_OpenHaptic`); own JNI instead | `navigator.vibrate` |
 | Wake lock | yes | no | Android permission | `SDL_DisableScreenSaver` | Screen Wake Lock |
 | Local notifications | no | delivery yes | permission, receiver | none | Notifications API |
 | Alarms (scheduled) | no | yes | exact-alarm permission, receiver | none | none (Notification Triggers dropped) |
