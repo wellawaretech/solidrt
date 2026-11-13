@@ -17,13 +17,16 @@
 import { file, realpath } from "flux:fs"
 import { join } from "flux:path"
 import { fail } from "./args"
+import { checkWindowSize, type WindowSize } from "../lib/window-size"
 
 // `runtime`: the project's own runtime directory (`"solidrt": { "runtime" }`,
 // see lib/runtime.ts), absolute as `dir` and as package.json names it as
 // `declared`; the client spawns from it when it holds one for this host.
+// `windowSize`: the size the local client opens at without --size
+// (`"solidrt": { "windowSize" }`, lib/window-size.ts).
 export type ProjectRuntime = { dir: string; declared: string }
 export type Mode =
-  | { mode: "project"; key: string; projectDir: string; entry: string; runtime: ProjectRuntime | null }
+  | { mode: "project"; key: string; projectDir: string; entry: string; runtime: ProjectRuntime | null; windowSize?: WindowSize }
   | { mode: "file"; key: string; projectDir: null; entry: string; runtime: null }
 
 const DEFAULT_ENTRY = "src/index.tsx"
@@ -49,7 +52,7 @@ export async function resolveMode(args: { entry: string | undefined; project: bo
     if (!(await file(entry).exists())) {
       fail(`Entry not found: ${entry}${declared.entry ? "" : ' (set "solidrt": { "entry": ... } in package.json)'}`)
     }
-    return { mode: "project", key: cwd, projectDir: cwd, entry, runtime: runtimeDir(cwd, declared) }
+    return { mode: "project", key: cwd, projectDir: cwd, entry, runtime: runtimeDir(cwd, declared), windowSize: declared.windowSize }
   }
 
   let entry = await realpath(source)
@@ -59,17 +62,18 @@ export async function resolveMode(args: { entry: string | undefined; project: bo
     )
   }
   if (hasPkg && args.project) {
-    return { mode: "project", key: cwd, projectDir: cwd, entry, runtime: runtimeDir(cwd, await declaredConfig(cwd)) }
+    let declared = await declaredConfig(cwd)
+    return { mode: "project", key: cwd, projectDir: cwd, entry, runtime: runtimeDir(cwd, declared), windowSize: declared.windowSize }
   }
   if (!hasPkg && args.project) fail(`--project needs a package.json in ${cwd}`)
   return { mode: "file", key: entry, projectDir: null, entry, runtime: null }
 }
 
-// The project's declared entry and runtime (`"solidrt": { "entry", "runtime"
-// }` in package.json), relative to the project root. Only the fields the
-// server needs are checked here; the bun commands validate the whole key
-// (src/lib/project.ts).
-async function declaredConfig(dir: string): Promise<{ entry?: string; runtime?: string }> {
+// The project's declared entry, runtime and windowSize (`"solidrt": {
+// "entry", "runtime", "windowSize" }` in package.json), the paths relative
+// to the project root. Only the fields the server needs are checked here;
+// the bun commands validate the whole key (src/lib/project.ts).
+async function declaredConfig(dir: string): Promise<{ entry?: string; runtime?: string; windowSize?: WindowSize }> {
   let pkg = await file(join(dir, "package.json"))
     .json()
     .catch(() => fail(`Unreadable package.json in ${dir}`))
@@ -81,7 +85,12 @@ async function declaredConfig(dir: string): Promise<{ entry?: string; runtime?: 
   for (let key of ["entry", "runtime"]) {
     if (key in config && config[key] !== null && typeof config[key] !== "string") fail(`"solidrt": "${key}" must be a string`)
   }
-  return { entry: config.entry ?? undefined, runtime: config.runtime ?? undefined }
+  let windowSize = config.windowSize ?? undefined
+  if (windowSize !== undefined) {
+    let error = checkWindowSize(windowSize)
+    if (error) fail(error)
+  }
+  return { entry: config.entry ?? undefined, runtime: config.runtime ?? undefined, windowSize }
 }
 
 function runtimeDir(cwd: string, declared: { runtime?: string }): ProjectRuntime | null {

@@ -12,6 +12,8 @@ Run from the project root to serve the project (the entry is
 serves a single file outside a project. In a project root a file argument
 is ambiguous, so it takes `--project` (the project, with this entry) or
 `--file` (the file alone). Nothing searches upward for a package.json.
+The local client opens at the project's `solidrt.windowSize`. Give
+`--size` to use a different size.
 
 The server pushes the bundle to every connected client, so one server can
 drive a desktop window and a phone at the same time. A save reaches them on

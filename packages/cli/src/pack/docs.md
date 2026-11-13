@@ -41,6 +41,7 @@ platform-neutral terms; the `android` group holds what only Android needs:
 ```json
 "solidrt": {
   "appId": "com.example.app",
+  "windowSize": { "width": 900, "height": 600 },
   "icon": "./assets/icon.svg",
   "iconBackground": "#1a1a1a",
   "capabilities": {
@@ -57,6 +58,14 @@ platform-neutral terms; the `android` group holds what only Android needs:
   "runtime": "runtime/dist"
 }
 ```
+
+`windowSize` is the size the desktop window opens at, in logical points:
+the unit `windowSize()` reports. The window has the same size at every
+display scale. `run` opens the local client at this size, and `--size`
+wins over it. Android and the TV ignore it, because the app is the whole
+screen. The size is not clamped: a size larger than the display goes to
+the OS as asked, and the window manager decides. To change the size while
+the app runs, declare `<window size>`.
 
 `runtime` names the project's own runtime binaries, when the project builds
 a custom runtime (a cargo project over lattice with the project's native

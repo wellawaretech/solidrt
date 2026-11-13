@@ -1043,11 +1043,6 @@ Shaped, not started.
   pattern, Windows and macOS through wry), Linux on Wayland has no plane and
   needs either "unavailable" or a WPE texture lane, and the use case decides
   the scope.
-- **[An app cannot choose the size its window opens at](backlog/window-start-size.md)** [2026-11-13]
-  The start size is the `--size` flag (default 1280x720), which a packed app
-  has no path to, so a start size in the project config, carried by the
-  manifest and read before the window exists, is the missing piece, with no
-  resize flash and no startup change.
 - **[Dev-tooling storage in XDG base directories instead of one home dotdir](backlog/xdg-storage-layout.md)** [2026-08-13]
   Dev state lives in ~/.solidrt/ (servers/<port>/, clients/client<M>/), chosen
   2026-08-13 for one rule on every platform. XDG splits by purpose instead -
@@ -3334,6 +3329,11 @@ Finished, kept for the reasoning.
   sets a size, so a desktop app cannot change its window size after start; a
   `size` prop over a new alloy command, deduplicated in the platform loop,
   plus the control API resize that shares the ore call.
+- **[An app cannot choose the size its window opens at](done/window-start-size.md)** [2026-11-13]
+  The start size is the `--size` flag (default 1280x720), which a packed app
+  has no path to, so a start size in the project config, carried by the
+  manifest and read before the window exists, is the missing piece, with no
+  resize flash and no startup change.
 
 ## Notes
 

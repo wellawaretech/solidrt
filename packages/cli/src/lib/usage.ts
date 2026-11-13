@@ -74,7 +74,7 @@ run/server/demo options:
       -- <args...>       Everything after -- reaches the app on every client (flux:process argv)
 
 run/client options:
-      --size <WxH>       Window size (default: 1280x720)
+      --size <WxH>       Window size in logical points (default: the project's windowSize, else 1280x720)
       --stats            Show the debug stats overlay (FPS, memory, frame timings)
       --data-root <dir>  Client data root (default: ~/.solidrt/clients)
   -c, --client <N>       Client number: its own data tree under the data root (default: 0)

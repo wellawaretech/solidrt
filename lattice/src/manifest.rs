@@ -28,6 +28,11 @@ pub struct Manifest {
   // none.
   #[serde(default)]
   pub icon: Option<String>,
+  // The size the desktop window opens at, in logical points (the project's
+  // `windowSize` key, checked by the CLI). Absent when the app declares
+  // none.
+  #[serde(default, rename = "windowSize")]
+  pub window_size: Option<WindowSize>,
   // Provenance: the CLI release (or git describe of the checkout) that built
   // this version; "unknown" only for manifests from CLIs that predate the
   // field. The packed runner warns when it differs from its own version
@@ -48,6 +53,13 @@ pub struct ManifestBundle {
   pub path: Option<String>,
   pub sha256: String,
   pub size: u64,
+}
+
+/// The size the desktop window opens at, in logical points.
+#[derive(Deserialize, Clone, Copy)]
+pub struct WindowSize {
+  pub width: u32,
+  pub height: u32,
 }
 
 /// One collected assets/ file, as the manifest lists it.
@@ -96,6 +108,12 @@ impl Manifest {
   /// Parse the canonical manifest string.
   pub fn parse(manifest: &str) -> Result<Manifest, String> {
     serde_json::from_str(manifest).map_err(|e| format!("manifest parse failed: {e}"))
+  }
+
+  /// The size the desktop window opens at, in logical points; None when the
+  /// manifest declares none.
+  pub fn window_size(&self) -> Option<(u32, u32)> {
+    self.window_size.map(|size| (size.width, size.height))
   }
 
   /// Parse `manifest.json` inside a version dir (or a pack folder). None when

@@ -63,7 +63,9 @@ in logical points. It applies when the value changes and does nothing on
 Android or the TV. It is not a constraint: a user drag is not fought and does
 not write back, so re-declaring the same size does not snap the window back,
 and a tiling compositor may ignore it. Read the actual size from `windowSize()`;
-the dev tree's `size` prop is the declared one.
+the dev tree's `size` prop is the declared one. The size a window opens at
+is the project's `"solidrt": { "windowSize": { width, height } }` key in
+package.json; the prop is for a change while the app runs.
 
 `env` and `capabilities` (both exported from `@solidrt/core`) are the two
 objects that expose this. They are plain objects with REACTIVE GETTERS, not

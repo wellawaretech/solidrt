@@ -3,7 +3,7 @@
 //! (offscreen, then dummy without GL, then a hidden window on the real
 //! display). Main thread only.
 
-use super::{Backing, Display, Window, WindowConfig};
+use super::{start_factor, start_units, window_factor, window_units, Backing, Display, Window, WindowConfig};
 
 /// Open the window `config` asks for (see `Display`). A GL window comes
 /// back with its context created and current on this thread;
@@ -65,16 +65,22 @@ fn open_offscreen(sdl: &sdl3::Sdl, config: &WindowConfig<'_>) -> Result<Window, 
 
 // A GL window: centered and high pixel density; resizable and shown when
 // `interactive`, hidden and fixed-size otherwise. Its context is created
-// here, current on this thread.
+// here, current on this thread. The interactive window is created at the
+// config's logical size in the window units `start_units` estimates; a
+// headless one at the config size as it is (see `WindowConfig`).
 fn open_gl(sdl: &sdl3::Sdl, config: &WindowConfig<'_>, interactive: bool) -> Result<Window, String> {
   let video = sdl.video().map_err(|e| format!("video subsystem: {e}"))?;
+  let driver = video.current_video_driver();
   // Platform fact worth having in every log: input behavior (pointer lock,
   // warp, coordinate spaces) differs per driver (wayland vs x11/XWayland).
-  log::info!("[ore] video driver: {}", video.current_video_driver());
+  log::info!("[ore] video driver: {driver}");
 
   configure_opengl(&video, config.backbuffer_samples);
 
-  let mut builder = video.window(config.title, config.width, config.height);
+  let logical = (config.width, config.height);
+  let content_scale = if interactive { primary_content_scale(&video) } else { 0.0 };
+  let units = if interactive { start_units(logical, driver, content_scale) } else { logical };
+  let mut builder = video.window(config.title, units.0, units.1);
   builder.opengl().position_centered().high_pixel_density();
   // A headless window is hidden and fixed-size: keeping it non-resizable
   // stops the compositor from negotiating a different surface size on a
@@ -100,7 +106,55 @@ fn open_gl(sdl: &sdl3::Sdl, config: &WindowConfig<'_>, interactive: bool) -> Res
   }
 
   let gl_context = crate::gl_surface::create_context(&window).map_err(|e| format!("GL setup: {e}"))?;
-  Ok(Window::new(video, window, Some(gl_context), Backing::Gl))
+  let mut window = Window::new(video, window, Some(gl_context), Backing::Gl);
+  if interactive {
+    check_start_size(&mut window, logical, units, driver, start_factor(driver, content_scale));
+  }
+  Ok(window)
+}
+
+// The primary display's content scale, the one scale there is before a
+// window exists; 1 when SDL reports none.
+fn primary_content_scale(video: &sdl3::VideoSubsystem) -> f32 {
+  match video.get_primary_display().and_then(|display| display.get_content_scale()) {
+    Ok(scale) => scale,
+    Err(e) => {
+      log::debug!("[ore] primary display content scale unavailable ({e}); using 1");
+      1.0
+    }
+  }
+}
+
+// Once the window exists, its own factor (display scale over pixel
+// density, the `window_units` formula) against the one the start size was
+// estimated with (`start_units`). Factors, not sizes: a compositor may give
+// the window another size (Hyprland reports every window maximized), which
+// is not an error. A different factor means the driver table was wrong for
+// this driver: the window is resized to the logical size once and centered
+// again (a resize grows from the top-left corner).
+fn check_start_size(window: &mut Window, logical: (u32, u32), units: (u32, u32), driver: &str, estimated: f32) {
+  let display_scale = window.display_scale();
+  let pixel_density = window.held().pixel_density();
+  let actual = window_factor(display_scale, pixel_density);
+  let actual_units = window_units(logical, display_scale, pixel_density);
+  if actual_units != units {
+    log::warn!(
+      "[ore] window start size: the {driver} driver's window factor is {actual}, not the estimated {estimated}; resizing"
+    );
+    if let Err(e) = window.set_size(logical.0, logical.1) {
+      log::warn!("[ore] window start size correction refused: {e}");
+    }
+    if !window.held_mut().set_position(sdl3::video::WindowPos::Centered, sdl3::video::WindowPos::Centered) {
+      log::warn!("[ore] window could not be centered again: {}", crate::sdl_error());
+    }
+  }
+  log::info!(
+    "[ore] window: {}x{} logical points, {}x{} units (factor {actual} on {driver})",
+    logical.0,
+    logical.1,
+    actual_units.0,
+    actual_units.1
+  );
 }
 
 // The headless mode on SDL's dummy video driver: a windowless Window (no GL

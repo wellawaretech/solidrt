@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { fail } from "./fail"
 import { checkFontsMap, STOCK_FONT_ROLES } from "./fonts"
 import { iconBackgroundRgb } from "./icon-background"
+import { checkWindowSize, type WindowSize } from "./window-size"
 
 // Project configuration lives in the `solidrt` key of the project's
 // package.json (okf/plans/client-storage-updates.md):
@@ -11,6 +12,9 @@ import { iconBackgroundRgb } from "./icon-background"
 //     "appId": "com.example.app",   // stable identity: storage dir, Android package id
 //     "org": "Example",             // optional display metadata (publisher)
 //     "displayName": "Example App", // optional display metadata (player/window)
+//     "windowSize": { "width": 900, "height": 600 },
+//                                   // the size a desktop window opens at, in
+//                                   // logical points (see window-size.ts)
 //     "fonts": { ... },             // see fonts.ts
 //     "textures": { ... },          // how textures are compressed at bake
 //                                   // time (@solidrt/core/textures)
@@ -78,6 +82,8 @@ export type ProjectConfig = {
   appId?: string
   org?: string
   displayName?: string
+  /** The size a desktop window opens at, in logical points (window-size.ts). */
+  windowSize?: WindowSize
   /**
    * alias -> font file path (the app's own face under that alias, replacing
    * the runtime's), false to drop the runtime's font under it, or true for
@@ -167,7 +173,7 @@ function parseAndroidConfig(raw: unknown): AndroidConfig {
 export type Project = { dir: string; name: string | undefined; version: string | undefined; config: ProjectConfig }
 
 // Every key the `solidrt` object accepts (the ProjectConfig fields).
-const PROJECT_KEYS = ["entry", "appId", "org", "displayName", "icon", "iconBackground", "capabilities", "backup", "fonts", "textures", "android", "runtime"]
+const PROJECT_KEYS = ["entry", "appId", "org", "displayName", "windowSize", "icon", "iconBackground", "capabilities", "backup", "fonts", "textures", "android", "runtime"]
 
 /**
  * The font aliases a runtime binds, as its build listed them beside its
@@ -228,6 +234,10 @@ function parseProjectConfig(raw: unknown, dir: string): ProjectConfig {
   // @solidrt/core/textures, which every texture bake runs.
   if ("textures" in config && (typeof config.textures !== "object" || Array.isArray(config.textures))) {
     fail('"solidrt": "textures" must be an object')
+  }
+  if ("windowSize" in config) {
+    let error = checkWindowSize(config.windowSize)
+    if (error) fail(error)
   }
   if ("android" in config) config.android = parseAndroidConfig(config.android)
   if ("fonts" in config) {
@@ -335,6 +345,7 @@ export function buildManifest(code: string, entry: string, extra: ManifestAsset[
   return JSON.stringify({
     appId: identity.appId,
     displayName: identity.displayName,
+    ...manifestWindowSize(projectDir),
     runtimeVersion: RUNTIME_VERSION,
     solidrtVersion: SOLIDRT_VERSION,
     ...(icon ? { icon } : {}),
@@ -345,6 +356,19 @@ export function buildManifest(code: string, entry: string, extra: ManifestAsset[
 }
 
 export type ManifestAsset = { path: string; sha256: string; size: number }
+
+/**
+ * The manifest's `windowSize` entry, to spread in right after `displayName`
+ * by both manifest writers (the dev manifest above, the pack folder's in
+ * pack/layout.ts): lattice reads it before the window exists. Written as
+ * `{ width, height }` in that order whatever order package.json lists them,
+ * since the manifest's bytes are the version id; empty when the app
+ * declares none.
+ */
+export function manifestWindowSize(projectDir: string | null): { windowSize?: WindowSize } {
+  let size = loadProject(projectDir)?.config.windowSize
+  return size ? { windowSize: { width: size.width, height: size.height } } : {}
+}
 /** A font annotation: an alias bound to an assets/ file, or to nothing (no
  * path) when the app drops the runner's default for that role. */
 export type ManifestFont = { alias: string; path?: string }

@@ -6,6 +6,7 @@ mod frame_history;
 mod frame_signal;
 #[cfg(any(feature = "go", feature = "test"))]
 mod input;
+mod manifest;
 mod modules;
 mod paced_clock;
 #[cfg(feature = "go")]

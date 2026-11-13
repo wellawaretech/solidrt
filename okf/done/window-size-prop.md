@@ -22,7 +22,7 @@ An app that changes shape while running (a compact mode, a panel that grows
 when it opens a drawer) cannot ask for the window that fits.
 
 The size a window opens at is a separate item,
-[window-start-size](../backlog/window-start-size.md). This item does not
+[window-start-size](../done/window-start-size.md). This item does not
 wait for it: the dedupe below makes a mount-time declaration equal to the
 open size a no-op, and a different one is the resize the app asked for.
 

@@ -5,6 +5,7 @@
   "solidrt": {
     "appId": null,
     "displayName": null,
+    "windowSize": null,
     "icon": null,
     "iconBackground": null,
     "capabilities": {

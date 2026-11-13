@@ -61,6 +61,11 @@ pub enum Display {
 /// How the window opens.
 pub struct WindowConfig<'a> {
   pub title: &'a str,
+  /// The size the window opens at, in logical points: the unit `size`,
+  /// `set_size` and the resize event use. An interactive window is created
+  /// at these points converted to SDL window units (`start_units`, checked
+  /// once the window exists); a headless window is created at them as they
+  /// are, the frame size the host asked for.
   pub width: u32,
   pub height: u32,
   pub display: Display,
@@ -569,11 +574,44 @@ pub(crate) fn normalize_safe_area(rect: Rect, logical: (u32, u32), pixels: (u32,
 /// Wayland) and the content scale where they are physical (X11, Windows).
 /// A non-positive scale or density means a factor of 1.
 pub(crate) fn window_units(logical: (u32, u32), display_scale: f32, pixel_density: f32) -> (u32, u32) {
-  let (w, h) = logical;
+  scale_units(logical, window_factor(display_scale, pixel_density))
+}
+
+/// The factor `window_units` converts by: display scale over pixel
+/// density, 1 when either is non-positive.
+fn window_factor(display_scale: f32, pixel_density: f32) -> f32 {
   if display_scale <= 0.0 || pixel_density <= 0.0 {
-    return logical;
+    return 1.0;
   }
-  let factor = display_scale / pixel_density;
+  display_scale / pixel_density
+}
+
+/// The video drivers whose window coordinates are physical pixels, where
+/// high DPI is a content scale only (SDL's docs/README-highdpi.md). On every
+/// other driver (macOS, Wayland, Android, the headless drivers) window
+/// coordinates are logical points.
+const PHYSICAL_WINDOW_COORDINATE_DRIVERS: &[&str] = &["x11", "windows"];
+
+/// A size in logical points as the SDL window units to create a window
+/// with, before there is a window to ask (`window_units` needs one): on the
+/// drivers with physical window coordinates the size times the display's
+/// content scale, rounded to whole units; elsewhere the size as it is. A
+/// non-positive content scale means a factor of 1.
+pub(crate) fn start_units(logical: (u32, u32), driver: &str, content_scale: f32) -> (u32, u32) {
+  scale_units(logical, start_factor(driver, content_scale))
+}
+
+/// The factor `start_units` converts by.
+fn start_factor(driver: &str, content_scale: f32) -> f32 {
+  if content_scale <= 0.0 || !PHYSICAL_WINDOW_COORDINATE_DRIVERS.contains(&driver) {
+    return 1.0;
+  }
+  content_scale
+}
+
+// A size times a factor, rounded to whole units.
+fn scale_units(size: (u32, u32), factor: f32) -> (u32, u32) {
+  let (w, h) = size;
   ((w as f32 * factor).round() as u32, (h as f32 * factor).round() as u32)
 }
 

@@ -21,6 +21,7 @@ import { state } from "./state"
 import { fail, parseArgs } from "./args"
 import type { ServerConfig } from "./config"
 import { absolute, resolveMode, sourceDirOf } from "./mode"
+import { windowSizeFlag } from "../lib/window-size"
 import { requireBinary, solCommand } from "./binaries"
 import * as cache from "./cache"
 import { handleProxy } from "./proxy"
@@ -67,7 +68,10 @@ let clientArgs: string[] = []
 if (args.client !== null) {
   clientArgs.push("--data-root", args.dataRoot ? absolute(args.dataRoot, await realpath(".")) : devDir("clients"))
   clientArgs.push("--client", String(args.client))
-  if (args.size) clientArgs.push("--size", args.size)
+  // Without --size the client opens at the project's windowSize, as the
+  // packed app does; a file run has none and keeps the client's default.
+  let size = args.size ?? windowSizeFlag(mode.mode === "project" ? mode.windowSize : undefined)
+  if (size) clientArgs.push("--size", size)
 }
 
 let config: ServerConfig = {

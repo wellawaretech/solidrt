@@ -9,7 +9,9 @@
 use flux::rquickjs::module::ModuleDef;
 use flux::FluxEngineBuilder;
 
-/// The window a run opens when nothing sizes it (`--size`, a packed app).
+/// The window a run opens when nothing sizes it: not `--size`, not the
+/// manifest's `windowSize` (a packed app's, or the `--assets` folder's).
+/// In logical points, like both.
 const DEFAULT_WINDOW_SIZE: (u32, u32) = (1280, 720);
 
 /// The scheme every module a runtime adds registers under: `runtime:physics`,
@@ -144,6 +146,7 @@ pub fn android_main(argc: i32, argv: *mut *mut i8, program: Program) -> i32 {
     None,
     launch,
     None,
+    // The app is the whole screen: no size applies on Android.
     DEFAULT_WINDOW_SIZE,
     false,
     dev_server,
@@ -190,6 +193,8 @@ pub fn android_main(argc: i32, argv: *mut *mut i8, program: Program) -> i32 {
     Some(payload.app),
     launch,
     payload.display_name,
+    // The app is the whole screen: the manifest's windowSize does nothing
+    // on Android.
     DEFAULT_WINDOW_SIZE,
     false,
     None,
@@ -300,7 +305,7 @@ pub fn main(program: Program) {
       Some(payload.app),
       launch,
       payload.display_name,
-      DEFAULT_WINDOW_SIZE,
+      payload.window_size.unwrap_or(DEFAULT_WINDOW_SIZE),
       false,
       None,
       payload.fonts,
@@ -323,7 +328,7 @@ pub fn main(program: Program) {
   let mut duration: f64 = 1.0;
   let mut settle = false;
   let mut strict = false;
-  let mut size: (u32, u32) = DEFAULT_WINDOW_SIZE;
+  let mut size: Option<(u32, u32)> = None;
   let mut stats = false;
   let mut out: Option<String> = None;
   let mut dev_server: Option<String> = None;
@@ -426,10 +431,10 @@ pub fn main(program: Program) {
     } else if arg == "--size" {
       let val = args.next().unwrap_or_else(|| usage("--size requires a value"));
       let (w, h) = val.split_once('x').unwrap_or_else(|| usage("--size must be in WxH format, e.g. 1920x1080"));
-      size = (
+      size = Some((
         w.parse().unwrap_or_else(|_| usage("--size width must be a positive integer")),
         h.parse().unwrap_or_else(|_| usage("--size height must be a positive integer")),
-      );
+      ));
     } else {
       // The first non-flag argument is the source path; everything after it
       // is the app's argument vector, verbatim, so a stray runner flag can
@@ -448,12 +453,18 @@ pub fn main(program: Program) {
   // from the file, and the flags above still apply, so `sol console` runs a
   // packed app under the dev runner's controls. Anything else is JS source on
   // the bare runtime: the program's fonts, no identity.
+  //
+  // The manifest's windowSize (a .solapp's, or the `--assets` folder's
+  // below), which the interactive window opens at when no `--size` was
+  // typed; the test and render hosts keep their own size.
+  let mut manifest_size: Option<(u32, u32)> = None;
   #[cfg(not(feature = "go"))]
   let (app, mut fonts, mut app_id): (_, crate::manifest::AppFonts, Option<String>) =
     match source_path.as_deref().and_then(|p| crate::payload::load_path(std::path::PathBuf::from(p))) {
       Some(payload) => {
         crate::gl_libs::provision(&payload.app_id, &payload.gl_libs);
         forge::fs::set_assets_base(Some(payload.base));
+        manifest_size = payload.window_size;
         (Some(payload.app), payload.fonts, Some(payload.app_id))
       }
       None => {
@@ -489,6 +500,7 @@ pub fn main(program: Program) {
     // its fonts registered over the program's set.
     if let Some(manifest) = crate::manifest::Manifest::load(&dir) {
       fonts = manifest.load_fonts(&dir);
+      manifest_size = manifest.window_size();
       app_id = app_id.or(Some(manifest.app_id));
       display_name = manifest.display_name;
     }
@@ -496,6 +508,7 @@ pub fn main(program: Program) {
   }
   let storage = crate::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
   if test {
+    let size = size.unwrap_or(DEFAULT_WINDOW_SIZE);
     run_tests(TestArgs { app, filter, seed, failures, size, fonts, storage, app_args, program });
   }
   let launch = crate::Launch { restored: false, link };
@@ -510,7 +523,7 @@ pub fn main(program: Program) {
       strict,
       seed,
       launch,
-      size,
+      size: size.unwrap_or(DEFAULT_WINDOW_SIZE),
       stats,
       fonts,
       storage,
@@ -519,6 +532,7 @@ pub fn main(program: Program) {
     });
   }
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
+  let size = size.or(manifest_size).unwrap_or(DEFAULT_WINDOW_SIZE);
   crate::start(&rt, app, launch, display_name, size, stats, dev_server, fonts, storage, app_args, program);
 }
 

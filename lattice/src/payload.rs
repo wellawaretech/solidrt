@@ -31,6 +31,9 @@ pub struct FactoryPayload {
   // The manifest's displayName: what the OS shows for the app where the
   // runtime names it (a registered scheme handler, ore::link).
   pub display_name: Option<String>,
+  // The manifest's windowSize: the size the desktop window opens at, in
+  // logical points; None when the app declares none.
+  pub window_size: Option<(u32, u32)>,
   pub base: forge::fs::AssetsBase,
   // (filename, bytes) in section order; only the single-file trailer carries
   // these (a folder pack ships the libraries next to the runner instead, and
@@ -92,6 +95,7 @@ pub fn load(trailer: forge::trailer::Trailer) -> Option<FactoryPayload> {
   Some(FactoryPayload {
     app,
     fonts,
+    window_size: manifest.window_size(),
     app_id: manifest.app_id,
     display_name: manifest.display_name,
     base: forge::fs::AssetsBase::Packed { exe, index },
@@ -117,6 +121,7 @@ pub fn load_adjacent_folder() -> Option<FactoryPayload> {
   Some(FactoryPayload {
     app,
     fonts,
+    window_size: manifest.window_size(),
     app_id: manifest.app_id,
     display_name: manifest.display_name,
     base: forge::fs::AssetsBase::Dir(dir),

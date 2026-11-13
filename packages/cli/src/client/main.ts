@@ -1,6 +1,8 @@
 import { values, port, clientStorageArgs } from "../lib/args"
 import { requireBinary, run } from "../lib/util"
 import { resolveFromCwd } from "../lib/registry"
+import { loadProject } from "../lib/project"
+import { windowSizeFlag } from "../lib/window-size"
 
 // Standalone solidrt-go client (no dev server of its own). Without flags it
 // attaches to the dev server of the project (or file) in the current
@@ -10,7 +12,10 @@ import { resolveFromCwd } from "../lib/registry"
 export async function main() {
   let runner = requireBinary("solidrt-go")
   let args: string[] = [...clientStorageArgs()]
-  if (values.size) args.push("--size", values.size)
+  // Without --size the window opens at the size the project in the current
+  // directory declares, as the packed app does (lib/project.ts).
+  let size = values.size ?? windowSizeFlag(loadProject(process.cwd())!.config.windowSize)
+  if (size) args.push("--size", size)
   let address: string | null
   if (values.server) {
     if (!values.server.includes(":")) {

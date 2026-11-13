@@ -1,5 +1,5 @@
 use crate::display::Rect;
-use crate::window::{create_image_cursor, normalize_safe_area, resize_via_limits_enabled, window_units};
+use crate::window::{create_image_cursor, normalize_safe_area, resize_via_limits_enabled, start_units, window_units};
 
 /// A desktop window: SDL_GetWindowSize is already logical, so the pixel
 /// size over the scale equals it and the rect passes through.
@@ -58,6 +58,44 @@ fn window_units_where_coordinates_are_physical_scale_the_size() {
 fn window_units_without_a_density_keep_the_size() {
   assert_eq!(window_units((900, 600), 2.0, 0.0), (900, 600));
   assert_eq!(window_units((900, 600), 0.0, 1.0), (900, 600));
+}
+
+/// A driver with physical window coordinates (X11): the content scale
+/// multiplies the logical size.
+#[test]
+fn start_units_on_x11_scale_the_size() {
+  const CONTENT_SCALE: f32 = 2.0;
+  assert_eq!(start_units((900, 600), "x11", CONTENT_SCALE), (1800, 1200));
+}
+
+/// A fractional content scale rounds to whole units.
+#[test]
+fn start_units_round_to_whole_units() {
+  const CONTENT_SCALE: f32 = 1.25;
+  assert_eq!(start_units((901, 601), "windows", CONTENT_SCALE), (1126, 751));
+}
+
+/// A driver with logical window coordinates (Wayland): the size passes
+/// through whatever the content scale.
+#[test]
+fn start_units_on_wayland_keep_the_size() {
+  const CONTENT_SCALE: f32 = 2.0;
+  assert_eq!(start_units((900, 600), "wayland", CONTENT_SCALE), (900, 600));
+}
+
+/// A driver outside the table keeps the size.
+#[test]
+fn start_units_on_an_unknown_driver_keep_the_size() {
+  const CONTENT_SCALE: f32 = 2.0;
+  assert_eq!(start_units((900, 600), "offscreen", CONTENT_SCALE), (900, 600));
+  assert_eq!(start_units((900, 600), "", CONTENT_SCALE), (900, 600));
+}
+
+/// No content scale means a factor of 1.
+#[test]
+fn start_units_without_a_content_scale_keep_the_size() {
+  assert_eq!(start_units((900, 600), "x11", 0.0), (900, 600));
+  assert_eq!(start_units((900, 600), "x11", -1.0), (900, 600));
 }
 
 /// The resize-via-limits gate: any value but an empty string or "0" turns
