@@ -5,7 +5,7 @@
 //! Adreno the span around the draw reads the frame interval rather than the
 //! work (32 ms at a two-refresh cadence, 46-52 at three, for a 15 ms frame),
 //! which fed the cadence hold a term that never let it step down
-//! (okf/backlog/android-frame-gpu-time-from-egl-timestamps.md). Where the
+//! (okf/done/android-frame-gpu-time-from-egl-timestamps.md). Where the
 //! extension is present the frame's GPU term comes from here and the frame's
 //! timer query is not issued; the per-pass queries are untouched.
 //!

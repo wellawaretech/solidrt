@@ -7,9 +7,10 @@
 // below it are in okf/design/frame-timing.md (D1, D2, D8).
 //
 // The count is ESTIMATED from reference instants (a swap's return on the
-// raster thread, a vsync release, an idle tick's deadline), because no
-// platform backend reports presentation timing yet. A reference instant sits
-// near the refresh its frame follows but not on it: under a mailbox
+// raster thread, a vsync release, an idle tick's deadline). A vsync
+// release's reference is the vsync's own instant, on the grid (Android's
+// Choreographer frame time). A swap's return sits near the refresh its
+// frame follows but not on it: under a mailbox
 // compositor a swap can return up to ~0.6 periods early or late, so no
 // single interval can tell one late refresh from two early ones - the
 // per-sample round() that was tried flipped between 0, 1 and 2. This
@@ -22,12 +23,14 @@
 // Over any span the count stays within 1.75 periods of the measurement,
 // which is the long-run wall truth by construction.
 //
-// KNOWN ISSUE (presentation timing): the correct source is the platform's
-// presentation feedback (wp_presentation, EGL_ANDROID_get_frame_timestamps,
-// the ANGLE sync-control extensions, CVDisplayLink), which reports the
-// refresh a frame was shown on; with it the tolerance is never exercised
-// and this estimator is only the fallback. Per platform, behind this same
-// seam: okf/backlog/presentation-feedback.md.
+// KNOWN ISSUE (presentation timing): the platform's presentation feedback
+// (wp_presentation, EGL_ANDROID_get_frame_timestamps, the ANGLE
+// sync-control extensions, CVDisplayLink) reports the refresh a frame was
+// shown on, but for a signal released at swap return it arrives after that
+// signal's count is needed. It cannot replace the reference there; it can
+// put the anchor on the true grid, so the whole tolerance is left for the
+// noise, and validate the count. Per platform:
+// okf/backlog/presentation-feedback.md.
 
 // Refresh periods a signal's reference instant may sit from the refresh it
 // follows. Swap returns under mailbox compositors land up to ~0.6 periods

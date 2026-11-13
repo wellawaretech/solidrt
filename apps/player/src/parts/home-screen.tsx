@@ -614,7 +614,7 @@ export function HomeScreen() {
                       then. No camera pre-check: enumerating cameras starts the
                       platform's capture backend, and doing that on every
                       player start is what a wedged backend turns into a dead
-                      client (Raspberry Pi; see sdl_utils::camera_subsystem_init).
+                      client (Raspberry Pi; see ore::camera::start).
                       The subsystem starts when the scan screen opens a camera,
                       and a machine without one gets the scan screen's error
                       notice. */}

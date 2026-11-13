@@ -91,8 +91,9 @@ with the interval at 1 (measured 2026-09-25 on an M1 mini at 60 Hz with the
 0.0.62 client: 1575 presents/s, `present 0.0ms`, window in front or display
 asleep alike; the refresh counter still read 60), and SDL's own
 display-link pacing lives on its native CGL path only, which the GLES
-driver alloy forces never takes. So alloy reproduces SDL's pacing one
-layer up (`alloy/src/display_link.rs`, the transcription of
+driver ore forces (`configure_opengl` in `ore/src/window/open.rs`) never
+takes. So ore reproduces SDL's pacing one layer up, inside the GL
+surface's swap (`ore/src/gl_surface/display_link.rs`, the transcription of
 `SDL_cocoaopengl.m`): a `CVDisplayLink` over the active displays whose
 callback counts ticks into a condvar, and the window swap waits for the
 next tick before swapping. Above it nothing is macOS-specific. A
@@ -303,10 +304,14 @@ this document is updated as the other two land.
    frame statistics or the sync-control extensions on ANGLE, `CVDisplayLink`
    on macOS (in use to pace the swap since 2026-09-25, not yet as a
    presentation timestamp), Choreographer frame times and
-   `EGL_ANDROID_get_frame_timestamps` on Android. They turn the count into a
-   measurement: the tolerance is never exercised and the estimator is
-   only a fallback. Behind the same seam; per platform; open
-   ([presentation-feedback]).
+   `EGL_ANDROID_get_frame_timestamps` (in use for the frame's GPU term, not
+   yet for the present time) on Android. Where a vsync callback releases
+   the frame signal they are the reference itself and the count sits on
+   the grid: Android under VsyncLocked, on the Choreographer frame time
+   since 2026-09-21. Where the signal is released at swap return they
+   arrive too late to decide the count; there they calibrate the anchor
+   and validate the count (D8). Per platform; the Choreographer half
+   landed, the rest is open ([presentation-feedback]).
 2. **An honest clock that advances by whole refreshes.** D1.
 3. **Stable cadence selection** when the app cannot make the refresh rate:
    Android's Frame Pacing library (Swappy) is the reference. It holds a
@@ -330,7 +335,7 @@ has the measurements and the two regressions the split introduced and fixed
 VsyncLocked for touch, SwapPaced for everything else, chosen in lattice from
 alloy's `InputDevices` fact ([frame-pacing-fluency]). Facts in alloy,
 policy in lattice; alloy never keys behavior on a device. SwapPaced needs a
-swap that blocks; where the driver's does not (macOS) alloy makes it block
+swap that blocks; where the driver's does not (macOS) ore makes it block
 on the display link rather than changing the policy (the macOS paragraph
 above). The policy is implicit today; making it enumerable and
 app-overridable is [runtime-policy-registry].

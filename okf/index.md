@@ -587,12 +587,24 @@ Shaped, not started.
   not animatable), so a lit fill snaps on a theme switch where a solid fill
   cross-fades; interpolate gradients that share a kind and stop count, stop
   colors in oklab and positions linearly, and keep snapping for the rest.
-- **[Device haptics](backlog/haptics.md)** [2026-11-12]
+- **[Haptic waveforms - envelopes and navigator.vibrate](backlog/haptic-waveforms.md)** [2026-11-13]
+  Feedback by intent covers a tap or a toggle, but an engine, an alarm or a
+  pattern with a duration has no API. A waveform is an envelope of intensity
+  and sharpness control points, played natively on Android (the envelope
+  builder on 16, a sampled waveform below), with the routing purpose as an
+  option and the web's navigator.vibrate as a thin layer over it.
+- **[Haptics at present - play with the frame that shows the change](backlog/haptics-at-present.md)** [2026-11-13]
+  A haptic call plays when it is made, which is before the frame that shows
+  its cause is on the display; a haptic that lands a frame early or late
+  against the visual reads as wrong. An `at` option that holds the call until
+  that frame is swapped. Whether it is worth building depends on a measurement
+  - the latency from the call to the actuator moving - which comes first.
+- **[Device haptics - feedback by intent](backlog/haptics.md)** [2026-11-12]
   An app cannot make the device's actuator respond, so a tap, a toggle, an
-  error or a game hit can be seen and heard but not felt. One platform-neutral
-  model (feedback named by intent, waveforms as intensity/sharpness envelopes,
-  a support query) built on Android now through our own JNI, shaped so iOS,
-  macOS and Windows slot in later without changing the API.
+  error or a hit can be seen and heard but not felt. Feedback named by intent
+  plus a support query, platform-neutral, built on Android now through our own
+  JNI and shaped so iOS, macOS and Windows slot in later without changing the
+  API. Waveforms and present-aligned playback are their own items.
 - **[Color math is unreachable headless](backlog/headless-color-math.md)** [2026-08-19]
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components
@@ -768,12 +780,14 @@ Shaped, not started.
   Supporting positioning-context-relative bounding boxes forced position out
   of the style adapter into a special case at the top of apply_jsx, splitting
   it from its sibling insets.
-- **[Presentation feedback - measure the refresh a frame was shown on](backlog/presentation-feedback.md)** [2026-09-21]
-  The refresh count behind the app timeline is estimated from swap-return and
-  vsync-release instants with a 0.75-period tolerance; every platform has an
-  API that reports the actual presentation time or vblank count per frame,
-  which would make the count a measurement and the estimator a fallback. Tier
-  1 of okf/design/frame-timing.md, one platform at a time, Android first.
+- **[Presentation feedback - calibrate and validate the refresh count](backlog/presentation-feedback.md)** [2026-09-21]
+  Where the frame signal is released at swap return the refresh count is
+  estimated from noisy instants against an anchor frozen after warm-up; every
+  platform reports per frame the refresh it was shown on, too late to decide
+  the count but in time to put the anchor on the true grid and to check the
+  count against the compositor's record. Tier 1 of okf/design/frame-timing.md;
+  the Android Choreographer half landed, the rest is built per platform when
+  its refresh-count reading asks for it.
 - **[Production diagnostics surface](backlog/production-diagnostics-surface.md)** [2026-07-17]
   Layout counters are latched into Stats but only dev-client queries read
   them; wanted a production consumer so field bug reports carry the numbers.
@@ -1029,13 +1043,16 @@ Shaped, not started.
   pattern, Windows and macOS through wry), Linux on Wayland has no plane and
   needs either "unavailable" or a WPE texture lane, and the use case decides
   the scope.
-- **[A size prop on window](backlog/window-size-prop.md)** [2026-11-11]
-  An app cannot choose its window size at start or change it while running;
-  the start size is the `--size` flag (default 1280x720, fixed for a packed
-  app) and `<window>` has only title, fullscreen and shader, so a `size` prop
-  applied through a new platform command is the missing piece, with the start
-  size best carried by the packed manifest to avoid a resize flash.
-  Desktop-only.
+- **[An app cannot resize its window while running](backlog/window-size-prop.md)** [2026-11-11]
+  `<window>` has only title, fullscreen and shader and no platform command
+  sets a size, so a desktop app cannot change its window size after start; a
+  `size` prop over a new `AlloyCommand::SetSize` is the sketch, a follow-up to
+  the start size and waiting for an app that needs it.
+- **[An app cannot choose the size its window opens at](backlog/window-start-size.md)** [2026-11-13]
+  The start size is the `--size` flag (default 1280x720), which a packed app
+  has no path to, so a start size in the project config, carried by the
+  manifest and read before the window exists, is the missing piece, with no
+  resize flash and no startup change.
 - **[Dev-tooling storage in XDG base directories instead of one home dotdir](backlog/xdg-storage-layout.md)** [2026-08-13]
   Dev state lives in ~/.solidrt/ (servers/<port>/, clients/client<M>/), chosen
   2026-08-13 for one rule on every platform. XDG splits by purpose instead -
