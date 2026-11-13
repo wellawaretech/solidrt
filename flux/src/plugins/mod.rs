@@ -162,6 +162,9 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:link");
   loader.add_module("flux:link", crate::ore_plugins::link::LinkModule);
 
+  resolver.add_module("flux:haptics");
+  loader.add_module("flux:haptics", crate::ore_plugins::haptics::HapticsModule);
+
   #[cfg(feature = "test")]
   {
     resolver.add_module(crate::test_plugins::MODULE_NAME);
@@ -193,6 +196,7 @@ pub(crate) async fn init_context(
       ctx.store_userdata(rejections.clone()).expect("store rejection log");
       ctx.store_userdata(shutdown_hooks).unwrap();
       crate::ore_plugins::link::store_state(&ctx);
+      crate::ore_plugins::haptics::store_state(&ctx);
       crate::standards_plugins::share::store_state(&ctx);
       for store in userdata {
         store(&ctx);
@@ -257,9 +261,10 @@ fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
 /// code here, the wasmtime lane, instead of interpreting them) is the one
 /// entry no cfg of this crate decides: the `wasm-native` feature resolves to
 /// wasmi on a target without a backend, so `base_capabilities` reads the
-/// lane forge was built with. `link` (flux:link's openLink) and `share`
-/// (navigator.share) are facts of the platform, not the build: listed only
-/// where it has an opener and a share sheet. `clipboard-image` is a fact of
+/// lane forge was built with. `link` (flux:link's openLink), `share`
+/// (navigator.share) and `haptics` (flux:haptics) are facts of the
+/// platform, not the build: listed only where it has an opener, a share
+/// sheet and a haptic actuator. `clipboard-image` is a fact of
 /// the platform too, but not listed here: only the gui seam defines
 /// `navigator.clipboard`, so its `register_capabilities` lists it, and a
 /// headless flux, which has no clipboard, never does.
@@ -303,6 +308,9 @@ pub fn base_capabilities() -> Vec<&'static str> {
   }
   if ore::share::available() {
     caps.push(crate::standards_plugins::share::CAPABILITY);
+  }
+  if ore::haptics::available() {
+    caps.push(crate::ore_plugins::haptics::CAPABILITY);
   }
   caps
 }

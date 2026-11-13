@@ -304,6 +304,8 @@ impl Session {
       .plugin(|ctx| crate::link::set_record_only(&ctx))
       // A test's shares are recorded, never shown.
       .plugin(|ctx| crate::share::set_record_only(&ctx))
+      // A test's haptic feedback is recorded, never played.
+      .plugin(|ctx| crate::haptics::set_record_only(&ctx))
   }
 
   /// Evaluate the file in `engine` (built from a builder `install` went

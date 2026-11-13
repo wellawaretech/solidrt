@@ -32,7 +32,7 @@ import { checkWindowSize, type WindowSize } from "./window-size"
 //     "capabilities": {             // what the app may ask the user for; all
 //       "camera": true,             // on by default (a packed app then works
 //       "microphone": true,         // like it did in the player), false drops
-//       "vibration": true,          // one; each packer maps the names
+//       "haptics": true,            // one; each packer maps the names
 //       "internet": true
 //     },
 //     "backup": false,              // true lets the OS back up the app's data/
@@ -128,7 +128,7 @@ export type AndroidConfig = {
 // on unless the project switches one off, so a packed app can do what it did
 // in the player; the scaffold lists them all so switching off is a one-line
 // edit.
-export const CAPABILITIES = ["camera", "microphone", "vibration", "internet"] as const
+export const CAPABILITIES = ["camera", "microphone", "haptics", "internet"] as const
 export type Capability = (typeof CAPABILITIES)[number]
 
 /** The capabilities a project keeps: every one not switched off. */
@@ -223,6 +223,11 @@ function parseProjectConfig(raw: unknown, dir: string): ProjectConfig {
       fail('"solidrt": "capabilities" must be a map of capability name to true/false')
     }
     for (let [name, value] of Object.entries(map)) {
+      // The capability "haptics" was named "vibration" before; a config
+      // that still says so is told the new name, not only the list.
+      if (name === "vibration") {
+        fail('"solidrt.capabilities": "vibration" is now named "haptics"; rename the key')
+      }
       if (!(CAPABILITIES as readonly string[]).includes(name)) {
         fail(`"solidrt.capabilities": "${name}" is not one of ${CAPABILITIES.join(", ")}`)
       }

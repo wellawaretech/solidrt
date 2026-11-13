@@ -1,4 +1,5 @@
 import { env } from "./environment"
+import { touchFeedbackSupport } from "./haptics"
 
 // Capabilities: what interactions are possible in the current environment.
 // Derived from Environment State on every read - computed, never stored - so
@@ -22,6 +23,12 @@ export type Capabilities = {
   keyboardNav: boolean
   /** How much horizontal room the window offers (Material breakpoints). */
   windowSizeClass: WindowSizeClass
+  /**
+   * The device has a haptic actuator, so `touchFeedback` can be felt. A
+   * hardware fact, not the user's settings; `touchFeedbackSupport()` has
+   * the per-intent detail.
+   */
+  haptics: boolean
 }
 
 // Material 3 width breakpoints, in logical pixels.
@@ -44,5 +51,10 @@ export let capabilities: Capabilities = {
   get windowSizeClass(): WindowSizeClass {
     let w = env.windowSize.width
     return w >= EXPANDED_MIN_WIDTH ? "expanded" : w >= MEDIUM_MIN_WIDTH ? "medium" : "compact"
+  },
+  // A hardware fact, not Environment State: it never changes, so it is
+  // not reactive.
+  get haptics() {
+    return touchFeedbackSupport().actuator
   },
 }

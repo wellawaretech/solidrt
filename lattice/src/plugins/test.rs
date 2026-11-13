@@ -236,6 +236,14 @@ fn requested_shares(ctx: Ctx<'_>) -> flux::rquickjs::Result<String> {
   Ok(crate::share::requested_json(&ctx).to_string())
 }
 
+/// `requestedHaptics()`: the feedback calls the app made (`flux:haptics`),
+/// oldest first, as JSON text (`[{ intent, weight, intensity, at }]`); a
+/// test engine records them and plays none.
+fn requested_haptics(ctx: Ctx<'_>) -> flux::rquickjs::Result<String> {
+  stepper(&ctx, "requestedHaptics()")?;
+  Ok(crate::haptics::requested_json(&ctx).to_string())
+}
+
 /// `clipboard()`: what the engine's clipboard holds: null, `{ text }`, or
 /// `{ type, data }` for an image (its MIME type and a fresh copy of its
 /// bytes). A test engine's clipboard is its own, never the OS's.
@@ -635,6 +643,7 @@ impl ModuleDef for SolTestModule {
     decl.declare("link")?;
     decl.declare("requestedLinks")?;
     decl.declare("requestedShares")?;
+    decl.declare("requestedHaptics")?;
     decl.declare("clipboard")?;
     decl.declare("setClipboard")?;
     decl.declare("debug")?;
@@ -671,6 +680,7 @@ impl ModuleDef for SolTestModule {
     exports.export("link", Function::new(ctx.clone(), link)?)?;
     exports.export("requestedLinks", Function::new(ctx.clone(), requested_links)?)?;
     exports.export("requestedShares", Function::new(ctx.clone(), requested_shares)?)?;
+    exports.export("requestedHaptics", Function::new(ctx.clone(), requested_haptics)?)?;
     exports.export("clipboard", Function::new(ctx.clone(), clipboard)?)?;
     exports.export("setClipboard", Function::new(ctx.clone(), set_clipboard)?)?;
     exports.export("debug", Function::new(ctx.clone(), debug)?)?;

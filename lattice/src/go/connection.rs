@@ -138,6 +138,7 @@ const QUERY_KINDS: &[&str] = &[
   "dialog_answer",
   "requested_links",
   "requested_shares",
+  "requested_haptics",
   "clipboard",
 ];
 
@@ -1176,6 +1177,23 @@ async fn try_serve(
                   }
                 }
               }
+              Some("requested_haptics") => {
+                // The haptic feedback calls the app made (flux:haptics),
+                // oldest first: a dev client plays each and records it, so
+                // an agent reads back what a tap asked to feel.
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(requested_haptics_reply(&ctx, id));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
               Some("clipboard") => {
                 // What the app last wrote to the clipboard (text, or an
                 // image as base64), not the OS clipboard's content: a dev
@@ -1650,6 +1668,13 @@ fn requested_links_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
 /// share.rs spells them). Runs on the JS thread.
 fn requested_shares_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
   serde_json::json!({"type": "result", "id": id, "data": {"shares": crate::share::requested_json(ctx)}}).to_string()
+}
+
+/// The haptic feedback calls the app made (the engine's
+/// `ore::haptics::Session`, as haptics.rs spells them). Runs on the JS
+/// thread.
+fn requested_haptics_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
+  serde_json::json!({"type": "result", "id": id, "data": {"haptics": crate::haptics::requested_json(ctx)}}).to_string()
 }
 
 /// What the app last wrote to the clipboard (the engine's

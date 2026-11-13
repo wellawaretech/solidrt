@@ -4,6 +4,7 @@ mod clipboard;
 #[cfg(feature = "window")]
 mod dialog;
 mod folders;
+mod haptics;
 mod input;
 mod link;
 mod locale;

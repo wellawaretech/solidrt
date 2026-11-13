@@ -12,7 +12,8 @@ mute on the user's own input while the agent measures or tests
 edits (`pause_watch`/`resume_watch`), links (`send_link` opens the screen a
 link names, `get_location` reads where the app is, `get_requested_links` reads
 the links the app asked to open), shares (`get_requested_shares` reads what
-the app handed to the share sheet), the clipboard (`get_clipboard` reads what
+the app handed to the share sheet), haptics (`get_requested_haptics` reads the
+touch feedback the app asked for), the clipboard (`get_clipboard` reads what
 the app last copied, text or a PNG image), and any debug commands the app
 itself registers.
 A scaffolded project ships an `.mcp.json`, so Claude Code attaches to your

@@ -497,6 +497,13 @@ let TOOLS: {
     inputSchema: { client: CLIENT_ARG },
   },
   {
+    name: "get_requested_haptics",
+    annotations: READ_ONLY,
+    description:
+      "Read the haptic feedback calls the running app made with feedback from flux:haptics (touchFeedback in @solidrt/core), oldest first, the last 64: `haptics`, each `{ intent, weight, intensity, at }`, `weight` and `intensity` null for every intent but impact, `at` in ms since the engine began. The client plays each call on the device's actuator (a no-op where it has none, as on a desktop) and records it too, so after tapping a switch or a button this says which feedback the app asked for. Under the test host the calls are only recorded, never played.",
+    inputSchema: { client: CLIENT_ARG },
+  },
+  {
     name: "get_clipboard",
     annotations: READ_ONLY,
     description:
@@ -772,6 +779,8 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       return control(`/requested-links${clientParam(args)}`)
     case "get_requested_shares":
       return control(`/requested-shares${clientParam(args)}`)
+    case "get_requested_haptics":
+      return control(`/requested-haptics${clientParam(args)}`)
     case "get_clipboard":
       return control(`/clipboard${clientParam(args)}`)
     case "get_location":

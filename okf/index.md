@@ -388,6 +388,15 @@ Shaped, not started.
   texture back from the GPU; a camera thread fills a latest-frame tap keyed by
   the texture id JS already holds, the raster upload, the QR decoder and any
   module read from it, and the UI thread does no per-frame pixel work.
+- **[Report what an app can use as states, not as one yes/no list](backlog/capability-states.md)** [2026-11-13]
+  Flux.capabilities is a flat list of names fixed at engine start, so it
+  cannot say "not known yet", "only a call can tell", "the user has not
+  answered" or "it changed"; it mixes build facts, device facts and test-host
+  overrides, and wrong answers already ship (the TV's stub picker, the Linux
+  portal without a FileChooser, a camera with no device). Keep the list for
+  build facts, and add a reactive three-state availability per platform
+  facility and a permission state on the web's Permissions API shape. Starts
+  after haptics lands.
 - **[Make sol check honor solidrt.entry](backlog/check-honors-project-entry.md)** [2026-09-29]
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
@@ -599,12 +608,6 @@ Shaped, not started.
   against the visual reads as wrong. An `at` option that holds the call until
   that frame is swapped. Whether it is worth building depends on a measurement
   - the latency from the call to the actuator moving - which comes first.
-- **[Device haptics - feedback by intent](backlog/haptics.md)** [2026-11-12]
-  An app cannot make the device's actuator respond, so a tap, a toggle, an
-  error or a hit can be seen and heard but not felt. Feedback named by intent
-  plus a support query, platform-neutral, built on Android now through our own
-  JNI and shaped so iOS, macOS and Windows slot in later without changing the
-  API. Waveforms and present-aligned playback are their own items.
 - **[Color math is unreachable headless](backlog/headless-color-math.md)** [2026-08-19]
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components
@@ -2341,6 +2344,12 @@ Finished, kept for the reasoning.
   issue, per target, and reported per presented frame in get_stats'
   window.targets and cumulatively in /gpu; fragments shaded stay a documented
   gap on the GLES 3.0 baseline, so fill still needs subtraction.
+- **[Device haptics - feedback by intent](done/haptics.md)** [2026-11-13]
+  An app cannot make the device's actuator respond, so a tap, a toggle, an
+  error or a hit can be seen and heard but not felt. Feedback named by intent
+  plus a support query, platform-neutral, built on Android now through our own
+  JNI and shaped so iOS, macOS and Windows slot in later without changing the
+  API. Waveforms and present-aligned playback are their own items.
 - **[No headless test can read what the paint walk drew](done/headless-display-list-readback.md)** [2026-11-11]
   The display list is an opaque renderer type, so a unit test sees counters
   and caches but never which shape was drawn where, at what width or with

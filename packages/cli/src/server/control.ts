@@ -442,6 +442,7 @@ const CONTROL_ENDPOINTS = [
   "/__control__/link",
   "/__control__/requested-links",
   "/__control__/requested-shares",
+  "/__control__/requested-haptics",
   "/__control__/clipboard",
   "/__control__/texture",
   "/__control__/clock",
@@ -622,6 +623,11 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       // { shares: [{ title, text, url, files: [{ path, name }] }] }. The
       // client shows each sheet and records the share.
       return handleQuery(query, "requested_shares")
+    case "/__control__/requested-haptics":
+      // The haptic feedback calls the app made (flux:haptics), oldest
+      // first: { haptics: [{ intent, weight, intensity, at }] }, weight and
+      // intensity null but for impact. The client plays each and records it.
+      return handleQuery(query, "requested_haptics")
     case "/__control__/clipboard":
       // What the app last wrote to the clipboard: { clipboard: null |
       // { text } | { type, byteLength, base64 } }. Not the OS clipboard's

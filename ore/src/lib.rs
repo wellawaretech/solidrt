@@ -15,11 +15,11 @@
 //! (`redraw`, Android's surface asks), and the window-free facilities: the
 //! main-thread bridge, the links (opening one, the app's own scheme
 //! registration and its single-instance hand-off), the locale, the share
-//! sheet, the clipboard, the audio devices (`audio`: the playback device,
-//! the converter, the recording device), the camera (`camera`), the user
-//! folders, the power state, thread placement, the clock (`time`), the log
-//! sink, and the platform vocabulary of input, display, gamepad and
-//! lifecycle types. Its window
+//! sheet, haptic feedback (`haptics`), the clipboard, the audio devices
+//! (`audio`: the playback device, the converter, the recording device),
+//! the camera (`camera`), the user folders, the power state, thread
+//! placement, the clock (`time`), the log sink, and the platform
+//! vocabulary of input, display, gamepad and lifecycle types. Its window
 //! part, behind the `window` feature (what needs SDL's video subsystem),
 //! holds the pump's wait itself (`Platform::wait`: its translation reads
 //! the window), the window (`window`: opening it with the headless chain,
@@ -48,6 +48,7 @@ pub mod folders;
 pub mod gamepad;
 #[cfg(feature = "window")]
 pub mod gl_surface;
+pub mod haptics;
 pub mod input;
 pub mod lifecycle;
 pub mod link;

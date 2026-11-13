@@ -52,6 +52,8 @@ that matches the work; do not work from memory of what a web framework does.
   freeze the UI (a big parse, a simulation step - isolates take it off
   the thread), or anything writing properties in a loop ->
   node_modules/@solidrt/core/agents/performance.md
+- make the device respond to a tap, a toggle, an error or a hit (touch
+  feedback) -> node_modules/@solidrt/core/agents/haptics.md
 <!-- components:begin -->
 - build a screen from widgets, or theme it ->
   node_modules/@solidrt/components/AGENTS.md and its examples/

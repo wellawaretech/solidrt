@@ -477,6 +477,10 @@ when exactly one client is connected.
   shares }`, oldest first, the last 64, each `{ title, text, url, files:
   [{ path, name }] }`). The client shows the share sheet for each and
   records it.
+- `/requested-haptics` - the haptic feedback calls the app made with
+  `flux:haptics` (`{ haptics }`, oldest first, the last 64, each `{
+  intent, weight, intensity, at }`, `weight` and `intensity` null but for
+  `impact`). The client plays each one and records it.
 - `/clipboard` - what the app last wrote to the clipboard (`{ clipboard
   }`: null, `{ text }`, or `{ type: "image/png", byteLength, base64 }`).
   The client writes the OS clipboard and keeps the last write; this is

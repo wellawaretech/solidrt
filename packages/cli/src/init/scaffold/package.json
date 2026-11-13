@@ -11,7 +11,7 @@
     "capabilities": {
       "camera": true,
       "microphone": true,
-      "vibration": true,
+      "haptics": true,
       "internet": true
     },
     "backup": false,

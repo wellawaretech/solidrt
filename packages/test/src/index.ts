@@ -16,8 +16,9 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { camera as installCamera, capture, clipboard as readClipboard, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, requestedLinks, requestedShares, microphone as installMicrophone, painted as paintFrame, setClipboard as putClipboard, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowPixels as readWindow, windowReady } from "sol:test"
+import { camera as installCamera, capture, clipboard as readClipboard, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, requestedHaptics, requestedLinks, requestedShares, microphone as installMicrophone, painted as paintFrame, setClipboard as putClipboard, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowPixels as readWindow, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
+import type { HapticIntent, ImpactWeight } from "flux:haptics"
 
 export { expect }
 
@@ -191,6 +192,18 @@ export type RequestedShare = {
 }
 
 /**
+ * A haptic feedback call the app made (`touchFeedback`, `flux:haptics`):
+ * the intent, the impact's `weight` and `intensity` (null for every
+ * intent but `impact`), and `at`, in ms since the engine began.
+ */
+export type RequestedHaptic = {
+  intent: HapticIntent
+  weight: ImpactWeight | null
+  intensity: number | null
+  at: number
+}
+
+/**
  * What the clipboard holds (`app.clipboard()`, `app.setClipboard()`): a
  * text, or an image as its MIME type and its encoded bytes. `image/bmp`
  * is what a Windows bitmap reads as; the app's `read()` gets it as PNG.
@@ -260,6 +273,19 @@ export interface TestApp {
    * expect(app.requestedShares()).toEqual([{ title: null, text: "My board", url: null, files: [{ path: "share/board.png", name: "board.png" }] }])
    */
   requestedShares(): RequestedShare[]
+  /**
+   * The haptic feedback calls the app made (`touchFeedback`), oldest
+   * first, the last 64: the `intent`, for `impact` its `weight` and
+   * `intensity` (null for every other intent), and `at`, in ms since the
+   * engine began. Under test nothing plays: each call is recorded, so a
+   * test asserts which feedback a switch or a button asks for.
+   *
+   * @example
+   * await app.input([{ type: "pointer", action: "tap", x: 100, y: 40 }])
+   * await app.settle()
+   * expect(app.requestedHaptics()).toMatchObject([{ intent: "toggleOn", weight: null, intensity: null }])
+   */
+  requestedHaptics(): RequestedHaptic[]
   /**
    * What the clipboard holds: null when it is empty, `{ text }`, or
    * `{ type, data }` for an image. Under test the clipboard is the
@@ -724,6 +750,7 @@ let app: TestApp = {
   },
   requestedLinks: () => requestedLinks(),
   requestedShares: () => JSON.parse(requestedShares()) as RequestedShare[],
+  requestedHaptics: () => JSON.parse(requestedHaptics()) as RequestedHaptic[],
   clipboard: () => readClipboard() as ClipboardContent | null,
   setClipboard(content) {
     if (content === null) return putClipboard(null)

@@ -47,7 +47,7 @@ platform-neutral terms; the `android` group holds what only Android needs:
   "capabilities": {
     "camera": true,
     "microphone": true,
-    "vibration": true,
+    "haptics": true,
     "internet": true
   },
   "backup": false,

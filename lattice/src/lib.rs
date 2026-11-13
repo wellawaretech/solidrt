@@ -15,6 +15,8 @@ mod gl_libs;
 #[cfg(feature = "go")]
 mod go;
 #[cfg(any(feature = "go", feature = "test"))]
+mod haptics;
+#[cfg(any(feature = "go", feature = "test"))]
 mod input_plan;
 mod manifest;
 mod overlay;
@@ -1833,8 +1835,8 @@ fn start_with(
 
 /// What every stepped engine gets beside the stepper: the window state a
 /// host waits on, the wall taken out (performance.now() reads 0, the
-/// calendar is the fixed epoch plus frame time), links and shares
-/// recorded instead of opened or shown, and the clipboard the engine's own
+/// calendar is the fixed epoch plus frame time), links, shares and haptic
+/// feedback recorded instead of opened, shown or played, and the clipboard the engine's own
 /// instead of the OS's. Registered after `flux::gui::install`, so the
 /// clipboard session the gui seam stores is there.
 #[cfg(any(feature = "go", feature = "test"))]
@@ -1842,6 +1844,7 @@ fn stepped_engine(ctx: &flux::rquickjs::Ctx<'_>) {
   ctx.store_userdata(stepped::WindowReady::default()).expect("store window ready");
   flux::link::set_record_only(ctx);
   flux::share::set_record_only(ctx);
+  flux::haptics::set_record_only(ctx);
   flux::clipboard::set_record_only(ctx);
   if let Err(e) = flux::freeze_wall(ctx, stepped::EPOCH_MS) {
     log::error!("[sol] stepped engine: failed to freeze the wall clock: {e}");

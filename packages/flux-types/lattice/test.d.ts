@@ -105,6 +105,14 @@ declare module "sol:test" {
    */
   export function requestedShares(): string
   /**
+   * The haptic feedback calls the app made (`feedback` of `flux:haptics`),
+   * oldest first, the last 64, as JSON text: `[{ intent, weight,
+   * intensity, at }]`, `weight` and `intensity` null for every intent but
+   * `impact`, `at` in ms since the engine began. A test engine records
+   * them and plays none.
+   */
+  export function requestedHaptics(): string
+  /**
    * What the engine's clipboard holds: null when it is empty, `{ text }`,
    * or `{ type, data }` for an image (its MIME type and a fresh copy of
    * its bytes). A test engine's clipboard is its own, never the OS's.

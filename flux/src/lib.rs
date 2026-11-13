@@ -34,6 +34,7 @@ pub use forge_plugins::process::{ProcessArgs, ProcessExit};
 pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 #[cfg(feature = "gui")]
 pub use ore_plugins::dialog;
+pub use ore_plugins::haptics;
 pub use ore_plugins::link;
 pub use pending::{describe_in_flight, hold_engine, in_flight, settled, Hold};
 pub use plugins::add_capability;

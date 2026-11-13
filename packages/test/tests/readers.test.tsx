@@ -1,5 +1,5 @@
 // The verbs an app test has beside naming nodes and sending pointer input:
-// a link in and the links and shares out, the clipboard both ways, a debug
+// a link in and the links, shares and haptics out, the clipboard both ways, a debug
 // command, a synthetic gamepad, and the readers past a node's record: the
 // subtree as text, its pixels, the GPU inventory.
 
@@ -7,7 +7,7 @@ import { registerDebug } from "sol:dev"
 import { file } from "flux:fs"
 import { decodeImage, encodeImage } from "flux:image"
 import { test, expect } from "../src/index.ts"
-import { createSignal, gamepads, onLink, openLink } from "@solidrt/core"
+import { createSignal, gamepads, onLink, openLink, touchFeedback } from "@solidrt/core"
 
 // The error the promise `run` returns rejects with; fails when it
 // fulfills, and when `run` throws instead of returning a promise (a call
@@ -123,6 +123,22 @@ test("a share the app asks for is recorded, no sheet shown", async app => {
   expect(app.requestedShares()).toEqual([])
   await navigator.share!({ text: "My board", files: [file("share/board.png")] })
   expect(app.requestedShares()).toEqual([{ title: null, text: "My board", url: null, files: [{ path: "share/board.png", name: "board.png" }] }])
+})
+
+test("haptic feedback the app asks for is recorded, nothing played", async app => {
+  await app.mount(() => <text>switch</text>)
+  expect(app.requestedHaptics()).toEqual([])
+  touchFeedback("toggleOn")
+  touchFeedback("impact", { weight: "heavy", intensity: 0.5 })
+  let requested = app.requestedHaptics()
+  expect(requested).toMatchObject([
+    { intent: "toggleOn", weight: null, intensity: null },
+    { intent: "impact", weight: "heavy", intensity: 0.5 },
+  ])
+  for (let call of requested) {
+    expect(Number.isFinite(call.at)).toBe(true)
+    expect(call.at).toBeGreaterThanOrEqual(0)
+  }
 })
 
 test("the image clipboard is listed under test, whatever the platform", async app => {

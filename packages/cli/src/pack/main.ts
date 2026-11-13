@@ -28,7 +28,7 @@ const DEFAULT_ICON_BACKGROUND = "#1a1a1a"
 const ANDROID_CAPABILITY_PERMISSIONS: Record<Capability, string> = {
   camera: "android.permission.CAMERA",
   microphone: "android.permission.RECORD_AUDIO",
-  vibration: "android.permission.VIBRATE",
+  haptics: "android.permission.VIBRATE",
   internet: "android.permission.INTERNET",
 }
 

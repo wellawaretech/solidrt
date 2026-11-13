@@ -72,6 +72,7 @@ serve({
 | `flux:wasm` | Run WebAssembly modules. A build has one of two engines. wasmi is an interpreter, and it runs on all targets. On compute, it is 4x to 88x faster than JavaScript. wasmtime (the `wasm-native` feature) compiles a module to machine code. On compute, it is 18x to 960x faster than JavaScript. |
 | `flux:isolate` | Run a module on its own thread, and call it as an object. |
 | `flux:link` | Open a link in the app of the platform that handles it: a browser, the mail app, a store. The `link` capability is in the list only on platforms that have an opener. |
+| `flux:haptics` | Give touch feedback on the haptic actuator of the device. The app names the event, for example `toggleOn`, `error` or `impact`. The platform plays its own effect for that event and obeys the settings of the user. Where nothing plays, a call does nothing. The `haptics` capability is in the list only on devices that have an actuator. |
 | `flux:image` | Decode and encode images. Transcode and encode compressed textures (KTX2). |
 | `flux:svg` | Parse an SVG document into draw data. |
 | `flux:test` | Tests for a flux program: `test` and `expect`. Only the `flux` binary has this module. It runs a test file with `--test`, and each test runs in its own engine. `sol test` runs on this module. |

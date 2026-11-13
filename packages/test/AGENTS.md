@@ -67,6 +67,9 @@ agents/testing.md.
   `app.requestedShares()` lists what the app handed to `navigator.share`
   (`{ title, text, url, files: [{ path, name }] }`, unset fields null):
   under test no sheet shows and the call resolves at once.
+  `app.requestedHaptics()` lists the touch feedback calls the app made
+  (`{ intent, weight, intensity, at }`, `weight` and `intensity` null but
+  for `impact`): under test each is recorded and none plays.
   `app.clipboard()` reads the clipboard (null, `{ text }` or `{ type,
   data }`) and `app.setClipboard(content)` puts a text, an image or null
   on it for the app to paste: under test it is the engine's own

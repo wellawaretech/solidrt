@@ -2,6 +2,7 @@
 title: Device haptics - feedback by intent
 description: An app cannot make the device's actuator respond, so a tap, a toggle, an error or a hit can be seen and heard but not felt. Feedback named by intent plus a support query, platform-neutral, built on Android now through our own JNI and shaped so iOS, macOS and Windows slot in later without changing the API. Waveforms and present-aligned playback are their own items.
 created: 2026-11-12
+completed: 2026-11-13
 ---
 
 # Device haptics - feedback by intent
@@ -60,7 +61,7 @@ Two rules for the set:
   weight or continuous (`impact`); a two-sided event is two names
   (`toggleOn`, `toggleOff`).
 
-Proposed set (final names are the first decision):
+The set (the names as built; core exports `touchFeedback`, `stopTouchFeedback`, `touchFeedbackSupport`, the flux module `feedback`, `stopFeedback`, `feedbackSupport`):
 
 | Intent | Meaning | Android | iOS | macOS trackpad |
 |---|---|---|---|---|
@@ -203,6 +204,68 @@ that names the new one. The UI-thread hop's latency is measured and
 written into [haptics-at-present](haptics-at-present.md). The mapping
 table for iOS, macOS and Windows is checked against those platforms'
 docs, so their backends need no API change.
+
+## Findings
+
+Built 2026-11-13: `ore/src/haptics.rs` with the Java helpers on
+`SolidRTActivity`, `flux:haptics`, the core exports, `capabilities.haptics`,
+the `haptics` capability (renamed from `vibration`, the old name refused
+with the new one), the recording through `requestedHaptics()`,
+`/__control__/requested-haptics` and `get_requested_haptics`, and the
+headless tests (ore, flux, `@solidrt/test`).
+
+Verified on a Pixel 7 at API 37, from the dev client's control API, with
+the vibrator service's own history (`dumpsys vibrator_manager`) as the
+witness:
+
+- Every intent played on the actuator with usage TOUCH: the view path's
+  constants for the ten intents that have one (`performHapticFeedback`,
+  the service resolving them to prebaked ticks and clicks, and to
+  primitives for `thresholdOn`, `thresholdOff` and `toggleOn`), the
+  predefined double click for `warning`, and composition primitives for
+  `impact`: TICK, CLICK, THUD at the intensity as the scale (1.0, 0.5,
+  0.2 played as asked). Support reported every intent `native` but
+  `alignment` (`approximate`), `impactIntensity` true.
+- The touch feedback setting off: every call, on both paths, is logged by
+  the service as `ignored_for_settings`. So the `Vibrator` path with a
+  `VibrationAttributes` TOUCH usage follows the setting at API 33 and up;
+  below 33 (the audio usage) it is still unconfirmed.
+- The UI-thread hop (`runOnUiThread`, measured in the helper and logged at
+  debug level): 0.1 to 1.5 ms over ten calls (125, 205, 528, 592, 695,
+  884, 1082, 1270, 1281, 1485 us). From the runnable to the service's
+  start timestamp about 2 to 8 ms more. So a haptic lands roughly 2 to
+  10 ms after the call, well within one refresh.
+- Home and back: no error, feedback after the resume plays.
+- Desktop: `feedbackSupport()` reports no actuator and every intent `none`, every
+  call is a recorded no-op, `haptics` is not in the capabilities.
+
+Not verified on a device: the fallbacks below API 34 and 29 (no such
+device at hand), the capability switched off (the dev client declares
+VIBRATE; the path is a result code and one warning), and a device with an
+actuator but no primitives.
+
+Decided while building:
+
+- `warning` is `native` from API 30 (its double click is its own there)
+  and `approximate` below (error plays the same double click).
+- `impactIntensity` is true only when the primitives for all three
+  weights are supported, so the composition path is taken whenever the
+  flag says intensity is honoured.
+- Options are validated on every intent (a bad weight or intensity throws
+  on `toggleOn` too); valid ones are dropped by ore for every intent but
+  `impact`.
+- A recorded intensity is spelled from the f32's shortest decimal, so 0.8
+  reads back as 0.8.
+
+Follow-up, for [capability-states](../backlog/capability-states.md): this
+item reports availability as booleans in two places, the `haptics` name
+in `Flux.capabilities` (the actuator, a device fact fixed at engine
+start) and `capabilities.haptics` in core (the same fact, a plain
+getter, not reactive). Both are the flat yes/no that item replaces with
+states; `feedbackSupport()` (core's `touchFeedbackSupport()`) already holds the richer facts (the
+level per intent, the intensity flag) and is the shape to keep. The test
+host's override (a record-only session reports an actuator) is one of the
+mixed-in overrides that item names.
 
 ## Not in this item
 

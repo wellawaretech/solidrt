@@ -308,9 +308,13 @@ unsafe extern "C" fn lifecycle_watch(userdata: *mut c_void, event: *mut sdl3::sy
   // SAFETY: `userdata` is the Box leaked in `on_lifecycle`, never freed
   // while the watch is installed, and only read here (the closure is Sync).
   let f = unsafe { &*userdata.cast::<Box<dyn Fn(Lifecycle) + Send + Sync>>() };
-  // ore's own hook first: the Android audio resume check (crate::audio).
+  // ore's own hooks first: the Android audio resume check (crate::audio)
+  // and the cancel of a playing haptic effect (crate::haptics).
   if std::panic::catch_unwind(AssertUnwindSafe(|| crate::audio::on_lifecycle(&lifecycle))).is_err() {
     log::error!("[ore] the audio lifecycle hook panicked");
+  }
+  if std::panic::catch_unwind(AssertUnwindSafe(|| crate::haptics::on_lifecycle(&lifecycle))).is_err() {
+    log::error!("[ore] the haptics lifecycle hook panicked");
   }
   if std::panic::catch_unwind(AssertUnwindSafe(|| f(lifecycle))).is_err() {
     log::error!("[ore] the lifecycle callback panicked");

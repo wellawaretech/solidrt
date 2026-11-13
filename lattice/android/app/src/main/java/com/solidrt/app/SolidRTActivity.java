@@ -1,5 +1,6 @@
 package com.solidrt.app;
 
+import android.Manifest;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
@@ -8,8 +9,10 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.PixelFormat;
+import android.media.AudioAttributes;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
@@ -21,8 +24,14 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.os.VibrationAttributes;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.os.VibratorManager;
 import android.util.Log;
 import android.view.Display;
+import android.view.HapticFeedbackConstants;
 import android.view.InputDevice;
 import android.view.View;
 import android.view.WindowInsets;
@@ -33,6 +42,7 @@ import androidx.core.content.FileProvider;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -298,6 +308,298 @@ public class SolidRTActivity extends SDLActivity {
             registerReceiver(shareChosen, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
             registerReceiver(shareChosen, filter);
+        }
+    }
+
+    // Haptic feedback (ore haptics.rs): an intent's effect, by SDK level at
+    // run time. An intent with a HapticFeedbackConstants constant on this
+    // level plays through View.performHapticFeedback on the decor view, on
+    // the UI thread: it needs no permission and follows the user's touch
+    // feedback setting. The rest (warning, impact, success and error below
+    // API 30) play through the Vibrator with usage TOUCH, which needs
+    // VIBRATE (the haptics capability). The intent, weight and level
+    // numbers are ore's (Intent::index, Weight::index, Level), and so are
+    // the results of haptic(). Nothing here throws into native.
+    private static final int HAPTIC_SELECTION = 0;
+    private static final int HAPTIC_ALIGNMENT = 1;
+    private static final int HAPTIC_THRESHOLD_ON = 2;
+    private static final int HAPTIC_THRESHOLD_OFF = 3;
+    private static final int HAPTIC_TOGGLE_ON = 4;
+    private static final int HAPTIC_TOGGLE_OFF = 5;
+    private static final int HAPTIC_LONG_PRESS = 6;
+    private static final int HAPTIC_DRAG_START = 7;
+    private static final int HAPTIC_SUCCESS = 8;
+    private static final int HAPTIC_ERROR = 9;
+    private static final int HAPTIC_WARNING = 10;
+    private static final int HAPTIC_IMPACT = 11;
+    private static final int HAPTIC_INTENT_COUNT = 12;
+    private static final int HAPTIC_WEIGHT_LIGHT = 0;
+    private static final int HAPTIC_WEIGHT_MEDIUM = 1;
+    private static final int HAPTIC_WEIGHT_HEAVY = 2;
+    private static final int HAPTIC_LEVEL_NATIVE = 0;
+    private static final int HAPTIC_LEVEL_APPROXIMATE = 1;
+    private static final int HAPTIC_LEVEL_NONE = 2;
+    // What haptic() returns.
+    private static final int HAPTIC_PLAYED = 0;
+    private static final int HAPTIC_NO_ACTUATOR = 1;
+    private static final int HAPTIC_NO_PERMISSION = 2;
+    private static final int HAPTIC_UNSUPPORTED = 3;
+    // The slots of hapticSupport()'s array: three flags (1 true, 0 false),
+    // then one level per intent.
+    private static final int HAPTIC_ACTUATOR_SLOT = 0;
+    private static final int HAPTIC_IMPACT_INTENSITY_SLOT = 1;
+    private static final int HAPTIC_VIBRATE_PERMITTED_SLOT = 2;
+    private static final int HAPTIC_FIRST_LEVEL_SLOT = 3;
+    // An intent with no view constant (it plays through the Vibrator), and a
+    // weight with no supported composition primitive.
+    private static final int HAPTIC_NO_CONSTANT = -1;
+    // The one-shot an effect plays as on API 26 to 28, which has no
+    // predefined effects: a duration and an amplitude (1..255, where the
+    // device has amplitude control) per impact weight. An intent other
+    // than impact plays the medium one.
+    private static final long HAPTIC_ONESHOT_LIGHT_MS = 10;
+    private static final long HAPTIC_ONESHOT_MEDIUM_MS = 20;
+    private static final long HAPTIC_ONESHOT_HEAVY_MS = 40;
+    private static final int HAPTIC_ONESHOT_LIGHT_AMPLITUDE = 80;
+    private static final int HAPTIC_ONESHOT_MEDIUM_AMPLITUDE = 160;
+    private static final int HAPTIC_ONESHOT_HEAVY_AMPLITUDE = 255;
+    // For the UI-thread hop's log line.
+    private static final long NANOS_PER_MICROSECOND = 1000;
+    // Looked up once: the device's vibrator (null without one) and whether
+    // the app holds VIBRATE (a normal permission, fixed at install).
+    private static boolean hapticLookedUp;
+    private static Vibrator hapticDevice;
+    private static boolean hapticVibrateGranted;
+
+    private static synchronized Vibrator hapticVibrator() {
+        if (!hapticLookedUp && mSingleton != null) {
+            hapticLookedUp = true;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                VibratorManager manager = (VibratorManager) mSingleton.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+                hapticDevice = manager != null ? manager.getDefaultVibrator() : null;
+            } else {
+                hapticDevice = (Vibrator) mSingleton.getSystemService(Context.VIBRATOR_SERVICE);
+            }
+            hapticVibrateGranted = mSingleton.checkSelfPermission(Manifest.permission.VIBRATE) == PackageManager.PERMISSION_GRANTED;
+        }
+        return hapticDevice;
+    }
+
+    private static synchronized boolean hapticPermitted() {
+        hapticVibrator();
+        return hapticVibrateGranted;
+    }
+
+    // The HapticFeedbackConstants constant `intent` plays with on this SDK
+    // level, or HAPTIC_NO_CONSTANT for the Vibrator path.
+    private static int hapticViewConstant(int intent) {
+        boolean api34 = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE;
+        boolean api30 = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+        switch (intent) {
+            case HAPTIC_SELECTION:
+            case HAPTIC_ALIGNMENT:
+                return api34 ? HapticFeedbackConstants.SEGMENT_TICK : HapticFeedbackConstants.CLOCK_TICK;
+            case HAPTIC_THRESHOLD_ON:
+                return api34 ? HapticFeedbackConstants.GESTURE_THRESHOLD_ACTIVATE : HapticFeedbackConstants.CLOCK_TICK;
+            case HAPTIC_THRESHOLD_OFF:
+                return api34 ? HapticFeedbackConstants.GESTURE_THRESHOLD_DEACTIVATE : HapticFeedbackConstants.CLOCK_TICK;
+            case HAPTIC_TOGGLE_ON:
+                return api34 ? HapticFeedbackConstants.TOGGLE_ON : HapticFeedbackConstants.CLOCK_TICK;
+            case HAPTIC_TOGGLE_OFF:
+                return api34 ? HapticFeedbackConstants.TOGGLE_OFF : HapticFeedbackConstants.CLOCK_TICK;
+            case HAPTIC_LONG_PRESS:
+                return HapticFeedbackConstants.LONG_PRESS;
+            case HAPTIC_DRAG_START:
+                return api34 ? HapticFeedbackConstants.DRAG_START : HapticFeedbackConstants.LONG_PRESS;
+            case HAPTIC_SUCCESS:
+                return api30 ? HapticFeedbackConstants.CONFIRM : HAPTIC_NO_CONSTANT;
+            case HAPTIC_ERROR:
+                return api30 ? HapticFeedbackConstants.REJECT : HAPTIC_NO_CONSTANT;
+            default:
+                return HAPTIC_NO_CONSTANT;
+        }
+    }
+
+    // Whether `intent` plays its own constant or effect on this SDK level
+    // (native), rather than another intent's (approximate).
+    private static boolean hapticOwnEffect(int intent) {
+        switch (intent) {
+            case HAPTIC_SELECTION:
+            case HAPTIC_THRESHOLD_ON:
+            case HAPTIC_THRESHOLD_OFF:
+            case HAPTIC_TOGGLE_ON:
+            case HAPTIC_TOGGLE_OFF:
+            case HAPTIC_DRAG_START:
+                return Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE;
+            case HAPTIC_LONG_PRESS:
+                return true;
+            case HAPTIC_SUCCESS:
+            case HAPTIC_ERROR:
+                return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+            case HAPTIC_IMPACT:
+                return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
+            case HAPTIC_WARNING:
+                // Its double click is error's too below API 30, where error
+                // has no REJECT yet.
+                return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+            default:
+                // alignment is selection's tick.
+                return false;
+        }
+    }
+
+    // The composition primitive an impact of `weight` plays as, or
+    // HAPTIC_NO_CONSTANT where this level or this device has none.
+    private static int hapticPrimitive(Vibrator vibrator, int weight) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return HAPTIC_NO_CONSTANT;
+        }
+        int primitive;
+        if (weight == HAPTIC_WEIGHT_LIGHT) {
+            primitive = VibrationEffect.Composition.PRIMITIVE_TICK;
+        } else if (weight == HAPTIC_WEIGHT_HEAVY && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            primitive = VibrationEffect.Composition.PRIMITIVE_THUD;
+        } else {
+            primitive = VibrationEffect.Composition.PRIMITIVE_CLICK;
+        }
+        return vibrator.areAllPrimitivesSupported(primitive) ? primitive : HAPTIC_NO_CONSTANT;
+    }
+
+    // The predefined effect `effect` (API 29), else the one-shot of `weight`.
+    private static VibrationEffect hapticPredefined(Vibrator vibrator, int effect, int weight) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return VibrationEffect.createPredefined(effect);
+        }
+        long durationMs;
+        int amplitude;
+        if (weight == HAPTIC_WEIGHT_LIGHT) {
+            durationMs = HAPTIC_ONESHOT_LIGHT_MS;
+            amplitude = HAPTIC_ONESHOT_LIGHT_AMPLITUDE;
+        } else if (weight == HAPTIC_WEIGHT_HEAVY) {
+            durationMs = HAPTIC_ONESHOT_HEAVY_MS;
+            amplitude = HAPTIC_ONESHOT_HEAVY_AMPLITUDE;
+        } else {
+            durationMs = HAPTIC_ONESHOT_MEDIUM_MS;
+            amplitude = HAPTIC_ONESHOT_MEDIUM_AMPLITUDE;
+        }
+        return VibrationEffect.createOneShot(durationMs,
+                vibrator.hasAmplitudeControl() ? amplitude : VibrationEffect.DEFAULT_AMPLITUDE);
+    }
+
+    // The Vibrator path's effect for `intent`, or null for an intent that
+    // plays through the view.
+    private static VibrationEffect hapticEffect(Vibrator vibrator, int intent, int weight, float intensity) {
+        switch (intent) {
+            case HAPTIC_WARNING:
+            case HAPTIC_ERROR:
+                return hapticPredefined(vibrator, VibrationEffect.EFFECT_DOUBLE_CLICK, HAPTIC_WEIGHT_MEDIUM);
+            case HAPTIC_SUCCESS:
+                return hapticPredefined(vibrator, VibrationEffect.EFFECT_CLICK, HAPTIC_WEIGHT_MEDIUM);
+            case HAPTIC_IMPACT: {
+                int primitive = hapticPrimitive(vibrator, weight);
+                if (primitive != HAPTIC_NO_CONSTANT) {
+                    return VibrationEffect.startComposition().addPrimitive(primitive, intensity).compose();
+                }
+                int effect = weight == HAPTIC_WEIGHT_LIGHT ? VibrationEffect.EFFECT_TICK
+                        : weight == HAPTIC_WEIGHT_HEAVY ? VibrationEffect.EFFECT_HEAVY_CLICK
+                        : VibrationEffect.EFFECT_CLICK;
+                return hapticPredefined(vibrator, effect, weight);
+            }
+            default:
+                return null;
+        }
+    }
+
+    // What this device plays: [actuator, impactIntensity, vibratePermitted,
+    // level of each intent], the flags 1 or 0. Hardware and build facts:
+    // the user's settings do not change them.
+    public static int[] hapticSupport() {
+        int[] facts = new int[HAPTIC_FIRST_LEVEL_SLOT + HAPTIC_INTENT_COUNT];
+        try {
+            Vibrator vibrator = hapticVibrator();
+            boolean actuator = vibrator != null && vibrator.hasVibrator();
+            boolean permitted = hapticPermitted();
+            boolean intensity = actuator && permitted
+                    && hapticPrimitive(vibrator, HAPTIC_WEIGHT_LIGHT) != HAPTIC_NO_CONSTANT
+                    && hapticPrimitive(vibrator, HAPTIC_WEIGHT_MEDIUM) != HAPTIC_NO_CONSTANT
+                    && hapticPrimitive(vibrator, HAPTIC_WEIGHT_HEAVY) != HAPTIC_NO_CONSTANT;
+            facts[HAPTIC_ACTUATOR_SLOT] = actuator ? 1 : 0;
+            facts[HAPTIC_IMPACT_INTENSITY_SLOT] = intensity ? 1 : 0;
+            facts[HAPTIC_VIBRATE_PERMITTED_SLOT] = permitted ? 1 : 0;
+            for (int intent = 0; intent < HAPTIC_INTENT_COUNT; intent++) {
+                int level;
+                if (!actuator || (hapticViewConstant(intent) == HAPTIC_NO_CONSTANT && !permitted)) {
+                    level = HAPTIC_LEVEL_NONE;
+                } else {
+                    level = hapticOwnEffect(intent) ? HAPTIC_LEVEL_NATIVE : HAPTIC_LEVEL_APPROXIMATE;
+                }
+                facts[HAPTIC_FIRST_LEVEL_SLOT + intent] = level;
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Haptic support query failed: " + e);
+            Arrays.fill(facts, 0);
+            Arrays.fill(facts, HAPTIC_FIRST_LEVEL_SLOT, facts.length, HAPTIC_LEVEL_NONE);
+        }
+        return facts;
+    }
+
+    // Play `intent` (an impact at `weight` and `intensity` 0..1; both
+    // ignored for every other intent). HAPTIC_PLAYED once handed to the
+    // platform, or why nothing plays.
+    public static int haptic(int intent, int weight, float intensity) {
+        try {
+            if (intent < 0 || intent >= HAPTIC_INTENT_COUNT || weight < HAPTIC_WEIGHT_LIGHT || weight > HAPTIC_WEIGHT_HEAVY) {
+                return HAPTIC_UNSUPPORTED;
+            }
+            final SDLActivity activity = mSingleton;
+            Vibrator vibrator = hapticVibrator();
+            if (activity == null || vibrator == null || !vibrator.hasVibrator()) {
+                return HAPTIC_NO_ACTUATOR;
+            }
+            final int constant = hapticViewConstant(intent);
+            if (constant != HAPTIC_NO_CONSTANT) {
+                // The hop to the UI thread, logged per call: what playing
+                // with the frame has to budget for.
+                final long posted = SystemClock.elapsedRealtimeNanos();
+                activity.runOnUiThread(() -> {
+                    long hopUs = (SystemClock.elapsedRealtimeNanos() - posted) / NANOS_PER_MICROSECOND;
+                    Log.d(TAG, "Haptic feedback UI-thread hop: " + hopUs + " us");
+                    activity.getWindow().getDecorView().performHapticFeedback(constant);
+                });
+                return HAPTIC_PLAYED;
+            }
+            if (!hapticPermitted()) {
+                return HAPTIC_NO_PERMISSION;
+            }
+            VibrationEffect effect = hapticEffect(vibrator, intent, weight, intensity);
+            if (effect == null) {
+                return HAPTIC_UNSUPPORTED;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                vibrator.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_TOUCH));
+            } else {
+                vibrator.vibrate(effect, new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                        .build());
+            }
+            return HAPTIC_PLAYED;
+        } catch (SecurityException e) {
+            return HAPTIC_NO_PERMISSION;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Haptic feedback failed: " + e);
+            return HAPTIC_UNSUPPORTED;
+        }
+    }
+
+    // Cancel what the Vibrator plays (a view effect is too short to stop).
+    public static void hapticStop() {
+        try {
+            Vibrator vibrator = hapticVibrator();
+            if (vibrator != null && hapticPermitted()) {
+                vibrator.cancel();
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Haptic stop failed: " + e);
         }
     }
 

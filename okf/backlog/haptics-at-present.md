@@ -28,6 +28,11 @@ there is the rest of the frame and the pipeline's depth.
 
 - If the haptic already lands within a refresh of the visual, there is
   nothing to fix: close this item with the numbers in a note.
+- Measured so far (okf/done/haptics.md, Pixel 7 at API 37): the
+  `runOnUiThread` hop is 0.1 to 1.5 ms, and the vibrator service starts
+  the effect 2 to 8 ms after the runnable, so the call reaches the
+  actuator in roughly 2 to 10 ms. What is left to measure is the
+  actuator's own start and the display side.
 - If the haptic is early, holding it until the frame is swapped fixes
   it. That is the shape below.
 - If the haptic is late (the actuator's latency is longer than the

@@ -13,6 +13,7 @@
 /// <reference path="./modules/wasm.d.ts" />
 /// <reference path="./modules/isolate.d.ts" />
 /// <reference path="./modules/link.d.ts" />
+/// <reference path="./modules/haptics.d.ts" />
 /// <reference path="./modules/test.d.ts" />
 
 // Web-standard globals. The runtime is QuickJS, not a browser or Node, so it
