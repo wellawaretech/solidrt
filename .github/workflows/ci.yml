@@ -96,8 +96,9 @@ jobs:
   # realpath test expecting the verbatim prefix, and the cache's LRU touch
   # failing on a read-only handle. With the video feature, so the vendored
   # libvpx and opus build and decode on every platform (the x64 runners
-  # need nasm for libvpx's SIMD code; the arm ones do not); that is the
-  # only system package forge needs.
+  # need nasm for libvpx's SIMD code; the arm ones do not). forge links ore,
+  # which builds SDL from source: the macOS and Windows images ship what it
+  # needs, the Ubuntu images need the packages.
   test-forge:
     name: test-forge (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
@@ -131,9 +132,9 @@ jobs:
         with:
           key: test-forge-${{ matrix.platform }}
 
-      - name: Install nasm
-        if: matrix.platform == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y nasm
+      # SDL's build dependencies, for ore; nasm for libvpx comes with them.
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/linux-system-deps
 
       - if: matrix.platform == 'windows'
         uses: ./.github/actions/windows-msys2-tools
