@@ -13,7 +13,7 @@ window = ["dep:objc2-core-video", "dep:objc2-core-foundation", "dep:windows", "d
 # SDL, built from source as alloy builds it: per target, the same pin and
 # features, so the two crates unify on one SDL in a GUI build.
 [target.'cfg(target_os = "android")'.dependencies]
-sdl3 = { version = "=0.20.0", features = ["build-from-source"] }
+sdl3 = { version = "=0.22.1", features = ["build-from-source"] }
 # The activity's helpers (src/android.rs: the share sheet, the touchscreen
 # feature, the packed asset lookup; src/dialog/android.rs: the document
 # intents), over JNI on the process-wide JavaVM and activity that
