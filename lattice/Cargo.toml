@@ -94,4 +94,4 @@ libloading = "=0.9.0"
 # Android reaches the dev server via the adb-reverse loopback instead, and
 # receiving mDNS there would need a WifiManager.MulticastLock, so it is excluded.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-mdns-sd = "=0.21.6"
+mdns-sd = "=0.21.7"
