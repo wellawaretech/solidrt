@@ -146,7 +146,7 @@ glob = "=0.3.4"
 # channel feature: events cross to the caller on a tokio channel.
 notify = { version = "=8.2.1", default-features = false, features = ["macos_fsevent"] }
 # Current-process stats for flux:process (memoryUsage rss).
-sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
+sysinfo = { version = "=0.40.1", default-features = false, features = ["system"] }
 # WebSocket framing for the client and the server, behind `http`.
 fastwebsockets = { version = "=0.10.0", features = ["upgrade", "unstable-split"], optional = true }
 # The p2p core behind `p2p` (forge::p2p).
