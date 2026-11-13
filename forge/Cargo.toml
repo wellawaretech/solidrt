@@ -171,7 +171,7 @@ hickory-proto = "=0.26.3"
 # Cross-platform interface enumeration (name / IPv4+prefix / MAC / flags) for
 # flux:net interfaces() - the no-subprocess replacement for parsing `ip addr`.
 # Shared with iroh's deps while `p2p` is on.
-netdev = "=0.46.3"
+netdev = "=0.47.0"
 # URL parsing for the relay token a relay URL carries as its user part
 # (forge::p2p), behind `p2p` and `p2p-relay`. Already in the tree (iroh depends on it).
 url = { version = "=2.5.8", optional = true }
