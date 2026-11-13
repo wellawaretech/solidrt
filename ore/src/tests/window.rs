@@ -1,5 +1,5 @@
 use crate::display::Rect;
-use crate::window::{create_image_cursor, normalize_safe_area};
+use crate::window::{create_image_cursor, normalize_safe_area, resize_via_limits_enabled, window_units};
 
 /// A desktop window: SDL_GetWindowSize is already logical, so the pixel
 /// size over the scale equals it and the rect passes through.
@@ -33,4 +33,40 @@ fn safe_area_without_a_size_is_left_alone() {
 fn image_cursor_without_frames_is_an_error() {
   let error = create_image_cursor(&[], 0, 0).err();
   assert_eq!(error.as_deref(), Some("cursor has no frames"));
+}
+
+/// Logical window coordinates (macOS, Wayland): the display scale equals
+/// the pixel density, so the logical size passes through.
+#[test]
+fn window_units_where_coordinates_are_logical_keep_the_size() {
+  const SCALE: f32 = 2.0;
+  const DENSITY: f32 = 2.0;
+  assert_eq!(window_units((900, 600), SCALE, DENSITY), (900, 600));
+}
+
+/// Physical window coordinates (X11, Windows): density 1 at scale 2, so
+/// the logical size doubles.
+#[test]
+fn window_units_where_coordinates_are_physical_scale_the_size() {
+  const SCALE: f32 = 2.0;
+  const DENSITY: f32 = 1.0;
+  assert_eq!(window_units((900, 600), SCALE, DENSITY), (1800, 1200));
+}
+
+/// No density (or no scale) means a factor of 1.
+#[test]
+fn window_units_without_a_density_keep_the_size() {
+  assert_eq!(window_units((900, 600), 2.0, 0.0), (900, 600));
+  assert_eq!(window_units((900, 600), 0.0, 1.0), (900, 600));
+}
+
+/// The resize-via-limits gate: any value but an empty string or "0" turns
+/// it on; an unset variable leaves it off.
+#[test]
+fn resize_via_limits_reads_the_environment_value() {
+  assert!(!resize_via_limits_enabled(None));
+  assert!(!resize_via_limits_enabled(Some("")));
+  assert!(!resize_via_limits_enabled(Some("0")));
+  assert!(resize_via_limits_enabled(Some("1")));
+  assert!(resize_via_limits_enabled(Some("true")));
 }

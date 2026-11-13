@@ -1,6 +1,6 @@
 //! The OS window: the one window a run has, opened from the platform
 //! (`Platform::open_window`), with its commands (title, raise, icon,
-//! fullscreen, minimize, hide), its cursors, its text input session, the
+//! fullscreen, size, minimize, hide), its cursors, its text input session, the
 //! pointer lock, and its GL context (`create_gl_surface`, and
 //! `recreate_gl` after a context loss). Also the input device presence
 //! facts (keyboard, mouse, touch, the screen keyboard) and the
@@ -13,12 +13,22 @@
 //!
 //! Coordinates: sizes from `size` and the safe area are in logical points;
 //! only `size_in_pixels` is physical.
+//!
+//! Resizing through the size limits: with `SOLIDRT_RESIZE_VIA_LIMITS` set
+//! to anything but an empty string or "0", `set_size` also pins the
+//! window's minimum and maximum size to the requested size, and lifts them
+//! again once the window has that size (`settle_forced_size`) or before a
+//! fullscreen change. It exists for compositors that report every window
+//! maximized (Hyprland), where SDL holds a plain size request forever and
+//! the size limits are the one way a window can resize itself. While a
+//! forced size is pending, the user cannot drag the window to another size.
 
 mod cursors;
 mod open;
 mod surface;
 
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
+use std::sync::OnceLock;
 
 use sdl3::sys::rect::SDL_Rect;
 use sdl3::sys::video::SDL_Window;
@@ -100,10 +110,42 @@ pub struct Window {
   text_input: Option<TextInputOptions>,
   /// The pointer lock as last applied, reapplied on a recreate.
   pointer_lock: bool,
+  /// The size `set_size` imposed through the window's minimum and maximum
+  /// size, in SDL window units, while the window has not reached it (see
+  /// the module doc).
+  forced_size: Option<(u32, u32)>,
+}
+
+/// How a `set_size` request went to the platform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SizeRequest {
+  /// The plain SDL request: the compositor answers with a resize event, or
+  /// holds it.
+  Requested,
+  /// The size was imposed through the window's minimum and maximum size;
+  /// the caller must present a frame so the compositor sees them (they
+  /// reach it with the next surface commit).
+  Forced,
 }
 
 /// The window is held for its life; only a failed recreate empties it.
 const WINDOW_HELD: &str = "the window is held for its life";
+
+/// The environment variable that turns on resizing through the size limits
+/// (see the module doc).
+const RESIZE_VIA_LIMITS_ENV: &str = "SOLIDRT_RESIZE_VIA_LIMITS";
+
+/// Whether a `RESIZE_VIA_LIMITS_ENV` value turns the workaround on: set to
+/// anything but an empty string or "0".
+pub(crate) fn resize_via_limits_enabled(value: Option<&str>) -> bool {
+  value.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+// The gate, read from the environment once per process.
+fn resize_via_limits() -> bool {
+  static ENABLED: OnceLock<bool> = OnceLock::new();
+  *ENABLED.get_or_init(|| resize_via_limits_enabled(std::env::var(RESIZE_VIA_LIMITS_ENV).ok().as_deref()))
+}
 
 /// The live window's handle, the parent the dialogs show on
 /// (`crate::dialog`): set when a `Window` is built and again when
@@ -145,6 +187,7 @@ impl Window {
       icon: None,
       text_input: None,
       pointer_lock: false,
+      forced_size: None,
     }
   }
 
@@ -230,7 +273,96 @@ impl Window {
   }
 
   pub fn set_fullscreen(&mut self, fullscreen: bool) -> Result<(), String> {
+    // SDL re-applies the stored size limits when a window leaves
+    // fullscreen; a forced size's stale limits would pin it there.
+    self.release_forced_size();
     self.held_mut().set_fullscreen(fullscreen).map_err(|e| e.to_string())
+  }
+
+  /// Ask for a window size in logical points, the unit `size` and the
+  /// resize event report. SDL's window coordinates are logical on macOS
+  /// and Wayland and physical pixels on X11 and Windows (SDL's
+  /// docs/README-highdpi.md), so the request is converted by display scale
+  /// over pixel density (`window_units`): 1 where the coordinates are
+  /// already logical, the content scale on X11 and Windows. The X11 and
+  /// Windows factor comes from SDL's document; it is not measured on a
+  /// scaled X11 display.
+  ///
+  /// SDL_SetWindowSize records the request as the window's pending size;
+  /// the backends apply it when the window leaves fullscreen or maximized.
+  /// A backend without a SetWindowSize (Android) returns unsupported and
+  /// sends no event, and a tiling compositor may ignore or defer the
+  /// request: Hyprland reports every toplevel as maximized from its first
+  /// map (to suppress client-side decorations), so SDL holds the request
+  /// there for good. The resulting resize arrives as the normal
+  /// `PlatformEvent::Resize`.
+  ///
+  /// With `SOLIDRT_RESIZE_VIA_LIMITS` on (see the module doc), the window's
+  /// minimum and maximum size are first pinned to the requested size, which
+  /// a compositor applies even to a window it holds maximized, and the
+  /// answer is `SizeRequest::Forced`: the caller presents a frame, whose
+  /// surface commit carries the limits to the compositor. The platform loop
+  /// lifts them through `settle_forced_size` once the window has the size.
+  /// A window already at the size gets the plain request. Without the
+  /// variable the answer is `SizeRequest::Requested`.
+  pub fn set_size(&mut self, width: u32, height: u32) -> Result<SizeRequest, String> {
+    let units = window_units((width, height), self.display_scale(), self.held().pixel_density());
+    let forced = resize_via_limits() && self.held().size() != units;
+    if resize_via_limits() && !forced {
+      // Nothing to force, and an earlier forced size must not stay pinned.
+      self.release_forced_size();
+    }
+    if forced {
+      // A forced size still pending pins the old limits; a larger request
+      // would then set a minimum above the maximum, which SDL refuses.
+      self.release_forced_size();
+      let (w, h) = units;
+      let window = self.held_mut();
+      window.set_minimum_size(w, h).map_err(|e| e.to_string())?;
+      window.set_maximum_size(w, h).map_err(|e| e.to_string())?;
+      self.forced_size = Some(units);
+    }
+    let w = i32::try_from(units.0).unwrap_or(i32::MAX);
+    let h = i32::try_from(units.1).unwrap_or(i32::MAX);
+    // SAFETY: a live window; takes plain sizes (SDL rejects non-positive
+    // ones with an error).
+    let ok = unsafe { sdl3::sys::video::SDL_SetWindowSize(self.held().raw(), w, h) };
+    if !ok {
+      let error = crate::sdl_error();
+      // A refused size must not leave the limits pinned to it.
+      self.release_forced_size();
+      return Err(error);
+    }
+    Ok(if forced { SizeRequest::Forced } else { SizeRequest::Requested })
+  }
+
+  /// After a resize event: lift the limits a forced size pinned once the
+  /// window has that size (SDL_GetWindowSize, in window units). A resize to
+  /// any other size leaves them, so it cannot lift them early.
+  pub fn settle_forced_size(&mut self) {
+    let Some(target) = self.forced_size else {
+      return;
+    };
+    if self.held().size() == target {
+      log::debug!("[ore] forced window size {}x{} reached; lifting the size limits", target.0, target.1);
+      self.release_forced_size();
+    }
+  }
+
+  /// Lift the limits a forced size pinned, reached or not (before a
+  /// fullscreen change). Nothing happens without a forced size.
+  pub fn release_forced_size(&mut self) {
+    if self.forced_size.take().is_none() {
+      return;
+    }
+    // 0x0 is SDL's "no limit" for both.
+    let window = self.held_mut();
+    if let Err(e) = window.set_minimum_size(0, 0) {
+      log::warn!("[ore] lifting the minimum window size failed: {e}");
+    }
+    if let Err(e) = window.set_maximum_size(0, 0) {
+      log::warn!("[ore] lifting the maximum window size failed: {e}");
+    }
   }
 
   pub fn minimize(&mut self) -> Result<(), String> {
@@ -429,6 +561,20 @@ pub(crate) fn normalize_safe_area(rect: Rect, logical: (u32, u32), pixels: (u32,
     width: (rect.width as f32 * fx).round() as i32,
     height: (rect.height as f32 * fy).round() as i32,
   }
+}
+
+/// A size in logical points as SDL window units: logical * display_scale
+/// / pixel_density, rounded to whole units. Display scale over pixel
+/// density is 1 where SDL's window coordinates are already logical (macOS,
+/// Wayland) and the content scale where they are physical (X11, Windows).
+/// A non-positive scale or density means a factor of 1.
+pub(crate) fn window_units(logical: (u32, u32), display_scale: f32, pixel_density: f32) -> (u32, u32) {
+  let (w, h) = logical;
+  if display_scale <= 0.0 || pixel_density <= 0.0 {
+    return logical;
+  }
+  let factor = display_scale / pixel_density;
+  ((w as f32 * factor).round() as u32, (h as f32 * factor).round() as u32)
 }
 
 // The display orientation SDL reports, as ore's vocabulary.

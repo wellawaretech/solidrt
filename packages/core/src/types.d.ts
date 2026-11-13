@@ -787,6 +787,21 @@ export interface WindowProps extends LayoutProps, InputProps, TransitionProps {
   title?: string
   fullscreen?: boolean
   /**
+   * Ask for a window size, in logical points (the unit windowSize() reports).
+   * Desktop only: on Android and the TV the app is the whole screen and this
+   * does nothing. It applies when the value changes; the same value declared
+   * again (an object literal re-built by a reactive re-run, a reload) does
+   * nothing. It is not a constraint: a user drag is not fought and does not
+   * write back, so re-declaring the same size does not snap a dragged window
+   * back. A fullscreen or maximized window applies it when it returns to
+   * normal; a tiling compositor may ignore it. On Hyprland, the client needs
+   * SOLIDRT_RESIZE_VIA_LIMITS=1 in its environment for the size to apply.
+   * Null removes the declaration and leaves the window as it is. The dev tree reads back the declared
+   * size, while windowSize() reports the actual one. The headless test host
+   * ignores it.
+   */
+  size?: { width: number; height: number } | null
+  /**
    * Run the window's finished frame through a GPU program as the last step
    * before it reaches the screen. While declared, the frame renders into a
    * runtime-owned layer texture the program samples; removing the prop

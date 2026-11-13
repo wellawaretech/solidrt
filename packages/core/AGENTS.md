@@ -58,6 +58,13 @@ the design aspect - `aspectRatio` does not override stretch. Reach for
 `windowSizeClass` branching only when the layout genuinely reflows across
 form factors.
 
+To ask for a window size on desktop, declare `<window size={{ width, height }}>`
+in logical points. It applies when the value changes and does nothing on
+Android or the TV. It is not a constraint: a user drag is not fought and does
+not write back, so re-declaring the same size does not snap the window back,
+and a tiling compositor may ignore it. Read the actual size from `windowSize()`;
+the dev tree's `size` prop is the declared one.
+
 `env` and `capabilities` (both exported from `@solidrt/core`) are the two
 objects that expose this. They are plain objects with REACTIVE GETTERS, not
 functions - read them as `capabilities.windowSizeClass`, `env.displayScale`

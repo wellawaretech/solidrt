@@ -44,6 +44,14 @@ What the individual descriptions cannot tell you:
   which client you are using); and before calling a visual change done,
   snapshot each distinct form factor at least once - a layout that fits one
   window can clip or overflow another.
+- `set_window_size` resizes a desktop client's window the way the user's
+  drag does; Android and the TV ignore it, and a tiling compositor or a
+  fullscreen window may ignore or defer it (Hyprland always does: it
+  reports every window as maximized). With `SOLIDRT_RESIZE_VIA_LIMITS=1`
+  in the client's environment (a `sol run` passes its environment to the
+  client it launches) the resize applies there too: the client pins its
+  window's min and max size to the request until it lands. Its reply only
+  echoes the request: `settle`, then read the size from the tree root.
 - Measuring or testing? `mute_user_input` first: it mutes the user's own
   input on every client (a stray click or keypress mid-measurement corrupts
   the result); `send_input` still works. `unmute_user_input` the moment you
@@ -532,6 +540,18 @@ when exactly one client is connected.
   reply gave up waiting. GET `/clock` reads the same record without
   touching it. `/clients` reports each client's `timeScale`, reset to 1 by
   every push.
+- POST `/window?width=<w>&height=<h>` - resizes the client's desktop
+  window, in logical points (the space `/tree` reports); `{ width, height
+  }` back, the request echoed. It stands in for the user's drag and leaves
+  the app's declared `<window size>` alone. Android and the TV ignore it,
+  a tiling compositor or a fullscreen window may ignore or defer it: read
+  the result from the tree root after `/settle`. Hyprland reports every
+  window as maximized, so SDL never applies a plain size there. With
+  `SOLIDRT_RESIZE_VIA_LIMITS=1` in the client's environment (a `sol run`
+  passes its environment to the client it launches) the resize applies
+  there: the client pins its window's min and max size to the request
+  until it lands. Without it, resize through the compositor's own
+  dispatcher instead.
 - A forwarded query that gets no answer in its budget (10 s, more for a
   raw-format image or a stepped clock) is a 504 naming the budget. On a
   slow device, or for a heavy reply (a raw snapshot of a large window), a

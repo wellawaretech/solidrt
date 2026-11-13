@@ -445,6 +445,7 @@ const CONTROL_ENDPOINTS = [
   "/__control__/clipboard",
   "/__control__/texture",
   "/__control__/clock",
+  "/__control__/window",
   "/__control__/input",
   "/__control__/settle",
   "/__control__/buffer",
@@ -685,6 +686,24 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       if ("error" in result) return result.error
       let info = state.clients.get(target.ws)
       if (info && typeof result.data?.scale === "number") info.timeScale = result.data.scale
+      return Response.json(result.data)
+    }
+    case "/__control__/window": {
+      // Window resize: POST ?width=<w>&height=<h> in logical points (the
+      // space /tree reports) asks the client to resize its desktop window.
+      // It stands in for the user's drag: the app's declared <window size>
+      // is untouched, and a tiling compositor or a fullscreen window may
+      // ignore or defer it; a no-op on Android and the TV. The reply echoes
+      // the request; read the result back from the tree root after /settle.
+      if (req.method !== "POST") return Response.json({ error: "Window requires POST" }, { status: 405 })
+      let width = Number(query.get("width"))
+      let height = Number(query.get("height"))
+      if (!Number.isSafeInteger(width) || width < 1 || !Number.isSafeInteger(height) || height < 1)
+        return Response.json({ error: "Window requires ?width=<w>&height=<h> in logical points" }, { status: 400 })
+      let target = findClient(query.get("client"))
+      if ("error" in target) return target.error
+      let result = await queryClient(target.ws, "window", { width, height })
+      if ("error" in result) return result.error
       return Response.json(result.data)
     }
     case "/__control__/input": {

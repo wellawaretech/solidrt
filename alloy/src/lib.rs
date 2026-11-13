@@ -30,6 +30,7 @@ pub mod spatial;
 mod stepped;
 mod threads;
 mod vsync;
+mod window_size;
 pub mod yuv;
 
 #[cfg(test)]

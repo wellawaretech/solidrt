@@ -1043,11 +1043,6 @@ Shaped, not started.
   pattern, Windows and macOS through wry), Linux on Wayland has no plane and
   needs either "unavailable" or a WPE texture lane, and the use case decides
   the scope.
-- **[An app cannot resize its window while running](backlog/window-size-prop.md)** [2026-11-11]
-  `<window>` has only title, fullscreen and shader and no platform command
-  sets a size, so a desktop app cannot change its window size after start; a
-  `size` prop over a new `AlloyCommand::SetSize` is the sketch, a follow-up to
-  the start size and waiting for an app that needs it.
 - **[An app cannot choose the size its window opens at](backlog/window-start-size.md)** [2026-11-13]
   The start size is the `--size` flag (default 1280x720), which a packed app
   has no path to, so a start size in the project config, carried by the
@@ -3334,6 +3329,11 @@ Finished, kept for the reasoning.
   streams API. Add the three classes as globals, implemented in embedded JS,
   with a documented subset (no BYOB, no queuing strategies beyond a chunk
   count), and type bodies and subprocess output as ReadableStream.
+- **[An app cannot resize its window while running](done/window-size-prop.md)** [2026-11-11]
+  `<window>` has only title, fullscreen and shader and no platform command
+  sets a size, so a desktop app cannot change its window size after start; a
+  `size` prop over a new alloy command, deduplicated in the platform loop,
+  plus the control API resize that shares the ore call.
 
 ## Notes
 
@@ -3813,6 +3813,14 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   32-bit exit status to a byte, so a crash status like 0xC0000005 reads as a
   plain exit 5; the CLI cannot tell a crashed client from one that exited. Fix
   PR open upstream since 2026-07.
+- **[Hyprland tells every toplevel it is maximized, so a window can never resize itself](upstream/hyprland-maximized-state-on-every-toplevel.md)** [2026-11-13]
+  Hyprland sends the xdg maximized state (and all four tiled states) to every
+  toplevel at first map to keep clients from drawing their own decorations,
+  with no option or rule to turn it off; SDL then holds SDL_SetWindowSize as a
+  pending size that never applies, so the `<window size>` prop and the control
+  API resize do nothing on Hyprland unless the client runs with
+  SOLIDRT_RESIZE_VIA_LIMITS=1, which pins the window's min and max size to the
+  request. Known upstream since 2023 and kept on purpose.
 - **[ImpellerColorMatrix translation column is normalized, not 0..255](upstream/impeller-color-matrix-translation.md)** [2026-09-02]
   The impeller.h doc (and impellers 0.4.2 doc comment) says the color-matrix
   translation column is 0..255; the shipped implementation adds it raw in

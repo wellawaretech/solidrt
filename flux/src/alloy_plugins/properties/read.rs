@@ -45,6 +45,11 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       if let Some(shader) = &win.shader {
         out.push(("shader", ReadValue::Int(shader.program as i64)));
       }
+      // The declared size, not the actual window size: the two drift apart
+      // after a user drag by design (windowSize() reports the actual one).
+      if let Some((w, h)) = win.size {
+        out.push(("size", ReadValue::Nums(vec![w as f64, h as f64])));
+      }
     }
     ElementKind::View(view) => read_view(view, &mut out),
     ElementKind::Rectangle(rect) => {

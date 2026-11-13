@@ -77,6 +77,8 @@ pub(crate) fn run_stepped_loop(
         publish(&current);
         event_tx.send(crate::event::headless_resize_event(&current)).ok();
       }
+      // DeclareSize and ResizeWindow land here: the test host's size wins,
+      // and a size change mid-render would change the frame size.
       _ => {}
     }
   }

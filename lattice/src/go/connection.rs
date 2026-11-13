@@ -120,6 +120,7 @@ pub struct QueryHandles {
 /// match in `try_serve`.
 const QUERY_KINDS: &[&str] = &[
   "clock",
+  "window",
   "input",
   "settle",
   "stats",
@@ -734,6 +735,29 @@ async fn try_serve(
                   let _ = reply_tx.send(reply);
                 });
               }
+              Some("window") => {
+                // Dev-tool window resize, in logical points (the unit
+                // windowSize() and the tree report). It stands in for the
+                // user's drag: it leaves the app's declared `<window size>`
+                // alone, and a tiling compositor or a fullscreen window may
+                // ignore or defer it. The reply echoes the request; the
+                // resize lands later as the normal resize event, which
+                // drives its own frame, so no frame-request latch here.
+                let size = window_dimension(&json, "width")
+                  .and_then(|width| window_dimension(&json, "height").map(|height| (width, height)));
+                let reply = match size {
+                  Ok((width, height)) => {
+                    if flags.alloy_cmd_tx.send(alloy::AlloyCommand::ResizeWindow { width, height }).is_err() {
+                      error_reply(id, "Window resize failed: the window is gone")
+                    } else {
+                      serde_json::json!({"type": "result", "id": id, "data": {"width": width, "height": height}})
+                        .to_string()
+                    }
+                  }
+                  Err(e) => error_reply(id, &e),
+                };
+                let _ = client.send(tokio_websockets::Message::text(reply)).await;
+              }
               Some("input") => {
                 // Synthetic input: parsed events enter the same channel real
                 // SDL input feeds (see DevFlags::input_tx), deliberately with
@@ -1253,6 +1277,17 @@ async fn try_serve(
 
 fn error_reply(id: u64, message: &str) -> String {
   serde_json::json!({"type": "result", "id": id, "error": message}).to_string()
+}
+
+/// One side of a window query's size: a positive whole number that fits a
+/// u32, or the error naming the field.
+fn window_dimension(json: &serde_json::Value, field: &str) -> Result<u32, String> {
+  json
+    .get(field)
+    .and_then(|v| v.as_u64())
+    .and_then(|v| u32::try_from(v).ok())
+    .filter(|v| *v > 0)
+    .ok_or_else(|| format!("Window {field} must be a positive whole number"))
 }
 
 /// The frame interval an input plan is run at from the control API (see

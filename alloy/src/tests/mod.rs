@@ -56,6 +56,7 @@ mod texture;
 mod transitions;
 mod tree;
 mod view;
+mod window_size;
 mod window_tap;
 mod yuv;
 

@@ -17,7 +17,7 @@ use crate::stepped::run_stepped_loop;
 use ore::event::PlatformEvent;
 use ore::lifecycle::Lifecycle;
 use ore::platform::Platform;
-use ore::window::{Backing, Display, Window, WindowConfig};
+use ore::window::{Backing, Display, SizeRequest, Window, WindowConfig};
 
 pub struct App {
   platform: Platform,
@@ -253,6 +253,11 @@ impl App {
       raster.send(RasterCmd::RebindWindowSurface).ok();
     }
     event_tx.send(initial).ok();
+
+    // The app's last declared window size (the `<window size>` prop), seeded
+    // with the size the window opened at, so a mount-time declaration equal
+    // to it sends nothing (see window_size.rs).
+    let mut declared_size = Some(crate::event::logical_size(window.size_in_pixels(), window.display_scale()));
 
     // The lifecycle transitions, forwarded the moment the platform pushes
     // them, ahead of the pump (see ore::lifecycle::Lifecycle for why and on
@@ -668,6 +673,11 @@ impl App {
             refresh_rate = *hz;
             crate::set_refresh_rate(*hz);
           }
+          // A forced size's limits are lifted once the window reaches it,
+          // so the user can drag the window again (see ore's set_size).
+          if matches!(e, PlatformEvent::Resize { .. }) {
+            window.settle_forced_size();
+          }
           if !deliver(AlloyEvent::from(e), at) {
             break 'run;
           }
@@ -850,6 +860,25 @@ impl App {
               log::warn!("set_fullscreen failed: {e}");
             }
           }
+          AlloyCommand::DeclareSize(size) => {
+            if let Some((w, h)) = crate::window_size::size_to_apply(&mut declared_size, size) {
+              // Debug, not warn: an app that declares a size also runs
+              // where the platform refuses it (Android).
+              match window.set_size(w, h) {
+                // A forced size reaches the compositor only with a surface
+                // commit, and a commit comes with a presented frame.
+                Ok(SizeRequest::Forced) => liveness.request_frame(),
+                Ok(SizeRequest::Requested) => {}
+                Err(e) => log::debug!("[alloy] declared window size not applied: {e}"),
+              }
+            }
+          }
+          AlloyCommand::ResizeWindow { width, height } => match window.set_size(width, height) {
+            // As for DeclareSize: the frame's commit carries the forced size.
+            Ok(SizeRequest::Forced) => liveness.request_frame(),
+            Ok(SizeRequest::Requested) => {}
+            Err(e) => log::warn!("[alloy] window resize failed: {e}"),
+          },
           AlloyCommand::SetCursor(cursor) => window.set_cursor(cursor),
           AlloyCommand::CreateCursor { id, frames, hot_x, hot_y } => window.register_cursor(id, &frames, hot_x, hot_y),
           AlloyCommand::DropCursor(id) => window.drop_cursor(id),

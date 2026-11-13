@@ -576,6 +576,17 @@ let TOOLS: {
     },
   },
   {
+    name: "set_window_size",
+    annotations: SETS_STATE,
+    description:
+      "Resize a running app client's window, in logical points (the space get_render_tree reports). Desktop only: a no-op on Android and the TV, where the app is the whole screen. The request stands in for the user dragging the window edge: it does not change the app's declared `<window size>`. A tiling compositor or a fullscreen window may ignore or defer it, and the reply only echoes the request, so never assume the result: call settle, then read the tree root's size from get_render_tree. Use it to exercise the app's resize and display-scale paths (layout at a narrow or a wide size, onResize, windowSize()).",
+    inputSchema: {
+      width: z.number().int().min(1).describe("Window width in logical points"),
+      height: z.number().int().min(1).describe("Window height in logical points"),
+      client: CLIENT_ARG,
+    },
+  },
+  {
     name: "settle",
     annotations: READ_ONLY,
     description:
@@ -713,6 +724,14 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       let params = new URLSearchParams({ step: String(args.n) })
       if (typeof args?.client === "number") params.set("client", String(args.client))
       return control(`/clock?${params.toString()}`, "POST")
+    }
+    case "set_window_size": {
+      if (typeof args?.width !== "number" || !(args.width >= 1) || typeof args?.height !== "number" || !(args.height >= 1)) {
+        return { ok: false, message: "set_window_size requires width >= 1 and height >= 1" }
+      }
+      let params = new URLSearchParams({ width: String(args.width), height: String(args.height) })
+      if (typeof args?.client === "number") params.set("client", String(args.client))
+      return control(`/window?${params.toString()}`, "POST")
     }
     case "settle": {
       let params = new URLSearchParams()

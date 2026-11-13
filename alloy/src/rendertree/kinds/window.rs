@@ -11,6 +11,10 @@ use taffy::{prelude::percent, Display, FlexDirection, Size, Style};
 pub struct Window {
   pub title: String,
   pub fullscreen: bool,
+  /// The declared window size in logical points (the `<window size>`
+  /// prop); None when undeclared. The read-back of the declaration, not the
+  /// window's actual size, which a user drag changes.
+  pub size: Option<(u32, u32)>,
   /// The declared window shader (see `Context::set_window_shader`); None
   /// draws the frame unshaded.
   pub shader: Option<WindowShader>,
@@ -22,7 +26,13 @@ pub struct Window {
 
 impl Default for Window {
   fn default() -> Self {
-    Window { title: "SolidRT".to_string(), fullscreen: false, shader: None, pending_shader: RefCell::new(None) }
+    Window {
+      title: "SolidRT".to_string(),
+      fullscreen: false,
+      size: None,
+      shader: None,
+      pending_shader: RefCell::new(None),
+    }
   }
 }
 
@@ -37,10 +47,12 @@ impl Buildable for Window {
 }
 
 impl Window {
-  // Title and fullscreen are not plain fields: changing them must push a command
-  // to the windowing backend. That behavior lives here, in the element, so the
-  // binding layer only has to decode the value and call the setter. Title is
-  // pure chrome (Damage::None); fullscreen changes the window size (Layout).
+  // Title, fullscreen and size are not plain fields: changing them must push a
+  // command to the windowing backend. That behavior lives here, in the element,
+  // so the binding layer only has to decode the value and call the setter.
+  // Title is pure chrome (Damage::None); fullscreen changes the window size
+  // (Layout). A declared size is Damage::None: the size changes when the
+  // resize event arrives, which already drives layout.
   pub fn set_title(&mut self, title: String, cmd_tx: &Sender<AlloyCommand>) -> Damage {
     self.title = title;
     cmd_tx.send(AlloyCommand::SetTitle(self.title.clone())).ok();
@@ -51,6 +63,15 @@ impl Window {
     self.fullscreen = fullscreen;
     cmd_tx.send(AlloyCommand::SetFullscreen(fullscreen)).ok();
     Damage::Layout
+  }
+
+  /// Declare the window size in logical points, or clear the declaration
+  /// (None). The platform loop applies a declaration only when it differs
+  /// from the last one (AlloyCommand::DeclareSize).
+  pub fn set_size(&mut self, size: Option<(u32, u32)>, cmd_tx: &Sender<AlloyCommand>) -> Damage {
+    self.size = size;
+    cmd_tx.send(AlloyCommand::DeclareSize(size)).ok();
+    Damage::None
   }
 
   /// Declare or clear the window shader. Like texture params, the write only

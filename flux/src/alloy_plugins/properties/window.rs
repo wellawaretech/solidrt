@@ -21,8 +21,29 @@ pub fn apply(
       cmd_tx,
     ),
     "shader" => win.set_shader(decode_shader(value)?),
+    "size" => win.set_size(decode_size(value)?, cmd_tx),
     _ => return Ok(None),
   }))
+}
+
+// { width, height } in logical points; null clears the declaration. Each
+// field is a finite, positive, whole number, checked before the cast so a
+// fraction or a negative is an error rather than a silent truncation.
+fn decode_size(value: &PropValue) -> Result<Option<(u32, u32)>, String> {
+  if value.is_null() {
+    return Ok(None);
+  }
+  if !matches!(value, PropValue::Map(_)) {
+    return Err(format!("size must be {{ width, height }} or null, got {}", describe(value)));
+  }
+  let field = |name: &str| -> Result<u32, String> {
+    let raw = value.get(name).unwrap_or(&PropValue::Null);
+    match raw.as_f64() {
+      Some(n) if n.is_finite() && n > 0.0 && n.fract() == 0.0 && n <= u32::MAX as f64 => Ok(n as u32),
+      _ => Err(format!("size.{name} must be a positive whole number, got {}", describe(raw))),
+    }
+  };
+  Ok(Some((field("width")?, field("height")?)))
 }
 
 // { program, params?, textures?, vertexCount?, previous? }; null clears.

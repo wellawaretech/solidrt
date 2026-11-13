@@ -145,7 +145,8 @@ impl SurfaceLiveness {
     }
   }
 
-  fn request_frame(&self) {
+  /// Latch a frame request, once the embedder has registered the latch.
+  pub fn request_frame(&self) {
     if let Some(latch) = &self.latch {
       latch.store(true, Ordering::Relaxed);
     }

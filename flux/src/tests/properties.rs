@@ -3,14 +3,16 @@
 // caller throws as a catchable JS error), never a panic, and the message
 // names the property, the offending value, and where useful the accepted set.
 
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, Receiver};
 
 use crate::alloy_plugins::properties::apply_jsx;
 use crate::alloy_plugins::properties::transition::{anim_prop, decode_node_entry, decode_stagger, LaneRule};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::{
-  AnimProp, AnimValue, Curve, Damage, Element, ElementKind, TransitionEntry, TransitionSpec, DEFAULT_STROKE_WIDTH,
+  AnimProp, AnimValue, Curve, Damage, Element, ElementKind, TransitionEntry, TransitionSpec, Window,
+  DEFAULT_STROKE_WIDTH,
 };
+use alloy::AlloyCommand;
 
 fn apply(kind: &str, name: &str, value: PropValue) -> Result<Damage, String> {
   let mut el = Element::from_kind(kind).expect("known kind");
@@ -22,6 +24,14 @@ fn apply(kind: &str, name: &str, value: PropValue) -> Result<Damage, String> {
 fn apply_el(el: &mut Element, name: &str, value: PropValue) -> Result<Damage, String> {
   let (tx, _rx) = channel();
   apply_jsx(el, name, &value, &tx, &|_, _| Ok(()))
+}
+
+// The variant returning the command receiver, for a property whose effect is
+// the command the element sends (the window's size declaration).
+fn apply_el_cmds(el: &mut Element, name: &str, value: PropValue) -> (Result<Damage, String>, Receiver<AlloyCommand>) {
+  let (tx, rx) = channel();
+  let result = apply_jsx(el, name, &value, &tx, &|_, _| Ok(()));
+  (result, rx)
 }
 
 fn num(n: f64) -> PropValue {
@@ -1045,4 +1055,64 @@ fn texture_radius_applies_and_reads_back() {
     panic!("texture kind");
   };
   assert_eq!(tex.radius, None);
+}
+
+fn size(width: PropValue, height: PropValue) -> PropValue {
+  map(&[("width", width), ("height", height)])
+}
+
+// The root window element; from_kind does not build one (the tree creates
+// it as the root), so build it the way the tree does.
+fn window() -> Element {
+  Window::default().with_layout()
+}
+
+fn apply_window(name: &str, value: PropValue) -> Result<Damage, String> {
+  apply_el(&mut window(), name, value)
+}
+
+#[test]
+fn window_size_declares_and_reads_back() {
+  use crate::alloy_plugins::properties::{read_jsx, ReadValue};
+  let mut el = window();
+  let (result, rx) = apply_el_cmds(&mut el, "size", size(num(900.0), num(600.0)));
+  assert_eq!(result, Ok(Damage::None));
+  assert!(matches!(rx.try_recv(), Ok(AlloyCommand::DeclareSize(Some((900, 600))))));
+  assert!(read_jsx(&el)
+    .iter()
+    .any(|(n, v)| *n == "size" && matches!(v, ReadValue::Nums(pair) if pair == &vec![900.0, 600.0])));
+}
+
+#[test]
+fn window_size_null_clears_the_declaration() {
+  use crate::alloy_plugins::properties::read_jsx;
+  let mut el = window();
+  apply_el(&mut el, "size", size(num(900.0), num(600.0))).expect("size applies");
+  let (result, rx) = apply_el_cmds(&mut el, "size", PropValue::Null);
+  assert_eq!(result, Ok(Damage::None));
+  assert!(matches!(rx.try_recv(), Ok(AlloyCommand::DeclareSize(None))));
+  assert!(!read_jsx(&el).iter().any(|(n, _)| *n == "size"), "a cleared size emits nothing");
+}
+
+#[test]
+fn window_size_rejects_a_bad_field_naming_it() {
+  let bad = [num(900.5), num(0.0), num(-1.0), num(f64::INFINITY), num(f64::NAN), text("wide")];
+  for value in bad {
+    let err = apply_window("size", size(value.clone(), num(600.0))).unwrap_err();
+    assert!(err.starts_with("size.width must be a positive whole number"), "{err}");
+    let err = apply_window("size", size(num(900.0), value.clone())).unwrap_err();
+    assert!(err.starts_with("size.height must be a positive whole number"), "{err}");
+  }
+  let err = apply_window("size", size(num(900.0), text("tall"))).unwrap_err();
+  assert!(err.ends_with("got \"tall\""), "{err}");
+}
+
+#[test]
+fn window_size_rejects_a_missing_field_and_a_non_map() {
+  let err = apply_window("size", map(&[("width", num(900.0))])).unwrap_err();
+  assert!(err.starts_with("size.height must be"), "{err}");
+  let err = apply_window("size", map(&[("height", num(600.0))])).unwrap_err();
+  assert!(err.starts_with("size.width must be"), "{err}");
+  let err = apply_window("size", PropValue::List(vec![num(900.0), num(600.0)])).unwrap_err();
+  assert_eq!(err, "size must be { width, height } or null, got a list of 2");
 }

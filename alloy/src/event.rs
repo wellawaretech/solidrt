@@ -36,6 +36,17 @@ pub enum AlloyCommand {
   // Platforms without window icons (macOS) ignore it.
   SetIcon { width: u32, height: u32, rgba: Vec<u8> },
   SetFullscreen(bool),
+  // The app's declared window size in logical points, from the `<window
+  // size>` prop; None when the prop was removed. Deduplicated by the loop
+  // (see window_size.rs): applied only when it differs from the last
+  // declared size, which is seeded with the size the window opened at, so a
+  // re-fired object prop, a reload and a mount-time declaration equal to
+  // the open size send nothing to the OS, and a user drag is never fought.
+  // None forgets the declared size, so the next declaration always applies.
+  DeclareSize(Option<(u32, u32)>),
+  // A dev tool's resize in logical points: applied unconditionally, and
+  // the declared size is left alone (it stands in for the user's drag).
+  ResizeWindow { width: u32, height: u32 },
   // Frame-release policy (see vsync::FramePacing). The embedder derives it
   // from the input-modality facts (InputDevices) and re-sends on hotplug;
   // the loop applies it immediately, releasing any vsync-deferred presents
@@ -387,13 +398,22 @@ pub(crate) fn current_resize_event(window: &Window) -> AlloyEvent {
   resize_event(window.size_in_pixels(), window.display_scale(), window.safe_area())
 }
 
+// The logical size of a drawable of `pixel_size` physical pixels at
+// `scale`: the pixel size over the scale. The one formula the resize event
+// and the platform loop's open size (app.rs, the declared size's seed)
+// share, so the two cannot disagree.
+pub(crate) fn logical_size((w, h): (u32, u32), scale: f32) -> (u32, u32) {
+  ((w as f32 / scale) as u32, (h as f32 / scale) as u32)
+}
+
 // The resize for a drawable of `pixel_size` physical pixels at `scale`: the
 // logical size is the pixel size over the scale, the safe area is already in
 // logical points. One place, so the event ore's pump reports and the one
 // read from the window here cannot disagree.
-fn resize_event((w, h): (u32, u32), scale: f32, r: ore::display::Rect) -> AlloyEvent {
+fn resize_event(pixel_size: (u32, u32), scale: f32, r: ore::display::Rect) -> AlloyEvent {
+  let (w, h) = logical_size(pixel_size, scale);
   AlloyEvent::Resize {
-    size: ISize::new((w as f32 / scale) as i64, (h as f32 / scale) as i64),
+    size: ISize::new(w as i64, h as i64),
     safe_area: Rect::new(
       crate::renderer::Point::new(r.x as f32, r.y as f32),
       crate::renderer::Size::new(r.width as f32, r.height as f32),
