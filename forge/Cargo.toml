@@ -105,8 +105,8 @@ hyper = { version = "=1.12.0", features = ["server", "http1", "http2"], optional
 # The TLS stack behind `tls`: rustls through tokio-rustls, without its
 # default aws-lc-rs provider (a second provider and a C build), and the
 # webpki roots.
-tokio-rustls = { version = "=0.26.4", default-features = false, features = ["ring", "tls12", "logging"], optional = true }
-webpki-roots = { version = "=1.0.11", optional = true }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12", "logging"], optional = true }
+webpki-roots = { version = "=1.0.12", optional = true }
 # The certificates of flux:net's generateCertificate, behind `tls`: rcgen,
 # rustls's own project, on ring. Already in the tree (iroh-relay depends on
 # it). The explicit feature list keeps a future default from pulling aws-lc
@@ -114,7 +114,7 @@ webpki-roots = { version = "=1.0.11", optional = true }
 rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "pem", "ring", "x509-parser"], optional = true }
 # The validity dates of a generated certificate (`std` for the clock).
 # Already in the tree (rcgen depends on it).
-time = { version = "=0.3.47", default-features = false, features = ["std"], optional = true }
+time = { version = "=0.3.55", default-features = false, features = ["std"], optional = true }
 hyper-util = { version = "=0.1.21", features = ["tokio"], optional = true }
 http-body-util = { version = "=0.1.5", optional = true }
 # The digest core behind crypto.subtle.digest.
@@ -122,7 +122,7 @@ sha2 = "=0.11.1"
 # forge::compression (CompressionStream / DecompressionStream): deflate, the
 # zlib format and the gzip framing's CRC-32, on the pure-Rust backend. Already
 # in the tree (image -> png depends on it).
-flate2 = "=1.1.10"
+flate2 = "=1.1.11"
 bytes = "=1.12.1"
 futures-core = "=0.3.34"
 # Jitter for the fetch 429 backoff, behind `http`. Already in the tree
@@ -153,7 +153,7 @@ glob = "=0.3.4"
 # Directory change notifications for forge::fs::DirWatcher (flux:fs dir().watch):
 # inotify / FSEvents / ReadDirectoryChangesW behind one API. No crossbeam
 # channel feature: events cross to the caller on a tokio channel.
-notify = { version = "=8.2.1", default-features = false, features = ["macos_fsevent"] }
+notify = { version = "=8.2.2", default-features = false, features = ["macos_fsevent"] }
 # Current-process stats for flux:process (memoryUsage rss).
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
 # WebSocket framing for the client and the server, behind `http`.
@@ -254,7 +254,7 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Stor
 [build-dependencies]
 # Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the
 # Android build can link clang_rt.builtins; see build.rs.
-cc = "=1.10.0"
+cc = "=1.11.1"
 # Drives the vendored libopus's CMake project (build.rs); already in the tree
 # (sdl3-sys builds SDL with it).
 cmake = "=0.1.58"
