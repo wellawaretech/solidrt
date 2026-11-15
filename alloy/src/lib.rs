@@ -64,6 +64,7 @@ pub use present::{CountTally, Counted, RefreshCounter, RefreshCounting, SignalLe
 pub use raster::TapSize;
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
 pub use stepped::SteppedConfig;
+pub use threads::stop_raster;
 pub use vsync::FramePacing;
 pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
 

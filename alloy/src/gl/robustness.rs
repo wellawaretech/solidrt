@@ -121,7 +121,14 @@ impl Robustness {
         "[alloy] GPU reset status unavailable: no robustness extension; a loss shows only as a failed present"
       ),
     }
-    let lose = binding.proc_address(c"glLoseContextCHROMIUM");
+    // By the extension string, like the status entry: NVIDIA's
+    // eglGetProcAddress answers every name with a stub, so a resolved
+    // pointer alone would report a loss "forced" that never happens.
+    let lose = if gl.supported_extensions().contains("GL_CHROMIUM_lose_context") {
+      binding.proc_address(c"glLoseContextCHROMIUM")
+    } else {
+      std::ptr::null()
+    };
     // Safety: same, for GL_CHROMIUM_lose_context's one signature.
     let lose_context = (!lose.is_null()).then(|| unsafe { std::mem::transmute::<*const c_void, LoseContextFn>(lose) });
     Robustness { reset_status, lose_context }

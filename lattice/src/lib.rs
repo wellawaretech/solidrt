@@ -133,7 +133,7 @@ impl ExitPolicy {
   fn exit(&self) {
     if let Some(stop) = &self.render_stop {
       // The render host ends the run in order (the writer finishes, the
-      // engine loop quits, alloy fences the raster thread).
+      // engine loop quits, alloy stops the raster thread).
       stop.store(true, Ordering::Relaxed);
       return;
     }
@@ -154,6 +154,8 @@ impl ExitPolicy {
       // failed send means the engine loop is already gone.
       let _ = self.engine_tx.send(EngineCmd::Quit);
     } else {
+      // Nothing may be in a GL call when the exit unloads the driver.
+      alloy::stop_raster();
       std::process::exit(0);
     }
   }
@@ -983,6 +985,7 @@ fn ui_thread(
               let exec = current_exec_hooks.borrow().clone();
               tokio::task::spawn_local(async move {
                 run_hook(exec, "quit", QUIT_HOOK_DEADLINE).await;
+                alloy::stop_raster();
                 std::process::exit(0)
               });
               continue;
@@ -1073,6 +1076,7 @@ fn ui_thread(
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 if !alive.load(Ordering::Relaxed) && generations.load(Ordering::Relaxed) == generation {
                   log::warn!("[sol] app did not respond to back; exiting");
+                  alloy::stop_raster();
                   std::process::exit(1);
                 }
               });
@@ -1703,6 +1707,9 @@ fn install_panic_hook() {
     let location = info.location().map(|l| format!(" at {}:{}", l.file(), l.line())).unwrap_or_default();
     log::error!("[sol] Panic in thread {name}{location}: {}", info.payload_as_str().unwrap_or("<non-string payload>"));
     default_hook(info);
+    // The exit unloads the GL driver: stop the raster thread first (a no-op
+    // when it is the one panicking).
+    alloy::stop_raster();
     std::process::exit(101);
   }));
 }

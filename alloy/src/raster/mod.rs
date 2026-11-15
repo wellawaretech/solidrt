@@ -358,18 +358,6 @@ impl RasterSender {
     }
     result
   }
-
-  /// Block until every command queued before this call has executed. The
-  /// thread answers in order, so the reply means its queue was empty and
-  /// nothing is drawing: what a process exit or a window teardown needs,
-  /// since either pulls the driver out from under a draw still encoding.
-  /// A raster thread that is already gone counts as drained.
-  pub(crate) fn drain(&self) {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    if self.send(RasterCmd::Drain { reply: reply_tx }).is_ok() {
-      reply_rx.recv().ok();
-    }
-  }
 }
 
 // Consecutive failed presents that confirm the GL context is gone for good.
@@ -880,6 +868,22 @@ impl RasterState {
   /// Frame draws (superseded frames drop); the commands between frames still
   /// apply in order, so state is never sampled out of sequence. Exits when the
   /// UI thread drops its sender or the main loop stops receiving frames.
+  /// The thread's stop (RasterCmd::Stop, see threads::stop_raster): every
+  /// command queued ahead has executed, so nothing is drawing. Answer, then
+  /// park for the rest of the process with the context still current. The
+  /// GL state is leaked, not dropped: the process ends right after, and
+  /// tearing down the renderer and every GL object would be more driver
+  /// calls for nothing. Never releases the context and never returns: the
+  /// driver faults later if it does (stop_raster has the measurement).
+  fn stop(self, reply: mpsc::Sender<()>) -> ! {
+    self.stats.queue_depth.fetch_sub(1, Ordering::Release);
+    std::mem::forget(self);
+    reply.send(()).ok();
+    loop {
+      std::thread::park();
+    }
+  }
+
   pub(crate) fn run(mut self, rx: mpsc::Receiver<RasterCmd>) {
     'outer: loop {
       // A window tap readback in flight is completed at the next frame; when
@@ -1329,8 +1333,11 @@ impl RasterState {
           RasterCmd::Limits { reply: tx } => {
             reply(tx, self.limits);
           }
-          RasterCmd::Drain { reply: tx } => {
-            reply(tx, ());
+          RasterCmd::Stop { reply: tx } => {
+            // The channel closes first, so a blocking command sent after
+            // the stop fails instead of waiting on a parked thread.
+            drop(rx);
+            self.stop(tx);
           }
         }
         // The command is done (a load-shed one counts: it was consumed); the

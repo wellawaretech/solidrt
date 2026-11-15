@@ -42,11 +42,12 @@ impl HeadlessWindow {
 // those, the embedder may set another size and scale (a test's window),
 // published to the raster thread the way a window resize is (the surface
 // size atomic, read at the next frame or readback) and told to the app as a
-// resize. The window itself is never drawn to headless; it is held so
-// the surface keeping the context current outlives every draw. Returns when
-// the embedder is done and has dropped its command sender.
+// resize. The window itself is never drawn to headless; it is borrowed, so
+// the caller holds it (and the surface keeping the context current) past
+// the raster thread's stop. Returns when the embedder is done and has
+// dropped its command sender.
 pub(crate) fn run_stepped_loop(
-  window: ore::window::Window,
+  window: &ore::window::Window,
   cmd_rx: mpsc::Receiver<AlloyCommand>,
   event_tx: crate::EventSender,
   config: SteppedConfig,

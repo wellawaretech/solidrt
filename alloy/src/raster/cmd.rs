@@ -583,10 +583,10 @@ pub(crate) enum RasterCmd {
   /// frame finds the reset status and recovers. The reply says whether the
   /// hook exists on this driver.
   LoseContext { reply: mpsc::Sender<bool> },
-  /// Fence: answered when the thread reaches it, which (commands execute in
-  /// order) is when everything queued before it has executed and nothing is
-  /// drawing. See RasterSender::drain.
-  Drain { reply: mpsc::Sender<()> },
+  /// Stop the thread: reached (commands execute in order) when everything
+  /// queued before it has executed and nothing is drawing, it answers and
+  /// parks for the rest of the process. See threads::stop_raster.
+  Stop { reply: mpsc::Sender<()> },
 }
 
 impl RasterCmd {
@@ -595,7 +595,7 @@ impl RasterCmd {
   /// the clean-tree fast path until the next real resolve. The exemptions:
   /// Frame itself, window shader redeclarations (the very writes the fast
   /// path exists for), the overlay (drawn post-pass into FBO 0, never
-  /// sampled by the frame), and the Drain fence, which touches nothing. A
+  /// sampled by the frame), and the stop, which touches nothing. A
   /// shader *program* change still invalidates through its cleared layer.
   pub(crate) fn invalidates_resolved_content(&self) -> bool {
     !matches!(
@@ -603,7 +603,7 @@ impl RasterCmd {
       RasterCmd::Frame { .. }
         | RasterCmd::SetWindowShader { .. }
         | RasterCmd::SetOverlay { .. }
-        | RasterCmd::Drain { .. }
+        | RasterCmd::Stop { .. }
         | RasterCmd::Resync
         | RasterCmd::LoseContext { .. }
         | RasterCmd::AttachWindowTap { .. }

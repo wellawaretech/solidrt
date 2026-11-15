@@ -264,14 +264,6 @@ impl Context {
     self.raster_tx.send(cmd).ok();
   }
 
-  /// Block until the raster thread has executed everything queued before
-  /// this call, so nothing is drawing when the caller goes on to exit the
-  /// process (see RasterSender::drain). Only meaningful from the thread that
-  /// submits frames: another producer could queue a draw behind the fence.
-  pub fn drain(&self) {
-    self.raster_tx.drain();
-  }
-
   /// The UI side of a context recovery (okf/done/gpu-context-loss.md),
   /// from the `ContextRestored` event: take the raster thread's new
   /// adoptions into the texture registry (the entries' old handles belong

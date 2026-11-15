@@ -1,4 +1,5 @@
 use crate::renderer::ISize;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -57,6 +58,9 @@ pub fn setup(platform: Platform, title: &str, size: ISize, mode: Mode) -> App {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
       default_hook(info);
+      // The exit unloads the GL driver: nothing may be in a GL call then
+      // (see stop_raster; on sol-raster itself the stop is a no-op).
+      crate::stop_raster();
       std::process::exit(1);
     }));
   }
@@ -187,6 +191,35 @@ fn recover_gl(window: &mut Window, surface_size: &Arc<AtomicU64>) -> Result<Box<
   Ok(Box::new(gl::WindowBinding::new(surface)))
 }
 
+/// The window the raster thread draws on, with the drop order the two need:
+/// the raster thread stops (its frame in flight finishes, it parks) before
+/// the window goes, since dropping the window unloads the GL driver, and a
+/// GL call still running on it crashes. Every return of `App::run` drops
+/// one of these, so no exit path and no later refactor can drop the window
+/// ahead of the stop: the window cannot be moved out of a type with a Drop.
+struct RasterWindow {
+  window: Window,
+}
+
+impl Drop for RasterWindow {
+  fn drop(&mut self) {
+    crate::stop_raster();
+  }
+}
+
+impl Deref for RasterWindow {
+  type Target = Window;
+  fn deref(&self) -> &Window {
+    &self.window
+  }
+}
+
+impl DerefMut for RasterWindow {
+  fn deref_mut(&mut self) -> &mut Window {
+    &mut self.window
+  }
+}
+
 impl App {
   /// Handle onto the resampler the run loop feeds. Grab a clone before
   /// run(): the UI consumer samples it once per frame signal, and
@@ -209,7 +242,7 @@ impl App {
     self,
     dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<crate::Arrival>) + Send + 'static,
   ) {
-    let App { mut platform, mut window, display, mode, resampler, user_input_muted } = self;
+    let App { mut platform, window, display, mode, resampler, user_input_muted } = self;
     let surface_size = display.surface_size_handle();
 
     let (tx, rx) = mpsc::channel::<FrameOutput>();
@@ -232,6 +265,8 @@ impl App {
     };
     let raster =
       display.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.frame_sink(), stats.clone());
+    // From here the window drops only after the raster thread stopped.
+    let mut window = RasterWindow { window };
 
     // Surface-liveness policy (rebind + repaint across the surface
     // lifecycle; see liveness.rs). The latch half arrives later via
@@ -239,11 +274,7 @@ impl App {
     let mut liveness = SurfaceLiveness::new();
 
     if let Mode::Stepped(stepped) = mode {
-      run_stepped_loop(window, cmd_rx, event_tx, stepped, surface_size);
-      // Nothing may be drawing when the window drops: dropping it unloads
-      // the EGL library, and the embedder exits the process right after,
-      // which would pull the driver out from under a draw still encoding.
-      raster.drain();
+      run_stepped_loop(&window, cmd_rx, event_tx, stepped, surface_size);
       return;
     }
 
