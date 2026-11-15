@@ -86,4 +86,4 @@ libc = "=0.2.191"
 [build-dependencies]
 # Locates the target C compiler so the macOS build can link
 # libclang_rt.osx.a; see build.rs. forge's pin, already in the tree.
-cc = "=1.10.0"
+cc = "=1.11.1"
