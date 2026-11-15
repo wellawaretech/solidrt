@@ -103,8 +103,9 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   portal without a FileChooser, a camera with no device). Keep the list for
   build facts (the modules compiled in, minus what the project declared it
   does not use), add a reactive three-state availability per platform facility
-  and a permission state on the web's Permissions API shape, and name the
-  packaging declaration as the fourth, platform-neutral axis it is.
+  and a permission state in the web's vocabulary, read in the same shape as
+  availability, and name the packaging declaration as the fourth,
+  platform-neutral axis it is.
 - **[Client storage and bundle updates](plans/client-storage-updates.md)** [2026-07-20]
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,

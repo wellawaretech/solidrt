@@ -471,7 +471,7 @@ when exactly one client is connected.
   host's overrides applied. A failed call corrects the fact, so read it
   again after one. `/clients` carries each client's own map at connect as
   `availability` (null on a runtime that predates it).
-- `/permission` - the live engine's permissions (`navigator.permissions`,
+- `/permission` - the live engine's permissions (`Flux.permission`,
   what core's `permission(name)` reads): `{ camera, microphone }`, each
   `"granted"`, `"denied"` (the user refused; an open fails) or `"prompt"`
   (not answered; the OS asks at the next open), the test host's overrides

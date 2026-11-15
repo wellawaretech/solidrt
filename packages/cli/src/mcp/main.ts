@@ -471,7 +471,7 @@ let TOOLS: {
     name: "get_permission",
     annotations: READ_ONLY,
     description:
-      "What the user allows the running app's engine (navigator.permissions, what core's permission(name) reads): a map of camera and microphone to \"granted\" (an open is expected to stream), \"denied\" (the user refused; an open fails until they allow it in the system settings) or \"prompt\" (not answered yet; the OS asks at the next open). Live, with the test host's overrides applied, so it may differ from list_clients' `permission`, which is the client's own at connect. A denied open settles the state to denied: read it again after one.",
+      "What the user allows the running app's engine (Flux.permission, what core's permission(name) reads): a map of camera and microphone to \"granted\" (an open is expected to stream), \"denied\" (the user refused; an open fails until they allow it in the system settings) or \"prompt\" (not answered yet; the OS asks at the next open). Live, with the test host's overrides applied, so it may differ from list_clients' `permission`, which is the client's own at connect. A denied open settles the state to denied: read it again after one.",
     inputSchema: { client: CLIENT_ARG },
   },
   {

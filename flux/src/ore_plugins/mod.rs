@@ -4,11 +4,13 @@
 //! (`navigator.languages`) is marshalled in `standards_plugins/` instead.
 //! The file dialogs need the window as their parent and the pump for their
 //! answer, so `flux:dialog` sits behind the `gui` feature. Whether each
-//! facility is there now (`Flux.availability`) is marshalled in
-//! `availability`, on every build.
+//! facility is there now (`Flux.availability`) and what the user allows
+//! (`Flux.permission`) are marshalled in `availability` and `permission`,
+//! on every build.
 
 pub mod availability;
 #[cfg(feature = "gui")]
 pub mod dialog;
 pub mod haptics;
 pub mod link;
+pub mod permission;

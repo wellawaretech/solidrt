@@ -16,7 +16,7 @@ export type ClientEntry = {
    * runtime that predates the report. The live map, test overrides applied,
    * is GET /availability. */
   availability: Record<string, string> | null
-  /** The client's own permissions at connect (`navigator.permissions`):
+  /** The client's own permissions at connect (`Flux.permission`):
    * camera and microphone to "granted", "denied" or "prompt"; null on a
    * runtime that predates the report. The live map, test overrides
    * applied, is GET /permission. */

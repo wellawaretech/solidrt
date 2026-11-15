@@ -202,7 +202,7 @@ pub(crate) async fn init_context(
       crate::ore_plugins::haptics::store_state(&ctx);
       crate::standards_plugins::share::store_state(&ctx);
       crate::ore_plugins::availability::store_state(&ctx);
-      crate::standards_plugins::permissions::store_state(&ctx);
+      crate::ore_plugins::permission::store_state(&ctx);
       for store in userdata {
         store(&ctx);
       }
@@ -216,10 +216,10 @@ pub(crate) async fn init_context(
       crate::standards_plugins::console::init_console(&ctx);
       crate::standards_plugins::navigator::init_navigator(&ctx);
       crate::standards_plugins::share::init_share(&ctx);
-      crate::standards_plugins::permissions::init_permissions(&ctx);
       events::init(&ctx);
       flux_obj.set("version", env!("FLUX_VERSION")).expect("failed to set Flux.version");
       crate::ore_plugins::availability::init(&ctx, &flux_obj);
+      crate::ore_plugins::permission::init(&ctx, &flux_obj);
       crate::standards_plugins::headers::init_headers(&ctx);
       crate::standards_plugins::request::init_request(&ctx);
       crate::standards_plugins::response::init_response(&ctx);
@@ -241,7 +241,7 @@ pub(crate) async fn init_context(
       // sessions set their availability and permission overrides.
       define_capabilities(&ctx).expect("failed to define Flux.capabilities");
       crate::ore_plugins::availability::emit(&ctx);
-      crate::standards_plugins::permissions::emit(&ctx);
+      crate::ore_plugins::permission::emit(&ctx);
     })
     .await;
 

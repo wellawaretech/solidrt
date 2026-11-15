@@ -1,6 +1,6 @@
 ---
 title: Report what an app can use as states, not as one yes/no list
-description: Flux.capabilities is a flat list of names fixed for the process, so it cannot say "not known yet", "only a call can tell", "the user has not answered" or "it changed"; it mixes build facts, device facts and test-host overrides, and wrong answers already ship (the TV's stub picker, the Linux portal without a FileChooser, a camera with no device). Keep the list for build facts (the modules compiled in, minus what the project declared it does not use), add a reactive three-state availability per platform facility and a permission state on the web's Permissions API shape, and name the packaging declaration as the fourth, platform-neutral axis it is.
+description: Flux.capabilities is a flat list of names fixed for the process, so it cannot say "not known yet", "only a call can tell", "the user has not answered" or "it changed"; it mixes build facts, device facts and test-host overrides, and wrong answers already ship (the TV's stub picker, the Linux portal without a FileChooser, a camera with no device). Keep the list for build facts (the modules compiled in, minus what the project declared it does not use), add a reactive three-state availability per platform facility and a permission state in the web's vocabulary, read in the same shape as availability, and name the packaging declaration as the fourth, platform-neutral axis it is.
 created: 2026-11-13
 ---
 
@@ -231,15 +231,26 @@ removed events keep the state current, the same way the sticky
 is fixed by the same rule: a device seen is a device present). haptics is
 the actuator fact that landed, `ore::haptics::available()`.
 
-### 3. Permission: the web's Permissions API, simplified
+### 3. Permission: the web's vocabulary, availability's shape
 
 The web already has this question and its answer. `navigator.permissions.query({ name })`
 resolves to a `PermissionStatus` whose `state` is `"granted" | "denied" | "prompt"`
-and which fires `change`. Keep the name and the shape (CLAUDE.md, API
-design), and simplify the semantics:
+and which fires `change`. Keep the vocabulary (the names and the three
+states), and read it in the shape availability has: `Flux.permission(name)`
+is one synchronous read, the sticky `permission` event carries the whole
+map, and core's `permission(name)` is the reactive read. The status object
+was built first and taken out again (2026-11-15, findings): its `query` is
+async for a reason flux does not have (the browser asks another process;
+here the read is local), its `change` was a second change path beside the
+sticky event, and flux has no `Event` or `EventTarget`, so the status
+reimplemented one in plain JS for a surface a Solid app never calls,
+since core's `permission(name)` is the read it uses. One shape for the
+three runtime questions (`Flux.capabilities`, `Flux.availability`,
+`Flux.permission`) is the simplification; the web's words stay.
 
-- The status is live: `state` updates, and `change` fires when the user
-  answers a prompt, or returns from system settings with a new answer.
+- The read is live: it answers the current state, and the sticky event
+  fires when the user answers a prompt, or returns from system settings
+  with a new answer.
 - `"prompt"` is the honest state wherever the OS asks at the open (macOS
   TCC, Android before the first request). ore's `request` stops answering
   `true` for "nothing to ask ahead of use". It answers with the state, and
@@ -334,7 +345,7 @@ each:
 - [location-module](../backlog/location-module.md) promises "availability by name
   via Flux.capabilities" and permission as an `error()` state. Its build
   fact is the module, its availability is GeoClue2 or the platform
-  service, and its permission is a `navigator.permissions` name.
+  service, and its permission is a `Flux.permission` name.
 - [runtime-policy-registry](../backlog/runtime-policy-registry.md) borrows the
   "`Flux.capabilities`-style ask by name" shape for the read side of
   policies. The build list stays a list; the reactive availability
@@ -370,7 +381,7 @@ Then, in order, each step complete on its own:
 3. Device availability for camera, microphone and audio output, with
    hotplug (fixes 3, and the touchscreen line in okf/tiny.md by the same
    rule).
-4. `navigator.permissions` over a widened `ore::permission` (camera added
+4. `Flux.permission` over a widened `ore::permission` (camera added
    beside the microphone, the asked-before bit, state on resume), with
    the session state mapped as above (fixes 5, 6).
 
@@ -436,7 +447,7 @@ Decisions taken for the plan (the open decisions above, resolved):
 3. `unknown` from a probe in flight is visible: the fast probes answer at
    start, the slow ones settle asynchronously. No startup wait on D-Bus.
 4. Haptics and internet are declarations, not permission names;
-   `navigator.permissions` knows the web's names only.
+   `Flux.permission` knows the web's names only.
 5. All four steps are in scope, in order, each reviewed before the next
    is started.
 
@@ -618,7 +629,7 @@ once verified on the TV and the tablet.
 - Verification on a desktop without a webcam and with one plugged in,
   and on the tablet.
 
-### Step 4: `navigator.permissions`
+### Step 4: `Flux.permission`
 
 - ore: `Permission { Camera, Microphone }` (haptics and internet are
   declarations, never asked for; see section 4),
@@ -631,11 +642,11 @@ once verified on the TV and the tablet.
   sandbox: Granted. Windows: Prompt until the open decides (to be
   checked). The mapping per platform is written in `ore::permission`'s
   module doc, one contract.
-- flux `standards_plugins/permissions.rs`:
-  `navigator.permissions.query({ name })` resolving to a `PermissionStatus`
-  with `state`, `onchange` and `addEventListener("change")`; the names
-  are the web's (`camera`, `microphone`); any other name, and a name
-  whose build fact the project declared away, rejects with a `TypeError`.
+- flux `ore_plugins/permission.rs`, the shape of `availability.rs`:
+  `Flux.permission(name)` returning `"granted" | "denied" | "prompt"`, the
+  sticky `permission` event with the whole map; the names are the web's
+  (`camera`, `microphone`); any other name, and a name whose build fact
+  the project declared away, throws a `TypeError`.
 - The camera and microphone sessions: a `Denied` open settles the
   permission to `denied`. `sol:test` gets `setPermission(name, state)`;
   the control API and the dev client's info carry the states.
@@ -694,6 +705,15 @@ it, which is already honest.
   nor was the Android Java. zbus is pinned at 5.19.0: the 6.x line is a
   month old and rests on a new runtime crate. The portal introspection
   took 22 ms cold and 1 ms warm on this desktop.
+- Step 4, the shape (2026-11-15): `navigator.permissions` was built on the
+  web's shape first and replaced by `Flux.permission(name)`, the shape
+  `Flux.availability` has (section 3 has the reasons). What went with it:
+  the plain-JS `PermissionStatus` and its hand-rolled listener set, the
+  async `query`, the `standards/permissions.d.ts`, and core's `"prompt"`
+  guess before the first sticky emit, which the synchronous read replaces
+  with the exact answer. The module moved to `ore_plugins/`, where its
+  marshalling says it belongs. `setPermission`, the control API's
+  `/permission`, the console and the MCP tool are unchanged.
 - The ore unit tests go through the main-thread bridge, and SDL counts as
   the main thread whichever test thread first initialized it, so a bridged
   call from another test would queue forever; in ore's own unit tests the

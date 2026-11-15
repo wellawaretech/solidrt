@@ -29,12 +29,7 @@ test("switched-off haptics reports no actuator, though the test session records"
   expect(feedbackSupport().actuator).toBe(false)
 })
 
-test("a permission the project switched off rejects its query with a TypeError", async () => {
-  let name = await navigator.permissions.query({ name: "camera" }).then(
-    () => "resolved",
-    (e: Error) => e.name,
-  )
-  expect(name).toBe("TypeError")
-  let microphone = await navigator.permissions.query({ name: "microphone" })
-  expect(["granted", "denied", "prompt"]).toContain(microphone.state)
+test("a permission the project switched off throws a TypeError on its read", () => {
+  expect(() => Flux.permission("camera")).toThrow(TypeError)
+  expect(["granted", "denied", "prompt"]).toContain(Flux.permission("microphone"))
 })

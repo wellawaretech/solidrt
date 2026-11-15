@@ -7,9 +7,8 @@ use flux::FluxEngine;
 use ore::permission::{Permission, PermissionState};
 
 // The permission states as an embedder shapes them: a plugin's override is
-// what a status's `state` reads and what the sticky `permission` event
-// carries, and a later override plus `emit` fires a listening status's
-// `change` once.
+// what `Flux.permission` reads and what the sticky `permission` event
+// carries, and a later override plus `emit` replaces the cached payload.
 
 /// An engine whose plugin reports the camera denied, with
 /// `stickyPermission()` returning the cached payload of the sticky
@@ -40,28 +39,22 @@ fn grant_camera(ctx: Ctx<'_>) {
 }
 
 #[tokio::test]
-async fn an_override_reaches_the_status_the_payload_and_the_change_listener() {
+async fn an_override_reaches_the_read_and_the_sticky_payload() {
   let sink = LogSink::new();
   engine(&sink)
     .eval_source(
       r#"
-      let status = await navigator.permissions.query({ name: "camera" })
-      console.log(status.state)
+      console.log(Flux.permission("camera"))
       let payload = stickyPermission()
       console.log(payload.camera)
       console.log(Object.keys(payload).join(","))
-      let changes = 0
-      let listener = () => { changes += 1 }
-      status.addEventListener("change", listener)
       grantCamera()
-      grantCamera()
-      status.removeEventListener("change", listener)
-      console.log(String(changes))
-      console.log(status.state)
+      console.log(Flux.permission("camera"))
+      console.log(stickyPermission().camera)
       "#,
     )
     .await;
   let out = sink.captured();
   let lines = out.lines_at(flux::LogLevel::Log);
-  assert_eq!(lines, ["denied", "denied", "camera,microphone", "1", "granted"], "log: {lines:?}");
+  assert_eq!(lines, ["denied", "denied", "camera,microphone", "granted", "granted"], "log: {lines:?}");
 }

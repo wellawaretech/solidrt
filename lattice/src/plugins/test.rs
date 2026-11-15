@@ -328,8 +328,8 @@ fn set_availability(ctx: Ctx<'_>, name: String, state: String) -> flux::rquickjs
 /// `setPermission(name, state)`: report the named permission ("camera",
 /// "microphone") as `state` ("granted", "denied" or "prompt") in this
 /// engine, whatever the platform says, and emit the `permission` event so
-/// a reactive reader and every listening `PermissionStatus` update. Throws
-/// a `TypeError` on an unknown name or state.
+/// a reactive reader updates. Throws a `TypeError` on an unknown name or
+/// state.
 fn set_permission(ctx: Ctx<'_>, name: String, state: String) -> flux::rquickjs::Result<()> {
   stepper(&ctx, "setPermission()")?;
   let Some(permission) = flux::permission::permission_named(&name) else {

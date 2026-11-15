@@ -221,8 +221,8 @@ function ensurePermissionState() {
 
 /**
  * Whether the user allows the app the device `name`: "camera" or
- * "microphone". The standing permission, as `navigator.permissions` reports
- * it, beside the platform fact `availability(name)` and the build fact
+ * "microphone". The standing permission, as `Flux.permission` reads it,
+ * beside the platform fact `availability(name)` and the build fact
  * `Flux.capabilities`.
  *
  * - "granted": the user allowed it, and an open is expected to stream.
@@ -234,10 +234,9 @@ function ensurePermissionState() {
  * `createMicrophone` report how one open went through their `error()` (the
  * session's progress); this is the standing answer, and a denied open
  * settles it to "denied". Read it in a tracked scope (JSX, memo, effect) to
- * follow the user's answer. Before the engine's first report commits, a
- * read answers "prompt" (`navigator.permissions` is async, so there is no
- * synchronous fallback) and a tracked read follows on the next flush.
- * Throws a TypeError on an unknown name once the report is there.
+ * follow the user's answer. Before the engine's first report commits, the
+ * engine's own read answers. Throws a TypeError on an unknown name, and
+ * on a name the project switched off in `solidrt.uses`.
  *
  * @example
  * <Show when={permission("camera") === "denied"}>
@@ -247,7 +246,9 @@ function ensurePermissionState() {
 export function permission(name: string): PermissionState {
   ensurePermissionState()
   let map = permissionAccessor!()
-  if (map === undefined) return "prompt"
+  // Before the first emit (a runtime that has not reported yet, or the
+  // replay not yet committed), the engine's own read answers.
+  if (map === undefined) return Flux.permission(name)
   if (typeof name !== "string" || !Object.hasOwn(map, name)) {
     throw new TypeError(`permission: unknown name ${JSON.stringify(name)}, expected one of ${Object.keys(map).join(", ")}`)
   }

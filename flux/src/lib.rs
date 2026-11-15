@@ -37,13 +37,13 @@ pub use ore_plugins::availability;
 pub use ore_plugins::dialog;
 pub use ore_plugins::haptics;
 pub use ore_plugins::link;
+pub use ore_plugins::permission;
 pub use pending::{describe_in_flight, hold_engine, in_flight, settled, Hold};
 pub use plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
 pub use plugins::js_error::JsResult;
 pub use plugins::{add_capability, capability_excluded, exclude_capability, listed_capabilities};
 #[cfg(feature = "gui")]
 pub use standards_plugins::clipboard;
-pub use standards_plugins::permissions as permission;
 pub use standards_plugins::share;
 // The marshalling toolkit a module over flux uses as its plugins do (a
 // custom runtime's `runtime:*` module, docs/runtime "Native code"): the

@@ -17,7 +17,7 @@ answer; never fold them into one check, and never guess from the OS.
 |---|---|---|
 | Is the module in this build? | `Flux.capabilities.includes("camera")` | never: frozen for the process |
 | Does this platform have it? | `availability("camera")` | reactive: a probe settles, a device comes or goes, a call corrects it |
-| Did the user allow it? | `permission("camera")` (`navigator.permissions`) | reactive: the user answers a prompt, or changes it in the system settings |
+| Did the user allow it? | `permission("camera")` (`Flux.permission`) | reactive: the user answers a prompt, or changes it in the system settings |
 | Does the project use it? | `solidrt.uses` in package.json | at pack time; a name switched off leaves `Flux.capabilities` |
 
 The platform names are `link`, `dialog`, `share`, `clipboard-image`,
@@ -79,8 +79,7 @@ haptics is probed once at start, so it is never `"unknown"`.
 names are `camera` and `microphone`; any other name throws a TypeError.
 Haptics and internet are not permissions: no platform asks the user for
 them. A name the project switched off in `solidrt.uses` is not a
-permission either: `navigator.permissions.query` rejects it with a
-TypeError.
+permission either: `permission(name)` throws a TypeError on it.
 
 - `"granted"`: the user allowed it. An open is expected to stream.
 - `"denied"`: the user refused. An open fails until the user allows it
@@ -104,11 +103,11 @@ as before. `permission(name)` is the standing answer before and after
 any open, and a denied open settles it to `"denied"`.
 
 Read `permission(name)` in a tracked scope, as `availability(name)`.
-`navigator.permissions` is async, so before the engine's first report
-commits, a read answers `"prompt"`; a tracked read follows on the next
-flush. The web API is there too: `(await navigator.permissions.query({
-name: "camera" })).state` is live, and its `change` event fires on every
-new answer.
+Before the engine's first report commits, the engine's own read
+`Flux.permission(name)` answers, so the first value is already exact.
+Outside a component, `Flux.permission(name)` is the same read without
+the reactivity, and the sticky `permission` event of `sol:events`
+carries the whole map on every change.
 
 What each platform reports:
 

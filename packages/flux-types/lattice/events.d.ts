@@ -31,8 +31,8 @@ declare module "sol:events" {
   }
   /**
    * The user's standing answer on a device permission, as
-   * `navigator.permissions.query` reports it: "granted", "denied", or
-   * "prompt" (the OS asks at the open, or at the first request).
+   * `Flux.permission` reads it: "granted", "denied", or "prompt" (the OS
+   * asks at the open, or at the first request).
    */
   export type PermissionState = "granted" | "denied" | "prompt"
   /** Every permission's state, by its name. */

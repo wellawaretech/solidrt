@@ -34,15 +34,6 @@ you know from the web:
   locales of the user, as BCP 47 tags. It also has `navigator.share`:
   the share sheet of the platform. Only Android has a share sheet for
   now. `Flux.availability("share")` tells if this platform has it.
-- `navigator.permissions`, with `query({ name })`: the answer of the user
-  for a device. The names are `camera` and `microphone`. The query
-  resolves to a `PermissionStatus`. Its `state` is `"granted"`,
-  `"denied"` or `"prompt"`. The state is live, and the status sends a
-  `change` event when the user gives a different answer. This is
-  simpler than the web: there are only two names. A different name, or a
-  name that the project does not use, causes a `TypeError`. There is no
-  request call. The app asks when it
-  opens the device.
 
 Some APIs are not there, on purpose: `URL`, `crypto`, `Blob` and
 `FormData`. One known app does not usually need them. When an app needs
@@ -607,9 +598,15 @@ change. In a SolidRT app, `availability(name)` from `@solidrt/core` reads
 the state and updates the UI when it changes.
 
 To find if the user gives permission for a device, use
-`navigator.permissions.query({ name })`. The answer is `"granted"`,
-`"denied"` or `"prompt"`. With `"prompt"`, the platform asks the user
-when the app opens the device. The sticky `permission` event of
+`Flux.permission(name)`. The names are `camera` and `microphone`. A
+different name, or a name that the project does not use, causes a
+`TypeError`. The answer is `"granted"`, `"denied"` or `"prompt"`. With
+`"prompt"`, the platform asks the user when the app opens the device.
+There is no request call: the app asks when it opens the device. The
+web has `navigator.permissions` for this question. Flux keeps the
+web's names and states, but not its shape: the answer is one
+synchronous read, the same shape as `Flux.availability`, and not a
+status object with its own events. The sticky `permission` event of
 `sol:events` sends all the states at start and after each change. In a
 SolidRT app, `permission(name)` from `@solidrt/core` reads the state and
 updates the UI when it changes.

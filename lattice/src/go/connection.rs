@@ -1180,7 +1180,7 @@ async fn try_serve(
               Some("permission") => {
                 // The live engine's permission states (flux's snapshot:
                 // ore's states, the engine's overrides applied, as
-                // `navigator.permissions` reads them).
+                // `Flux.permission` reads them).
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {

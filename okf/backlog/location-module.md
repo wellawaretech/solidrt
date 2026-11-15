@@ -27,7 +27,7 @@ platform fix.
   PositionOptions ceremony beyond `highAccuracy`.
 - Permission is part of the contract: request on first use, surface denied
   as an error() state, same as microphone/camera, and the standing answer
-  readable as a `navigator.permissions` name per
+  readable as a `Flux.permission` name per
   [capability-states](../plans/capability-states.md).
 
 ## Involves

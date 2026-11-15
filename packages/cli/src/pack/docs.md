@@ -103,7 +103,7 @@ no permission of its own, and the app can only ask for a permission that
 the APK declares. The manifest also holds the names that are on. The
 runtime removes a dropped name from `Flux.capabilities`, so the app sees
 the same list on all platforms. A dropped name also does not get to
-`navigator.permissions`: a query for it rejects with a `TypeError`.
+`Flux.permission`: a read of it throws a `TypeError`.
 
 Only the Android packer is available now. The other columns show what each
 packer will declare when it is available.

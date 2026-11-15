@@ -328,9 +328,8 @@ export interface TestApp {
   setAvailability(name: string, state: Availability): void
   /**
    * Sets what the user allows, as `permission(name)` and
-   * `navigator.permissions.query({ name })` read it: `name` "camera" or
-   * "microphone", `state` "granted", "denied" or "prompt". A live
-   * `PermissionStatus` fires `change`. The change reaches a reactive
+   * `Flux.permission(name)` read it: `name` "camera" or "microphone",
+   * `state` "granted", "denied" or "prompt". The change reaches a reactive
    * reader with the next frame: `settle()` after it. Throws a TypeError on
    * an unknown name or state.
    *

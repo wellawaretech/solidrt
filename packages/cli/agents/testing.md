@@ -212,12 +212,11 @@ the state another way, and the test uses it:
   test the branch that hides a feature; `settle()` after it, and the
   reader has updated.
 - `app.setPermission(name, state)` sets what the user allows, as
-  `permission(name)` and `navigator.permissions` read it: `camera` or
+  `permission(name)` and `Flux.permission(name)` read it: `camera` or
   `microphone`, `"granted"`, `"denied"` or `"prompt"`; a test engine reads
   both as `"granted"` until a test sets one. Set `"denied"` to
-  test the branch that tells the user to allow the device; a live
-  `PermissionStatus` fires `change`, and after `settle()` a reader has
-  updated.
+  test the branch that tells the user to allow the device; after
+  `settle()` a reader has updated.
 - `await app.camera(image)` makes an RGBA8 image (a `decodeImage` result,
   or `{ width, height, data }` the test builds) what the camera sees,
   before the app opens its camera: the viewfinder shows it and a QR code

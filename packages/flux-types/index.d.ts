@@ -33,7 +33,6 @@
 /// <reference path="./standards/crypto.d.ts" />
 /// <reference path="./standards/navigator.d.ts" />
 /// <reference path="./standards/share.d.ts" />
-/// <reference path="./standards/permissions.d.ts" />
 /// <reference path="./standards/clipboard.d.ts" />
 
 // GUI capabilities (present only on a gui-enabled runtime). rendertree/camera/
@@ -94,4 +93,21 @@ declare let Flux: {
    * carries the whole map and fires when a state changes.
    */
   availability(name: string): "available" | "unavailable" | "unknown"
+  /**
+   * The user's standing answer on the named device permission: "camera" or
+   * "microphone". Throws a `TypeError` on another name, and on a name the
+   * app's project declared it does not use (`uses.camera: false`): that is
+   * a packaging fact, not a permission state. "granted": an open is
+   * expected to stream. "denied": the user refused; an open fails until
+   * they allow it in the system settings. "prompt": not answered yet; the
+   * OS asks at the next open (macOS before the first open, Android before
+   * the first request, the camera inside a Flatpak sandbox). Where a
+   * platform has no prompt for a name (Linux outside a sandbox) the state
+   * is "granted"; Windows reads its privacy switches, "granted" or
+   * "denied", never "prompt". There is no request: opening the device is
+   * the request, and a refused open settles the state to "denied". The
+   * sticky `permission` event on `sol:events` carries the whole map and
+   * fires when a state changes.
+   */
+  permission(name: string): "granted" | "denied" | "prompt"
 }
