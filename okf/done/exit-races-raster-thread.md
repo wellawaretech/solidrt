@@ -158,7 +158,7 @@ recovery) releases the dead context on the raster thread and destroys it
 on the main thread, the pattern that faults. A simulated loss on this
 driver dies in SIGSEGV in `recreate_gl`'s `SDL_EGL_DestroyContext`, in the
 same eglcore function, instead of recovering:
-[context-recovery-nvidia-wayland](../backlog/context-recovery-nvidia-wayland.md).
+[context-recovery-nvidia-wayland](context-recovery-nvidia-wayland.md).
 On the way: NVIDIA's `eglGetProcAddress` answers every name with a stub, so
 `glLoseContextCHROMIUM` resolved and `/gpu?lose=1` reported `forced: true`
 while nothing happened; `Robustness::load` now resolves the hook by the

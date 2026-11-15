@@ -410,12 +410,6 @@ Shaped, not started.
   the loss probe's content, never on a 3d scene mounted afterwards. Wants the
   stage that fails found (the rgba16f scene target, its resolve, or the draw
   itself) and the recovery verified on a scene.
-- **[Context loss recovery faults on NVIDIA Wayland](backlog/context-recovery-nvidia-wayland.md)** [2026-11-15]
-  A GPU context loss on the NVIDIA proprietary driver under Wayland ends the
-  client in SIGSEGV instead of a recovery - `recreate_gl` destroys the dead
-  context after the raster thread released it, and this driver faults in
-  exactly that destruction (measured with a simulated loss; the same fault the
-  exit fix sidesteps).
 - **[Read a depth texture through the control API](backlog/control-api-depth-texture-read.md)** [2026-10-07]
   A target's depth texture is sampler-only, so /texture refuses it and a
   shadow-map bug cannot be split into "the tile was not written" and "the
@@ -1813,6 +1807,13 @@ Finished, kept for the reasoning.
   texture walk (referencer index, 2026-09-02) and the boundary-shader-input
   full re-bake (2026-08-10) are fixed; the one left, the unbatched
   invalidate_paint in set_unrounded_layout, is a tiny.md line.
+- **[Context loss recovery faults on NVIDIA Wayland](done/context-recovery-nvidia-wayland.md)** [2026-11-15]
+  A GPU context loss on the NVIDIA proprietary driver under Wayland ended the
+  client in SIGSEGV instead of a recovery - `recreate_gl` destroyed the dead
+  context after the raster thread released it, and this driver faults in
+  exactly that destruction. Fixed by forgetting the dead context on the
+  same-window path; `/gpu?lose=1` now simulates a loss on drivers without
+  ANGLE's hook, so the recovery is testable everywhere.
 - **[CSS color parsing in Rust; drop colord](done/css-colors-in-rust.md)** [2026-08-19]
   Move CSS color-string parsing from the JS renderer (colord) into alloy
   (csscolorparser), so color strings cross the FFI raw and one side owns color

@@ -459,19 +459,26 @@ impl Window {
   }
 
   /// After a context loss, with the old context released by its thread:
-  /// destroy it, recreate the window when asked (same title, size,
-  /// position, fullscreen and maximized state), create a fresh context
-  /// released for the caller's thread, and reapply what was set on the
-  /// window (the icon, the text input session, the pointer lock).
+  /// let go of it (forgotten on the same window, destroyed with the window
+  /// when asked, see inside), recreate the window when asked (same title,
+  /// size, position, fullscreen and maximized state), create a fresh
+  /// context released for the caller's thread, and reapply what was set on
+  /// the window (the icon, the text input session, the pointer lock).
   pub fn recreate_gl(&mut self, recreate_window: bool) -> Result<GlSurface, String> {
     if self.backing != Backing::Gl {
       return Err("the window has no GL context to recreate".to_string());
     }
-    // The old context goes first (SDL_GL_DestroyContext; its thread
-    // released it, so it is current nowhere), before the window it was
-    // created on.
-    self.gl_context = None;
+    // The dead context goes first, before the window it was created on. It
+    // is destroyed only when the window goes with it: SDL_GL_DestroyContext
+    // on a context another thread released faults inside the NVIDIA
+    // proprietary driver under Wayland (measured, okf/done/
+    // context-recovery-nvidia-wayland.md), so on the same-window path the
+    // handle is forgotten instead. What leaks is the driver's bookkeeping
+    // of one dead context per loss; its GL objects died with the reset.
+    // With the window the destroy was measured safe (ANGLE), and the
+    // window's destruction terminates the display anyway.
     if recreate_window {
+      self.gl_context = None;
       let old = self.window.take().expect(WINDOW_HELD);
       let title = old.title().to_string();
       let (width, height) = old.size();
@@ -495,6 +502,8 @@ impl Window {
         }
       }
       self.window = Some(window);
+    } else if let Some(dead) = self.gl_context.take() {
+      std::mem::forget(dead);
     }
     self.gl_context = Some(crate::gl_surface::create_context(self.held())?);
     let surface = self

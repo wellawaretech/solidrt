@@ -578,10 +578,11 @@ pub(crate) enum RasterCmd {
   /// refused, since what they carry belongs to the dead context
   /// (okf/done/gpu-context-loss.md).
   Resync,
-  /// Mark the context lost as if its own work had reset the device
-  /// (GL_CHROMIUM_lose_context, ANGLE's test hook): the next presented
-  /// frame finds the reset status and recovers. The reply says whether the
-  /// hook exists on this driver.
+  /// Lose the context on purpose: through GL_CHROMIUM_lose_context (ANGLE's
+  /// test hook) where the driver has it, so the next presented frame finds
+  /// a guilty reset; simulated elsewhere, so the next drawn frame reports
+  /// the loss without a reset. Either way the raster thread recovers. The
+  /// reply says whether the loss was forced (true) or simulated (false).
   LoseContext { reply: mpsc::Sender<bool> },
   /// Stop the thread: reached (commands execute in order) when everything
   /// queued before it has executed and nothing is drawing, it answers and

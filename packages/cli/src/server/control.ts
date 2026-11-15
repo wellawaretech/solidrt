@@ -557,9 +557,9 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       if (label !== undefined) extra.label = label
       let draw = parseInt(query.get("draw") ?? "", 10)
       if (Number.isFinite(draw)) extra.draw = draw
-      // ?lose=1 forces a GL context loss instead of reading the inventory
-      // (the recovery's test hook, ANGLE only); the reply's `forced` says
-      // whether the driver had it.
+      // ?lose=1 loses the GL context instead of reading the inventory: forced
+      // through ANGLE's hook where the driver has it, simulated elsewhere;
+      // the reply's `forced`/`simulated` say which.
       if (query.get("lose") === "1" || query.get("lose") === "true") extra.lose = true
       return handleQuery(query, "gpu", extra)
     }

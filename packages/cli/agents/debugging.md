@@ -227,8 +227,10 @@ when exactly one client is connected.
   clock running it is refused: pause first.
 - `/texture?id=<textureId>` - same shape and options as `/snapshot`, at the
   texture's native size (a scene or shader target behind a `<texture>` leaf).
-- `/gpu?lose=1` - force a GPU context loss (ANGLE's test hook, so Windows,
-  macOS and the Android emulator; `{ forced: false }` elsewhere): the
+- `/gpu?lose=1` - lose the GPU context on purpose: a real forced loss
+  through ANGLE's test hook on Windows, macOS and the Android emulator
+  (`{ forced: true, simulated: false }`), a simulated one without a reset on
+  every other driver (`{ forced: false, simulated: true }`). Either way the
   client logs the loss and the recovery, `/stats` counts it in
   `contextLosses`, the app's `onContextRestored` fires, and the next frame
   draws on the rebuilt context. The way to see an app survive a driver

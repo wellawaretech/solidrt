@@ -281,10 +281,11 @@ impl Context {
     self.send(RasterCmd::Resync);
   }
 
-  /// Force a context loss (GL_CHROMIUM_lose_context, ANGLE's test hook):
-  /// the next presented frame finds the reset status and recovers. Ok(false)
-  /// where the driver has no such hook (every driver but ANGLE); Err when
-  /// the raster thread is gone.
+  /// Lose the context on purpose, so the next drawn frame recovers: forced
+  /// through GL_CHROMIUM_lose_context (ANGLE's test hook, a real guilty
+  /// reset) where the driver has it, Ok(true); simulated without a reset
+  /// elsewhere (every driver but ANGLE), Ok(false). Err when the raster
+  /// thread is gone.
   pub fn lose_context(&self) -> Result<bool, String> {
     self.rpc(|reply| RasterCmd::LoseContext { reply })
   }

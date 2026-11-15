@@ -315,9 +315,8 @@ pub fn gpu_lose_context(ctx: &rquickjs::Ctx<'_>) -> Result<bool, String> {
     return Err("no alloy context".to_string());
   };
   let forced = atx.lose_context()?;
-  if forced {
-    super::request_frame(ctx);
-  }
+  // The loss shows at the next drawn frame, forced or simulated.
+  super::request_frame(ctx);
   Ok(forced)
 }
 

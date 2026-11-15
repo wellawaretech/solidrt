@@ -429,6 +429,10 @@ pub(crate) struct RasterState {
   binding: Box<dyn GlBinding>,
   // The context's reset status and the forced-loss hook (see gl/robustness.rs).
   robustness: gl::Robustness,
+  // Set by LoseContext where the driver has no forced-loss hook: the next
+  // drawn frame reports the context lost (status Unknown) and recovers,
+  // without a reset. The recovery path is then testable on every driver.
+  simulated_loss: bool,
   // The GPU device behind the context, asked why it went away when a loss
   // is reported (see ore's gl_surface/device_loss.rs).
   device: ore::gl_surface::DeviceProbe,
@@ -803,6 +807,7 @@ impl RasterState {
       binding,
       robustness,
       device,
+      simulated_loss: false,
       awaiting_resync: false,
       adopted_snapshots: HashSet::new(),
       surface_size,
@@ -939,7 +944,14 @@ impl RasterState {
             // place, so its changes still reach the screen.
             self.damage.fold(damage);
             if self.sink.headless() || Some(i) == last_frame {
-              match self.frame(dl, present_at, frame) {
+              let mut result = self.frame(dl, present_at, frame);
+              if result.is_ok() && std::mem::take(&mut self.simulated_loss) {
+                result = Err(FrameExit::ContextLost {
+                  detail: "simulated loss (no reset)".to_string(),
+                  status: gl::ResetStatus::Unknown,
+                });
+              }
+              match result {
                 Ok(()) => {}
                 Err(FrameExit::MainGone) => break 'outer,
                 // The context is gone: rebuild everything behind the same
@@ -964,6 +976,9 @@ impl RasterState {
             let forced = self.robustness.lose_context();
             if forced {
               log::warn!("[alloy] GPU context loss forced (GL_CHROMIUM_lose_context)");
+            } else {
+              log::warn!("[alloy] GPU context loss simulated (no GL_CHROMIUM_lose_context on this driver)");
+              self.simulated_loss = true;
             }
             reply(tx, forced);
           }
