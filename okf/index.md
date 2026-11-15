@@ -129,19 +129,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   bytes per splat; a product-quantized encoding behind the SH block's
   `encoding` field would cut the dominant texture 12x, at the price of a
   bake-time k-means to engineer and a quality judgement of its own.
-- **[TLS follow-ups - HTTPS serving, server startTls, certificates, WebSocket options, one limiter per app](plans/tls-follow-ups.md)** [2026-11-05]
-  The gaps tls-and-fetch-limits left "until a real app needs it" - HTTPS (and
-  h2) in serve, startTls as the server, certificate generation, subprotocols
-  and a TLS client for WebSocket, the per-host limits shared across isolates -
-  plus the open decision on media sources and the cap; one stage each.
-- **[Encode video and audio](plans/video-encode.md)** [2026-10-16]
-  The runtime decodes VP9 and Opus but cannot encode either, so an app cannot
-  record its camera and microphone to a file or send them anywhere; a VP9
-  encoder (libvpx off Android, MediaCodec on it), an Opus encoder and a WebM
-  writer in forge, fed natively from the camera tap and the microphone ring,
-  surfaced as `record()` in flux:video; recording to a file first, the window
-  as a second source, video chat over p2p as the later consumer of the same
-  pipe.
 - **[Documentation website](plans/website.md)** [2026-07-16]
   "A monorepo website/ generated statically by a flux script: section nav, a
   Core-first Start page, and generate-what-we-can content (API reference from
@@ -266,6 +253,12 @@ Shaped, not started.
   on the renderer it already has; what is missing is a per-app manifest opt-in
   through sol pack, a Play upload path, and a verification pass on the Desktop
   Head Unit for the second display, the density change and the driving block.
+- **[A reload while casting can leave the Android engine stuck in teardown](backlog/android-caster-reload-teardown.md)** [2026-11-14]
+  Once on the Pixel 7, a dev reload of an app that was casting its window live
+  left the old engine stuck in its teardown, the swap never building a frame
+  until a force-stop; the same scene headless on the laptop tears down
+  cleanly, so the device-side part (the MediaCodec encoder's flush, the window
+  tap, the camera) is not pinned down.
 - **[Android client forgets its dev-server address](backlog/android-dev-server-persistence.md)** [2026-07-27]
   The dev-server address only reaches the client as a launch-intent extra, so
   any relaunch that does not come from the CLI (the device's own launcher, a
@@ -389,14 +382,14 @@ Shaped, not started.
   the texture id JS already holds, the raster upload, the QR decoder and any
   module read from it, and the UI thread does no per-frame pixel work.
 - **[Report what an app can use as states, not as one yes/no list](backlog/capability-states.md)** [2026-11-13]
-  Flux.capabilities is a flat list of names fixed at engine start, so it
+  Flux.capabilities is a flat list of names fixed for the process, so it
   cannot say "not known yet", "only a call can tell", "the user has not
   answered" or "it changed"; it mixes build facts, device facts and test-host
   overrides, and wrong answers already ship (the TV's stub picker, the Linux
   portal without a FileChooser, a camera with no device). Keep the list for
-  build facts, and add a reactive three-state availability per platform
-  facility and a permission state on the web's Permissions API shape. Starts
-  after haptics lands.
+  build facts (the modules compiled in, minus what the project switched off),
+  and add a reactive three-state availability per platform facility and a
+  permission state on the web's Permissions API shape.
 - **[Make sol check honor solidrt.entry](backlog/check-honors-project-entry.md)** [2026-09-29]
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
@@ -650,6 +643,13 @@ Shaped, not started.
   new pixels. Correct for the tree, wrong for the repaint - every video,
   camera or GPU-content frame repaints the whole window, measured at 11-13.5
   ms of a 20 ms budget on the TV whatever the content's size.
+- **[Let a live recording follow its link](backlog/live-video-link-adaptation.md)** [2026-11-14]
+  The live form of `record` sends WebM over one reliable, ordered byte stream
+  at a bitrate fixed at the start, with a keyframe only every 2 s; a lost
+  packet stalls everything behind it until the live player's catch-up cuts, a
+  receiver cannot ask for a keyframe, and a link that narrows is overrun; the
+  encoders already take a forced keyframe and a new bitrate, nothing drives
+  them.
 - **[Location module (geolocation)](backlog/location-module.md)** [2026-08-15]
   The runtime exposes camera, microphone, speech-recognition and sound as
   @solidrt/core subpath modules but has no geolocation API, so apps fall back
@@ -677,6 +677,12 @@ Shaped, not started.
   dropped, so Discover searches forever; restoring it means a forge::mdns
   responder (advertise) exposed as a flux capability, and its feasibility next
   to system responders is unproven.
+- **[The Pixel's hardware VP9 encoder gives a soft picture](backlog/mediacodec-vp9-bitrate-undershoot.md)** [2026-11-14]
+  On the Pixel 7 `c2.exynos.vp9.encoder` produces about 240 kbit/s at 324x720
+  against a 700 kbit/s budget, in a file (VBR) and live (CBR) alike, so a
+  screencast or a call from the phone looks soft; find out whether the codec
+  takes the bitrate mode and the bitrate at all, and raise the budget or the
+  quality setting until it does.
 - **[Put every optional flux module behind a cargo feature](backlog/module-feature-flags.md)** [2026-10-06]
   A custom runtime can only leave out what is a cargo feature all the way
   down, and today sqlite, subprocess, mdns and QR scanning are unconditional
@@ -710,6 +716,13 @@ Shaped, not started.
   - which forces any app state a command touches up to module scope; an
   owner-scoped variant auto-cleaned like onFrame lets both live in the
   component they belong to.
+- **[Let two peers on different networks find a direct path](backlog/p2p-relay-across-nats.md)** [2026-11-14]
+  The self-hosted relay (`serveRelay`) runs plain HTTP with no QUIC
+  address-discovery listener, so endpoints learn no public address from it and
+  two peers behind different NATs stay on the relay for the whole call; a TLS
+  QUIC listener would fix that at the cost of a certificate the clients must
+  accept; whether `sol run` serves a relay for its dev clients is undecided
+  too.
 - **[Trim p2p tickets to the addresses a peer needs](backlog/p2p-ticket-addresses.md)** [2026-09-14]
   A p2p ticket lists every interface address (VPN, container bridge, LAN,
   global IPv6), which exposes the network layout to anyone who sees it and
@@ -3239,6 +3252,12 @@ Finished, kept for the reasoning.
   fetch, a shared forge::tls with TLS sockets in flux:net, TLS options for
   fetch through a client object, and wss:// - in that order, one stage per
   item.
+- **[Close the TLS gaps left by tls-and-fetch-limits](done/tls-follow-ups.md)** [2026-11-05]
+  The gaps tls-and-fetch-limits left "until a real app needs it" - HTTPS (and
+  h2) in serve, startTls as the server, certificate generation, subprotocols
+  and a TLS client for WebSocket, the per-host limits shared across isolates,
+  automatic TLS session resumption in flux:net - plus the open decision on
+  media sources and the cap; one stage each.
 - **[A cancelled touch ends its pointer](done/touch-cancel.md)** [2026-09-30]
   When the system takes a touch away from the app (a system gesture, a palm
   rejection, a window losing the touch), the pointer stays down forever - the
@@ -3281,6 +3300,14 @@ Finished, kept for the reasoning.
   Element-valued props built a native subtree on every read, so typeof probes
   orphaned unmounted builds forever; fixed by resolving once through
   children(), with orphan stats.
+- **[Encode video and audio](done/video-encode.md)** [2026-11-14]
+  The runtime decodes VP9 and Opus but cannot encode either, so an app cannot
+  record its camera and microphone to a file or send them anywhere; a VP9
+  encoder (libvpx off Android, MediaCodec on it), an Opus encoder and a WebM
+  writer in forge, fed natively from the camera tap and the microphone ring,
+  surfaced as `record()` in flux:video; recording to a file first, the window
+  as a second source, video chat over p2p as the later consumer of the same
+  pipe.
 - **[Wait for audio before anchoring the first video frame](done/video-first-frame-audio-anchor.md)** [2026-10-02]
   When play follows open closely, the first frame can reach start_audio before
   the reader has queued any audio; the empty sink makes it anchor the picture
@@ -3447,6 +3474,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   one-comparison latch rule, why an isolated UI present costs the video a
   frame, and the fence wait that fixes it at a measured cost to animating
   apps.
+- **[Android VP9 encoders](notes/android-vp9-encoders.md)** [2026-11-14]
+  Which Android devices have a VP9 encoder and how the one we use behaves; the
+  SM-T500 has none (the platform's software encoder is excluded on slow-cpu
+  devices), so `record` rejects there with `unsupported` by decision, and the
+  Pixel 7's hardware encoder pads its output buffers and runs well under the
+  bitrate asked.
 - **[The Android vsync release chain, traced against the compositor](notes/android-vsync-release-chain.md)** [2026-09-12]
   What a 5 s atrace of an animating app on a 60 Hz Android 12 tablet shows
   about the vsync-locked frame chain - the Choreographer callbacks are on
@@ -3611,7 +3644,9 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
 - **[Headless verification traps](notes/headless-verification-traps.md)** [2026-09-11]
   What bites a probe that verifies GPU state under sol render - deferred
   texture destroys, sRGB has no readback, production bundling drops Solid's
-  diagnostics, Geometry.vertices typing.
+  diagnostics, Geometry.vertices typing - and a test that records under the
+  stepped host (a window at rest adds no frames, the microphone hears only
+  what follows the start).
 - **[Impeller text decoration, measured](notes/impeller-text-decoration.md)** [2026-08-18]
   What Impeller's paragraph underline does and does not do - trailing
   whitespace is never underlined, the stroke is the font's post thickness
@@ -3798,6 +3833,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   model (2026-09-11) - the release client sol run launches, what sol check
   covers, where the engine matches a pipeline against its program, and
   half-float support in bun and flux.
+- **[Video encode measurements](notes/video-encode-measurements.md)** [2026-11-14]
+  What recording, the window tap and the live form cost on the laptop and the
+  Pixel 7 (recorder ms per frame, raster issue and map ms, bitrates, missed
+  presents), the binary size of the encoder and the relay, and the external
+  decoders the writer's files were checked against.
 - **[wasmi against wasmtime's Pulley - throughput and compile time](notes/wasm-interpreter-throughput.md)** [2026-10-04]
   Measured 2026-10-04 on an x86_64 desktop and the armeabi-v7a TV with the
   same wat workloads; Pulley on stable Rust runs 2-6x slower than wasmi on

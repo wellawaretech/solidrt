@@ -28,6 +28,15 @@
 //!
 //! This source bypasses the engine's `fetch`: no disk cache, no dev-server
 //! proxying. The device reaches the host directly.
+//!
+//! It still counts against the app's per-host limits when it is given them
+//! (`fetch::HostLimits`): each request takes a slot on its host before it
+//! is sent and holds it while its body is open, which is as long as the
+//! pump reads it, including while the ring is full (a paused player keeps
+//! its request open, so it keeps its slot). A reopen drops the old body
+//! first, so a source holds one slot at most. An HTTP/2 host takes none.
+//! Opened without limits (`None`), the source takes no slot and waits out
+//! no cooldown.
 
 use bytes::{Buf, Bytes};
 #[cfg(feature = "http")]
@@ -625,6 +634,8 @@ pub struct HttpSource {
   url: String,
   client: reqwest::Client,
   identity: Option<Identity>,
+  /// The per-host limits each request takes its slot from; `None` takes none.
+  limits: Option<Limits>,
 }
 
 #[cfg(feature = "http")]
@@ -637,8 +648,9 @@ struct Identity {
 
 #[cfg(feature = "http")]
 impl HttpSource {
-  /// One reqwest client per user agent, shared by every source.
-  pub fn new(url: &str, user_agent: &str) -> io::Result<HttpSource> {
+  /// One reqwest client per user agent, shared by every source. With
+  /// `limits`, every request takes a slot on its host (see the module doc).
+  pub fn new(url: &str, user_agent: &str, limits: Option<Limits>) -> io::Result<HttpSource> {
     static CLIENTS: OnceLock<Mutex<HashMap<String, reqwest::Client>>> = OnceLock::new();
     let mut clients = CLIENTS.get_or_init(Default::default).lock().unwrap_or_else(PoisonError::into_inner);
     let client = match clients.get(user_agent) {
@@ -649,7 +661,7 @@ impl HttpSource {
         client
       }
     };
-    Ok(HttpSource { url: url.to_string(), client, identity: None })
+    Ok(HttpSource { url: url.to_string(), client, identity: None, limits })
   }
 
   async fn open_at(&mut self, offset: u64) -> io::Result<Opened> {
@@ -658,7 +670,16 @@ impl HttpSource {
     if let Some(validator) = self.identity.as_ref().and_then(|id| id.validator.as_deref()) {
       request = request.header(IF_RANGE, validator);
     }
+    // An unparsable url takes no slot; the send reports it.
+    let limited = self.limits.as_ref().zip(crate::fetch::host_key(&self.url));
+    let permit = match &limited {
+      Some((limits, host)) => limits.acquire(host).await,
+      None => None,
+    };
     let response = request.send().await.map_err(io::Error::other)?;
+    if let Some((limits, host)) = &limited {
+      limits.record(host, response.version() == reqwest::Version::HTTP_2);
+    }
     let status = response.status().as_u16();
     let header = |name| response.headers().get(name).and_then(|v| v.to_str().ok());
     let (start, len, seekable) = match status {
@@ -685,7 +706,12 @@ impl HttpSource {
         self.identity = Some(Identity { total: len, validator });
       }
     }
-    Ok(Opened { body: to_byte_stream(response.bytes_stream()), len, seekable })
+    let body = to_byte_stream(response.bytes_stream());
+    let body = match permit {
+      Some(permit) => crate::fetch::with_permit(body, permit),
+      None => body,
+    };
+    Ok(Opened { body, len, seekable })
   }
 }
 
@@ -718,6 +744,16 @@ fn parse_content_range(value: &str) -> Option<(u64, Option<u64>)> {
 
 // --- The one source rule for media openers ---
 
+/// The per-host limits a URL source takes its slots from: the app's
+/// `fetch::HostLimits`.
+#[cfg(feature = "http")]
+pub type Limits = Arc<crate::fetch::HostLimits>;
+
+/// Without `http` there is no URL source and no limits: the type has no
+/// value, so `None` is the only argument.
+#[cfg(not(feature = "http"))]
+pub enum Limits {}
+
 /// What a media opener takes, from one rule shared by every media API: an
 /// `http:` or `https:` spec (case-insensitive) is a URL, any other scheme is
 /// refused, and anything else is a path resolved like every forge file read
@@ -746,18 +782,20 @@ impl Source {
 
   /// Open the bytes. Returns at once for a URL (the request is in flight;
   /// [`ByteSource::facts`] waits for its answer), after the open for a
-  /// file. `user_agent` is the HTTP request's.
-  pub fn open(&self, user_agent: &str) -> io::Result<ByteSource> {
+  /// file. `user_agent` is the HTTP request's; `limits` are the per-host
+  /// limits a URL's requests take their slot from, `None` for none (see
+  /// the module doc). A path ignores both.
+  pub fn open(&self, user_agent: &str, limits: Option<Limits>) -> io::Result<ByteSource> {
     match self {
       Source::Path(path) => open_file(path),
       #[cfg(feature = "http")]
       Source::Http(url) => {
-        let reader = Reader::open(HttpSource::new(url, user_agent)?, STREAM_RING_BYTES);
+        let reader = Reader::open(HttpSource::new(url, user_agent, limits)?, STREAM_RING_BYTES);
         Ok(ByteSource { handle: Some(reader.handle()), inner: SourceBytes::Streamed(reader) })
       }
       #[cfg(not(feature = "http"))]
       Source::Http(url) => {
-        let _ = user_agent;
+        let _ = (user_agent, limits);
         Err(io::Error::new(
           ErrorKind::Unsupported,
           format!("{url}: http URLs need a runtime built with the http feature"),

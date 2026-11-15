@@ -3,13 +3,15 @@ use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::forge_plugins::http_client::FetchClient;
 use crate::forge_plugins::websocket::{call_callback, message_payload};
 use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::marshal::OptArg;
 use crate::standards_plugins::body::JsBytes;
 use forge::websocket::{
-  parse_ws_url, run_client, ClientDispatch, ClientSocket, ClientWriter, CLOSED, CLOSING, CONNECTING, OPEN,
+  check_protocols, parse_ws_url, run_client, ClientDispatch, ClientSocket, ClientWriter, CLOSED, CLOSING, CONNECTING,
+  OPEN,
 };
 
 // Marshalling only: the URL parsing, connect, handshake, frame loop and
@@ -27,7 +29,7 @@ struct Handlers<'js> {
   close: Option<Function<'js>>,
 }
 
-/// The web-standard `WebSocket` client global. Stage 1: `ws://` only, handler
+/// The web-standard `WebSocket` client global: `ws://` and `wss://`, handler
 /// properties (no addEventListener), plain-object events.
 #[rquickjs::class(rename = "WebSocket")]
 pub(crate) struct WebSocket<'js> {
@@ -49,6 +51,61 @@ impl<'js> Trace<'js> for WebSocket<'js> {
   }
 }
 
+/// The subprotocols of a `protocols` value: a string, or an array of
+/// strings. `what` names the value in the throw.
+fn protocols_of<'js>(ctx: &Ctx<'js>, value: &Value<'js>, what: &str) -> rquickjs::Result<Vec<String>> {
+  let not_strings =
+    || Exception::throw_syntax(ctx, &format!("WebSocket: {what} must be a string or an array of strings"));
+  if let Some(s) = value.as_string() {
+    return Ok(vec![s.to_string()?]);
+  }
+  let Some(array) = value.as_array() else {
+    return Err(not_strings());
+  };
+  let mut protocols = Vec::with_capacity(array.len());
+  for item in array.iter::<Value>() {
+    match item?.as_string() {
+      Some(s) => protocols.push(s.to_string()?),
+      None => return Err(not_strings()),
+    }
+  }
+  Ok(protocols)
+}
+
+/// The second constructor argument: the standard `protocols` (a string or
+/// an array), or an options object `{ protocols?, client? }`.
+fn options_of<'js>(
+  ctx: &Ctx<'js>,
+  value: Option<Value<'js>>,
+) -> rquickjs::Result<(Vec<String>, Option<Class<'js, FetchClient>>)> {
+  let Some(value) = value else {
+    return Ok((Vec::new(), None));
+  };
+  if value.is_string() || value.is_array() {
+    return Ok((protocols_of(ctx, &value, "protocols")?, None));
+  }
+  // A plain options object only (not a function, a typed array or a
+  // promise): those are a mistake, not an empty offer.
+  let opts = match value.as_object() {
+    Some(opts) if value.type_of() == rquickjs::Type::Object => opts,
+    _ => {
+      return Err(Exception::throw_syntax(
+        ctx,
+        "WebSocket: the second argument must be a string, an array of strings or an options object",
+      ))
+    }
+  };
+  let protocols: Value = opts.get("protocols")?;
+  let protocols = match protocols.is_undefined() || protocols.is_null() {
+    true => Vec::new(),
+    false => protocols_of(ctx, &protocols, "protocols")?,
+  };
+  let client = opts
+    .get::<_, Option<Class<FetchClient>>>("client")
+    .map_err(|_| Exception::throw_type(ctx, "WebSocket: client must be an HttpClient from createHttpClient"))?;
+  Ok((protocols, client))
+}
+
 /// A handler property value for JS: the function, or null when unset.
 fn handler_value<'js>(ctx: &Ctx<'js>, f: &Option<Function<'js>>) -> Value<'js> {
   f.clone().map_or_else(|| Value::new_null(ctx.clone()), Function::into_value)
@@ -57,8 +114,11 @@ fn handler_value<'js>(ctx: &Ctx<'js>, f: &Option<Function<'js>>) -> Value<'js> {
 #[rquickjs::methods]
 impl<'js> WebSocket<'js> {
   #[qjs(constructor)]
-  pub fn new(ctx: Ctx<'js>, url: String) -> rquickjs::Result<Self> {
-    let target = parse_ws_url(&url).map_err(|msg| Exception::throw_message(&ctx, &msg))?;
+  pub fn new(ctx: Ctx<'js>, url: String, options: OptArg<Value<'js>>) -> rquickjs::Result<Self> {
+    let mut target = parse_ws_url(&url).map_err(|msg| Exception::throw_message(&ctx, &msg))?;
+    let (protocols, client) = options_of(&ctx, options.0)?;
+    check_protocols(&protocols).map_err(|msg| Exception::throw_syntax(&ctx, &format!("WebSocket: {msg}")))?;
+    target.protocols = protocols;
     let socket = ClientSocket::new();
     let handlers: Rc<RefCell<Handlers<'js>>> = Rc::default();
     let pending = PendingOps::of(&ctx);
@@ -77,18 +137,28 @@ impl<'js> WebSocket<'js> {
         drop(hold);
       });
     };
-    // wss:// verifies the server as fetch does, against the webpki roots:
-    // the web constructor has no TLS options.
-    let tls = match target.tls {
-      true => Some(
+    // wss:// verifies the server as the client's fetches do, or without a
+    // client as fetch does, against the webpki roots. `Err` is a closed
+    // client, reported as a failed handshake is. ws:// takes no config.
+    let tls = match (target.tls, client) {
+      (false, _) => Ok(None),
+      (true, Some(client)) => client.borrow().tls().map(Some).ok_or("WebSocket: the client is closed"),
+      (true, None) => Ok(Some(
         forge::tls::client_config(&forge::tls::ClientOptions::default())
           .map_err(|msg| Exception::throw_message(&ctx, &msg))?,
-      ),
-      false => None,
+      )),
     };
+    // A WebSocket takes no per-host slot of fetch's limits, as in browsers:
+    // the connection is its own, outside the fetch clients' pools.
     let task_socket = socket.clone();
     ctx.spawn(async move {
-      run_client(task_socket, target, tls, &dispatch, spawn_writer, &logger).await;
+      match tls {
+        Ok(tls) => run_client(task_socket, target, tls, &dispatch, spawn_writer, &logger).await,
+        Err(msg) => {
+          logger.warn(&format!("[flux] websocket connect failed: {msg}"));
+          task_socket.fail(&dispatch, msg.to_string())
+        }
+      }
       drop(hold);
     });
     Ok(WebSocket { socket, handlers, url })
@@ -119,6 +189,12 @@ impl<'js> WebSocket<'js> {
   #[qjs(get)]
   pub fn url(&self) -> String {
     self.url.clone()
+  }
+
+  /// The subprotocol the server picked: `""` until open, and for none.
+  #[qjs(get)]
+  pub fn protocol(&self) -> String {
+    self.socket.protocol()
   }
 
   #[qjs(get, rename = "onopen")]

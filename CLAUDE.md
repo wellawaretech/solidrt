@@ -36,6 +36,8 @@ Write the prose and headings in `docs/` in ASD-STE100 Simplified Technical Engli
 # API design
 Look at standard (web) functionality through a solidrt lens: solidrt runs a single known application, not the whole internet. Keep the standard names and shapes, but simplify the semantics to what an app needs, and document the simplified contract plainly.
 
+Make the lowest layers explicit, and always leave the app a way to get full control. A default may match what the platforms (browsers, Node, Deno) do on their own, but a runtime behaviour never ships as a hidden policy alone: beside the default goes an explicit knob or opt-out, and an observable of what the runtime did (`conn.resumed` and `resume`, `setHostLimit` and `slot: false`). Purely internal ceilings (a cache's entry bound) stay private; they are not behaviour an app reasons about.
+
 API input validation: throw in dev, ignore-with-warning in prod. No runtime dev/prod signal exists yet (see `okf/backlog/dev-prod-validation-policy.md`), and everything running today is dev, so validation sites just throw.
 
 # Dependencies

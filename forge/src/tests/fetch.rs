@@ -7,7 +7,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::Instant;
 
 use crate::cache::Cache;
-use crate::fetch::{cached_meta, do_fetch, do_fetch_cached, CacheMode, Client, HostLimits, RequestBody, ResponseData};
+use crate::fetch::{
+  cached_meta, do_fetch, do_fetch_cached, parse_host_key, CacheMode, Client, HostLimits, RequestBody, ResponseData,
+};
 use crate::stream::ByteStream;
 
 /// The permit (`None` for an HTTP/2 host) if `acquire` returns within `ms`.
@@ -78,6 +80,120 @@ async fn http2_host_skips_the_cap_but_not_the_cooldown() {
 }
 
 #[test]
+fn host_limits_are_send_and_sync() {
+  fn assert_sync<T: Send + Sync>() {}
+  assert_sync::<HostLimits>();
+}
+
+// The test body runs on the runtime's own thread and spawned tasks on its
+// workers, so the slot is held on one thread and waited for on another.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tasks_on_other_threads_share_one_cap() {
+  let limits = Arc::new(HostLimits::new(1));
+  let held = limits.acquire("a:80").await;
+
+  let other = limits.clone();
+  let blocked = tokio::spawn(async move { acquires_within(&other, "a:80", 50).await.is_none() });
+  assert!(blocked.await.expect("the blocked task runs"));
+
+  let other = limits.clone();
+  let waiter = tokio::spawn(async move { acquires_within(&other, "a:80", 1000).await.is_some() });
+  drop(held);
+  assert!(waiter.await.expect("the waiting task runs"));
+}
+
+// --- the settable cap ---
+
+#[tokio::test]
+async fn a_raised_cap_releases_a_waiter_at_once() {
+  let limits = HostLimits::new(1);
+  let _held = limits.acquire("a:80").await;
+  let waiter = limits.acquire("a:80");
+  tokio::pin!(waiter);
+  assert!(tokio::time::timeout(Duration::from_millis(50), &mut waiter).await.is_err(), "capped at 1");
+  limits.set_limit(None, Some(2));
+  let second = tokio::time::timeout(Duration::from_millis(50), &mut waiter).await.expect("released by the raise");
+  assert!(second.is_some(), "the waiter holds a slot");
+}
+
+#[tokio::test]
+async fn a_lowered_cap_applies_as_slots_free() {
+  let limits = HostLimits::new(3);
+  let first = limits.acquire("a:80").await;
+  let second = limits.acquire("a:80").await;
+  // Two open, one free: the free one is forgotten at once, one more is owed.
+  limits.set_limit(None, Some(1));
+  assert_eq!(limits.limit(None), Some(1));
+  let third = limits.acquire("a:80");
+  tokio::pin!(third);
+  assert!(tokio::time::timeout(Duration::from_millis(50), &mut third).await.is_err(), "two open, cap 1");
+  drop(first);
+  assert!(tokio::time::timeout(Duration::from_millis(50), &mut third).await.is_err(), "one open, cap 1");
+  drop(second);
+  let third = tokio::time::timeout(Duration::from_millis(1000), &mut third).await.expect("none open");
+  assert!(third.is_some());
+  // The cap holds from then on.
+  assert!(acquires_within(&limits, "a:80", 50).await.is_none());
+}
+
+#[tokio::test]
+async fn an_unlimited_host_takes_no_slot() {
+  let limits = HostLimits::new(1);
+  let _held = limits.acquire("a:80").await;
+  let waiter = limits.acquire("a:80");
+  tokio::pin!(waiter);
+  assert!(tokio::time::timeout(Duration::from_millis(50), &mut waiter).await.is_err());
+  limits.set_limit(Some("a:80"), None);
+  assert_eq!(limits.limit(Some("a:80")), None);
+  // The waiter goes at once, with no slot, and so does every later acquire.
+  let waited = tokio::time::timeout(Duration::from_millis(50), &mut waiter).await.expect("freed by unlimited");
+  assert!(waited.is_none());
+  assert!(matches!(acquires_within(&limits, "a:80", 50).await, Some(None)));
+  // A finite cap again starts afresh: the slot held since does not count.
+  limits.set_limit(Some("a:80"), Some(1));
+  let fresh = acquires_within(&limits, "a:80", 50).await.expect("a fresh pool");
+  assert!(fresh.is_some());
+  assert!(acquires_within(&limits, "a:80", 50).await.is_none());
+}
+
+#[tokio::test]
+async fn a_host_override_sits_beside_the_default() {
+  let limits = HostLimits::new(1);
+  assert_eq!(limits.limit(None), Some(1));
+  assert_eq!(limits.limit(Some("a:80")), Some(1), "an unseen host reads the default");
+  limits.set_limit(Some("a:80"), Some(2));
+  let _a1 = limits.acquire("a:80").await;
+  assert!(acquires_within(&limits, "a:80", 50).await.is_some(), "the override's second slot");
+  let _b1 = limits.acquire("b:80").await;
+  assert!(acquires_within(&limits, "b:80", 50).await.is_none(), "the default's one slot");
+
+  // A new default reaches hosts seen and unseen, but not the override.
+  limits.set_limit(None, Some(3));
+  assert_eq!(limits.limit(Some("a:80")), Some(2));
+  assert_eq!(limits.limit(Some("b:80")), Some(3));
+  assert_eq!(limits.limit(Some("c:80")), Some(3));
+  assert!(acquires_within(&limits, "b:80", 50).await.is_some());
+  let _c = [limits.acquire("c:80").await, limits.acquire("c:80").await, limits.acquire("c:80").await];
+  assert!(acquires_within(&limits, "c:80", 50).await.is_none());
+  limits.set_limit(None, None);
+  assert_eq!(limits.limit(None), None);
+  assert_eq!(limits.limit(Some("a:80")), Some(2));
+}
+
+#[test]
+fn host_keys_parse_from_urls_and_keys() {
+  assert_eq!(parse_host_key("https://Example.com/x?y").as_deref(), Some("example.com:443"));
+  assert_eq!(parse_host_key("http://127.0.0.1:8080").as_deref(), Some("127.0.0.1:8080"));
+  assert_eq!(parse_host_key("Example.com:443").as_deref(), Some("example.com:443"));
+  assert_eq!(parse_host_key("[::1]:80").as_deref(), Some("[::1]:80"));
+  assert_eq!(parse_host_key("example.com"), None, "a key names its port");
+  assert_eq!(parse_host_key("example.com:http"), None);
+  assert_eq!(parse_host_key("example.com:80/x"), None);
+  assert_eq!(parse_host_key("user@example.com:80"), None);
+  assert_eq!(parse_host_key(""), None);
+}
+
+#[test]
 fn cached_meta_reads_fetch_meta() {
   let meta = br#"{"status":200,"status_text":"OK","url":"https://host/img.jpg","headers":[["content-type","image/JPEG; charset=binary"]]}"#;
   let decoded = cached_meta(meta).expect("decodes");
@@ -131,7 +247,9 @@ fn test_client() -> Client {
 async fn fetch_asset(url: &str, cache_dir: &str) -> ResponseData {
   let cache = Rc::new(Cache::new(temp_dir(cache_dir), 1024 * 1024));
   let limits = HostLimits::new(2);
-  do_fetch_cached(&test_client(), &limits, "GET", url, vec![], None, cache, CacheMode::ForceCache).await.expect("fetch")
+  do_fetch_cached(&test_client(), &limits, true, "GET", url, vec![], None, cache, CacheMode::ForceCache)
+    .await
+    .expect("fetch")
 }
 
 /// Read a body to its end.
@@ -169,7 +287,7 @@ async fn plain_get_retries_after_429() {
   let (addr, hits) = scripted_server(vec![TOO_MANY, OK]).await;
   let limits = HostLimits::new(2);
   let resp =
-    do_fetch(&test_client(), &limits, "GET", &format!("http://{addr}/api"), vec![], None).await.expect("fetch");
+    do_fetch(&test_client(), &limits, true, "GET", &format!("http://{addr}/api"), vec![], None).await.expect("fetch");
   assert_eq!(resp.status, 200);
   assert_eq!(hits.load(Ordering::SeqCst), 2);
 }
@@ -182,7 +300,7 @@ async fn plain_fetches_beyond_the_cap_queue() {
   let url = format!("http://{addr}/api");
   let client = test_client();
   let limits = HostLimits::new(2);
-  let get = || do_fetch(&client, &limits, "GET", &url, vec![], None);
+  let get = || do_fetch(&client, &limits, true, "GET", &url, vec![], None);
 
   // Two responses whose bodies are not read yet hold both slots...
   let first = get().await.expect("first fetch");
@@ -204,6 +322,30 @@ async fn plain_fetches_beyond_the_cap_queue() {
 }
 
 #[tokio::test]
+async fn a_fetch_without_a_slot_skips_the_cap_not_the_cooldown() {
+  let (addr, hits) = scripted_server(vec![OK; 3]).await;
+  let url = format!("http://{addr}/api");
+  let client = test_client();
+  let limits = HostLimits::new(1);
+  // The one slot is held by an unread body...
+  let held = do_fetch(&client, &limits, true, "GET", &url, vec![], None).await.expect("first fetch");
+  // ...and a fetch without a slot goes past it.
+  let free = tokio::time::timeout(Duration::from_secs(5), do_fetch(&client, &limits, false, "GET", &url, vec![], None))
+    .await
+    .expect("not capped");
+  assert_eq!(free.expect("slotless fetch").status, 200);
+  assert_eq!(hits.load(Ordering::SeqCst), 2);
+
+  // A cooldown still holds it back.
+  limits.cooldown(&format!("{addr}"), Duration::from_millis(300));
+  let start = Instant::now();
+  let cooled = do_fetch(&client, &limits, false, "GET", &url, vec![], None).await.expect("after the cooldown");
+  assert_eq!(cooled.status, 200);
+  assert!(start.elapsed() >= Duration::from_millis(250), "the cooldown was waited out");
+  drop(held);
+}
+
+#[tokio::test]
 async fn post_429_is_not_retried_and_cools_the_host() {
   let (addr, hits) = scripted_server(vec![TOO_MANY_SOON, OK, OK]).await;
   let client = test_client();
@@ -212,6 +354,7 @@ async fn post_429_is_not_retried_and_cools_the_host() {
   let post = do_fetch(
     &client,
     &limits,
+    true,
     "POST",
     &format!("http://{addr}/api"),
     vec![],
@@ -229,8 +372,8 @@ async fn post_429_is_not_retried_and_cools_the_host() {
   let plain_url = format!("http://{addr}/api");
   let cached_url = format!("http://{addr}/img");
   let (plain, cached) = tokio::join!(
-    do_fetch(&client, &limits, "GET", &plain_url, vec![], None),
-    do_fetch_cached(&client, &limits, "GET", &cached_url, vec![], None, cache, CacheMode::ForceCache),
+    do_fetch(&client, &limits, true, "GET", &plain_url, vec![], None),
+    do_fetch_cached(&client, &limits, true, "GET", &cached_url, vec![], None, cache, CacheMode::ForceCache),
   );
   assert_eq!(plain.expect("plain fetch").status, 200);
   assert_eq!(cached.expect("cached fetch").status, 200);
@@ -281,7 +424,7 @@ fn tls_client(opts: ClientOptions) -> Client {
 }
 
 async fn get(client: &Client, limits: &HostLimits, url: &str) -> Result<ResponseData, String> {
-  do_fetch(client, limits, "GET", url, vec![], None).await
+  do_fetch(client, limits, true, "GET", url, vec![], None).await
 }
 
 fn ca_server() -> Arc<ServerConfig> {

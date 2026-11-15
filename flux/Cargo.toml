@@ -34,14 +34,15 @@ gui = ["dep:alloy", "dep:taffy", "dep:serde_json", "forge/audio", "ore/window"]
 # flux:video (behind forge/video): not a cargo default; see forge/Cargo.toml.
 video = ["forge/video"]
 # `record` of flux:video (behind forge/video-encode): the encoders, the WebM
-# writer and the recorder; implies video. See okf/plans/video-encode.md.
+# writer and the recorder; implies video. See okf/done/video-encode.md.
 video-encode = ["video", "forge/video-encode"]
 # fetch, WebSocket and flux:http (serve, server WebSockets) and the `http`
 # capability (behind forge/http): the HTTP client with its TLS and the
 # server, one switch. Not a cargo default; see forge/Cargo.toml.
 http = ["tls", "forge/http"]
-# connectTls, startTls and listenTls of flux:net and the `tls` capability
-# (behind forge/tls); `http` implies it. Not a cargo default.
+# connectTls, startTls, listenTls and generateCertificate of flux:net and
+# the `tls` capability (behind forge/tls); `http` implies it. Not a cargo
+# default.
 tls = ["forge/tls"]
 # flux:p2p, the `p2p` option of flux:http's serve and the `p2p` capability
 # (behind forge/p2p): not a cargo default; see forge/Cargo.toml.

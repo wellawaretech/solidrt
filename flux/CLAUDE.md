@@ -48,7 +48,9 @@ is that host. A failed test's record carries details read in its engine
 (what is in flight, plus what an embedder's `DetailsHook` adds).
 
 The flux module tests are `flux/tests/*.test.ts`, run by `bun run sol test
---only flux` on that host, typed against `packages/flux-types`. `flux/tests/*.rs`
+--only flux` on that host, typed against `packages/flux-types`. A module
+test's isolate modules are `flux/isolates/<id>.js`, read through the assets
+mount (`--assets flux`), as an app's are. `flux/tests/*.rs`
 holds only what Rust observes about an engine and a test inside it cannot
 (the logger, uncaught reporting, idleness, exit, the embedding API, isolate
 spawning, the websocket wire against a raw client); a test that only checks

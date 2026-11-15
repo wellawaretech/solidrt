@@ -9,6 +9,8 @@ mod encode;
 #[cfg(feature = "http")]
 mod fetch;
 mod fs;
+#[cfg(feature = "http")]
+mod http;
 mod image;
 mod isolate;
 #[cfg(feature = "ktx2")]

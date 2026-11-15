@@ -153,7 +153,10 @@ declare module "flux:http" {
     readonly port: number
     /** The bound host/interface. */
     readonly host: string
-    /** The server's base URL, e.g. `"http://0.0.0.0:3000/"`. */
+    /**
+     * The server's base URL, e.g. `"http://0.0.0.0:3000/"`, or
+     * `"https://..."` with the `tls` option.
+     */
     readonly url: string
     /**
      * Accept a websocket handshake for `req`. On `true` the handler must return
@@ -176,6 +179,14 @@ declare module "flux:http" {
      */
     requestIP(req: Request): SocketAddress | null
     /**
+     * The client certificate's key of the connection `req` arrived on: the
+     * SHA-256 of its SubjectPublicKeyInfo as 64 lowercase hex characters,
+     * the `peerKey` form of a `flux:net` `Conn`. Null without a client
+     * certificate, on plain HTTP, over `p2p`, or for a JS-constructed
+     * Request.
+     */
+    peerKey(req: Request): string | null
+    /**
      * Stop accepting new connections and gracefully shut down open ones. Safe to
      * call more than once.
      */
@@ -188,6 +199,26 @@ declare module "flux:http" {
     endpoint: Endpoint
     /** ALPN protocol matched against each incoming connection. */
     protocol: string
+  }
+
+  /** The `tls` serve option: the server's identity and client policy. */
+  type ServeTlsOptions = {
+    /** The server certificate chain (PEM). */
+    cert: string
+    /** The private key (PEM) of {@link cert}. */
+    key: string
+    /**
+     * Require a client certificate that chains to one of these roots (PEM).
+     * Without it and without {@link anyClientCert}, no client certificate
+     * is asked for.
+     */
+    caCerts?: string[]
+    /**
+     * Require a client certificate but accept any key: check
+     * {@link Server.peerKey} yourself (the pairing case). Cannot be combined
+     * with {@link caCerts}.
+     */
+    anyClientCert?: boolean
   }
 
   type ServeOptions = {
@@ -221,9 +252,19 @@ declare module "flux:http" {
      * each incoming connection whose ALPN matches `protocol` has the HTTP/WS
      * protocol spoken over its first bidirectional stream. `server.close()`
      * stops accepting; the endpoint itself stays open for its owner. Needs
-     * the "p2p" capability as well; without it the option throws.
+     * the "p2p" capability as well; without it the option throws. A p2p
+     * connection is encrypted by iroh and serves plain HTTP/1.1, with or
+     * without {@link tls}.
      */
     p2p?: P2pOptions
+    /**
+     * Serve HTTPS on the TCP listener. A connection agrees `h2` (HTTP/2) or
+     * `http/1.1` by ALPN. The WebSocket upgrade is HTTP/1.1 only, so a
+     * browser opens its WebSocket on a connection of its own. `p2p`
+     * connections are not affected: iroh encrypts them already. A malformed
+     * certificate or key throws before anything binds.
+     */
+    tls?: ServeTlsOptions
   }
 
   /**
@@ -231,8 +272,8 @@ declare module "flux:http" {
    * with the "http" capability (the stock runtimes have it); the module is
    * absent without it.
    *
-   * @param options  Port, host, routes, fetch fallback, error handler, and
-   *                 websocket callbacks.
+   * @param options  Port, host, routes, fetch fallback, error handler,
+   *                 websocket callbacks, p2p, and tls (HTTPS).
    * @returns The running {@link Server}.
    */
   export function serve(options: ServeOptions): Server
@@ -264,7 +305,7 @@ declare module "flux:http" {
    * A `fetch` client with TLS options, from {@link createHttpClient}: pass it
    * as `fetch(url, { client })`. It keeps its own connections; the per-host
    * limits of `fetch` are shared with every other client, so a server sees
-   * one app.
+   * one app. It is also the TLS of a `WebSocket` opened with `{ client }`.
    */
   export class HttpClient {
     /**
@@ -281,4 +322,37 @@ declare module "flux:http" {
    * malformed one throws. A server that fails the check rejects the fetch.
    */
   export function createHttpClient(options?: HttpClientOptions): HttpClient
+
+  /**
+   * The per-host cap of `fetch` (see the global `fetch`): how many requests
+   * to one HTTP/1.1 host may be open at once. With `host`, that host's cap;
+   * without, the default, which every host without a cap of its own has.
+   * `Infinity` is unlimited. The default is 6.
+   *
+   * A host is a `"host:port"` key (`"example.com:443"`, `"127.0.0.1:8080"`;
+   * the port is required) or a URL, which names the key of its host and its
+   * port (`https://example.com/x` is `"example.com:443"`). Anything else
+   * throws.
+   *
+   * The cap is the app's: every isolate and every `createHttpClient` client
+   * shares it.
+   */
+  export function getHostLimit(host?: string): number
+
+  /**
+   * Set the per-host cap of `fetch`: `limit` is a positive integer or
+   * `Infinity` (unlimited); anything else, including an integer beyond the
+   * runtime's own maximum (far above any real cap), throws. With `host` (a key or a
+   * URL, as {@link getHostLimit} takes), the cap of that host alone, which a
+   * later default leaves as it is. Without, the default: the cap of every
+   * host without one of its own, those seen so far and those seen later.
+   *
+   * A raised cap applies at once: fetches waiting for a slot go. A lowered
+   * cap applies as slots free up: open requests keep theirs, and new ones
+   * wait until the open ones are within the new cap. An unlimited host
+   * takes no slot, as an HTTP/2 host does; when it gets a finite cap again,
+   * the requests opened meanwhile do not count against it. A 429 pause
+   * applies whatever the cap.
+   */
+  export function setHostLimit(limit: number, host?: string): void
 }

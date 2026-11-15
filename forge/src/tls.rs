@@ -17,12 +17,27 @@
 //! - Any client key (`AnyClientKey`): a client certificate is required, any
 //!   key is accepted, and the app checks the peer's key itself (pairing).
 //!   The signatures are verified here too.
+//!
+//! Session resumption is automatic. A connection over the config
+//! `ClientConfigs` keeps for its options resumes a session from an earlier
+//! connection with equal options to the same server name (a config owns its
+//! session store, and rustls keys that store by server name). The options
+//! are part of the key, not one config per engine: a resumed handshake
+//! verifies no certificate, so a session verified under one trust policy
+//! (roots, pin, client certificate) must not serve a connection under
+//! another. `client_config_without_resumption` opts one connection out.
+//!
+//! `generate_certificate` makes the identities these configs take: an ECDSA
+//! P-256 key and a certificate for it, self-signed or signed by a CA made the
+//! same way, through rcgen on ring.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use tokio_rustls::rustls;
 use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use tokio_rustls::rustls::client::Resumption;
 use tokio_rustls::rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
 use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
@@ -36,6 +51,16 @@ pub use tokio_rustls::rustls::{ClientConfig, ServerConfig};
 
 /// The length of a pin and of a peer key: a SHA-256 hash.
 pub const PIN_LEN: usize = 32;
+
+/// How long a server-side handshake may take before the connection is
+/// dropped: a client that connects and stalls holds nothing past it. Shared
+/// by `net::listen_tls` and the HTTPS server of `http`.
+pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How many distinct client option sets keep their config (and so their
+/// sessions) at once in a `ClientConfigs`; the least recently used one is
+/// dropped past it.
+pub const CLIENT_CONFIG_KEYS: usize = 16;
 
 /// How a TLS client verifies the server and identifies itself.
 #[derive(Default)]
@@ -52,6 +77,80 @@ pub struct ClientOptions {
   pub pin: Option<[u8; PIN_LEN]>,
   /// The protocols to offer by ALPN, in preference order.
   pub alpn: Vec<String>,
+}
+
+/// One rustls client config per distinct client identity, so that
+/// connections with equal options share sessions and no others do (see the
+/// module doc). A config owns its session store, and rustls resumes a
+/// session only under the very same verifier and credential objects it was
+/// made under, so the config itself is what has to be shared. Holds at most
+/// `CLIENT_CONFIG_KEYS` configs, dropping the least recently used.
+#[derive(Default)]
+pub struct ClientConfigs {
+  /// The configs by identity, the most recently used last.
+  configs: Mutex<Vec<(ClientIdentity, Arc<ClientConfig>)>>,
+}
+
+impl ClientConfigs {
+  pub fn new() -> ClientConfigs {
+    ClientConfigs::default()
+  }
+
+  /// The config for `opts`: the same one for equal options, a new one
+  /// (`client_config`) for options not seen (or dropped) before.
+  pub fn config_for(&self, opts: &ClientOptions) -> Result<Arc<ClientConfig>, String> {
+    let key = client_identity(opts);
+    let mut configs = self.configs.lock().expect("TLS client configs lock");
+    if let Some(at) = configs.iter().position(|(k, _)| *k == key) {
+      let entry = configs.remove(at);
+      let config = entry.1.clone();
+      configs.push(entry);
+      return Ok(config);
+    }
+    let config = client_config(opts)?;
+    if configs.len() >= CLIENT_CONFIG_KEYS {
+      configs.remove(0);
+    }
+    configs.push((key, config.clone()));
+    Ok(config)
+  }
+}
+
+/// What `client_identity` gives: equal for equal client options only.
+pub type ClientIdentity = [u8; PIN_LEN];
+
+/// The identity of client options, the key `ClientConfigs` keeps a config
+/// by: the SHA-256 of the options' trust policy and identity, every field
+/// each length-prefixed and each `Option` behind a presence byte, so that
+/// no two distinct options encode the same. A TLS client `net::Conn`
+/// records the identity of the options it was made with.
+pub fn client_identity(opts: &ClientOptions) -> ClientIdentity {
+  fn bytes(hash: &mut Sha256, b: &[u8]) {
+    hash.update((b.len() as u64).to_le_bytes());
+    hash.update(b);
+  }
+  fn optional(hash: &mut Sha256, b: Option<&[u8]>) {
+    match b {
+      Some(b) => {
+        hash.update([1]);
+        bytes(hash, b);
+      }
+      None => hash.update([0]),
+    }
+  }
+  let mut hash = Sha256::new();
+  hash.update((opts.ca_certs.len() as u64).to_le_bytes());
+  for blob in &opts.ca_certs {
+    bytes(&mut hash, blob);
+  }
+  optional(&mut hash, opts.cert.as_deref());
+  optional(&mut hash, opts.key.as_deref());
+  optional(&mut hash, opts.pin.as_ref().map(|p| p.as_slice()));
+  hash.update((opts.alpn.len() as u64).to_le_bytes());
+  for p in &opts.alpn {
+    bytes(&mut hash, p.as_bytes());
+  }
+  hash.finalize().into()
 }
 
 /// How a TLS server authenticates its clients.
@@ -112,6 +211,21 @@ fn alpn_bytes(alpn: &[String]) -> Vec<Vec<u8>> {
 /// Build a client config: the webpki roots plus `ca_certs`, or the pin; an
 /// optional client certificate; the ALPN list.
 pub fn client_config(opts: &ClientOptions) -> Result<Arc<ClientConfig>, String> {
+  Ok(Arc::new(build_client_config(opts)?))
+}
+
+/// A client config as `client_config` builds it, but one that neither
+/// offers nor stores sessions: a one-off config, not cached, for a
+/// connection that opts out of resumption, so it does a full handshake and
+/// the sessions of the cached config for equal options are neither offered
+/// nor replaced.
+pub fn client_config_without_resumption(opts: &ClientOptions) -> Result<Arc<ClientConfig>, String> {
+  let mut config = build_client_config(opts)?;
+  config.resumption = Resumption::disabled();
+  Ok(Arc::new(config))
+}
+
+fn build_client_config(opts: &ClientOptions) -> Result<ClientConfig, String> {
   let provider = provider();
   let builder = ClientConfig::builder_with_provider(provider.clone())
     .with_safe_default_protocol_versions()
@@ -137,15 +251,23 @@ pub fn client_config(opts: &ClientOptions) -> Result<Arc<ClientConfig>, String> 
     _ => return Err("cert and key go together".to_string()),
   };
   config.alpn_protocols = alpn_bytes(&opts.alpn);
-  Ok(Arc::new(config))
+  Ok(config)
 }
 
 /// Build a server config: the identity, the client authentication, the
 /// ALPN list.
 pub fn server_config(opts: &ServerOptions) -> Result<Arc<ServerConfig>, String> {
+  server_config_with_versions(opts, rustls::DEFAULT_VERSIONS)
+}
+
+/// `server_config` limited to `versions` (the tests' TLS 1.2-only server).
+pub(crate) fn server_config_with_versions(
+  opts: &ServerOptions,
+  versions: &[&'static rustls::SupportedProtocolVersion],
+) -> Result<Arc<ServerConfig>, String> {
   let provider = provider();
   let builder = ServerConfig::builder_with_provider(provider.clone())
-    .with_safe_default_protocol_versions()
+    .with_protocol_versions(versions)
     .map_err(|e| e.to_string())?;
   let builder = match &opts.client_auth {
     ClientAuth::None => builder.with_no_client_auth(),
@@ -227,6 +349,98 @@ pub(crate) fn rustls_message(e: &(dyn std::error::Error + 'static)) -> Option<St
     }
     _ => None,
   }
+}
+
+/// How many days a generated certificate is valid by default: 10 years, for
+/// a LAN identity made once on first run.
+pub const DEFAULT_CERT_VALID_DAYS: u32 = 3650;
+
+/// What `generate_certificate` is asked for.
+pub struct CertificateRequest<'a> {
+  /// The subject alternative names: DNS names and IP addresses alike (a
+  /// name that parses as an IP address is one). The first is also the
+  /// subject's common name. At least one.
+  pub names: &'a [String],
+  /// How many days from now the certificate is valid; at least 1.
+  pub valid_days: u32,
+  /// Whether the certificate is a CA, which can be an `issuer`.
+  pub is_ca: bool,
+  /// The CA that signs it: the CA's certificate and its PKCS#8 private key,
+  /// both PEM. `None` self-signs.
+  pub issuer: Option<(&'a [u8], &'a [u8])>,
+}
+
+/// What `generate_certificate` makes.
+pub struct GeneratedCertificate {
+  /// The certificate (PEM).
+  pub cert: String,
+  /// Its private key (PKCS#8 PEM).
+  pub key: String,
+  /// The key's pin: `spki_sha256` of the certificate as lowercase hex, the
+  /// form `peer_key` reports and `parse_pin` reads.
+  pub pin: String,
+}
+
+/// How far before its issue a generated certificate is already valid: a
+/// device whose clock runs behind the issuing one by less than this still
+/// accepts it at once (public CAs backdate the same way).
+const CERT_BACKDATE: time::Duration = time::Duration::hours(1);
+
+/// Make a fresh ECDSA P-256 key and a certificate for it, valid from
+/// `CERT_BACKDATE` before now for `valid_days`. Each name is an IP address
+/// or a DNS name (`server_name`'s rules, with an optional leading `*.`
+/// wildcard label). Synchronous on purpose: a P-256 key takes well under a
+/// millisecond. Errors name the field at fault (`names`, `validDays`,
+/// `issuer.cert`, `issuer.key`).
+pub fn generate_certificate(req: &CertificateRequest) -> Result<GeneratedCertificate, String> {
+  let Some(common_name) = req.names.first() else {
+    return Err("names: at least one DNS name or IP address".to_string());
+  };
+  for name in req.names {
+    if name.parse::<std::net::IpAddr>().is_ok() {
+      continue;
+    }
+    let host = name.strip_prefix("*.").unwrap_or(name);
+    if host.parse::<std::net::IpAddr>().is_ok() || server_name(host).is_err() {
+      return Err(format!("names: not a DNS name or IP address: {name:?}"));
+    }
+  }
+  if req.valid_days == 0 {
+    return Err("validDays: at least one day".to_string());
+  }
+  let mut params = rcgen::CertificateParams::new(req.names.to_vec()).map_err(|e| format!("names: {e}"))?;
+  let now = time::OffsetDateTime::now_utc();
+  params.not_before = now - CERT_BACKDATE;
+  params.not_after = now
+    .checked_add(time::Duration::days(i64::from(req.valid_days)))
+    .ok_or_else(|| format!("validDays: {} days is past the last date a certificate holds", req.valid_days))?;
+  params.distinguished_name = rcgen::DistinguishedName::new();
+  params.distinguished_name.push(rcgen::DnType::CommonName, common_name.as_str());
+  if req.is_ca {
+    params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+  }
+  let key = rcgen::KeyPair::generate().map_err(|e| format!("key: {e}"))?;
+  let cert = match req.issuer {
+    Some((cert, issuer_key)) => {
+      let cert = std::str::from_utf8(cert).map_err(|_| "issuer.cert: not PEM text".to_string())?;
+      let issuer_key = std::str::from_utf8(issuer_key).map_err(|_| "issuer.key: not PEM text".to_string())?;
+      let issuer_key = rcgen::KeyPair::from_pem(issuer_key).map_err(|e| format!("issuer.key: {e}"))?;
+      // rcgen signs with whatever key it is handed; a key that is not the
+      // certificate's makes a leaf no client verifies, so check it here.
+      let issuer_cert = certs_from_pem(cert.as_bytes(), "issuer.cert")?;
+      let issuer_spki = ParsedCertificate::try_from(&issuer_cert[0])
+        .map_err(|e| format!("issuer.cert: {e:?}"))?
+        .subject_public_key_info();
+      if rcgen::PublicKeyData::subject_public_key_info(&issuer_key) != issuer_spki.as_ref() {
+        return Err("issuer.key: does not belong to issuer.cert".to_string());
+      }
+      let issuer = rcgen::Issuer::from_ca_cert_pem(cert, issuer_key).map_err(|e| format!("issuer.cert: {e}"))?;
+      params.signed_by(&key, &issuer).map_err(|e| format!("issuer: {e}"))?
+    }
+    None => params.self_signed(&key).map_err(|e| format!("certificate: {e}"))?,
+  };
+  let pin = spki_sha256(cert.der()).ok_or_else(|| "certificate: does not parse".to_string())?;
+  Ok(GeneratedCertificate { cert: cert.pem(), key: key.serialize_pem(), pin: encode_hex(&pin) })
 }
 
 fn encode_hex(bytes: &[u8]) -> String {

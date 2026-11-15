@@ -40,16 +40,106 @@ declare module "flux:net" {
     pin?: string
     /** The protocols to offer by ALPN, in preference order (e.g. `["h2", "http/1.1"]`). */
     alpn?: string[]
+    /**
+     * Session resumption (see {@link connectTls}). `true`, the default:
+     * automatic, an earlier session of equal options to the same server
+     * name is offered. `false`: opt out, a full handshake that checks the
+     * server's certificate afresh, for a server that misbehaves on
+     * resumption; the sessions other connections resume from stay as they
+     * are. A {@link Conn}: resume that connection's session. It must be a
+     * TLS client connection with equal options (`caCerts`, `cert` and
+     * `key`, `pin`, `alpn`), or this throws before it connects, so an FTPS
+     * data connection the server would refuse fails visibly. It gives no
+     * stronger guarantee than equal options do: the session offered is one
+     * of equal options to the same server name, not necessarily that
+     * connection's, and the server still decides.
+     */
+    resume?: boolean | Conn
   }
 
-  /** Options for {@link startTls}. */
-  type StartTlsOptions = TlsClientOptions & {
+  /** Options for {@link startTls} as the client, the default. */
+  type StartTlsClientOptions = TlsClientOptions & {
+    /** Upgrade as the client: the default. */
+    isServer?: false
     /**
      * The server name to verify and to send as SNI: the connection knows
      * only the peer's IP. Required unless {@link TlsClientOptions.pin} is
      * given.
      */
     hostname?: string
+  }
+
+  /**
+   * Options for {@link startTls} as the server: the options of
+   * {@link listenTls} without `host`, plus `timeoutMs`. `hostname`, `pin`
+   * and `resume` are client options and throw here.
+   */
+  type StartTlsServerOptions = {
+    /** Upgrade as the server (Node's `isServer`). */
+    isServer: true
+    /** Give up the handshake after this many ms. Default 10000. */
+    timeoutMs?: number
+    /** The server certificate chain (PEM). */
+    cert: string
+    /** The private key (PEM) of {@link cert}. */
+    key: string
+    /** The protocols to accept by ALPN, in preference order. */
+    alpn?: string[]
+    /**
+     * Require a client certificate that chains to one of these roots (PEM).
+     * Without it and without {@link anyClientCert}, no client certificate
+     * is asked for.
+     */
+    caCerts?: string[]
+    /**
+     * Require a client certificate but accept any key: check
+     * {@link Conn.peerKey} yourself (the pairing case). Cannot be combined
+     * with {@link caCerts}.
+     */
+    anyClientCert?: boolean
+  }
+
+  /** Options for {@link startTls}: the client form, or the server form with `isServer: true`. */
+  type StartTlsOptions = StartTlsClientOptions | StartTlsServerOptions
+
+  /** Options for {@link generateCertificate}. */
+  type GenerateCertificateOptions = {
+    /**
+     * The subject alternative names, DNS names and IP addresses alike
+     * (`["localhost", "192.168.2.37"]`); at least one. A client verifies the
+     * name it connects as against them. A DNS name may start with a `*.`
+     * wildcard label; anything that is neither a DNS name nor an IP address
+     * throws. The first is also the subject's common name.
+     */
+    names: string[]
+    /**
+     * How many days the certificate is valid, a positive integer. Default
+     * 3650 (10 years). It is valid from an hour before it was made, so a
+     * device whose clock runs a little behind accepts it at once.
+     */
+    validDays?: number
+    /** Make a CA, which can be the {@link issuer} of other certificates. Default false. */
+    isCa?: boolean
+    /**
+     * The CA that signs the certificate: its certificate and its PKCS#8
+     * private key (PEM), as {@link generateCertificate} made them with
+     * `isCa`. Without it the certificate is self-signed.
+     */
+    issuer?: { cert: string; key: string }
+  }
+
+  /** What {@link generateCertificate} makes. */
+  type GeneratedCertificate = {
+    /** The certificate (PEM). */
+    cert: string
+    /** Its private key (PKCS#8 PEM). Keep it secret. */
+    key: string
+    /**
+     * The key's pin: the SHA-256 of its SubjectPublicKeyInfo as 64
+     * lowercase hex characters, the form of {@link Conn.peerKey} and
+     * {@link TlsClientOptions.pin}.
+     */
+    pin: string
   }
 
   /** Options for {@link listenTls}. */
@@ -152,6 +242,12 @@ declare module "flux:net" {
      * {@link TlsClientOptions.pin}.
      */
     readonly peerKey: string | null
+    /**
+     * Whether the TLS handshake resumed an earlier session (see
+     * {@link connectTls}); on a {@link listenTls} connection, whether the
+     * server resumed one. `false` on plain TCP and after a full handshake.
+     */
+    readonly resumed: boolean
     /**
      * What the peer sends, one chunk per read, pulled only as far as it is
      * read. Ends when the peer ends its write side or closes, or on
@@ -264,6 +360,24 @@ declare module "flux:net" {
    * a client certificate. So a server that rejects the certificate (or a
    * missing one) is seen as an error on the first read, not here.
    *
+   * Sessions resume on their own, as in browsers and Node
+   * ({@link TlsClientOptions.resume} opts out or names the session). A
+   * connection whose options (`caCerts`, `cert` and `key`, `pin`, `alpn`)
+   * equal those of an earlier connection of this app, isolates included, to
+   * the same server name offers to resume that session; the server decides,
+   * and {@link Conn.resumed} reports the outcome. This is what an FTPS data
+   * connection (`PROT P`) needs: it carries the control connection's
+   * options, so it offers the control connection's session. A resumed
+   * handshake verifies no certificate, so other options never share a
+   * session.
+   *
+   * On TLS 1.3 a session is a set of tickets: the server sends them after
+   * the handshake, the client stores them only when it reads from that
+   * connection, and each resumption spends one. So read from the first
+   * connection before you open the second (FTP reads the control reply
+   * anyway), and expect a full handshake once the tickets are spent by
+   * connections that were never read.
+   *
    * Only with the "tls" capability; without it this throws.
    */
   export function connectTls(host: string, port: number, opts?: TlsClientOptions): Promise<Conn>
@@ -278,6 +392,26 @@ declare module "flux:net" {
    * the stream holds no chunk it was not asked for. Rejects for a connection
    * that is TLS already, closed or half-closed, or whose peer ended.
    *
+   * With `isServer: true` it upgrades as the server instead (Node's
+   * `isServer`), for an SMTP, IMAP or XMPP server that answers `STARTTLS`:
+   * the options are those of {@link listenTls} without `host`. The same
+   * guarantees hold: the old `Conn` is spent at once and no plain-text bytes
+   * are lost. So send the plain-text answer ("go ahead") and call this at
+   * once, with no read of your own pending on the old `readable`: a read
+   * that is still waiting when the client's handshake arrives takes its
+   * first bytes.
+   * {@link Conn.peerKey} reports the client's key when a client certificate
+   * was asked for.
+   *
+   * Either way the handshake must finish within `timeoutMs` (default
+   * 10000), or this rejects.
+   *
+   * Sessions resume as with {@link connectTls}, and
+   * {@link TlsClientOptions.resume} works the same: an earlier session of
+   * either function is offered. On TLS 1.3, read from the first connection
+   * before you upgrade the second. As the server, each call has a session
+   * cache of its own, so no client resumes into it.
+   *
    * Only with the "tls" capability; without it this throws.
    */
   export function startTls(conn: Conn, opts: StartTlsOptions): Promise<Conn>
@@ -291,6 +425,29 @@ declare module "flux:net" {
    * Only with the "tls" capability; without it this throws.
    */
   export function listenTls(port: number, opts: ListenTlsOptions): Promise<Listener>
+
+  /**
+   * Make a TLS identity: a fresh ECDSA P-256 key and a certificate for it,
+   * valid for `validDays`, as PEM (the key in PKCS#8), with the
+   * key's pin in the {@link Conn.peerKey} form. The result goes straight
+   * into {@link listenTls}, {@link startTls}, `serve({ tls })` of
+   * `flux:http`, or the `cert` and `key` of a client.
+   *
+   * What it is for: a LAN app that pairs by pin makes its identity on
+   * first run, self-signed, and its peers store the pin they saw at
+   * pairing ({@link TlsClientOptions.pin}). A fleet makes a private CA once
+   * (`isCa: true`) and issues each device a certificate with it
+   * (`issuer`); clients trust the CA through `caCerts`.
+   *
+   * The runtime stores nothing: keep the PEM yourself (with `flux:fs`) and
+   * load it on the next run, or the identity changes. Synchronous: a P-256
+   * key takes well under a millisecond. The verb is Web Crypto's
+   * (`generateKey`). Throws for options that do not fit (no names, an
+   * `issuer` that does not parse).
+   *
+   * Only with the "tls" capability; without it this throws.
+   */
+  export function generateCertificate(opts: GenerateCertificateOptions): GeneratedCertificate
 
   /** Bind a {@link Udp} socket. */
   export function udp(opts?: UdpOptions): Promise<Udp>

@@ -37,7 +37,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 fn open_reader(spec: &str) -> Reader {
   let source = Source::parse(spec).expect("a path or URL");
-  let (reader, opened) = Reader::open(Box::new(move || source.open("forge-test")));
+  let (reader, opened) = Reader::open(Box::new(move || source.open("forge-test", None)));
   opened.blocking_recv().expect("the reader answers the open").expect("open");
   reader
 }

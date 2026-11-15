@@ -1,6 +1,6 @@
 ---
 title: Headless verification traps
-description: What bites a probe that verifies GPU state under sol render - deferred texture destroys, sRGB has no readback, production bundling drops Solid's diagnostics, Geometry.vertices typing.
+description: What bites a probe that verifies GPU state under sol render - deferred texture destroys, sRGB has no readback, production bundling drops Solid's diagnostics, Geometry.vertices typing - and a test that records under the stepped host (a window at rest adds no frames, the microphone hears only what follows the start).
 created: 2026-09-11
 ---
 
@@ -32,3 +32,21 @@ has up). Each cost a rerun; none is specific to that probe.
 - **`Geometry.vertices` is typed `ArrayBufferView`.** App code that slices
   it (`subarray`) has to narrow to `Float32Array` first; the package's own
   builders know the concrete type, `sol check` on a probe does not.
+
+## Recording under the test host
+
+Found writing the `record` tests (okf/done/video-encode.md, 2026-10-16).
+
+- **A window at rest records nothing.** The test host's `frame()` steps
+  app time without demanding a draw, and a window recording takes a frame
+  only when one is drawn, so a screen test moves a box every frame. (A
+  recording's start demands one frame of its own, so a real screencast
+  begins with the screen as it is.)
+- **Only samples pushed after `record()` started are heard.** The
+  microphone tap's cursor starts at the present, and the test
+  microphone's clip arrives at once, not paced; push the clip after the
+  recording is up.
+- **The still camera stamps every frame 0 and publishes one frame per
+  install.** The recorder gives such frames the nominal step, so the clip
+  plays at its frame rate; a test that wants several frames installs
+  several images.

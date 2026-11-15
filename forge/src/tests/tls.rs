@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio_rustls::rustls;
 use tokio_rustls::TlsAcceptor;
 
 use crate::net::*;
@@ -71,7 +72,8 @@ async fn handshake(
   let listener = listen_tls("127.0.0.1", 0, server).await.expect("listen_tls");
   let port = port_of(&listener);
   let config = client_config(client).expect("client config");
-  let connect = connect_tls("127.0.0.1", port, CONNECT_MS, config, server_name(name).expect("name"));
+  let identity = Some(client_identity(client));
+  let connect = connect_tls("127.0.0.1", port, CONNECT_MS, config, server_name(name).expect("name"), identity);
   let (connected, accepted) = {
     // The listener takes in the TCP connection only while an accept is
     // pending, so both run together.
@@ -208,7 +210,7 @@ async fn a_stalled_client_does_not_hold_up_the_next_accept() {
   let config = client_config(&private_ca_client()).expect("client config");
   let name = server_name("localhost").expect("name");
   let (client, accepted) =
-    tokio::join!(connect_tls("127.0.0.1", port, CONNECT_MS, config, name), soon(listener.accept()));
+    tokio::join!(connect_tls("127.0.0.1", port, CONNECT_MS, config, name, None), soon(listener.accept()));
   client.expect("client handshake");
   assert!(accepted.expect("accept").is_some());
 }
@@ -245,7 +247,7 @@ async fn a_peer_that_skips_close_notify_ends_the_read() {
     drop(tcp);
   });
   let config = client_config(&private_ca_client()).expect("client config");
-  let client = connect_tls("127.0.0.1", port, CONNECT_MS, config, server_name("localhost").expect("name"))
+  let client = connect_tls("127.0.0.1", port, CONNECT_MS, config, server_name("localhost").expect("name"), None)
     .await
     .expect("client handshake");
   server.await.expect("server task");
@@ -257,9 +259,15 @@ async fn a_peer_that_skips_close_notify_ends_the_read() {
 /// A STARTTLS server: answers one plain-text line with `OK`, then does the
 /// TLS handshake on the same socket and echoes one chunk over it.
 async fn starttls_server() -> u16 {
+  starttls_server_over(server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &[])).await
+}
+
+/// `starttls_server` over `config`: a config shared with a `listen_tls`
+/// listener shares its session cache too.
+async fn starttls_server_over(config: Arc<ServerConfig>) -> u16 {
   let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
   let port = listener.local_addr().expect("addr").port();
-  let acceptor = TlsAcceptor::from(server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &[]));
+  let acceptor = TlsAcceptor::from(config);
   tokio::spawn(async move {
     let (mut tcp, _) = listener.accept().await.expect("accept");
     let mut line = [0u8; 10];
@@ -275,6 +283,11 @@ async fn starttls_server() -> u16 {
   port
 }
 
+/// The client role of `start_tls` over `config`, verifying `name`.
+fn as_client(config: Arc<ClientConfig>, name: &str) -> TlsRole {
+  TlsRole::Client { config, server_name: Some(server_name(name).expect("name")), identity: None }
+}
+
 #[tokio::test]
 async fn start_tls_upgrades_after_a_plain_exchange() {
   let port = starttls_server().await;
@@ -286,8 +299,7 @@ async fn start_tls_upgrades_after_a_plain_exchange() {
     assert_eq!(soon(next_chunk(&mut view)).await, Ok(Some(b"OK\r\n".to_vec())));
   }
   let config = client_config(&private_ca_client()).expect("client config");
-  let tls =
-    start_tls(&conn, CONNECT_MS, config, Some(server_name("localhost").expect("name"))).await.expect("startTls");
+  let tls = start_tls(&conn, CONNECT_MS, as_client(config, "localhost")).await.expect("startTls");
   assert!(conn.write(b"x".to_vec()).await.is_err(), "the old Conn is spent");
   assert_eq!(soon(next_chunk(&mut conn.readable())).await, Ok(None));
 
@@ -303,9 +315,9 @@ async fn start_tls_ends_a_pending_read_as_end_of_stream() {
   let mut view = conn.readable();
   assert_eq!(soon(next_chunk(&mut view)).await, Ok(Some(b"OK\r\n".to_vec())));
   let config = client_config(&private_ca_client()).expect("client config");
-  let name = Some(server_name("localhost").expect("name"));
   // The app's read is still pending when the upgrade starts.
-  let (pending, tls) = tokio::join!(next_chunk(&mut view), start_tls(&conn, CONNECT_MS, config, name));
+  let (pending, tls) =
+    tokio::join!(next_chunk(&mut view), start_tls(&conn, CONNECT_MS, as_client(config, "localhost")));
   assert_eq!(pending, Ok(None));
   let tls = tls.expect("startTls");
   tls.write(b"after".to_vec()).await.expect("write over TLS");
@@ -318,14 +330,290 @@ async fn start_tls_refuses_a_tls_or_half_closed_conn() {
   let (client, _server, _listener) = handshake(server, &private_ca_client(), "localhost").await;
   let client = client.expect("client handshake");
   let config = client_config(&private_ca_client()).expect("client config");
-  let name = Some(server_name("localhost").expect("name"));
-  let err = start_tls(&client, CONNECT_MS, config.clone(), name.clone()).await.err().expect("refused");
+  let err = start_tls(&client, CONNECT_MS, as_client(config.clone(), "localhost")).await.err().expect("refused");
   assert!(err.contains("TLS already"), "{err}");
 
   let listener = listen("127.0.0.1", 0).await.expect("listen");
   let (plain, _peer) = tokio::join!(connect("127.0.0.1", port_of(&listener), CONNECT_MS), listener.accept());
   let plain = plain.expect("connect");
   plain.close_write().await.expect("half-close");
-  let err = start_tls(&plain, CONNECT_MS, config, name).await.err().expect("refused");
+  let err = start_tls(&plain, CONNECT_MS, as_client(config, "localhost")).await.err().expect("refused");
   assert!(err.contains("write side is closed"), "{err}");
+}
+
+#[tokio::test]
+async fn start_tls_upgrades_both_sides_of_a_plain_connection() {
+  let listener = listen("127.0.0.1", 0).await.expect("listen");
+  let (client, server) = tokio::join!(connect("127.0.0.1", port_of(&listener), CONNECT_MS), listener.accept());
+  let client = client.expect("connect");
+  let server = server.expect("accept").expect("accepted conn");
+  client.write(b"STARTTLS\r\n".to_vec()).await.expect("request");
+  assert_eq!(soon(next_chunk(&mut server.readable())).await, Ok(Some(b"STARTTLS\r\n".to_vec())));
+  server.write(b"OK\r\n".to_vec()).await.expect("answer");
+  assert_eq!(soon(next_chunk(&mut client.readable())).await, Ok(Some(b"OK\r\n".to_vec())));
+
+  let as_server = TlsRole::Server(server_config_of(SERVER, SERVER_KEY, ClientAuth::AnyKey, &[]));
+  let config = client_config(&with_client_cert(private_ca_client())).expect("client config");
+  let (server_tls, client_tls) = tokio::join!(
+    start_tls(&server, CONNECT_MS, as_server),
+    start_tls(&client, CONNECT_MS, as_client(config, "localhost"))
+  );
+  let server_tls = server_tls.expect("server startTls");
+  let client_tls = client_tls.expect("client startTls");
+  assert_eq!(server_tls.peer_key().as_deref(), Some(CLIENT_PIN));
+  assert!(client_tls.peer_key().is_some(), "the client sees the server's key");
+
+  client_tls.write(b"up".to_vec()).await.expect("client write over TLS");
+  assert_eq!(soon(next_chunk(&mut server_tls.readable())).await, Ok(Some(b"up".to_vec())));
+  server_tls.write(b"down".to_vec()).await.expect("server write over TLS");
+  assert_eq!(soon(next_chunk(&mut client_tls.readable())).await, Ok(Some(b"down".to_vec())));
+  for old in [&client, &server] {
+    assert!(old.write(b"x".to_vec()).await.is_err(), "the old Conn is spent");
+    assert_eq!(soon(next_chunk(&mut old.readable())).await, Ok(None));
+  }
+}
+
+// ---- generated certificates --------------------------------------------------
+
+/// A certificate for `names` from `generate_certificate`, signed by
+/// `issuer` or self-signed.
+fn generated(names: &[&str], is_ca: bool, issuer: Option<&GeneratedCertificate>) -> GeneratedCertificate {
+  let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+  generate_certificate(&CertificateRequest {
+    names: &names,
+    valid_days: DEFAULT_CERT_VALID_DAYS,
+    is_ca,
+    issuer: issuer.map(|i| (i.cert.as_bytes(), i.key.as_bytes())),
+  })
+  .expect("generate certificate")
+}
+
+fn served(made: &GeneratedCertificate) -> Arc<ServerConfig> {
+  server_config_of(made.cert.as_bytes(), made.key.as_bytes(), ClientAuth::None, &[])
+}
+
+fn trusting(ca: &GeneratedCertificate) -> ClientOptions {
+  ClientOptions { ca_certs: vec![ca.cert.clone().into_bytes()], ..Default::default() }
+}
+
+#[tokio::test]
+async fn a_generated_self_signed_certificate_is_trusted_by_its_pin() {
+  let made = generated(&["localhost", "127.0.0.1"], false, None);
+  assert!(made.cert.starts_with("-----BEGIN CERTIFICATE-----"), "{}", made.cert);
+  assert!(made.key.starts_with("-----BEGIN PRIVATE KEY-----"), "a PKCS#8 key: {}", made.key);
+  let opts = ClientOptions { pin: Some(parse_pin(&made.pin).expect("pin")), ..Default::default() };
+  let (client, accepted, _listener) = handshake(served(&made), &opts, "127.0.0.1").await;
+  assert_eq!(client.expect("client handshake").peer_key(), Some(made.pin.clone()));
+  assert!(accepted.is_some());
+
+  let (client, accepted, _listener) = handshake(served(&made), &ClientOptions::default(), "localhost").await;
+  let err = client.err().expect("the default roots reject it");
+  assert!(err.contains("invalid peer certificate"), "{err}");
+  assert!(accepted.is_none());
+}
+
+#[tokio::test]
+async fn a_generated_ca_issues_a_leaf_a_ca_certs_client_trusts() {
+  let ca = generated(&["test-ca"], true, None);
+  let leaf = generated(&["localhost"], false, Some(&ca));
+  let (client, accepted, _listener) = handshake(served(&leaf), &trusting(&ca), "localhost").await;
+  let client = client.expect("client handshake");
+  assert_eq!(client.peer_key(), Some(leaf.pin.clone()), "the pin is the key the client sees");
+  assert!(accepted.is_some());
+
+  let stranger = generated(&["localhost"], false, None);
+  let (client, _, _listener) = handshake(served(&stranger), &trusting(&ca), "localhost").await;
+  let err = client.err().expect("a certificate the CA did not issue fails");
+  assert!(err.contains("invalid peer certificate"), "{err}");
+}
+
+#[tokio::test]
+async fn an_ip_name_verifies_by_ip() {
+  let ca = generated(&["test-ca"], true, None);
+  let leaf = generated(&["127.0.0.1"], false, Some(&ca));
+  let (client, _, _listener) = handshake(served(&leaf), &trusting(&ca), "127.0.0.1").await;
+  client.expect("the IP address is the name");
+  let (client, _, _listener) = handshake(served(&leaf), &trusting(&ca), "localhost").await;
+  let err = client.err().expect("a DNS name the certificate does not hold fails");
+  assert!(err.contains("invalid peer certificate"), "{err}");
+}
+
+#[test]
+fn generate_certificate_errors_name_the_field() {
+  let ca = generated(&["test-ca"], true, None);
+  let names = vec!["localhost".to_string()];
+  let request = |names: &[String], valid_days: u32, issuer: Option<(&[u8], &[u8])>| {
+    let request = CertificateRequest { names, valid_days, is_ca: false, issuer };
+    generate_certificate(&request).err().expect("an error")
+  };
+  let err = request(&[], DEFAULT_CERT_VALID_DAYS, None);
+  assert!(err.starts_with("names: "), "{err}");
+  let err = request(&names, 0, None);
+  assert!(err.starts_with("validDays: "), "{err}");
+  let err = request(&names, u32::MAX, None);
+  assert!(err.starts_with("validDays: "), "{err}");
+  let err = request(&names, DEFAULT_CERT_VALID_DAYS, Some((b"not a pem", ca.key.as_bytes())));
+  assert!(err.starts_with("issuer.cert: "), "{err}");
+  let err = request(&names, DEFAULT_CERT_VALID_DAYS, Some((ca.cert.as_bytes(), b"not a pem")));
+  assert!(err.starts_with("issuer.key: "), "{err}");
+  let err = request(&names, DEFAULT_CERT_VALID_DAYS, Some((ca.cert.as_bytes(), SELF_SIGNED_KEY)));
+  assert_eq!(err, "issuer.key: does not belong to issuer.cert");
+  for bad in ["", "my server", "http://x", "a..b", "*"] {
+    let err = request(&[bad.to_string()], DEFAULT_CERT_VALID_DAYS, None);
+    assert!(err.starts_with("names: not a DNS name"), "{bad:?}: {err}");
+  }
+  let wildcard =
+    CertificateRequest { names: &["*.example.test".to_string()], valid_days: 1, is_ca: false, issuer: None };
+  generate_certificate(&wildcard).expect("a wildcard name");
+}
+
+// ---- session resumption ------------------------------------------------------
+
+/// What a resumption test's server sends first, after each handshake.
+const GREETING: &[u8] = b"hello";
+
+/// Connect over the config `configs` keeps for `client` to `listener` as
+/// "localhost" and accept it there; the server then greets and the client
+/// reads the greeting, which also takes in the server's TLS 1.3 session
+/// ticket. The client's and the server's `Conn`.
+async fn greeted(listener: &Listener, configs: &ClientConfigs, client: &ClientOptions) -> (Conn, Conn) {
+  let config = configs.config_for(client).expect("client config");
+  greeted_over(listener, config, client).await
+}
+
+/// `greeted` over `config`, built from `client`.
+async fn greeted_over(listener: &Listener, config: Arc<ClientConfig>, client: &ClientOptions) -> (Conn, Conn) {
+  let name = server_name("localhost").expect("name");
+  let identity = Some(client_identity(client));
+  let connect = connect_tls("127.0.0.1", port_of(listener), CONNECT_MS, config, name, identity);
+  let (client, server) = tokio::join!(connect, soon(listener.accept()));
+  let client = client.expect("client handshake");
+  let server = server.expect("accept").expect("accepted conn");
+  server.write(GREETING.to_vec()).await.expect("greeting");
+  assert_eq!(soon(next_chunk(&mut client.readable())).await, Ok(Some(GREETING.to_vec())));
+  (client, server)
+}
+
+/// Two connections with equal options to `server`: the first a full
+/// handshake, the second resumed, on both sides.
+async fn second_connection_resumes(server: Arc<ServerConfig>) {
+  let listener = listen_tls("127.0.0.1", 0, server).await.expect("listen_tls");
+  let configs = ClientConfigs::new();
+  let (client, accepted) = greeted(&listener, &configs, &private_ca_client()).await;
+  assert!(!client.resumed() && !accepted.resumed(), "the first handshake is a full one");
+  let (client, accepted) = greeted(&listener, &configs, &private_ca_client()).await;
+  assert!(client.resumed(), "the client resumed");
+  assert!(accepted.resumed(), "the server resumed");
+  assert!(client.peer_key().is_some(), "a resumed session keeps the server's certificate");
+}
+
+#[test]
+fn client_configs_are_keyed_by_the_options() {
+  let configs = ClientConfigs::new();
+  let config_for = |opts: &ClientOptions| configs.config_for(opts).expect("client config");
+  let base = || ClientOptions { alpn: vec!["x-a".to_string()], ..private_ca_client() };
+  let config = config_for(&base());
+  assert!(Arc::ptr_eq(&config, &config_for(&base())), "equal options share a config");
+  let other_alpn = ClientOptions { alpn: vec!["x-b".to_string()], ..base() };
+  assert!(!Arc::ptr_eq(&config, &config_for(&other_alpn)), "another ALPN list");
+  let pinned = ClientOptions { pin: Some(parse_pin(SELF_SIGNED_PIN).expect("pin")), ..Default::default() };
+  let other_pin = ClientOptions { pin: Some(parse_pin(CLIENT_PIN).expect("pin")), ..Default::default() };
+  assert!(!Arc::ptr_eq(&config_for(&pinned), &config_for(&other_pin)), "another pin");
+  assert!(!Arc::ptr_eq(&config, &config_for(&with_client_cert(base()))), "an added client certificate");
+  let bad = ClientOptions { cert: Some(CLIENT.to_vec()), ..Default::default() };
+  assert!(configs.config_for(&bad).is_err(), "a config that does not build is an error");
+}
+
+#[test]
+fn client_configs_drop_the_least_recently_used() {
+  let configs = ClientConfigs::new();
+  let config_for = |i: usize| {
+    let opts = ClientOptions { alpn: vec![format!("x-{i}")], ..Default::default() };
+    configs.config_for(&opts).expect("client config")
+  };
+  let first = config_for(0);
+  let second = config_for(1);
+  for i in 2..CLIENT_CONFIG_KEYS {
+    config_for(i);
+  }
+  // The first is used again, so the second is now the least recent.
+  assert!(Arc::ptr_eq(&first, &config_for(0)));
+  config_for(CLIENT_CONFIG_KEYS);
+  assert!(Arc::ptr_eq(&first, &config_for(0)), "a recent config stays");
+  assert!(!Arc::ptr_eq(&second, &config_for(1)), "the least recent was dropped");
+}
+
+#[tokio::test]
+async fn equal_options_resume_over_tls13() {
+  second_connection_resumes(server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &[])).await;
+}
+
+#[tokio::test]
+async fn equal_options_resume_over_tls12() {
+  let options =
+    ServerOptions { cert: SERVER.to_vec(), key: SERVER_KEY.to_vec(), alpn: Vec::new(), client_auth: ClientAuth::None };
+  let server = server_config_with_versions(&options, &[&rustls::version::TLS12]).expect("server config");
+  second_connection_resumes(server).await;
+}
+
+#[tokio::test]
+async fn other_options_do_a_full_handshake() {
+  let server = server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &["x-a", "x-b"]);
+  let listener = listen_tls("127.0.0.1", 0, server).await.expect("listen_tls");
+  let configs = ClientConfigs::new();
+  let alpn = |p: &str| ClientOptions { alpn: vec![p.to_string()], ..private_ca_client() };
+  let (client, _accepted) = greeted(&listener, &configs, &alpn("x-a")).await;
+  assert!(!client.resumed());
+  let (client, accepted) = greeted(&listener, &configs, &alpn("x-b")).await;
+  assert_eq!(client.alpn_protocol().as_deref(), Some("x-b"));
+  assert!(!client.resumed() && !accepted.resumed(), "another ALPN list is a full handshake");
+}
+
+#[tokio::test]
+async fn start_tls_resumes_a_connect_tls_session() {
+  let server = server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &[]);
+  let listener = listen_tls("127.0.0.1", 0, server.clone()).await.expect("listen_tls");
+  let configs = ClientConfigs::new();
+  let (first, _accepted) = greeted(&listener, &configs, &private_ca_client()).await;
+  assert!(!first.resumed());
+
+  let port = starttls_server_over(server).await;
+  let conn = connect("127.0.0.1", port, CONNECT_MS).await.expect("connect");
+  conn.write(b"STARTTLS\r\n".to_vec()).await.expect("write");
+  assert_eq!(soon(next_chunk(&mut conn.readable())).await, Ok(Some(b"OK\r\n".to_vec())));
+  let config = configs.config_for(&private_ca_client()).expect("client config");
+  let tls = start_tls(&conn, CONNECT_MS, as_client(config, "localhost")).await.expect("startTls");
+  assert!(tls.resumed(), "the upgrade resumed the connectTls session");
+  assert!(!conn.resumed(), "plain TCP never resumes");
+  tls.write(b"secret".to_vec()).await.expect("write over TLS");
+  assert_eq!(soon(next_chunk(&mut tls.readable())).await, Ok(Some(b"secret".to_vec())));
+}
+
+#[tokio::test]
+async fn a_config_without_resumption_does_a_full_handshake() {
+  let server = server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &[]);
+  let listener = listen_tls("127.0.0.1", 0, server).await.expect("listen_tls");
+  let configs = ClientConfigs::new();
+  let (first, _accepted) = greeted(&listener, &configs, &private_ca_client()).await;
+  assert!(!first.resumed());
+  let config = client_config_without_resumption(&private_ca_client()).expect("client config");
+  let (client, accepted) = greeted_over(&listener, config, &private_ca_client()).await;
+  assert!(!client.resumed() && !accepted.resumed(), "an opted-out connection is a full handshake");
+  let (client, accepted) = greeted(&listener, &configs, &private_ca_client()).await;
+  assert!(client.resumed() && accepted.resumed(), "the cached config still resumes");
+}
+
+#[tokio::test]
+async fn a_client_conn_records_its_options_identity() {
+  let server = server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &[]);
+  let listener = listen_tls("127.0.0.1", 0, server).await.expect("listen_tls");
+  let configs = ClientConfigs::new();
+  let options = private_ca_client();
+  let (client, accepted) = greeted(&listener, &configs, &options).await;
+  assert_eq!(client.client_identity(), Some(client_identity(&options)));
+  let other = ClientOptions { alpn: vec!["x-other".to_string()], ..private_ca_client() };
+  assert_ne!(client.client_identity(), Some(client_identity(&other)), "other options, another identity");
+  assert_eq!(accepted.client_identity(), None, "an accepted connection is no client");
+  let plain = connect("127.0.0.1", port_of(&listener), CONNECT_MS).await.expect("connect");
+  assert_eq!(plain.client_identity(), None, "plain TCP is no TLS client");
 }

@@ -77,7 +77,7 @@ pub(super) fn stalling(
 
 fn open(spec: &str) -> (Reader, Result<MediaInfo, crate::video::StreamError>) {
   let source = Source::parse(spec).expect("a path or URL");
-  let (reader, opened) = Reader::open(Box::new(move || source.open("forge-test")));
+  let (reader, opened) = Reader::open(Box::new(move || source.open("forge-test", None)));
   let info = opened.blocking_recv().expect("the reader answers the open");
   (reader, info)
 }
@@ -345,7 +345,7 @@ fn an_abandoned_open_stops_the_reader() {
   // Stall inside the header: the open cannot answer until the server does.
   let (addr, requests) = serve(stalling(data.clone(), 100, resume.clone()));
   let source = Source::parse(&format!("http://{addr}/clip.webm")).expect("url");
-  let (reader, opened) = Reader::open(Box::new(move || source.open("forge-test")));
+  let (reader, opened) = Reader::open(Box::new(move || source.open("forge-test", None)));
   std::thread::sleep(QUIET);
   assert_eq!(lock(&requests).len(), 1, "the request went out");
   // Dropping the reader (an aborted open, a disposed owner) returns at

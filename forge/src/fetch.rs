@@ -12,12 +12,12 @@
 use bytes::Bytes;
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
-use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -190,10 +190,13 @@ pub async fn send(
 /// up to `RETRY_LIMIT` times, and any other request hands the 429 to the
 /// caller (a body cannot be replayed, and repeating another method is the
 /// caller's decision). The slot rides the response body and frees when the
-/// body ends or its consumer drops it.
+/// body ends or its consumer drops it. With `slot` false the request takes
+/// no slot but still waits out the host's cooldown: the cooldown spares the
+/// server, the slot spares the app's other requests.
 pub async fn do_fetch(
   client: &Client,
   limits: &HostLimits,
+  slot: bool,
   method: &str,
   url: &str,
   headers: Vec<(String, String)>,
@@ -201,7 +204,11 @@ pub async fn do_fetch(
 ) -> Result<ResponseData, String> {
   let host = host_key(url);
   let permit = match &host {
-    Some(host) => limits.acquire(host).await,
+    Some(host) if slot => limits.acquire(host).await,
+    Some(host) => {
+      limits.cooled(host).await;
+      None
+    }
     // An unparsable url: skip the limit and let send produce the error.
     None => None,
   };
@@ -227,14 +234,15 @@ pub async fn do_fetch(
     if !can_retry || attempt == RETRY_LIMIT {
       break;
     }
-    // Sleep it out while holding the slot (see `acquire`): the other requests
-    // queue behind the cooldown instead of taking over the freed slot.
+    // Sleep it out while holding the slot, when this request has one (see
+    // `acquire`): the other requests queue behind the cooldown instead of
+    // taking over the freed slot.
     tokio::time::sleep(delay).await;
     attempt += 1;
     resp = send(client, method, url, headers.clone(), None).await?;
   }
   if let Some(permit) = permit {
-    resp.body = Box::pin(LimitedStream { inner: resp.body, _permit: permit });
+    resp.body = with_permit(resp.body, permit);
   }
   Ok(resp)
 }
@@ -246,6 +254,9 @@ pub async fn do_fetch(
 /// cap: its requests share one connection, and the server's stream limit is
 /// the cap. A host is capped until its first response says otherwise.
 ///
+/// A slot is an open request to a host, whatever opened it: a media source
+/// (`source::HttpSource`) takes one as a fetch does.
+///
 /// A permit is an async RAII value: waiters are pending futures (nothing
 /// blocks), and the permit rides the response body stream so it releases when
 /// the body completes or its consumer drops it.
@@ -254,55 +265,250 @@ pub async fn do_fetch(
 /// recycling is still tens of requests per second), so a host also carries a
 /// cooldown: a 429 pauses the whole host (see `cooldown`), and `acquire`
 /// waits it out before letting a request start.
+///
+/// The cap is the app's to change (`set_limit`): a default for every host,
+/// and an override per host beside it.
+///
+/// One per app, shared by every engine (the root and its isolates) and every
+/// client, so a server sees one app, not one per thread or per client. It is
+/// `Send + Sync`: its locks guard plain state and are never held across an
+/// await.
 pub struct HostLimits {
-  max_per_host: usize,
-  hosts: RefCell<HashMap<String, Rc<HostState>>>,
+  hosts: Mutex<Hosts>,
+}
+
+/// The default cap and the hosts seen so far. A host's state is made on
+/// first sight with the default of that moment.
+struct Hosts {
+  /// The cap of a host with no override; `None` is unlimited.
+  default: Option<usize>,
+  map: HashMap<String, Arc<HostState>>,
 }
 
 struct HostState {
-  semaphore: Arc<Semaphore>,
-  cooldown_until: Cell<Option<Instant>>,
+  slots: Mutex<Slots>,
+  cooldown_until: Mutex<Option<Instant>>,
   /// The host's last response came over HTTP/2.
-  multiplexed: Cell<bool>,
+  multiplexed: AtomicBool,
+}
+
+/// A host's cap.
+struct Slots {
+  /// Set by `set_limit` for this host: a new default leaves the host alone.
+  overridden: bool,
+  /// The slots of a finite cap; `None` while the host is unlimited.
+  pool: Option<Arc<Pool>>,
+}
+
+/// The slots of a finite cap. A raised cap adds permits at once. A lowered
+/// one forgets what is free at once (`forget_permits`) and owes the rest: a
+/// permit that comes back to a pool that owes is forgotten by the acquire
+/// that takes it, which then waits on. So the slots in use never exceed the
+/// new cap once the requests open before the change have ended.
+struct Pool {
+  semaphore: Arc<Semaphore>,
+  ledger: Mutex<Ledger>,
+}
+
+struct Ledger {
+  cap: usize,
+  /// Permits still to forget as they come back.
+  owed: usize,
+}
+
+impl Pool {
+  fn new(cap: usize) -> Arc<Pool> {
+    Arc::new(Pool { semaphore: Arc::new(Semaphore::new(cap)), ledger: Mutex::new(Ledger { cap, owed: 0 }) })
+  }
+
+  fn ledger(&self) -> std::sync::MutexGuard<'_, Ledger> {
+    self.ledger.lock().expect("host slots ledger poisoned")
+  }
+
+  fn resize(&self, cap: usize) {
+    let mut ledger = self.ledger();
+    if cap > ledger.cap {
+      let more = cap - ledger.cap;
+      let repaid = more.min(ledger.owed);
+      ledger.owed -= repaid;
+      self.semaphore.add_permits(more - repaid);
+    } else {
+      let fewer = ledger.cap - cap;
+      let forgotten = self.semaphore.forget_permits(fewer);
+      ledger.owed += fewer - forgotten;
+    }
+    ledger.cap = cap;
+  }
+
+  /// A permit, once one is free and nothing is owed. `None` when the pool
+  /// closed while this waited: its host went unlimited.
+  async fn acquire(&self) -> Option<OwnedSemaphorePermit> {
+    loop {
+      let permit = self.semaphore.clone().acquire_owned().await.ok()?;
+      let owes = {
+        let mut ledger = self.ledger();
+        let owes = ledger.owed > 0;
+        if owes {
+          ledger.owed -= 1;
+        }
+        owes
+      };
+      if !owes {
+        return Some(permit);
+      }
+      permit.forget();
+    }
+  }
+}
+
+impl Slots {
+  fn new(limit: Option<usize>) -> Slots {
+    Slots { overridden: false, pool: limit.map(Pool::new) }
+  }
+
+  fn limit(&self) -> Option<usize> {
+    self.pool.as_ref().map(|pool| pool.ledger().cap)
+  }
+
+  /// Change the cap. Unlimited closes the pool, which frees its waiters; a
+  /// finite cap after unlimited starts a fresh pool, which does not count
+  /// the requests already open.
+  fn set(&mut self, limit: Option<usize>) {
+    self.pool = match (self.pool.take(), limit) {
+      (Some(pool), Some(cap)) => {
+        pool.resize(cap);
+        Some(pool)
+      }
+      (Some(pool), None) => {
+        pool.semaphore.close();
+        None
+      }
+      (None, limit) => limit.map(Pool::new),
+    };
+  }
+}
+
+impl HostState {
+  fn new(limit: Option<usize>) -> HostState {
+    HostState {
+      slots: Mutex::new(Slots::new(limit)),
+      cooldown_until: Mutex::new(None),
+      multiplexed: AtomicBool::new(false),
+    }
+  }
+
+  fn slots(&self) -> std::sync::MutexGuard<'_, Slots> {
+    self.slots.lock().expect("host slots lock poisoned")
+  }
+
+  fn cooldown_until(&self) -> Option<Instant> {
+    *self.cooldown_until.lock().expect("host cooldown lock poisoned")
+  }
+
+  /// Wait out an active cooldown, however often it is extended meanwhile.
+  async fn cooled(&self) {
+    loop {
+      match self.cooldown_until() {
+        Some(until) if until > Instant::now() => tokio::time::sleep_until(until).await,
+        _ => return,
+      }
+    }
+  }
+}
+
+/// The largest finite per-host cap: the semaphore's own maximum. A caller
+/// that takes caps from outside checks against it (`set_limit` clamps).
+pub const MAX_HOST_LIMIT: usize = Semaphore::MAX_PERMITS;
+
+/// A cap as the semaphore can hold it: at least one slot (a cap of 0 would
+/// stall the host for good), at most `MAX_HOST_LIMIT`.
+fn valid_cap(limit: Option<usize>) -> Option<usize> {
+  limit.map(|cap| cap.clamp(1, MAX_HOST_LIMIT))
 }
 
 impl HostLimits {
   pub fn new(max_per_host: usize) -> Self {
-    Self { max_per_host, hosts: RefCell::new(HashMap::new()) }
+    Self { hosts: Mutex::new(Hosts { default: valid_cap(Some(max_per_host)), map: HashMap::new() }) }
   }
 
-  fn state(&self, host: &str) -> Rc<HostState> {
-    self
-      .hosts
-      .borrow_mut()
-      .entry(host.to_string())
-      .or_insert_with(|| {
-        Rc::new(HostState {
-          semaphore: Arc::new(Semaphore::new(self.max_per_host)),
-          cooldown_until: Cell::new(None),
-          multiplexed: Cell::new(false),
-        })
-      })
-      .clone()
+  fn hosts(&self) -> std::sync::MutexGuard<'_, Hosts> {
+    self.hosts.lock().expect("host limits lock poisoned")
+  }
+
+  /// The state of `host`, cloned out of the map: the map lock is released
+  /// before the caller awaits anything.
+  fn state(&self, host: &str) -> Arc<HostState> {
+    let mut hosts = self.hosts();
+    let default = hosts.default;
+    hosts.map.entry(host.to_string()).or_insert_with(|| Arc::new(HostState::new(default))).clone()
+  }
+
+  /// The cap of `host` (a `host_key`), or the default without one. `None`
+  /// is unlimited. A host not seen yet reads the default.
+  pub fn limit(&self, host: Option<&str>) -> Option<usize> {
+    let hosts = self.hosts();
+    match host.and_then(|host| hosts.map.get(host)) {
+      Some(state) => state.slots().limit(),
+      None => hosts.default,
+    }
+  }
+
+  /// Set the cap of `host` (a `host_key`), an override that a later default
+  /// leaves alone; or, without a host, the default: the cap of every host
+  /// with no override, seen so far or later. `None` is unlimited: `acquire`
+  /// takes no slot on such a host, as on an HTTP/2 one, and its waiters go
+  /// at once. A raised cap frees waiters at once. A lowered cap takes effect
+  /// as slots free up: requests already open keep theirs, and new ones wait
+  /// until the open ones are within the new cap. A finite cap on a host that
+  /// was unlimited starts afresh: the requests open since do not count. A
+  /// cap of 0 is taken as 1.
+  pub fn set_limit(&self, host: Option<&str>, limit: Option<usize>) {
+    let limit = valid_cap(limit);
+    let mut hosts = self.hosts();
+    match host {
+      Some(host) => {
+        let default = hosts.default;
+        let state = hosts.map.entry(host.to_string()).or_insert_with(|| Arc::new(HostState::new(default)));
+        let mut slots = state.slots();
+        slots.overridden = true;
+        slots.set(limit);
+      }
+      None => {
+        hosts.default = limit;
+        for state in hosts.map.values() {
+          let mut slots = state.slots();
+          if !slots.overridden {
+            slots.set(limit);
+          }
+        }
+      }
+    }
   }
 
   /// Wait for a slot on `host`, then for any active cooldown. The returned
-  /// permit frees the slot on drop; an HTTP/2 host takes no slot (`None`) but
-  /// still waits out the cooldown. The permit is held through the cooldown
-  /// sleep on purpose: a 429'd host drains to idle and stays paused, instead
-  /// of freed slots re-flooding it the moment their transfers finish.
+  /// permit frees the slot on drop; an HTTP/2 or unlimited host takes no
+  /// slot (`None`) but still waits out the cooldown. The permit is held
+  /// through the cooldown sleep on purpose: a 429'd host drains to idle and
+  /// stays paused, instead of freed slots re-flooding it the moment their
+  /// transfers finish.
   pub async fn acquire(&self, host: &str) -> Option<OwnedSemaphorePermit> {
     let state = self.state(host);
-    let permit = match state.multiplexed.get() {
+    let pool = match state.multiplexed.load(Ordering::Relaxed) {
       true => None,
-      false => Some(state.semaphore.clone().acquire_owned().await.expect("host semaphore never closes")),
+      false => state.slots().pool.clone(),
     };
-    loop {
-      match state.cooldown_until.get() {
-        Some(until) if until > Instant::now() => tokio::time::sleep_until(until).await,
-        _ => return permit,
-      }
-    }
+    let permit = match pool {
+      Some(pool) => pool.acquire().await,
+      None => None,
+    };
+    state.cooled().await;
+    permit
+  }
+
+  /// Wait out any active cooldown on `host` without taking a slot: a request
+  /// that opted out of the cap still spares a server that asked for a pause.
+  pub async fn cooled(&self, host: &str) {
+    self.state(host).cooled().await;
   }
 
   /// Record the HTTP version of a response from `host`. The last response
@@ -310,7 +516,7 @@ impl HostLimits {
   /// request on. A burst that starts before the first response records
   /// HTTP/2 is capped once more, which is harmless.
   pub fn record(&self, host: &str, http2: bool) {
-    self.state(host).multiplexed.set(http2);
+    self.state(host).multiplexed.store(http2, Ordering::Relaxed);
   }
 
   /// Pause new requests to `host` for `delay`. Extends, never shortens, an
@@ -319,21 +525,52 @@ impl HostLimits {
   pub fn cooldown(&self, host: &str, delay: Duration) {
     let state = self.state(host);
     let until = Instant::now() + delay;
-    if state.cooldown_until.get().is_none_or(|current| until > current) {
-      state.cooldown_until.set(Some(until));
+    let mut current = state.cooldown_until.lock().expect("host cooldown lock poisoned");
+    if current.is_none_or(|current| until > current) {
+      *current = Some(until);
     }
   }
 }
 
 /// The per-host key: host plus effective port, so `http://x` and `https://x`
-/// count as the same endpoint family only when their ports match.
-fn host_key(url: &str) -> Option<String> {
+/// count as the same endpoint family only when their ports match. `None`
+/// for a value that is no URL with a host.
+pub fn host_key(url: &str) -> Option<String> {
   let parsed = reqwest::Url::parse(url).ok()?;
   let host = parsed.host_str()?;
   match parsed.port_or_known_default() {
     Some(port) => Some(format!("{host}:{port}")),
     None => Some(host.to_string()),
   }
+}
+
+/// The per-host key an app names: a URL (its `host_key`), or a
+/// `host:port` key itself, its host normalized as a URL's is (lowercased).
+/// A key names its port, since a bare host could be either scheme's.
+/// `None` for anything else.
+pub fn parse_host_key(value: &str) -> Option<String> {
+  if value.contains("://") {
+    return host_key(value);
+  }
+  let (_, port) = value.rsplit_once(':')?;
+  let port: u16 = port.parse().ok()?;
+  let parsed = reqwest::Url::parse(&format!("http://{value}")).ok()?;
+  // Nothing beside the host and port: "user@host:80" or "host:80/x" is no key.
+  let bare = parsed.username().is_empty()
+    && parsed.password().is_none()
+    && parsed.path() == "/"
+    && parsed.query().is_none()
+    && parsed.fragment().is_none();
+  match bare {
+    true => Some(format!("{}:{port}", parsed.host_str()?)),
+    false => None,
+  }
+}
+
+/// `body` holding `permit` for as long as it lives: the slot frees when the
+/// body ends or its consumer drops it.
+pub fn with_permit(body: ByteStream, permit: OwnedSemaphorePermit) -> ByteStream {
+  Box::pin(LimitedStream { inner: body, _permit: permit })
 }
 
 /// Carries the host permit for the lifetime of the response body.
@@ -422,10 +659,12 @@ fn jittered_backoff(attempt: u32) -> Duration {
 /// a plain `do_fetch`. Stored bodies write through as the consumer drains the
 /// response and commit only on clean completion (see `Cache::store`). A disk
 /// hit takes no slot on the per-host limit; a miss goes through `do_fetch`
-/// with its limit and 429 retry.
+/// with its limit (taking a slot unless `slot` is false) and 429 retry.
+#[allow(clippy::too_many_arguments)]
 pub async fn do_fetch_cached(
   client: &Client,
   limits: &HostLimits,
+  slot: bool,
   method: &str,
   url: &str,
   headers: Vec<(String, String)>,
@@ -434,7 +673,7 @@ pub async fn do_fetch_cached(
   mode: CacheMode,
 ) -> Result<ResponseData, String> {
   if method != "GET" {
-    return do_fetch(client, limits, method, url, headers, body).await;
+    return do_fetch(client, limits, slot, method, url, headers, body).await;
   }
   if mode == CacheMode::ForceCache {
     if let Some((meta, cached_body)) = cache.lookup(url).await {
@@ -452,7 +691,7 @@ pub async fn do_fetch_cached(
       }
     }
   }
-  let resp = do_fetch(client, limits, method, url, headers, body).await?;
+  let resp = do_fetch(client, limits, slot, method, url, headers, body).await?;
   if !(200..300).contains(&resp.status) {
     return Ok(resp);
   }

@@ -20,8 +20,8 @@ use crate::video::PixelLayout;
 // is marginal and the cores are the app's (the decoder's cap too).
 const MAX_ENCODE_THREADS: usize = 4;
 // VP8E_SET_CPUUSED for VP9 realtime: 5..9 trade quality for speed. 7 keeps
-// a laptop core well inside a 30 fps frame at 720p and still looks fine;
-// the tablet's ceiling is measured in okf/plans/video-encode.md.
+// a laptop core well inside a 30 fps frame at 720p and still looks fine
+// (measured in okf/notes/video-encode-measurements.md).
 const CPU_USED: c_int = 7;
 // The narrowest tile column VP9 allows is 256 px: the tile-column count is
 // the largest power of two that keeps every column at least this wide.

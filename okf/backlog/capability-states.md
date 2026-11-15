@@ -1,6 +1,6 @@
 ---
 title: Report what an app can use as states, not as one yes/no list
-description: Flux.capabilities is a flat list of names fixed at engine start, so it cannot say "not known yet", "only a call can tell", "the user has not answered" or "it changed"; it mixes build facts, device facts and test-host overrides, and wrong answers already ship (the TV's stub picker, the Linux portal without a FileChooser, a camera with no device). Keep the list for build facts, and add a reactive three-state availability per platform facility and a permission state on the web's Permissions API shape. Starts after haptics lands.
+description: Flux.capabilities is a flat list of names fixed for the process, so it cannot say "not known yet", "only a call can tell", "the user has not answered" or "it changed"; it mixes build facts, device facts and test-host overrides, and wrong answers already ship (the TV's stub picker, the Linux portal without a FileChooser, a camera with no device). Keep the list for build facts (the modules compiled in, minus what the project switched off), and add a reactive three-state availability per platform facility and a permission state on the web's Permissions API shape.
 created: 2026-11-13
 ---
 
@@ -8,28 +8,33 @@ created: 2026-11-13
 
 ## Symptom
 
-`Flux.capabilities` is a `string[]` built once while the engine starts
-(`flux/src/plugins/mod.rs` `build_capabilities`, extended by
-`add_capability`). An app checks `includes(name)`, which gives a yes or a
-no. The answer cannot be "not known yet", "only a call can tell", "the user
-has not answered", or "this changed since start". Every fact that is really
-one of those is forced into a boolean, so some answers are wrong today:
+`Flux.capabilities` is a `string[]` built once for the process: the base
+list while the engine starts (`flux/src/plugins/mod.rs` `build_capabilities`),
+the gui names as a plugin (`register_capabilities` in
+`flux/src/alloy_plugins/mod.rs`, through `add_capability`), and the
+platform facts probed once (the dialog when the window opens,
+`ore/src/window/open.rs`; link, share and haptics on their first read). An
+app checks `includes(name)`, which gives a yes or a no. The answer cannot
+be "not known yet", "only a call can tell", "the user has not answered",
+or "this changed since start". Every fact that is really one of those is
+forced into a boolean, so some answers are wrong today:
 
 1. **The TV's stub picker** ([android-tv-dialog-stub](android-tv-dialog-stub.md)).
    `ACTION_OPEN_DOCUMENT` resolves to the TV's framework stub package, so
    "dialog" is listed, and every call answers with a cancel. The app shows
    an Open button that cannot work.
 2. **A Linux portal without a FileChooser.** `ore::dialog::platform_available`
-   checks that the portal's D-Bus *service file* is on disk, or that zenity
-   is on the path. SDL's own driver choice (`SDL_Portal_detect`, SDL 3.4.18
-   `src/dialog/unix/SDL_portaldialog.c`) introspects the portal object for
-   `org.freedesktop.portal.FileChooser`. A session whose portal backends do
-   not implement FileChooser (and has no zenity) gets "dialog" listed, and
-   the call then fails with SDL's "File dialog driver unsupported". The
-   link probe (`ore::link::platform_available`) has the same shape: a
-   service file or `xdg-open` on the path, not an OpenURI that answers.
-   ore's cheap probe is right not to block startup on D-Bus. What it lacks
-   is a way to say "probably", and to correct itself.
+   checks that there is a session bus and the portal's D-Bus *service file*
+   is on disk, or that zenity is on the path. SDL's own driver choice
+   (`SDL_Portal_detect`, SDL 3.4.18 `src/dialog/unix/SDL_portaldialog.c`)
+   introspects the portal object for `org.freedesktop.portal.FileChooser`.
+   A session whose portal backends do not implement FileChooser (and has
+   no zenity) gets "dialog" listed, and the call then fails with SDL's
+   "File dialog driver unsupported". The link probe
+   (`ore::link::platform_available`) has the same shape: a service file or
+   `xdg-open` on the path, not an OpenURI that answers. ore's cheap probe
+   is right not to block startup on D-Bus. What it lacks is a way to say
+   "probably", and to correct itself.
 3. **Camera, microphone and audio are listed unconditionally** under the
    gui feature (`GUI_CAPABILITIES`). The name means "flux:camera can be
    imported". An app reads it as "there is a camera". On a desktop with no
@@ -37,9 +42,16 @@ one of those is forced into a boolean, so some answers are wrong today:
    learns otherwise from `createCamera`'s `error()`.
 4. **A packed app that switched a capability off still lists it.**
    `"solidrt": { "capabilities": { "camera": false } }` drops
-   `android.permission.CAMERA` from the APK (`packages/cli/src/pack/main.ts`),
-   but the runtime does not know that. `Flux.capabilities` still lists
-   "camera", and the open is denied without a prompt.
+   `android.permission.CAMERA` from the APK (`packages/cli/src/pack/main.ts`,
+   `ANDROID_CAPABILITY_PERMISSIONS`), but the runtime does not know that.
+   `Flux.capabilities` still lists "camera", and the open is denied without
+   a prompt. Haptics handles the same case on its own ([haptics](../done/haptics.md),
+   "Without the capability"): the `Vibrator` intents report `none`, the
+   calls are no-ops, and one warning names the capability. So one fact,
+   "the project left it out", already has two readings, and the camera has
+   none. The default-on camera capability also makes Play infer a required
+   camera (okf/tiny.md, "packed Android apps"), the packaging side of the
+   same fact.
 5. **"Granted" where nothing was asked.** `ore::permission::request`
    answers `true` at once off Android ("the open that follows reports what
    the OS decided"). That is not granted. It means "no prompt to raise
@@ -49,25 +61,32 @@ one of those is forced into a boolean, so some answers are wrong today:
    returns `true` before the camera driver is known ("leans toward a
    prompt may be up"). That is a correct choice for its one caller, but it
    is a third state that a bool has no room for.
-7. **Nothing can change.** The list is fixed at start. A webcam plugged in,
-   a portal service started after login, a permission granted in system
-   settings while the app is backgrounded: none of these can reach an app
-   that branched on the list.
+7. **Nothing can change.** The list is fixed for the process. A webcam
+   plugged in, a portal service started after login, a permission granted
+   in system settings while the app is backgrounded: none of these can
+   reach an app that branched on the list. The one precedent for a fact
+   that moves is the sticky `inputDevices` event, and even that misses a
+   touchscreen attached after start (okf/tiny.md, "Android touch device
+   list").
 8. **The list is not trustworthy as data.** It is a plain mutable JS array
    (`Flux.capabilities.push("camera")` works). The native copy that the dev
    client reports (`flux::capabilities()` in `flux/src/lib.rs`) repeats
-   `register_capabilities` in `flux/src/alloy_plugins/mod.rs` by hand: two
-   lists that must stay in sync. The test host adds "dialog" and "share" to
-   the engine's list (`set_answers_only`, `set_record_only`), so the engine
-   and the native report disagree there, on purpose but invisibly.
+   `register_capabilities` by hand, and `lattice/src/go/connection.rs`
+   chains a third list, lattice's own `runtime:*` module names
+   (`lattice/src/entry.rs`): three lists that must stay in sync. The test
+   host adds every platform name to the engine's list when the platform
+   lacks it: dialog through `set_answers_only`, and link, share, haptics
+   and clipboard-image through their `set_record_only`. So the engine and
+   the native report disagree there, on purpose but invisibly.
 
 Meanwhile, three neighbors have each made their own state vocabulary,
 because the shared one could not hold theirs:
 
 - the camera and microphone sessions: `Pending | Approved | Denied`
-  (`ore::camera::PermissionState`, okf/done/microphone-permission-state.md);
-- haptics, in progress: `support` with `native | approximate | none` per
-  intent, plus an actuator fact (okf/plans/haptics.md);
+  (`ore::camera::PermissionState`, [microphone-permission-state](../done/microphone-permission-state.md));
+- haptics, landed: `Support` with an `actuator` fact and a `Level` of
+  `native | approximate | none` per intent (`ore/src/haptics.rs`,
+  [haptics](../done/haptics.md));
 - core's environment: `SystemTheme` and `Orientation` carry `"unknown"`,
   and `env.inputDevices` is `undefined` until the runtime reports devices,
   with the seen-flags as the fallback (`packages/core/src/environment.ts`).
@@ -80,9 +99,9 @@ questions with one word, and each question has its own honest states.
 
 | Question | Who decides | Can it change while running? | Honest states |
 |---|---|---|---|
-| Is the code in this runtime? | the build (cargo features, a custom runtime's modules) | no | yes, no |
+| Is the code in this runtime? | the build (cargo features, a custom runtime's modules) and the packaging (the project's switched-off capabilities) | no | yes, no |
 | Does this device and platform provide it? | the OS, the hardware, the session | yes (hotplug, a service starting) | available, unavailable, unknown |
-| May the app use it? | the packaging (declared permissions) and the user | yes (the user answers, revokes) | granted, denied, prompt |
+| May the app use it? | the user | yes (the user answers, revokes) | granted, denied, prompt |
 
 A fourth axis, **fidelity** (haptics `native | approximate`, the wasm lane,
 compressed textures), is facility-specific. It stays in each module's own
@@ -102,22 +121,36 @@ Where today's names sit:
 - **Permission facts**: camera, microphone, haptics' `VIBRATE`, later
   location, notifications and exact alarms (okf/design/platform-layering.md,
   "Permissions").
-- **Test-host overrides**: dialog and share. A record-only or answers-only
-  session makes them *available* in that engine. This is an availability
-  fact of the session, and it fits the availability model as such.
+- **Test-host overrides**: dialog, link, share, haptics and clipboard-image,
+  every platform name. A record-only or answers-only session makes them
+  *available* in that engine. This is an availability fact of the session,
+  and it fits the availability model as such.
 
 ## Proposed model
 
 ### 1. `Flux.capabilities` keeps build facts only
 
-- It holds what the binary contains: certain from the first line of app
+- It holds what this program contains: certain from the first line of app
   code, and the same for the whole process. A boolean is the right model
   here, so the shape stays a list.
-- It is frozen (`Object.freeze`), so it is data an app can trust.
-- Native code has one source for it. `flux::capabilities()` and the engine
-  list are built from the same function. The gui seam's list and an
-  embedder's modules join through one registration path, never through a
-  second hand-kept copy.
+- It is frozen (`Object.freeze`), so it is data an app can trust. The
+  freeze runs after the whole plugin chain, since the gui seam, an
+  embedder's modules and the test host's overrides all add names as
+  plugins today.
+- Native code has one source for it. `flux::capabilities()`, the engine
+  list and the dev client's report are built from the same function. The
+  gui seam's list and an embedder's modules join through one registration
+  path, never through a second hand-kept copy.
+- **A capability the project switched off is absent from the list**, like
+  a module not compiled in. "The developer left it out" is a packaging
+  fact, fixed for the process and the same on every platform, so it is a
+  build fact, not a permission state. This needs the packed program to
+  carry its resolved capability set (`resolveCapabilities` in
+  `packages/cli/src/lib/project.ts`) to the runtime; the Android manifest's
+  `requestedPermissions` is a cross-check there, not the source, since
+  desktop has no manifest. The module import still works and its calls
+  reject with `NotSupportedError`, as haptics already warns once and plays
+  nothing (fixes 4 in one place for every capability).
 - The platform names (link, dialog, share, clipboard-image, haptics) leave
   it and move to availability (2). camera, microphone and audio stay as
   build names ("the module is here"), and their device half moves to (2).
@@ -144,9 +177,9 @@ Two rules make this exact, not advisory:
 - **A call corrects the fact.** When a call fails because the facility is
   absent (SDL's "driver unsupported", ore's `DialogError::Unavailable`,
   `LinkError::Unavailable`), ore records `unavailable` and the change is
-  emitted before the call rejects. A call that works on an `unknown`
-  facility records `available`. The second call never repeats the first
-  call's surprise.
+  emitted before the call rejects, whatever the state was. A call that
+  works on an `unknown` facility records `available`. The second call
+  never repeats the first call's surprise.
 - **Show unless unavailable.** The documented app rule is "offer the
   feature unless it is unavailable, and handle `NotSupportedError`". So
   `unknown` never hides a feature that would have worked.
@@ -170,12 +203,20 @@ Placement, by okf/design/platform-layering.md:
   dialog session is `available` in that engine, and the native dev-client
   report states the client's own facts, so the two may differ, as they do
   today, but now by design and visibly.
+- The dev client reports the states beside the list. The console's server
+  panel (`apps/console/src/servers.ts`) and the MCP `list_clients` tool
+  read `info.capabilities` today as "the capability names compiled into
+  that runtime"; once the platform names leave the list, an agent must be
+  able to see "dialog unknown" or "camera denied" on a client without
+  writing an app for it.
 
 Device facilities follow the same contract. camera and microphone are
 `available` when a device is enumerated, `unavailable` when the enumeration
 finished empty, and `unknown` before it finished. SDL's device added and
-removed events keep the state current. haptics is the actuator fact that
-the haptics plan defines.
+removed events keep the state current, the same way the sticky
+`inputDevices` event is meant to (and the touchscreen it misses, okf/tiny.md,
+is fixed by the same rule: a device seen is a device present). haptics is
+the actuator fact that landed, `ore::haptics::available()`.
 
 ### 3. Permission: the web's Permissions API, simplified
 
@@ -190,15 +231,19 @@ design), and simplify the semantics:
   TCC, Android before the first request). ore's `request` stops answering
   `true` for "nothing to ask ahead of use". It answers with the state, and
   the open still reports the OS's decision.
-- A capability that the project switched off is `"denied"` permanently.
-  This needs the packed app to know its declared capabilities. On Android,
-  ore can read whether the manifest declares the permission
-  (`PackageManager` `requestedPermissions`), so no new packaging data is
-  needed there.
+- A capability the project switched off never reaches this layer: it is
+  absent from the build list (1), so a query for it answers as for an
+  unknown name. The permission state is the user's answer only.
 - The names are the project's capability names (camera, microphone,
-  haptics, later location and notifications), the same vocabulary as
-  `"solidrt": { "capabilities" }`. One word per thing across the
-  packaging and the runtime.
+  haptics, later location and notifications), the same vocabulary as the
+  project config. One word per thing across the packaging and the runtime.
+- The per-open session state stays. `Pending | Approved | Denied` on a
+  camera or microphone session is the progress of one open (the OS prompt
+  is up, the device streams, the device was refused), and
+  `createCamera`'s `error()` keeps reporting it. The standing permission
+  is a different fact: `prompt` is what a session reads before its open
+  goes `Pending`, and a `Denied` open settles the permission to `denied`.
+  Neither replaces the other.
 
 Engine-level traps that the implementation must face, not skip:
 
@@ -221,44 +266,67 @@ Engine-level traps that the implementation must face, not skip:
 
 ### What stays as it is
 
-- Core's `capabilities` (hover, touch, keyboard nav, window size class)
-  are a different thing: input affordances derived from the environment
-  for the policy layer. They keep their reactive shape. The shared word
-  "capabilities" across three meanings (this list, the project config, the
-  core affordances) is the second open decision.
+- Core's `capabilities` (hover, touch, keyboard nav, window size class,
+  `packages/core/src/capabilities.ts`) are a different thing: input
+  affordances derived from the environment for the policy layer. They
+  keep their reactive shape and their name (see the second open decision).
 - Fidelity stays in each module (haptics `support`, `"wasm-native"`).
 - A missing module still fails at import, as now.
 
+## Neighbors that build on this
+
+Three open items reach for the list or the permission question, and
+should adopt the three states from the start rather than add a boolean
+each:
+
+- [location-module](location-module.md) promises "availability by name
+  via Flux.capabilities" and permission as an `error()` state. Its build
+  fact is the module, its availability is GeoClue2 or the platform
+  service, and its permission is a `navigator.permissions` name.
+- [runtime-policy-registry](runtime-policy-registry.md) borrows the
+  "`Flux.capabilities`-style ask by name" shape for the read side of
+  policies. The build list stays a list; the reactive availability
+  surface is the shape a policy's current value wants.
+- okf/tiny.md, "Android touch device list" and "packed Android apps", are
+  the hotplug case and the switched-off-capability case of this note,
+  seen once each.
+
 ## Sequencing
 
-Start after haptics lands (okf/plans/haptics.md, in progress now). That
-plan adds "haptics" to the list as an actuator fact and adds a `support`
-query, which is exactly a device fact plus fidelity. Changing the
-vocabulary under it while it is built would make both pieces of work
-wrong. When it is finished, read what landed, and make its actuator fact
-the first availability that moves out of the list (its `support` stays).
+Haptics landed first ([haptics](../done/haptics.md)): its actuator fact
+(`ore::haptics::available()`) is a device fact and its `support` query is
+fidelity, which is exactly the split this note draws. Its actuator fact is
+the first availability that moves out of the list; `support` stays.
 
 Then, in order, each step complete on its own:
 
-1. One native source for the build list, frozen in JS (fixes 8).
+1. One native source for the build list, frozen in JS after the plugin
+   chain, and the project's switched-off capabilities absent from it
+   (fixes 4, 8). The five test-host overrides keep working through this
+   step: they are plugins, so they run before the freeze, and they leave
+   the list in step 2.
 2. `ore::Availability` and the sticky event, with dialog, link, share,
-   clipboard-image and haptics moved to it. The dialog gets the
-   introspection probe and the call-corrects-fact rule (fixes 1, 2, 7 for
-   these facilities). Close [android-tv-dialog-stub](android-tv-dialog-stub.md)
-   and [file-dialogs-no-picker-device](file-dialogs-no-picker-device.md)
+   clipboard-image and haptics moved to it, and the test-host overrides
+   with them. The dialog gets the introspection probe and the
+   call-corrects-fact rule (fixes 1, 2, 7 for these facilities). Close
+   [android-tv-dialog-stub](android-tv-dialog-stub.md) and
+   [file-dialogs-no-picker-device](file-dialogs-no-picker-device.md)
    through it: the stub resolution can be `unknown` if the stub cannot be
    told apart reliably, and the first cancel-at-once then is not evidence
-   enough to correct, so the stub check stays the real fix there.
+   enough to correct, so the stub check stays the real fix there. The dev
+   client's info message carries the states from this step on.
 3. Device availability for camera, microphone and audio output, with
-   hotplug (fixes 3).
+   hotplug (fixes 3, and the touchscreen line in okf/tiny.md by the same
+   rule).
 4. `navigator.permissions` over a widened `ore::permission` (camera added
-   beside the microphone, the asked-before bit, state on resume), with the
-   project's switched-off capabilities read as denied (fixes 4, 5, 6).
+   beside the microphone, the asked-before bit, state on resume), with
+   the session state mapped as above (fixes 5, 6).
 
 ## Done looks like
 
-- `Flux.capabilities` is frozen and lists build facts only, and the dev
-  client's report comes from the same function.
+- `Flux.capabilities` is frozen and lists build facts only, a switched-off
+  capability is absent from it on every platform, and the dev client's
+  report comes from the same function.
 - On the TV, the dialog is `unavailable` (or `unknown`, settled by its
   first call), never `available` with a cancel. On a Linux session with
   no FileChooser backend and no zenity, the dialog reads `unknown` at
@@ -270,13 +338,16 @@ Then, in order, each step complete on its own:
 - On Android, the camera's permission reads `prompt` before the first
   request, `granted` or `denied` after the answer, `denied` after a "don't
   ask again", and `prompt` again after an "only this time" grant expires.
-  A packed app with `"camera": false` reads `denied` and never shows a
-  prompt.
+  A packed app with `"camera": false` has no "camera" in its list and
+  never shows a prompt.
 - Headless tests set availability and permission states through the test
   host and read the app's reaction.
-- `packages/flux-types`, `docs/runtime/index.md` ("Capabilities, not
-  platforms") and the core AGENTS topic state the three questions and the
-  "show unless unavailable" rule.
+- `list_clients` and the console's server panel show a client's
+  availability and permission states beside its build list.
+- `packages/flux-types` (`capabilities` as `readonly string[]`),
+  `docs/runtime/index.md` ("Capabilities, not platforms") and the core
+  AGENTS topic state the three questions and the "show unless
+  unavailable" rule.
 
 ## Open decisions
 
@@ -284,11 +355,14 @@ Then, in order, each step complete on its own:
    so `Flux.availability(name)` fits the module surface rule. A sticky
    event named for it is the reactive path. No web standard exists to
    borrow.
-2. **The three meanings of "capabilities".** Keep the word for build facts
-   (the runtime's) and the project config (the app's declared needs), and
-   rename core's input affordances (`affordances`)? Or rename the project
-   config key to `permissions`, which is what it maps to? Decide once, with
-   no backwards compatibility to keep.
+2. **The three meanings of "capabilities".** Recommendation: rename the
+   project config key to `permissions`. The packer maps it one-to-one
+   onto declared permissions today (`ANDROID_CAPABILITY_PERMISSIONS`), and
+   the `vibration` to `haptics` rename showed there is no compatibility to
+   keep. `Flux.capabilities` keeps the word for build facts, and core's
+   input affordances keep theirs, since that name ships in every
+   scaffold. Decide once, before step 1 carries the resolved set to the
+   runtime under one name or the other.
 3. **Whether `unknown` from a probe in flight should be seen at all.** The
    alternative is that the engine waits for the fast probes before the
    first app line, so only "only a call can tell" is ever unknown. That

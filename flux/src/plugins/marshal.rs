@@ -62,6 +62,20 @@ pub fn string_opt<'js>(ctx: &Ctx<'js>, opts: &Object<'js>, key: &str, api: &str)
   }
 }
 
+/// An optional boolean of an options object: `None` when absent,
+/// `undefined` or `null`, a throw naming `api` and the key when it is
+/// anything but a boolean.
+pub fn bool_opt<'js>(ctx: &Ctx<'js>, opts: &Object<'js>, key: &str, api: &str) -> rquickjs::Result<Option<bool>> {
+  let v: Value = opts.get(key)?;
+  if v.is_undefined() || v.is_null() {
+    return Ok(None);
+  }
+  match v.as_bool() {
+    Some(b) => Ok(Some(b)),
+    None => Err(Exception::throw_type(ctx, &format!("{api}: {key} must be a boolean"))),
+  }
+}
+
 /// Bridge a fallible native async op that completes by itself to a JS
 /// promise. The engine is held as work in flight (of `kind`, see
 /// `PendingOps`) from this call until the op ends, and the outcome is wrapped

@@ -2,6 +2,8 @@ pub mod dir;
 pub mod file;
 pub mod fs;
 #[cfg(feature = "http")]
+pub mod host_limit;
+#[cfg(feature = "http")]
 pub mod http_client;
 pub mod image;
 pub mod isolate;

@@ -8,7 +8,7 @@ use rquickjs::JsLifetime;
 #[cfg(feature = "http")]
 use forge::fetch::{Client, HostLimits};
 #[cfg(feature = "http")]
-use std::rc::Rc;
+use std::sync::Arc;
 
 // The runtime's own product token (FLUX_VERSION is the git-describe build
 // stamp, see build.rs). Embedders replace it with their identity via
@@ -16,20 +16,17 @@ use std::rc::Rc;
 #[cfg(any(feature = "http", feature = "video"))]
 const USER_AGENT: &str = concat!("FluxRT/", env!("FLUX_VERSION"));
 
-/// Browser convention for per-host connection concurrency on HTTP/1.1.
-#[cfg(feature = "http")]
-const FETCHES_PER_HOST: usize = 6;
-
 /// The engine's fetch client (`forge::fetch::Client`), one per context.
 #[cfg(feature = "http")]
 #[derive(Clone, JsLifetime)]
 pub(crate) struct HttpClient(#[qjs(skip_trace)] pub Client);
 
-/// The engine's per-host fetch limits, one per context: every client the
-/// engine sends through shares them, so a server sees one app.
+/// The app's per-host fetch limits (`EngineConfig::fetch_limits`), stored
+/// per context: every client of every engine of the app, isolates included,
+/// sends through the same ones, so a server sees one app.
 #[cfg(feature = "http")]
 #[derive(Clone, JsLifetime)]
-pub(crate) struct FetchLimits(#[qjs(skip_trace)] pub Rc<HostLimits>);
+pub(crate) struct FetchLimits(#[qjs(skip_trace)] pub Arc<HostLimits>);
 
 /// The user agent every HTTP request from this engine carries:
 /// `FluxEngineBuilder::user_agent`, read off the stored engine config, else
@@ -47,5 +44,6 @@ pub(crate) fn init_http(ctx: &Ctx<'_>) {
   let agent = user_agent(ctx);
   let client = HttpClient(Client::new(&agent).expect("build http client"));
   ctx.store_userdata(client).expect("store http client");
-  ctx.store_userdata(FetchLimits(Rc::new(HostLimits::new(FETCHES_PER_HOST)))).expect("store fetch limits");
+  let limits = ctx.userdata::<crate::engine::EngineConfig>().expect("engine config userdata").fetch_limits.clone();
+  ctx.store_userdata(FetchLimits(limits)).expect("store fetch limits");
 }

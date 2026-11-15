@@ -1,6 +1,6 @@
 // Encoding: the configuration, the packet, the contract every video encoder
 // backend meets (libvpx off Android, AMediaCodec on it: see
-// okf/plans/video-encode.md) and the RGBA to I420 conversion a source's
+// okf/done/video-encode.md) and the RGBA to I420 conversion a source's
 // frames take on the way in. The recorder (record.rs) drives one encoder
 // per clip; nothing here knows a container or a thread.
 

@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::forge_plugins::http_client::FetchClient;
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
-use crate::plugins::marshal::{with_in_flight, CopyBytes, OptArg};
+use crate::plugins::marshal::{bool_opt, with_in_flight, CopyBytes, OptArg};
 use crate::standards_plugins::abort::AbortSignal;
 use crate::standards_plugins::body::{is_async_iterable, pump_async_iterable};
 use crate::standards_plugins::headers::header_pairs_from_init;
@@ -28,8 +28,13 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
   let fetch_fn = Function::new(
     ctx.clone(),
     MutFn::from(fetch_builder(move |ctx, url: String, opts| {
+      // `slot: false` skips the per-host slot (not a cooldown).
+      let slot = match opts.0.as_ref() {
+        Some(o) => bool_opt(&ctx, o, "slot", "fetch")?.unwrap_or(true),
+        None => true,
+      };
       // A `createHttpClient` client, else the engine's; both send through
-      // the engine's per-host limits.
+      // the app's per-host limits.
       let custom: Option<Class<FetchClient>> = match opts.0.as_ref() {
         Some(o) => o
           .get::<_, Option<Class<FetchClient>>>("client")
@@ -89,9 +94,9 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
       let net = async move {
         match (cache, cache_mode) {
           (Some(cache), Some(mode)) => {
-            do_fetch_cached(&client, &limits, &method, &url, headers, body, cache, mode).await
+            do_fetch_cached(&client, &limits, slot, &method, &url, headers, body, cache, mode).await
           }
-          _ => do_fetch(&client, &limits, &method, &url, headers, body).await,
+          _ => do_fetch(&client, &limits, slot, &method, &url, headers, body).await,
         }
       };
 

@@ -2,6 +2,7 @@
 title: Encode video and audio
 description: The runtime decodes VP9 and Opus but cannot encode either, so an app cannot record its camera and microphone to a file or send them anywhere; a VP9 encoder (libvpx off Android, MediaCodec on it), an Opus encoder and a WebM writer in forge, fed natively from the camera tap and the microphone ring, surfaced as `record()` in flux:video; recording to a file first, the window as a second source, video chat over p2p as the later consumer of the same pipe.
 created: 2026-10-16
+completed: 2026-11-14
 ---
 
 # Encode video and audio
@@ -100,7 +101,7 @@ rec.error()                  // VideoError | null, like a player's
   decoder is bound (`forge/src/audio/opus/ffi.rs`). The encoder is in the
   library already, so Opus costs only its ffi and whatever the linker now
   keeps.
-- **MediaCodec** is bound in `forge/src/video/mediacodec.rs` for decoding;
+- **MediaCodec** is bound in `forge/src/video/mediacodec/` for decoding;
   an encoder is the same API in the other direction
   (`MediaCodec::from_encoder_type` exists in ndk 0.9).
 - **The WebM reader** (`forge/src/video/webm.rs`) is ours and already
@@ -110,8 +111,9 @@ rec.error()                  // VideoError | null, like a player's
   frames with SDL tick timestamps; **the microphone ring**
   (`alloy::microphone::MicrophoneTap`) is read by cursor from any thread
   and its `opened_ns` is on the same timeline, so sync costs nothing.
-- **Live playback** (mode 2) is designed but deferred in
-  [[video-streaming]]; the receiving end of a chat or screencast needs it.
+- **Live playback** (mode 2) was designed but deferred in
+  [[video-streaming]]; the receiving end of a chat or screencast needs it,
+  and step 6 built it.
 
 ## Shape
 
@@ -161,10 +163,11 @@ playback adapts alloy's sinks to `FrameSink` and `AudioSink`.
 `flux/src/alloy_plugins/record.rs` exports `record`: `TapInput` adapts
 `FrameTap::wait_newer`, `MicInput` adapts `MicrophoneTap::wait` and
 `read_into` (whose `MicRead::timestamp_ns` places the block on the SDL
-ticks), and the recorder attaches both. A cut-out's box in device pixels is
-the rendertree's `device_box` (the pixels the paint covers). Engine teardown stops every open recording
-with a bounded join and the writer closes the file; nothing outlives the
-engine. Types in `gui/video.d.ts`, `"video-encode"` in the gui
+ticks), and the recorder attaches both. A cut-out's box in device pixels
+is the rendertree's `device_box` (the pixels the paint covers). Engine
+teardown stops every open recording with a bounded join and the writer
+closes the file; nothing outlives the engine. Types in
+`packages/flux-types/gui/video.d.ts`, `"video-encode"` in the gui
 capabilities.
 
 ### The window tap (alloy)
@@ -227,75 +230,51 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
    after a drop; a two-way loopback test through a relay in the record
    suite. Built 2026-10-17; laptop host to tablet guest verified one way
    (the tablet has no VP9 encoder and joins receiving only, by the
-   decision above); the two-way run, the latency read and the live
-   bitrate measurement wait for the Pixel (see Open).
+   decision above); the two-way run and the latency read followed on the
+   Pixel (Findings); the live bitrate is a follow-up.
 
-## Open
+## Follow-ups
 
-- **Devices without a VP9 encoder** (decided 2026-10-16: left
-  `unsupported`, to be revisited when a need arises). The SM-T500 is one
-  (see Findings): its hardware encoders are AVC and HEVC, the platform's
-  software VP9 encoder is excluded on slow-cpu devices, and its software
-  VP8 (`OMX.google.vp8.encoder`, libvpx, declared 21-30 fps at 720p) is
-  the only royalty-free encoder it has. The two ways to serve such a
-  device, when wanted: libvpx's own VP9 encoder built for Android too
-  (+1.3 MB, the same library at our realtime settings; MediaCodec stays
-  first where it has VP9), or VP8 as a second codec through the whole
-  pipe (writer and reader ids, the VP8 decoder on in libvpx, the VP8 mime
-  in the MediaCodec paths, codec selection in the players, the live form)
-  for roughly twice the software speed. The Pixel 7's
-  `c2.exynos.vp9.encoder` is hardware, up to 3840x2176, declared 160-240
-  fps at 720p.
-- **Pixel format into the encoder.** The tap holds upright RGBA, so each
-  frame is converted to I420 on the recorder thread. Cheap at 640x480; at
-  720p30 measure it before deciding whether the tap should also expose the
+Closed 2026-11-14. Open work left by this item:
+
+- The Pixel's hardware encoder runs at a third of the bitrate asked, a
+  soft picture: [[mediacodec-vp9-bitrate-undershoot]].
+- Keyframe on demand, a bitrate that follows the link, and QUIC
+  datagrams if the stall-and-cut shows: [[live-video-link-adaptation]].
+- Two peers behind different NATs stay on the relay (no QUIC address
+  discovery), and whether `sol run` serves a relay is undecided:
+  [[p2p-relay-across-nats]].
+- A reload while casting left the Pixel's old engine stuck in teardown
+  once: [[android-caster-reload-teardown]].
+- The stepped host deadlocks a live player against a blocking raster
+  call: [[headless-live-take-deadlock]].
+- The call's redial after a network drop is covered by the code path but
+  was never read on a device: a line in okf/tiny.md (Runtime).
+
+Settled while open, kept here for the trail:
+
+- **Devices without a VP9 encoder** stay `unsupported` (decided
+  2026-10-16), a documented limitation with the two ways to serve them in
+  okf/notes/android-vp9-encoders.md.
+- **Pixel format into the encoder.** The RGBA to I420 conversion on the
+  recorder thread is cheap enough at 640x480 and 720p
+  (okf/notes/video-encode-measurements.md); the tap does not expose the
   camera's native YUV.
-- **Transport and framing** (step 6 took WebM over one reliable, ordered
-  byte stream: the mode-2 reader as is, a TCP connection or a p2p stream
-  alike; a lost packet stalls everything behind it, which the live
-  catch-up then cuts). Step 7 added the self-hosted relay; the phone's
-  direct UDP stall is upstream's (Findings). Still open: QUIC datagrams
-  with keyframe requests if the stall-and-cut shows, and keyframe on
-  demand plus a bitrate that follows the link, which the call does not
-  need yet (a dropped connection is a fresh recording, which begins on a
-  keyframe).
-- **The call's delay.** Read by eye on the laptop and Pixel call
-  (2026-10-17): about a second. That was the live resume floor of the
-  time (the stream low water plus 250 ms, 0.75 s) plus the pipe, the same
-  figure the screencast gave, and a `latency` of 0.3 s could not go below
-  it. The floor is 0.15 s since 2026-10-20 ([[live-latency-floor]], done:
-  the live thresholds follow the `latency` option, a stall's backlog is
-  skipped back to the latency); the call runs at it on the laptop and the
-  Pixel over the relay with no buffering episode, no skipped or late
-  frame and no cut over a minute each way, and the glass to glass delay
-  read off the laptop's clock in the Pixel's picture of it is 0.2 to
-  0.3 s (okf/done/live-latency-floor.md).
-- **Owed on the Pixel 7**: the live bitrate (its
-  hardware encoder gave 240 kbit/s at 324x720 under a 700 kbit/s budget
-  in CBR mode, a soft picture: see whether the mode takes, or raise the
-  live default). The two-way call itself ran 2026-10-17 (Findings). The
-  phone as the sender over a direct path ran 2026-11-03 after the iroh
-  1.4.1 bump (okf/upstream/noq-udp-android-eio-ecn-cmsg-send-stall.md,
+- **The call's delay.** About a second at first (2026-10-17): the live
+  resume floor of the time (the stream low water plus 250 ms, 0.75 s)
+  plus the pipe, which a `latency` of 0.3 s could not go below. The floor
+  is 0.15 s since 2026-10-20 ([[live-latency-floor]]: the live thresholds
+  follow the `latency` option, a stall's backlog is skipped back to the
+  latency); the call runs at it on the laptop and the Pixel over the
+  relay with no buffering episode, no skipped or late frame and no cut
+  over a minute each way, 0.2 to 0.3 s glass to glass.
+- **The Pixel as a sender over a direct path** ran 2026-11-03 after the
+  iroh 1.4.1 bump (okf/upstream/noq-udp-android-eio-ecn-cmsg-send-stall.md,
   resolved): live both ways on `path mixed`. A fresh endpoint's first
   call stalled 15 s until forge built Android endpoints without GSO
   (okf/upstream/noq-udp-android-gso-eio-first-call-stall.md); with that,
   the first call is live by +4 s and `paths: "relay"` is no longer needed
   for this phone.
-- **The relay across NATs.** Without a QUIC address-discovery listener
-  (TLS, so a self-signed certificate the clients would have to accept)
-  the endpoints learn no public address from the relay, so two peers on
-  different networks are carried by the relay and never find a direct
-  path; and whether `sol run` should serve a relay for its dev clients
-  is undecided.
-- **A drop's redial on a device.** The guest's redial after a network
-  drop is covered by the code path (the far picture failing after it
-  played, the pipe failing) and the host's side was seen (a lost
-  connection reported within 45 s of the tablet's Wi-Fi going off), but
-  the tablet's dev client reloads the app when it reconnects to the dev
-  server, which reset the guest before its redial could be read; a
-  packed app or a drop that spares the dev connection would show it.
-- **The stepped host deadlocks a live player against a blocking raster
-  call** (found by the call test): [[headless-live-take-deadlock]].
 
 ## Not in scope
 
@@ -322,10 +301,17 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   as unbounded.
 - Two devices in a screencast (done 2026-10-16, over TCP on the local
   network) and then a video call,
-  glass-to-glass latency measured and stated, a dropped connection
-  recovering on a keyframe (step 6).
+  glass-to-glass latency measured and stated (0.2 to 0.3 s), a dropped
+  connection recovering on a keyframe (the code path is covered; the read
+  on a device is a follow-up).
 
 ## Findings
+
+The measurements are in okf/notes/video-encode-measurements.md, the
+Android encoder facts (the SM-T500 has none, the Pixel's pads its output)
+in okf/notes/android-vp9-encoders.md, and the recording test traps in
+okf/notes/headless-verification-traps.md. What follows is how the work
+went.
 
 - **The pause is two times, not a flag.** A first version measured the
   gap from the last input taken to the first after the resume, which also
@@ -358,84 +344,14 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   microphone's open already worked: the pump task settles the promise
   itself with the status the session left Pending on, and the tick settles
   whatever it reaches first. A camera test covers the outside-mount open.
-- **Test traps.** The test microphone must be installed before `mount` for
-  the app's open to find it; a clip installed later reaches an open
-  session, and only samples pushed after `record()` started are heard (the
-  tap's cursor starts at the present). The test microphone's clip arrives
-  at once, not paced. The still camera stamps frames 0 and publishes one
-  frame per install.
-- **Laptop webcam, 2026-10-16** (i5-1340P, release client, 640x480 UVC
-  camera at about 24 fps): the recorder thread spends 2.8 ms per frame on
-  the RGBA to I420 conversion plus the VP9 encode (cpu-used 7, 4 threads,
-  2 tile columns), no camera frame dropped over 10 s clips, the process at
-  about a fifth of a core more than idle, and the UI thread unaffected
-  (p95 0.5 ms, no slow frames in the `/stats` windows during three
-  recordings, their starts included). A 12 s clip with Opus mono is
-  1.2 MB, 770 kbit/s against the 920 kbit/s default budget. One window of
-  the very first recording in the process showed 16 paints of 50 ms on
-  the status text's changes; three later recordings showed none, so it
-  is not understood and not reproduced.
-- **The recorded file reads in ffprobe and decodes whole in ffmpeg**
-  (VP9 640x480, Opus 48 kHz mono, Duration and Cues present), so the
-  writer's output is not only what our reader accepts.
 - **CI** runs the forge tests with `video-encode` (the encoder, writer and
   recorder tests) and the workspace tests with `flux/video-encode`.
-- **The window tap on the laptop, 2026-10-16** (i5-1340P, release client,
-  Mesa, 1280x720 window at scale 1, the camera viewfinder streaming so
-  every refresh draws): a 19.5 s screencast at the window's size took
-  1172 frames, 60 per second, with the raster thread spending 0.18 ms per
-  frame issuing (the blit and the pack-buffer read) and 0.71 ms completing
-  (the fence check, the row-reversing copy out of the mapped buffer, the
-  publish), and the recorder 4.5 ms per 720p frame (RGBA to I420 plus VP9).
-  Scaled to 640x360 it is 0.29 ms issue, 0.47 ms map and 2.3 ms per frame
-  in the recorder. No frame dropped, no missed present, no slow frame, GPU
-  frame time 0.6 ms, UI p95 0.6 ms during the recording. The clips (2.8
-  Mbit/s at 720p, 0.7 at 360p) decode whole in ffmpeg and a frame read
-  back from one is upright, the stats overlay included. The feeder misses
-  the very last frame at the stop (the stop flag and the close race its
-  wait), one frame per clip; left as is.
-- **Pixel 7, 2026-10-16** (Tensor G2, Android 17, release client, the
-  MediaCodec encoder `c2.exynos.vp9.encoder` in hardware, planar I420
-  input accepted at the first try): a screencast of the 411x914-point
-  window at 720 lines (324x720 pixels) ran 2268 frames in 37.7 s, 60 per
-  second, at 6.5 ms per frame on the recorder thread (the I420 convert
-  plus the codec's input copy and the output drain; the codec itself runs
-  on its own threads), 162x360 at 5.1 ms, and the 480x640 camera with the
-  microphone at 5.5 ms: the cost is mostly per call, not per pixel. No
-  frame dropped, no missed present in the window, UI p95 3.2 ms, GPU
-  frame time 5.3 ms. Every clip decodes whole in ffmpeg (the hardware
-  clips are small: 240 kbit/s at 324x720, well under the budget), a
-  screencast frame read back is upright, and the camera clip carries
-  Opus at 48 kHz. The encoder's output pts equal its input pts, one
-  block per frame; no superframes seen.
-- **SM-T500 has no VP9 encoder at all** (Android 12, found 2026-10-16):
-  `AMediaCodec_createEncoderByType` returns none. The platform's
-  `c2.android.vp9.encoder` is declared `variant="!slow-cpu"` in the
-  swcodec apex and the tablet is a slow-cpu device: its vendor list
-  includes `media_codecs_google_video_le.xml`, whose encoders are H.263,
-  H.264, MPEG-4 and VP8 only. The earlier reading of the XML (Open, above)
-  missed the variant. Decided the same day: left `unsupported` there,
-  the options recorded under Open.
-- **A hardware encoder's output buffers carry padding after the frame**
-  (Pixel 7, `c2.exynos.vp9.encoder`, found 2026-10-16 on the first live
-  cast): zeros mostly, a run of 0xff on some frames (sixty of a 223-byte
-  frame). libvpx finds a frame's end where its arithmetic decoder stopped,
-  skips zero padding, and takes a nonzero run for a second frame with an
-  invalid marker, after which every frame until a keyframe is refused;
-  ffmpeg's VP9 decoder ignores trailing bytes, which hid it from the file
-  checks. Our demuxer was blameless (ffmpeg's extracts the same block). The
-  fix is on our decoder's input: a block without a superframe index is
-  handed to libvpx as a one-frame superframe stating its length (VP9 Annex
-  B), so it decodes exactly the block. The first second of such a stream
-  is a fixture (`forge/src/tests/data/pixel_live.webm`) with a test
-  decoding all sixty frames.
 - **Laptop to tablet over p2p, 2026-10-16**: the laptop's window (1280x720
   at 720 lines, libvpx, live mode) cast to the SM-T500 over a local-only
   IPv4 direct path, the tablet playing it through the texture player
-  (MediaCodec decode) at 59 fps with 12 missed presents per 10 s window
-  and no buffering episode; the delay read off the caster's clock in the
-  tablet's picture is about 0.8 s, which is the live resume floor (0.75 s)
-  plus the pipe, at a `latency` of 0.3 s. The sender spends 37 KB/s. A
+  (MediaCodec decode) with no buffering episode, about 0.8 s behind: the
+  live resume floor of the time (0.75 s) plus the pipe, at a `latency` of
+  0.3 s (the figures in okf/notes/video-encode-measurements.md). A
   debug command on each role (`ticket` on the shower, `cast <ticket>` on
   the caster) drives a cast without the camera.
 - **The Pixel 7 as a caster stalls over `flux:p2p`'s direct UDP path**:
@@ -454,16 +370,12 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   shower's local address; `flux:p2p` stays for a later item (a self-hosted
   relay is the way to carry this phone, no public relay).
 - **Over TCP, 2026-10-16**: Pixel to laptop and Pixel to tablet both play
-  at 60 fps, about 0.8 s behind the caster's clock (the live resume floor),
-  the tablet with 1 missed present per 10 s and no buffering, the laptop
-  with 8; the Pixel's hardware encoder at the default budget for 324x720
-  (about 240 kbit/s) gives a soft picture, so the live default bitrate is
-  worth raising. Open: a reload of the caster app while it cast left the
-  Pixel's old engine stuck in its teardown once (the swap never built a
-  frame; a force-stop recovered it); the same scene headless on the laptop
-  (a TCP loopback cast left open at the test's end) tears down cleanly,
-  so the device-side cause (the MediaCodec encoder's flush, the window
-  tap, the camera) is not pinned down.
+  at 60 fps, about 0.8 s behind the caster's clock (the live resume
+  floor). The Pixel's hardware encoder at the default budget for 324x720
+  (about 240 kbit/s) gives a soft picture
+  ([[mediacodec-vp9-bitrate-undershoot]]). A reload of the caster app
+  while it cast left the Pixel's old engine stuck in its teardown once
+  ([[android-caster-reload-teardown]]).
 - **The Pixel's upload stall is a noq-udp bug, not the direct path** (found
   2026-10-17, from the phone's `sendmsg error ... EIO ... ecn: Ect0,
   segment_size` line): the pinned noq-udp halts GSO on an EIO but drops the
@@ -490,19 +402,14 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   HTTP latency counts, and the endpoint was online (its ticket carrying
   the relay) only after 3 s; built as `RelayConfig::new(url, None)` it is
   online in 0.2 s. Without address discovery the endpoint learns no public
-  address from the relay, which a pair across two NATs would need to find
-  a direct path: on one network it is moot, and a TLS QUIC listener on the
-  relay (self-signed, so the clients would have to skip verification) is
-  the later item if it ever matters. The relay admits its own token only
+  address from the relay: on one network it is moot
+  ([[p2p-relay-across-nats]] for two). The relay admits its own token only
   (a fresh 32-byte one per relay, checked on the websocket upgrade's
   bearer header through iroh-relay's access hook), carried as the user
   part of the relay URL (`http://<token>@host:port/`): an endpoint strips
   it into its relay config and its ticket writes it back, so the guest
   gets it from the QR, and a port reachable from further away is not an
-  open relay. The flux binary (release, unstripped,
-  Linux x64) grows from 57.06 MB to 59.52 MB with the feature: iroh-relay's
-  server pulls clap, tokio-rustls-acme, rcgen and the cert reloading crates
-  on top of what iroh's client half already linked.
+  open relay. The size row is in okf/notes/video-encode-measurements.md.
 - **The call on devices, 2026-10-17** (laptop host, SM-T500 guest, the
   laptop serving the relay, the tablet dialing the ticket through
   `call_debug call <ticket>`): the tablet has no VP9 encoder, so its
@@ -518,8 +425,7 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   connected again; Wi-Fi off on the tablet had the host report the lost
   connection within 45 s. The player's `finished` and `buffering` are
   plain reads, so a status text over them must poll them into signals,
-  which the screencast's player does not (it reads them in JSX and goes
-  stale).
+  which the screencast's player does not (a line in okf/tiny.md).
 - **The record suite deadlocked the headless host one run in four** with
   the two-way call test, by a hazard older than the test: under the
   stepped clock a playing live player's frame take waits for a frame due
@@ -546,7 +452,3 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   went stale when a second camera appeared mid-session (the open named a
   `/dev/video2` that had moved), cured by a fresh client, so a camera
   that fails to open after a hotplug is the SDL list, not the app.
-- **A stepped test records nothing from a window at rest**: `frame()` of
-  the test host steps app time without demanding a draw, so the screen
-  tests move a box every frame. The recording's start demands one frame
-  of its own, so a real screencast begins with the screen as it is.

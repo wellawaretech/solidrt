@@ -134,7 +134,25 @@ pub struct EngineConfig {
   #[cfg(feature = "wasm")]
   #[qjs(skip_trace)]
   pub wasm: Option<forge::wasm::WasmEngine>,
+  /// The app's per-host fetch limits: one per app, so every fetch of the
+  /// root engine and its isolates, through any client, takes the same slots
+  /// and waits out the same cooldown. `build` makes them; an isolate child
+  /// gets its parent's.
+  #[cfg(feature = "http")]
+  #[qjs(skip_trace)]
+  pub fetch_limits: Arc<forge::fetch::HostLimits>,
+  /// The app's TLS client configs (flux:net `connectTls` and `startTls`):
+  /// one cache per app, so a connection resumes a session of an earlier one
+  /// with equal options, in this engine or another isolate of the app.
+  #[cfg(feature = "tls")]
+  #[qjs(skip_trace)]
+  pub tls_client_configs: Arc<forge::tls::ClientConfigs>,
 }
+
+/// Browser convention for per-host connection concurrency on HTTP/1.1: the
+/// slots of the app's `HostLimits`.
+#[cfg(feature = "http")]
+const FETCHES_PER_HOST: usize = 6;
 
 pub struct FluxEngineBuilder {
   plugins: Vec<PluginFn>,
@@ -148,6 +166,10 @@ pub struct FluxEngineBuilder {
   isolate_resolver: Option<IsolateResolver>,
   #[cfg(feature = "wasm")]
   wasm: Option<forge::wasm::WasmEngine>,
+  #[cfg(feature = "http")]
+  fetch_limits: Option<Arc<forge::fetch::HostLimits>>,
+  #[cfg(feature = "tls")]
+  tls_client_configs: Option<Arc<forge::tls::ClientConfigs>>,
   interrupt: Option<Arc<AtomicBool>>,
   on_uncaught: Option<UncaughtHook>,
   busy: Option<Arc<AtomicBool>>,
@@ -166,6 +188,14 @@ impl FluxEngineBuilder {
     #[cfg(feature = "wasm")]
     {
       b.wasm = config.wasm;
+    }
+    #[cfg(feature = "http")]
+    {
+      b.fetch_limits = Some(config.fetch_limits);
+    }
+    #[cfg(feature = "tls")]
+    {
+      b.tls_client_configs = Some(config.tls_client_configs);
     }
     b
   }
@@ -304,6 +334,10 @@ impl FluxEngineBuilder {
       isolate_resolver: self.isolate_resolver,
       #[cfg(feature = "wasm")]
       wasm,
+      #[cfg(feature = "http")]
+      fetch_limits: self.fetch_limits.unwrap_or_else(|| Arc::new(forge::fetch::HostLimits::new(FETCHES_PER_HOST))),
+      #[cfg(feature = "tls")]
+      tls_client_configs: self.tls_client_configs.unwrap_or_else(|| Arc::new(forge::tls::ClientConfigs::new())),
     };
     // The config lands in userdata whole: the fetch and http initializers
     // read their settings from it, and an isolate child inherits it.
@@ -357,6 +391,10 @@ impl FluxEngine {
       isolate_resolver: None,
       #[cfg(feature = "wasm")]
       wasm: None,
+      #[cfg(feature = "http")]
+      fetch_limits: None,
+      #[cfg(feature = "tls")]
+      tls_client_configs: None,
       interrupt: None,
       on_uncaught: None,
       busy: None,

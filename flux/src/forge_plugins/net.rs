@@ -19,8 +19,14 @@
 //!   `close()` releases the port and ends the iteration.
 //! - `connectTls(host, port, opts?)`, `startTls(conn, opts)` and
 //!   `listenTls(port, opts)`: the same `Conn` and `Listener` over TLS, with
-//!   `conn.alpnProtocol` and `conn.peerKey`. Behind the `tls` feature; without
-//!   it the three throw and name it.
+//!   `conn.alpnProtocol`, `conn.peerKey` and `conn.resumed`. `startTls`
+//!   upgrades as the client, or as the server with `isServer: true`.
+//! - `generateCertificate(opts)` -> `{ cert, key, pin }`: an ECDSA P-256 key
+//!   and its certificate (PEM), self-signed or signed by an `issuer`, and the
+//!   key's pin in the `peerKey` form. Synchronous.
+//!
+//!   These four are behind the `tls` feature; without it they throw and
+//!   name it.
 //! - `udp(opts?)` -> `Udp`: `send` / `recv` plus the broadcast / multicast knobs
 //!   the peer beacon needs; `close()` releases the socket and resolves a pending
 //!   `recv` with `null`.
@@ -115,7 +121,7 @@ fn net_listen<'js>(
 #[cfg(feature = "tls")]
 const TLS_TIMEOUT_MS: u64 = 10_000;
 
-/// `connectTls(host, port, { timeoutMs?, caCerts?, cert?, key?, pin?, alpn? })`
+/// `connectTls(host, port, { timeoutMs?, caCerts?, cert?, key?, pin?, alpn?, resume? })`
 /// -> `Promise<Conn>`. `host` is the name verified and sent as SNI.
 #[cfg(feature = "tls")]
 fn net_connect_tls<'js>(
@@ -125,12 +131,12 @@ fn net_connect_tls<'js>(
   opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, NetConn>>> + 'js>> {
   let timeout_ms = opt_u64(&opts, "timeoutMs", TLS_TIMEOUT_MS)?;
-  let config = tls_client_config(&ctx, "connectTls", &opts)?;
+  let (config, identity) = tls_client_config(&ctx, "connectTls", &opts)?;
   let name = forge::tls::server_name(&host).map_err(|m| Exception::throw_message(&ctx, &format!("connectTls: {m}")))?;
   let hold = PendingOps::of(&ctx).in_flight("connect");
   let ctx2 = ctx.clone();
   Ok(Promised(async move {
-    let r = forge::net::connect_tls(&host, port, timeout_ms, config, name).await;
+    let r = forge::net::connect_tls(&host, port, timeout_ms, config, name, Some(identity)).await;
     drop(hold);
     match r {
       Ok(conn) => NetConn::create(&ctx2, conn),
@@ -139,37 +145,72 @@ fn net_connect_tls<'js>(
   }))
 }
 
-/// `startTls(conn, { hostname?, timeoutMs?, caCerts?, cert?, key?, pin?, alpn? })`
+/// `startTls(conn, { hostname?, timeoutMs?, caCerts?, cert?, key?, pin?, alpn?, resume? })`
 /// -> `Promise<Conn>`: upgrade a plain `Conn` as the client. `hostname` is
 /// required unless `pin` is given; without it the peer's IP is verified.
+/// With `isServer: true`, as the server: the options are `listenTls`'s
+/// without `host` (`cert`, `key`, `alpn?`, `caCerts?`, `anyClientCert?`),
+/// plus `timeoutMs`.
 #[cfg(feature = "tls")]
 fn net_start_tls<'js>(
   ctx: Ctx<'js>,
   conn: Class<'js, NetConn>,
   opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, NetConn>>> + 'js>> {
-  let throw = |m: String| Exception::throw_message(&ctx, &format!("startTls: {m}"));
-  let hostname = opt_string(&opts, "hostname")?;
-  if hostname.is_none() && opt_string(&opts, "pin")?.is_none() {
-    return Err(throw("hostname is required without a pin".to_string()));
-  }
-  let name = match hostname {
-    Some(host) => Some(forge::tls::server_name(&host).map_err(throw)?),
-    None => None,
-  };
   let timeout_ms = opt_u64(&opts, "timeoutMs", TLS_TIMEOUT_MS)?;
-  let config = tls_client_config(&ctx, "startTls", &opts)?;
+  let role = match &opts.0 {
+    Some(o) if opt_bool(&opts, "isServer")?.unwrap_or(false) => start_tls_server_role(&ctx, o)?,
+    _ => start_tls_client_role(&ctx, &opts)?,
+  };
   let inner = conn.borrow().inner.clone();
   let hold = PendingOps::of(&ctx).in_flight("tls handshake");
   let ctx2 = ctx.clone();
   Ok(Promised(async move {
-    let r = forge::net::start_tls(&inner, timeout_ms, config, name).await;
+    let r = forge::net::start_tls(&inner, timeout_ms, role).await;
     drop(hold);
     match r {
       Ok(conn) => NetConn::create(&ctx2, conn),
       Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
     }
   }))
+}
+
+/// The client role of `startTls`: the client options and the server name
+/// (`hostname`, required without a pin).
+#[cfg(feature = "tls")]
+fn start_tls_client_role<'js>(ctx: &Ctx<'js>, opts: &OptArg<Object<'js>>) -> rquickjs::Result<forge::net::TlsRole> {
+  let throw = |m: String| Exception::throw_message(ctx, &format!("startTls: {m}"));
+  let hostname = opt_string(opts, "hostname")?;
+  if hostname.is_none() && opt_string(opts, "pin")?.is_none() {
+    return Err(throw("hostname is required without a pin".to_string()));
+  }
+  let server_name = match hostname {
+    Some(host) => Some(forge::tls::server_name(&host).map_err(throw)?),
+    None => None,
+  };
+  let (config, identity) = tls_client_config(ctx, "startTls", opts)?;
+  Ok(forge::net::TlsRole::Client { config, server_name, identity: Some(identity) })
+}
+
+/// The server role of `startTls` (`isServer: true`): the server options of
+/// `listenTls`, in a config of its own per call (a server identity serves
+/// one listener or a few upgrades, and its sessions are its own). The
+/// client-only options throw.
+#[cfg(feature = "tls")]
+fn start_tls_server_role<'js>(ctx: &Ctx<'js>, opts: &Object<'js>) -> rquickjs::Result<forge::net::TlsRole> {
+  let throw = |m: &str| Exception::throw_message(ctx, &format!("startTls: {m}"));
+  for client_only in ["hostname", "pin", "resume"] {
+    if opts.get::<_, Option<Value>>(client_only)?.is_some() {
+      return Err(throw(&format!("{client_only} is a client option, not one with isServer")));
+    }
+  }
+  if opts.get::<_, Option<String>>("cert")?.is_none() || opts.get::<_, Option<String>>("key")?.is_none() {
+    return Err(throw("cert and key are required with isServer"));
+  }
+  let alpn = opts.get::<_, Option<Vec<String>>>("alpn")?.unwrap_or_default();
+  let options = tls_server_options(ctx, "startTls", opts, alpn)?;
+  let config = forge::tls::server_config(&options).map_err(|m| throw(&m))?;
+  Ok(forge::net::TlsRole::Server(config))
 }
 
 /// `listenTls(port, { cert, key, host?, alpn?, caCerts?, anyClientCert? })`
@@ -182,21 +223,10 @@ fn net_listen_tls<'js>(
 ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, NetListener>>> + 'js>> {
   let throw = |m: &str| Exception::throw_message(&ctx, &format!("listenTls: {m}"));
   let host = opt_string(&opts, "host")?.unwrap_or_else(|| "0.0.0.0".to_string());
-  let (Some(cert), Some(key)) = (opt_string(&opts, "cert")?, opt_string(&opts, "key")?) else {
-    return Err(throw("cert and key are required"));
-  };
-  let ca_certs = opt_get::<Vec<String>>(&opts, "caCerts")?;
-  let client_auth = match (ca_certs, opt_bool(&opts, "anyClientCert")?.unwrap_or(false)) {
-    (Some(_), true) => return Err(throw("caCerts and anyClientCert exclude each other")),
-    (Some(certs), false) => forge::tls::ClientAuth::Chain(certs.into_iter().map(String::into_bytes).collect()),
-    (None, true) => forge::tls::ClientAuth::AnyKey,
-    (None, false) => forge::tls::ClientAuth::None,
-  };
-  let options = forge::tls::ServerOptions {
-    cert: cert.into_bytes(),
-    key: key.into_bytes(),
-    alpn: opt_get::<Vec<String>>(&opts, "alpn")?.unwrap_or_default(),
-    client_auth,
+  let alpn = opt_get::<Vec<String>>(&opts, "alpn")?.unwrap_or_default();
+  let options = match &opts.0 {
+    Some(o) => tls_server_options(&ctx, "listenTls", o, alpn)?,
+    None => return Err(throw("cert and key are required")),
   };
   let config = forge::tls::server_config(&options).map_err(|m| throw(&m))?;
   let hold = PendingOps::of(&ctx).in_flight("listen");
@@ -211,15 +241,73 @@ fn net_listen_tls<'js>(
   }))
 }
 
-/// The client config of `connectTls` and `startTls` from their options.
+/// The TLS server options (`cert`, `key`, `caCerts`, `anyClientCert`) of
+/// an options object, accepting `alpn`; a missing `cert` or `key`, or both
+/// `caCerts` and `anyClientCert`, throws, prefixed with `api`. `serve` of
+/// flux:http reads the same from its `tls` option.
+#[cfg(feature = "tls")]
+pub(crate) fn tls_server_options<'js>(
+  ctx: &Ctx<'js>,
+  api: &str,
+  opts: &Object<'js>,
+  alpn: Vec<String>,
+) -> rquickjs::Result<forge::tls::ServerOptions> {
+  let throw = |m: &str| Exception::throw_message(ctx, &format!("{api}: {m}"));
+  let (Some(cert), Some(key)) = (opts.get::<_, Option<String>>("cert")?, opts.get::<_, Option<String>>("key")?) else {
+    return Err(throw("cert and key are required"));
+  };
+  let ca_certs = opts.get::<_, Option<Vec<String>>>("caCerts")?;
+  let client_auth = match (ca_certs, opts.get::<_, Option<bool>>("anyClientCert")?.unwrap_or(false)) {
+    (Some(_), true) => return Err(throw("caCerts and anyClientCert exclude each other")),
+    (Some(certs), false) => forge::tls::ClientAuth::Chain(certs.into_iter().map(String::into_bytes).collect()),
+    (None, true) => forge::tls::ClientAuth::AnyKey,
+    (None, false) => forge::tls::ClientAuth::None,
+  };
+  Ok(forge::tls::ServerOptions { cert: cert.into_bytes(), key: key.into_bytes(), alpn, client_auth })
+}
+
+/// The app's TLS client configs (`EngineConfig::tls_client_configs`),
+/// stored per context, so every `connectTls` and `startTls` of the app
+/// shares sessions with the calls of equal options. Isolates share the
+/// parent's: the cache travels in `EngineConfig` with the per-host limits.
+#[cfg(feature = "tls")]
+#[derive(Clone, JsLifetime)]
+pub(crate) struct TlsClientConfigs(#[qjs(skip_trace)] pub Arc<forge::tls::ClientConfigs>);
+
+/// The client config of `connectTls` and `startTls` for their options, and
+/// the options' identity the new `Conn` records. By `resume`: absent or
+/// `true`, the engine's cached config for equal options, so that sessions
+/// resume; `false`, a one-off config that neither offers nor stores one; a
+/// `Conn`, the cached config once that connection's options identity
+/// equals this call's (it throws otherwise).
 #[cfg(feature = "tls")]
 fn tls_client_config<'js>(
   ctx: &Ctx<'js>,
   api: &str,
   opts: &OptArg<Object<'js>>,
-) -> rquickjs::Result<Arc<forge::tls::ClientConfig>> {
+) -> rquickjs::Result<(Arc<forge::tls::ClientConfig>, forge::tls::ClientIdentity)> {
+  let throw = |m: &str| Exception::throw_message(ctx, &format!("{api}: {m}"));
   let options = tls_client_options(ctx, api, opts)?;
-  forge::tls::client_config(&options).map_err(|m| Exception::throw_message(ctx, &format!("{api}: {m}")))
+  let identity = forge::tls::client_identity(&options);
+  let resume = match opt_get::<Value>(opts, "resume")? {
+    None => true,
+    Some(v) => match (v.as_bool(), Class::<NetConn>::from_value(&v)) {
+      (Some(resume), _) => resume,
+      (None, Ok(conn)) => match conn.borrow().inner.client_identity() {
+        Some(theirs) if theirs == identity => true,
+        Some(_) => return Err(throw("resume: the connection's TLS options differ")),
+        None => return Err(throw("resume: not a TLS client connection")),
+      },
+      (None, Err(_)) => return Err(throw("resume must be a boolean or a Conn")),
+    },
+  };
+  let config = if resume {
+    let configs = ctx.userdata::<TlsClientConfigs>().expect("TLS client configs userdata").0.clone();
+    configs.config_for(&options)
+  } else {
+    forge::tls::client_config_without_resumption(&options)
+  };
+  Ok((config.map_err(|m| throw(&m))?, identity))
 }
 
 /// The TLS client options (`caCerts`, `cert`, `key`, `pin`, `alpn`) of a
@@ -248,6 +336,64 @@ pub(crate) fn tls_client_options<'js>(
   })
 }
 
+/// `generateCertificate({ names, validDays?, isCa?, issuer? })` ->
+/// `{ cert, key, pin }`: a fresh ECDSA P-256 key and its certificate, PEM.
+/// Synchronous, as `forge::tls::generate_certificate`.
+#[cfg(feature = "tls")]
+fn net_generate_certificate<'js>(ctx: Ctx<'js>, opts: OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>> {
+  let throw = |m: &str| Exception::throw_message(&ctx, &format!("generateCertificate: {m}"));
+  let names_error = "names must be an array of strings";
+  let Some(names) = opt_get::<Value>(&opts, "names")? else {
+    return Err(throw(names_error));
+  };
+  let Some(names) = names.as_array() else {
+    return Err(throw(names_error));
+  };
+  let mut name_list = Vec::with_capacity(names.len());
+  for name in names.iter::<Value>() {
+    match name?.as_string() {
+      Some(s) => name_list.push(s.to_string()?),
+      None => return Err(throw(names_error)),
+    }
+  }
+  let valid_days = match opt_get::<Value>(&opts, "validDays")? {
+    None => forge::tls::DEFAULT_CERT_VALID_DAYS,
+    Some(v) => match v.as_number() {
+      Some(n) if n.fract() == 0.0 && n >= 1.0 && n <= f64::from(u32::MAX) => n as u32,
+      _ => return Err(throw("validDays must be a positive integer")),
+    },
+  };
+  let is_ca = match opt_get::<Value>(&opts, "isCa")? {
+    None => false,
+    Some(v) => v.as_bool().ok_or_else(|| throw("isCa must be a boolean"))?,
+  };
+  let issuer = match opt_get::<Value>(&opts, "issuer")? {
+    None => None,
+    Some(v) => {
+      let pem_of = |key: &str| -> rquickjs::Result<String> {
+        let field = v.as_object().map(|o| o.get::<_, Value>(key)).transpose()?;
+        match field.as_ref().and_then(|f| f.as_string()) {
+          Some(s) => s.to_string(),
+          None => Err(throw("issuer must be { cert, key } with PEM strings")),
+        }
+      };
+      Some((pem_of("cert")?, pem_of("key")?))
+    }
+  };
+  let request = forge::tls::CertificateRequest {
+    names: &name_list,
+    valid_days,
+    is_ca,
+    issuer: issuer.as_ref().map(|(cert, key)| (cert.as_bytes(), key.as_bytes())),
+  };
+  let made = forge::tls::generate_certificate(&request).map_err(|m| throw(&m))?;
+  let result = Object::new(ctx.clone())?;
+  result.set("cert", made.cert)?;
+  result.set("key", made.key)?;
+  result.set("pin", made.pin)?;
+  Ok(result)
+}
+
 /// Without the `tls` feature the TLS functions exist and throw, naming it.
 #[cfg(not(feature = "tls"))]
 fn no_tls(ctx: Ctx<'_>, api: &str) -> rquickjs::Error {
@@ -267,6 +413,11 @@ fn net_start_tls(ctx: Ctx<'_>) -> rquickjs::Result<()> {
 #[cfg(not(feature = "tls"))]
 fn net_listen_tls(ctx: Ctx<'_>) -> rquickjs::Result<()> {
   Err(no_tls(ctx, "listenTls"))
+}
+
+#[cfg(not(feature = "tls"))]
+fn net_generate_certificate(ctx: Ctx<'_>) -> rquickjs::Result<()> {
+  Err(no_tls(ctx, "generateCertificate"))
 }
 
 /// `udp({ port?, reuse? })` -> `Promise<Udp>`. `port` 0 (default) = OS-assigned;
@@ -396,6 +547,13 @@ impl NetConn {
   #[qjs(get, rename = "peerKey")]
   pub fn peer_key<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     string_or_null(ctx, self.inner.peer_key())
+  }
+
+  /// Whether the handshake resumed an earlier session; `false` on plain
+  /// TCP and after a full handshake.
+  #[qjs(get)]
+  pub fn resumed(&self) -> bool {
+    self.inner.resumed()
   }
 }
 
@@ -605,6 +763,7 @@ impl ModuleDef for NetModule {
     decl.declare("connectTls")?;
     decl.declare("startTls")?;
     decl.declare("listenTls")?;
+    decl.declare("generateCertificate")?;
     decl.declare("udp")?;
     decl.declare("icmpEcho")?;
     decl.declare("interfaces")?;
@@ -612,12 +771,19 @@ impl ModuleDef for NetModule {
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
+    #[cfg(feature = "tls")]
+    {
+      let configs =
+        ctx.userdata::<crate::engine::EngineConfig>().expect("engine config userdata").tls_client_configs.clone();
+      ctx.store_userdata(TlsClientConfigs(configs)).expect("store TLS client configs");
+    }
     exports.export("probe", Function::new(ctx.clone(), net_probe)?)?;
     exports.export("connect", Function::new(ctx.clone(), net_connect)?)?;
     exports.export("listen", Function::new(ctx.clone(), net_listen)?)?;
     exports.export("connectTls", Function::new(ctx.clone(), net_connect_tls)?)?;
     exports.export("startTls", Function::new(ctx.clone(), net_start_tls)?)?;
     exports.export("listenTls", Function::new(ctx.clone(), net_listen_tls)?)?;
+    exports.export("generateCertificate", Function::new(ctx.clone(), net_generate_certificate)?)?;
     exports.export("udp", Function::new(ctx.clone(), net_udp)?)?;
     exports.export("icmpEcho", Function::new(ctx.clone(), net_icmp_echo)?)?;
     exports.export("interfaces", Function::new(ctx.clone(), net_interfaces)?)?;

@@ -170,6 +170,13 @@ declare module "flux:video" {
      * reason and the source is closed.
      */
     signal?: AbortSignal
+    /**
+     * `false`: an http(s) source takes no per-host slot of `fetch`. By
+     * default it takes one while its request is open, a paused player
+     * included (see the global `fetch` for the slots). Other sources take
+     * none either way. A value that is not a boolean throws.
+     */
+    slot?: boolean
   }
 
   export type VideoPlaneOptions = {
@@ -182,6 +189,8 @@ declare module "flux:video" {
     bus?: string
     /** Aborting it abandons the open (see VideoOpenOptions). */
     signal?: AbortSignal
+    /** `false`: an http(s) source takes no per-host slot (see VideoOpenOptions). */
+    slot?: boolean
   }
 
   /**

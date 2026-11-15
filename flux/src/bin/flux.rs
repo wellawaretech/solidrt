@@ -19,20 +19,30 @@ fn log_fn(_level: LogLevel, msg: &str) {
 // a test engine is one of a file's many, and ending the process would end
 // the file's run without its closing line, so a test host holds it back as
 // a windowed app's engine and the isolates do.
-fn engine_builder(base: &Path, argv: &[String], exit: bool) -> FluxEngineBuilder {
-  let base = base.to_path_buf();
-  let builder = FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv.to_vec())).isolate_resolver(move |id| {
-    // Bytecode first, like the lattice resolver: a compiled bundle dir
-    // ships isolates/<id>.fluxbc, a source layout isolates/<id>.js.
-    let dir = base.join("isolates");
-    if let Ok(bytes) = std::fs::read(dir.join(format!("{id}.fluxbc"))) {
-      return Ok(ModuleCode::Bytecode(bytes));
+//
+// `base` is where `isolate(id)` looks: `<base>/isolates/` on disk for a
+// plain run; `None` for a test run, which resolves through the assets mount
+// (`--assets`) as the runtime does, since its cwd is the sandbox.
+fn engine_builder(base: Option<&Path>, argv: &[String], exit: bool) -> FluxEngineBuilder {
+  let builder = FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv.to_vec()));
+  let builder = match base {
+    None => builder.isolate_resolver(flux::resolve_isolate_from_assets),
+    Some(base) => {
+      let base = base.to_path_buf();
+      builder.isolate_resolver(move |id| {
+        // Bytecode first, like the lattice resolver: a compiled bundle dir
+        // ships isolates/<id>.fluxbc, a source layout isolates/<id>.js.
+        let dir = base.join("isolates");
+        if let Ok(bytes) = std::fs::read(dir.join(format!("{id}.fluxbc"))) {
+          return Ok(ModuleCode::Bytecode(bytes));
+        }
+        let file = dir.join(format!("{id}.js"));
+        std::fs::read_to_string(&file)
+          .map(ModuleCode::Source)
+          .map_err(|e| format!("isolate '{id}': cannot read {}: {e}", file.display()))
+      })
     }
-    let file = dir.join(format!("{id}.js"));
-    std::fs::read_to_string(&file)
-      .map(ModuleCode::Source)
-      .map_err(|e| format!("isolate '{id}': cannot read {}: {e}", file.display()))
-  });
+  };
   if exit {
     builder.userdata(ProcessExit)
   } else {
@@ -76,8 +86,9 @@ async fn main() {
     }),
   };
 
-  // `isolate("worker")` is `<entry dir>/isolates/worker.js`; a stdin script
-  // has no directory, so its isolates live under the working directory.
+  // In a plain run `isolate("worker")` is `<entry dir>/isolates/worker.js`;
+  // a stdin script has no directory, so its isolates live under the working
+  // directory.
   let base: PathBuf = match path.as_deref() {
     Some("-") | None => PathBuf::from("."),
     Some(p) => Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf(),
@@ -86,7 +97,8 @@ async fn main() {
   #[cfg(feature = "test")]
   if let Some(TestRun { options, sandbox, assets }) = test {
     // The project's files, mounted as an app's are: `assets/...` reads the
-    // project's assets folder, read-only, while the cwd is the sandbox.
+    // project's assets folder and `isolate(id)` its `isolates/<id>.js` (or
+    // `.fluxbc`), read-only, while the cwd is the sandbox.
     // Absolutized ahead of entering the sandbox, like the sandbox itself.
     if let Some(dir) = assets {
       let dir = std::path::absolute(&dir).unwrap_or_else(|e| {
@@ -112,7 +124,7 @@ async fn main() {
       if let Some(dir) = &sandbox {
         empty_dir(dir);
       }
-      engine_builder(&base, &argv, false)
+      engine_builder(None, &argv, false)
     };
     let passed = flux::test::run_file(ModuleCode::Source(source), options, builder, |record| {
       forge::tty::write_line(&record.line())
@@ -127,7 +139,7 @@ async fn main() {
   let failed = Arc::new(AtomicBool::new(false));
   let mark_failed = failed.clone();
   let engine =
-    engine_builder(&base, &argv, true).on_uncaught(move |_| mark_failed.store(true, Ordering::Relaxed)).build();
+    engine_builder(Some(&base), &argv, true).on_uncaught(move |_| mark_failed.store(true, Ordering::Relaxed)).build();
   engine.eval_source(&source).await;
   forge::tty::restore();
   if failed.load(Ordering::Relaxed) {
@@ -151,7 +163,7 @@ fn empty_dir(dir: &Path) {
 
 // A test run as the command line asks for it: the host's options, the
 // sandbox the tests run in (`--data-root`) and the project directory whose
-// `assets/` they read (`--assets`).
+// `assets/` and `isolates/` they read (`--assets`).
 #[cfg(feature = "test")]
 struct TestRun {
   options: flux::test::RunOptions,

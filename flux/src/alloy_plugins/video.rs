@@ -38,7 +38,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use forge::source::Source;
+use forge::source::{Limits, Source};
 use forge::stream::ByteStream;
 use forge::video::reader::{Live, Opener, Reader};
 use forge::video::transport::Shared;
@@ -47,7 +47,7 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
 
-use crate::plugins::marshal::OptArg;
+use crate::plugins::marshal::{bool_opt, OptArg};
 use crate::plugins::seekable::{SeekableOpener, SeekableSource};
 use crate::standards_plugins::abort::AbortSignal;
 use crate::standards_plugins::body::{drive_async_iterable, is_async_iterable};
@@ -336,9 +336,9 @@ impl<'js> MediaSource<'js> {
   /// The opener the reader thread runs. A JS stream's chunks cross on a
   /// bounded channel: the pump (`pump_stream`) runs on the JS thread, the
   /// reader thread reads the channel as a byte stream.
-  fn into_opener(self, ctx: &Ctx<'js>, user_agent: String) -> Opener {
+  fn into_opener(self, ctx: &Ctx<'js>, user_agent: String, limits: Option<Limits>) -> Opener {
     match self {
-      MediaSource::Spec(source) => Box::new(move || source.open(&user_agent)),
+      MediaSource::Spec(source) => Box::new(move || source.open(&user_agent, limits)),
       MediaSource::File(open) => Box::new(move || {
         let reader = open().map_err(io::Error::other)?;
         forge::source::from_seekable(reader)
@@ -409,6 +409,25 @@ fn read_latency(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result
   }
 }
 
+/// The `{ slot? }` option: the per-host limits a URL source takes its slot
+/// from. The app's (`FetchLimits`) by default, `None` for `slot: false`;
+/// without `http` there is no URL source and no limits.
+fn read_limits<'js>(ctx: &Ctx<'js>, options: &OptArg<Object<'js>>) -> rquickjs::Result<Option<Limits>> {
+  let slot = match options.0.as_ref() {
+    Some(opts) => bool_opt(ctx, opts, "slot", "openVideo")?.unwrap_or(true),
+    None => true,
+  };
+  #[cfg(feature = "http")]
+  let limits =
+    slot.then(|| ctx.userdata::<crate::standards_plugins::http::FetchLimits>().expect("fetch limits").0.clone());
+  #[cfg(not(feature = "http"))]
+  let limits = {
+    let _ = slot;
+    None
+  };
+  Ok(limits)
+}
+
 fn read_signal<'js>(options: &OptArg<Object<'js>>) -> rquickjs::Result<Option<Class<'js, AbortSignal<'js>>>> {
   match options.0.as_ref() {
     Some(opts) => opts.get::<_, Option<Class<AbortSignal>>>("signal"),
@@ -437,6 +456,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>
   let source = read_source(&ctx, source)?;
   let live = read_latency(&ctx, &options)?;
   let signal = read_signal(&options)?;
+  let limits = read_limits(&ctx, &options)?;
   let (promise, resolve, reject) = Promise::new(&ctx)?;
   let state = state(&ctx);
   let plane = matches!(present, Present::Plane { .. });
@@ -459,7 +479,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>
   }
   let label = source.label();
   let user_agent = crate::standards_plugins::http::user_agent(&ctx);
-  let (reader, opened) = Reader::open_with(source.into_opener(&ctx, user_agent), live);
+  let (reader, opened) = Reader::open_with(source.into_opener(&ctx, user_agent, limits), live);
   let aborted = signal.as_ref().map(|sig| sig.borrow().subscribe());
   let hold = crate::pending::PendingOps::of(&ctx).in_flight("video open");
   let task_ctx = ctx.clone();

@@ -1,12 +1,13 @@
 use rquickjs::class::Trace;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::MaybePromise;
-use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
+use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Value};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::forge_plugins::net::tls_server_options;
 #[cfg(feature = "p2p")]
 use crate::forge_plugins::p2p::P2pEndpoint;
 use crate::forge_plugins::websocket::{message_payload, parse_ws_handlers, spawn_socket, ServeUpgrade, WsHandlers};
@@ -20,7 +21,8 @@ use crate::standards_plugins::response::Response;
 #[cfg(feature = "p2p")]
 use forge::http::accept_loop_p2p;
 use forge::http::{
-  accept_loop, bind_listener, serve_connection, Remote, Reply, RequestParts, Route, RouteTable, ServerShared,
+  accept_loop, bind_listener, serve_connection, serve_tls_connection, LocalExecutor, Remote, Reply, RequestParts,
+  Route, RouteTable, ServerShared,
 };
 use forge::websocket::{accept_upgrade, Topics};
 
@@ -28,6 +30,10 @@ use forge::websocket::{accept_upgrade, Topics};
 // bodies, and routing table live in `forge::http`; this layer parses the serve
 // options, builds the JS Request, calls the JS handlers, and turns what they
 // return into a `Reply`.
+
+/// The protocols an HTTPS `serve` accepts by ALPN, in preference order:
+/// HTTP/2 first, as `Deno.serve` does, then HTTP/1.1 (the WebSocket upgrade).
+const SERVE_TLS_ALPN: [&str; 2] = ["h2", "http/1.1"];
 
 /// Read a Response's buffered bytes. A stream body (a `ReadableStream` given
 /// to the constructor, or the network stream of a fetched Response) is
@@ -294,6 +300,7 @@ async fn dispatch_fn<'js>(
     params,
     parts.upgrade,
     parts.remote,
+    parts.peer_key,
   ) {
     Ok(c) => c,
     Err(e) => {
@@ -357,6 +364,9 @@ pub struct Server {
   /// The pub/sub topic registry shared with every socket of this server.
   #[qjs(skip_trace)]
   topics: Topics,
+  /// Whether `serve` got a `tls` option: the TCP listener serves HTTPS.
+  #[qjs(skip_trace)]
+  tls: bool,
 }
 
 #[rquickjs::methods]
@@ -447,6 +457,18 @@ impl Server {
     }
   }
 
+  /// The client certificate's key of the connection `req` arrived on, in the
+  /// `peerKey` form of a flux:net `Conn` (the SHA-256 of its
+  /// SubjectPublicKeyInfo as lowercase hex), or null: no client certificate,
+  /// plain HTTP, p2p, or a JS-constructed Request.
+  #[qjs(rename = "peerKey")]
+  pub fn peer_key<'js>(&self, ctx: Ctx<'js>, req: Class<'js, Request<'js>>) -> rquickjs::Result<Value<'js>> {
+    match req.borrow().peer_key.clone() {
+      Some(key) => key.into_js(&ctx),
+      None => Ok(Value::new_null(ctx)),
+    }
+  }
+
   /// Close the server: stop accepting new connections and gracefully shut down
   /// open ones. Safe to call more than once.
   pub fn close(&self) {
@@ -465,7 +487,8 @@ impl Server {
 
   #[qjs(get)]
   pub fn url(&self) -> String {
-    format!("http://{}:{}/", self.host, self.port)
+    let scheme = if self.tls { "https" } else { "http" };
+    format!("{scheme}://{}:{}/", self.host, self.port)
   }
 }
 
@@ -518,6 +541,19 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
     None => None,
   };
 
+  // The `tls` option: the TCP listener serves HTTPS, `h2` or `http/1.1` by
+  // ALPN. Parsed before anything binds, so a bad option throws first.
+  let tls_config = match opts.get::<_, Option<Object<'js>>>("tls")? {
+    Some(o) => {
+      let alpn = SERVE_TLS_ALPN.iter().map(|p| p.to_string()).collect();
+      let options = tls_server_options(&ctx, "serve: tls", &o, alpn)?;
+      let config =
+        forge::tls::server_config(&options).map_err(|m| Exception::throw_message(&ctx, &format!("serve: tls: {m}")))?;
+      Some(config)
+    }
+    None => None,
+  };
+
   let host: Option<String> = opts.get("host")?;
   let host = host.unwrap_or_else(|| "0.0.0.0".to_string());
   let listener = bind_listener(&host, port).map_err(|e| Exception::throw_message(&ctx, &e))?;
@@ -532,7 +568,14 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   // caller and passed as the second `fetch(req, server)` argument.
   let server = Class::instance(
     ctx.clone(),
-    Server { shared: shared.clone(), port, host, has_websocket: websocket.is_some(), topics: Topics::default() },
+    Server {
+      shared: shared.clone(),
+      port,
+      host,
+      has_websocket: websocket.is_some(),
+      topics: Topics::default(),
+      tls: tls_config.is_some(),
+    },
   )?;
   let handlers = Handlers { fetch_fn, error_fn, routes, websocket, server: server.clone() };
 
@@ -544,13 +587,30 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   ctx.spawn(async move {
     let shutdown_rx = loop_shared.subscribe();
     let accept_logger = loop_logger.clone();
+    // With `tls`, one executor per server spawns the HTTP/2 streams of its
+    // connections on the JS executor, as their request futures are not `Send`.
+    let tls = tls_config.map(|config| {
+      let exec_ctx = loop_ctx.clone();
+      (config, LocalExecutor::new(move |fut| exec_ctx.spawn(fut)))
+    });
     // Each accepted socket spawns its own connection task. Spawning stays here in
     // the marshalling layer (the engine-free core hands sockets back through this
     // closure) so the core never touches `ctx.spawn`.
     let on_conn = move |remote, sock| {
       let conn_rx = loop_shared.subscribe();
       let handler = request_handler(loop_handlers.clone(), loop_logger.clone());
-      loop_ctx.spawn(serve_connection(sock, remote, handler, loop_logger.clone(), conn_rx));
+      match &tls {
+        Some((config, exec)) => loop_ctx.spawn(serve_tls_connection(
+          sock,
+          config.clone(),
+          remote,
+          handler,
+          loop_logger.clone(),
+          conn_rx,
+          exec.clone(),
+        )),
+        None => loop_ctx.spawn(serve_connection(sock, remote, handler, loop_logger.clone(), conn_rx)),
+      }
     };
     accept_loop(listener, accept_logger, shutdown_rx, on_conn).await;
     // Connection tasks shut themselves down on the same signal, so the
@@ -559,7 +619,8 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   });
 
   // The p2p twin of the TCP loop: a connection's io is its first bi-stream, its
-  // peer identity the remote endpoint id. `close()` stops both loops through the
+  // peer identity the remote endpoint id. `tls` does not apply: iroh encrypts a
+  // p2p connection already, so it is served as plain HTTP/1.1. `close()` stops both loops through the
   // shared shutdown signal; the endpoint itself stays open for its owner.
   #[cfg(feature = "p2p")]
   if let Some((endpoint, alpn)) = p2p {
@@ -591,22 +652,29 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   Ok(server)
 }
 
-/// The `flux:http` module. Exports `serve`, the HTTP server entry point, and
-/// `createHttpClient`, a `fetch` client with TLS options (`http_client.rs`).
+/// The `flux:http` module. Exports `serve`, the HTTP server entry point,
+/// `createHttpClient`, a `fetch` client with TLS options (`http_client.rs`),
+/// and `getHostLimit`/`setHostLimit`, the per-host cap of `fetch`
+/// (`host_limit.rs`).
 pub struct HttpModule;
 
 impl ModuleDef for HttpModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("serve")?;
     decl.declare("createHttpClient")?;
+    decl.declare("getHostLimit")?;
+    decl.declare("setHostLimit")?;
     Ok(())
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
+    use crate::forge_plugins::host_limit::{get_host_limit, set_host_limit};
     let serve_fn = Function::new(ctx.clone(), serve_impl)?;
     exports.export("serve", serve_fn)?;
     exports
       .export("createHttpClient", Function::new(ctx.clone(), crate::forge_plugins::http_client::create_http_client)?)?;
+    exports.export("getHostLimit", Function::new(ctx.clone(), get_host_limit)?)?;
+    exports.export("setHostLimit", Function::new(ctx.clone(), set_host_limit)?)?;
     Ok(())
   }
 }

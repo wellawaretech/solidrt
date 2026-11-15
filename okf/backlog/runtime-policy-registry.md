@@ -58,8 +58,10 @@ should be
 
 Through the solidrt lens the read side belongs next to the other
 environment facts (the `Flux.capabilities`-style "ask by name" shape
-wears well); the write side is app manifest or top-level API, not
-per-frame. One decision to make deliberately: whether overrides are
+wears well, and [capability-states](capability-states.md) adds the
+reactive availability surface a policy's current value wants, since the
+list itself stays fixed build facts); the write side is app manifest or
+top-level API, not per-frame. One decision to make deliberately: whether overrides are
 declarative (manifest/window prop, applies before first frame) or
 imperative (switchable at runtime - frame pacing genuinely could be:
 a drawing surface could request VsyncLocked only while a stylus is

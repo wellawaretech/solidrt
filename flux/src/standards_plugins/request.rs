@@ -51,6 +51,12 @@ pub struct Request<'js> {
   #[cfg(feature = "http")]
   #[qjs(skip_trace)]
   pub(crate) remote: Option<forge::http::Remote>,
+  /// The client certificate's key (the `peerKey` form) of the HTTPS
+  /// connection, set only on requests built by the flux:http server. Read
+  /// by `server.peerKey(req)`.
+  #[cfg(feature = "http")]
+  #[qjs(skip_trace)]
+  pub(crate) peer_key: Option<String>,
 }
 
 impl<'js> Trace<'js> for Request<'js> {
@@ -95,6 +101,8 @@ impl<'js> Request<'js> {
       upgrade: RefCell::new(None),
       #[cfg(feature = "http")]
       remote: None,
+      #[cfg(feature = "http")]
+      peer_key: None,
     })
   }
 
@@ -166,6 +174,7 @@ pub(crate) fn request_from_parts<'js>(
   params: Vec<(String, String)>,
   upgrade: Option<UpgradeHandle>,
   remote: Option<forge::http::Remote>,
+  peer_key: Option<String>,
 ) -> rquickjs::Result<Class<'js, Request<'js>>> {
   let headers = headers_from_pairs(ctx, headers)?;
   let params_obj = Object::new(ctx.clone())?;
@@ -183,6 +192,7 @@ pub(crate) fn request_from_parts<'js>(
       params: params_obj,
       upgrade: RefCell::new(upgrade.map(ServeUpgrade::Ready)),
       remote,
+      peer_key,
     },
   )
 }

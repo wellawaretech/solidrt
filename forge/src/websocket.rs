@@ -567,6 +567,9 @@ pub struct WsTarget {
   pub path: String,
   /// A `wss://` target: the connection runs over TLS.
   pub tls: bool,
+  /// The subprotocols to offer, in preference order (`check_protocols`
+  /// vets them); empty offers none. `parse_ws_url` leaves it empty.
+  pub protocols: Vec<String>,
 }
 
 /// The default ports of `ws://` and `wss://`.
@@ -577,6 +580,47 @@ const WSS_PORT: u16 = 443;
 /// picked `h2` would expect the upgrade as an RFC 8441 extended CONNECT,
 /// which this client does not speak.
 const WSS_ALPN: &[u8] = b"http/1.1";
+
+/// The handshake header that offers subprotocols and carries the server's
+/// pick (RFC 6455 4.1, 4.2.2).
+const PROTOCOL_HEADER: &str = "Sec-WebSocket-Protocol";
+
+/// Whether `b` may appear in an RFC 7230 `token`, the form of a subprotocol
+/// name: a visible ASCII character that is no separator.
+fn is_token_char(b: u8) -> bool {
+  b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
+}
+
+/// Vet the subprotocols a client offers: each a non-empty token, none
+/// twice (case-sensitive). `Err` is the message to surface.
+pub fn check_protocols(protocols: &[String]) -> Result<(), String> {
+  for (i, protocol) in protocols.iter().enumerate() {
+    if protocol.is_empty() {
+      return Err("a subprotocol must not be empty".to_string());
+    }
+    if !protocol.bytes().all(is_token_char) {
+      return Err(format!("invalid subprotocol: {protocol}"));
+    }
+    if protocols[..i].contains(protocol) {
+      return Err(format!("duplicate subprotocol: {protocol}"));
+    }
+  }
+  Ok(())
+}
+
+/// The subprotocol the handshake agreed on, from the server's answer: `""`
+/// when it picked none, the pick when it is one of the `offered`. Anything
+/// else (a pick not offered, several picks) fails the connection.
+fn agreed_protocol(offered: &[String], headers: &hyper::HeaderMap) -> Result<String, String> {
+  let picks: Vec<String> =
+    headers.get_all(PROTOCOL_HEADER).iter().map(|v| String::from_utf8_lossy(v.as_bytes()).trim().to_string()).collect();
+  match picks.as_slice() {
+    [] => Ok(String::new()),
+    [pick] if offered.contains(pick) => Ok(pick.clone()),
+    [_] => Err(format!("the server picked a subprotocol that was not offered: {}", picks.join(", "))),
+    _ => Err(format!("the server picked more than one subprotocol: {}", picks.join(", "))),
+  }
+}
 
 /// Parse a `ws://` or `wss://` URL; `Err` is the message to surface.
 pub fn parse_ws_url(url: &str) -> Result<WsTarget, String> {
@@ -619,14 +663,16 @@ pub fn parse_ws_url(url: &str) -> Result<WsTarget, String> {
     None if tls => WSS_PORT,
     None => WS_PORT,
   };
-  Ok(WsTarget { host: host.to_string(), port, path, tls })
+  Ok(WsTarget { host: host.to_string(), port, path, tls, protocols: Vec::new() })
 }
 
 /// State shared between the host's client handle and `run_client`: the
-/// readyState, the writer queue (present once the handshake completes), and
-/// the close signal.
+/// readyState, the agreed subprotocol, the writer queue (present once the
+/// handshake completes), and the close signal.
 pub struct ClientSocket {
   state: Cell<u8>,
+  /// The subprotocol the server picked; `""` until open and for none.
+  protocol: RefCell<String>,
   tx: RefCell<Option<mpsc::UnboundedSender<OutMsg>>>,
   /// Wakes the connection task when `close()` starts a close: during CONNECTING
   /// it aborts the attempt, after that it arms the close-grace deadline
@@ -636,11 +682,31 @@ pub struct ClientSocket {
 
 impl ClientSocket {
   pub fn new() -> Rc<ClientSocket> {
-    Rc::new(ClientSocket { state: Cell::new(CONNECTING), tx: RefCell::new(None), closing: Notify::new() })
+    Rc::new(ClientSocket {
+      state: Cell::new(CONNECTING),
+      protocol: RefCell::new(String::new()),
+      tx: RefCell::new(None),
+      closing: Notify::new(),
+    })
   }
 
   pub fn state(&self) -> u8 {
     self.state.get()
+  }
+
+  /// The subprotocol the server picked: `""` until the socket opens, and
+  /// when it picked none.
+  pub fn protocol(&self) -> String {
+    self.protocol.borrow().clone()
+  }
+
+  /// Fail a socket that never opened: mark it CLOSED and report `error`
+  /// with `message`, then an unclean 1006 `close`. The path of a failed
+  /// connect, and of a host that cannot start one.
+  pub fn fail<D: ClientDispatch>(&self, dispatch: &D, message: String) {
+    self.state.set(CLOSED);
+    dispatch.on_error(message);
+    dispatch.on_close(1006, String::new(), false);
   }
 
   /// Queue a frame. Only an OPEN socket sends; a frame on any other state is
@@ -749,7 +815,8 @@ where
 /// socket is OPEN. Events go to `dispatch`; a failed connect (or TLS
 /// handshake) reports `error` then an unclean `close`. `tls` is the config a
 /// `wss://` target connects with (its ALPN is set here, to `http/1.1`
-/// only); a `ws://` target ignores it.
+/// only); a `ws://` target ignores it. The target's `protocols` are
+/// offered, and the server's pick becomes `ClientSocket::protocol`.
 pub async fn run_client<D, S>(
   socket: Rc<ClientSocket>,
   target: WsTarget,
@@ -761,46 +828,54 @@ pub async fn run_client<D, S>(
   D: ClientDispatch,
   S: FnOnce(ClientWriter),
 {
-  let WsTarget { host, port, path, tls: secure } = target;
+  let WsTarget { host, port, path, tls: secure, protocols } = target;
   // IPv6 hosts get their brackets back for the Host header.
   let authority = if host.contains(':') { format!("[{host}]:{port}") } else { format!("{host}:{port}") };
   let connect = async {
     let stream = TcpStream::connect((host.as_str(), port)).await.map_err(|e| e.to_string())?;
-    let req = HyperRequest::builder()
+    let mut builder = HyperRequest::builder()
       .method("GET")
       .uri(&path)
       .header(HOST, &authority)
       .header(UPGRADE, "websocket")
       .header(CONNECTION, "upgrade")
       .header("Sec-WebSocket-Key", handshake::generate_key())
-      .header("Sec-WebSocket-Version", "13")
-      .body(Empty::<bytes::Bytes>::new())
-      .map_err(|e| e.to_string())?;
-    if !secure {
-      return handshake::client(&SpawnExecutor, req, stream).await.map_err(|e| e.to_string());
+      .header("Sec-WebSocket-Version", "13");
+    if !protocols.is_empty() {
+      builder = builder.header(PROTOCOL_HEADER, protocols.join(", "));
     }
-    let Some(tls) = tls else {
-      return Err("wss:// needs a TLS config".to_string());
+    let req = builder.body(Empty::<bytes::Bytes>::new()).map_err(|e| e.to_string())?;
+    let handshake = if secure {
+      let Some(tls) = tls else {
+        return Err("wss:// needs a TLS config".to_string());
+      };
+      let mut config = (*tls).clone();
+      config.alpn_protocols = vec![WSS_ALPN.to_vec()];
+      let name = crate::tls::server_name(&host)?;
+      let stream = tokio_rustls::TlsConnector::from(Arc::new(config))
+        .connect(name, stream)
+        .await
+        .map_err(|e| format!("TLS handshake: {}", crate::tls::handshake_error(&e)))?;
+      handshake::client(&SpawnExecutor, req, stream).await
+    } else {
+      handshake::client(&SpawnExecutor, req, stream).await
     };
-    let mut config = (*tls).clone();
-    config.alpn_protocols = vec![WSS_ALPN.to_vec()];
-    let name = crate::tls::server_name(&host)?;
-    let stream = tokio_rustls::TlsConnector::from(Arc::new(config))
-      .connect(name, stream)
-      .await
-      .map_err(|e| format!("TLS handshake: {}", crate::tls::handshake_error(&e)))?;
-    handshake::client(&SpawnExecutor, req, stream).await.map_err(|e| e.to_string())
+    let (ws, response) = handshake.map_err(|e| e.to_string())?;
+    // A pick that fails drops `ws` here, which closes the connection.
+    let protocol = agreed_protocol(&protocols, response.headers())?;
+    Ok((ws, protocol))
   };
   tokio::pin!(connect);
 
   let ws = tokio::select! {
     res = &mut connect => match res {
-      Ok((ws, _response)) => ws,
+      Ok((ws, protocol)) => {
+        *socket.protocol.borrow_mut() = protocol;
+        ws
+      }
       Err(e) => {
-        socket.state.set(CLOSED);
         logger.warn(&format!("[flux] websocket connect failed: {e}"));
-        dispatch.on_error(format!("connect failed: {e}"));
-        dispatch.on_close(1006, String::new(), false);
+        socket.fail(dispatch, format!("connect failed: {e}"));
         return;
       }
     },

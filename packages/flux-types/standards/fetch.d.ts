@@ -82,6 +82,14 @@ interface RequestInit {
    * the `Request` constructor.
    */
   client?: import("flux:http").HttpClient
+  /**
+   * `false`: the fetch takes no per-host slot (see {@link fetch}), so it
+   * neither waits for a free one nor holds one while its body is open. It
+   * still waits out a 429 pause of its host: the pause spares the server,
+   * the slot spares the app's other requests. Default `true`. A value that
+   * is not a boolean throws. Ignored by the `Request` constructor.
+   */
+  slot?: boolean
 }
 
 /**
@@ -167,22 +175,36 @@ declare let Response: {
  * "http" capability (the stock runtimes have it); the global is absent
  * without it.
  *
- * Every fetch to a host (host plus port) takes one of 6 slots, as browsers
- * cap HTTP/1.1; further fetches wait for a free slot. A slot is held until
- * the response body is read to its end or cancelled (`body.cancel()`, a
- * `break` out of `for await`). A host whose last
+ * Every fetch to a host (host plus port) takes one of its slots, 6 by
+ * default as browsers cap HTTP/1.1; further fetches wait for a free slot.
+ * A slot is held until the response body is read to its end or cancelled
+ * (`body.cancel()`, a `break` out of `for await`). A host whose last
  * response came over HTTP/2 takes no slot: its requests share one
  * connection. HTTPS hosts offer HTTP/2; a plain `http://` host is always
- * HTTP/1.1.
+ * HTTP/1.1. The cap is the app's to change, for one host or as the
+ * default: `getHostLimit` and `setHostLimit` of `flux:http`.
  *
- * The trap: 6 long-polls, event streams or long downloads to one HTTP/1.1
- * host hold every slot, and every other fetch to that host waits behind
- * them. Use a `WebSocket` for a long-lived channel; it takes no slot.
+ * A slot is an open request to a host, whatever opened it. A media source
+ * opened by `video.open` (flux:video) from an http(s) URL takes a slot
+ * while its request is open. A paused player keeps its request open, so
+ * it keeps its slot; a seek moves it to a new request. Open it with
+ * `slot: false` to take none.
+ *
+ * The trap: 6 long-polls, event streams, long downloads or videos to one
+ * HTTP/1.1 host hold every slot, and every other fetch to that host waits
+ * behind them. Use a `WebSocket` for a long-lived channel; it takes no
+ * slot. For a long request that must not wait, or must not hold up the
+ * others, pass `slot: false` (see {@link RequestInit.slot}), or raise the
+ * host's cap.
  *
  * A 429 response pauses every fetch to that host for its `Retry-After`
  * (whole seconds), or for a short backoff without one. A body-less GET or
  * HEAD then retries up to 3 times; any other request resolves with the
  * 429. A `Retry-After` above 60 seconds pauses nothing and resolves with
  * the 429.
+ *
+ * The slots and the pause are per app, not per isolate or per client:
+ * every isolate of the app and every `createHttpClient` client share them,
+ * so a server sees one app.
  */
 declare function fetch(url: string, options?: RequestInit): Promise<Response>

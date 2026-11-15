@@ -10,13 +10,17 @@
 //! dispatch, an `FnMut` for spawning connection tasks. The marshalling layer
 //! (flux `forge_plugins/serve.rs`) monomorphizes those generics with its
 //! engine-bound types and owns every `ctx.spawn`.
+//!
+//! A connection is plain HTTP/1.1 (`serve_connection`) or HTTPS
+//! (`serve_tls_connection`): the handshake runs in the connection's own task,
+//! then `h2` by ALPN is served as HTTP/2 and anything else as HTTP/1.1.
 
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Body, Frame, Incoming};
-use hyper::server::conn::http1;
-use hyper::service::service_fn;
+use hyper::server::conn::{http1, http2};
+use hyper::service::{service_fn, Service};
 use hyper::upgrade::OnUpgrade;
 use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
 use hyper_util::rt::TokioIo;
@@ -24,13 +28,16 @@ use percent_encoding::percent_decode_str;
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
+use tokio_rustls::TlsAcceptor;
 
 use crate::logger::Logger;
 use crate::stream::{to_byte_stream, ByteStream};
+use crate::tls;
 
 // ---- Response bodies -------------------------------------------------------
 
@@ -158,20 +165,36 @@ pub struct RequestParts {
   pub upgrade: Option<UpgradeHandle>,
   /// The connection's peer, for `server.requestIP(req)` and `ws.remoteAddr`.
   pub remote: Option<Remote>,
+  /// The client certificate's key in the `peerKey` form (`tls::peer_key`),
+  /// for `server.peerKey(req)`. `None` without a client certificate or on a
+  /// plain connection.
+  pub peer_key: Option<String>,
 }
 
 impl RequestParts {
-  fn from_hyper(mut req: HyperRequest<Incoming>, remote: Option<Remote>) -> RequestParts {
+  fn from_hyper(mut req: HyperRequest<Incoming>, remote: Option<Remote>, peer_key: Option<String>) -> RequestParts {
     let method = req.method().as_str().to_string();
-    let url = req.uri().to_string();
-    let headers = req
+    // HTTP/2 carries the target as `:scheme`, `:authority` and `:path`, which
+    // hyper joins into an absolute URI and sends no `Host` header; the host
+    // sees what HTTP/1.1 sends, the origin form (`/x?y`) plus a `Host`, so
+    // routes and handlers read the same either way.
+    let url = match (req.version(), req.uri().path_and_query()) {
+      (hyper::Version::HTTP_2, Some(path)) => path.to_string(),
+      _ => req.uri().to_string(),
+    };
+    let mut headers: Vec<(String, String)> = req
       .headers()
       .iter()
       .filter_map(|(name, value)| value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string())))
       .collect();
+    if req.version() == hyper::Version::HTTP_2 && !headers.iter().any(|(name, _)| name == "host") {
+      if let Some(authority) = req.uri().authority() {
+        headers.insert(0, ("host".to_string(), authority.to_string()));
+      }
+    }
     let upgrade = req.extensions_mut().remove::<OnUpgrade>().map(UpgradeHandle);
     let body = to_byte_stream(req.into_body().into_data_stream());
-    RequestParts { method, url, headers, body, upgrade, remote }
+    RequestParts { method, url, headers, body, upgrade, remote, peer_key }
   }
 }
 
@@ -326,47 +349,177 @@ pub enum Remote {
   Peer(String),
 }
 
-/// Serve one accepted connection: run HTTP/1 with websocket upgrades and graceful
-/// shutdown. On a stop signal, finish any in-flight request then close; an idle
-/// keep-alive connection has nothing in flight, so it closes promptly. Generic
-/// over the request `handler` so the engine-free core never names the host's
-/// (script-bound) types, and over the `io` so any byte duplex serves (an accepted
-/// TCP socket, a p2p connection's `ConnIo`). `remote` rides onto every request
-/// the connection carries.
-pub async fn serve_connection<I, H, Fut>(
-  io: I,
-  remote: Option<Remote>,
+/// Spawns hyper's per-stream HTTP/2 tasks through the host's spawner,
+/// which runs them on the host's (single-threaded) executor; hyper's
+/// `Executor` has no `Send` bound, and the host's request futures are not
+/// `Send`. Generic over the lifetime `'a` of what it spawns: a host's
+/// spawner may take futures that borrow from it (a script engine's spawn
+/// takes futures bound to the engine's lifetime), so it is not tied to
+/// `'static`.
+#[derive(Clone)]
+pub struct LocalExecutor<'a>(Rc<dyn Fn(LocalTask<'a>) + 'a>);
+
+/// A task `LocalExecutor` hands to the host's spawner.
+pub type LocalTask<'a> = Pin<Box<dyn Future<Output = ()> + 'a>>;
+
+impl<'a> LocalExecutor<'a> {
+  pub fn new(spawn: impl Fn(LocalTask<'a>) + 'a) -> Self {
+    LocalExecutor(Rc::new(spawn))
+  }
+}
+
+impl<'a, Fut: Future<Output = ()> + 'a> hyper::rt::Executor<Fut> for LocalExecutor<'a> {
+  fn execute(&self, fut: Fut) {
+    (self.0)(Box::pin(fut))
+  }
+}
+
+/// The HTTP version a connection is served with.
+pub enum Protocol {
+  Http1,
+  Http2,
+}
+
+impl Protocol {
+  /// The protocol of an agreed ALPN: `h2` is HTTP/2; `http/1.1`, or no
+  /// ALPN at all, is HTTP/1.1.
+  pub fn from_alpn(alpn: Option<&str>) -> Protocol {
+    match alpn {
+      Some("h2") => Protocol::Http2,
+      _ => Protocol::Http1,
+    }
+  }
+}
+
+/// The hyper service both protocols serve: each request becomes
+/// `RequestParts` (with the connection's `remote` and `peer_key`) for the
+/// host's `handler`.
+fn service<H, Fut>(
   handler: H,
-  logger: Logger,
-  mut shutdown_rx: watch::Receiver<bool>,
-) where
-  I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+  remote: Option<Remote>,
+  peer_key: Option<String>,
+) -> impl Service<
+  HyperRequest<Incoming>,
+  Response = HyperResponse<ResBody>,
+  Error = Infallible,
+  Future = impl Future<Output = Result<HyperResponse<ResBody>, Infallible>>,
+>
+where
   H: Fn(RequestParts) -> Fut,
   Fut: Future<Output = Reply>,
 {
-  let service = service_fn(move |req: HyperRequest<Incoming>| {
-    let reply = handler(RequestParts::from_hyper(req, remote.clone()));
+  service_fn(move |req: HyperRequest<Incoming>| {
+    let reply = handler(RequestParts::from_hyper(req, remote.clone(), peer_key.clone()));
     async move { Ok::<_, Infallible>(reply.await.0) }
-  });
-  let io = TokioIo::new(io);
-  // with_upgrades keeps the connection alive past a 101 response so hyper can
-  // hand the raw stream to the websocket tasks.
-  let conn = http1::Builder::new().serve_connection(io, service).with_upgrades();
-  tokio::pin!(conn);
+  })
+}
 
+/// Run a hyper connection `conn` to its end. On a stop signal, finish any
+/// in-flight request then close (`graceful` asks the connection to); an idle
+/// keep-alive connection has nothing in flight, so it closes promptly.
+async fn drive<C>(conn: C, graceful: impl FnOnce(Pin<&mut C>), logger: Logger, mut shutdown_rx: watch::Receiver<bool>)
+where
+  C: Future<Output = Result<(), hyper::Error>>,
+{
+  tokio::pin!(conn);
   tokio::select! {
     res = conn.as_mut() => {
       if let Err(e) = res {
         logger.warn(&format!("[flux] serve connection error: {e}"));
       }
     }
-    // On stop, finish any in-flight request then close. An idle keep-alive
-    // connection has nothing in flight, so it closes promptly and the task ends.
     _ = wait_for_stop(&mut shutdown_rx) => {
-      conn.as_mut().graceful_shutdown();
+      graceful(conn.as_mut());
       if let Err(e) = conn.as_mut().await {
         logger.warn(&format!("[flux] serve connection error: {e}"));
       }
+    }
+  }
+}
+
+/// Serve one accepted connection: run HTTP/1 with websocket upgrades and graceful
+/// shutdown. On a stop signal, finish any in-flight request then close; an idle
+/// keep-alive connection has nothing in flight, so it closes promptly. Generic
+/// over the request `handler` so the engine-free core never names the host's
+/// (script-bound) types, and over the `io` so any byte duplex serves (an accepted
+/// TCP socket, a p2p connection's `ConnIo`). `remote` rides onto every request
+/// the connection carries. Plain HTTP is HTTP/1.1 only (no h2c).
+pub async fn serve_connection<I, H, Fut>(
+  io: I,
+  remote: Option<Remote>,
+  handler: H,
+  logger: Logger,
+  shutdown_rx: watch::Receiver<bool>,
+) where
+  I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+  H: Fn(RequestParts) -> Fut,
+  Fut: Future<Output = Reply>,
+{
+  let service = service(handler, remote, None);
+  // with_upgrades keeps the connection alive past a 101 response so hyper can
+  // hand the raw stream to the websocket tasks.
+  let conn = http1::Builder::new().serve_connection(TokioIo::new(io), service).with_upgrades();
+  drive(conn, |conn| conn.graceful_shutdown(), logger, shutdown_rx).await;
+}
+
+/// Serve one accepted TCP connection over TLS. The handshake runs here, in
+/// the connection's own task, bounded by `tls::HANDSHAKE_TIMEOUT`, so a
+/// stalled client holds up no other connection; a failed or timed out
+/// handshake is logged and drops the connection. Then the protocol agreed by
+/// ALPN decides: `h2` is served by hyper's HTTP/2 server, its streams spawned
+/// through `exec`; `http/1.1` (or no ALPN) as `serve_connection` does, with
+/// websocket upgrades. The upgrade is HTTP/1.1 only (no RFC 8441 extended
+/// CONNECT), so a browser opens its WebSocket on a separate HTTP/1.1
+/// connection. Both shut down gracefully on the stop signal; a stop during
+/// the handshake drops the connection. The client certificate's key, if any,
+/// rides onto every request as `peer_key`.
+pub async fn serve_tls_connection<'a, H, Fut>(
+  stream: TcpStream,
+  config: Arc<tls::ServerConfig>,
+  remote: Option<Remote>,
+  handler: H,
+  logger: Logger,
+  mut shutdown_rx: watch::Receiver<bool>,
+  exec: LocalExecutor<'a>,
+) where
+  H: Fn(RequestParts) -> Fut + 'a,
+  Fut: Future<Output = Reply> + 'a,
+{
+  let accept = TlsAcceptor::from(config).accept(stream);
+  // A stop during the handshake drops the connection: nothing was served
+  // on it yet, and a server that closed answers no new request.
+  let handshake = tokio::select! {
+    r = tokio::time::timeout(tls::HANDSHAKE_TIMEOUT, accept) => r,
+    _ = wait_for_stop(&mut shutdown_rx) => return,
+  };
+  let stream = match handshake {
+    Ok(Ok(stream)) => stream,
+    failed => {
+      let reason = match failed {
+        Ok(Err(e)) => tls::handshake_error(&e),
+        _ => format!("timed out after {:?}", tls::HANDSHAKE_TIMEOUT),
+      };
+      let peer = match &remote {
+        Some(Remote::Ip(addr)) => addr.to_string(),
+        Some(Remote::Peer(id)) => id.clone(),
+        None => "an unknown peer".to_string(),
+      };
+      logger.warn(&format!("[flux] serve TLS handshake with {peer}: {reason}"));
+      return;
+    }
+  };
+  let (_, session) = stream.get_ref();
+  let protocol = Protocol::from_alpn(tls::alpn_protocol(session).as_deref());
+  let service = service(handler, remote, tls::peer_key(session));
+  let io = TokioIo::new(stream);
+  match protocol {
+    Protocol::Http2 => {
+      let conn = http2::Builder::new(exec).serve_connection(io, service);
+      drive(conn, |conn| conn.graceful_shutdown(), logger, shutdown_rx).await;
+    }
+    Protocol::Http1 => {
+      let conn = http1::Builder::new().serve_connection(io, service).with_upgrades();
+      drive(conn, |conn| conn.graceful_shutdown(), logger, shutdown_rx).await;
     }
   }
 }

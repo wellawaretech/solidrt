@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Notify};
 
+use crate::fetch::{host_key, HostLimits};
 use crate::source::{
   Facts, HttpSource, OpenFuture, Opened, Producer, Reader, STREAM_RING_BYTES, STREAM_SKIP_BY_READ_BYTES,
 };
@@ -202,7 +203,7 @@ pub(super) fn chunk(bytes: &[u8]) -> Vec<u8> {
 }
 
 fn http_reader(addr: SocketAddr, ring: usize) -> Reader {
-  let source = HttpSource::new(&format!("http://{addr}/clip.webm"), "forge-test").expect("build the source");
+  let source = HttpSource::new(&format!("http://{addr}/clip.webm"), "forge-test", None).expect("build the source");
   Reader::open(source, ring)
 }
 
@@ -511,6 +512,101 @@ fn a_transient_open_failure_on_a_seekable_source_is_retried() {
   end.expect("clean end after the reconnects");
   assert_eq!(got, b"0123456789");
   assert_eq!(*lock(&opens), [0, 5, 5]);
+}
+
+// --- The per-host slot ---
+
+/// Larger than a far seek needs: past the small ring and a skip by read.
+const SLOT_FILE: usize = 2 * STREAM_RING_BYTES;
+
+fn limited_reader(addr: SocketAddr, limits: Option<Arc<HostLimits>>) -> Reader {
+  let source = HttpSource::new(&format!("http://{addr}/clip.webm"), "forge-test", limits).expect("build the source");
+  // A ring that fills at once: the request stays open, as a paused
+  // player's does.
+  Reader::open(source, SMALL_RING)
+}
+
+/// Whether a slot on `host` is free within `within`, asked from a runtime
+/// of the test's own (the slot it gets is let go at once).
+fn slot_free(limits: &HostLimits, host: &str, within: Duration) -> bool {
+  let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().expect("test runtime");
+  runtime.block_on(async { tokio::time::timeout(within, limits.acquire(host)).await.is_ok() })
+}
+
+/// `work` on a thread of its own, failing the test when it takes longer
+/// than PROMPT: a source stuck behind a slot would block it for good.
+fn promptly<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+  let (tx, rx) = std::sync::mpsc::channel();
+  thread::spawn(move || {
+    let _ = tx.send(work());
+  });
+  rx.recv_timeout(PROMPT).expect("done in time, not stuck behind a slot")
+}
+
+#[test]
+fn a_source_holds_a_slot_while_its_request_is_open() {
+  let (addr, _) = serve(ranged(Arc::new(file(SLOT_FILE)), "\"v1\""));
+  let host = host_key(&format!("http://{addr}/")).expect("a host key");
+  let limits = Arc::new(HostLimits::new(1));
+  let reader = limited_reader(addr, Some(limits.clone()));
+  let reader = promptly(move || {
+    reader.facts().expect("the first open answers");
+    reader
+  });
+  // The ring is full and the body open: the one slot is the source's.
+  assert!(!slot_free(&limits, &host, SETTLE), "the open request holds the slot");
+  drop(reader);
+  assert!(slot_free(&limits, &host, PROMPT), "the slot frees when the reader closes");
+}
+
+#[test]
+fn a_source_without_limits_takes_no_slot() {
+  let data = Arc::new(file(SLOT_FILE));
+  let (addr, requests) = serve(ranged(data.clone(), "\"v1\""));
+  let host = host_key(&format!("http://{addr}/")).expect("a host key");
+  let limits = Arc::new(HostLimits::new(1));
+  let held = limited_reader(addr, Some(limits.clone()));
+  let held = promptly(move || {
+    held.facts().expect("the first open answers");
+    held
+  });
+  // The one slot is taken; a source without limits is not held back...
+  let mut free = limited_reader(addr, None);
+  let free = promptly(move || {
+    let mut first = [0u8; 100];
+    free.read_exact(&mut first).expect("bytes past the cap");
+    (free, first)
+  });
+  assert_eq!(free.1, data[..100]);
+  assert_eq!(lock(&requests).len(), 2);
+  // ...and holds none itself: the slot is free once the limited one closes.
+  drop(held);
+  assert!(slot_free(&limits, &host, PROMPT), "the slot frees with the other source still open");
+}
+
+#[test]
+fn a_reopen_holds_one_slot_not_two() {
+  let data = Arc::new(file(SLOT_FILE));
+  let (addr, requests) = serve(ranged(data.clone(), "\"v1\""));
+  let host = host_key(&format!("http://{addr}/")).expect("a host key");
+  let limits = Arc::new(HostLimits::new(1));
+  let mut reader = limited_reader(addr, Some(limits.clone()));
+  // Far past the ring and a skip by read: a restart under a new request,
+  // which gets the one slot only because the old request let it go.
+  let far = STREAM_RING_BYTES;
+  let (reader, mid) = promptly(move || {
+    let mut first = [0u8; 100];
+    reader.read_exact(&mut first).expect("first bytes");
+    reader.seek(SeekFrom::Start(far as u64)).expect("seek");
+    let mut mid = [0u8; 100];
+    reader.read_exact(&mut mid).expect("bytes after the seek");
+    (reader, mid)
+  });
+  assert_eq!(mid, data[far..far + 100]);
+  assert_eq!(lock(&requests).len(), 2, "the seek reopened");
+  assert!(!slot_free(&limits, &host, SETTLE), "the new request holds the slot");
+  drop(reader);
+  assert!(slot_free(&limits, &host, PROMPT), "the slot frees when the reader closes");
 }
 
 // --- The source rule ---
