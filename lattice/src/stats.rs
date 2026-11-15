@@ -92,7 +92,8 @@ fn smooth(prev: f32, sample: f32, dt: f32) -> f32 {
 /// Process stats (RSS memory + CPU%) sampled at most once per second and
 /// rendered in the top-right debug overlay alongside the frame rate.
 pub struct Stats {
-  system: System,
+  // None where sysinfo does not support the platform: RSS then reads 0.
+  system: Option<System>,
   pid: Option<Pid>,
   proc_rss: u64,
   proc_cpu: f32,
@@ -136,7 +137,7 @@ pub struct Stats {
 
 impl Stats {
   pub fn new() -> Self {
-    let system = System::new_with_specifics(RefreshKind::nothing());
+    let system = System::new_with_specifics(RefreshKind::nothing()).ok();
     let pid = sysinfo::get_current_pid().ok();
     let mut stats = Self {
       system,
@@ -182,13 +183,13 @@ impl Stats {
   }
 
   fn sample(&mut self) {
-    if let Some(pid) = self.pid {
-      self.system.refresh_processes_specifics(
+    if let (Some(system), Some(pid)) = (self.system.as_mut(), self.pid) {
+      system.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         true,
         ProcessRefreshKind::nothing().with_memory(),
       );
-      if let Some(proc) = self.system.process(pid) {
+      if let Some(proc) = system.process(pid) {
         self.proc_rss = proc.memory();
       }
     }

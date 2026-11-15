@@ -13,7 +13,7 @@ window = ["dep:objc2-core-video", "dep:objc2-core-foundation", "dep:windows", "d
 # SDL, built from source as alloy builds it: per target, the same pin and
 # features, so the two crates unify on one SDL in a GUI build.
 [target.'cfg(target_os = "android")'.dependencies]
-sdl3 = { version = "=0.20.0", features = ["build-from-source"] }
+sdl3 = { version = "=0.22.1", features = ["build-from-source"] }
 # The activity's helpers (src/android.rs: the share sheet, the touchscreen
 # feature, the packed asset lookup; src/dialog/android.rs: the document
 # intents), over JNI on the process-wide JavaVM and activity that
@@ -31,7 +31,7 @@ ndk = { version = "=0.9.0", default-features = false }
 ndk-sys = "=0.6.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
+sdl3 = { version = "=0.22.1", features = ["build-from-source-static"] }
 # CVDisplayLink for the macOS swap pacer (src/gl_surface/display_link.rs): the
 # ANGLE-Metal swap does not block, so the window swap waits for the link's
 # tick, as SDL's own CGL path does. Generated CoreVideo bindings from the
@@ -50,10 +50,10 @@ objc2-core-foundation = { version = "=0.3.2", default-features = false, optional
 objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["AVCaptureDevice", "AVMediaFormat"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
+sdl3 = { version = "=0.22.1", features = ["build-from-source-static"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
+sdl3 = { version = "=0.22.1", features = ["build-from-source-static"] }
 # GetDeviceRemovedReason on the D3D11 device behind ANGLE, for the context-
 # loss log line (src/gl_surface/device_loss.rs): the DXGI_ERROR_* names and the COM
 # interface. Already in the client's graph (iroh's netwatch pulls it), so
@@ -104,4 +104,4 @@ zbus = { workspace = true }
 [build-dependencies]
 # Locates the target C compiler so the macOS build can link
 # libclang_rt.osx.a; see build.rs. forge's pin, already in the tree.
-cc = "=1.10.0"
+cc = "=1.11.1"

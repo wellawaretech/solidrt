@@ -42,7 +42,9 @@ pub fn pid() -> u32 {
 
 /// Resident set size of the current process in bytes (0 if unavailable).
 pub fn rss() -> u64 {
-  let mut system = System::new_with_specifics(RefreshKind::nothing());
+  let Ok(mut system) = System::new_with_specifics(RefreshKind::nothing()) else {
+    return 0;
+  };
   let Ok(pid) = sysinfo::get_current_pid() else {
     return 0;
   };
@@ -72,18 +74,18 @@ pub fn exec_path() -> Option<String> {
 /// Pro" (sysinfo folds the device model in), "macOS 15.2", "Windows 11 Pro".
 /// `None` when the platform does not say.
 pub fn os_description() -> Option<String> {
-  System::long_os_version()
+  System::long_os_version().ok()
 }
 
 /// The kernel version ("7.1.4-arch1-1", a Darwin or NT build), or `None`.
 pub fn kernel_version() -> Option<String> {
-  System::kernel_version()
+  System::kernel_version().ok()
 }
 
 /// The machine's hostname, or `None`. What tells one client's machine from
 /// another's once clients connect over the network.
 pub fn host_name() -> Option<String> {
-  System::host_name()
+  System::host_name().ok()
 }
 
 /// The process environment as name/value pairs (non-UTF-8 entries skipped).
@@ -95,7 +97,9 @@ pub fn env_vars() -> Vec<(String, String)> {
 /// the OS refused (permissions). SIGKILL / TerminateProcess, like `Child::kill`.
 pub fn kill(pid: u32) -> bool {
   let pid = sysinfo::Pid::from_u32(pid);
-  let mut system = System::new_with_specifics(RefreshKind::nothing());
+  let Ok(mut system) = System::new_with_specifics(RefreshKind::nothing()) else {
+    return false;
+  };
   system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, ProcessRefreshKind::nothing());
   system.process(pid).map(|proc| proc.kill()).unwrap_or(false)
 }
@@ -105,7 +109,9 @@ pub fn kill(pid: u32) -> bool {
 /// asks before trusting a record.
 pub fn alive(pid: u32) -> bool {
   let pid = sysinfo::Pid::from_u32(pid);
-  let mut system = System::new_with_specifics(RefreshKind::nothing());
+  let Ok(mut system) = System::new_with_specifics(RefreshKind::nothing()) else {
+    return false;
+  };
   system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, ProcessRefreshKind::nothing());
   system.process(pid).is_some_and(|proc| !matches!(proc.status(), sysinfo::ProcessStatus::Zombie))
 }
