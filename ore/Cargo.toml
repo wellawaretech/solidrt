@@ -41,6 +41,14 @@ sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
 objc2-core-video = { version = "=0.3.2", default-features = false, features = ["CVBase", "CVReturn", "CVDisplayLink", "CVHostTime"], optional = true }
 objc2-core-foundation = { version = "=0.3.2", default-features = false, optional = true }
 
+# AVCaptureDevice.authorizationStatus(for:) for the camera and microphone
+# permission states (src/permission.rs). The AVFoundation bindings of the
+# objc2 family, the same publisher and version as objc2-core-video above,
+# built on the objc2 0.6 and objc2-foundation 0.3.2 already in the graph.
+# One class method and two media type constants used.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["AVCaptureDevice", "AVMediaFormat"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
 
@@ -65,9 +73,10 @@ log = { workspace = true }
 tokio = { workspace = true, features = ["io-util"] }
 
 # The per-user protocol registration a packed app writes on
-# registerProtocolHandler (src/link/registration.rs), through Microsoft's
-# safe registry binding; already in the graph (ipconfig, the resolver's
-# Windows DNS config).
+# registerProtocolHandler (src/link/registration.rs), and the camera and
+# microphone privacy switches the permission states read
+# (src/permission.rs), through Microsoft's safe registry binding; already
+# in the graph (ipconfig, the resolver's Windows DNS config).
 [target.'cfg(windows)'.dependencies]
 windows-registry = "=0.6.1"
 # GetCurrentThread/SetThreadPriority for the frame tiers (src/threads.rs),
@@ -82,6 +91,15 @@ windows-sys = { version = "=0.61.2", features = ["Win32_System_Threading"] }
 # clocks (src/touch.rs, src/display_vsync.rs); alloy's and forge's pin.
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.191"
+
+# The portal introspection on Linux and the BSDs (src/portal.rs): one
+# Introspect call on the session bus, settling the dialog and link
+# availability. zbus on tokio only (no default features: no async-io
+# executor beside tokio), driven by a current-thread runtime on the probe
+# thread. The 5.x line, not 6.x: 6.0 is a month old and rests on a new
+# runtime crate (zruntime); 5.19 is the line in wide use.
+[target.'cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android", target_os = "ios")))'.dependencies]
+zbus = { workspace = true }
 
 [build-dependencies]
 # Locates the target C compiler so the macOS build can link

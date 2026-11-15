@@ -1,3 +1,4 @@
+use ore::availability::Availability;
 use ore::dialog::{DialogError, DialogFilter, DialogKind, DialogRequest, DialogStatus, Picked};
 
 use crate::dialog::{parse_answer, request_json, status_json};
@@ -49,20 +50,28 @@ fn a_request_is_its_kind_and_options_in_the_pickers_words() {
 #[test]
 fn the_status_carries_the_last_requests_answer_once_it_has_one() {
   let folder = DialogRequest { kind: DialogKind::OpenDirectory, filters: Vec::new(), start_in: None };
-  let waiting =
-    DialogStatus { available: true, pending: Some(folder.clone()), last: Some((folder.clone(), None)), queued: 2 };
+  let waiting = DialogStatus {
+    availability: Availability::Available,
+    pending: Some(folder.clone()),
+    last: Some((folder.clone(), None)),
+    queued: 2,
+  };
   assert_eq!(
     status_json(&waiting),
     serde_json::json!({
       "pending": { "kind": "openDirectory", "startIn": null },
       "last": { "kind": "openDirectory", "startIn": null },
       "queued": 2,
-      "available": true,
+      "availability": "available",
     })
   );
   let picked = Picked { location: "docs".to_string(), name: "docs".to_string() };
-  let answered =
-    DialogStatus { available: false, pending: None, last: Some((folder.clone(), Some(Ok(vec![picked])))), queued: 0 };
+  let answered = DialogStatus {
+    availability: Availability::Unavailable,
+    pending: None,
+    last: Some((folder.clone(), Some(Ok(vec![picked])))),
+    queued: 0,
+  };
   assert_eq!(
     status_json(&answered)["last"]["answer"],
     serde_json::json!({ "picked": [{ "location": "docs", "name": "docs" }] })

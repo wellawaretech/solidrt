@@ -33,6 +33,11 @@ pub struct Manifest {
   // none.
   #[serde(default, rename = "windowSize")]
   pub window_size: Option<WindowSize>,
+  // What the app uses, as the project declared it (the `uses` key,
+  // resolved by the CLI). Absent means everything is used: a manifest from
+  // an older CLI, or a file served on its own.
+  #[serde(default)]
+  pub uses: Option<Vec<String>>,
   // Provenance: the CLI release (or git describe of the checkout) that built
   // this version; "unknown" only for manifests from CLIs that predate the
   // field. The packed runner warns when it differs from its own version
@@ -90,6 +95,12 @@ pub struct AppFonts {
   pub aliases: Vec<String>,
 }
 
+/// The names that are both a declaration (the project's `uses`) and a
+/// build capability (`Flux.capabilities`): a name the project leaves out of
+/// `uses` is excluded from the engine. `internet` is a declaration with no
+/// build name (`http` is the build fact), so it stays a packaging fact.
+pub const DECLARED_CAPABILITIES: &[&str] = &["camera", "microphone", "haptics"];
+
 pub(crate) fn unknown_version() -> String {
   "unknown".to_string()
 }
@@ -114,6 +125,16 @@ impl Manifest {
   /// manifest declares none.
   pub fn window_size(&self) -> Option<(u32, u32)> {
     self.window_size.map(|size| (size.width, size.height))
+  }
+
+  /// The build capabilities the project declared it does not use: of
+  /// `DECLARED_CAPABILITIES`, the ones absent from `uses`. Empty when the
+  /// manifest has no `uses` (everything is used).
+  pub fn excluded_capabilities(&self) -> Vec<&'static str> {
+    let Some(uses) = &self.uses else {
+      return Vec::new();
+    };
+    DECLARED_CAPABILITIES.iter().copied().filter(|name| !uses.iter().any(|used| used == name)).collect()
   }
 
   /// Parse `manifest.json` inside a version dir (or a pack folder). None when

@@ -243,6 +243,17 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent, time_stamp_ms: f64) -> boo
         emit_event(&ctx, "contextRestored", obj);
       });
     }
+    // A facility's availability changed: re-emit the whole snapshot (ore's
+    // states, this engine's overrides applied), so the sticky payload is
+    // always the full map.
+    AlloyEvent::Availability { .. } => {
+      exec.exec(move |ctx| crate::availability::emit(&ctx));
+    }
+    // A permission's state changed: re-emit the whole map (ore's states,
+    // this engine's overrides applied), as for availability.
+    AlloyEvent::Permission { .. } => {
+      exec.exec(move |ctx| crate::permission::emit(&ctx));
+    }
     // Runner-owned: pointer dispatch is hit testing, not marshalling; the
     // frame signals, Quit and Exposed are the run loop's own (see lattice's
     // event loop). No wildcard - a new variant must be placed above or here.

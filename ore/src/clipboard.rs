@@ -31,6 +31,8 @@ use std::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::availability::{self, Availability, Facility};
+
 mod sdl;
 
 /// The eight bytes every PNG file starts with (the PNG specification,
@@ -108,10 +110,20 @@ impl std::fmt::Display for ClipboardError {
 /// finished on.
 pub type Responder<T> = Box<dyn FnOnce(Result<T, ClipboardError>) + Send>;
 
-/// Whether this platform can write and read an image on its clipboard:
-/// the desktops. SDL's Android clipboard is text only.
-pub fn image_available() -> bool {
-  cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows"))
+/// Whether this platform can write and read an image on its clipboard
+/// (`crate::availability`): Available on the desktops, Unavailable
+/// elsewhere (SDL's Android clipboard is text only), never Unknown.
+pub fn image_availability() -> Availability {
+  availability::of(Facility::ClipboardImage)
+}
+
+/// The first answer, run once by `crate::availability`.
+pub(crate) fn probe_image() -> Availability {
+  if cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows")) {
+    Availability::Available
+  } else {
+    Availability::Unavailable
+  }
 }
 
 /// The clipboard session of one engine (see the module doc).
@@ -201,7 +213,7 @@ impl Session {
       self.put(Some(Content::Image(image)));
       return respond(Ok(()));
     }
-    if !image_available() {
+    if image_availability() == Availability::Unavailable {
       return respond(Err(ClipboardError::Unavailable));
     }
     let session = Arc::clone(self);
@@ -239,7 +251,7 @@ impl Session {
       };
       return respond(Ok(image));
     }
-    if !image_available() {
+    if image_availability() == Availability::Unavailable {
       return respond(Err(ClipboardError::Unavailable));
     }
     crate::main_thread::run(move |on_main| {

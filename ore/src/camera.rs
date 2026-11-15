@@ -7,8 +7,23 @@
 //! hotplug events SDL delivers once the subsystem is up arrive through the
 //! pump (ore's pump -> CameraDeviceChange), so a listener re-enumerates
 //! without polling.
+//!
+//! Availability (`Facility::Camera`, `crate::availability`): the subsystem
+//! starts lazily, at the first list or open (`start`), never earlier (an
+//! init can power a device, raise a prompt, or wedge; see `start`). So the
+//! camera reads `Unknown` until an app lists or opens one: the "only a call
+//! can tell" case. When `start` reaches Ready, the device list settles it
+//! (`Available` with a camera listed, `Unavailable` with none), and every
+//! CameraDeviceChange re-reads it (`refresh_availability`); a failed init
+//! is `Unavailable`. Where SDL delivers no hotplug (macOS and Windows; a
+//! removal on Linux, see `PlatformEvent::CameraDeviceChange`) the state
+//! stays what the list showed at the last read. SDL keeps a camera
+//! unplugged while open in its list until it closes, so closing a camera
+//! re-reads it too. With SDL's pipewire backend (the Linux fallback) the
+//! devices arrive after the init, so the first answer can be `Unavailable`
+//! until their added events arrive.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use sdl3::sys::camera::{
@@ -21,6 +36,9 @@ use sdl3::sys::pixels::{SDL_COLORSPACE_SRGB, SDL_PIXELFORMAT_MJPG, SDL_PIXELFORM
 use sdl3::sys::properties::SDL_GetFloatProperty;
 use sdl3::sys::stdinc::SDL_free;
 use sdl3::sys::surface::{SDL_ConvertPixels, SDL_GetSurfaceProperties, SDL_Surface, SDL_PROP_SURFACE_ROTATION_FLOAT};
+
+use crate::availability::{self, Availability, Facility};
+use crate::permission::{self, Permission};
 
 /// The frame rate a spec choice prefers among equally sized native specs,
 /// in thousandths of a frame per second: the usual camera rate, smooth
@@ -48,6 +66,11 @@ enum InitState {
 }
 
 static INIT_STATE: Mutex<InitState> = Mutex::new(InitState::NotStarted);
+
+// Held across one availability read and its record, so two reads on two
+// threads (the init worker, the pump, a camera's drop) never record their
+// lists out of order.
+static AVAILABILITY_READ: Mutex<()> = Mutex::new(());
 
 /// Lazy one-time SDL camera subsystem init (the first list or open). Never
 /// blocks: the first call spawns a worker and reports `Starting`; a list
@@ -90,7 +113,13 @@ pub fn start() -> Start {
         if let Err(e) = &result {
           log::warn!("[ore::camera] {e}");
         }
+        let ready = result.is_ok();
         *INIT_STATE.lock().expect("camera init state poisoned") = InitState::Done(result);
+        if ready {
+          refresh_availability();
+        } else {
+          availability::set(Facility::Camera, Availability::Unavailable);
+        }
       });
       match spawned {
         Ok(_) => {
@@ -100,6 +129,7 @@ pub fn start() -> Start {
         Err(e) => {
           let msg = format!("camera init thread failed to spawn: {e}");
           *state = InitState::Done(Err(msg.clone()));
+          availability::set(Facility::Camera, Availability::Unavailable);
           Start::Failed(msg)
         }
       }
@@ -108,6 +138,19 @@ pub fn start() -> Start {
     InitState::Done(Ok(())) => Start::Ready,
     InitState::Done(Err(e)) => Start::Failed(e.clone()),
   }
+}
+
+/// Re-read the camera's availability from the device list (see the module
+/// doc). Does nothing before `start` reports Ready: the camera reads
+/// `Unknown` until then, and nothing here starts the subsystem. Any thread
+/// (SDL_GetCameras is thread safe); the pump calls it on every
+/// CameraDeviceChange.
+pub(crate) fn refresh_availability() {
+  if !matches!(*INIT_STATE.lock().expect("camera init state poisoned"), InitState::Done(Ok(()))) {
+    return;
+  }
+  let _read = AVAILABILITY_READ.lock().unwrap_or_else(PoisonError::into_inner);
+  availability::set(Facility::Camera, Availability::of_devices(devices().len()));
 }
 
 fn subsystem_init() -> bool {
@@ -314,6 +357,9 @@ impl Camera {
       framerate_numerator: FALLBACK_FPS,
       framerate_denominator: 1,
     });
+    // SDL's open asks Android for the camera itself: remember that it was
+    // asked (see `crate::permission`).
+    permission::note_asking(Permission::Camera);
     // SAFETY: `spec` is a live, fully initialized spec SDL only reads.
     let raw = unsafe { SDL_OpenCamera(SDL_CameraID(id), &spec) };
     if raw.is_null() {
@@ -322,13 +368,20 @@ impl Camera {
     Ok(Camera { raw })
   }
 
-  /// The OS permission's state; Pending until the user (or the backend)
-  /// answers.
+  /// The OS permission's state for this open; Pending until the user (or
+  /// the backend) answers. An answer settles the standing permission
+  /// (`crate::permission`): approved records it granted, denied denied.
   pub fn permission(&self) -> PermissionState {
     // SAFETY: `raw` is an open camera, live until drop.
     match unsafe { SDL_GetCameraPermissionState(self.raw) } {
-      SDL_CameraPermissionState::APPROVED => PermissionState::Approved,
-      SDL_CameraPermissionState::DENIED => PermissionState::Denied,
+      SDL_CameraPermissionState::APPROVED => {
+        permission::record(Permission::Camera, permission::PermissionState::Granted);
+        PermissionState::Approved
+      }
+      SDL_CameraPermissionState::DENIED => {
+        permission::record(Permission::Camera, permission::PermissionState::Denied);
+        PermissionState::Denied
+      }
       _ => PermissionState::Pending,
     }
   }
@@ -368,6 +421,8 @@ impl Drop for Camera {
     // SAFETY: `raw` is an open camera, closed once here; no frame outlives
     // it (a Frame borrows the Camera).
     unsafe { SDL_CloseCamera(self.raw) };
+    // A camera unplugged while open leaves SDL's list only now.
+    refresh_availability();
   }
 }
 

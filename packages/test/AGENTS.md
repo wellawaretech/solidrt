@@ -74,6 +74,16 @@ agents/testing.md.
   data }`) and `app.setClipboard(content)` puts a text, an image or null
   on it for the app to paste: under test it is the engine's own
   clipboard, never the OS's.
+  `app.setAvailability(name, state)` sets what `availability(name)` reads
+  (`"available"`, `"unavailable"` or `"unknown"`); under test link,
+  dialog, share, clipboard-image and haptics read `"available"` and
+  camera, microphone and audio `"unknown"`. A reader updates with the next
+  frame: `settle()` after it.
+  `app.setPermission(name, state)` sets what `permission(name)` and
+  `navigator.permissions` read for `camera` or `microphone` (`"granted"`,
+  `"denied"` or `"prompt"`); a test engine reads both as `"granted"` until a
+  test sets one. A live `PermissionStatus` fires `change`, and a reader
+  updates with the next frame: `settle()` after it.
   `await app.debug(name, args)` calls a command the
   app registered with `registerDebug` and returns its value: the way to
   put a loaded app into a state its UI reaches slowly. A `gamepad` event

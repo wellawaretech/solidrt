@@ -11,6 +11,16 @@ export type ClientEntry = {
   /** Build profile: debug or release. */
   profile: string
   capabilities: string[]
+  /** The client's own platform facts at connect (`Flux.availability`):
+   * facility name to "available", "unavailable" or "unknown"; null on a
+   * runtime that predates the report. The live map, test overrides applied,
+   * is GET /availability. */
+  availability: Record<string, string> | null
+  /** The client's own permissions at connect (`navigator.permissions`):
+   * camera and microphone to "granted", "denied" or "prompt"; null on a
+   * runtime that predates the report. The live map, test overrides
+   * applied, is GET /permission. */
+  permission: Record<string, string> | null
   /** Query kinds this client's runtime answers (empty on runtimes that predate
    * the advertisement); dev tools plan their verification surface from it. */
   queries: string[]

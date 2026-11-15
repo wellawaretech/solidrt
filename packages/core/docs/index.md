@@ -144,8 +144,15 @@ onFrame((tick) => setT(tick))
 is observed (system theme, text scale, orientation, visibility, connected
 input devices), `capabilities` what follows from it for behavior (hover,
 touch, precise pointer, keyboard navigation, window size class). Which
-runtime features exist on this build is `Flux.capabilities`, by name, never
-by guessing from the OS.
+runtime modules are in this build is `Flux.capabilities`, by name. Which
+platform facilities this platform has (a file dialog, a link opener, the
+share sheet, the clipboard image, haptics) is `availability(name)`. It is
+`"available"`, `"unavailable"` or `"unknown"`, and it is reactive. Show a
+feature unless it is `"unavailable"`, and handle the `NotSupportedError`.
+Do not guess from the OS. Whether the user gives permission for the
+camera or the microphone is `permission(name)`. It is `"granted"`,
+`"denied"` or `"prompt"`, and it is reactive. There is no request call:
+when the app opens the device, the platform asks the user.
 
 Window-shaped values are reactive too: `windowSize()`, `safeArea()`,
 `displayScale()`, `keyboardHeight()`, `windowFocused()`.
@@ -223,13 +230,14 @@ picks: a messenger, mail, a cloud drive. Write the file with `flux:fs`
 first, then share its handle. The target app reads the file later, so do
 not delete the file after the call. The promise resolves when the user
 picks a target. It rejects with an `AbortError` when the user closes the
-sheet. `navigator.share` exists only on Android for now: check it before
-you show a Share button.
+sheet. Only Android has a share sheet for now:
+`availability("share")` tells if this platform has one. Show the Share
+button unless it is `"unavailable"`.
 
 ```ts
 let png = file("share/board.png")
 await png.write(encodeImage(await captureSnapshot(boardNode)))
-if (navigator.share) await navigator.share({ text: "My board", files: [png] })
+if (availability("share") !== "unavailable") await navigator.share({ text: "My board", files: [png] })
 ```
 
 ```tsx

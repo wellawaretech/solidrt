@@ -5,10 +5,12 @@ import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.ClipData;
+import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.PixelFormat;
@@ -86,15 +88,59 @@ public class SolidRTActivity extends SDLActivity {
 
     private static native void nativeDialogResult(long id, String[] uris, String[] names);
 
-    // Whether a document picker exists on this device (a TV has none).
-    public static boolean dialogsAvailable() {
+    // Whether a document picker exists on this device, for ore's dialog
+    // availability (ore dialog.rs, the ACTIVITY_* constants there):
+    // DIALOGS_UNAVAILABLE when nothing resolves the open intent, or only the
+    // TV framework's stub package does (it answers every request with a
+    // cancel, so it is no picker); DIALOGS_AVAILABLE when a picker resolves;
+    // DIALOGS_UNKNOWN while there is no activity to ask.
+    private static final int DIALOGS_UNAVAILABLE = 0;
+    private static final int DIALOGS_AVAILABLE = 1;
+    private static final int DIALOGS_UNKNOWN = 2;
+    private static final String TV_FRAMEWORK_STUBS = "com.google.android.tv.frameworkpackagestubs";
+
+    public static int dialogsAvailable() {
         if (mSingleton == null) {
-            return false;
+            return DIALOGS_UNKNOWN;
         }
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
-        return intent.resolveActivity(mSingleton.getPackageManager()) != null;
+        ComponentName picker = intent.resolveActivity(mSingleton.getPackageManager());
+        if (picker == null || TV_FRAMEWORK_STUBS.equals(picker.getPackageName())) {
+            return DIALOGS_UNAVAILABLE;
+        }
+        return DIALOGS_AVAILABLE;
+    }
+
+    // The asked-before bit of a runtime permission, for ore's permission
+    // states (ore permission.rs): Android answers "not granted, no
+    // rationale" both before the first request and after a final denial,
+    // so ore notes that it asked (true before a request or a camera open)
+    // and clears the bit once the permission is granted (false). One
+    // preferences file, keyed by the Android permission name
+    // ("android.permission.CAMERA"). Called by native over JNI on any
+    // thread; false and a no-op while there is no activity.
+    private static final String PERMISSION_PREFERENCES = "ore.permissions";
+
+    public static boolean permissionAsked(String permission) {
+        if (mSingleton == null) {
+            return false;
+        }
+        return mSingleton.getSharedPreferences(PERMISSION_PREFERENCES, Context.MODE_PRIVATE).getBoolean(permission, false);
+    }
+
+    public static void notePermissionAsked(String permission, boolean asked) {
+        if (mSingleton == null) {
+            return;
+        }
+        SharedPreferences.Editor editor = mSingleton.getSharedPreferences(PERMISSION_PREFERENCES, Context.MODE_PRIVATE).edit();
+        if (asked) {
+            editor.putBoolean(permission, true);
+        } else {
+            editor.remove(permission);
+        }
+        editor.apply();
     }
 
     // Show a dialog: `patterns` are extension lists ("png;jpg"), mapped to

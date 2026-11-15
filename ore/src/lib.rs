@@ -18,8 +18,10 @@
 //! sheet, haptic feedback (`haptics`), the clipboard, the audio devices
 //! (`audio`: the playback device, the converter, the recording device),
 //! the camera (`camera`), the user folders, the power state, thread
-//! placement, the clock (`time`), the log sink, and the platform
-//! vocabulary of input, display, gamepad and lifecycle types. Its window
+//! placement, the clock (`time`), the log sink, each facility's
+//! availability (`availability`: available, unavailable or unknown, and its
+//! changes through the pump), and the platform vocabulary of input,
+//! display, gamepad and lifecycle types. Its window
 //! part, behind the `window` feature (what needs SDL's video subsystem),
 //! holds the pump's wait itself (`Platform::wait`: its translation reads
 //! the window), the window (`window`: opening it with the headless chain,
@@ -35,6 +37,7 @@
 #[cfg(target_os = "android")]
 pub mod android;
 pub mod audio;
+pub mod availability;
 pub mod camera;
 pub mod clipboard;
 #[cfg(feature = "window")]
@@ -57,6 +60,10 @@ pub mod logging;
 pub mod main_thread;
 pub mod permission;
 pub mod platform;
+// The portal introspection (zbus), where the dialog and link probes reach
+// the xdg-desktop-portal.
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android", target_os = "ios")))]
+mod portal;
 pub mod power;
 pub mod redraw;
 pub mod share;

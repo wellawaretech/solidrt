@@ -453,14 +453,31 @@ when exactly one client is connected.
   waiting for an answer (`kind` openFiles/saveFile/openDirectory and its
   options) or null; `last`, the last request made with its `answer`
   (`picked` entries, `cancelled`, or `failed`); `queued`, answers waiting
-  for the next request; `available`, whether the client's platform can show
-  a native dialog. POST `/dialog` with a JSON body `{ files: [path, ...] }`,
-  `{ directory: path }` or `{ cancel: true }` answers the waiting request
-  (`answered: true`) or queues the answer for the next one (`queued:
-  true`). Queue BEFORE triggering the flow: on a visible client an
+  for the next request; `availability`, whether the client's platform can
+  show a native dialog: `"available"`, `"unavailable"` (a call rejects with
+  `NotSupportedError`) or `"unknown"` (not settled, or only a call can
+  tell; the dialog still shows). POST `/dialog` with a JSON body `{
+  files: [path, ...] }`, `{ directory: path }` or `{ cancel: true }`
+  answers the waiting request (`answered: true`) or queues the answer for
+  the next one (`queued: true`). Queue BEFORE triggering the flow: on a visible client an
   unanswered request shows the native dialog, which nothing can dismiss
   remotely. Paths are in the client's own file system; the app gets
   `flux:fs` handles on them as from a real pick.
+- `/availability` - the live engine's platform facts (`Flux.availability`,
+  what core's `availability(name)` reads): `{ link, dialog, share,
+  "clipboard-image", haptics, camera, microphone, audio }`, each
+  `"available"`, `"unavailable"` (a call rejects with `NotSupportedError`)
+  or `"unknown"` (a probe not settled, or only a call can tell), the test
+  host's overrides applied. A failed call corrects the fact, so read it
+  again after one. `/clients` carries each client's own map at connect as
+  `availability` (null on a runtime that predates it).
+- `/permission` - the live engine's permissions (`navigator.permissions`,
+  what core's `permission(name)` reads): `{ camera, microphone }`, each
+  `"granted"`, `"denied"` (the user refused; an open fails) or `"prompt"`
+  (not answered; the OS asks at the next open), the test host's overrides
+  applied. A denied open settles the state to `"denied"`. `/clients`
+  carries each client's own map at connect as `permission` (null on a
+  runtime that predates it).
 - `/link` - GET reads the location the app reports (`{ location }`, a
   router's current path, null when the app reports none; a reload of the
   same app starts at the last reported location, so a rebuild comes back

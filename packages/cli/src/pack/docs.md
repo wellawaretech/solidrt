@@ -44,7 +44,7 @@ platform-neutral terms; the `android` group holds what only Android needs:
   "windowSize": { "width": 900, "height": 600 },
   "icon": "./assets/icon.svg",
   "iconBackground": "#1a1a1a",
-  "capabilities": {
+  "uses": {
     "camera": true,
     "microphone": true,
     "haptics": true,
@@ -94,13 +94,29 @@ file's corners can be. A file padded to the 108/66dp rule gets the padding
 twice and shows at about half the size. Use at least 238 px square (59.4dp
 at xxxhdpi). The Play Console store listing needs its own 512x512 PNG icon;
 pack does not make it.
-`capabilities` is what the app may ask the user for, in platform-neutral
-names. All are on unless switched off, so a packed app can do what it did
-in the player; the scaffold lists them all, and `"camera": false` (or
-deleting the line) drops one. The runner declares no permission of its own:
-each capability kept on becomes the APK's permission, and only a declared
-permission can be requested at runtime. `android.permissions` adds fully
-qualified `<uses-permission>` names beyond those (billing, push, vendor).
+`uses` tells what the app uses. Its names are the same on all platforms.
+All names are on by default, so a packed app can do the same things that
+it did in the player. The scaffold lists all the names. To drop a name, set
+it to `false` (`"camera": false`) or delete its line. Each packer changes a
+name that is on into the declaration of its platform. The runner declares
+no permission of its own, and the app can only ask for a permission that
+the APK declares. The manifest also holds the names that are on. The
+runtime removes a dropped name from `Flux.capabilities`, so the app sees
+the same list on all platforms. A dropped name also does not get to
+`navigator.permissions`: a query for it rejects with a `TypeError`.
+
+Only the Android packer is available now. The other columns show what each
+packer will declare when it is available.
+
+| Name | Android | iOS and macOS | Windows (MSIX) | Flatpak | Snap |
+|---|---|---|---|---|---|
+| `camera` | `CAMERA` | `NSCameraUsageDescription`; sandbox `com.apple.security.device.camera` | `webcam` | camera portal | `camera` plug |
+| `microphone` | `RECORD_AUDIO` | `NSMicrophoneUsageDescription`; sandbox `com.apple.security.device.audio-input` | `microphone` | `--socket=pulseaudio` | `audio-record` plug |
+| `haptics` | `VIBRATE` | nothing | nothing | nothing | nothing |
+| `internet` | `INTERNET` | sandbox `com.apple.security.network.client`; iOS nothing | `internetClient` | `--share=network` | `network` plug |
+
+`android.permissions` adds fully qualified `<uses-permission>` names
+beyond those (billing, push, vendor).
 `android.versionCode` orders updates and must only ever grow; `versionName`
 is the package `version`.
 

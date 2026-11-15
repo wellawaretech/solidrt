@@ -304,6 +304,48 @@ fn set_clipboard<'js>(ctx: Ctx<'js>, content: Value<'js>) -> flux::rquickjs::Res
   Ok(())
 }
 
+/// `setAvailability(name, state)`: report the named facility ("link",
+/// "dialog", ...) as `state` ("available", "unavailable" or "unknown") in
+/// this engine, whatever the platform says, and emit the `availability`
+/// event so a reactive reader updates. Throws a `TypeError` on an unknown
+/// name or state.
+fn set_availability(ctx: Ctx<'_>, name: String, state: String) -> flux::rquickjs::Result<()> {
+  stepper(&ctx, "setAvailability()")?;
+  let Some(facility) = flux::availability::facility_named(&name) else {
+    return Err(Exception::throw_type(&ctx, &format!("sol:test setAvailability: unknown facility {name}")));
+  };
+  let Some(state) = flux::availability::state_named(&state) else {
+    return Err(Exception::throw_type(
+      &ctx,
+      &format!("sol:test setAvailability: unknown state {state}; one of available, unavailable, unknown"),
+    ));
+  };
+  flux::availability::set_override(&ctx, facility, state);
+  flux::availability::emit(&ctx);
+  Ok(())
+}
+
+/// `setPermission(name, state)`: report the named permission ("camera",
+/// "microphone") as `state` ("granted", "denied" or "prompt") in this
+/// engine, whatever the platform says, and emit the `permission` event so
+/// a reactive reader and every listening `PermissionStatus` update. Throws
+/// a `TypeError` on an unknown name or state.
+fn set_permission(ctx: Ctx<'_>, name: String, state: String) -> flux::rquickjs::Result<()> {
+  stepper(&ctx, "setPermission()")?;
+  let Some(permission) = flux::permission::permission_named(&name) else {
+    return Err(Exception::throw_type(&ctx, &format!("sol:test setPermission: unknown permission {name}")));
+  };
+  let Some(state) = flux::permission::state_named(&state) else {
+    return Err(Exception::throw_type(
+      &ctx,
+      &format!("sol:test setPermission: unknown state {state}; one of granted, denied, prompt"),
+    ));
+  };
+  flux::permission::set_override(&ctx, permission, state);
+  flux::permission::emit(&ctx);
+  Ok(())
+}
+
 /// `debug(name, args)`: call a debug command the app registered
 /// (`registerDebug` of `sol:dev`), `args` and the result as JSON text
 /// (null for none).
@@ -646,6 +688,8 @@ impl ModuleDef for SolTestModule {
     decl.declare("requestedHaptics")?;
     decl.declare("clipboard")?;
     decl.declare("setClipboard")?;
+    decl.declare("setAvailability")?;
+    decl.declare("setPermission")?;
     decl.declare("debug")?;
     decl.declare("stats")?;
     decl.declare("capture")?;
@@ -683,6 +727,8 @@ impl ModuleDef for SolTestModule {
     exports.export("requestedHaptics", Function::new(ctx.clone(), requested_haptics)?)?;
     exports.export("clipboard", Function::new(ctx.clone(), clipboard)?)?;
     exports.export("setClipboard", Function::new(ctx.clone(), set_clipboard)?)?;
+    exports.export("setAvailability", Function::new(ctx.clone(), set_availability)?)?;
+    exports.export("setPermission", Function::new(ctx.clone(), set_permission)?)?;
     exports.export("debug", Function::new(ctx.clone(), debug)?)?;
     exports.export("stats", Function::new(ctx.clone(), stats)?)?;
     exports.export("capture", Function::new(ctx.clone(), capture)?)?;

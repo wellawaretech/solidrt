@@ -17,16 +17,11 @@ use rquickjs::promise::Promised;
 use rquickjs::{Array, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Value};
 use tokio::sync::oneshot;
 
+use ore::availability::{Availability, Facility};
 use ore::dialog::{DialogAnswer, DialogError, DialogFilter, DialogKind, DialogRequest, DialogResponder, Session};
 
 use crate::plugins::js_error::named_error;
 use crate::plugins::marshal::OptArg;
-
-/// The capability the file dialogs are listed under, only where the
-/// platform can show one (`ore::dialog::available`), or where the session
-/// answers only: a fact of the surface, not of the build, so it is not in
-/// `GUI_CAPABILITIES`.
-pub(crate) const CAPABILITY: &str = "dialog";
 
 #[derive(Clone, JsLifetime)]
 struct DialogState(#[qjs(skip_trace)] Arc<Session>);
@@ -50,17 +45,15 @@ pub fn session(ctx: &Ctx<'_>) -> Option<Arc<Session>> {
 
 /// Never show a dialog in this engine: every call waits on the session's
 /// queue (a test host's engine, whose test answers through the harness).
-/// Every call then resolves, so the engine lists the "dialog" capability
-/// whether or not the platform could show one: an app that gates on it
-/// takes its dialog path under test, where the test answers.
+/// Every call then resolves, so the engine reports the facility available
+/// in this session whether or not the platform could show one: an app that
+/// gates on it takes its dialog path under test, where the test answers.
 pub fn set_answers_only(ctx: &Ctx<'_>) {
   let Some(session) = session(ctx) else {
     return;
   };
   session.set_answers_only();
-  if !ore::dialog::available() {
-    crate::add_capability(ctx, CAPABILITY);
-  }
+  crate::availability::set_override(ctx, Facility::Dialog, Availability::Available);
 }
 
 /// Which function made a request: what its answer is built into.

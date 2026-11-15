@@ -125,6 +125,8 @@ export function clientList(withAddress = false): (ClientEntry & { address?: stri
     version: info.version,
     profile: info.profile,
     capabilities: info.capabilities,
+    availability: info.availability,
+    permission: info.permission,
     queries: info.queries,
     stats: info.stats,
     timeScale: info.timeScale,
@@ -439,6 +441,8 @@ const CONTROL_ENDPOINTS = [
   "/__control__/force-full-renders",
   "/__control__/debug",
   "/__control__/dialog",
+  "/__control__/availability",
+  "/__control__/permission",
   "/__control__/link",
   "/__control__/requested-links",
   "/__control__/requested-shares",
@@ -604,6 +608,16 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       }
       return handleQuery(query, "dialog_answer", { answer })
     }
+    case "/__control__/availability":
+      // The live engine's platform facts (facility name to "available",
+      // "unavailable" or "unknown", test-host overrides applied), as the
+      // client answers them; /clients has the client's own at connect.
+      return handleQuery(query, "availability")
+    case "/__control__/permission":
+      // The live engine's permissions (camera and microphone to "granted",
+      // "denied" or "prompt", test-host overrides applied), as the client
+      // answers them; /clients has the client's own at connect.
+      return handleQuery(query, "permission")
     case "/__control__/link": {
       // GET reads the location the app reported (reportLocation from
       // sol:dev; null without one); POST ?link=<link> delivers a link to

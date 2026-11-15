@@ -438,6 +438,10 @@ struct RunOptions {
   // The app's own fonts (a packed payload's, a `--assets` manifest's; none
   // for bare source), registered over the program's set (see merge_fonts).
   fonts: manifest::AppFonts,
+  // The build capabilities the startup app's project declared it does not
+  // use (a packed payload's manifest, a `--assets` manifest's; none for
+  // bare source), left out of its engines (see Manifest::excluded_capabilities).
+  excluded_capabilities: Vec<&'static str>,
   // Data-root resolution inputs (see storage::resolve).
   storage: storage::StorageSpec,
   // The app's argument vector (everything after the source path or a bare
@@ -637,6 +641,7 @@ fn ui_thread(
     stats,
     dev_server,
     fonts,
+    excluded_capabilities,
     storage: storage_spec,
     args,
     errors,
@@ -688,6 +693,12 @@ fn ui_thread(
   // app remove / cache wipe) is rebuilt before the next app run. A dev push
   // naming a different app re-anchors (see anchor_app).
   let mut current_app_id: Option<String> = Some(default_app_id.clone());
+  // The build capabilities the running app's project declared it does not
+  // use, left out of each engine built for it. The dev client reads them
+  // from the installed version's manifest on every app switch (like its
+  // fonts); the player declares nothing.
+  #[cfg_attr(not(feature = "go"), allow(unused_mut))]
+  let mut app_excluded = excluded_capabilities;
 
   // The program's fonts, with the app's own over them. The dev client keeps
   // the program's so app switches rebuild the set from scratch (see
@@ -1393,6 +1404,16 @@ fn ui_thread(
       // so a module's init finds the gui state, before the hosts' stepping
       // setup below, so a test or render engine carries them too.
       let builder = modules.install(builder);
+      // What the app's project declared it does not use leaves
+      // Flux.capabilities, and the module calls behind it refuse.
+      let builder = {
+        let excluded = app_excluded.clone();
+        builder.plugin(move |ctx| {
+          for name in &excluded {
+            flux::exclude_capability(&ctx, name);
+          }
+        })
+      };
       // The player's app-management surface over the version store; the
       // launch closure feeds the same reload path a dev push uses.
       #[cfg(feature = "go")]
@@ -1419,7 +1440,14 @@ fn ui_thread(
           .userdata(stepper.clone())
           .plugin(|ctx| stepped_engine(&ctx))
           // A test's dialogs are answered by the harness, never shown.
-          .plugin(|ctx| flux::dialog::set_answers_only(&ctx)),
+          .plugin(|ctx| flux::dialog::set_answers_only(&ctx))
+          // A test reads every permission granted on every machine, until
+          // it sets one (`setPermission`).
+          .plugin(|ctx| {
+            for permission in ore::permission::Permission::ALL {
+              flux::permission::set_override(&ctx, *permission, ore::permission::PermissionState::Granted);
+            }
+          }),
         None => builder,
       };
       // A render engine: the stepper, the wall taken out and Math.random
@@ -1566,6 +1594,7 @@ fn ui_thread(
                   current_app_id = Some(default_app_id.clone());
                   release_to_default(&default_app_id);
                   reset_fonts(&platform, base_fonts.clone());
+                  app_excluded = Vec::new();
                 }
                 EngineCmd::Quit => quit = true,
               }
@@ -1587,6 +1616,10 @@ fn ui_thread(
           mount_assets(app_id);
           #[cfg(feature = "go")]
           apply_app_fonts(app_id, &platform, &base_fonts);
+          #[cfg(feature = "go")]
+          {
+            app_excluded = go::store::app_excluded_capabilities(app_id);
+          }
         }
         current_app = app;
         run_id = next_run_id;
@@ -1625,6 +1658,10 @@ fn ui_thread(
               mount_assets(app_id);
               #[cfg(feature = "go")]
               apply_app_fonts(app_id, &platform, &base_fonts);
+              #[cfg(feature = "go")]
+              {
+                app_excluded = go::store::app_excluded_capabilities(app_id);
+              }
             }
             current_app = AppSource::Text(code);
             current_args = args;
@@ -1643,6 +1680,7 @@ fn ui_thread(
             current_app_id = Some(default_app_id.clone());
             release_to_default(&default_app_id);
             reset_fonts(&platform, base_fonts.clone());
+            app_excluded = Vec::new();
           }
           Some(EngineCmd::Quit) | None => break,
         }
@@ -1680,6 +1718,7 @@ pub(crate) fn start(
   stats: bool,
   dev_server: Option<String>,
   fonts: manifest::AppFonts,
+  excluded_capabilities: Vec<&'static str>,
   storage: storage::StorageSpec,
   args: Vec<String>,
   program: Program,
@@ -1695,6 +1734,7 @@ pub(crate) fn start(
     stats,
     dev_server,
     fonts,
+    excluded_capabilities,
     storage,
     args,
     hosts,
@@ -1718,6 +1758,7 @@ pub(crate) fn start_render(
   size: (u32, u32),
   stats: bool,
   fonts: manifest::AppFonts,
+  excluded_capabilities: Vec<&'static str>,
   storage: storage::StorageSpec,
   args: Vec<String>,
   program: Program,
@@ -1726,7 +1767,22 @@ pub(crate) fn start_render(
   let host = render_host::RenderHost::new(run);
   let outcome = host.outcome.clone();
   let hosts = Hosts { test: None, render: Some(host), errors: strict.then(|| Arc::new(ErrorTally::default())) };
-  start_with(rt, Some(app), launch, None, mode, size, stats, None, fonts, storage, args, hosts, program)?;
+  start_with(
+    rt,
+    Some(app),
+    launch,
+    None,
+    mode,
+    size,
+    stats,
+    None,
+    fonts,
+    excluded_capabilities,
+    storage,
+    args,
+    hosts,
+    program,
+  )?;
   let outcome = outcome.lock().expect("render outcome lock poisoned").take();
   outcome.unwrap_or_else(|| Err("the render ended before it started".to_string()))
 }
@@ -1735,12 +1791,14 @@ pub(crate) fn start_render(
 /// tests, every test in an engine of its own, one record line on stdout
 /// per result. Err when the file failed to load or a test failed.
 #[cfg(feature = "test")]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn start_tests(
   rt: &tokio::runtime::Runtime,
   app: AppSource,
   run: TestRun,
   size: (u32, u32),
   fonts: manifest::AppFonts,
+  excluded_capabilities: Vec<&'static str>,
   storage: storage::StorageSpec,
   args: Vec<String>,
   program: Program,
@@ -1748,7 +1806,22 @@ pub(crate) fn start_tests(
   let mode = alloy::Mode::Stepped(alloy::SteppedConfig { fps: stepped::DEFAULT_FPS });
   let launch = Launch { restored: false, link: None };
   let hosts = Hosts { test: Some(run), render: None, errors: None };
-  start_with(rt, Some(app), launch, None, mode, size, false, None, fonts, storage, args, hosts, program)
+  start_with(
+    rt,
+    Some(app),
+    launch,
+    None,
+    mode,
+    size,
+    false,
+    None,
+    fonts,
+    excluded_capabilities,
+    storage,
+    args,
+    hosts,
+    program,
+  )
 }
 
 /// The headless hosts a run may carry, and the error tally of `--strict`.
@@ -1769,6 +1842,7 @@ fn start_with(
   stats: bool,
   dev_server: Option<String>,
   fonts: manifest::AppFonts,
+  excluded_capabilities: Vec<&'static str>,
   storage: storage::StorageSpec,
   args: Vec<String>,
   hosts: Hosts,
@@ -1804,6 +1878,7 @@ fn start_with(
     stats,
     dev_server,
     fonts,
+    excluded_capabilities,
     storage,
     args,
     errors: errors.clone(),

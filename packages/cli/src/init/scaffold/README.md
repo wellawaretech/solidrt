@@ -48,7 +48,7 @@ now reaches the window and the device together.
 - `assets/icon.svg` and `assets/icon.png` are the app icon. Everything in
   `assets/` ships with the app.
 - The `"solidrt"` section of `package.json` holds the app's name, id and
-  capabilities.
+  what the app uses (`"uses"`).
 
 ## Available scripts
 

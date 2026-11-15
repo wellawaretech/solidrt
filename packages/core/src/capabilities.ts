@@ -1,5 +1,4 @@
-import { env } from "./environment"
-import { touchFeedbackSupport } from "./haptics"
+import { availability, env } from "./environment"
 
 // Capabilities: what interactions are possible in the current environment.
 // Derived from Environment State on every read - computed, never stored - so
@@ -24,9 +23,9 @@ export type Capabilities = {
   /** How much horizontal room the window offers (Material breakpoints). */
   windowSizeClass: WindowSizeClass
   /**
-   * The device has a haptic actuator, so `touchFeedback` can be felt. A
-   * hardware fact, not the user's settings; `touchFeedbackSupport()` has
-   * the per-intent detail.
+   * The device has a haptic actuator, so `touchFeedback` can be felt:
+   * `availability("haptics")` is "available". A hardware fact, not the
+   * user's settings; `touchFeedbackSupport()` has the per-intent detail.
    */
   haptics: boolean
 }
@@ -52,9 +51,9 @@ export let capabilities: Capabilities = {
     let w = env.windowSize.width
     return w >= EXPANDED_MIN_WIDTH ? "expanded" : w >= MEDIUM_MIN_WIDTH ? "medium" : "compact"
   },
-  // A hardware fact, not Environment State: it never changes, so it is
-  // not reactive.
+  // A platform fact, reactive like the rest: read through availability, so
+  // a reader follows the fact if the runtime reports a change.
   get haptics() {
-    return touchFeedbackSupport().actuator
+    return availability("haptics") === "available"
   },
 }

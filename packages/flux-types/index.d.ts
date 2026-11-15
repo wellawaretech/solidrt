@@ -19,7 +19,8 @@
 // Web-standard globals. The runtime is QuickJS, not a browser or Node, so it
 // ships no lib.dom / @types/bun: these declarations are the sole source for
 // console, fetch, the Fetch types, the streams, the compression streams,
-// timers, WebSocket, the encoders, and crypto.
+// timers, WebSocket, the encoders, crypto, and navigator (its languages,
+// share and permissions).
 /// <reference path="./standards/console.d.ts" />
 /// <reference path="./standards/time.d.ts" />
 /// <reference path="./standards/text.d.ts" />
@@ -32,6 +33,7 @@
 /// <reference path="./standards/crypto.d.ts" />
 /// <reference path="./standards/navigator.d.ts" />
 /// <reference path="./standards/share.d.ts" />
+/// <reference path="./standards/permissions.d.ts" />
 /// <reference path="./standards/clipboard.d.ts" />
 
 // GUI capabilities (present only on a gui-enabled runtime). rendertree/camera/
@@ -70,8 +72,26 @@ declare let Flux: {
   /** The flux runtime version. */
   version: string
   /**
-   * Feature names this build/runtime provides. Branch on availability rather
-   * than the OS, e.g. `Flux.capabilities.includes("subprocess")`.
+   * Feature names this build/runtime provides. Branch on them rather than
+   * on the OS, e.g. `Flux.capabilities.includes("subprocess")`.
+   *
+   * The list holds build facts: the modules compiled into this runtime,
+   * minus the names the project declared it does not use (`"uses"` in its
+   * package.json `solidrt` key). It is frozen and is the same for the whole
+   * process. Platform facts (whether a device or a service is there) and the
+   * user's permission are separate questions, and they are not in this
+   * list: a name here means the module is present, not that a call to it
+   * succeeds.
    */
-  capabilities: string[]
+  capabilities: readonly string[]
+  /**
+   * Whether this device, platform and session provide the named facility
+   * now: "link", "dialog", "share", "clipboard-image", "haptics",
+   * "camera", "microphone" or "audio". Throws a `TypeError` on another
+   * name. "unknown" means not settled yet, or only a call can tell. Offer
+   * the feature unless it is "unavailable", and handle the call's
+   * `NotSupportedError`. The sticky `availability` event on `sol:events`
+   * carries the whole map and fires when a state changes.
+   */
+  availability(name: string): "available" | "unavailable" | "unknown"
 }

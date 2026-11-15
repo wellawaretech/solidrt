@@ -39,7 +39,8 @@ export type MicrophoneStream = {
  * is disposed (e.g. the component unmounts). Capture stays pull-based:
  * read() drains the samples captured since the last read, out of the
  * session's 10 s window. For imperative use, call open() from
- * "flux:microphone".
+ * "flux:microphone". The standing permission, before and after an open, is
+ * `permission("microphone")`.
  */
 export function createMicrophone(options: MicrophoneOptions = {}): MicrophoneStream {
   let [id, setId] = createSignal<number | undefined>(undefined)

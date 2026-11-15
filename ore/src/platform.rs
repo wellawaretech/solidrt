@@ -152,6 +152,12 @@ impl Platform {
     // Android's held redraws arrive the same way (see redraw.rs); set on
     // every platform, where nothing asks, so the loop needs no cfg.
     crate::redraw::set_waker(waker.clone());
+    // A facility's availability change made while the pump sleeps wakes it
+    // (see availability.rs).
+    crate::availability::install_waker(waker.clone());
+    // A permission's change made while the pump sleeps wakes it too (see
+    // permission.rs).
+    crate::permission::install_waker(waker.clone());
     let event_pump = sdl.event_pump().map_err(|e| format!("SDL event pump: {e}"))?;
     let epoch = crate::time::ticks_epoch();
 
@@ -232,7 +238,8 @@ impl Platform {
   ///    the window's lock at the start of the call.
   /// 2. On Android, the touch side channel's samples, each at its own time.
   /// 3. The polled platform facts' transitions (screen keyboard, hardware
-  ///    keyboard, power, the refresh rate safety net), stamped now.
+  ///    keyboard, power, the refresh rate safety net) and the queued
+  ///    availability changes, stamped now.
   ///
   /// Behind the `window` feature because translation reads the window's
   /// scale, size and safe area live, per event; the windowless host lifts
@@ -308,13 +315,18 @@ unsafe extern "C" fn lifecycle_watch(userdata: *mut c_void, event: *mut sdl3::sy
   // SAFETY: `userdata` is the Box leaked in `on_lifecycle`, never freed
   // while the watch is installed, and only read here (the closure is Sync).
   let f = unsafe { &*userdata.cast::<Box<dyn Fn(Lifecycle) + Send + Sync>>() };
-  // ore's own hooks first: the Android audio resume check (crate::audio)
-  // and the cancel of a playing haptic effect (crate::haptics).
+  // ore's own hooks first: the Android audio resume check (crate::audio),
+  // the cancel of a playing haptic effect (crate::haptics) and the
+  // permission states read again on return to the foreground
+  // (crate::permission).
   if std::panic::catch_unwind(AssertUnwindSafe(|| crate::audio::on_lifecycle(&lifecycle))).is_err() {
     log::error!("[ore] the audio lifecycle hook panicked");
   }
   if std::panic::catch_unwind(AssertUnwindSafe(|| crate::haptics::on_lifecycle(&lifecycle))).is_err() {
     log::error!("[ore] the haptics lifecycle hook panicked");
+  }
+  if std::panic::catch_unwind(AssertUnwindSafe(|| crate::permission::on_lifecycle(&lifecycle))).is_err() {
+    log::error!("[ore] the permission lifecycle hook panicked");
   }
   if std::panic::catch_unwind(AssertUnwindSafe(|| f(lifecycle))).is_err() {
     log::error!("[ore] the lifecycle callback panicked");

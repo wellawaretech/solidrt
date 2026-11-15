@@ -71,8 +71,9 @@ touch feedback switched off, nothing plays, and no option overrides that.
 
 ## Support: read it once, only to design around it
 
-- `capabilities.haptics` - the device has an actuator. A hardware fact,
-  not reactive and not the user's settings.
+- `capabilities.haptics` - the device has an actuator:
+  `availability("haptics")` is `"available"` (agents/platform-facts.md). A
+  hardware fact, probed once at start, and not the user's settings.
 - `touchFeedbackSupport()` - `{ actuator, intents, impactIntensity }`:
   `intents` maps each intent to `"native"` (the platform has its own
   effect), `"approximate"` (another intent's effect plays) or `"none"`
@@ -87,7 +88,7 @@ can play, not what the user allows.
 ## The capability
 
 The project's `package.json` lists `"haptics": true` under
-`solidrt.capabilities` (the scaffold has it on). On Android it becomes
+`solidrt.uses` (the scaffold has it on). On Android it becomes
 the `VIBRATE` permission. With `"haptics": false` the app has no
 `VIBRATE`: the intents the system plays through the view (the touch
 feedback constants) still play; the ones that need the vibrator

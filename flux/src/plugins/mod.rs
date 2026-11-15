@@ -15,13 +15,15 @@ pub mod marshal;
 pub mod seekable;
 pub mod value;
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
-use rquickjs::{Array, AsyncContext, AsyncRuntime, Ctx, JsLifetime, Object, Value};
+use rquickjs::object::Property;
+use rquickjs::{Array, AsyncContext, AsyncRuntime, Ctx, Function, JsLifetime, Object, Value};
 
 use crate::engine::ShutdownHooks;
 use crate::logger::{Logger, UncaughtHook};
@@ -195,9 +197,12 @@ pub(crate) async fn init_context(
       }
       ctx.store_userdata(rejections.clone()).expect("store rejection log");
       ctx.store_userdata(shutdown_hooks).unwrap();
+      ctx.store_userdata(CapabilityRegistry::seeded()).expect("store capability registry");
       crate::ore_plugins::link::store_state(&ctx);
       crate::ore_plugins::haptics::store_state(&ctx);
       crate::standards_plugins::share::store_state(&ctx);
+      crate::ore_plugins::availability::store_state(&ctx);
+      crate::standards_plugins::permissions::store_state(&ctx);
       for store in userdata {
         store(&ctx);
       }
@@ -211,9 +216,10 @@ pub(crate) async fn init_context(
       crate::standards_plugins::console::init_console(&ctx);
       crate::standards_plugins::navigator::init_navigator(&ctx);
       crate::standards_plugins::share::init_share(&ctx);
+      crate::standards_plugins::permissions::init_permissions(&ctx);
       events::init(&ctx);
       flux_obj.set("version", env!("FLUX_VERSION")).expect("failed to set Flux.version");
-      flux_obj.set("capabilities", build_capabilities(&ctx)).expect("failed to set Flux.capabilities");
+      crate::ore_plugins::availability::init(&ctx, &flux_obj);
       crate::standards_plugins::headers::init_headers(&ctx);
       crate::standards_plugins::request::init_request(&ctx);
       crate::standards_plugins::response::init_response(&ctx);
@@ -230,6 +236,12 @@ pub(crate) async fn init_context(
       for setup in setups {
         setup(ctx.clone());
       }
+      // After the whole chain: the gui seam and an embedder's modules list
+      // (and the embedder excludes) as plugins, and the test host's
+      // sessions set their availability and permission overrides.
+      define_capabilities(&ctx).expect("failed to define Flux.capabilities");
+      crate::ore_plugins::availability::emit(&ctx);
+      crate::standards_plugins::permissions::emit(&ctx);
     })
     .await;
 
@@ -251,7 +263,9 @@ fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
   }
 }
 
-/// Feature names this flux build provides, surfaced as `Flux.capabilities`.
+/// Feature names this flux build provides, the seed of every engine's
+/// `Flux.capabilities` (see `CapabilityRegistry`; the gui seam and an
+/// embedder list theirs on top, and the app's exclusions come off it).
 /// JS branches on availability (`Flux.capabilities.includes("subprocess")`)
 /// rather than on the OS. A conditionally-compiled feature sits under its
 /// own cfg, so it only appears when actually present: `ktx2` says
@@ -261,13 +275,9 @@ fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
 /// code here, the wasmtime lane, instead of interpreting them) is the one
 /// entry no cfg of this crate decides: the `wasm-native` feature resolves to
 /// wasmi on a target without a backend, so `base_capabilities` reads the
-/// lane forge was built with. `link` (flux:link's openLink), `share`
-/// (navigator.share) and `haptics` (flux:haptics) are facts of the
-/// platform, not the build: listed only where it has an opener, a share
-/// sheet and a haptic actuator. `clipboard-image` is a fact of
-/// the platform too, but not listed here: only the gui seam defines
-/// `navigator.clipboard`, so its `register_capabilities` lists it, and a
-/// headless flux, which has no clipboard, never does.
+/// lane forge was built with. Whether a platform facility (opening a link,
+/// the share sheet, haptics, ...) is there now is no build fact and not
+/// listed here: `Flux.availability` reports it (`ore_plugins/availability`).
 const BASE_CAPABILITIES: &[&str] = &[
   "sqlite",
   "fs",
@@ -303,38 +313,106 @@ pub fn base_capabilities() -> Vec<&'static str> {
   if forge::wasm::LANE == forge::wasm::Lane::Native {
     caps.push("wasm-native");
   }
-  if ore::link::available() {
-    caps.push(crate::ore_plugins::link::CAPABILITY);
-  }
-  if ore::share::available() {
-    caps.push(crate::standards_plugins::share::CAPABILITY);
-  }
-  if ore::haptics::available() {
-    caps.push(crate::ore_plugins::haptics::CAPABILITY);
-  }
   caps
 }
 
-fn build_capabilities<'js>(ctx: &Ctx<'js>) -> Array<'js> {
-  let arr = Array::new(ctx.clone()).expect("create capabilities array");
-  for (i, name) in base_capabilities().into_iter().enumerate() {
-    arr.set(i, name).expect("set capability");
-  }
-  arr
+/// This engine's capability names: the listed ones in registration order,
+/// without duplicates, and the ones the app's project declared it does not
+/// use. `Flux.capabilities` is built from it once, after the plugin chain,
+/// and is frozen from then on.
+#[derive(JsLifetime)]
+struct CapabilityRegistry(#[qjs(skip_trace)] RefCell<Capabilities>);
+
+#[derive(Default)]
+struct Capabilities {
+  listed: Vec<String>,
+  excluded: HashSet<String>,
+  // Set once `Flux.capabilities` is defined: a later change reaches no JS.
+  frozen: bool,
 }
 
-/// Append `name` to `Flux.capabilities`, for a module registered beside the
+impl CapabilityRegistry {
+  /// A registry listing what every flux build provides.
+  fn seeded() -> CapabilityRegistry {
+    let listed = base_capabilities().into_iter().map(str::to_string).collect();
+    CapabilityRegistry(RefCell::new(Capabilities { listed, ..Capabilities::default() }))
+  }
+}
+
+/// The registry's state for a change by `api`, or None (with a warning)
+/// once `Flux.capabilities` is frozen or when the engine has no registry.
+fn change_capabilities<R>(
+  ctx: &Ctx<'_>,
+  api: &str,
+  name: &str,
+  change: impl FnOnce(&mut Capabilities) -> R,
+) -> Option<R> {
+  let Some(registry) = ctx.userdata::<CapabilityRegistry>() else {
+    log::warn!("[flux] {api} {name}: no capability registry in this engine");
+    return None;
+  };
+  let mut capabilities = registry.0.borrow_mut();
+  if capabilities.frozen {
+    log::warn!("[flux] {api} {name}: Flux.capabilities is already frozen; run it as a plugin");
+    return None;
+  }
+  Some(change(&mut capabilities))
+}
+
+/// List `name` in `Flux.capabilities`, for a module registered beside the
 /// built-ins (the gui plugin set, an embedder's own modules): availability
 /// checks stay uniform, `Flux.capabilities.includes(name)` whoever provides
-/// it. Runs as a plugin, after `Flux` exists.
+/// it. A name already listed stays where it is. Runs as a plugin: the list
+/// is frozen after the plugin chain.
 pub fn add_capability(ctx: &Ctx<'_>, name: &str) {
-  let Ok(flux) = ctx.globals().get::<_, Object>("Flux") else {
-    return;
+  change_capabilities(ctx, "add_capability", name, |capabilities| {
+    if !capabilities.listed.iter().any(|listed| listed == name) {
+      capabilities.listed.push(name.to_string());
+    }
+  });
+}
+
+/// Leave `name` out of `Flux.capabilities` whoever lists it: the app's
+/// project declared it does not use it (the manifest's `uses`). The module
+/// still imports; a plugin that must refuse its calls reads
+/// `capability_excluded`. Runs as a plugin, like `add_capability`.
+pub fn exclude_capability(ctx: &Ctx<'_>, name: &str) {
+  change_capabilities(ctx, "exclude_capability", name, |capabilities| {
+    capabilities.excluded.insert(name.to_string());
+  });
+}
+
+/// Whether the app's project declared it does not use `name` (see
+/// `exclude_capability`).
+pub fn capability_excluded(ctx: &Ctx<'_>, name: &str) -> bool {
+  ctx.userdata::<CapabilityRegistry>().is_some_and(|registry| registry.0.borrow().excluded.contains(name))
+}
+
+/// The names `Flux.capabilities` holds: the listed ones, in registration
+/// order, minus the excluded ones (for an embedder's control surface).
+pub fn listed_capabilities(ctx: &Ctx<'_>) -> Vec<String> {
+  let Some(registry) = ctx.userdata::<CapabilityRegistry>() else {
+    return Vec::new();
   };
-  let Ok(caps) = flux.get::<_, Array>("capabilities") else {
-    return;
-  };
-  if let Err(e) = caps.set(caps.len(), name) {
-    log::warn!("[flux] could not list capability {name}: {e}");
+  let capabilities = registry.0.borrow();
+  capabilities.listed.iter().filter(|name| !capabilities.excluded.contains(*name)).cloned().collect()
+}
+
+/// Define `Flux.capabilities` as a frozen array on a non-writable,
+/// non-configurable property, then freeze `Flux` itself: the registry
+/// takes no change after this.
+fn define_capabilities(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
+  let array = Array::new(ctx.clone())?;
+  for (i, name) in listed_capabilities(ctx).into_iter().enumerate() {
+    array.set(i, name)?;
   }
+  if let Some(registry) = ctx.userdata::<CapabilityRegistry>() {
+    registry.0.borrow_mut().frozen = true;
+  }
+  let object: Object = ctx.globals().get("Object")?;
+  let freeze: Function = object.get("freeze")?;
+  freeze.call::<_, ()>((array.clone(),))?;
+  let flux: Object = ctx.globals().get("Flux")?;
+  flux.prop("capabilities", Property::from(array).enumerable())?;
+  freeze.call::<_, ()>((flux,))
 }

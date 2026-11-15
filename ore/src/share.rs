@@ -23,6 +23,8 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::availability::{self, Availability, Facility};
+
 /// How many shares the log keeps, the newest last: what a test or an
 /// agent reads back, without an app that shares in a loop growing it.
 pub(crate) const REQUESTED_LOG_CAP: usize = 64;
@@ -78,9 +80,19 @@ impl std::fmt::Display for ShareError {
 /// What a share is answered through, once, from the thread it settled on.
 pub type ShareResponder = Box<dyn FnOnce(Result<(), ShareError>) + Send>;
 
-/// Whether this platform can show a share sheet at all.
-pub fn available() -> bool {
-  cfg!(target_os = "android")
+/// Whether this platform can show a share sheet (`crate::availability`):
+/// Available on Android, Unavailable elsewhere, never Unknown.
+pub fn availability() -> Availability {
+  availability::of(Facility::Share)
+}
+
+/// The first answer, run once by `crate::availability`.
+pub(crate) fn probe() -> Availability {
+  if cfg!(target_os = "android") {
+    Availability::Available
+  } else {
+    Availability::Unavailable
+  }
 }
 
 /// The share session of one engine (see the module doc).

@@ -95,6 +95,16 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   unloaded (HLOD), streaming sources beyond cameras, and the handler lifecycle
   (load, abort, sliced build, unload, retain, state) in core so a 2d
   population handler is the same machinery one dimension down.
+- **[Report what an app can use as states, not as one yes/no list](plans/capability-states.md)** [2026-11-13]
+  Flux.capabilities is a flat list of names fixed for the process, so it
+  cannot say "not known yet", "only a call can tell", "the user has not
+  answered" or "it changed"; it mixes build facts, device facts and test-host
+  overrides, and wrong answers already ship (the TV's stub picker, the Linux
+  portal without a FileChooser, a camera with no device). Keep the list for
+  build facts (the modules compiled in, minus what the project declared it
+  does not use), add a reactive three-state availability per platform facility
+  and a permission state on the web's Permissions API shape, and name the
+  packaging declaration as the fourth, platform-neutral axis it is.
 - **[Client storage and bundle updates](plans/client-storage-updates.md)** [2026-07-20]
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
@@ -381,15 +391,6 @@ Shaped, not started.
   texture back from the GPU; a camera thread fills a latest-frame tap keyed by
   the texture id JS already holds, the raster upload, the QR decoder and any
   module read from it, and the UI thread does no per-frame pixel work.
-- **[Report what an app can use as states, not as one yes/no list](backlog/capability-states.md)** [2026-11-13]
-  Flux.capabilities is a flat list of names fixed for the process, so it
-  cannot say "not known yet", "only a call can tell", "the user has not
-  answered" or "it changed"; it mixes build facts, device facts and test-host
-  overrides, and wrong answers already ship (the TV's stub picker, the Linux
-  portal without a FileChooser, a camera with no device). Keep the list for
-  build facts (the modules compiled in, minus what the project switched off),
-  and add a reactive three-state availability per platform facility and a
-  permission state on the web's Permissions API shape.
 - **[Make sol check honor solidrt.entry](backlog/check-honors-project-entry.md)** [2026-09-29]
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is

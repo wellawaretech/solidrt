@@ -16,8 +16,9 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { camera as installCamera, capture, clipboard as readClipboard, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, requestedHaptics, requestedLinks, requestedShares, microphone as installMicrophone, painted as paintFrame, setClipboard as putClipboard, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowPixels as readWindow, windowReady } from "sol:test"
+import { camera as installCamera, capture, clipboard as readClipboard, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, requestedHaptics, requestedLinks, requestedShares, microphone as installMicrophone, painted as paintFrame, setAvailability as putAvailability, setClipboard as putClipboard, setPermission as putPermission, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowPixels as readWindow, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
+import type { Availability, PermissionState } from "@solidrt/core"
 import type { HapticIntent, ImpactWeight } from "flux:haptics"
 
 export { expect }
@@ -309,6 +310,36 @@ export interface TestApp {
    * await app.settle()
    */
   setClipboard(content: ClipboardContent | null): void
+  /**
+   * Sets what this platform has, as `availability(name)` and
+   * `Flux.availability(name)` read it: `name` one of "link", "dialog",
+   * "share", "clipboard-image", "haptics", "camera", "microphone" or
+   * "audio", `state` "available", "unavailable" or "unknown". Under test
+   * the first five read "available" (each call is recorded) and the
+   * devices "unknown" until set. The change reaches a reactive reader with
+   * the next frame: `settle()` after it. Throws a TypeError on an unknown
+   * name or state.
+   *
+   * @example
+   * app.setAvailability("dialog", "unavailable")
+   * await app.settle()
+   * expect(app.find({ label: "open" }).exists).toBe(false)
+   */
+  setAvailability(name: string, state: Availability): void
+  /**
+   * Sets what the user allows, as `permission(name)` and
+   * `navigator.permissions.query({ name })` read it: `name` "camera" or
+   * "microphone", `state` "granted", "denied" or "prompt". A live
+   * `PermissionStatus` fires `change`. The change reaches a reactive
+   * reader with the next frame: `settle()` after it. Throws a TypeError on
+   * an unknown name or state.
+   *
+   * @example
+   * app.setPermission("camera", "denied")
+   * await app.settle()
+   * expect(app.find({ label: "allow-camera" }).exists).toBe(true)
+   */
+  setPermission(name: string, state: PermissionState): void
   /**
    * Makes `image` what the camera sees: every camera the app opens from
    * now on shows it (a `createCamera` or `open` resolves at once, no device
@@ -763,6 +794,18 @@ let app: TestApp = {
     if (type !== "image/png" && type !== "image/bmp") throw new TypeError(`setClipboard: an image's type is "image/png" or "image/bmp", got ${JSON.stringify(type)}`)
     if (!(data instanceof Uint8Array)) throw new TypeError("setClipboard: an image's data must be a Uint8Array of its encoded bytes")
     putClipboard({ type, data })
+  },
+  setAvailability(name, state) {
+    if (state !== "available" && state !== "unavailable" && state !== "unknown") {
+      throw new TypeError(`setAvailability: the state is "available", "unavailable" or "unknown", got ${JSON.stringify(state)}`)
+    }
+    putAvailability(name, state)
+  },
+  setPermission(name, state) {
+    if (state !== "granted" && state !== "denied" && state !== "prompt") {
+      throw new TypeError(`setPermission: the state is "granted", "denied" or "prompt", got ${JSON.stringify(state)}`)
+    }
+    putPermission(name, state)
   },
   async camera(image) {
     let ok = image !== null && typeof image === "object" && image.data instanceof Uint8Array

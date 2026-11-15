@@ -1,9 +1,10 @@
 //! `navigator.share`: the web's share call, a thin marshalling layer over
 //! `ore::share`'s `Session`, the session this engine keeps. The web's
 //! shape (`{ title, text, url, files }`) with simplified semantics: no
-//! user-gesture rule, no `canShare` (the "share" capability says it), and
-//! `navigator.share` defined only where the capability is listed, so the
-//! web's own check (`if (navigator.share)`) agrees with it. `files` holds
+//! user-gesture rule, no `canShare` (`Flux.availability("share")` says it),
+//! and `navigator.share` defined on every build, so the surface does not
+//! come and go with the platform: where there is no sheet, the call rejects
+//! with a `NotSupportedError`. `files` holds
 //! `flux:fs` file handles, the runtime's one file model. The call resolves
 //! once the sheet accepted the share and rejects with the web's names: an
 //! `AbortError` when the user closed it without picking a target, an
@@ -14,6 +15,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use ore::availability::{Availability, Facility};
 use ore::share::{Session, ShareError, ShareRequest, SharedFile};
 use rquickjs::promise::Promised;
 use rquickjs::{Array, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Value};
@@ -21,11 +23,6 @@ use tokio::sync::oneshot;
 
 use crate::plugins::js_error::named_error;
 use crate::plugins::marshal::string_opt;
-
-/// The capability `navigator.share` is listed under: where the platform
-/// has a share sheet (`ore::share::available`), or where the session
-/// records only.
-pub(crate) const CAPABILITY: &str = "share";
 
 const API: &str = "navigator.share";
 
@@ -44,15 +41,9 @@ pub fn session(ctx: &Ctx<'_>) -> Option<Arc<Session>> {
   ctx.userdata::<ShareState>().map(|s| s.0.clone())
 }
 
-/// Define `navigator.share` where the platform has a sheet. Runs after
-/// the navigator is installed.
+/// Define `navigator.share`, on every build. Runs after the navigator is
+/// installed.
 pub(crate) fn init_share(ctx: &Ctx<'_>) {
-  if ore::share::available() {
-    define(ctx);
-  }
-}
-
-fn define(ctx: &Ctx<'_>) {
   let navigator: Object = ctx.globals().get("navigator").expect("navigator global");
   navigator
     .set("share", Function::new(ctx.clone(), share).expect("create navigator.share"))
@@ -61,8 +52,8 @@ fn define(ctx: &Ctx<'_>) {
 
 /// Never show a sheet in this engine: every share is logged and resolves
 /// (a test host's engine, a render). Every call then resolves, so the
-/// engine defines `navigator.share` and lists the "share" capability
-/// whether or not the platform has a sheet.
+/// engine reports the facility available in this session whether or not
+/// the platform has a sheet.
 pub fn set_record_only(ctx: &Ctx<'_>) {
   let Some(session) = session(ctx) else {
     return;
@@ -71,10 +62,7 @@ pub fn set_record_only(ctx: &Ctx<'_>) {
     return;
   }
   session.set_record_only();
-  if !ore::share::available() {
-    define(ctx);
-    crate::add_capability(ctx, CAPABILITY);
-  }
+  crate::availability::set_override(ctx, Facility::Share, Availability::Available);
 }
 
 /// `navigator.share(data)`: the data read into a request and handed to the

@@ -23,10 +23,25 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
 
+use crate::plugins::js_error::named_error;
 use crate::plugins::marshal::{bytes_of, OptArg};
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
+}
+
+/// The capability this module is listed under, which the app's project
+/// may declare it does not use.
+pub(crate) const CAPABILITY: &str = "camera";
+
+/// The promise `open()` returns when the project declared it does not use
+/// the camera: rejected with a NotSupportedError, before any device is
+/// reached.
+fn refused<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Promise<'js>> {
+  let (promise, _resolve, reject) = Promise::new(ctx)?;
+  let error = named_error(ctx, "NotSupportedError", "openCamera: the project declared it does not use the camera")?;
+  reject.call::<_, ()>((error,))?;
+  Ok(promise)
 }
 
 /// The settle functions of an `open()` promise, by session, until the task
@@ -118,6 +133,9 @@ fn list_impl(ctx: Ctx<'_>) -> rquickjs::Result<Array<'_>> {
 }
 
 fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Result<Promise<'js>> {
+  if crate::capability_excluded(&ctx, CAPABILITY) {
+    return refused(&ctx);
+  }
   let mut device: Option<u32> = None;
   let mut facing: Option<Facing> = None;
   let mut width: Option<u32> = None;

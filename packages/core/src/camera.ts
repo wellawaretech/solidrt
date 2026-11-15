@@ -80,7 +80,8 @@ export type CameraStream = {
   height(): number | undefined
   /** The most recently decoded barcode (requires the scan option). */
   barcode(): BarcodeResult | undefined
-  /** Set if opening failed (e.g. permission denied). */
+  /** Set if opening failed (e.g. permission denied). The standing
+   * permission, before and after an open, is `permission("camera")`. */
   error(): Error | undefined
 }
 

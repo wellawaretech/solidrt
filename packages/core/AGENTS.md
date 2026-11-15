@@ -7,7 +7,7 @@ the types in src/types.d.ts and jsx-runtime.d.ts.
 SolidRT is a custom SolidJS renderer: it paints through a Rust runtime, not the
 DOM. There is no HTML, no CSS cascade, no `className`.
 
-Three companion files carry the depth this one leaves out; read the one that
+Four companion files carry the depth this one leaves out; read the one that
 matches the work before starting it:
 - agents/painting.md - what you paint with, and what replaces each CSS
   reflex. Read before styling a screen: a background, a gradient, a shadow,
@@ -19,6 +19,11 @@ matches the work before starting it:
 - agents/haptics.md - touch feedback by intent, the support query and the
   capability. Read before making the device respond to a tap, a toggle,
   an error or a hit.
+- agents/platform-facts.md - what this platform has (`availability(name)`),
+  what the user allows (`permission(name)`), their states and the
+  show-unless-unavailable rule. Read before gating a feature on the
+  platform or on the user's answer: a file dialog, a link, the share
+  sheet, the clipboard image, haptics, a camera, a microphone.
 
 When SolidRT itself gets in the way (a bug, a missing export, a doc that
 misled you, a trap nothing warned about), append it to SOLIDRT-FEEDBACK.md

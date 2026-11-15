@@ -1,8 +1,11 @@
 //! The platform facts the pump must poll (SDL emits no events for them):
-//! screen-keyboard visibility/height, hardware-keyboard presence, power
-//! status, and the display refresh rate safety net. One owner: each fact is
+//! screen-keyboard visibility/height, hardware-keyboard presence, a
+//! touchscreen first seen by its finger, power status, and the display
+//! refresh rate safety net. One owner: each fact is
 //! re-queried on its own cadence and emits an event only on a transition, so
-//! consumers see edges instead of level spam.
+//! consumers see edges instead of level spam. The availability changes
+//! (`crate::availability`) and the permission changes (`crate::permission`)
+//! are queued by whoever made them and drained here.
 
 use std::time::{Duration, Instant};
 
@@ -26,6 +29,10 @@ pub(super) struct Watch {
   // re-emits InputDevices on change. Elsewhere SDL's own added/removed
   // events cover hotplug and this never transitions.
   physical_keyboard: bool,
+  // A touchscreen SDL never listed shows itself by its first finger
+  // (`window::note_touch`, at translation), so the pump re-emits
+  // InputDevices when that fact first flips, in the wait that saw it.
+  touch_seen: bool,
   last_power_check: Instant,
   last_refresh_check: Instant,
   refresh_rate: f32,
@@ -42,6 +49,7 @@ impl Watch {
       keyboard_shown: false,
       keyboard_height: 0.0,
       physical_keyboard: crate::window::physical_keyboard(),
+      touch_seen: crate::window::touch_seen(),
       last_power_check: Instant::now(),
       last_refresh_check: Instant::now(),
       refresh_rate: display_refresh_rate(window),
@@ -71,8 +79,10 @@ impl Watch {
       events.push(PlatformEvent::KeyboardVisibility { shown, height });
     }
     let physical_keyboard = crate::window::physical_keyboard();
-    if physical_keyboard != self.physical_keyboard {
+    let touch_seen = crate::window::touch_seen();
+    if physical_keyboard != self.physical_keyboard || touch_seen != self.touch_seen {
       self.physical_keyboard = physical_keyboard;
+      self.touch_seen = touch_seen;
       events.push(PlatformEvent::InputDevices(crate::window::input_devices()));
     }
     if self.last_power_check.elapsed() >= POWER_CHECK_PERIOD {
@@ -85,6 +95,12 @@ impl Watch {
         events.push(e);
       }
     }
+    events.extend(
+      crate::availability::drain().into_iter().map(|(facility, state)| PlatformEvent::Availability { facility, state }),
+    );
+    events.extend(
+      crate::permission::drain().into_iter().map(|(permission, state)| PlatformEvent::Permission { permission, state }),
+    );
     events
   }
 }

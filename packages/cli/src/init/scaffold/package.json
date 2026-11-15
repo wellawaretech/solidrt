@@ -8,7 +8,7 @@
     "windowSize": null,
     "icon": null,
     "iconBackground": null,
-    "capabilities": {
+    "uses": {
       "camera": true,
       "microphone": true,
       "haptics": true,

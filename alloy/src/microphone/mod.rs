@@ -106,11 +106,18 @@ pub struct MicrophoneRegistry {
 /// Ask for the microphone without waiting; the answer lands in the
 /// returned cell (`PERMISSION_PENDING` until then). A platform with no
 /// prompt, or a permission already held, may have answered on return.
+/// Granted and Prompt both go on to the open: Prompt means the OS asks at
+/// the open (or nothing asks), and the open reports its decision.
 fn request_record_permission() -> Result<Arc<AtomicI8>, String> {
+  use ore::permission::{Permission, PermissionState};
   let answer = Arc::new(AtomicI8::new(PERMISSION_PENDING));
   let answered = answer.clone();
-  ore::permission::request(ore::permission::Permission::Microphone, move |granted| {
-    answered.store(if granted { PERMISSION_GRANTED } else { PERMISSION_DENIED }, Ordering::Release);
+  ore::permission::request(Permission::Microphone, move |state| {
+    let answer = match state {
+      PermissionState::Granted | PermissionState::Prompt => PERMISSION_GRANTED,
+      PermissionState::Denied => PERMISSION_DENIED,
+    };
+    answered.store(answer, Ordering::Release);
   })
   .map_err(|e| format!("could not request the microphone permission: {e}"))?;
   Ok(answer)

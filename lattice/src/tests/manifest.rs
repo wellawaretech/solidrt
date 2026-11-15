@@ -16,3 +16,20 @@ fn window_size_reads_the_declared_pair() {
 fn window_size_is_none_without_the_key() {
   assert_eq!(manifest("").window_size(), None);
 }
+
+#[test]
+fn excluded_capabilities_is_empty_without_uses() {
+  assert!(manifest("").excluded_capabilities().is_empty());
+}
+
+#[test]
+fn excluded_capabilities_is_empty_when_every_declaration_is_used() {
+  let manifest = manifest(r#","uses":["camera","microphone","haptics","internet"]"#);
+  assert!(manifest.excluded_capabilities().is_empty());
+}
+
+#[test]
+fn excluded_capabilities_lists_a_declaration_left_out() {
+  let manifest = manifest(r#","uses":["microphone","haptics"]"#);
+  assert_eq!(manifest.excluded_capabilities(), vec!["camera"]);
+}

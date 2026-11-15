@@ -14,7 +14,10 @@ link names, `get_location` reads where the app is, `get_requested_links` reads
 the links the app asked to open), shares (`get_requested_shares` reads what
 the app handed to the share sheet), haptics (`get_requested_haptics` reads the
 touch feedback the app asked for), the clipboard (`get_clipboard` reads what
-the app last copied, text or a PNG image), and any debug commands the app
+the app last copied, text or a PNG image), the platform facts
+(`get_availability` reads what the app's platform has: a file dialog, a link
+opener, the share sheet, ...), the permissions (`get_permission` reads what
+the user allows: the camera, the microphone), and any debug commands the app
 itself registers.
 A scaffolded project ships an `.mcp.json`, so Claude Code attaches to your
 running app with no setup. Other agents keep their server list in their own

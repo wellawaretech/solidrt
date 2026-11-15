@@ -1,14 +1,16 @@
 // System file dialogs (gui-enabled runtime only): the platform's own open,
 // save and folder pickers, resolving to flux:fs handles. Solidrt semantics
 // on the web pickers' vocabulary: no permission model, one dialog at a time,
-// a cancel is a value (an empty list or null), never an error. Listed in
-// `Flux.capabilities` as "dialog" only where the platform can show one (a
-// headless build, iOS, a Linux session without the portal or zenity, an
-// Android without a document picker cannot), and a call there rejects with
-// an error named "NotSupportedError". Under `sol test` no dialog is shown:
-// the test answers it (`app.dialog`), and so can an agent over the control
-// API, before the app asks; a test engine therefore lists "dialog" whatever
-// its platform can show, so an app that gates on the capability asks there.
+// a cancel is a value (an empty list or null), never an error. Whether the
+// platform can show one is `Flux.availability("dialog")`: "available",
+// "unavailable" (a hidden window, iOS, a Linux session without the portal
+// or zenity, an Android without a document picker) or "unknown" (the
+// portal alone, until its probe or a call settles it). Offer the picker
+// unless it is "unavailable"; a call there rejects with an error named
+// "NotSupportedError". Under `sol test` no dialog is shown: the test
+// answers it (`app.dialog`), and so can an agent over the control API,
+// before the app asks; a test engine therefore reads "available" whatever
+// its platform can show, so an app that gates on it asks there.
 
 declare module "flux:dialog" {
   import type { FluxDir, FluxFile } from "flux:fs"

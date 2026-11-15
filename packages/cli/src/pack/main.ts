@@ -3,8 +3,9 @@ import { bundleFlux, bundleSolid, compileToBytecode, engineFingerprint, findFlux
 import { compiledInUnusedHint, STOCK_FONT_ROLES } from "../lib/fonts"
 import { projectRuntime, type ProjectRuntime } from "../lib/runtime"
 import { fail } from "../lib/fail"
-import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, loadAppIdentity, loadProject, resolveCapabilities, type Capability, type ManifestFont, type Project } from "../lib/project"
+import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, loadAppIdentity, loadProject, type ManifestFont, type Project } from "../lib/project"
 import { resolveMode, type Mode } from "../lib/mode"
+import { resolveUses, type Use } from "../lib/uses"
 import { packApp, packFlux, packSolid } from "./trailer"
 import { buildPackFolder, writePackFolder } from "./layout"
 import { patchApk } from "./android/apk"
@@ -22,10 +23,11 @@ const DEFAULT_VERSION_NAME = "1.0"
 // Adaptive-icon background when the project sets no iconBackground: the
 // near-black ground of the unbranded grayscale scaffold icon.
 const DEFAULT_ICON_BACKGROUND = "#1a1a1a"
-// The Android permission each capability declares. The runner declares none
-// itself; SDL requests the runtime grant when a feature opens, which only
-// works for a declared permission.
-const ANDROID_CAPABILITY_PERMISSIONS: Record<Capability, string> = {
+// The Android permission each `uses` name declares: the Android column of
+// the declaration table in pack/docs.md. The runner declares none itself;
+// SDL requests the runtime grant when a feature opens, which only works for
+// a declared permission.
+const ANDROID_DECLARATIONS: Record<Use, string> = {
   camera: "android.permission.CAMERA",
   microphone: "android.permission.RECORD_AUDIO",
   haptics: "android.permission.VIBRATE",
@@ -180,7 +182,7 @@ export async function packApks(): Promise<Map<string, string>> {
   let android = config.android ?? {}
   let icon = resolveLauncherIcon(project)
   let permissions = [
-    ...resolveCapabilities(config).map((name) => ANDROID_CAPABILITY_PERMISSIONS[name]),
+    ...resolveUses(config).map((name) => ANDROID_DECLARATIONS[name]),
     ...(android.permissions ?? []),
   ]
   let backup = config.backup ?? false

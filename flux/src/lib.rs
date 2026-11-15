@@ -32,16 +32,18 @@ pub use forge::process::{arch, platform};
 pub use forge::seek::{SeekableRead, SeekableReader};
 pub use forge_plugins::process::{ProcessArgs, ProcessExit};
 pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
+pub use ore_plugins::availability;
 #[cfg(feature = "gui")]
 pub use ore_plugins::dialog;
 pub use ore_plugins::haptics;
 pub use ore_plugins::link;
 pub use pending::{describe_in_flight, hold_engine, in_flight, settled, Hold};
-pub use plugins::add_capability;
 pub use plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
 pub use plugins::js_error::JsResult;
+pub use plugins::{add_capability, capability_excluded, exclude_capability, listed_capabilities};
 #[cfg(feature = "gui")]
 pub use standards_plugins::clipboard;
+pub use standards_plugins::permissions as permission;
 pub use standards_plugins::share;
 // The marshalling toolkit a module over flux uses as its plugins do (a
 // custom runtime's `runtime:*` module, docs/runtime "Native code"): the
@@ -67,22 +69,16 @@ pub use standards_plugins::time::{
 };
 pub use tokio;
 
-/// Feature names this build provides, as surfaced to JS via `Flux.capabilities`.
-/// Native callers (e.g. a dev client introspecting the runtime) get the same
-/// list without a JS context.
+/// Feature names this build provides: what an engine's `Flux.capabilities`
+/// starts from (the base list, and the gui seam's under the gui feature),
+/// before an embedder's own modules and the app's exclusions. Native
+/// callers (e.g. a dev client introspecting the runtime) get it without a
+/// JS context.
 pub fn capabilities() -> Vec<&'static str> {
   #[allow(unused_mut)]
   let mut caps = plugins::base_capabilities();
   #[cfg(feature = "gui")]
   caps.extend_from_slice(alloy_plugins::GUI_CAPABILITIES);
-  #[cfg(feature = "gui")]
-  if ore::dialog::available() {
-    caps.push(ore_plugins::dialog::CAPABILITY);
-  }
-  #[cfg(feature = "gui")]
-  if ore::clipboard::image_available() {
-    caps.push(standards_plugins::clipboard::IMAGE_CAPABILITY);
-  }
   caps
 }
 

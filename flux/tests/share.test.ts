@@ -1,11 +1,11 @@
 // navigator.share. The test host records shares instead of showing a
-// sheet, so a call resolves at once, and it defines navigator.share and
-// lists the capability whatever the machine has.
+// sheet, so a call resolves at once, and it reports share available
+// whatever the machine has. navigator.share is defined on every build.
 import { expect, test } from "flux:test"
 import { file } from "flux:fs"
 
-test("the test host lists the share capability and defines navigator.share", () => {
-  expect(Flux.capabilities.includes("share")).toBe(true)
+test("the test host reports share available and defines navigator.share", () => {
+  expect(Flux.availability("share")).toBe("available")
   expect(typeof navigator.share).toBe("function")
 })
 

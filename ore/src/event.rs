@@ -4,8 +4,10 @@
 //! vocabulary, the back triggers collapsed into one request). SDL's own
 //! event types never leave ore. Plain data.
 
+use crate::availability::{Availability, Facility};
 use crate::display::{Orientation, Rect};
 use crate::input::{InputDevices, Modifiers, PointerType};
+use crate::permission::{Permission, PermissionState};
 use crate::power::PowerInfo;
 
 #[derive(Clone, Debug)]
@@ -174,5 +176,17 @@ pub enum PlatformEvent {
   ///     so neither add nor remove arrives.
   CameraDeviceChange {
     added: bool,
+  },
+  /// A facility's availability changed (`crate::availability`): the new
+  /// state, already readable through `availability::of` when this arrives.
+  Availability {
+    facility: Facility,
+    state: Availability,
+  },
+  /// A permission's state changed (`crate::permission`): the new state,
+  /// already readable through `permission::state` when this arrives.
+  Permission {
+    permission: Permission,
+    state: PermissionState,
   },
 }

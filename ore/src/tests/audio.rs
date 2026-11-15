@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::facts_lock;
 use crate::audio::{Converter, Playback};
 
 /// The source rate of the converter test, Hz.
@@ -35,9 +36,11 @@ fn converter_resamples_and_upmixes() {
 
 // SDL reads SDL_AUDIO_DRIVER when the audio subsystem is first initialized,
 // so this test must run in a process where nothing opened audio before;
-// ore's other tests do not.
+// ore's other tests do not. The init records the microphone and audio
+// output availability, so the test holds the facts lock.
 #[test]
 fn playback_pulls_on_the_dummy_driver() {
+  let _facts = facts_lock();
   sdl3::hint::set("SDL_AUDIO_DRIVER", "dummy");
   let pulls = Arc::new(AtomicU64::new(0));
   let counted = Arc::clone(&pulls);

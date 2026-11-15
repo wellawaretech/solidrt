@@ -6,30 +6,30 @@
 //! reads back for a test or an agent, and reaches no platform when set to
 //! record only.
 
+use std::cell::Cell;
 use std::sync::Arc;
 
+use ore::availability::{Availability, Facility};
 use ore::haptics::{Call, Impact, Intent, Session, Weight};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Value};
 
+use crate::logger::CtxLogger;
 use crate::plugins::marshal::OptArg;
-
-/// The capability haptics is listed under, only where the device has an
-/// actuator (`ore::haptics::available`), or where the session records
-/// only.
-pub(crate) const CAPABILITY: &str = "haptics";
 
 /// The lowest and highest `intensity` an impact takes.
 const MIN_INTENSITY: f64 = 0.0;
 const MAX_INTENSITY: f64 = 1.0;
 
+/// The session, and whether the one warning that an excluded haptics
+/// plays nothing was logged.
 #[derive(Clone, JsLifetime)]
-struct HapticsState(#[qjs(skip_trace)] Arc<Session>);
+struct HapticsState(#[qjs(skip_trace)] Arc<Session>, #[qjs(skip_trace)] Cell<bool>);
 
 /// Store the haptics session in userdata. Runs at engine init, before any
 /// module import.
 pub(crate) fn store_state(ctx: &Ctx<'_>) {
-  ctx.store_userdata(HapticsState(Session::new())).expect("store haptics state");
+  ctx.store_userdata(HapticsState(Session::new(), Cell::new(false))).expect("store haptics state");
 }
 
 /// This engine's haptics session, for the embedder's test verb and
@@ -40,8 +40,8 @@ pub fn session(ctx: &Ctx<'_>) -> Option<Arc<Session>> {
 
 /// Never reach the platform in this engine: every call is logged and
 /// plays nothing, and support reports a device that plays every intent (a
-/// test host's engine, a render). The engine then lists the "haptics"
-/// capability whether or not the device has an actuator.
+/// test host's engine, a render). The engine then reports the facility
+/// available in this session whether or not the device has an actuator.
 pub fn set_record_only(ctx: &Ctx<'_>) {
   let Some(session) = session(ctx) else {
     return;
@@ -50,8 +50,25 @@ pub fn set_record_only(ctx: &Ctx<'_>) {
     return;
   }
   session.set_record_only();
-  if !ore::haptics::available() {
-    crate::add_capability(ctx, CAPABILITY);
+  crate::availability::set_override(ctx, Facility::Haptics, Availability::Available);
+}
+
+/// Whether the app's project declared it does not use haptics (the
+/// facility's name, "haptics"): then nothing plays and support reports
+/// none, whatever the device has. Read here, so ore knows nothing of the
+/// project.
+fn excluded(ctx: &Ctx<'_>) -> bool {
+  crate::capability_excluded(ctx, Facility::Haptics.name())
+}
+
+/// Log, once per engine, that a feedback call played nothing because the
+/// project declared it does not use haptics.
+fn warn_excluded(ctx: &Ctx<'_>) {
+  let Some(state) = ctx.userdata::<HapticsState>() else {
+    return;
+  };
+  if !state.1.replace(true) {
+    ctx.logger().warn("flux:haptics: the project declared it does not use haptics; nothing plays");
   }
 }
 
@@ -95,6 +112,10 @@ fn feedback<'js>(ctx: Ctx<'js>, intent: Value<'js>, options: OptArg<Value<'js>>)
     Some(options) => impact_of(&ctx, options)?,
     None => Impact::default(),
   };
+  if excluded(&ctx) {
+    warn_excluded(&ctx);
+    return Ok(());
+  }
   let Some(session) = session(&ctx) else {
     return Err(Exception::throw_message(&ctx, "feedback: no haptics session in this engine"));
   };
@@ -137,6 +158,9 @@ fn impact_of<'js>(ctx: &Ctx<'js>, options: Value<'js>) -> rquickjs::Result<Impac
 
 /// `stopFeedback()`: cancel what plays now.
 fn stop_feedback(ctx: Ctx<'_>) {
+  if excluded(&ctx) {
+    return;
+  }
   if let Some(session) = session(&ctx) {
     session.stop();
   }
@@ -146,8 +170,8 @@ fn stop_feedback(ctx: Ctx<'_>) {
 /// from the session's facts, frozen (the intents object too).
 fn feedback_support<'js>(ctx: Ctx<'js>) -> rquickjs::Result<Object<'js>> {
   let facts = match session(&ctx) {
-    Some(session) => session.support(),
-    None => ore::haptics::Support::none(),
+    Some(session) if !excluded(&ctx) => session.support(),
+    _ => ore::haptics::Support::none(),
   };
   let intents = Object::new(ctx.clone())?;
   for intent in Intent::ALL {

@@ -1,7 +1,8 @@
 use std::sync::mpsc;
 
+use crate::availability::Availability;
 use crate::dialog::{
-  name_of_path, sdl_pattern, set_available, DialogError, DialogFilter, DialogKind, DialogRequest, Picked, Session,
+  name_of_path, sdl_pattern, set_availability, DialogError, DialogFilter, DialogKind, DialogRequest, Picked, Session,
 };
 
 #[test]
@@ -83,12 +84,13 @@ fn under_answers_only_a_request_waits_and_a_second_one_is_refused() {
 }
 
 // With no answer queued and not answers-only, a request reaches the
-// platform's availability, which nothing in a test probes: it answers
+// platform's availability, which the test sets Unavailable: it answers
 // unavailable without touching SDL.
 #[test]
 fn a_request_with_no_dialog_to_show_is_unavailable() {
+  let _facts = super::facts_lock();
   let dialogs = Session::new();
-  set_available(false);
+  set_availability(Availability::Unavailable);
   let (tx, rx) = mpsc::channel();
   let respond = Box::new(move |answer| {
     tx.send(answer).ok();
@@ -96,7 +98,7 @@ fn a_request_with_no_dialog_to_show_is_unavailable() {
   dialogs.begin(request(DialogKind::OpenDirectory), respond);
   assert_eq!(rx.try_recv().expect("refused at once"), Err(DialogError::Unavailable));
   let status = dialogs.status();
-  assert!(!status.available);
+  assert_eq!(status.availability, Availability::Unavailable);
   assert!(status.pending.is_none());
   assert_eq!(status.last.map(|(_, answer)| answer), Some(Some(Err(DialogError::Unavailable))));
 }
@@ -106,6 +108,8 @@ fn a_request_with_no_dialog_to_show_is_unavailable() {
 // one (the first request of a session has id 1, the next 2).
 #[test]
 fn a_platform_answer_after_an_outside_one_is_dropped() {
+  // A platform answer corrects the dialog availability (see the session).
+  let _facts = super::facts_lock();
   let dialogs = Session::new();
   dialogs.set_answers_only();
   let (tx, rx) = mpsc::channel();

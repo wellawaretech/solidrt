@@ -277,8 +277,8 @@ test("raw events in the control API's shape, with app time between them", async 
   expect(failure).toContain("pointer action must be down, up, cancel, move, tap or drag")
 }, { fps: 1000 })
 
-test("the dialog capability is listed: the test answers the dialogs", async app => {
-  expect(Flux.capabilities.includes("dialog")).toBe(true)
+test("the dialog reads as available: the test answers the dialogs", async app => {
+  expect(Flux.availability("dialog")).toBe("available")
   let asked = app.dialog({ cancel: true })
   expect(await openFiles()).toEqual([])
   expect((await asked).kind).toBe("openFiles")

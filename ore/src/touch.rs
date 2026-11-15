@@ -4,7 +4,9 @@
 //! activity's surface (SolidRTSurface.java) hands each finger sample here
 //! with its time, SDL sees no finger at all, and the pump drains the
 //! queue beside the SDL events (see `Platform::wait`). Mouse, pen and the
-//! touch device list stay with SDL.
+//! touch device list stay with SDL; since SDL no longer sees a finger here,
+//! it never registers a touchscreen, and the first finger down marks one
+//! present instead (`window::note_touch`, at translation).
 
 use std::sync::{Mutex, OnceLock};
 

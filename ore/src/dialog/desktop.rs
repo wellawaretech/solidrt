@@ -98,16 +98,27 @@ fn c_string(s: &str) -> Result<CString, DialogError> {
   CString::new(s).map_err(|_| DialogError::Failed(format!("dialog: {s:?} contains a NUL character")))
 }
 
-// SDL's answer: a null list is an error (SDL's reason), an empty list a
-// cancel, otherwise the picked paths. Runs once per shown dialog, on
-// whatever thread SDL answers from; the responder must not panic, as this
-// runs under SDL's C frames.
+/// The stable start of SDL's error when no dialog driver works on this
+/// platform (no portal and no zenity on Linux, a driver hint set where SDL
+/// has one backend): SDL 3.4's dialog backends all begin with it, and some
+/// add the hint's supported values after it.
+const SDL_NO_DRIVER: &str = "File dialog driver unsupported";
+
+// SDL's answer: a null list is an error (SDL's reason, or Unavailable when
+// SDL has no dialog driver here), an empty list a cancel, otherwise the
+// picked paths. Runs once per shown dialog, on whatever thread SDL answers
+// from; the responder must not panic, as this runs under SDL's C frames.
 unsafe extern "C" fn answered(userdata: *mut c_void, filelist: *const *const c_char, _filter: c_int) {
   // SAFETY: `userdata` is the box `show` leaked for this dialog, and SDL
   // calls this once per dialog.
   let call = unsafe { Box::from_raw(userdata.cast::<Call>()) };
   let answer = if filelist.is_null() {
-    Err(DialogError::Failed(format!("dialog: {}", crate::sdl_error())))
+    let error = crate::sdl_error();
+    if error.starts_with(SDL_NO_DRIVER) {
+      Err(DialogError::Unavailable)
+    } else {
+      Err(DialogError::Failed(format!("dialog: {error}")))
+    }
   } else {
     // SAFETY: a non-null list from SDL is a null-terminated array of
     // C strings, valid for the duration of this callback.

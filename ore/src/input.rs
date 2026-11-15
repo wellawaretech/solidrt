@@ -126,7 +126,8 @@ pub fn w3c_code_for_key(key: &str) -> &'static str {
 /// Connected input device classes. Presence, not traffic: a connected mouse
 /// that never moves still reports true. Read at init and re-read on
 /// keyboard/mouse hotplug; SDL has no touch hotplug events, so touch is
-/// re-queried on those same occasions.
+/// re-queried on those same occasions, and is true from the first finger
+/// seen, which re-emits it (`window::note_touch`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InputDevices {
   pub keyboard: bool,

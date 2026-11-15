@@ -23,8 +23,8 @@ const WEIGHTS: ImpactWeight[] = ["light", "medium", "heavy"]
 // An intensity inside 0..1 that is neither end.
 const MID_INTENSITY = 0.5
 
-test("the test host lists the haptics capability", () => {
-  expect(Flux.capabilities.includes("haptics")).toBe(true)
+test("the test host reports haptics available", () => {
+  expect(Flux.availability("haptics")).toBe("available")
 })
 
 test("feedbackSupport reports an actuator playing every intent natively, frozen", () => {

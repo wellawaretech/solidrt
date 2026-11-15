@@ -10,24 +10,40 @@
 //! are thread-safe, so every type here is `Send` and callable from any one
 //! thread at a time. The callbacks run on SDL's audio thread; a panic in one
 //! is caught and logged, never unwound into SDL.
+//!
+//! Availability (`Facility::Microphone` and `Facility::AudioOutput`,
+//! `crate::availability`): the subsystem starts lazily, at the first open
+//! or list (`ensure_init`), so both read `Unknown` until an app plays a
+//! sound or lists or opens a microphone: the "only a call can tell" case.
+//! When the init succeeds, SDL's recording and playback device lists
+//! settle them (`Available` with a device listed, `Unavailable` with none),
+//! and SDL's audio device added and removed events re-read them
+//! (`refresh_availability`, from the pump); a failed init is `Unavailable`
+//! for both. On Android, SDL's AAudio backend lists one default recording
+//! device and one default playback device whatever the hardware and
+//! whatever the RECORD_AUDIO permission (it asks for the permission at the
+//! open), so both read `Available` there once the subsystem is up, and a
+//! device with no microphone shows it at the open.
 
 use std::ffi::{c_int, c_void, CStr};
 use std::marker::PhantomData;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use sdl3::sys::audio::{
   SDL_AudioDeviceID, SDL_AudioSpec, SDL_AudioStream, SDL_ClearAudioStream, SDL_CreateAudioStream,
   SDL_DestroyAudioStream, SDL_FlushAudioStream, SDL_GetAudioDeviceFormat, SDL_GetAudioDeviceName,
-  SDL_GetAudioRecordingDevices, SDL_GetAudioStreamAvailable, SDL_GetAudioStreamData, SDL_GetAudioStreamQueued,
-  SDL_OpenAudioDeviceStream, SDL_PutAudioStreamData, SDL_ResumeAudioStreamDevice, SDL_SetAudioStreamFrequencyRatio,
-  SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, SDL_AUDIO_DEVICE_DEFAULT_RECORDING, SDL_AUDIO_F32,
+  SDL_GetAudioPlaybackDevices, SDL_GetAudioRecordingDevices, SDL_GetAudioStreamAvailable, SDL_GetAudioStreamData,
+  SDL_GetAudioStreamQueued, SDL_OpenAudioDeviceStream, SDL_PutAudioStreamData, SDL_ResumeAudioStreamDevice,
+  SDL_SetAudioStreamFrequencyRatio, SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, SDL_AUDIO_DEVICE_DEFAULT_RECORDING,
+  SDL_AUDIO_F32,
 };
 use sdl3::sys::init::{SDL_InitSubSystem, SDL_INIT_AUDIO};
 use sdl3::sys::stdinc::SDL_free;
 
+use crate::availability::{self, Availability, Facility};
 use crate::lifecycle::Lifecycle;
 
 /// The device rate assumed when SDL cannot say (it converts to the real
@@ -47,23 +63,74 @@ static OPEN: Mutex<Option<Arc<Inner>>> = Mutex::new(None);
 // Bumped on every background and foreground transition, so a pending
 // resume check knows the app left again before it ran.
 static TRANSITIONS: AtomicU64 = AtomicU64::new(0);
+// The subsystem init's outcome, once it ran (see `ensure_init`).
+static INIT: OnceLock<Result<(), String>> = OnceLock::new();
+// Held across one availability read and its record, so two reads on two
+// threads (the first init, the pump) never record their lists out of order.
+static AVAILABILITY_READ: Mutex<()> = Mutex::new(());
 
 /// SDL's audio subsystem, initialized once (first open or list); the error
-/// is the one the first attempt got, kept for every later caller.
+/// is the one the first attempt got, kept for every later caller. Settles
+/// the microphone and audio output availability (see the module doc).
 fn ensure_init() -> Result<(), String> {
-  static INIT: OnceLock<Result<(), String>> = OnceLock::new();
   INIT
     .get_or_init(|| {
       // SAFETY: a plain subsystem init with no pointers, run once through
       // the OnceLock; SDL refcounts the subsystem against the host's own
       // init.
       if unsafe { SDL_InitSubSystem(SDL_INIT_AUDIO) } {
+        read_availability();
         Ok(())
       } else {
-        Err(format!("audio subsystem init failed: {}", crate::sdl_error()))
+        // Read SDL's error before the records: their wake is an SDL call.
+        let error = format!("audio subsystem init failed: {}", crate::sdl_error());
+        availability::set(Facility::Microphone, Availability::Unavailable);
+        availability::set(Facility::AudioOutput, Availability::Unavailable);
+        Err(error)
       }
     })
     .clone()
+}
+
+/// Re-read the microphone and audio output availability from SDL's device
+/// lists (see the module doc). Does nothing before the subsystem is up:
+/// both read `Unknown` until then, and nothing here starts it. Any thread;
+/// the pump calls it on SDL's audio device added and removed events.
+#[cfg_attr(not(feature = "window"), allow(dead_code))]
+pub(crate) fn refresh_availability() {
+  if matches!(INIT.get(), Some(Ok(()))) {
+    read_availability();
+  }
+}
+
+// Record both availabilities from SDL's device lists, the subsystem up.
+fn read_availability() {
+  let _read = AVAILABILITY_READ.lock().unwrap_or_else(PoisonError::into_inner);
+  availability::set(Facility::Microphone, Availability::of_devices(device_count(true)));
+  availability::set(Facility::AudioOutput, Availability::of_devices(device_count(false)));
+}
+
+// How many recording (or playback) devices SDL lists now, the defaults
+// included where the backend lists only those.
+fn device_count(recording: bool) -> usize {
+  let mut count: c_int = 0;
+  // SAFETY: SDL documents both list calls as safe from any thread
+  // (SDL_audio.h, \threadsafety; they read the device table under SDL's
+  // subsystem lock); `count` is a valid local, and the array SDL returns
+  // is ours to free, null-checked and freed below.
+  let ids = unsafe {
+    if recording {
+      SDL_GetAudioRecordingDevices(&mut count)
+    } else {
+      SDL_GetAudioPlaybackDevices(&mut count)
+    }
+  };
+  if ids.is_null() {
+    return 0;
+  }
+  // SAFETY: SDL allocated the array; freed once, never read.
+  unsafe { SDL_free(ids as *mut c_void) };
+  count.max(0) as usize
 }
 
 /// An f32 spec at `rate` and `channels`.

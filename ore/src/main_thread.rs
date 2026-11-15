@@ -11,9 +11,16 @@
 //!
 //! A call still queued when SDL quits never runs: what it captured is
 //! leaked, not dropped, so a responder in it never answers.
+//!
+//! In this crate's unit tests the call runs at once on the calling thread:
+//! the test binary has no pump to run a queued call, and SDL counts as the
+//! main thread whichever test thread first initialized it, so a bridged
+//! call from any other test would queue forever.
 
+#[cfg(not(test))]
 use std::ffi::c_void;
 
+#[cfg(not(test))]
 use sdl3::sys::init::SDL_RunOnMainThread;
 
 /// Run `f` on the main thread, exactly once: with `Ok(())` on the main
@@ -21,6 +28,14 @@ use sdl3::sys::init::SDL_RunOnMainThread;
 /// when SDL could not queue it. `f` must not panic: it runs under SDL's
 /// C frames, where a panic aborts.
 pub fn run<F: FnOnce(Result<(), String>) + Send + 'static>(f: F) {
+  #[cfg(test)]
+  f(Ok(()));
+  #[cfg(not(test))]
+  run_through_sdl(f);
+}
+
+#[cfg(not(test))]
+fn run_through_sdl<F: FnOnce(Result<(), String>) + Send + 'static>(f: F) {
   let userdata = Box::into_raw(Box::new(f)).cast::<c_void>();
   // SAFETY: `trampoline::<F>` matches the callback signature and takes
   // back the box `userdata` owns. SDL calls it at most once per call, and
@@ -35,6 +50,7 @@ pub fn run<F: FnOnce(Result<(), String>) + Send + 'static>(f: F) {
   f(Err(error));
 }
 
+#[cfg(not(test))]
 unsafe extern "C" fn trampoline<F: FnOnce(Result<(), String>)>(userdata: *mut c_void) {
   // SAFETY: `userdata` is the box `run` leaked for this call, and SDL
   // runs each call once.

@@ -1,11 +1,13 @@
 use crate::renderer::{ISize, Rect};
 
+use ore::availability::{Availability, Facility};
 use ore::cursor::{Cursor, CursorFrame};
 use ore::display::Orientation;
 use ore::event::PlatformEvent;
 use ore::gamepad::GamepadState;
 use ore::input::{Modifiers, PointerType};
 use ore::lifecycle::SuspendHold;
+use ore::permission::{Permission, PermissionState};
 use ore::power::PowerInfo;
 use ore::text_input::TextInputOptions;
 use ore::theme::SystemTheme;
@@ -376,6 +378,18 @@ pub enum AlloyEvent {
   CameraDeviceChange {
     added: bool,
   },
+  // A facility's availability changed (ore::availability): the new state,
+  // a fact passed through as ore reported it.
+  Availability {
+    facility: Facility,
+    state: Availability,
+  },
+  // A permission's state changed (ore::permission): the new state, a fact
+  // passed through as ore reported it.
+  Permission {
+    permission: Permission,
+    state: PermissionState,
+  },
 }
 
 pub(crate) fn current_system_theme_event() -> AlloyEvent {
@@ -502,6 +516,8 @@ impl From<PlatformEvent> for AlloyEvent {
       PlatformEvent::KeyboardVisibility { shown, height } => AlloyEvent::KeyboardVisibility { shown, height },
       PlatformEvent::PowerStatus { info } => AlloyEvent::PowerStatus { info },
       PlatformEvent::CameraDeviceChange { added } => AlloyEvent::CameraDeviceChange { added },
+      PlatformEvent::Availability { facility, state } => AlloyEvent::Availability { facility, state },
+      PlatformEvent::Permission { permission, state } => AlloyEvent::Permission { permission, state },
     }
   }
 }

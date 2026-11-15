@@ -74,7 +74,7 @@ fn answer_json(answer: &DialogAnswer) -> serde_json::Value {
 /// What the control API reports: the request waiting for an answer (null
 /// when none), the last request made with its `answer` once it has one,
 /// how many answers are queued, and whether this platform can show a
-/// dialog.
+/// dialog (`availability`: "available", "unavailable" or "unknown").
 pub fn status_json(status: &DialogStatus) -> serde_json::Value {
   let last = status.last.as_ref().map(|(request, answer)| {
     let mut json = request_json(request);
@@ -87,6 +87,6 @@ pub fn status_json(status: &DialogStatus) -> serde_json::Value {
     "pending": status.pending.as_ref().map(request_json),
     "last": last,
     "queued": status.queued,
-    "available": status.available,
+    "availability": status.availability.name(),
   })
 }

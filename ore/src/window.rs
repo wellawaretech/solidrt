@@ -747,15 +747,36 @@ pub fn hardware_keyboard() -> bool {
   HARDWARE_KEYBOARD.load(Ordering::Relaxed)
 }
 
+// Whether a finger was seen this process: a touch device is present. SDL's
+// list misses a touchscreen it has not registered (on Android SDL registered
+// one at its first touch, and the fingers no longer pass through SDL, see
+// touch.rs), so a finger seen is the proof the list cannot give. Never
+// cleared: SDL reports no touchscreen removal either.
+static TOUCH_SEEN: AtomicBool = AtomicBool::new(false);
+
+/// Record that a finger touched the window (the pump's translation, at
+/// every finger down). The pump's watch re-emits `InputDevices` when this
+/// first flips the fact. Any thread.
+pub(crate) fn note_touch() {
+  TOUCH_SEEN.store(true, Ordering::Relaxed);
+}
+
+/// Whether a finger was seen this process (see `note_touch`).
+pub fn touch_seen() -> bool {
+  TOUCH_SEEN.load(Ordering::Relaxed)
+}
+
 /// The connected input device classes now (see `InputDevices`).
 pub fn input_devices() -> InputDevices {
   // On Android the SDL touch list over-reports (TV boxes with virtual input
-  // drivers claiming pointer sources), so the fact is gated on the
-  // platform's own touchscreen feature declaration.
+  // drivers claiming pointer sources), so the list is gated on the
+  // platform's own touchscreen feature declaration. A finger seen needs no
+  // gate: a claimed pointer source is a guess, a real finger is proof.
   #[cfg(target_os = "android")]
-  let touch = has_touch_device() && crate::android::has_touchscreen_feature();
+  let listed = has_touch_device() && crate::android::has_touchscreen_feature();
   #[cfg(not(target_os = "android"))]
-  let touch = has_touch_device();
+  let listed = has_touch_device();
+  let touch = touch_seen() || listed;
   InputDevices {
     keyboard: physical_keyboard(),
     mouse: has_mouse(),

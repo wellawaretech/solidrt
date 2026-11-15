@@ -2,7 +2,8 @@
 // types (Headers / Request / Response / Body), TextEncoder/Decoder, the
 // streams (ReadableStream / WritableStream / TransformStream, the text
 // streams and the compression streams), timers, the WebSocket client,
-// AbortController/AbortSignal, navigator (its languages and share).
+// AbortController/AbortSignal, navigator (its languages, share and
+// permissions).
 // Installed as globals. The
 // Fetch types are reused by the `flux:http` server in the sibling `modules`
 // layer.
@@ -22,6 +23,7 @@ pub mod fetch;
 pub mod headers;
 pub mod http;
 pub mod navigator;
+pub mod permissions;
 pub mod random;
 pub mod request;
 pub mod response;

@@ -2,7 +2,7 @@
 // An answer queued ahead is taken by the next call, a call made first waits
 // for the answer, the app gets flux:fs handles named as a picker would name
 // them, a cancel is an empty list or null, a second dialog while one is
-// open rejects, and the capability tells the truth about a headless client.
+// open rejects, and the availability tells the truth about a headless client.
 
 import { test, expect } from "@solidrt/test"
 import { openDirectory, openFiles, saveFile } from "flux:dialog"
@@ -93,8 +93,8 @@ test("a handle's name is read lazily and stays what it was", async () => {
   expect(Object.keys(f)).toContain("name")
 })
 
-test("a headless test client lists the dialog capability, and a test's dialogs answer", async app => {
-  expect(Flux.capabilities.includes("dialog")).toBe(true)
+test("a headless test client reads the dialog as available, and a test's dialogs answer", async app => {
+  expect(Flux.availability("dialog")).toBe("available")
   app.dialog({ cancel: true })
   expect(await openFiles()).toEqual([])
 })

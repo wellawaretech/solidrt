@@ -397,6 +397,13 @@ What the set says:
   the microphone alone. The camera's prompt is SDL's own at the device
   open, read back through `ore::camera::Camera::permission`, and whether a
   backend prompts at all is `ore::camera::permission_prompts`.
+- **Availability**: whether a facility can be used here, one of three
+  states per facility (`ore/src/availability.rs`): available (a call is
+  expected to work), unavailable (a call rejects with the facility's
+  `Unavailable`), unknown (not settled yet, or only a call can tell). A
+  call corrects the fact before it answers, and a change reaches the pump
+  as `PlatformEvent::Availability`, drained by the watch poll. The app
+  rule is "offer the feature unless it is unavailable".
 - **Web shapes**: per feature, the standard name and the simplified
   contract (the solidrt lens), recorded in its backlog item.
 

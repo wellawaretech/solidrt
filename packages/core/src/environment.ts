@@ -140,6 +140,120 @@ function ensureTextScaleState() {
   })
 }
 
+/**
+ * Whether this platform has a facility. "available": a call is expected to
+ * work. "unavailable": a call cannot work here; it rejects with a
+ * "NotSupportedError". "unknown": the runtime cannot tell yet (a probe in
+ * flight, or a facility only a call can settle).
+ */
+export type Availability = "available" | "unavailable" | "unknown"
+
+let availabilityAccessor: (() => Record<string, Availability> | undefined) | undefined
+
+function ensureAvailabilityState() {
+  if (availabilityAccessor) return
+  runWithOwner(null, () => {
+    let [map, setMap] = createSignal<Record<string, Availability> | undefined>(undefined)
+    // Sticky: the engine emits the whole map at start and again on every
+    // change, so the replay on subscribe already holds every name.
+    on("availability", (m: Record<string, Availability>) => setMap({ ...m }))
+    availabilityAccessor = map
+  })
+}
+
+/**
+ * Whether this platform has the facility `name`: "link", "dialog", "share",
+ * "clipboard-image", "haptics", "camera", "microphone" or "audio". A
+ * platform fact, beside the build fact `Flux.capabilities` (the module is
+ * compiled in) and the project's declaration (`solidrt.uses`).
+ *
+ * - "available": the platform says yes, and a call is expected to work.
+ * - "unavailable": a call cannot work here and rejects with a
+ *   "NotSupportedError". Hide the feature.
+ * - "unknown": the runtime cannot tell yet. A probe is in flight (it
+ *   settles to one of the other two), or only a call can tell (the call
+ *   settles it).
+ *
+ * Offer the feature unless it is "unavailable", and handle the
+ * "NotSupportedError": "unknown" never hides a feature that would have
+ * worked. A call corrects the fact, so a failed call reads "unavailable"
+ * from then on. Read it in a tracked scope (JSX, memo, effect) to follow a
+ * probe settling or a device arriving. Throws a TypeError on an unknown
+ * name.
+ *
+ * @example
+ * <Show when={availability("dialog") !== "unavailable"}>
+ *   <view onPointerDown={pickFiles}>...</view>
+ * </Show>
+ */
+export function availability(name: string): Availability {
+  ensureAvailabilityState()
+  let map = availabilityAccessor!()
+  // Before the first emit (a runtime that has not reported yet, or the
+  // replay not yet committed), the engine's own read answers.
+  if (map === undefined) return Flux.availability(name)
+  if (typeof name !== "string" || !Object.hasOwn(map, name)) {
+    throw new TypeError(`availability: unknown name ${JSON.stringify(name)}, expected one of ${Object.keys(map).join(", ")}`)
+  }
+  return map[name]!
+}
+
+/**
+ * Whether the user allows the app a device. "granted": an open is expected
+ * to stream. "denied": the user refused; an open fails until they allow it
+ * in the system settings. "prompt": the user has not answered yet, and the
+ * OS asks at the next open.
+ */
+export type PermissionState = "granted" | "denied" | "prompt"
+
+let permissionAccessor: (() => Record<string, PermissionState> | undefined) | undefined
+
+function ensurePermissionState() {
+  if (permissionAccessor) return
+  runWithOwner(null, () => {
+    let [map, setMap] = createSignal<Record<string, PermissionState> | undefined>(undefined)
+    // Sticky, like availability: the engine emits the whole map at start and
+    // again on every change, so the replay on subscribe holds every name.
+    on("permission", (m: Record<string, PermissionState>) => setMap({ ...m }))
+    permissionAccessor = map
+  })
+}
+
+/**
+ * Whether the user allows the app the device `name`: "camera" or
+ * "microphone". The standing permission, as `navigator.permissions` reports
+ * it, beside the platform fact `availability(name)` and the build fact
+ * `Flux.capabilities`.
+ *
+ * - "granted": the user allowed it, and an open is expected to stream.
+ * - "denied": the user refused. An open fails until the user allows it in
+ *   the system settings; show where to do that.
+ * - "prompt": the user has not answered yet. The OS asks at the next open.
+ *
+ * Ask by opening: the open is the request. `createCamera` and
+ * `createMicrophone` report how one open went through their `error()` (the
+ * session's progress); this is the standing answer, and a denied open
+ * settles it to "denied". Read it in a tracked scope (JSX, memo, effect) to
+ * follow the user's answer. Before the engine's first report commits, a
+ * read answers "prompt" (`navigator.permissions` is async, so there is no
+ * synchronous fallback) and a tracked read follows on the next flush.
+ * Throws a TypeError on an unknown name once the report is there.
+ *
+ * @example
+ * <Show when={permission("camera") === "denied"}>
+ *   <text>Allow the camera in the system settings</text>
+ * </Show>
+ */
+export function permission(name: string): PermissionState {
+  ensurePermissionState()
+  let map = permissionAccessor!()
+  if (map === undefined) return "prompt"
+  if (typeof name !== "string" || !Object.hasOwn(map, name)) {
+    throw new TypeError(`permission: unknown name ${JSON.stringify(name)}, expected one of ${Object.keys(map).join(", ")}`)
+  }
+  return map[name]!
+}
+
 let mouseSeenAccessor: (() => boolean) | undefined
 let touchSeenAccessor: (() => boolean) | undefined
 

@@ -151,6 +151,7 @@ pub fn android_main(argc: i32, argv: *mut *mut i8, program: Program) -> i32 {
     false,
     dev_server,
     crate::manifest::AppFonts::default(),
+    Vec::new(),
     storage,
     Vec::new(),
     program,
@@ -199,6 +200,7 @@ pub fn android_main(argc: i32, argv: *mut *mut i8, program: Program) -> i32 {
     false,
     None,
     payload.fonts,
+    payload.excluded_capabilities,
     storage,
     Vec::new(),
     program,
@@ -309,6 +311,7 @@ pub fn main(program: Program) {
       false,
       None,
       payload.fonts,
+      payload.excluded_capabilities,
       storage,
       app_args,
       program,
@@ -458,6 +461,9 @@ pub fn main(program: Program) {
   // below), which the interactive window opens at when no `--size` was
   // typed; the test and render hosts keep their own size.
   let mut manifest_size: Option<(u32, u32)> = None;
+  // The build capabilities the app's project declared it does not use, from
+  // the same manifest as its fonts.
+  let mut excluded_capabilities: Vec<&'static str> = Vec::new();
   #[cfg(not(feature = "go"))]
   let (app, mut fonts, mut app_id): (_, crate::manifest::AppFonts, Option<String>) =
     match source_path.as_deref().and_then(|p| crate::payload::load_path(std::path::PathBuf::from(p))) {
@@ -465,6 +471,7 @@ pub fn main(program: Program) {
         crate::gl_libs::provision(&payload.app_id, &payload.gl_libs);
         forge::fs::set_assets_base(Some(payload.base));
         manifest_size = payload.window_size;
+        excluded_capabilities = payload.excluded_capabilities;
         (Some(payload.app), payload.fonts, Some(payload.app_id))
       }
       None => {
@@ -500,6 +507,7 @@ pub fn main(program: Program) {
     // its fonts registered over the program's set.
     if let Some(manifest) = crate::manifest::Manifest::load(&dir) {
       fonts = manifest.load_fonts(&dir);
+      excluded_capabilities = manifest.excluded_capabilities();
       manifest_size = manifest.window_size();
       app_id = app_id.or(Some(manifest.app_id));
       display_name = manifest.display_name;
@@ -509,7 +517,7 @@ pub fn main(program: Program) {
   let storage = crate::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
   if test {
     let size = size.unwrap_or(DEFAULT_WINDOW_SIZE);
-    run_tests(TestArgs { app, filter, seed, failures, size, fonts, storage, app_args, program });
+    run_tests(TestArgs { app, filter, seed, failures, size, fonts, excluded_capabilities, storage, app_args, program });
   }
   let launch = crate::Launch { restored: false, link };
   if render {
@@ -526,6 +534,7 @@ pub fn main(program: Program) {
       size: size.unwrap_or(DEFAULT_WINDOW_SIZE),
       stats,
       fonts,
+      excluded_capabilities,
       storage,
       app_args,
       program,
@@ -533,7 +542,20 @@ pub fn main(program: Program) {
   }
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   let size = size.or(manifest_size).unwrap_or(DEFAULT_WINDOW_SIZE);
-  crate::start(&rt, app, launch, display_name, size, stats, dev_server, fonts, storage, app_args, program);
+  crate::start(
+    &rt,
+    app,
+    launch,
+    display_name,
+    size,
+    stats,
+    dev_server,
+    fonts,
+    excluded_capabilities,
+    storage,
+    app_args,
+    program,
+  );
 }
 
 /// What `--test` runs with (see `run_tests`).
@@ -545,6 +567,7 @@ struct TestArgs {
   failures: Option<String>,
   size: (u32, u32),
   fonts: crate::manifest::AppFonts,
+  excluded_capabilities: Vec<&'static str>,
   storage: crate::storage::StorageSpec,
   app_args: Vec<String>,
   program: Program,
@@ -565,6 +588,7 @@ struct RenderArgs {
   size: (u32, u32),
   stats: bool,
   fonts: crate::manifest::AppFonts,
+  excluded_capabilities: Vec<&'static str>,
   storage: crate::storage::StorageSpec,
   app_args: Vec<String>,
   program: Program,
@@ -598,6 +622,7 @@ fn run_render(args: RenderArgs) -> ! {
     args.size,
     args.stats,
     args.fonts,
+    args.excluded_capabilities,
     args.storage,
     args.app_args,
     args.program,
@@ -631,8 +656,18 @@ fn run_tests(args: TestArgs) -> ! {
   });
   let run = crate::TestRun { options, failures };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
-  let passed =
-    crate::start_tests(&rt, app, run, args.size, args.fonts, args.storage, args.app_args, args.program).is_ok();
+  let passed = crate::start_tests(
+    &rt,
+    app,
+    run,
+    args.size,
+    args.fonts,
+    args.excluded_capabilities,
+    args.storage,
+    args.app_args,
+    args.program,
+  )
+  .is_ok();
   std::process::exit(if passed { 0 } else { 1 })
 }
 

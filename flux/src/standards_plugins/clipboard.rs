@@ -16,12 +16,13 @@
 //! `settle` waits on it. Installed from `gui::install` (the clipboard
 //! needs the windowing platform's video subsystem), so a headless flux has
 //! no `navigator.clipboard` and no `ClipboardItem`: absence is the
-//! availability check for text, and "clipboard-image" in
-//! `Flux.capabilities` the one for images.
+//! availability check for text, and `Flux.availability("clipboard-image")`
+//! the one for images.
 
 use std::future::Future;
 use std::sync::Arc;
 
+use ore::availability::{Availability, Facility};
 use ore::clipboard::{ClipboardError, Image, ImageFormat, Responder, Session};
 use rquickjs::class::Trace;
 use rquickjs::promise::Promised;
@@ -33,11 +34,6 @@ use tokio::sync::oneshot;
 
 use crate::plugins::js_error::named_error;
 use crate::plugins::marshal::{bytes_of, OptArg};
-
-/// The capability an image write and read are listed under: where the
-/// platform carries an image on its clipboard
-/// (`ore::clipboard::image_available`), or where the session records only.
-pub(crate) const IMAGE_CAPABILITY: &str = "clipboard-image";
 
 /// The one item type `write` takes and `read` reports.
 const PNG_TYPE: &str = "image/png";
@@ -65,9 +61,9 @@ pub fn session(ctx: &Ctx<'_>) -> Option<Arc<Session>> {
 
 /// Never reach the OS clipboard in this engine: the session's own value
 /// is the clipboard (a test host's engine, a render). An image then
-/// writes and reads whatever the platform, so the engine lists the
-/// "clipboard-image" capability. Runs after the gui seam stored the
-/// session and `Flux` exists.
+/// writes and reads whatever the platform, so the engine reports the
+/// facility available in this session. Runs after the gui seam stored the
+/// session.
 pub fn set_record_only(ctx: &Ctx<'_>) {
   let Some(session) = session(ctx) else {
     return;
@@ -76,9 +72,7 @@ pub fn set_record_only(ctx: &Ctx<'_>) {
     return;
   }
   session.set_record_only();
-  if !ore::clipboard::image_available() {
-    crate::add_capability(ctx, IMAGE_CAPABILITY);
-  }
+  crate::availability::set_override(ctx, Facility::ClipboardImage, Availability::Available);
 }
 
 /// Define `navigator.clipboard` and the `ClipboardItem` global. Runs after

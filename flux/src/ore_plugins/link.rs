@@ -12,6 +12,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use ore::availability::{Availability, Facility};
 use ore::link::{LinkError, OwnScheme, Session};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
@@ -19,10 +20,6 @@ use rquickjs::{Ctx, Exception, Function, IntoJs, JsLifetime, Value};
 use tokio::sync::oneshot;
 
 use crate::plugins::js_error::named_error;
-
-/// The capability `openLink` is listed under, only where the platform has
-/// an opener (`ore::link::available`), or where the session records only.
-pub(crate) const CAPABILITY: &str = "link";
 
 #[derive(Clone, JsLifetime)]
 struct LinkState(#[qjs(skip_trace)] Arc<Session>);
@@ -49,8 +46,8 @@ pub fn set_own_scheme(ctx: &Ctx<'_>, own: OwnScheme) {
 
 /// Never reach the platform in this engine: every link is logged and the
 /// call resolves, and a registration writes nothing (a test host's engine,
-/// a render). Every call then resolves, so the engine lists the "link"
-/// capability whether or not the platform has an opener.
+/// a render). Every call then resolves, so the engine reports the facility
+/// available in this session whether or not the platform has an opener.
 pub fn set_record_only(ctx: &Ctx<'_>) {
   let Some(session) = session(ctx) else {
     return;
@@ -59,9 +56,7 @@ pub fn set_record_only(ctx: &Ctx<'_>) {
     return;
   }
   session.set_record_only();
-  if !ore::link::available() {
-    crate::add_capability(ctx, CAPABILITY);
-  }
+  crate::availability::set_override(ctx, Facility::Link, Availability::Available);
 }
 
 /// The `flux:link` module.

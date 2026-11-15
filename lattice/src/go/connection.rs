@@ -136,6 +136,8 @@ const QUERY_KINDS: &[&str] = &[
   "location",
   "dialog",
   "dialog_answer",
+  "availability",
+  "permission",
   "requested_links",
   "requested_shares",
   "requested_haptics",
@@ -549,14 +551,29 @@ async fn try_serve(
   // and OS, the SDL video driver, the display refresh rate as of the
   // connect and the GPU strings. The GPU strings come from the raster
   // thread's context; a connect that wins that race sends null, which a
-  // reconnect corrects.
+  // reconnect corrects. The capabilities are the build's list, not an
+  // app's engine list: what an app's project declared it does not use is a
+  // fact of that app, and this client runs many apps on one connection.
+  // The availability is this client's own facts, from ore (no engine's
+  // overrides): whether each platform facility is there as of the connect.
+  // The permission states likewise: the user's standing answers, from ore.
   let capabilities: Vec<&str> = flux::capabilities().into_iter().chain(queries.modules.iter().copied()).collect();
+  let availability = availability_json(
+    ore::availability::Facility::ALL.iter().map(|facility| (facility.name(), ore::availability::of(*facility).name())),
+  );
+  let permission = availability_json(
+    ore::permission::Permission::ALL
+      .iter()
+      .map(|permission| (permission.name(), ore::permission::state(*permission).name())),
+  );
   let info = serde_json::json!({
     "type": "info",
     "platform": flux::platform(),
     "version": crate::VERSION,
     "profile": crate::PROFILE,
     "capabilities": capabilities,
+    "availability": availability,
+    "permission": permission,
     "queries": QUERY_KINDS,
     // This runtime reports each engine's first frame (`ready`), so the
     // server holds queries for it after a push instead of timing out.
@@ -1143,6 +1160,40 @@ async fn try_serve(
                   }
                 }
               }
+              Some("availability") => {
+                // Whether each platform facility is there in the live
+                // engine (flux's snapshot: ore's states, the engine's
+                // overrides applied, as `Flux.availability` reads them).
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(availability_reply(&ctx, id));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
+              Some("permission") => {
+                // The live engine's permission states (flux's snapshot:
+                // ore's states, the engine's overrides applied, as
+                // `navigator.permissions` reads them).
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(permission_reply(&ctx, id));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
               Some("requested_links") => {
                 // The links the app asked to open (flux:link's openLink),
                 // oldest first, refused ones too: a dev client opens each
@@ -1689,6 +1740,28 @@ fn clipboard_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
 fn dialog_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
   let status = flux::dialog::session(ctx).map(|dialogs| dialogs.status()).unwrap_or_default();
   serde_json::json!({"type": "result", "id": id, "data": crate::dialog::status_json(&status)}).to_string()
+}
+
+/// The live engine's availability snapshot, `{ <facility>: <state> }`.
+/// Runs on the JS thread.
+fn availability_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
+  let data = availability_json(flux::availability::snapshot(ctx));
+  serde_json::json!({"type": "result", "id": id, "data": data}).to_string()
+}
+
+/// The live engine's permission snapshot, `{ <permission>: <state> }`.
+/// Runs on the JS thread.
+fn permission_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
+  let data = availability_json(flux::permission::snapshot(ctx));
+  serde_json::json!({"type": "result", "id": id, "data": data}).to_string()
+}
+
+/// Names to state names as one JSON object (the availability and the
+/// permission states).
+fn availability_json<'a>(states: impl IntoIterator<Item = (&'a str, &'a str)>) -> serde_json::Value {
+  serde_json::Value::Object(
+    states.into_iter().map(|(name, state)| (name.to_string(), serde_json::Value::from(state))).collect(),
+  )
 }
 
 /// Answer the file dialog: `answered` says a call was waiting and took it,

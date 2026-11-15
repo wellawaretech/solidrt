@@ -103,7 +103,7 @@ one executable file that contains
 the runtime and your app. Run it as you run other programs. To make an
 Android APK, use `bun run pack --apk`. Packing is experimental. The
 [sol pack](/tools/pack/) reference gives more data about the icon, the
-capabilities that the app requests, and the other outputs.
+features that the app uses, and the other outputs.
 
 ## Next steps
 

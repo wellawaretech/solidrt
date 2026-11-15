@@ -34,6 +34,9 @@ pub struct FactoryPayload {
   // The manifest's windowSize: the size the desktop window opens at, in
   // logical points; None when the app declares none.
   pub window_size: Option<(u32, u32)>,
+  // The build capabilities the project declared it does not use (the
+  // manifest's `uses`), left out of every engine of the app.
+  pub excluded_capabilities: Vec<&'static str>,
   pub base: forge::fs::AssetsBase,
   // (filename, bytes) in section order; only the single-file trailer carries
   // these (a folder pack ships the libraries next to the runner instead, and
@@ -96,6 +99,7 @@ pub fn load(trailer: forge::trailer::Trailer) -> Option<FactoryPayload> {
     app,
     fonts,
     window_size: manifest.window_size(),
+    excluded_capabilities: manifest.excluded_capabilities(),
     app_id: manifest.app_id,
     display_name: manifest.display_name,
     base: forge::fs::AssetsBase::Packed { exe, index },
@@ -122,6 +126,7 @@ pub fn load_adjacent_folder() -> Option<FactoryPayload> {
     app,
     fonts,
     window_size: manifest.window_size(),
+    excluded_capabilities: manifest.excluded_capabilities(),
     app_id: manifest.app_id,
     display_name: manifest.display_name,
     base: forge::fs::AssetsBase::Dir(dir),

@@ -31,9 +31,18 @@ you know from the web:
 - `atob` and `btoa`.
 - `AbortController` and `AbortSignal`.
 - `navigator`, with `navigator.languages` and `navigator.language`: the
-  locales of the user, as BCP 47 tags. On Android, it also has
-  `navigator.share`: the share sheet of the platform. The `share`
-  capability is in the list only on platforms that have a share sheet.
+  locales of the user, as BCP 47 tags. It also has `navigator.share`:
+  the share sheet of the platform. Only Android has a share sheet for
+  now. `Flux.availability("share")` tells if this platform has it.
+- `navigator.permissions`, with `query({ name })`: the answer of the user
+  for a device. The names are `camera` and `microphone`. The query
+  resolves to a `PermissionStatus`. Its `state` is `"granted"`,
+  `"denied"` or `"prompt"`. The state is live, and the status sends a
+  `change` event when the user gives a different answer. This is
+  simpler than the web: there are only two names. A different name, or a
+  name that the project does not use, causes a `TypeError`. There is no
+  request call. The app asks when it
+  opens the device.
 
 Some APIs are not there, on purpose: `URL`, `crypto`, `Blob` and
 `FormData`. One known app does not usually need them. When an app needs
@@ -71,8 +80,8 @@ serve({
 | `flux:process` | Arguments, environment, platform, executable path, memory usage, signal handlers, a check if a process runs, and `exit`. |
 | `flux:wasm` | Run WebAssembly modules. A build has one of two engines. wasmi is an interpreter, and it runs on all targets. On compute, it is 4x to 88x faster than JavaScript. wasmtime (the `wasm-native` feature) compiles a module to machine code. On compute, it is 18x to 960x faster than JavaScript. |
 | `flux:isolate` | Run a module on its own thread, and call it as an object. |
-| `flux:link` | Open a link in the app of the platform that handles it: a browser, the mail app, a store. The `link` capability is in the list only on platforms that have an opener. |
-| `flux:haptics` | Give touch feedback on the haptic actuator of the device. The app names the event, for example `toggleOn`, `error` or `impact`. The platform plays its own effect for that event and obeys the settings of the user. Where nothing plays, a call does nothing. The `haptics` capability is in the list only on devices that have an actuator. |
+| `flux:link` | Open a link in the app of the platform that handles it: a browser, the mail app, a store. `Flux.availability("link")` tells if this platform has an opener. |
+| `flux:haptics` | Give touch feedback on the haptic actuator of the device. The app names the event, for example `toggleOn`, `error` or `impact`. The platform plays its own effect for that event and obeys the settings of the user. Where nothing plays, a call does nothing. `Flux.availability("haptics")` tells if this device has an actuator. |
 | `flux:image` | Decode and encode images. Transcode and encode compressed textures (KTX2). |
 | `flux:svg` | Parse an SVG document into draw data. |
 | `flux:test` | Tests for a flux program: `test` and `expect`. Only the `flux` binary has this module. It runs a test file with `--test`, and each test runs in its own engine. `sol test` runs on this module. |
@@ -88,14 +97,14 @@ SolidRT runs on a GUI build. These are the modules that it adds:
   registered font. The engine rasterizes the glyphs into an atlas texture,
   and a consumer draws from that texture.
 - `flux:dialog`: the open, save and folder pickers of the platform. The
-  pickers resolve to `flux:fs` handles. The `dialog` capability is in the
-  list only on platforms that can show a picker.
+  pickers resolve to `flux:fs` handles. `Flux.availability("dialog")`
+  tells if this platform can show a picker.
 
 A GUI build also adds `navigator.clipboard` and `ClipboardItem`, because
 the clipboard needs a windowing platform. `readText` and `writeText` copy
-and paste text. `read` and `write` copy and paste a PNG image. The
-`clipboard-image` capability is in the list only on platforms that can
-copy and paste an image.
+and paste text. `read` and `write` copy and paste a PNG image.
+`Flux.availability("clipboard-image")` tells if this platform can copy
+and paste an image.
 
 The `create*` primitives in Core add reactivity to these modules. The
 modules are the imperative layer below the primitives.
@@ -561,6 +570,49 @@ available, use its feature name. Do not guess from the OS:
 ```js
 if (Flux.capabilities.includes("camera")) { /* ... */ }
 ```
+
+`Flux.capabilities` holds build facts only. It holds the modules that are
+compiled into the runtime. It does not hold a name that the project does
+not use: when `package.json` has `"uses": { "camera": false }`, the list
+has no `camera`. The list is frozen. It does not change while the process
+runs.
+
+The list does not tell if a device or a service is there. It also does not
+tell if the user gives permission. These are different questions. A name
+in the list means that the module is present. It does not mean that each
+call to the module succeeds.
+
+To find if this platform has a facility, use `Flux.availability(name)`.
+The names are `link`, `dialog`, `share`, `clipboard-image`, `haptics`,
+`camera`, `microphone` and `audio`. A different name causes a
+`TypeError`. The value is one of three states:
+
+- `"available"`: the platform has the facility. A call is expected to
+  work.
+- `"unavailable"`: a call cannot work on this platform. The call rejects
+  with a `NotSupportedError`.
+- `"unknown"`: the runtime cannot tell yet. A probe is not complete, or
+  only a call can tell.
+
+```js
+if (Flux.availability("dialog") !== "unavailable") { /* show the button */ }
+```
+
+Show a feature when its state is not `"unavailable"`. Catch the
+`NotSupportedError` of the call. A call corrects the state: after a call
+fails because the facility is not there, the state is `"unavailable"`.
+The state can change while the process runs. The sticky `availability`
+event of `sol:events` sends all the states at start and after each
+change. In a SolidRT app, `availability(name)` from `@solidrt/core` reads
+the state and updates the UI when it changes.
+
+To find if the user gives permission for a device, use
+`navigator.permissions.query({ name })`. The answer is `"granted"`,
+`"denied"` or `"prompt"`. With `"prompt"`, the platform asks the user
+when the app opens the device. The sticky `permission` event of
+`sol:events` sends all the states at start and after each change. In a
+SolidRT app, `permission(name)` from `@solidrt/core` reads the state and
+updates the UI when it changes.
 
 ## Run a program
 

@@ -10,9 +10,16 @@
 //! the background, so there only a missing opener is refused. Nothing
 //! reports what the other app does with the link.
 //!
-//! Availability is a fact of the platform, probed once (`available`):
-//! false on a Linux session with neither the portal nor `xdg-open` (a
-//! server). An embedder lists the capability from it.
+//! Availability (`availability`, see `crate::availability`) is probed
+//! once, at the first read. Available on Windows, macOS and Android, and on
+//! a Linux session with `xdg-open` on the path. Unavailable on a Linux
+//! session with neither the portal nor `xdg-open` (a server). Unknown on a
+//! Linux session with the portal alone, until the portal introspection
+//! (`crate::portal`, started by this probe or the dialog's) settles it on
+//! the portal's OpenURI interface. Where the introspection fails, the
+//! first open settles it (an open that worked records Available, one the
+//! platform refused as having no opener records Unavailable, before the
+//! open answers).
 //!
 //! The other direction is the app's own scheme, its app id
 //! (`com.example.app://settings`): `register` makes this executable its
@@ -29,7 +36,9 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
+
+use crate::availability::{self, Availability, Facility};
 
 pub(crate) mod instance;
 pub(crate) mod registration;
@@ -62,28 +71,68 @@ impl std::fmt::Display for LinkError {
 /// What an open is answered through, once, from the thread it finished on.
 pub type LinkResponder = Box<dyn FnOnce(Result<(), LinkError>) + Send>;
 
-/// Whether this platform can open a link at all (see the module doc).
-pub fn available() -> bool {
-  static AVAILABLE: OnceLock<bool> = OnceLock::new();
-  *AVAILABLE.get_or_init(platform_available)
+/// Whether this platform can open a link (see the module doc).
+pub fn availability() -> Availability {
+  availability::of(Facility::Link)
 }
 
+/// The first answer, run once by `crate::availability`.
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "android"))]
-fn platform_available() -> bool {
-  true
+pub(crate) fn probe() -> Availability {
+  Availability::Available
 }
 
 // Linux and the BSDs: SDL tries the portal's OpenURI over the session bus
 // first (activatable through the portal's service file under one of the
-// XDG data dirs), then spawns `xdg-open` from the path.
+// XDG data dirs), then spawns `xdg-open` from the path. `xdg-open` on the
+// path is the fallback that works; the portal alone may or may not serve
+// OpenURI, which the portal introspection settles (`crate::portal`: its
+// answer if it arrived, else Unknown until it does).
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
-fn platform_available() -> bool {
+pub(crate) fn probe() -> Availability {
   const PORTAL_SERVICE: &str = "dbus-1/services/org.freedesktop.portal.Desktop.service";
   const DEFAULT_DATA_DIRS: &str = "/usr/local/share:/usr/share";
+  if on_path("xdg-open") {
+    return Availability::Available;
+  }
   let on_bus = std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some();
   let data_dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| DEFAULT_DATA_DIRS.to_string());
   let portal = on_bus && data_dirs.split(':').any(|dir| std::path::Path::new(dir).join(PORTAL_SERVICE).is_file());
-  portal || on_path("xdg-open")
+  if portal {
+    portal_state()
+  } else {
+    Availability::Unavailable
+  }
+}
+
+// The portal introspection's answer for links. iOS takes the branch above
+// but has no portal module (and no session bus).
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android", target_os = "ios")))]
+fn portal_state() -> Availability {
+  crate::portal::link_state()
+}
+
+#[cfg(target_os = "ios")]
+fn portal_state() -> Availability {
+  Availability::Unknown
+}
+
+// A call corrects the fact (see `crate::availability`): an open the
+// platform refused for want of an opener records Unavailable, an open that
+// worked on an Unknown facility records Available. Any other failure is
+// about the link, not the facility, and changes nothing.
+fn correct(result: &Result<(), LinkError>) {
+  match result {
+    Err(LinkError::Unavailable) => availability::set(Facility::Link, Availability::Unavailable),
+    Ok(()) if availability() == Availability::Unknown => availability::set(Facility::Link, Availability::Available),
+    Ok(()) | Err(LinkError::Failed(_)) => {}
+  }
+}
+
+/// Set by the tests, standing in for a probe.
+#[cfg(test)]
+pub(crate) fn set_availability(state: Availability) {
+  availability::set(Facility::Link, state);
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
@@ -157,19 +206,30 @@ pub enum OwnScheme {
   Own { scheme: String, display_name: String },
 }
 
+/// What opens a link on the platform, on the main thread: `open_now`, or
+/// what a test stands in with.
+pub(crate) type Opener = fn(&str) -> Result<(), LinkError>;
+
 /// The link session of one engine (see the module doc).
 pub struct Session {
   record_only: AtomicBool,
   requested: Mutex<VecDeque<String>>,
   own_scheme: Mutex<OwnScheme>,
+  opener: Opener,
 }
 
 impl Session {
   pub fn new() -> Arc<Session> {
+    Session::with_opener(open_now)
+  }
+
+  /// A session whose platform opener is `opener`: `open_now`, or a test's.
+  pub(crate) fn with_opener(opener: Opener) -> Arc<Session> {
     Arc::new(Session {
       record_only: AtomicBool::new(false),
       requested: Mutex::new(VecDeque::new()),
       own_scheme: Mutex::new(OwnScheme::Unknown),
+      opener,
     })
   }
 
@@ -214,7 +274,9 @@ impl Session {
   }
 
   /// Open `link` on the main thread and answer through `respond`, logging
-  /// it first; a record-only session answers at once.
+  /// it first; a record-only session answers at once. Refused at once only
+  /// where links are `Unavailable`; an `Unknown` opener is tried, and its
+  /// answer corrects the fact before `respond` runs.
   pub fn open(&self, link: String, respond: LinkResponder) {
     {
       let mut requested = self.requested.lock().unwrap_or_else(PoisonError::into_inner);
@@ -226,11 +288,14 @@ impl Session {
     if self.is_record_only() {
       return respond(Ok(()));
     }
-    if !available() {
+    if availability() == Availability::Unavailable {
       return respond(Err(LinkError::Unavailable));
     }
+    let opener = self.opener;
     crate::main_thread::run(move |on_main| {
-      respond(on_main.map_err(LinkError::Failed).and_then(|()| open_now(&link)));
+      let result = on_main.map_err(LinkError::Failed).and_then(|()| opener(&link));
+      correct(&result);
+      respond(result);
     });
   }
 }

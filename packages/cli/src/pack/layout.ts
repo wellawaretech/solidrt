@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
-import { collectAssets, loadAppIdentity, manifestWindowSize, RUNTIME_VERSION, SOLIDRT_VERSION, type ManifestFont } from "../lib/project"
+import { collectAssets, loadAppIdentity, manifestUses, manifestWindowSize, RUNTIME_VERSION, SOLIDRT_VERSION, type ManifestFont } from "../lib/project"
 import type { Mode } from "../lib/mode"
 import { runnerGlLibs } from "../lib/artifacts"
 import { fail } from "../lib/fail"
@@ -49,6 +49,7 @@ export function buildPackFolder(mode: Mode, bytecode: Buffer, isolates: { id: st
     org: identity.org,
     displayName: identity.displayName,
     ...manifestWindowSize(mode.projectDir),
+    ...manifestUses(mode.projectDir),
     ...(icon ? { icon } : {}),
     runtimeVersion: RUNTIME_VERSION,
     solidrtVersion: SOLIDRT_VERSION,

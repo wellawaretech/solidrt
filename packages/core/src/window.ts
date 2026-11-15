@@ -649,7 +649,8 @@ export function onLink(fn: (link: string) => void) {
  *
  * Resolves once the platform's opener accepted the link; rejects when the
  * platform refuses it, with a "NotSupportedError" where it has no opener
- * (`Flux.capabilities.includes("link")` says up front). It says nothing
+ * (`availability("link")` says up front: offer the link unless it is
+ * "unavailable", and handle the "NotSupportedError"). It says nothing
  * about what the other app does with the link. Throws a TypeError on a
  * link without a scheme, or with a drive letter in its place (`C:\file`).
  * Under `sol test` the link is recorded, not opened

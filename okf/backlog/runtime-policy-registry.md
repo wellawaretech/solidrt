@@ -58,7 +58,7 @@ should be
 
 Through the solidrt lens the read side belongs next to the other
 environment facts (the `Flux.capabilities`-style "ask by name" shape
-wears well, and [capability-states](capability-states.md) adds the
+wears well, and [capability-states](../plans/capability-states.md) adds the
 reactive availability surface a policy's current value wants, since the
 list itself stays fixed build facts); the write side is app manifest or
 top-level API, not per-frame. One decision to make deliberately: whether overrides are

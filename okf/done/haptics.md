@@ -257,7 +257,7 @@ Decided while building:
 - A recorded intensity is spelled from the f32's shortest decimal, so 0.8
   reads back as 0.8.
 
-Follow-up, for [capability-states](../backlog/capability-states.md): this
+Follow-up, for [capability-states](../plans/capability-states.md): this
 item reports availability as booleans in two places, the `haptics` name
 in `Flux.capabilities` (the actuator, a device fact fixed at engine
 start) and `capabilities.haptics` in core (the same fact, a plain

@@ -22,3 +22,4 @@ ore = { path = "ore" }
 log = "=0.4.35"
 rquickjs = { version = "=0.14.0", features = ["bindgen", "rust-alloc", "futures", "macro", "loader"] }
 tokio = { version = "=1.54.1", features = ["rt", "rt-multi-thread", "time", "sync", "net"] }
+zbus = { version = "=5.19.0", default-features = false, features = ["tokio"] }

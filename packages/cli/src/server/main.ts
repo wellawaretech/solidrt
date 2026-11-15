@@ -249,6 +249,16 @@ function gpuLimits(value: unknown): GpuDeviceLimits | null {
   return limits as GpuDeviceLimits
 }
 
+// A name-to-state map from the client's info message (its platform facts,
+// its permissions), each state as text; null when it sent none (a runtime
+// that predates the report).
+function stateMap(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  let map: Record<string, string> = {}
+  for (let [name, state] of Object.entries(value)) map[name] = String(state)
+  return map
+}
+
 function onOpen(ws: ServerWebSocket) {
   let id = state.nextClientId++
   state.clients.set(ws, {
@@ -257,6 +267,8 @@ function onOpen(ws: ServerWebSocket) {
     profile: "unknown",
     id,
     capabilities: [],
+    availability: null,
+    permission: null,
     queries: [],
     stats: state.stats,
     timeScale: 1,
@@ -298,6 +310,8 @@ function onMessage(ws: ServerWebSocket, msg: string | Uint8Array) {
         profile: data.profile ?? "unknown",
         id: existing?.id ?? state.nextClientId++,
         capabilities: Array.isArray(data.capabilities) ? data.capabilities.map(String) : [],
+        availability: stateMap(data.availability),
+        permission: stateMap(data.permission),
         queries: Array.isArray(data.queries) ? data.queries.map(String) : [],
         stats: existing?.stats ?? state.stats,
         timeScale: existing?.timeScale ?? 1,

@@ -3,11 +3,12 @@
 // own effect for the intent and follows the user's system settings (touch
 // feedback off silences it). Every call is accepted everywhere; where
 // nothing plays (no actuator, a desktop, a TV) it is a silent no-op, so app
-// code needs no platform branch. Listed in `Flux.capabilities` as "haptics"
-// only where the device has an actuator. Under `sol test` nothing plays: the
-// test host records each call (`app.requestedHaptics()`), so a test engine
-// lists "haptics" whatever its platform has. A dev client plays it and
-// records it too, for an agent to read back.
+// code needs no platform branch. Whether the device has an actuator is
+// `Flux.availability("haptics")`: "available" or "unavailable" (probed
+// once, at start). Under `sol test` nothing plays: the test host records
+// each call (`app.requestedHaptics()`), so a test engine reads "available"
+// whatever its platform has. A dev client plays it and records it too, for
+// an agent to read back.
 
 declare module "flux:haptics" {
   /**

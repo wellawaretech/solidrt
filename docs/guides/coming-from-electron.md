@@ -68,7 +68,7 @@ the runtime modules:
 | `http` | `flux:http` |
 | `net` | `flux:net` |
 | `dialog` (Electron) | `flux:dialog` |
-| `clipboard` (Electron) | `navigator.clipboard` (text, and a PNG image with the `clipboard-image` capability) |
+| `clipboard` (Electron) | `navigator.clipboard` (text, and a PNG image where `Flux.availability("clipboard-image")` is `"available"`) |
 
 `fetch` is the same standard API. [Runtime](/runtime/) shows all modules.
 

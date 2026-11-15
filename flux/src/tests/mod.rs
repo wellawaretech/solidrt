@@ -1,3 +1,4 @@
+mod availability;
 mod intrinsics;
 mod marshal;
 #[cfg(feature = "gui")]

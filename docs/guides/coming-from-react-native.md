@@ -75,7 +75,7 @@ React Native. SolidRT also has a subset of CSS grid.
 | `expo-document-picker` | `flux:dialog` |
 | `expo-sqlite` | `flux:sqlite` |
 | AsyncStorage | There is no `localStorage`. Use `flux:sqlite` or `flux:fs` |
-| `expo-clipboard` | `navigator.clipboard`, for text, and for a PNG image with the `clipboard-image` capability |
+| `expo-clipboard` | `navigator.clipboard`, for text, and for a PNG image where `Flux.availability("clipboard-image")` is `"available"` |
 | `fetch` | `fetch`, the same standard API |
 
 [Runtime](/runtime/) gives the documentation for the `flux:*` modules.
@@ -88,7 +88,7 @@ React Native. SolidRT also has a subset of CSS grid.
 | `npx expo start` | `bun run dev` |
 | Expo Go | The SolidRT player, which connects to your dev server |
 | Fast Refresh | When you save, the app loads again. The state starts again from the initial values (see [Dev loop](/guides/dev-loop/)) |
-| `app.json` | The `solidrt` key in `package.json`: `appId`, `icon`, `capabilities`, `android.versionCode` |
+| `app.json` | The `solidrt` key in `package.json`: `appId`, `icon`, `uses`, `android.versionCode` |
 | EAS Build | `bun run pack --apk`, on your computer, without the Android SDK |
 
 The command signs a packed APK with a development key. This key is

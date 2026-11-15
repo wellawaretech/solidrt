@@ -272,11 +272,16 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   builder
 }
 
-/// Capability names the gui feature adds on top of `BASE_CAPABILITIES`.
+/// Capability names the gui feature adds on top of `BASE_CAPABILITIES`:
+/// the build's facts, the one list behind both `register_capabilities` (an
+/// engine's) and `flux::capabilities` (the build's, without a context).
+/// Whether the platform can show a file dialog or carry an image on its
+/// clipboard is no build fact and not listed here: `Flux.availability`
+/// reports it ("dialog", "clipboard-image").
 #[cfg(feature = "video")]
 pub const GUI_CAPABILITIES: &[&str] = &[
-  "camera",
-  "microphone",
+  camera::CAPABILITY,
+  microphone::CAPABILITY,
   "audio",
   "gpu",
   "spatial",
@@ -286,22 +291,12 @@ pub const GUI_CAPABILITIES: &[&str] = &[
   "video-encode",
 ];
 #[cfg(not(feature = "video"))]
-pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "spatial", "font"];
+pub const GUI_CAPABILITIES: &[&str] = &[camera::CAPABILITY, microphone::CAPABILITY, "audio", "gpu", "spatial", "font"];
 
 /// List the gui capability names in `Flux.capabilities`; a plugin, since
-/// `install` is the gui-feature seam. "clipboard-image" is a fact of the
-/// platform (`ore::clipboard::image_available`), listed here rather than
-/// with the base capabilities: only the gui seam defines
-/// `navigator.clipboard`, so a headless flux, desktop or not, has no image
-/// clipboard to list.
+/// `install` is the gui-feature seam.
 fn register_capabilities(ctx: Ctx<'_>) {
   for name in GUI_CAPABILITIES {
     crate::add_capability(&ctx, name);
-  }
-  if ore::dialog::available() {
-    crate::add_capability(&ctx, crate::ore_plugins::dialog::CAPABILITY);
-  }
-  if ore::clipboard::image_available() {
-    crate::add_capability(&ctx, crate::standards_plugins::clipboard::IMAGE_CAPABILITY);
   }
 }

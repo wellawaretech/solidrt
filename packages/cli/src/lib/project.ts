@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { fail } from "./fail"
 import { checkFontsMap, STOCK_FONT_ROLES } from "./fonts"
 import { iconBackgroundRgb } from "./icon-background"
+import { checkUses, usesEntry, type Use, type UsesMap } from "./uses"
 import { checkWindowSize, type WindowSize } from "./window-size"
 
 // Project configuration lives in the `solidrt` key of the project's
@@ -29,12 +30,13 @@ import { checkWindowSize, type WindowSize } from "./window-size"
 //                                   // foreground (Android adaptive icon and
 //                                   // splash; other packers as they compose
 //                                   // icons)
-//     "capabilities": {             // what the app may ask the user for; all
-//       "camera": true,             // on by default (a packed app then works
-//       "microphone": true,         // like it did in the player), false drops
-//       "haptics": true,            // one; each packer maps the names
-//       "internet": true
-//     },
+//     "uses": {                     // what the app declares it uses, in
+//       "camera": true,             // platform-neutral names; each packer
+//       "microphone": true,         // maps a name to its platform's own
+//       "haptics": true,            // declaration (see uses.ts); all on by
+//       "internet": true            // default, false drops one and the
+//     },                            // runtime leaves it out of
+//                                   // Flux.capabilities
 //     "backup": false,              // true lets the OS back up the app's data/
 //                                   // folder; off keeps it on the device
 //     "android": {                  // pack --apk (and, later, --aab)
@@ -42,7 +44,7 @@ import { checkWindowSize, type WindowSize } from "./window-size"
 //                                   // the package "version" field
 //       "permissions": ["com.android.vending.BILLING"]
 //                                   // <uses-permission> names beyond what
-//                                   // the capabilities imply, fully qualified
+//                                   // "uses" implies, fully qualified
 //     },
 //     "runtime": "runtime/dist"     // the project's own runtime (a cargo
 //                                   // project over lattice with the project's
@@ -98,8 +100,8 @@ export type ProjectConfig = {
   icon?: string
   /** The ground behind the icon's transparent foreground, "#rrggbb". */
   iconBackground?: string
-  /** Per-capability switches (CAPABILITIES); absent means on. */
-  capabilities?: Partial<Record<Capability, boolean>>
+  /** What the app declares it uses (USES in uses.ts); an absent name is on. */
+  uses?: UsesMap
   /** Let the OS back up the app's data/ folder; off keeps it on the device. */
   backup?: boolean
   android?: AndroidConfig
@@ -116,24 +118,10 @@ export type AndroidConfig = {
   /** Android versionCode: a positive integer that must only ever grow. */
   versionCode?: number
   /**
-   * Permissions the packed app declares beyond what its capabilities imply,
+   * Permissions the packed app declares beyond what its `uses` implies,
    * fully qualified ("com.android.vending.BILLING").
    */
   permissions?: string[]
-}
-
-// The capability vocabulary: everything the runtime can ask the user for, in
-// platform-neutral terms. Each packer maps a name to its platform's
-// permission (pack/main.ts for Android); an unknown name fails here. All are
-// on unless the project switches one off, so a packed app can do what it did
-// in the player; the scaffold lists them all so switching off is a one-line
-// edit.
-export const CAPABILITIES = ["camera", "microphone", "haptics", "internet"] as const
-export type Capability = (typeof CAPABILITIES)[number]
-
-/** The capabilities a project keeps: every one not switched off. */
-export function resolveCapabilities(config: ProjectConfig): Capability[] {
-  return CAPABILITIES.filter((name) => config.capabilities?.[name] !== false)
 }
 
 // A fully qualified permission name: at least two identifier segments
@@ -173,7 +161,7 @@ function parseAndroidConfig(raw: unknown): AndroidConfig {
 export type Project = { dir: string; name: string | undefined; version: string | undefined; config: ProjectConfig }
 
 // Every key the `solidrt` object accepts (the ProjectConfig fields).
-const PROJECT_KEYS = ["entry", "appId", "org", "displayName", "windowSize", "icon", "iconBackground", "capabilities", "backup", "fonts", "textures", "android", "runtime"]
+const PROJECT_KEYS = ["entry", "appId", "org", "displayName", "windowSize", "icon", "iconBackground", "uses", "backup", "fonts", "textures", "android", "runtime"]
 
 /**
  * The font aliases a runtime binds, as its build listed them beside its
@@ -205,6 +193,10 @@ function parseProjectConfig(raw: unknown, dir: string): ProjectConfig {
   if (raw === undefined) return {}
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail('"solidrt" in package.json must be an object')
   let config = raw as Record<string, unknown>
+  // Before the unknown-key check, so the old "capabilities" key is told its
+  // new name.
+  let usesError = checkUses(config)
+  if (usesError) fail(usesError)
   // Null = unset (see the header note): stripped here so every reader sees
   // the same absent key it would for an omitted one.
   for (let key of Object.keys(config)) {
@@ -216,23 +208,6 @@ function parseProjectConfig(raw: unknown, dir: string): ProjectConfig {
   }
   if ("iconBackground" in config && !(typeof config.iconBackground === "string" && iconBackgroundRgb(config.iconBackground))) {
     fail('"solidrt": "iconBackground" must be a "#rrggbb" color')
-  }
-  if ("capabilities" in config) {
-    let map = config.capabilities
-    if (typeof map !== "object" || map === null || Array.isArray(map)) {
-      fail('"solidrt": "capabilities" must be a map of capability name to true/false')
-    }
-    for (let [name, value] of Object.entries(map)) {
-      // The capability "haptics" was named "vibration" before; a config
-      // that still says so is told the new name, not only the list.
-      if (name === "vibration") {
-        fail('"solidrt.capabilities": "vibration" is now named "haptics"; rename the key')
-      }
-      if (!(CAPABILITIES as readonly string[]).includes(name)) {
-        fail(`"solidrt.capabilities": "${name}" is not one of ${CAPABILITIES.join(", ")}`)
-      }
-      if (typeof value !== "boolean") fail(`"solidrt.capabilities": "${name}" must be true or false`)
-    }
   }
   if ("backup" in config && typeof config.backup !== "boolean") fail('"solidrt": "backup" must be true or false')
   // What is in the group is its reader's to check: textureSettings in
@@ -351,6 +326,7 @@ export function buildManifest(code: string, entry: string, extra: ManifestAsset[
     appId: identity.appId,
     displayName: identity.displayName,
     ...manifestWindowSize(projectDir),
+    ...manifestUses(projectDir),
     runtimeVersion: RUNTIME_VERSION,
     solidrtVersion: SOLIDRT_VERSION,
     ...(icon ? { icon } : {}),
@@ -373,6 +349,17 @@ export type ManifestAsset = { path: string; sha256: string; size: number }
 export function manifestWindowSize(projectDir: string | null): { windowSize?: WindowSize } {
   let size = loadProject(projectDir)?.config.windowSize
   return size ? { windowSize: { width: size.width, height: size.height } } : {}
+}
+
+/**
+ * The manifest's `uses` entry, to spread in right after `windowSize` by both
+ * manifest writers: the declared set as a sorted array of names (uses.ts),
+ * which lattice reads to leave a switched-off name out of
+ * `Flux.capabilities`. Present whenever there is a project; empty in file
+ * mode, which the runtime reads as "everything is used".
+ */
+export function manifestUses(projectDir: string | null): { uses?: Use[] } {
+  return usesEntry(loadProject(projectDir)?.config ?? null)
 }
 /** A font annotation: an alias bound to an assets/ file, or to nothing (no
  * path) when the app drops the runner's default for that role. */

@@ -69,7 +69,7 @@ export type ApkPatch = {
   icon?: Buffer
   // Adaptive-icon background and splash color, "#rrggbb".
   iconBackground: string
-  // Fully qualified permission names to declare (the capabilities mapped,
+  // Fully qualified permission names to declare (the `uses` names mapped,
   // plus the project's extras; duplicates are skipped).
   permissions: string[]
   // Back up the app's data/ folder; off keeps everything on the device.

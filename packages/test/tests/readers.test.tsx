@@ -121,7 +121,7 @@ test("a link the app opens is recorded, not opened", async app => {
 test("a share the app asks for is recorded, no sheet shown", async app => {
   await app.mount(() => <text>board</text>)
   expect(app.requestedShares()).toEqual([])
-  await navigator.share!({ text: "My board", files: [file("share/board.png")] })
+  await navigator.share({ text: "My board", files: [file("share/board.png")] })
   expect(app.requestedShares()).toEqual([{ title: null, text: "My board", url: null, files: [{ path: "share/board.png", name: "board.png" }] }])
 })
 
@@ -141,9 +141,9 @@ test("haptic feedback the app asks for is recorded, nothing played", async app =
   }
 })
 
-test("the image clipboard is listed under test, whatever the platform", async app => {
+test("the image clipboard is available under test, whatever the platform", async app => {
   await app.mount(() => <text>copy</text>)
-  expect(Flux.capabilities).toContain("clipboard-image")
+  expect(Flux.availability("clipboard-image")).toBe("available")
 })
 
 test("text the app writes is the clipboard's, and reads back", async app => {

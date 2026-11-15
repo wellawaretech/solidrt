@@ -19,7 +19,7 @@
 //! no-op, except one warning per process when an intent on Android's
 //! `Vibrator` path meets an app without VIBRATE. `Support` is a fact of
 //! the hardware and the build (the actuator, the level of each intent,
-//! whether `impact` intensity is honoured), probed once (`available`,
+//! whether `impact` intensity is honoured), probed once (`availability`,
 //! `Session::support`); an intent the user silenced is still `native`.
 //! Going to the background cancels a playing effect (`on_lifecycle`).
 //!
@@ -33,6 +33,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Instant;
 
+use crate::availability::{self, Availability, Facility};
 use crate::lifecycle::Lifecycle;
 
 /// How many calls the log keeps, the newest last: what a test or an agent
@@ -234,11 +235,21 @@ pub struct Recorded {
   pub at_ms: f64,
 }
 
-/// Whether this device has a haptic actuator (the platform's
-/// `Support::actuator`, probed once). An embedder lists the capability
-/// from it.
-pub fn available() -> bool {
-  platform_support().actuator
+/// Whether this device has a haptic actuator (`crate::availability`):
+/// Available when the platform's `Support::actuator` says so, Unavailable
+/// otherwise, never Unknown (the support is probed at the first read).
+pub fn availability() -> Availability {
+  availability::of(Facility::Haptics)
+}
+
+/// The first answer, run once by `crate::availability`: the actuator of
+/// the platform's support, which this probes if nothing has yet.
+pub(crate) fn probe() -> Availability {
+  if platform_support().actuator {
+    Availability::Available
+  } else {
+    Availability::Unavailable
+  }
 }
 
 /// The platform's support, probed once for the process.
@@ -442,7 +453,7 @@ mod android {
       Ok(NO_PERMISSION) => {
         if !NO_PERMISSION_WARNED.swap(true, Ordering::Relaxed) {
           log::warn!(
-            "[ore] Haptic feedback \"{}\" plays nothing: the app has no VIBRATE permission; switch the haptics capability on in package.json (solidrt.capabilities)",
+            "[ore] Haptic feedback \"{}\" plays nothing: the app has no VIBRATE permission; declare haptics in package.json (solidrt.uses)",
             call.intent.name()
           );
         }

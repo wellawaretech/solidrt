@@ -16,7 +16,7 @@ platform fix.
   core underneath, marshalling only in the plugin. The module is a build
   fact in Flux.capabilities; whether this device and session has a
   location service is the three-state availability of
-  [capability-states](capability-states.md), not a second boolean.
+  [capability-states](../plans/capability-states.md), not a second boolean.
 - `@solidrt/core/location` alongside camera/microphone/sound/
   speech-recognition, following the createX reactive-primitive shape
   (`createLocation()` yielding a reactive position plus error(), never a
@@ -28,7 +28,7 @@ platform fix.
 - Permission is part of the contract: request on first use, surface denied
   as an error() state, same as microphone/camera, and the standing answer
   readable as a `navigator.permissions` name per
-  [capability-states](capability-states.md).
+  [capability-states](../plans/capability-states.md).
 
 ## Involves
 

@@ -21,9 +21,9 @@ lattice calls ore for host concerns only.
 # Contracts
 One contract per facility, the same on every platform. Where a platform
 cannot meet part of it, the module doc says so plainly, and availability is
-a fact the facility reports (`link::available`), which an embedder lists as
-a capability. Platform differences end here: what ore hands upward is
-normalized.
+a fact the facility reports (`link::availability`, one of the three states
+in `availability.rs`), which flux hands the app as `Flux.availability`.
+Platform differences end here: what ore hands upward is normalized.
 
 A facility a test must take the place of has a session an embedder keeps
 per engine (`link::Session`), the same shape as the dialog session: the log a

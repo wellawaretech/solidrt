@@ -125,6 +125,23 @@ declare module "sol:test" {
    */
   export function setClipboard(content: { text: string } | { type: "image/png" | "image/bmp"; data: Uint8Array } | null): void
   /**
+   * Sets what `Flux.availability(name)` reads in this engine and emits the
+   * sticky "availability" event with the whole map. A test engine reads
+   * "available" for link, dialog, share, clipboard-image and haptics (it
+   * records those calls) and "unknown" for camera, microphone and audio
+   * until a test sets them. Throws a TypeError on an unknown name or state.
+   */
+  export function setAvailability(name: string, state: "available" | "unavailable" | "unknown"): void
+  /**
+   * Sets what `navigator.permissions.query({ name })` reads in this engine
+   * (`state`, and a "change" on every status whose state it changes) and
+   * emits the sticky "permission" event with the whole map. A test engine
+   * reads both "camera" and "microphone" as "granted", on every machine,
+   * until a test sets one. Throws a TypeError on a name other than
+   * "camera" or "microphone", or an unknown state.
+   */
+  export function setPermission(name: string, state: "granted" | "denied" | "prompt"): void
+  /**
    * Calls a debug command the app registered with `registerDebug`. `args`
    * and the result are JSON text (null for no args). Throws on an unknown
    * name, a throwing command and a result JSON cannot carry.

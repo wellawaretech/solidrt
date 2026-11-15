@@ -1,11 +1,13 @@
 // navigator.share: the platform's share sheet, which hands files and a text
 // to another app the user picks (a messenger, mail, a cloud drive). Solidrt
 // semantics on the web's shape: no user-gesture rule (one known app), no
-// canShare() (the "share" capability says it), and `files` holds flux:fs
-// file handles (flux has no File). Android only, for now. `navigator.share`
-// is defined, and "share" is in `Flux.capabilities`, only where the
-// platform can show a sheet, so `if (navigator.share)` is the check; under
-// `sol test` it is defined everywhere, and a share is recorded instead of a
+// canShare() (`Flux.availability("share")` says it), and `files` holds
+// flux:fs file handles (flux has no File). Android only, for now.
+// `navigator.share` is defined on every build; whether this platform can
+// show a sheet is `Flux.availability("share")`, "available" or
+// "unavailable". Offer the Share button unless it is "unavailable"; a call
+// there rejects with an error named "NotSupportedError". Under `sol test`
+// it reads "available" everywhere, and a share is recorded instead of a
 // sheet showing (`app.requestedShares()`). A dev client shows the sheet and
 // records the share too, for an agent to read back.
 
@@ -38,19 +40,19 @@ interface Navigator {
    *
    * Throws a TypeError for data with nothing to share, a field of the
    * wrong type, or a file that is not a flux:fs handle; rejects with one
-   * for a file outside app storage that no file dialog picked.
-   *
-   * Undefined where the platform has no share sheet.
+   * for a file outside app storage that no file dialog picked. Rejects
+   * with a "NotSupportedError" where the platform has no share sheet
+   * (`Flux.availability("share")` is "unavailable").
    *
    * ```ts
    * let png = file("share/board.png")
    * await png.write(encodeImage(await captureSnapshot(boardNode)))
    * try {
-   *   await navigator.share!({ text: "My board", files: [png] })
+   *   await navigator.share({ text: "My board", files: [png] })
    * } catch (e) {
    *   if ((e as Error).name !== "AbortError") throw e
    * }
    * ```
    */
-  share?(data: ShareData): Promise<void>
+  share(data: ShareData): Promise<void>
 }

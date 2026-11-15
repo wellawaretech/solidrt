@@ -16,7 +16,11 @@ pub(crate) fn open(sdl: &sdl3::Sdl, config: WindowConfig<'_>) -> Result<Window, 
     Display::Hidden => open_gl(sdl, &config, false),
     Display::Offscreen => open_offscreen(sdl, &config),
   }?;
-  crate::dialog::set_available(config.display == Display::Interactive && crate::dialog::platform_available());
+  crate::dialog::set_availability(if config.display == Display::Interactive {
+    crate::dialog::platform_availability()
+  } else {
+    crate::availability::Availability::Unavailable
+  });
   Ok(window)
 }
 

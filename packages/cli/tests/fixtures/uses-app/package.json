@@ -1,0 +1,8 @@
+{
+  "name": "uses-app",
+  "type": "module",
+  "private": true,
+  "solidrt": {
+    "uses": { "camera": false, "haptics": false }
+  }
+}

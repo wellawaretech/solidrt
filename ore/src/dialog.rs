@@ -17,12 +17,21 @@
 //! handle opens later: a path on desktop, a `content://` URI on Android. A
 //! cancel is an empty answer, never an error.
 //!
-//! Availability is a fact of the platform, probed once the window exists
-//! (`available`): false on a hidden or offscreen surface, on a platform
-//! without a backend (iOS), on a Linux session with neither the portal nor
-//! zenity, and on an Android without a document picker (a TV). An embedder
-//! lists the capability from it, so an app can hide its Open and Save
-//! buttons up front.
+//! Availability (`availability`, see `crate::availability`) is probed once
+//! the window exists, and reads Unknown before that. Unavailable on a
+//! hidden or offscreen surface, on a platform without a backend (iOS), on
+//! a Linux session with neither the portal nor zenity, and on an Android
+//! whose document picker is missing or is the TV framework's stub (which
+//! cancels every request). Available on Windows and macOS, on a Linux
+//! session with zenity on the path (SDL's fallback), and on an Android
+//! with a real document picker. Unknown on a Linux session with the portal
+//! alone, until the portal introspection (`crate::portal`, started by this
+//! probe or the link's) settles it on the portal's FileChooser interface;
+//! where the introspection fails, it stays Unknown until the first call.
+//! A call corrects the fact before it answers: SDL's "driver unsupported"
+//! (`DialogError::Unavailable`) records Unavailable, a platform answer that
+//! worked (a cancel included) on Unknown records Available. A request is
+//! refused at once only where dialogs are Unavailable.
 //!
 //! `Session` is the session an embedder keeps per engine: one dialog at a
 //! time (the platform's are modal), the request waiting for its answer, the
@@ -46,7 +55,7 @@ use android as platform;
 #[cfg(not(target_os = "android"))]
 use desktop as platform;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::availability::{self, Availability, Facility};
 
 /// The activity's answer to a dialog, from the embedder's exported JNI
 /// symbol (`Java_com_solidrt_app_SolidRTActivity_nativeDialogResult`).
@@ -121,35 +130,50 @@ pub type DialogAnswer = Result<Vec<Picked>, DialogError>;
 /// answer arrives on.
 pub type DialogResponder = Box<dyn FnOnce(DialogAnswer) + Send>;
 
-static AVAILABLE: AtomicBool = AtomicBool::new(false);
-
-/// Whether this platform can show a file dialog at all (see the module
-/// doc). Probed once the window opens; a dialog that still fails to show
-/// rejects at call time with the platform's reason.
-pub fn available() -> bool {
-  AVAILABLE.load(Ordering::Relaxed)
+/// Whether this platform can show a file dialog (see the module doc). A
+/// dialog that still fails to show rejects at call time with the
+/// platform's reason.
+pub fn availability() -> Availability {
+  availability::of(Facility::Dialog)
 }
 
-/// Set by the window's probe (`window::open`) and by the tests.
-pub(crate) fn set_available(available: bool) {
-  AVAILABLE.store(available, Ordering::Relaxed);
+/// Set by the window's probe (`window::open`), by a call that corrects the
+/// fact (`Session`) and by the tests.
+pub(crate) fn set_availability(state: Availability) {
+  availability::set(Facility::Dialog, state);
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-pub(crate) fn platform_available() -> bool {
-  true
+pub(crate) fn platform_availability() -> Availability {
+  Availability::Available
 }
 
+// `SolidRTActivity.dialogsAvailable`'s answer: 0 no document picker (none
+// resolves, or only the TV framework's stub, which cancels every request),
+// 1 a picker resolves, 2 not known yet (no activity to ask).
 #[cfg(target_os = "android")]
-pub(crate) fn platform_available() -> bool {
+const ACTIVITY_NO_PICKER: i32 = 0;
+#[cfg(target_os = "android")]
+const ACTIVITY_PICKER: i32 = 1;
+#[cfg(target_os = "android")]
+const ACTIVITY_UNKNOWN: i32 = 2;
+
+#[cfg(target_os = "android")]
+pub(crate) fn platform_availability() -> Availability {
   match crate::android::with_activity("dialog availability", |env, activity| {
     let class = env.get_object_class(activity)?;
-    env.call_static_method(&class, jni::jni_str!("dialogsAvailable"), jni::jni_sig!("()Z"), &[])?.z()
+    env.call_static_method(&class, jni::jni_str!("dialogsAvailable"), jni::jni_sig!("()I"), &[])?.i()
   }) {
-    Ok(available) => available,
+    Ok(ACTIVITY_NO_PICKER) => Availability::Unavailable,
+    Ok(ACTIVITY_PICKER) => Availability::Available,
+    Ok(ACTIVITY_UNKNOWN) => Availability::Unknown,
+    Ok(other) => {
+      log::warn!("[ore] dialog availability: the activity answered {other}; reporting it unknown");
+      Availability::Unknown
+    }
     Err(e) => {
-      log::warn!("[ore] {e}; reporting no file dialogs");
-      false
+      log::warn!("[ore] {e}; reporting file dialogs unknown");
+      Availability::Unknown
     }
   }
 }
@@ -158,19 +182,29 @@ pub(crate) fn platform_available() -> bool {
 // portal service on it (activatable through its service file), and falls
 // back to zenity on the path. The service file lives under one of the XDG
 // data dirs; a session bus address says there is a bus to reach it over.
+// zenity on the path is the fallback that works; the portal alone may or
+// may not serve the FileChooser, which the portal introspection settles
+// (`crate::portal`: its answer if it arrived, else Unknown until it does).
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android", target_os = "ios")))]
-pub(crate) fn platform_available() -> bool {
+pub(crate) fn platform_availability() -> Availability {
   const PORTAL_SERVICE: &str = "dbus-1/services/org.freedesktop.portal.Desktop.service";
   const DEFAULT_DATA_DIRS: &str = "/usr/local/share:/usr/share";
+  if on_path("zenity") {
+    return Availability::Available;
+  }
   let on_bus = std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some();
   let data_dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| DEFAULT_DATA_DIRS.to_string());
   let portal = on_bus && data_dirs.split(':').any(|dir| std::path::Path::new(dir).join(PORTAL_SERVICE).is_file());
-  portal || on_path("zenity")
+  if portal {
+    crate::portal::dialog_state()
+  } else {
+    Availability::Unavailable
+  }
 }
 
 #[cfg(target_os = "ios")]
-pub(crate) fn platform_available() -> bool {
-  false
+pub(crate) fn platform_availability() -> Availability {
+  Availability::Unavailable
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android", target_os = "ios")))]

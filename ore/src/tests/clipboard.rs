@@ -151,7 +151,7 @@ fn a_platform_without_an_image_clipboard_refuses_an_image() {
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[test]
 fn the_desktops_have_an_image_clipboard() {
-  assert!(crate::clipboard::image_available());
+  assert_eq!(crate::clipboard::image_availability(), crate::availability::Availability::Available);
 }
 
 #[test]

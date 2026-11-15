@@ -1,12 +1,15 @@
 // Links: opening one, and the app's own scheme. Opening a link: the
 // platform's opener hands it to the app that handles it (a browser for
-// https:, the mail app for mailto:, the store app for a store link). Listed in `Flux.capabilities` as "link" only where the
-// platform has an opener (a Linux session with neither the
-// xdg-desktop-portal nor xdg-open has none), and a call there rejects
-// with an error named "NotSupportedError". Under `sol test` no link is
-// opened: the test host records it (`app.requestedLinks()`), so a test
-// engine lists "link" whatever its platform has. A dev client opens it
-// and records it too, for an agent to read back.
+// https:, the mail app for mailto:, the store app for a store link).
+// Whether this platform has an opener is `Flux.availability("link")`:
+// "available", "unavailable" (a Linux session with neither the
+// xdg-desktop-portal nor xdg-open has none) or "unknown" (the portal
+// alone, until a probe or a call settles it). Offer the link unless it is
+// "unavailable"; a call there rejects with an error named
+// "NotSupportedError". Under `sol test` no link is opened: the test host
+// records it (`app.requestedLinks()`), so a test engine reads "available"
+// whatever its platform has. A dev client opens it and records it too,
+// for an agent to read back.
 
 declare module "flux:link" {
   /**

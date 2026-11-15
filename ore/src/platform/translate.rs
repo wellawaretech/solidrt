@@ -183,6 +183,7 @@ pub(super) fn translate(sdl_event: SdlEvent, window: &Window) -> Option<Platform
     // pointer_type=Touch to disambiguate from mouse; if multi-surface touch
     // matters later, pointer_id can be (touch_id << 32) | finger_id.
     SdlEvent::FingerDown { finger_id, x, y, .. } => {
+      crate::window::note_touch();
       let (lw, lh) = touch_window_logical_size(window);
       Some(PlatformEvent::PointerDown {
         pointer_id: finger_id,
@@ -248,12 +249,22 @@ pub(super) fn translate(sdl_event: SdlEvent, window: &Window) -> Option<Platform
     // The sdl3 crate has no Event variants for camera device events, so they
     // arrive as Unknown and are recovered by raw type id. Approved/denied
     // (0x1402/0x1403) stay ignored: the camera open polls permission state
-    // itself.
+    // itself. Each re-reads the camera's availability before it goes up.
     SdlEvent::Unknown { type_, .. } if type_ == sdl3::sys::events::SDL_EVENT_CAMERA_DEVICE_ADDED.0 => {
+      crate::camera::refresh_availability();
       Some(PlatformEvent::CameraDeviceChange { added: true })
     }
     SdlEvent::Unknown { type_, .. } if type_ == sdl3::sys::events::SDL_EVENT_CAMERA_DEVICE_REMOVED.0 => {
+      crate::camera::refresh_availability();
       Some(PlatformEvent::CameraDeviceChange { added: false })
+    }
+    // Audio hotplug is handled in place: it re-reads the microphone and
+    // audio output availability, whose change reaches the app as an
+    // Availability event. Nothing else needs the device events, so they
+    // are not passed on.
+    SdlEvent::AudioDeviceAdded { .. } | SdlEvent::AudioDeviceRemoved { .. } => {
+      crate::audio::refresh_availability();
+      None
     }
     // SDL's drop path doubles as its URL delivery (Cocoa's kAEGetURL handler
     // and UIKit's openURL send the URL string as a drop file; the Android
@@ -273,6 +284,9 @@ pub(super) fn translate(sdl_event: SdlEvent, window: &Window) -> Option<Platform
 pub(super) fn translate_touch(sample: &crate::touch::TouchSample, window: &Window) -> PlatformEvent {
   use crate::touch::TouchKind;
   let (lw, lh) = touch_window_logical_size(window);
+  if matches!(sample.kind, TouchKind::Down) {
+    crate::window::note_touch();
+  }
   let (pointer_id, pointer_type) = (sample.finger_id, PointerType::Touch);
   let (x, y) = (sample.x * lw, sample.y * lh);
   let modifiers = modifiers_from_sdl(mod_state());

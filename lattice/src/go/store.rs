@@ -124,6 +124,15 @@ pub fn app_fonts(app_id: &str) -> AppFonts {
   manifest.load_fonts(&version_dir)
 }
 
+/// The build capabilities the current installed version's project
+/// declared it does not use (`Manifest::excluded_capabilities`). Empty
+/// when nothing is installed or the manifest declares no `uses`.
+pub fn app_excluded_capabilities(app_id: &str) -> Vec<&'static str> {
+  let Some(version_dir) = current_version_dir(app_id) else { return Vec::new() };
+  let Some(manifest) = Manifest::load(&version_dir) else { return Vec::new() };
+  manifest.excluded_capabilities()
+}
+
 /// The current installed version's manifest displayName, if declared.
 pub fn app_display_name(app_id: &str) -> Option<String> {
   let version_dir = current_version_dir(app_id)?;

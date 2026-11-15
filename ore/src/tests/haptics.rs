@@ -106,7 +106,7 @@ fn levels_have_their_api_names() {
 fn a_platform_without_an_actuator_plays_nothing_and_still_logs() {
   let session = Session::new();
   assert!(!session.is_record_only());
-  assert!(!crate::haptics::available());
+  assert_eq!(crate::haptics::availability(), crate::availability::Availability::Unavailable);
   assert_eq!(session.support(), Support::none());
   for intent in Intent::ALL {
     assert_eq!(session.support().level(intent), Level::None, "{}", intent.name());

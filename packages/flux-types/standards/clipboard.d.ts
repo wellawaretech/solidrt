@@ -8,10 +8,11 @@
 // GUI builds only (the clipboard belongs to the windowing platform): a
 // headless flux has `navigator` (navigator.d.ts) but no
 // `navigator.clipboard` and no `ClipboardItem`, so `"clipboard" in
-// navigator` is the check for text. An image works only where
-// "clipboard-image" is in `Flux.capabilities` (Linux, macOS and Windows;
-// not Android); that is the one check for it, there is no
-// `ClipboardItem.supports()`.
+// navigator` is the check for text. Whether an image works is
+// `Flux.availability("clipboard-image")`: "available" on Linux, macOS and
+// Windows, "unavailable" elsewhere (Android); that is the one check for it,
+// there is no `ClipboardItem.supports()`. Offer image copy and paste unless
+// it is "unavailable"; a call there rejects with a "NotSupportedError".
 //
 // On Linux the app serves what it copied: a copy, text included, is gone
 // when the app exits unless a clipboard manager took it over. On macOS an
@@ -20,8 +21,8 @@
 // and stays.
 //
 // Under `sol test` the clipboard is the engine's own, never the OS's, and
-// "clipboard-image" is listed whatever the platform: a test reads what the
-// app wrote (`app.clipboard()`) and puts what the app pastes
+// "clipboard-image" reads "available" whatever the platform: a test reads
+// what the app wrote (`app.clipboard()`) and puts what the app pastes
 // (`app.setClipboard()`). A dev client writes the OS clipboard and keeps
 // the app's last write for an agent to read back.
 //
@@ -77,8 +78,9 @@ interface Clipboard {
    * does not. Text is never reported here (`readText` reads it). On
    * Windows a bitmap (what the PrintScreen key copies) is read as PNG too.
    *
-   * Rejects with a "NotSupportedError" where "clipboard-image" is not in
-   * `Flux.capabilities`, and on platform failure.
+   * Rejects with a "NotSupportedError" where
+   * `Flux.availability("clipboard-image")` is "unavailable", and on
+   * platform failure.
    */
   read(): Promise<ClipboardItem[]>
   /**
@@ -89,8 +91,8 @@ interface Clipboard {
    *
    * Rejects with a TypeError for no item, several, an item with another
    * type, or bytes that are not a PNG; then with a "NotSupportedError"
-   * where "clipboard-image" is not in `Flux.capabilities`; and on platform
-   * failure.
+   * where `Flux.availability("clipboard-image")` is "unavailable"; and on
+   * platform failure.
    */
   write(items: ClipboardItem[]): Promise<void>
 }
