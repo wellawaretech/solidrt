@@ -71,8 +71,7 @@ pub(crate) fn build_file_named<'js>(
         Ok(with_in_flight(&ctx, "file", async move { Ok::<bool, String>(fs::file_exists(&path).await) }))
       }
     }),
-  )
-  .expect("create exists function");
+  )?;
   obj.set("exists", exists_fn)?;
 
   let stat_fn = Function::new(
@@ -84,8 +83,7 @@ pub(crate) fn build_file_named<'js>(
         Ok(with_in_flight(&ctx, "file", async move { fs::stat(&path).await.map(|s| Neutral(s.into())) }))
       }
     }),
-  )
-  .expect("create stat function");
+  )?;
   obj.set("stat", stat_fn)?;
 
   // Ranged read: `read(offset, length)` resolves to a Uint8Array of exactly
@@ -103,8 +101,7 @@ pub(crate) fn build_file_named<'js>(
         Ok(with_in_flight(&ctx, "file", async move { fs::read_range(&path, offset, length).await.map(JsBytes) }))
       }
     }),
-  )
-  .expect("create read function");
+  )?;
   obj.set("read", read_fn)?;
 
   // write(data, { atomic }): in place, or through a temporary file renamed
@@ -129,8 +126,7 @@ pub(crate) fn build_file_named<'js>(
         }))
       }
     }),
-  )
-  .expect("create write function");
+  )?;
   obj.set("write", write_fn)?;
 
   let remove_fn = Function::new(
@@ -142,8 +138,7 @@ pub(crate) fn build_file_named<'js>(
         Ok(with_in_flight(&ctx, "file", async move { fs::remove(&path).await }))
       }
     }),
-  )
-  .expect("create remove function");
+  )?;
   obj.set("remove", remove_fn)?;
 
   let rename_fn = Function::new(
@@ -155,8 +150,7 @@ pub(crate) fn build_file_named<'js>(
         Ok(with_in_flight(&ctx, "file", async move { fs::rename(&path, &to).await }))
       }
     }),
-  )
-  .expect("create rename function");
+  )?;
   obj.set("rename", rename_fn)?;
 
   let append_fn = Function::new(
@@ -169,8 +163,7 @@ pub(crate) fn build_file_named<'js>(
         Ok(with_in_flight(&ctx, "file", async move { fs::append(&path, &bytes).await }))
       }
     }),
-  )
-  .expect("create append function");
+  )?;
   obj.set("append", append_fn)?;
 
   // Carry a native seekable source so a consumer that needs sync, seekable bytes
@@ -192,6 +185,6 @@ pub(crate) fn attach_name<'js>(obj: &Object<'js>, path: Rc<String>, name: Option
   obj.prop("name", Accessor::new_get(getter).enumerable())
 }
 
-pub(crate) fn file_fn<'js>(ctx: &Ctx<'js>) -> Function<'js> {
-  Function::new(ctx.clone(), build_file).expect("create file function")
+pub(crate) fn file_fn<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Function<'js>> {
+  Function::new(ctx.clone(), build_file)
 }

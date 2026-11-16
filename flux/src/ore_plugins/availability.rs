@@ -72,12 +72,13 @@ pub fn state_named(name: &str) -> Option<Availability> {
 
 /// Emit the sticky `availability` event with this engine's snapshot, an
 /// object of facility name to state name.
-pub fn emit(ctx: &Ctx<'_>) {
-  let payload = Object::new(ctx.clone()).expect("create availability object");
+pub fn emit(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
+  let payload = Object::new(ctx.clone())?;
   for (name, state) in snapshot(ctx) {
-    payload.set(name, state).expect("set availability state");
+    payload.set(name, state)?;
   }
   emit_sticky(ctx, EVENT, payload);
+  Ok(())
 }
 
 /// Define `Flux.availability` on `flux`. Runs before `Flux` is frozen.

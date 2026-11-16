@@ -479,7 +479,12 @@ pub(crate) fn throw_consumed(ctx: &Ctx<'_>) -> rquickjs::Error {
 }
 
 pub(crate) fn throw_msg(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
-  ctx.throw(rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
+  // At the memory limit even the message may not fit: then the failed
+  // allocation's own error is the throw.
+  match rquickjs::String::from_str(ctx.clone(), msg) {
+    Ok(message) => ctx.throw(message.into()),
+    Err(e) => e,
+  }
 }
 
 /// Attach text(), bytes(), json() methods to obj.
@@ -522,8 +527,7 @@ where
         }))
       }
     }),
-  )
-  .expect("create text function");
+  )?;
 
   let bytes_fn = Function::new(
     ctx.clone(),
@@ -541,8 +545,7 @@ where
         Ok(Promised(async move { JsResult(fetch.await.map(JsBytes)) }))
       }
     }),
-  )
-  .expect("create bytes function");
+  )?;
 
   let array_buffer_fn = Function::new(
     ctx.clone(),
@@ -560,8 +563,7 @@ where
         Ok(Promised(async move { JsResult(fetch.await.map(JsArrayBuffer)) }))
       }
     }),
-  )
-  .expect("create arrayBuffer function");
+  )?;
 
   let json_fn = Function::new(
     ctx.clone(),
@@ -584,8 +586,7 @@ where
         }))
       }
     }),
-  )
-  .expect("create json function");
+  )?;
 
   obj.set("text", text_fn)?;
   obj.set("bytes", bytes_fn)?;

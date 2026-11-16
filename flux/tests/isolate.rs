@@ -1,7 +1,9 @@
-// The AbortSignal-on-calls contract of flux:isolate: a signal among a call's
-// arguments is consumed as the call's signal (never sent), abort stops the
-// waiting without touching the export, a pre-aborted signal sends and spawns
-// nothing, and a signal on a stream call is inert. The wider call/stream
+// flux:isolate as Rust observes it. The AbortSignal-on-calls contract: a
+// signal among a call's arguments is consumed as the call's signal (never
+// sent), abort stops the waiting without touching the export, a pre-aborted
+// signal sends and spawns nothing, and a signal on a stream call is inert.
+// Beside it: seeded children, start and load failures (an unknown module, a
+// memoryLimit too small to load) and teardown. The wider call/stream
 // protocol is exercised by flux/examples/isolate.js.
 #![cfg(feature = "compile")]
 
@@ -342,4 +344,27 @@ async fn a_detached_method_held_at_teardown_does_not_abort() {
   )
   .await;
   assert!(out.log().contains("count: 2"), "log: {}", out.log());
+}
+
+// A heap limit far below the child runtime's own baseline: the child starts
+// (the limit takes effect once its startup is done), loading its module
+// fails, and the call and `exited` carry that failure instead of a bare
+// exit. So far below the baseline QuickJS cannot build its "out of memory"
+// error, so the message names the failed module load.
+const TINY_MEMORY_LIMIT: usize = 64 * 1024;
+
+#[tokio::test]
+async fn a_memory_limit_too_small_to_load_rejects_with_the_failed_load() {
+  let (out, _) = run_with_worker(&format!(
+    r#"
+    import {{ isolate }} from "flux:isolate"
+    let w = isolate("worker", {{ memoryLimit: {TINY_MEMORY_LIMIT} }})
+    await w.echoCount(1).then(() => console.log("unexpected resolve"), e => console.log("rejected:", e.message))
+    console.log("exited:", await w.exited)
+    "#
+  ))
+  .await;
+  assert!(out.log().contains("rejected: isolate 'worker' exited: module error: "), "log: {}", out.log());
+  assert!(out.log().contains("exited: module error: "), "log: {}", out.log());
+  assert!(!out.log().contains("worker loaded"), "the module ran: {}", out.log());
 }

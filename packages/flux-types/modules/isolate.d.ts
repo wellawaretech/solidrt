@@ -24,10 +24,20 @@ declare module "flux:isolate" {
     args?: string[]
     /**
      * Heap limit in bytes for the child runtime. Once reached, allocations in
-     * the child fail with an out-of-memory error where they happen instead of
-     * growing the process; an exit this causes is observable via `exited`.
-     * Applies to this child only (not to isolates it spawns itself). Default:
-     * unlimited.
+     * the child fail instead of growing the process; an exit this causes is
+     * observable via `exited`.
+     * The child runtime's own baseline (its built-ins: roughly a few hundred
+     * KiB, depending on the build) counts toward the limit. A limit too small
+     * for the child's module to load does not throw from `isolate()`: the
+     * child ends as it does on any failed module load, and calls reject.
+     * With no room left to build an error, the rejection and `exited` may
+     * carry no cause. A child at its limit is not reliable: the runtime
+     * cannot allocate what it needs to continue, so a pending call may never
+     * settle and an error may go unreported. To bound a call, pass the
+     * signal of an `AbortController` that a `setTimeout` aborts, and
+     * `terminate()` the child when the call rejects with the abort reason.
+     * Applies to this child only (not to isolates it spawns itself).
+     * Default: unlimited.
      */
     memoryLimit?: number
   }

@@ -822,9 +822,12 @@ fn spawn_thread(
           });
         }
         let engine = builder.build();
+        // The kill is checked first, so a child killed before its first poll
+        // never runs its engine's startup.
         tokio::select! {
-          _ = engine.eval_module(id, code, move |ctx, ns| serve(ctx, ns, link)) => {}
+          biased;
           _ = kill.fired() => {}
+          _ = engine.eval_module(id, code, move |ctx, ns| serve(ctx, ns, link)) => {}
         }
       }));
     })

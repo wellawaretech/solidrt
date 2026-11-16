@@ -122,8 +122,7 @@ pub(crate) fn build_dir_named<'js>(ctx: Ctx<'js>, path: String, name: Option<Str
         }))
       }
     }),
-  )
-  .expect("create entries function");
+  )?;
   obj.set("entries", entries_fn)?;
 
   let exists_fn = Function::new(
@@ -135,8 +134,7 @@ pub(crate) fn build_dir_named<'js>(ctx: Ctx<'js>, path: String, name: Option<Str
         Ok(with_in_flight(&ctx, "directory", async move { Ok::<bool, String>(fs::dir_exists(&path).await) }))
       }
     }),
-  )
-  .expect("create exists function");
+  )?;
   obj.set("exists", exists_fn)?;
 
   let create_fn = Function::new(
@@ -148,8 +146,7 @@ pub(crate) fn build_dir_named<'js>(ctx: Ctx<'js>, path: String, name: Option<Str
         Ok(with_in_flight(&ctx, "directory", async move { fs::create_dir(&path).await }))
       }
     }),
-  )
-  .expect("create create function");
+  )?;
   obj.set("create", create_fn)?;
 
   obj.set("watch", Function::new(ctx.clone(), watch)?)?;
@@ -157,6 +154,6 @@ pub(crate) fn build_dir_named<'js>(ctx: Ctx<'js>, path: String, name: Option<Str
   Ok(obj)
 }
 
-pub(crate) fn dir_fn<'js>(ctx: &Ctx<'js>) -> Function<'js> {
-  Function::new(ctx.clone(), build_dir).expect("create dir function")
+pub(crate) fn dir_fn<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Function<'js>> {
+  Function::new(ctx.clone(), build_dir)
 }

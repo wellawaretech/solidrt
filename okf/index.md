@@ -296,6 +296,11 @@ Shaped, not started.
   background, SDL's resume ignores the failed restart and the session delivers
   no samples ever again, with no error; alloy needs the same
   reopen-after-resume workaround it has for playback, per recording stream.
+- **[Make a panic on Android end in the clean exit the panic hook intends](backlog/android-panic-exit-aborts.md)** [2026-11-16]
+  On Android a panic on a runtime thread aborts with SIGABRT on the view
+  system's RenderThread (a destroyed mutex) instead of exiting with status 101
+  as lattice's panic hook intends, leaving a tombstone and a misleading second
+  error.
 - **[Android Java libraries for platform features ship in the stock runner](backlog/android-per-app-libraries.md)** [2026-11-04]
   "The model is set: the stock Player and runner carry everything, and a
   developer who wants less builds a custom runtime. That covers native code,
@@ -629,6 +634,11 @@ Shaped, not started.
   this lists what the port itself still has to supply behind them (the suspend
   hold, the launch fact's source, no GPU work in the background), so nothing
   is rediscovered when the port starts.
+- **[Make reaching an isolate's memory limit end the child](backlog/isolate-memory-limit-ends-child.md)** [2026-11-16]
+  A flux:isolate child at its memoryLimit can stop answering or fail without a
+  report, because QuickJS drops a promise reaction it cannot allocate; enforce
+  the limit with a counting allocator that flags the engine, and end the child
+  with a report built in Rust.
 - **[Isolate transfer() and AbortSignal](backlog/isolate-transfer-and-abort.md)** [2026-08-20]
   AbortSignal on plain calls landed 2026-08-20 with the special-argument rule;
   transfer() was parked on the rquickjs quickjs-ng bump, and the workspace is
@@ -3919,6 +3929,15 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   once and a relay-only endpoint is live in 3 s: the GSO batch that fails with
   EIO is dropped rather than resent unsegmented (quinn issue 2399, open);
   forge builds Android endpoints without GSO until then.
+- **[quickjs-ng leaves a built-in method undefined when its first use fails](upstream/quickjs-ng-autoinit-failure-leaves-builtin-undefined.md)** [2026-11-16]
+  QuickJS builds a built-in's methods lazily at their first read, and when
+  that build fails at the memory limit it has already cleared the lazy entry,
+  so the method reads as undefined for the rest of the runtime's life.
+- **[quickjs-ng drops promise reactions at the memory limit](upstream/quickjs-ng-promise-reactions-dropped-at-memory-limit.md)** [2026-11-16]
+  At its memory limit QuickJS ignores a failed JS_EnqueueJob when it queues a
+  promise reaction, so an await continuation or a then handler never runs and
+  nothing is raised; reported upstream by others as open pull requests, none
+  merged.
 - **[quickjs-ng ArrayBuffer.prototype.transfer mishandles external buffers](upstream/quickjs-ng-transfer-external-buffers.md)** [2026-08-03]
   transfer() on a JS_NewArrayBuffer-backed (external) buffer calls js_realloc
   on a pointer the JS allocator does not own when the length changes (heap

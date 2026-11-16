@@ -119,8 +119,7 @@ fn build_command<'js>(
         Ok(with_in_flight(&ctx, "subprocess", async move { spec.run_output().await.map(|o| Neutral(o.into())) }))
       }
     }),
-  )
-  .expect("create output function");
+  )?;
   obj.set("output", output_fn)?;
 
   let spawn_fn = Function::new(
@@ -129,8 +128,7 @@ fn build_command<'js>(
       let spec = spec.clone();
       move |ctx| build_child(ctx, &spec)
     }),
-  )
-  .expect("create spawn function");
+  )?;
   obj.set("spawn", spawn_fn)?;
 
   Ok(obj)
@@ -243,8 +241,7 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
     move || {
       child.kill();
     }
-  })
-  .expect("create kill function");
+  })?;
   obj.set("kill", kill_fn)?;
 
   // status() -> Promise<{ code, signal, success }>, resolves when the child exits.
@@ -261,8 +258,7 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
         ))
       }
     }),
-  )
-  .expect("create status function");
+  )?;
   obj.set("status", status_fn)?;
 
   Ok(obj)
@@ -278,7 +274,7 @@ impl ModuleDef for SubprocessModule {
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
-    let command_fn = Function::new(ctx.clone(), build_command).expect("create command function");
+    let command_fn = Function::new(ctx.clone(), build_command)?;
     exports.export("command", command_fn)?;
     exports.export("which", Function::new(ctx.clone(), subprocess::which)?)?;
     Ok(())

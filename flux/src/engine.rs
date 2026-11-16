@@ -246,9 +246,13 @@ impl FluxEngineBuilder {
 
   /// Heap limit in bytes for this engine's runtime (QuickJS's memory limit):
   /// once reached, allocations fail with an out-of-memory error where they
-  /// happen instead of growing the process. Per engine, not part of the
-  /// inherited `EngineConfig`: an isolate's limit does not cascade to the
-  /// isolates it spawns.
+  /// happen instead of growing the process. The limit takes effect once the
+  /// engine's startup is done, and the startup's own heap counts toward it: a
+  /// limit below that baseline leaves an engine that starts and whose entry
+  /// fails to load (with too little room QuickJS throws `null` instead of
+  /// building its out-of-memory error), instead of failing startup. Per
+  /// engine, not part of the inherited `EngineConfig`: an isolate's limit
+  /// does not cascade to the isolates it spawns.
   pub fn memory_limit(mut self, limit: usize) -> Self {
     self.memory_limit = Some(limit);
     self
@@ -268,6 +272,12 @@ impl FluxEngineBuilder {
   /// uncatchable error unwinds it) so the engine's loop regains control. Used
   /// by isolates so `terminate()` can stop a busy child; the flag alone does
   /// not end the loop, the owner drops the engine future once it yields.
+  /// The flag interrupts what the engine is given to run (the queued exec
+  /// closures, the entry and everything after it), never its startup (the
+  /// built-in globals and the builder's plugins), which always completes.
+  /// QuickJS reads the flag at a periodic check, not at once: with a flag
+  /// already set when the engine starts, a short entry can run to its end
+  /// before the first check.
   pub fn interrupt_flag(mut self, flag: Arc<AtomicBool>) -> Self {
     self.interrupt = Some(flag);
     self

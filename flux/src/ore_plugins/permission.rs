@@ -69,12 +69,13 @@ pub fn state_named(name: &str) -> Option<PermissionState> {
 
 /// Emit the sticky `permission` event with this engine's map, an object of
 /// permission name to state name.
-pub fn emit(ctx: &Ctx<'_>) {
-  let payload = Object::new(ctx.clone()).expect("create permission object");
+pub fn emit(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
+  let payload = Object::new(ctx.clone())?;
   for (name, state) in snapshot(ctx) {
-    payload.set(name, state).expect("set permission state");
+    payload.set(name, state)?;
   }
   emit_sticky(ctx, EVENT, payload);
+  Ok(())
 }
 
 /// Define `Flux.permission` on `flux`. Runs before `Flux` is frozen.

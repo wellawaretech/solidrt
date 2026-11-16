@@ -247,12 +247,12 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent, time_stamp_ms: f64) -> boo
     // states, this engine's overrides applied), so the sticky payload is
     // always the full map.
     AlloyEvent::Availability { .. } => {
-      exec.exec(move |ctx| crate::availability::emit(&ctx));
+      exec.exec(move |ctx| crate::availability::emit(&ctx).expect("emit the availability snapshot"));
     }
     // A permission's state changed: re-emit the whole map (ore's states,
     // this engine's overrides applied), as for availability.
     AlloyEvent::Permission { .. } => {
-      exec.exec(move |ctx| crate::permission::emit(&ctx));
+      exec.exec(move |ctx| crate::permission::emit(&ctx).expect("emit the permission map"));
     }
     // Runner-owned: pointer dispatch is hit testing, not marshalling; the
     // frame signals, Quit and Exposed are the run loop's own (see lattice's

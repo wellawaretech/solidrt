@@ -5,9 +5,12 @@ mod common;
 use common::{run_source, LogSink};
 use flux::rquickjs::{function::MutFn, Ctx, Function, JsLifetime};
 use flux::{compile_source, on_shutdown, CtxLogger, FluxEngine, LogLevel};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 // Engine-level public API: custom plugins, injected userdata, shutdown hooks,
-// precompiled bytecode, top-level error reporting, and the stack-size limit.
+// precompiled bytecode, top-level error reporting, the stack-size limit, the
+// interrupt flag, and the memory limit.
 // (ExecHandle is exercised in events.rs.)
 
 #[derive(Clone, JsLifetime)]
@@ -78,4 +81,39 @@ async fn stack_size_limit_catches_overflow() {
   // Normal code runs under the limit; unbounded recursion overflows and throws
   // a catchable error rather than crashing the process.
   assert_eq!(sink.captured().log(), "before\noverflow caught");
+}
+
+#[tokio::test]
+async fn interrupt_flag_set_at_start_spares_startup_and_stops_entry() {
+  // A flag already set when the engine starts (an isolate killed while it
+  // starts): the engine's own startup still completes, and the entry is
+  // interrupted at its first check, so a busy loop ends and is reported.
+  let sink = LogSink::new();
+  let flag = Arc::new(AtomicBool::new(true));
+  let engine = FluxEngine::builder().logger(sink.logger()).interrupt_flag(flag).build();
+  engine.eval_source("for (;;) {}").await;
+  let captured = sink.captured();
+  let errors = captured.lines_at(LogLevel::Error);
+  assert_eq!(errors.len(), 1, "expected one error, got {errors:?}");
+  assert!(errors[0].starts_with("Error: interrupted"), "expected the interruption, got {errors:?}");
+}
+
+// A heap limit far below what the engine's own startup allocates, so any
+// allocation after startup fails at once.
+const TINY_MEMORY_LIMIT: usize = 64 * 1024;
+
+#[tokio::test]
+async fn memory_limit_below_baseline_spares_startup_and_fails_entry() {
+  // The limit takes effect once startup is done: the engine starts, and
+  // loading the entry fails and is reported. So far below the baseline
+  // QuickJS has no room to build its "out of memory" error and throws null
+  // instead, so the report names the module load, not the cause.
+  let sink = LogSink::new();
+  let engine = FluxEngine::builder().logger(sink.logger()).memory_limit(TINY_MEMORY_LIMIT).build();
+  engine.eval_source("let a = [1, 2, 3]; console.log(a.length)").await;
+  let captured = sink.captured();
+  let errors = captured.lines_at(LogLevel::Error);
+  assert_eq!(errors.len(), 1, "expected one error, got {errors:?}");
+  assert!(errors[0].starts_with("module error: "), "expected the failed module load, got {errors:?}");
+  assert!(captured.lines_at(LogLevel::Log).is_empty(), "the entry ran: {:?}", captured.lines_at(LogLevel::Log));
 }

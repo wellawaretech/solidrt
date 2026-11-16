@@ -321,8 +321,7 @@ fn set_availability(ctx: Ctx<'_>, name: String, state: String) -> flux::rquickjs
     ));
   };
   flux::availability::set_override(&ctx, facility, state);
-  flux::availability::emit(&ctx);
-  Ok(())
+  flux::availability::emit(&ctx)
 }
 
 /// `setPermission(name, state)`: report the named permission ("camera",
@@ -342,8 +341,7 @@ fn set_permission(ctx: Ctx<'_>, name: String, state: String) -> flux::rquickjs::
     ));
   };
   flux::permission::set_override(&ctx, permission, state);
-  flux::permission::emit(&ctx);
-  Ok(())
+  flux::permission::emit(&ctx)
 }
 
 /// `debug(name, args)`: call a debug command the app registered

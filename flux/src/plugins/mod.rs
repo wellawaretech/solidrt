@@ -66,14 +66,6 @@ pub(crate) async fn init_context(
     runtime.set_max_stack_size(limit).await;
   }
 
-  if let Some(limit) = memory_limit {
-    runtime.set_memory_limit(limit).await;
-  }
-
-  if let Some(flag) = interrupt {
-    runtime.set_interrupt_handler(Some(Box::new(move || flag.load(Ordering::Relaxed)))).await;
-  }
-
   // Global safety net for promises that reject with no handler attached. Without
   // this QuickJS swallows them silently (unlike a browser, which logs, or Node,
   // which crashes); only the entry-module promise is otherwise reported.
@@ -240,10 +232,23 @@ pub(crate) async fn init_context(
       // (and the embedder excludes) as plugins, and the test host's
       // sessions set their availability and permission overrides.
       define_capabilities(&ctx).expect("failed to define Flux.capabilities");
-      crate::ore_plugins::availability::emit(&ctx);
-      crate::ore_plugins::permission::emit(&ctx);
+      crate::ore_plugins::availability::emit(&ctx).expect("emit the availability snapshot");
+      crate::ore_plugins::permission::emit(&ctx).expect("emit the permission map");
     })
     .await;
+
+  // The memory limit and the interrupt handler are applied last: the startup
+  // above (the built-in globals and the embedder's setups) is init-time work
+  // that must run to completion. So a limit below the startup's own heap, or
+  // a flag that is already set (an isolate killed while it starts), fails
+  // only what the engine is given to run. The startup's heap still counts
+  // toward the limit: QuickJS limits the runtime's total heap.
+  if let Some(limit) = memory_limit {
+    runtime.set_memory_limit(limit).await;
+  }
+  if let Some(flag) = interrupt {
+    runtime.set_interrupt_handler(Some(Box::new(move || flag.load(Ordering::Relaxed)))).await;
+  }
 
   (runtime, context, pending, rejections)
 }
