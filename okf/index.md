@@ -396,9 +396,10 @@ Shaped, not started.
   snapshots, against 52.7 fps for the same writes on x), because its key holds
   the box snapped to the device grid and that box has a new logical size at
   every scale; text-layer-motion and snapshot-raster-composite-scale decided
-  the opposite and performance.md rule 5 promises it. Fixing the key alone is
-  not enough for a wide sweep - every crossing of the motion bound re-rasters
-  every snapshot in one frame.
+  the opposite, and performance.md rule 5 promises even fewer re-rasters.
+  Fixing the key alone does little for this repro - at its raster cost, a
+  frame that passes the motion bound lasts long enough for the next frame to
+  pass it again, through about half of the sweep.
 - **[Native modules cannot read camera frames](backlog/camera-frame-tap.md)** [2026-10-08]
   alloy's camera pump holds every frame as upright RGBA on the CPU and hands
   it only to the texture upload and the QR decoder, so a custom runtime module

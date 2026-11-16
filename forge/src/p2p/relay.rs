@@ -67,7 +67,7 @@ pub struct RelayTls {
   pub key: Vec<u8>,
   /// Whether the relay's URL carries `?pin=` (the leaf's key hash). `None`
   /// pins a self-signed leaf and not a CA-signed one.
-  pub pin: Option<bool>,
+  pub pinned: Option<bool>,
 }
 
 /// Options `RelayOptions::check` has validated, ready to serve: no
@@ -123,11 +123,11 @@ impl RelayOptions {
         };
         let config = crate::tls::server_config(&options).map_err(|e| format!("tls: {e}"))?;
         let leaf = crate::tls::leaf_from_pem(&options.cert, "tls: cert")?;
-        let pin = match tls.pin {
-          Some(pin) => pin,
+        let pinned = match tls.pinned {
+          Some(pinned) => pinned,
           None => crate::tls::is_self_signed(&leaf).ok_or_else(|| "tls: cert: does not parse".to_string())?,
         };
-        let pin = match pin {
+        let pin = match pinned {
           true => {
             let hash = crate::tls::spki_sha256(&leaf).ok_or_else(|| "tls: cert: does not parse".to_string())?;
             Some(super::encode_hex(&hash))

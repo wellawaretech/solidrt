@@ -30,7 +30,7 @@ is briefly closed.
   `server.setCertificate({ cert, key })`, which parses and checks the pair
   (the key matches the leaf) and throws on a bad one before it swaps.
 - For the relay: `Relay.url` carries a pin when the certificate is
-  self-signed (or `tls.pin: true`). A new key changes the pin, so a swap
+  self-signed (or `tls.pinned: true`). A new key changes the pin, so a swap
   that changes the pin changes the URL; the method either rejects that or
   reports the new `url`. Decide which.
 

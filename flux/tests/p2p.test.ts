@@ -254,9 +254,13 @@ test("an HTTPS relay's URL carries the pin of its self-signed certificate", asyn
   expect(relay.url.startsWith("https://")).toBe(true)
   expect(relay.url.endsWith(`:${relay.port}/?pin=${made.pin}`)).toBe(true)
   await relay.close()
-  let unpinned = await serveRelay({ host: "127.0.0.1", tls: { cert: made.cert, key: made.key, pin: false } })
+  let unpinned = await serveRelay({ host: "127.0.0.1", tls: { cert: made.cert, key: made.key, pinned: false } })
   expect(unpinned.url.includes("pin=")).toBe(false)
   await unpinned.close()
+  // A generateCertificate result passes as it is; its pin string is not read.
+  let direct = await serveRelay({ host: "127.0.0.1", tls: made })
+  expect(direct.url.endsWith(`:${direct.port}/?pin=${made.pin}`)).toBe(true)
+  await direct.close()
   let proxied = await serveRelay({ token: TOKEN_A, url: "https://relay.example.test/" })
   expect(proxied.url).toBe(`https://${TOKEN_A}@relay.example.test/`)
   await proxied.close()
@@ -283,7 +287,7 @@ test("serveRelay throws on an invalid option", () => {
   )
   expect(() => serveRelay({ host: "::1", tls: { cert: made.cert, key: made.key } })).toThrow("IPv6")
   expect(() =>
-    serveRelay({ tls: { cert: made.cert, key: made.key, pin: false }, url: "http://relay.example.test/" }),
+    serveRelay({ tls: { cert: made.cert, key: made.key, pinned: false }, url: "http://relay.example.test/" }),
   ).toThrow("url: a tls relay needs an https:// url")
   expect(() => serveRelay({ url: "https://relay.example.test/a|b" })).toThrow("url")
 })

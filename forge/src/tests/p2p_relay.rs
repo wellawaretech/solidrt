@@ -380,7 +380,7 @@ async fn allowlist_admits_and_set_allow_drops(tls: Option<&GeneratedCertificate>
     tls: tls.map(|cert| RelayTls {
       cert: cert.cert.clone().into_bytes(),
       key: cert.key.clone().into_bytes(),
-      pin: None,
+      pinned: None,
     }),
     ..RelayOptions::default()
   };
@@ -442,7 +442,7 @@ async fn relay_url_override_carries_the_token() {
 
   // Over HTTPS the override keeps the pin of a self-signed leaf.
   let leaf = certificate("127.0.0.1", false, None);
-  let tls = RelayTls { cert: leaf.cert.clone().into_bytes(), key: leaf.key.clone().into_bytes(), pin: None };
+  let tls = RelayTls { cert: leaf.cert.clone().into_bytes(), key: leaf.key.clone().into_bytes(), pinned: None };
   let opts = RelayOptions {
     host: Some("127.0.0.1".to_string()),
     tokens: Some(vec![TOKEN_A.to_string()]),
@@ -481,7 +481,8 @@ fn relay_options_are_validated() {
   assert!(!error.contains("secret"), "the error does not echo the user part: {error}");
   // A pin needs https, and an HTTPS relay URL cannot carry an IPv6 address.
   let leaf = certificate("127.0.0.1", false, None);
-  let tls = || Some(RelayTls { cert: leaf.cert.clone().into_bytes(), key: leaf.key.clone().into_bytes(), pin: None });
+  let tls =
+    || Some(RelayTls { cert: leaf.cert.clone().into_bytes(), key: leaf.key.clone().into_bytes(), pinned: None });
   bad(
     RelayOptions { url: Some("http://relay.example.test/".to_string()), tls: tls(), ..RelayOptions::default() },
     "url",
@@ -490,7 +491,7 @@ fn relay_options_are_validated() {
   bad(RelayOptions { url: Some("https://[::1]:8443/".to_string()), ..RelayOptions::default() }, "url");
   // TLS with an http:// url, pinned or not: clients would dial without TLS.
   let unpinned =
-    RelayTls { cert: leaf.cert.clone().into_bytes(), key: leaf.key.clone().into_bytes(), pin: Some(false) };
+    RelayTls { cert: leaf.cert.clone().into_bytes(), key: leaf.key.clone().into_bytes(), pinned: Some(false) };
   bad(
     RelayOptions {
       url: Some("http://relay.example.test/".to_string()),
@@ -504,7 +505,7 @@ fn relay_options_are_validated() {
     RelayOptions { host: Some("::1".to_string()), ..RelayOptions::default() }.check().is_ok(),
     "plain HTTP on IPv6"
   );
-  let tls = RelayTls { cert: b"not pem".to_vec(), key: b"not pem".to_vec(), pin: None };
+  let tls = RelayTls { cert: b"not pem".to_vec(), key: b"not pem".to_vec(), pinned: None };
   bad(RelayOptions { tls: Some(tls), ..RelayOptions::default() }, "tls");
 }
 
@@ -521,8 +522,8 @@ fn certificate(name: &str, is_ca: bool, issuer: Option<&GeneratedCertificate>) -
   .expect("a certificate")
 }
 
-async fn tls_relay(cert: &GeneratedCertificate, pin: Option<bool>) -> Relay {
-  let tls = RelayTls { cert: cert.cert.clone().into_bytes(), key: cert.key.clone().into_bytes(), pin };
+async fn tls_relay(cert: &GeneratedCertificate, pinned: Option<bool>) -> Relay {
+  let tls = RelayTls { cert: cert.cert.clone().into_bytes(), key: cert.key.clone().into_bytes(), pinned };
   let opts = RelayOptions { host: Some("127.0.0.1".to_string()), tls: Some(tls), ..RelayOptions::default() };
   Relay::serve(opts).await.expect("the HTTPS relay serves")
 }
@@ -554,7 +555,7 @@ async fn tls_relay_pins_a_self_signed_leaf() {
   relay.close().await;
 
   let unpinned = tls_relay(&leaf, Some(false)).await;
-  assert!(!unpinned.url().contains("pin="), "pin: false leaves the pin out: {}", unpinned.url());
+  assert!(!unpinned.url().contains("pin="), "pinned: false leaves the pin out: {}", unpinned.url());
   unpinned.close().await;
 }
 
@@ -568,7 +569,7 @@ async fn tls_relay_leaves_a_ca_signed_leaf_unpinned() {
   relay.close().await;
 
   let pinned = tls_relay(&leaf, Some(true)).await;
-  assert!(pinned.url().ends_with(&format!("/?pin={}", leaf.pin)), "pin: true pins it: {}", pinned.url());
+  assert!(pinned.url().ends_with(&format!("/?pin={}", leaf.pin)), "pinned: true pins it: {}", pinned.url());
   pinned.close().await;
 }
 

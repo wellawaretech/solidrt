@@ -79,9 +79,10 @@ impl P2pRelay {
 
 /// `serveRelay(opts?)` -> `Promise<Relay>`: `port` (0, the default, is a
 /// free one), `host`, `token` (a string or a list), `allow`, `url` and
-/// `tls: { cert, key, pin? }`, read into `forge::p2p::RelayOptions` and
+/// `tls: { cert, key, pinned? }`, read into `forge::p2p::RelayOptions` and
 /// validated there before anything binds, so an invalid option throws. The
-/// relay is standing work until its `close`.
+/// `tls` object of `generateCertificate` passes as it is: its `pin` (the
+/// hex string) is not read. The relay is standing work until its `close`.
 pub fn serve_relay<'js>(
   ctx: Ctx<'js>,
   opts: OptArg<Object<'js>>,
@@ -121,7 +122,7 @@ fn relay_options<'js>(ctx: &Ctx<'js>, opts: &Object<'js>) -> rquickjs::Result<Re
       else {
         return Err(throw("tls: cert and key are required"));
       };
-      Some(RelayTls { cert: cert.into_bytes(), key: key.into_bytes(), pin: tls.get("pin")? })
+      Some(RelayTls { cert: cert.into_bytes(), key: key.into_bytes(), pinned: tls.get("pinned")? })
     }
     None => None,
   };

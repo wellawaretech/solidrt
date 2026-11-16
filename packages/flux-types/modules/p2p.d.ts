@@ -402,15 +402,16 @@ declare module "flux:p2p" {
     /**
      * HTTPS: the certificate chain and its private key (PEM), as
      * `generateCertificate` of flux:net makes them or any CA issues them.
-     * `caCerts` and `anyClientCert` throw: relay clients present no
-     * certificate.
+     * Its result passes as it is (`tls: generateCertificate(...)`): its
+     * `pin` string is not read. `caCerts` and `anyClientCert` throw: relay
+     * clients present no certificate.
      *
-     * `pin` decides whether {@link Relay.url} carries the leaf's pin (see
-     * {@link EndpointOptions.relayUrl}). By default it does for a
+     * `pinned` decides whether {@link Relay.url} carries the leaf's pin
+     * (see {@link EndpointOptions.relayUrl}). By default it does for a
      * self-signed leaf (its issuer equals its subject) and does not for a
      * CA-signed one, which clients check by its chain. A CA certificate
      * whose subject equals its leaf's subject reads as self-signed: set
-     * `pin: false` for it.
+     * `pinned: false` for it.
      *
      * The pin stays the same only as long as the key does: save the
      * `cert` and `key` once and pass the same ones on every start (as an
@@ -424,7 +425,7 @@ declare module "flux:p2p" {
      * `https://` URL. The runtime has no built-in ACME. To renew, restart
      * the relay with the new certificate; a fixed `token` keeps its URL.
      */
-    tls?: { cert: string; key: string; pin?: boolean }
+    tls?: { cert: string; key: string; pinned?: boolean }
     /**
      * The tokens the relay admits; the first goes into {@link Relay.url}.
      * Default: one fresh random token per run. A fixed token keeps the URL
