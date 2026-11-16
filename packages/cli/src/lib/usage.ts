@@ -94,6 +94,8 @@ android options:
       --apk              Pack the app (sol pack --apk), then install and launch on each device the APK
                          built for its ABI
       --install          Reinstall the client first, even when it is current
+      --restart          Force-stop and relaunch the installed client at the dev server, a true cold
+                         start (a reload only swaps the engine); never installs or updates it
       --force            Where the installed app blocks the install (signed with another key, or newer),
                          uninstall it without asking; this clears its data
       --port <N>         Point it at the local dev server on this port

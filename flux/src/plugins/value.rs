@@ -33,7 +33,7 @@
 
 use rquickjs::{Array, ArrayBuffer, Ctx, Exception, FromJs, IntoJs, Object, TypedArray, Value as JsValue};
 
-use super::marshal::CopyBytes;
+use super::marshal::{array_length, CopyBytes};
 
 use forge::{Elem, Value};
 
@@ -143,9 +143,9 @@ fn decode<'js>(ctx: &Ctx<'js>, value: JsValue<'js>, depth: usize) -> rquickjs::R
     return Ok(Value::Bytes { elem, data });
   }
   if let Some(arr) = value.as_array() {
-    let mut items = Vec::with_capacity(arr.len());
-    for item in arr.iter::<JsValue>() {
-      items.push(decode(ctx, item?, depth + 1)?);
+    let mut items = Vec::new();
+    for i in 0..array_length(arr)? {
+      items.push(decode(ctx, arr.get::<JsValue>(i)?, depth + 1)?);
     }
     return Ok(Value::List(items));
   }

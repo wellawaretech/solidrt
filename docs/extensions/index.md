@@ -84,19 +84,21 @@ layer does ten thousand float stores and one publish. It does not do twenty
 thousand property writes.
 
 ```tsx
-import { decodeImage } from "@solidrt/core"
+import { decodeImage, render } from "@solidrt/core"
 import { createAtlas, grid, Sprite, SpriteLayer } from "@solidrt/2d"
 import sheet from "./sheet.png" with { type: "binary" }
 
 let atlas = createAtlas(decodeImage(sheet), { filter: "nearest" })
 let frames = grid(atlas, 4, 4)
 
-<window>
-  <SpriteLayer width={720} height={480} atlases={[atlas]} oversampleStep={1}>
-    <Sprite x={100} y={120} w={32} h={32} frame={frames[0]} />
-    <Sprite x={200} y={160} w={32} h={32} frame={frames[5]} rotation={0.4} />
-  </SpriteLayer>
-</window>
+render(() => (
+  <window>
+    <SpriteLayer width={720} height={480} atlases={[atlas]} oversampleStep={1}>
+      <Sprite x={100} y={120} w={32} h={32} frame={frames[0]} />
+      <Sprite x={200} y={160} w={32} h={32} frame={frames[5]} rotation={0.4} />
+    </SpriteLayer>
+  </window>
+))
 ```
 
 A layer declares the atlases that it uses and binds them as one draw. Thus,
@@ -119,14 +121,17 @@ renders into an ordinary texture in your UI tree. A static scene uses no GPU
 passes.
 
 ```tsx
+import { render } from "@solidrt/core"
 import { box, Mesh, PerspectiveCamera, Scene, unlit } from "@solidrt/3d"
 
-<window>
-  <Scene width={720} height={720}>
-    <PerspectiveCamera position={[0, 1.5, 3]} lookAt={[0, 0, 0]} />
-    <Mesh geometry={box()} material={unlit({ color: [0.9, 0.3, 0.3] })} />
-  </Scene>
-</window>
+render(() => (
+  <window>
+    <Scene width={720} height={720}>
+      <PerspectiveCamera position={[0, 1.5, 3]} lookAt={[0, 0, 0]} />
+      <Mesh geometry={box()} material={unlit({ color: [0.9, 0.3, 0.3] })} />
+    </Scene>
+  </window>
+))
 ```
 
 To use it, select it in the scaffolder, or use `bun add @solidrt/3d`. The

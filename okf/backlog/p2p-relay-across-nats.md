@@ -29,10 +29,32 @@ delay, and all of both peers' traffic on the relay host's uplink.
   self-hosted relay has no public certificate, so it would serve a
   self-signed one, and the clients would skip verification for that relay
   only (the relay's token in its URL already authenticates who may use
-  it). iroh-relay's server half has the listener; the client side needs a
-  verifier override.
+  it), or trust it through the `caCerts` / `pin` options of
+  okf/backlog/p2p-relay-on-a-public-network.md. iroh-relay's server half
+  has the listener; on the client side iroh's public
+  `Endpoint::builder().ca_tls_config(CaTlsConfig)` takes extra roots or a
+  custom verifier, so no `test-utils` feature is needed.
 - The endpoint config then carries the QAD port again, for relays that
   serve one.
+
+## The failure is silent
+
+When the configured relay never comes online (an untrusted certificate, a
+wrong token, a relay that is down) nothing says so. `Endpoint::create`
+succeeds, `ticket()` waits `TICKET_WAIT` (3 s) on `online()` and then
+encodes what it has (forge/src/p2p/endpoint.rs), which is `id||`, and a
+peer's `connect` fails later with "No addressing information available".
+Nothing names the relay or the reason; with `paths: "relay"` the endpoint
+is dead and looks fine. That breaks the API rule that the runtime never
+acts on a hidden policy without an observable of what it did. Fix this
+first, before any TLS work, since every option above produces this
+failure when misconfigured:
+
+- `ticket()` rejects (names the relay URL and the status) when a relay is
+  configured and not online after the wait, instead of encoding `id||`.
+- An `endpoint.relayStatus()` (or a watcher) over iroh's
+  `home_relay_status()`: connected, connecting, failed and why.
+- With `paths: "relay"`, `Endpoint.create` may fail fast instead.
 
 ## Open
 
@@ -42,4 +64,6 @@ delay, and all of both peers' traffic on the relay host's uplink.
   between two dev devices needs no host app), and on which port.
 
 Related: okf/backlog/p2p-ticket-addresses.md (what a ticket carries once
-it travels beyond the room).
+it travels beyond the room), okf/backlog/p2p-relay-on-a-public-network.md
+(the relay options and the endpoint's trust options for a relay beyond
+one network).

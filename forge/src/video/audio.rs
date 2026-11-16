@@ -16,19 +16,28 @@ use crate::audio::webm::padding_frames;
 // clears it), large enough to ride out the longest wait a player's worker
 // makes between top-ups (a frame's release lead plus one output dequeue).
 pub const AUDIO_LOOKAHEAD_US: i64 = 500_000;
-// How much later the sound of a content instant is heard than its picture
-// is seen when both leave the player together, net of the two output
-// paths: the sound's (SDL's device buffer, the platform mixer, the TV's
-// speakers or an HDMI/Bluetooth path) minus the picture's (a released
-// frame scans out about two vsyncs later). The plane player holds the
-// picture back by this much when the sound starts (a negative value holds
-// the sound back, by advancing the picture), and the sink position is read
-// back through it. Not measurable from here (SDL exposes no output
+// The default audio delay (`AudioOutput::delay_us`): how much later the
+// sound of a content instant is heard than its picture is seen when both
+// leave the player together, net of the two output paths: the sound's
+// (SDL's device buffer, the platform mixer, the TV's speakers or an
+// HDMI/Bluetooth path) minus the picture's (a released frame scans out
+// about two vsyncs later). Not measurable from here (SDL exposes no output
 // timestamp), so set with a flash-and-beep clip (examples/video/assets/
 // avsync.webm): 60 ms lands the beep on the flash on the Philips TV's own
 // speakers (2026-09-13; 20 ms left the sound visibly behind). An external
-// speaker path needs its own value, which is an app setting to come.
+// speaker path needs its own value, which the app passes (flux:video's
+// `audioDelay`).
 pub const AUDIO_OUTPUT_LATENCY_US: i64 = 60_000;
+
+/// Where a player's audio track plays: the sink, and the delay of the
+/// output path behind it in microseconds (the default is
+/// `AUDIO_OUTPUT_LATENCY_US`). The players hold the picture back by the
+/// delay when the sound starts, and the sink position is read back
+/// through it.
+pub struct AudioOutput {
+  pub sink: Box<dyn AudioSink>,
+  pub delay_us: i64,
+}
 
 pub struct AudioTrack {
   decoder: OpusDecoder,
@@ -36,6 +45,8 @@ pub struct AudioTrack {
   sample_rate: u32,
   channels: u16,
   pre_skip_us: i64,
+  // The output path's delay (`AudioOutput::delay_us`).
+  delay_us: i64,
   // Decoded samples before the stream's start (pre-skip) or a seek target
   // (preroll) are discarded.
   trim: Trim,
@@ -46,18 +57,20 @@ pub struct AudioTrack {
 }
 
 impl AudioTrack {
-  /// A track feeding `sink` (opened at the stream's rate and channels),
-  /// positioned at `start_us` (the stream's `MediaInfo::start_us`):
-  /// decoded samples before it are discarded, the pre-skip among them.
-  pub fn new(info: &AudioInfo, start_us: i64, sink: Box<dyn AudioSink>) -> Result<AudioTrack, String> {
+  /// A track feeding `output`'s sink (opened at the stream's rate and
+  /// channels), positioned at `start_us` (the stream's
+  /// `MediaInfo::start_us`): decoded samples before it are discarded, the
+  /// pre-skip among them.
+  pub fn new(info: &AudioInfo, start_us: i64, output: AudioOutput) -> Result<AudioTrack, String> {
     let decoder = OpusDecoder::new(info.sample_rate, info.channels)?;
     let pre_skip_us = info.pre_skip as i64 * 1_000_000 / info.sample_rate as i64;
     Ok(AudioTrack {
       decoder,
-      sink,
+      sink: output.sink,
       sample_rate: info.sample_rate,
       channels: info.channels,
       pre_skip_us,
+      delay_us: output.delay_us,
       trim: Trim::new(Some(start_us.max(0))),
       base: None,
       done: false,
@@ -156,10 +169,10 @@ impl AudioTrack {
     self.base
   }
 
-  /// The content time the speaker is at, from the sink's position; None
-  /// until something has been pushed.
+  /// The content time the speaker is at, from the sink's position net of
+  /// the output delay; None until something has been pushed.
   pub fn content_time_us(&self) -> Option<i64> {
     let (content_us, position_us) = self.base?;
-    Some(content_us + (self.sink.position_us() - position_us) - AUDIO_OUTPUT_LATENCY_US)
+    Some(content_us + (self.sink.position_us() - position_us) - self.delay_us)
   }
 }

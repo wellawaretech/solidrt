@@ -106,12 +106,19 @@ pub fn register_listener<'js>(
   once: bool,
 ) -> rquickjs::Result<Function<'js>> {
   let id = add_listener(ctx, event.clone(), callback, once);
-  Function::new(
+  let unsubscribe_event = event.clone();
+  let unsubscribe = Function::new(
     ctx.clone(),
     MutFn::from(move |ctx: Ctx<'_>| {
-      remove_listener(&ctx, &event, id);
+      remove_listener(&ctx, &unsubscribe_event, id);
     }),
-  )
+  );
+  // An engine at its memory limit can fail this last allocation: roll the
+  // listener back so the script, which gets the throw, has nothing to stop.
+  if unsubscribe.is_err() {
+    remove_listener(ctx, &event, id);
+  }
+  unsubscribe
 }
 
 // Whether `event` currently has any registered listeners. Lets a consumer tear

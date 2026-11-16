@@ -610,6 +610,14 @@ impl UiRuntime for FluxRuntime {
       // per frame, see flux virtual time), then rAF and the render event on
       // ts, so the frame consumes the state the callbacks dirtied.
       flux::gui::frame::deliver(&ctx, next_frame, ts, timer_ts);
+      // No render handler drew the frame (nothing mounted yet, so no window
+      // listens for "render"; draw() consumes the start stamp): run the
+      // draw path directly, as the paused path does, so its demand gate
+      // consumes the frame's request. Left set, an app with no window would
+      // demand frames forever and never come to rest.
+      if crate::frame::RENDER_FRAME.with(|c| c.get().start.is_some()) {
+        crate::plugins::draw::render_now(&ctx);
+      }
       timing.lock().expect("js timing lock poisoned").record_frame(start.elapsed().as_secs_f32() * 1000.0);
       // A frame a test asked for has run: its promise settles.
       #[cfg(feature = "test")]

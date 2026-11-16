@@ -32,11 +32,10 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::audio::AudioTrack;
+use super::audio::{AudioOutput, AudioTrack};
 use super::reader::{Next, Reader, ReaderHandle, Status};
 use super::transport::{
-  classify, Anchor, AudioSink, AudioSupply, AudioSync, Buffering, Clock, Command, Controls, Release, Shared, Supply,
-  Thresholds,
+  classify, Anchor, AudioSupply, AudioSync, Buffering, Clock, Command, Controls, Release, Shared, Supply, Thresholds,
 };
 use super::{AudioPacket, MediaInfo, StreamError};
 
@@ -77,7 +76,8 @@ pub trait Presenter {
   /// again while `Took` comes back.
   fn feed(&mut self, reader: &Reader) -> Result<Feed, StreamError>;
   /// Make the next decoded picture current, waiting up to `wait` for it.
-  /// None when nothing is ready within the wait.
+  /// None when nothing is ready within the wait. An error fails the stream
+  /// with it, unless the surface is lost by then (the stream ends instead).
   fn next(&mut self, wait: Duration) -> Result<Option<Picture>, StreamError>;
   /// The time the current picture would be released for when asked for
   /// `due_ns`: snapped onto a vsync grid when the presenter has one, `due_ns`
@@ -193,8 +193,8 @@ impl Player {
   /// Start the worker `name` over the stream `reader` delivers, presenting
   /// through the presenter `make` builds on the worker, scheduling on
   /// `clock`, and playing the audio track (when the stream has one and the
-  /// caller provides a `sink` for it, opened at the track's rate and
-  /// channels) into that sink. Playback starts paused; the first frame is
+  /// caller provides an `audio` output for it, its sink opened at the
+  /// track's rate and channels) into that output. Playback starts paused; the first frame is
   /// shown on `play`. An audio decoder that cannot be created plays silent.
   /// `lost` reports the presenter's surface gone.
   pub fn open(
@@ -202,13 +202,13 @@ impl Player {
     reader: Reader,
     make: PresenterFactory,
     clock: Clock,
-    sink: Option<Box<dyn AudioSink>>,
+    audio: Option<AudioOutput>,
     lost: LostSampler,
   ) -> Result<Player, String> {
     let info = reader.info().ok_or("stream not opened")?;
     let start_us = info.start_us;
     let audio_info = info.audio.clone();
-    if audio_info.is_some() && sink.is_none() {
+    if audio_info.is_some() && audio.is_none() {
       // Nobody will take the audio packets: drop them at the source.
       reader.set_tracks(true, false);
     }
@@ -232,8 +232,8 @@ impl Player {
             return;
           }
         };
-        let audio = match (audio_info, sink) {
-          (Some(info), Some(sink)) => match AudioTrack::new(&info, start_us, sink) {
+        let audio = match (audio_info, audio) {
+          (Some(info), Some(output)) => match AudioTrack::new(&info, start_us, output) {
             Ok(track) => Some(track),
             Err(e) => {
               log::warn!("[forge::video] {e} (playing silent)");
@@ -704,6 +704,12 @@ impl Worker<'_> {
     let picture = match self.presenter.next(OUTPUT_WAIT) {
       Ok(Some(picture)) => picture,
       Ok(None) => return,
+      // A decoder whose surface the platform took fails as a consequence:
+      // that is the lost end, not an error for the app.
+      Err(_) if (self.lost)() => {
+        self.lose();
+        return;
+      }
       Err(e) => {
         self.fail(e);
         return;

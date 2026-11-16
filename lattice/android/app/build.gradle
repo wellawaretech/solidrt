@@ -54,8 +54,10 @@ android {
     // auto-generates ~/.android/debug.keystore per machine, so a build from
     // one checkout cannot reinstall over another's. A fixed key (standard
     // debug alias/password, not sensitive) keeps local builds interchangeable.
-    // It signs every build but the published Player, the runner included
-    // (which `sol pack --apk` re-signs anyway).
+    // It signs every build but the published Player, the runner included.
+    // sol signs with this same key (packages/cli/src/pack/android/key.ts,
+    // exported from this keystore), so Player.dev, derived Players and apps
+    // packed in dev share one signer.
     signingConfigs {
         debug {
             storeFile = file('debug.keystore')

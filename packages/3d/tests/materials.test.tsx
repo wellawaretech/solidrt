@@ -9,7 +9,7 @@
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
 import { glsl, readTexture } from "@solidrt/core/gpu"
-import { add, createMesh, createScene, createSprite, plane, setTransform, sprite, unlit } from "../src/index.ts"
+import { add, createMesh, createScene, createSprite, plane, setTransform, shaderMaterialClass, sprite, unlit } from "../src/index.ts"
 import type { Material, SceneHandle } from "../src/index.ts"
 
 const SIZE = 128
@@ -88,4 +88,17 @@ test("sprite's surface function composes after the radial falloff: the center ta
   // The quad's corner lies outside the inscribed disc: nothing painted.
   let corner = pixel(scene, mid - HALF_PX * 2 + 1, mid - HALF_PX * 2 + 1)
   expect(corner[2]! < LIT).toBe(true)
+})
+
+test("shaderMaterialClass names a uLayers declared as anything but int at the class", () => {
+  let vertex = glsl`
+    in vec3 position;
+    uniform mat4 uModel;
+    uniform mat4 uViewProj;
+    void main() { gl_Position = uViewProj * uModel * vec4(position, 1.0); }
+  `
+  let fragment = (decl: string) => decl + "\nout vec4 fragColor;\nvoid main() { fragColor = vec4(1.0); }\n"
+  expect(() => shaderMaterialClass({ vertex, fragment: fragment("uniform highp sampler2DArray uLayers;") })).toThrow("'uLayers' as sampler2DArray")
+  expect(() => shaderMaterialClass({ vertex, fragment: fragment("uniform float uLayers;") })).toThrow("'uLayers' as float")
+  expect(() => shaderMaterialClass({ vertex, fragment: fragment("uniform int uLayers;") }).dispose()).not.toThrow()
 })

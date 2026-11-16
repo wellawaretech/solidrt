@@ -17,7 +17,7 @@
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
 import { camera as installCamera, capture, clipboard as readClipboard, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, requestedHaptics, requestedLinks, requestedShares, microphone as installMicrophone, painted as paintFrame, setAvailability as putAvailability, setClipboard as putClipboard, setPermission as putPermission, setFrameRate, setWindow, settle, stats as queryStats, time, until as untilHolds, windowPixels as readWindow, windowReady } from "sol:test"
-import { createElement, insert, render } from "@solidrt/core"
+import { createElement, insert, render, shownError } from "@solidrt/core"
 import type { Availability, PermissionState } from "@solidrt/core"
 import type { HapticIntent, ImpactWeight } from "flux:haptics"
 
@@ -233,6 +233,17 @@ export interface TestApp {
    * it, never at the top of the test.
    */
   mount(ui: () => unknown): Promise<Locator>
+  /**
+   * Mounts `ui` as `mount` does and resolves to the error the mount threw:
+   * the error the error window then shows in place of the app (a
+   * contradicting prop, a component that throws while it builds). Rejects
+   * when the app mounted without one. In place of `mount`, once per test.
+   *
+   * @example
+   * let error = await app.mountFails(() => <Scene width={64} height={64} renderScale={2} />)
+   * expect(error.message).toContain("renderScale")
+   */
+  mountFails(ui: () => unknown): Promise<Error>
   /**
    * Starts the app an entry module is, the way the runtime starts it: pass
    * a function that imports the entry, whose top level calls `render`.
@@ -741,27 +752,39 @@ function framesFor(ms: number): number {
 
 let mounted = false
 
+// Renders `ui` in a window (its own, unless it is one) and waits for the
+// first frame; returns the window's id. `verb` names the caller in errors.
+async function mountUi(ui: () => unknown, verb: string): Promise<number> {
+  if (typeof ui !== "function") throw new TypeError(`${verb}: pass a function that returns the UI, like () => <Counter />`)
+  if (mounted) throw new Error(`${verb}: this test already mounted its app; a test is one app`)
+  mounted = true
+  let root = 0
+  render(() => {
+    let content = ui() as { id: number; elementType?: string } | undefined
+    if (content && content.elementType === "window") {
+      root = content.id
+      return content
+    }
+    let win = createElement("window")
+    insert(win, () => content)
+    root = win.id
+    return win
+  })
+  // The window builds its first frame on its size, which the engine may
+  // not have been told yet.
+  await windowReady()
+  return root
+}
+
 let app: TestApp = {
   async mount(ui) {
-    if (typeof ui !== "function") throw new TypeError("mount: pass a function that returns the UI, like () => <Counter />")
-    if (mounted) throw new Error("mount: this test already mounted its app; a test is one app")
-    mounted = true
-    let root = 0
-    render(() => {
-      let content = ui() as { id: number; elementType?: string } | undefined
-      if (content && content.elementType === "window") {
-        root = content.id
-        return content
-      }
-      let win = createElement("window")
-      insert(win, () => content)
-      root = win.id
-      return win
-    })
-    // The window builds its first frame on its size, which the engine may
-    // not have been told yet.
-    await windowReady()
-    return fixed(root, "the mounted window")
+    return fixed(await mountUi(ui, "mount"), "the mounted window")
+  },
+  async mountFails(ui) {
+    await mountUi(ui, "mountFails")
+    let error = shownError()
+    if (error === undefined) throw new Error("mountFails: the app mounted without an error; the error window is not up")
+    return error instanceof Error ? error : new Error(String(error))
   },
   async load(entry) {
     if (typeof entry !== "function") throw new TypeError("load: pass a function that imports the entry, like () => import(\"../src/index.tsx\")")

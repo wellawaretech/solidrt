@@ -40,6 +40,12 @@ export type VideoOptions = {
    */
   latency?: number
   /**
+   * Seconds the sound's output path (HDMI, Bluetooth, the speakers) delays
+   * the sound behind the picture: an app setting for an external speaker.
+   * See flux:video's `VideoOpenOptions.audioDelay`.
+   */
+  audioDelay?: number
+  /**
    * The flux:audio bus the audio track plays on, so a bus gain, pause or
    * stop reaches it. Omitted, the track plays under the master gain alone.
    */
@@ -127,8 +133,20 @@ export function createVideo(source: VideoSource, options: VideoOptions = {}): Vi
 
   let opened: Promise<AnyPlayer> =
     options.present === "plane"
-      ? open(source, { present: "plane", fit: options.fit, bus: options.bus, latency: options.latency, signal: abort.signal })
-      : open(source, { bus: options.bus, latency: options.latency, signal: abort.signal })
+      ? open(source, {
+          present: "plane",
+          fit: options.fit,
+          bus: options.bus,
+          latency: options.latency,
+          audioDelay: options.audioDelay,
+          signal: abort.signal,
+        })
+      : open(source, {
+          bus: options.bus,
+          latency: options.latency,
+          audioDelay: options.audioDelay,
+          signal: abort.signal,
+        })
   opened
     .then((video) => {
       if (disposed) {

@@ -12,10 +12,11 @@ use std::collections::VecDeque;
 #[cfg(not(target_os = "android"))]
 use std::time::Duration;
 
+use super::audio::AudioOutput;
 #[cfg(not(target_os = "android"))]
 use super::reader::Next;
 use super::reader::Reader;
-use super::transport::{AudioSink, Clock, FrameSink, RELEASE_LEAD_NS};
+use super::transport::{Clock, FrameSink, RELEASE_LEAD_NS};
 #[cfg(not(target_os = "android"))]
 use super::worker::{Feed, Picture, Presenter};
 use super::worker::{Player, PresenterFactory, PresenterHost};
@@ -42,14 +43,14 @@ const TEXTURE_LEAD_PERIODS: i64 = 2;
 /// Open a texture player: decode the stream `reader` delivers and push its
 /// frames into `sink`, scheduled on `clock` (the compositor's own, so the
 /// due times and the sink's deadlines agree), with its audio track (when
-/// the stream has one and the caller provides `audio`) into that sink.
+/// the stream has one and the caller provides `audio`) into that output.
 /// Playback starts paused. A decoder that cannot be created ends the
 /// stream (`finished` goes true, the reason is logged and published).
 pub fn open(
   reader: Reader,
   sink: Box<dyn FrameSink>,
   clock: Clock,
-  audio: Option<Box<dyn AudioSink>>,
+  audio: Option<AudioOutput>,
 ) -> Result<Player, String> {
   let info = reader.info().ok_or("stream not opened")?;
   let (width, height) = (info.width, info.height);

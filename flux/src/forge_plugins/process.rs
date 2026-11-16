@@ -209,14 +209,21 @@ fn subscribe<'js>(
 ) -> rquickjs::Result<Function<'js>> {
   ensure_watcher(&ctx, &signal);
   let id = add_listener(&ctx, signal.clone(), callback, once);
-  Function::new(
-    ctx,
+  let unsubscribe = Function::new(ctx.clone(), {
+    let signal = signal.clone();
     MutFn::from(move |ctx: Ctx<'_>| {
       if remove_listener(&ctx, &signal, id) {
         stop_watcher(&ctx, &signal);
       }
-    }),
-  )
+    })
+  });
+  // A failure building the unsubscribe (an engine at its memory limit) rolls
+  // the registration back, so the script's throw leaves no standing listener
+  // or watcher it has no way to stop.
+  if unsubscribe.is_err() && remove_listener(&ctx, &signal, id) {
+    stop_watcher(&ctx, &signal);
+  }
+  unsubscribe
 }
 
 // Wake the watcher for `signal` so it stops; a no-op when none is installed.

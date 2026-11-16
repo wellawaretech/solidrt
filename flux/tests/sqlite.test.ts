@@ -106,6 +106,19 @@ test("a transaction rolls back on an error", async () => {
   await db.close()
 })
 
+test("params longer than int32 throw instead of aborting", async () => {
+  // The length is read as a number: the first param, an object, is reached
+  // and rejected. A long statement list reaches its bad first entry too.
+  let db = await Database.open(":memory:", "rw+")
+  let params: unknown[] = new Array(2 ** 31)
+  params[0] = {}
+  await expect((async () => db.run("SELECT ?", params as never))()).rejects.toThrow()
+  let statements: unknown[] = new Array(2 ** 31)
+  statements[0] = "not a pair"
+  await expect((async () => db.transaction(statements as never))()).rejects.toThrow("must be an array")
+  await db.close()
+})
+
 test("bad SQL rejects", async () => {
   let db = await Database.open(":memory:", "rw+")
   await expect(db.query("SELECT * FROM nonexistent").all()).rejects.toThrow()

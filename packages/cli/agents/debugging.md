@@ -342,13 +342,17 @@ when exactly one client is connected.
   second (frame signal to swap call plus GPU time), what the hold's
   step-down prediction reads; `videoLatched`, `videoSkipped` and
   `videoLateLatches` are the texture video path's counters (frames the
-  raster thread latched into a video texture, due frames it skipped
+  raster thread uploaded into a video texture, due frames it skipped
   because a newer one was due for the same present or the producer ran
   past the latch's queue, and frames latched for a present whose draw
   gate saw nothing due, so a cached boundary over the texture lagged one
-  frame): a fluency verdict on a `<texture>` showing video is these three
-  over a run (skipped and late both 0) plus the app's `currentTime()`
-  stepping at the content interval, never a present census;
+  frame). A video texture that nothing shows (no node and no target
+  samples it) parks its frames instead of uploading them: its parked
+  frames are not in `videoLatched` until it is shown, copied or read
+  back, and it counts no skips while unshown. A fluency verdict on a
+  `<texture>` showing video is these three over a run (skipped and late
+  both 0) plus the app's `currentTime()` stepping at the content
+  interval, never a present census;
   `cameraUploaded` and `cameraSkipped` are the camera path's: frames the
   raster thread uploaded into a camera texture, and frames the camera
   produced that no upload showed (gaps in the frame sequence), so a camera
@@ -582,6 +586,16 @@ when exactly one client is connected.
   busy or the app is wedged.
 - POST `/reload` - rebuild and push to every client; `{ ok, clients }` or
   the build error.
+- POST `/android-restart[?device=<serial>]` - a true cold start of the
+  Android client: runs `sol android --restart` against this server, which
+  force-stops the Player installed on the device and launches it again at
+  the server. `/reload` only swaps the engine in a running process, so a
+  startup bug (state a fresh process has and a reload keeps) shows only
+  here. `{ ok, clients }` (the ids of the Android clients that connected
+  after it, within about 10 s; empty when none did) or the CLI's output as
+  the error. It never installs the Player. `device` is a serial or unique
+  prefix, as `--device` takes; with several devices connected it is
+  required.
 - POST `/load` with `{ "entry": "<path>" }` - switch the entry and push it;
   `{ ok, entry, clients }` or the build error. Relative paths resolve
   against the project root (file mode: the served file's directory). A
@@ -667,6 +681,19 @@ The loop is the same as over MCP: `/reload`, then `/logs?since=`, then
   Vertex cost versus fill is not reported and still needs subtraction:
   change the splat size or the vertex count, take the execMs delta
   (okf/done/gpu-vertex-fill-attribution.md).
+- GPU timings on an Android device drift with the GPU's temperature: as
+  the device warms over a few minutes, the same build can read a frame
+  40% slower. Driver clock nodes are often permission-denied (every
+  `/sys/class/kgsl/` clock node on a Galaxy Tab A 10.1), so read the
+  temperature from the GPU thermal zone over adb instead: list the zones
+  with `adb shell 'for z in /sys/class/thermal/thermal_zone*; do echo $z
+  $(cat $z/type); done'`, pick the GPU one (`gpu-usr` on that tablet),
+  and read `adb shell cat /sys/class/thermal/thermal_zone<N>/temp`
+  (millidegrees C). Before each measured row, let the device cool below
+  a fixed threshold (say 35 C) or, where no zone is readable, idle it a
+  fixed 100 s. Record which rule you used, and the start temperature, in
+  each row. A comparison between rows measured at different
+  temperatures says nothing about the change.
 - Generating files counts as editing: pause_watch before a data-prep script
   writes into `assets/`, not just before source edits. The dev server watches
   the assets tree, so a script writing a few hundred MB rebuilds and pushes

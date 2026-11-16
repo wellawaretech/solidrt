@@ -104,6 +104,9 @@ pub fn paint_phase(
   let window_rect = Rect::new(Point::zero(), size);
   tree.node(root_id).last_extent.set(cull::Extent::Bounded(window_rect));
 
+  // Which videos the tree samples, before the walk's node shader passes
+  // and shaded rasterizes observe them.
+  note_shown_video(tree, alloy);
   // The walk borrows the tree for the BuildContext's lifetime, so it is
   // scoped: only plain stats leave the block.
   let (mut stats, damage, regions) = {
@@ -221,6 +224,17 @@ pub(crate) fn release_retired_textures(tree: &mut RenderTree, alloy: &crate::Con
   }
   if alloy.has_pending_destroys() {
     alloy.reclaim_destroyed(&tree.referenced_texture_ids());
+  }
+}
+
+/// Note which video textures the tree samples, ahead of the paint walk (and
+/// on the reuse path when a window-shader write lands there): every pixel
+/// observer the walk sends, and the frame, then go out with the shown set
+/// current (see `Context::note_shown_video`). The tree scan runs only while
+/// a YUV texture exists.
+pub(super) fn note_shown_video(tree: &RenderTree, alloy: &crate::Context) {
+  if alloy.has_yuv_textures() {
+    alloy.note_shown_video(tree.shown_texture_ids());
   }
 }
 

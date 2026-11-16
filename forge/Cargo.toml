@@ -252,8 +252,8 @@ libc = "=0.2.191"
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_LibraryLoader"] }
 
 [build-dependencies]
-# Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the
-# Android build can link clang_rt.builtins; see build.rs.
+# Compiles the vendored opusfile and Basis Universal sources, supplies
+# libvpx's CC, and finds MSBuild on Windows (build.rs).
 cc = "=1.11.1"
 # Drives the vendored libopus's CMake project (build.rs); already in the tree
 # (sdl3-sys builds SDL with it).

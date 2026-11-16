@@ -100,6 +100,11 @@ test("an output leaf that refs itself is followed, and leaf.size tracks the targ
   expect(seen[seen.length - 1]).toEqual(scene.size())
 })
 
+test("renderScale on a fixed-size scene contradicts it: the mount throws", async app => {
+  let error = await app.mountFails(() => <Scene width={WIDTH} height={HEIGHT} renderScale={SCALE} />)
+  expect(error.message).toContain("Scene: renderScale and maxPixels scale a fill-mode target")
+})
+
 test("a View3d without sizes fills its box like the scene", async app => {
   let view!: ViewHandle
   let pane = app.ref()

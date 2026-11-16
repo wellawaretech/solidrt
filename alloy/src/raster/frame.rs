@@ -664,34 +664,73 @@ impl RasterState {
   /// and rebind the conversion target to it, so the dirty flush re-renders
   /// the output and everything sampling it. Under a stepped clock the take
   /// waits for the frame that is due, never showing the one that happened
-  /// to arrive.
+  /// to arrive. An unshown latch (`show_video`) parks its frame instead
+  /// (see `YuvLatch::take`): an unshown player costs decode, not uploads.
   fn latch_video(&mut self, present_at: std::time::Instant) {
     if self.yuv_latches.is_empty() {
       return;
     }
     let deadline_ns = crate::clock::ns(present_at);
     let lookahead_ns = crate::yuv::lookahead_ns();
-    let mut taken = Vec::new();
-    for (id, entry) in self.yuv_latches.iter_mut() {
-      if let Some(frame) = entry.latch.take(deadline_ns, lookahead_ns, self.sink.headless()) {
-        let back = 1 - entry.front;
-        entry.front = back;
-        taken.push((*id, back, frame));
-      }
-    }
-    for (id, set, frame) in taken {
+    let headless = self.sink.headless();
+    let taken: Vec<_> = self
+      .yuv_latches
+      .iter()
+      .filter_map(|(id, entry)| entry.latch.take(deadline_ns, lookahead_ns, headless).map(|frame| (*id, frame)))
+      .collect();
+    self.upload_video(taken);
+  }
+
+  /// Apply the shown video set (`RasterCmd::ShowVideo`): a latch outside
+  /// it parks its frames from here on, and one that becomes shown uploads
+  /// its parked frame now, so the pixel observers after the command sample
+  /// the current frame, not the one it had when it was last shown.
+  pub(super) fn show_video(&mut self, shown: &std::collections::HashSet<u64>) {
+    let taken: Vec<_> = self
+      .yuv_latches
+      .iter()
+      .filter_map(|(id, entry)| entry.latch.set_shown(shown.contains(id)).map(|frame| (*id, frame)))
+      .collect();
+    self.upload_video(taken);
+  }
+
+  /// Upload the parked frame of the unshown YUV output `id` (see
+  /// `YuvLatch::take_held`), so a direct copy or readback of the output
+  /// sees the current frame. Only the output itself needs it: anything
+  /// that samples it (a node, a bound target) shows it already. Any other
+  /// id is a no-op, so a copy or readback of an unrelated texture costs no
+  /// unshown player an upload.
+  pub(super) fn latch_held_video(&mut self, id: u64) {
+    let Some(frame) = self.yuv_latches.get(&id).and_then(|entry| entry.latch.take_held()) else { return };
+    self.upload_video(vec![(id, frame)]);
+  }
+
+  /// The YUV output whose GL texture `texture` is, for a readback by
+  /// handle (`RasterCmd::ReadTexture`).
+  pub(super) fn yuv_output_of(&self, texture: &crate::renderer::Texture) -> Option<u64> {
+    use crate::renderer::prelude::*;
+    let name = texture.gl_name()?;
+    self.yuv_latches.keys().copied().find(|id| self.textures.get(id).is_some_and(|gpu| gpu.gl_texture == name))
+  }
+
+  // Upload each taken frame into its output's back plane set, flip the set
+  // and rebind the conversion target to it.
+  fn upload_video(&mut self, taken: Vec<(u64, crate::yuv::Taken)>) {
+    for (id, frame) in taken {
+      let Some(entry) = self.yuv_latches.get_mut(&id) else { continue };
+      let set = 1 - entry.front;
+      entry.front = set;
+      let (frame_size, planes) = (entry.frame_size, entry.sets[set].clone());
       self.stats.video_latched.fetch_add(1, Ordering::Relaxed);
       self.stats.video_skipped.fetch_add(frame.skipped as u64, Ordering::Relaxed);
       if frame.late {
         self.stats.video_late.fetch_add(1, Ordering::Relaxed);
       }
-      let Some(entry) = self.yuv_latches.get(&id) else { continue };
       let data = frame.frame.data;
-      if data.len() < entry.frame_size {
-        log::warn!("[alloy] yuv frame for {id} is {} bytes, needs {}", data.len(), entry.frame_size);
+      if data.len() < frame_size {
+        log::warn!("[alloy] yuv frame for {id} is {} bytes, needs {frame_size}", data.len());
         continue;
       }
-      let planes = entry.sets[set].clone();
       for &(_, plane, offset) in &planes {
         let len = match self.textures.get(&plane) {
           Some(gpu) => gpu.format.byte_len(gpu.width, gpu.height),

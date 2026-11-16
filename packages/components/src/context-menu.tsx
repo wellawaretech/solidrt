@@ -1,6 +1,7 @@
-import { createEffect, createSignal, createLongPress, createPortal, onBack, onLayout, getBoundingBox, Show, For, env } from "@solidrt/core"
+import { createEffect, createSignal, createLongPress, createPortal, onBack, onCleanup, onLayout, getBoundingBox, Show, For, env } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { createPress } from "./press"
+import { pushNavScope } from "./focus-nav"
 import { placePopup, PopupList } from "./popup"
 import { theme } from "./theme"
 import { policy } from "./policy"
@@ -86,11 +87,12 @@ export function ContextMenu(props: ContextMenuProps) {
         paddingRight={space("md")}
         {...press.handlers}
         cursor="pointer"
+        focusable={!p.item.disabled}
         pointerEvents={p.item.disabled ? "none" : undefined}
       >
         <PressFeedback
           pressed={press.pressed()}
-          hovered={press.hovered() && policy.interaction !== "touch"}
+          hovered={(press.hovered() && policy.interaction !== "touch") || (press.focused() && policy.focusRing)}
         />
         <text transition={colorFade()} {...bodyText(p.item.disabled ? theme.color.textMuted : theme.color.text)}>{p.item.label}</text>
       </view>
@@ -120,11 +122,16 @@ export function ContextMenu(props: ContextMenuProps) {
       let cur = pos()
       if (!cur || cur.x !== p.x || cur.y !== p.y) setPos({ x: p.x, y: p.y })
     })
+    // Open, the rows are the focus navigation's scope (as Select's options
+    // are), so a pad or keyboard cannot walk onto the screen behind the menu.
+    let popScope: (() => void) | undefined
+    onCleanup(() => popScope?.())
     // The fade is driven by the position write, not a mount-time `from`: the
     // menu parks offscreen until measured, so a `from` would play unseen.
     // The exit fade lives on this root (the node the close unmounts).
     return createPortal(
       <view
+        ref={(n: { id: number }) => (popScope = pushNavScope(n))}
         position="absolute"
         top={0}
         left={0}
@@ -185,8 +192,13 @@ export function ContextMenu(props: ContextMenuProps) {
       let h = Math.min(l.height, room)
       if (h !== listHeight()) setListHeight(h)
     })
+    // Open, the rows are the focus navigation's scope (as Select's options
+    // are), so a pad or keyboard cannot walk onto the screen behind the menu.
+    let popScope: (() => void) | undefined
+    onCleanup(() => popScope?.())
     return createPortal(
       <view
+        ref={(n: { id: number }) => (popScope = pushNavScope(n))}
         position="absolute"
         top={0}
         left={0}

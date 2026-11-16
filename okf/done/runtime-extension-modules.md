@@ -110,7 +110,7 @@ per group), the 2d screen's record-layer sprites (`records(layer)`,
 position at 0, rotation at 8). Bodies have a dense index per group; a
 destroy swap-removes and returns the index freed, so the app copies the
 last record over it. The types live in `types/physics3d.d.ts` and
-`physics2d.d.ts`. The 2d screen is `src/tower2d.tsx`, the same tower on a
+`physics2d.d.ts`. The 2d screen is the same tower on a
 record layer through the raw view API (`<SpriteLayer>` wraps node layers
 only).
 

@@ -101,6 +101,10 @@ export type LogsResponse = {
 /** POST /reload */
 export type ReloadResponse = { ok: true; clients: number }
 
+/** POST /android-restart: the ids of the Android clients that connected
+ * after the cold start (empty when none reached the server in time). */
+export type AndroidRestartResponse = { ok: true; clients: number[] }
+
 /** POST /load: the canonical entry now served. */
 export type LoadResponse = { ok: true; entry: string; clients: number }
 

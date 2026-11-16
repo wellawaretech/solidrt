@@ -28,6 +28,22 @@ test("mount puts content in a window and returns its locator", async app => {
   expect(app.find({ label: "increment" }).box.width).toBe(120)
 })
 
+function Contradiction(): null {
+  throw new Error("Contradiction: these props contradict")
+}
+
+test("mountFails resolves to the error the error window shows", async app => {
+  let error = await app.mountFails(() => <Contradiction />)
+  expect(error.message).toBe("Contradiction: these props contradict")
+  expect(app.find({ text: "Contradiction: these props contradict" }).visible).toBe(true)
+})
+
+test("mountFails rejects when the app mounts without an error", async app => {
+  let message = ""
+  await app.mountFails(() => <Counter />).catch((err: Error) => (message = err.message))
+  expect(message).toContain("mounted without an error")
+})
+
 test("a tap goes through the hit test and the tree is current after it", async app => {
   let counter = await app.mount(() => <Counter />)
   expect(counter.find({ text: "0" }).exists).toBe(true)

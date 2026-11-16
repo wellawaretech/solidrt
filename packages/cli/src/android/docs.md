@@ -18,6 +18,13 @@ desktop client: the runtime's knobs, such as `SOLIDRT_CADENCE_HOLD=off`
 for a measurement, reach the device client without a hand-typed `am
 start`.
 
+`--restart` stops the installed client and starts it again at the
+server. This is a true cold start: a reload only replaces the engine in
+the running process, and can hide a startup bug. `--restart` never
+installs or updates the client. A device without the client is an error.
+The control API runs the same restart with `POST
+/__control__/android-restart`, so a script can test startup behaviour.
+
 A device without the client gets it installed first, from the project's
 Android target for the device's ABI: the `@solidrt/android-<abi>` dev
 dependency, which carries that ABI's client and its runner (the base of

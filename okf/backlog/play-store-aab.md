@@ -192,12 +192,15 @@ reads.
 
 ## Out of scope
 
-- Implied features: a CAMERA permission makes Play treat
-  `android.hardware.camera` as required and hide the app from devices
-  without one. A `<uses-feature required="false">` per permission that
-  implies one is the same splice as the permission itself (a second
-  attribute, boolean typed) once an app needs it; the go overlay shows the
-  pair.
+- Implied features: a permission such as CAMERA makes Play treat the
+  feature it implies as required and hide the app from devices without
+  one. The camera, its autofocus and the microphone are declared
+  `required="false"` in `lattice/android/app/src/main/AndroidManifest.xml`,
+  so every runner ships them. A per-permission
+  `<uses-feature required="false">` splice is left only for a permission
+  that implies some other feature (location, for example): the same splice
+  as the permission itself (a second attribute, boolean typed), once an app
+  needs it.
 - Play Asset Delivery: the base module is capped at 200 MB of download. A
   payload above that would arrive as a separate split, and
   `packed_asset_location` reads only the base `sourceDir`. Wait for an app

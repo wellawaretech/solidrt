@@ -17,7 +17,7 @@ use super::reader::stalling;
 use super::source::serve;
 use super::video::{FakeSink, FakeSinkState};
 use crate::source::Source;
-use crate::video::audio::{AudioTrack, AUDIO_OUTPUT_LATENCY_US};
+use crate::video::audio::{AudioOutput, AudioTrack, AUDIO_OUTPUT_LATENCY_US};
 use crate::video::reader::{Next, Reader};
 use crate::video::transport::{
   monotonic_ns, Anchor, AudioSink, Clock, Command, DROP_LATE_NS, RELEASE_LEAD_NS, STALL_REANCHOR_NS,
@@ -55,6 +55,9 @@ const AUDIO_RATE: usize = 48_000;
 /// How long the stand-in reader holds the first audio packet back from the
 /// audio start: longer than a worker pass, well within the start timeout.
 const PACKET_HOLD: Duration = Duration::from_millis(50);
+/// An app's own audio delay, distinct from the default, so the picture's
+/// hold is seen to follow the output's delay and not the constant.
+const APP_AUDIO_DELAY_US: i64 = 150_000;
 
 // 4 s of ffmpeg testsrc2 160x120 at 25 fps, no audio, a keyframe every
 // second: 100 frames, seekable.
@@ -104,6 +107,9 @@ struct StubPresenter {
   lead_ns: i64,
   // Fail `next` once this many pictures have been released.
   fail_after: Option<usize>,
+  // Raised just before that failure: the surface went away beneath the
+  // decoder, which is what failed it.
+  lose_on_fail: Option<Arc<AtomicBool>>,
 }
 
 impl Presenter for StubPresenter {
@@ -128,6 +134,9 @@ impl Presenter for StubPresenter {
 
   fn next(&mut self, wait: Duration) -> Result<Option<Picture>, StreamError> {
     if self.fail_after.is_some_and(|n| lock(&self.log).released.len() >= n) {
+      if let Some(lost) = &self.lose_on_fail {
+        lost.store(true, Ordering::Relaxed);
+      }
       return Err(StreamError::decode("stub decoder gave up"));
     }
     match self.queue.pop_front() {
@@ -210,14 +219,22 @@ fn open_stub(
   clock: Clock,
   now: Arc<dyn Fn() -> i64 + Send + Sync>,
   lead_ns: i64,
-  sink: Option<Box<dyn AudioSink>>,
+  audio: Option<AudioOutput>,
   lost: LostSampler,
   fail_after: Option<usize>,
 ) -> Rig {
   let log = Arc::new(Mutex::new(Log::default()));
-  let stub = StubPresenter { queue: VecDeque::new(), current: None, log: log.clone(), now, lead_ns, fail_after };
+  let stub = StubPresenter {
+    queue: VecDeque::new(),
+    current: None,
+    log: log.clone(),
+    now,
+    lead_ns,
+    fail_after,
+    lose_on_fail: None,
+  };
   let make = Box::new(move || Ok(Box::new(stub) as Box<dyn PresenterHost>));
-  let player = Player::open("sol-video-test", reader, make, clock, sink, lost).expect("open player");
+  let player = Player::open("sol-video-test", reader, make, clock, audio, lost).expect("open player");
   Rig { player, log }
 }
 
@@ -441,32 +458,32 @@ fn a_seek_while_paused_shows_the_target_frame_once_and_skips_the_preroll() {
 
 #[test]
 fn the_first_frame_anchors_on_the_sound_when_a_sink_consumes() {
-  let offset = Arc::new(AtomicI64::new(0));
-  let (clock, now) = shifted_clock(offset);
-  let state = Arc::new(Mutex::new(FakeSinkState::default()));
-  let sink: Box<dyn AudioSink> = Box::new(FakeSink(state.clone()));
-  let rig = open_stub(open_reader(&av_path()), clock, now, RELEASE_LEAD_NS, Some(sink), never_lost(), None);
-  // A device that consumes at the track's rate once the track is playing.
-  let consumer = consuming(state.clone());
-  let play_ns = monotonic_ns();
-  rig.player.play();
-  wait_until("two releases", || released(&rig).len() >= 2);
-  let released_now = released(&rig);
-  let (pts, first_ns, _) = released_now[0];
-  assert_eq!(pts, 0);
-  // The picture is held back by the output latency the sound's clock
-  // reports: content time 0 is due once the sink has consumed the
-  // latency's worth, not at the instant play was called.
-  let held_ns = first_ns - play_ns;
-  let latency_ns = AUDIO_OUTPUT_LATENCY_US * 1000;
-  assert!(
-    held_ns >= latency_ns - SLACK_NS,
-    "first frame due {held_ns}ns after play, expected the {latency_ns}ns latency"
-  );
-  assert!(held_ns < latency_ns + PROMPT.as_nanos() as i64, "first frame due {held_ns}ns after play");
-  assert_eq!(released_now[1].1 - first_ns, FRAME_US * 1000, "the second frame follows the anchor");
-  assert!(lock(&state).pushed_frames > 0, "the track was fed");
-  drop(consumer);
+  for delay_us in [AUDIO_OUTPUT_LATENCY_US, APP_AUDIO_DELAY_US] {
+    let offset = Arc::new(AtomicI64::new(0));
+    let (clock, now) = shifted_clock(offset);
+    let state = Arc::new(Mutex::new(FakeSinkState::default()));
+    let sink: Box<dyn AudioSink> = Box::new(FakeSink(state.clone()));
+    let audio = AudioOutput { sink, delay_us };
+    let rig = open_stub(open_reader(&av_path()), clock, now, RELEASE_LEAD_NS, Some(audio), never_lost(), None);
+    // A device that consumes at the track's rate once the track is playing.
+    let consumer = consuming(state.clone());
+    let play_ns = monotonic_ns();
+    rig.player.play();
+    wait_until("two releases", || released(&rig).len() >= 2);
+    let released_now = released(&rig);
+    let (pts, first_ns, _) = released_now[0];
+    assert_eq!(pts, 0);
+    // The picture is held back by the output delay the sound's clock
+    // reports: content time 0 is due once the sink has consumed the
+    // delay's worth, not at the instant play was called.
+    let held_ns = first_ns - play_ns;
+    let delay_ns = delay_us * 1000;
+    assert!(held_ns >= delay_ns - SLACK_NS, "first frame due {held_ns}ns after play, expected the {delay_ns}ns delay");
+    assert!(held_ns < delay_ns + PROMPT.as_nanos() as i64, "first frame due {held_ns}ns after play");
+    assert_eq!(released_now[1].1 - first_ns, FRAME_US * 1000, "the second frame follows the anchor");
+    assert!(lock(&state).pushed_frames > 0, "the track was fed");
+    drop(consumer);
+  }
 
   // Without a sink the first frame anchors on itself: due at once.
   let offset = Arc::new(AtomicI64::new(0));
@@ -491,7 +508,8 @@ fn the_first_frame_waits_for_an_audio_packet_still_on_its_way() {
   let info = reader.info().expect("opened").audio.expect("an audio track");
   let state = Arc::new(Mutex::new(FakeSinkState::default()));
   let sink: Box<dyn AudioSink> = Box::new(FakeSink(state.clone()));
-  let mut audio = Some(AudioTrack::new(&info, 0, sink).expect("audio track"));
+  let output = AudioOutput { sink, delay_us: AUDIO_OUTPUT_LATENCY_US };
+  let mut audio = Some(AudioTrack::new(&info, 0, output).expect("audio track"));
   let consumer = consuming(state.clone());
   let (clock, now) = shifted_clock(Arc::new(AtomicI64::new(0)));
   let (_tx, rx) = mpsc::channel::<Command>();
@@ -523,7 +541,8 @@ fn the_first_frame_waits_for_an_audio_packet_still_on_its_way() {
   let reader = open_reader(&av_path());
   let info = reader.info().expect("opened").audio.expect("an audio track");
   let sink: Box<dyn AudioSink> = Box::new(FakeSink(Arc::new(Mutex::new(FakeSinkState::default()))));
-  let mut audio = Some(AudioTrack::new(&info, 0, sink).expect("audio track"));
+  let output = AudioOutput { sink, delay_us: AUDIO_OUTPUT_LATENCY_US };
+  let mut audio = Some(AudioTrack::new(&info, 0, output).expect("audio track"));
   let mut anchor = Anchor::new();
   let started = Instant::now();
   start_audio(&mut audio, &mut anchor, &clock, &rx, &mut pending, || Next::End);
@@ -626,6 +645,39 @@ fn the_exit_follows_close_from_the_ended_failed_and_lost_states_and_a_drop() {
   wait_until("some playback", || released(&rig).len() >= 2);
   lost.store(true, Ordering::Relaxed);
   wait_until("the lost surface to finish playback", || rig.player.finished());
+  rig.player.close();
+  exits_promptly(&rig);
+
+  // Lost beneath the decoder: the surface goes away and the decoder fails
+  // because of it; playback finishes with no error.
+  let lost = Arc::new(AtomicBool::new(false));
+  let sample = lost.clone();
+  let log = Arc::new(Mutex::new(Log::default()));
+  let at = Arc::new(AtomicI64::new(0));
+  let (clock, now) = stepped_clock(at);
+  let stub = StubPresenter {
+    queue: VecDeque::new(),
+    current: None,
+    log: log.clone(),
+    now,
+    lead_ns: RELEASE_LEAD_NS,
+    fail_after: Some(5),
+    lose_on_fail: Some(lost),
+  };
+  let make = Box::new(move || Ok(Box::new(stub) as Box<dyn PresenterHost>));
+  let player = Player::open(
+    "sol-video-test",
+    open_reader(&kf_path()),
+    make,
+    clock,
+    None,
+    Box::new(move || sample.load(Ordering::Relaxed)),
+  )
+  .expect("open player");
+  let rig = Rig { player, log };
+  rig.player.play();
+  wait_until("the lost surface to finish playback", || rig.player.finished());
+  assert!(rig.player.error().is_none(), "a lost surface is not a decode error");
   rig.player.close();
   exits_promptly(&rig);
 

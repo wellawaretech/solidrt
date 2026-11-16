@@ -42,7 +42,9 @@ use forge::source::{Limits, Source};
 use forge::stream::ByteStream;
 use forge::video::reader::{Live, Opener, Reader};
 use forge::video::transport::Shared;
-use forge::video::{ErrorKind, MediaInfo, PixelLayout, Player, StreamError, YuvFrame};
+use forge::video::{
+  AudioOutput, ErrorKind, MediaInfo, PixelLayout, Player, StreamError, YuvFrame, AUDIO_OUTPUT_LATENCY_US,
+};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
@@ -64,11 +66,16 @@ const STREAM_SOURCE_CHUNKS: usize = 32;
 const US_PER_S: f64 = 1_000_000.0;
 
 /// One open player: the worker's handle, its audio sink (a registry id,
-/// destroyed at close; the worker's handle on it outlives the entry), and
-/// how it presents.
+/// destroyed at close; the worker's handle on it outlives the entry),
+/// whether that sink is held silent, and how it presents.
 struct Entry {
   player: Player,
   sink: Option<u64>,
+  // Headless playback: the sink plays in real time while the stepped clock
+  // runs the frames, so its sound would be out of step. It is held at gain
+  // 0 (still fed and clocked) and `setGain` leaves it there, until a
+  // capture that records sound exists.
+  silenced: bool,
   kind: Kind,
 }
 
@@ -135,14 +142,16 @@ impl forge::video::FrameSink for FrameSinkAdapter {
 }
 
 // A paused sink for the stream's audio track and the worker's handle on it
-// under forge's contract, None when the stream has no audio or no output
+// under forge's contract, with the app's output delay, None when the stream has no audio or no output
 // device could be opened (the video then plays silent rather than
-// failing).
+// failing). A `silenced` sink starts at gain 0 (see `Entry::silenced`).
 fn open_sink(
   gui: &super::Gui,
   info: &MediaInfo,
   bus: Option<&str>,
-) -> (Option<u64>, Option<Box<dyn forge::video::AudioSink>>) {
+  delay_us: i64,
+  silenced: bool,
+) -> (Option<u64>, Option<AudioOutput>) {
   let Some(audio) = info.audio.as_ref() else {
     return (None, None);
   };
@@ -156,8 +165,13 @@ fn open_sink(
   if let Err(e) = gui.alloy.set_pcm_sink_paused(sink, true) {
     log::warn!("[video] {e}");
   }
+  if silenced {
+    if let Err(e) = gui.alloy.set_pcm_sink_gain(sink, 0.0, 0.0) {
+      log::warn!("[video] {e}");
+    }
+  }
   match gui.alloy.pcm_sink_handle(sink) {
-    Ok(handle) => (Some(sink), Some(Box::new(SinkAdapter(handle)))),
+    Ok(handle) => (Some(sink), Some(AudioOutput { sink: Box::new(SinkAdapter(handle)), delay_us })),
     Err(e) => {
       log::warn!("[video] no audio sink handle, playing silent: {e}");
       gui.alloy.destroy_pcm_sink(sink);
@@ -205,7 +219,7 @@ impl Drop for Inner {
 // sink's registry entry. Returns the worker's state, for a plane's
 // successor to await its exit.
 fn close_entry(gui: &super::Gui, entry: Entry) -> Arc<Shared> {
-  let Entry { player, sink, kind } = entry;
+  let Entry { player, sink, kind, .. } = entry;
   let shared = player.shared();
   drop(player);
   match kind {
@@ -409,6 +423,20 @@ fn read_latency(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result
   }
 }
 
+/// The `{ audioDelay? }` option: seconds the output path delays the sound
+/// (an HDMI or Bluetooth speaker's), `AUDIO_OUTPUT_LATENCY_US` when absent.
+fn read_audio_delay(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result<i64> {
+  let Some(opts) = options.0.as_ref() else { return Ok(AUDIO_OUTPUT_LATENCY_US) };
+  match opts.get::<_, Option<f64>>("audioDelay")? {
+    None => Ok(AUDIO_OUTPUT_LATENCY_US),
+    Some(v) if v.is_finite() && v >= 0.0 => Ok((v * US_PER_S) as i64),
+    Some(v) => Err(Exception::throw_type(
+      ctx,
+      &format!("openVideo: audioDelay must be a non-negative number of seconds, got {v}"),
+    )),
+  }
+}
+
 /// The `{ slot? }` option: the per-host limits a URL source takes its slot
 /// from. The app's (`FetchLimits`) by default, `None` for `slot: false`;
 /// without `http` there is no URL source and no limits.
@@ -455,6 +483,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>
   let bus = read_bus(&ctx, &options)?;
   let source = read_source(&ctx, source)?;
   let live = read_latency(&ctx, &options)?;
+  let audio_delay_us = read_audio_delay(&ctx, &options)?;
   let signal = read_signal(&options)?;
   let limits = read_limits(&ctx, &options)?;
   let (promise, resolve, reject) = Promise::new(&ctx)?;
@@ -513,7 +542,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>
     drop(hold);
     let ctx = task_ctx;
     let settled = match outcome {
-      Outcome::Opened(Ok(info)) => match build_player(ctx.clone(), &state, reader, info, present, bus, label) {
+      Outcome::Opened(Ok(info)) => match build_player(ctx.clone(), &state, reader, info, present, bus, audio_delay_us, label) {
         Ok(obj) => resolve.call::<_, ()>((obj,)),
         Err(e) => video_error(&ctx, &e, "openVideo: ").and_then(|err| reject.call::<_, ()>((err,))),
       },
@@ -558,6 +587,7 @@ fn plane_unavailable(_state: &VideoPluginState) -> Option<StreamError> {
 /// The player over the opened stream: its audio sink, its presenter
 /// (the texture and a sink on its latch, or the plane) and the worker, then
 /// the bound object.
+#[allow(clippy::too_many_arguments)]
 fn build_player<'js>(
   ctx: Ctx<'js>,
   state: &VideoPluginState,
@@ -565,10 +595,12 @@ fn build_player<'js>(
   info: MediaInfo,
   present: Present,
   bus: Option<String>,
+  audio_delay_us: i64,
   label: String,
 ) -> Result<Object<'js>, StreamError> {
   let gui = &state.0.gui;
-  let (sink, audio) = open_sink(gui, &info, bus.as_deref());
+  let silenced = alloy::clock::stepped();
+  let (sink, audio) = open_sink(gui, &info, bus.as_deref(), audio_delay_us, silenced);
   let has_audio = sink.is_some();
   let opened = match present {
     Present::Texture => open_texture_player(gui, reader, &info, audio, &label),
@@ -591,7 +623,7 @@ fn build_player<'js>(
   let shared = player.shared();
   let id = state.0.next_id.get() + 1;
   state.0.next_id.set(id);
-  state.0.players.borrow_mut().insert(id, Entry { player, sink, kind });
+  state.0.players.borrow_mut().insert(id, Entry { player, sink, silenced, kind });
   build_object(ctx, id, &info, has_audio, texture, shared)
 }
 
@@ -603,7 +635,7 @@ fn open_texture_player(
   gui: &super::Gui,
   reader: Reader,
   info: &MediaInfo,
-  audio: Option<Box<dyn forge::video::AudioSink>>,
+  audio: Option<AudioOutput>,
   label: &str,
 ) -> Result<(Player, Kind), StreamError> {
   let layout = match forge::video::decoded_layout() {
@@ -649,7 +681,7 @@ fn open_plane_player(
   _gui: &super::Gui,
   reader: Reader,
   info: &MediaInfo,
-  audio: Option<Box<dyn forge::video::AudioSink>>,
+  audio: Option<AudioOutput>,
   fit: PlaneFit,
 ) -> Result<(Player, Kind), StreamError> {
   use forge::video::transport::VsyncGrid;
@@ -676,7 +708,7 @@ fn open_plane_player(
   _gui: &super::Gui,
   _reader: Reader,
   _info: &MediaInfo,
-  _audio: Option<Box<dyn forge::video::AudioSink>>,
+  _audio: Option<AudioOutput>,
   _fit: PlaneFit,
 ) -> Result<(Player, Kind), StreamError> {
   // Refused at the call (see `plane_unavailable`); never reached.
@@ -756,7 +788,7 @@ where
 }
 
 /// setGain(gain, { rampMs? }): the audio track's volume, on its sink. A
-/// no-op for a player without one.
+/// no-op for a player without one, or with a silenced one.
 fn set_gain_impl<'js>(ctx: Ctx<'js>, id: u64, gain: f32, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
   if !gain.is_finite() || gain < 0.0 {
     return Err(Exception::throw_type(&ctx, "setGain: gain must be a finite number >= 0"));
@@ -768,7 +800,7 @@ fn set_gain_impl<'js>(ctx: Ctx<'js>, id: u64, gain: f32, options: OptArg<Object<
   if !ramp_ms.is_finite() || ramp_ms < 0.0 {
     return Err(Exception::throw_type(&ctx, "setGain: rampMs must be a finite number >= 0"));
   }
-  let Some(Some(sink)) = with_entry(&ctx, id, |e| e.sink) else { return Ok(()) };
+  let Some(Some(sink)) = with_entry(&ctx, id, |e| e.sink.filter(|_| !e.silenced)) else { return Ok(()) };
   state(&ctx)
     .0
     .gui

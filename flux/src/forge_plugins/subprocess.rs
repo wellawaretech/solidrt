@@ -9,7 +9,8 @@ use crate::plugins::marshal::{with_in_flight, with_standing, CopyBytes, OptArg};
 use crate::plugins::value::Neutral;
 use crate::standards_plugins::body::byte_stream_readable;
 use crate::standards_plugins::streams::writable_to;
-use forge::subprocess::{self, CommandSpec, Spawned};
+use forge::stream::ByteStream;
+use forge::subprocess::{self, Child, CommandSpec, Spawned};
 
 // flux:subprocess - spawn child processes and collect their output.
 //
@@ -160,6 +161,16 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
     spec.spawn().map_err(|m| Exception::throw_message(&ctx, &m))?;
   let pending = PendingOps::of(&ctx);
 
+  // The handle is built before anything is started, so a failure building it
+  // (an engine at its memory limit) starts nothing the script cannot stop:
+  // the unstarted supervisor drops and kill-on-drop ends the child. A
+  // detached child is never killed on drop, so its supervisor (which holds
+  // nothing) is started either way below.
+  let handle = child_handle(&ctx, &child, stdout, stderr, &pending);
+  if handle.is_err() && !spec.detached {
+    return handle;
+  }
+
   // opts.stdin (if given) is written first; the pipe then stays open for further
   // writes. Work in flight until the write completes.
   if let Some(bytes) = initial_stdin {
@@ -188,21 +199,32 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
     });
   }
 
+  handle
+}
+
+// The child's JS handle over its pipes and status (see build_child).
+fn child_handle<'js>(
+  ctx: &Ctx<'js>,
+  child: &Child,
+  stdout: ByteStream,
+  stderr: ByteStream,
+  pending: &PendingOps,
+) -> rquickjs::Result<Object<'js>> {
   // A detached child has null stdio; forge hands back empty streams for it, so
   // they iterate to nothing.
   let obj = Object::new(ctx.clone())?;
   obj.set("pid", child.pid())?;
-  obj.set("stdout", byte_stream_readable(&ctx, stdout, output_hold(&pending))?)?;
-  obj.set("stderr", byte_stream_readable(&ctx, stderr, output_hold(&pending))?)?;
+  obj.set("stdout", byte_stream_readable(ctx, stdout, output_hold(pending))?)?;
+  obj.set("stderr", byte_stream_readable(ctx, stderr, output_hold(pending))?)?;
 
   // stdin: a WritableStream over the child's stdin pipe. Writes serialize
-  // behind the stdin lock (after the initial stdin above) and resolve once the
+  // behind the stdin lock (after the initial stdin, see build_child) and resolve once the
   // pipe took the bytes, so a pipe into a slow child sees backpressure;
   // closing or aborting the stream closes the pipe, so the child sees EOF.
   obj.set(
     "stdin",
     writable_to(
-      &ctx,
+      ctx,
       "Child.stdin",
       "subprocess write",
       {

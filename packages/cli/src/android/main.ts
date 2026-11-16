@@ -31,7 +31,9 @@ import type { LiveRecord } from "../types/registry"
 // installed app that blocks an install (adbInstall) without asking. --env
 // NAME=value (repeatable) sets a variable in the client's environment
 // before it starts, for the runtime's knobs (SOLIDRT_CADENCE_HOLD) a
-// measurement pins.
+// measurement pins. --restart only force-stops and relaunches the installed
+// client at the server, a true cold start for testing startup from a script
+// (the control API's POST /android-restart runs it); it never installs.
 
 // The published Player's application id. Every build from a checkout
 // without PUBLISH=1 is the dev Player, com.solidrt.player.dev, installed
@@ -527,10 +529,11 @@ async function packAndInstall() {
 // first where it is missing), then wait briefly for them to show up on the
 // dev server. The clients are not child processes here: their lifecycle is
 // the WS connect/disconnect the server sees. With an APK argument or --apk,
-// install and launch a packed app instead.
+// install and launch a packed app instead; with --restart, only relaunch.
 export async function main() {
   if (source) return installApkFile(source)
   if (values.apk) return packAndInstall()
+  if (values.restart) return restart()
   if (values.census) {
     let adb = await requireAdb()
     for (let { target, abi } of await resolveTargets(adb)) await census(adb, target, censusPackages(abi))
@@ -549,6 +552,32 @@ export async function main() {
   let players = new Map<string, string>()
   for (let device of devices) players.set(device.target, await prepare(adb, device, needed))
 
+  await launchAndWait(adb, devices, players, server)
+}
+
+// `sol android --restart`: force-stop and relaunch the Player installed on
+// each device at the server (launch's -S), a true cold start where a reload
+// only swaps the engine. Nothing is installed or updated: a device without
+// the Player is an error, so a script never installs by accident.
+async function restart() {
+  let server = await resolveServer()
+  let adb = await requireAdb()
+  let needed = await neededModule()
+  let devices = await resolveTargets(adb)
+  let players = new Map<string, string>()
+  for (let { target, abi } of devices) {
+    let player = playerId(abi, needed)
+    if (installedVersion(adb, target, player) === null) {
+      fail(`${player} is not installed on ${target}; run sol android first to install it`)
+    }
+    players.set(target, player)
+  }
+  await launchAndWait(adb, devices, players, server)
+}
+
+// Launch each device's Player at `server`, then wait briefly for them to
+// show up on it.
+async function launchAndWait(adb: string, devices: Device[], players: Map<string, string>, server: LiveRecord | null) {
   let before = new Set(server ? (await connectedClients(server)).map((c) => c.id) : [])
   for (let device of devices) await launch(adb, device, players.get(device.target)!, server)
   if (!server) return

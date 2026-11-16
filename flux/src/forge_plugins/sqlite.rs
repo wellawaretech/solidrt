@@ -80,7 +80,7 @@ use rquickjs::{Array, Class, Ctx, Exception, Function, JsLifetime, Value};
 
 use crate::logger::report_uncaught;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{with_in_flight, OptArg};
+use crate::plugins::marshal::{array_length, with_in_flight, OptArg};
 use crate::plugins::value::{self, Neutral};
 use forge::sqlite::{SqlValue, SqliteConnection};
 
@@ -284,9 +284,9 @@ fn extract_params<'js>(ctx: &Ctx<'js>, params: Option<Array<'js>>) -> rquickjs::
   let Some(arr) = params else {
     return Ok(Vec::new());
   };
-  let mut out = Vec::with_capacity(arr.len());
-  for v in arr.iter::<Value>() {
-    let neutral = value::from_js(ctx, v?)?;
+  let mut out = Vec::new();
+  for i in 0..array_length(&arr)? {
+    let neutral = value::from_js(ctx, arr.get::<Value>(i)?)?;
     out.push(SqlValue::try_from(neutral).map_err(|m| Exception::throw_message(ctx, &m))?);
   }
   Ok(out)
@@ -294,9 +294,9 @@ fn extract_params<'js>(ctx: &Ctx<'js>, params: Option<Array<'js>>) -> rquickjs::
 
 /// Convert a JS array of `[sql, params]` entries into owned statements.
 fn extract_statements<'js>(ctx: &Ctx<'js>, arr: Array<'js>) -> rquickjs::Result<Vec<(String, Vec<SqlValue>)>> {
-  let mut out = Vec::with_capacity(arr.len());
-  for entry in arr.iter::<Value>() {
-    let Some(pair) = entry?.into_array() else {
+  let mut out = Vec::new();
+  for i in 0..array_length(&arr)? {
+    let Some(pair) = arr.get::<Value>(i)?.into_array() else {
       return Err(Exception::throw_message(ctx, "each transaction statement must be an array [sql, params?]"));
     };
     let sql: String = pair.get(0)?;

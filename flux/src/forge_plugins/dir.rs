@@ -63,8 +63,32 @@ fn watch<'js>(
   let event = watch_event_name(id);
   let listener = add_listener(&ctx, event.clone(), callback, false);
 
+  // The unsubscribe is built before the delivery task starts: a failure
+  // building it (an engine at its memory limit) rolls the registration back,
+  // so the script's throw leaves no standing listener it has no way to stop.
+  let unsubscribe = Function::new(ctx.clone(), {
+    let event = event.clone();
+    MutFn::from(move |ctx: Ctx<'_>| {
+      remove_listener(&ctx, &event, listener);
+      let installed = ctx.userdata::<InstalledWatches>().expect("installed watches userdata");
+      let stop = installed.0.borrow().stops.get(&id).cloned();
+      if let Some(stop) = stop {
+        stop.notify_one();
+      }
+    })
+  });
+  let unsubscribe = match unsubscribe {
+    Ok(unsubscribe) => unsubscribe,
+    Err(err) => {
+      remove_listener(&ctx, &event, listener);
+      let installed = ctx.userdata::<InstalledWatches>().expect("installed watches userdata");
+      installed.0.borrow_mut().stops.remove(&id);
+      return Err(err);
+    }
+  };
+
   let ctx_cb = ctx.clone();
-  let name = event.clone();
+  let name = event;
   ctx.spawn(async move {
     loop {
       let next = tokio::select! {
@@ -86,17 +110,7 @@ fn watch<'js>(
     }
   });
 
-  Function::new(
-    ctx,
-    MutFn::from(move |ctx: Ctx<'_>| {
-      remove_listener(&ctx, &event, listener);
-      let installed = ctx.userdata::<InstalledWatches>().expect("installed watches userdata");
-      let stop = installed.0.borrow().stops.get(&id).cloned();
-      if let Some(stop) = stop {
-        stop.notify_one();
-      }
-    }),
-  )
+  Ok(unsubscribe)
 }
 
 fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> {

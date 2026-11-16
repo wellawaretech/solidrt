@@ -107,6 +107,16 @@ fn unsupported_values_throw_type_errors() {
 }
 
 #[test]
+fn an_array_longer_than_int32_decodes_without_aborting() {
+  // `Array::len` asserts an int32; the length is read as a number instead,
+  // so the bad first element is reached and throws.
+  with_ctx(|ctx| {
+    let msg = decode_err(ctx, "(() => { let a = new Array(2 ** 31); a[0] = Symbol('s'); return a; })()");
+    assert!(msg.contains("cannot be sent"), "{msg}");
+  });
+}
+
+#[test]
 fn round_trip_through_js_preserves_shape() {
   with_ctx(|ctx| {
     let out: String = ctx

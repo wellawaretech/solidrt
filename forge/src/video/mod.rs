@@ -51,6 +51,7 @@ use std::fmt;
 #[cfg(feature = "video-encode")]
 pub use crate::audio::{OpusApplication, OpusEncoder};
 pub use crate::audio::{OpusDecoder, PcmChunk};
+pub use audio::{AudioOutput, AUDIO_OUTPUT_LATENCY_US};
 #[cfg(feature = "video-encode")]
 pub use encode::{open_encoder, rgba_to_i420, EncodeMode, EncodedFrame, EncoderConfig, VideoEncoder};
 #[cfg(all(feature = "video-encode", target_os = "android"))]

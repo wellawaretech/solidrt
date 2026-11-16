@@ -1292,6 +1292,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // The scene target's layer mask; shadow views follow it (a mesh the
   // scene cannot see must not darken it).
   let sceneMask = checkMask(opts?.layers ?? 1, "createScene")
+  // The casting lights already warned for layers disjoint from the
+  // scene's (sync), so each is reported once.
+  let disjointWarned = new WeakSet<CastingLight>()
   let label = opts?.label ?? "scene"
   let blendSpace = opts?.blendSpace ?? "linear"
   if (blendSpace !== "linear" && blendSpace !== "display") {
@@ -2170,6 +2173,19 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     }
     let shadowError = shadowSys.settle()
     if (budgetError === null) budgetError = shadowError
+    // A casting light whose layers share no bit with the scene's draws
+    // an empty map (its shadow views filter the scene's meshes by both
+    // masks): reported once per light, at the sync that finds it.
+    let lightIndex = 0
+    for (let light of lights) {
+      if (light.type === "hemisphere") continue
+      let i = lightIndex++
+      if (!light.castShadow || (light.layers & sceneMask) !== 0 || disjointWarned.has(light)) continue
+      disjointWarned.add(light)
+      console.warn(
+        `Scene '${label}' ${light.type} light ${i} casts nothing: its layers 0x${(light.layers >>> 0).toString(16)} share no bit with the scene's layers 0x${(sceneMask >>> 0).toString(16)}, so its shadow map draws no mesh; give the light a layer the scene draws`,
+      )
+    }
     ensureCamera(camera, width, height)
     let cameraMoved = camera.pending
     if (camera.pending) {

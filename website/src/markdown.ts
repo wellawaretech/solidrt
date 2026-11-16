@@ -85,12 +85,14 @@ function buildRenderer(
     r.image = ({ href, title, text }) =>
       applyTemplate(image, { href, title: title ?? "", text });
 
+  // The language is the info string's first word: the rest are flags for
+  // tooling (`tsx nocheck`, scripts/check-docs-snippets.ts).
   let code = elements.code;
   if (code)
     r.code = ({ text, lang, escaped }) =>
       applyTemplate(code, {
         text: escaped ? text : escapeHtml(text),
-        lang: lang ?? "",
+        lang: (lang ?? "").split(/\s+/)[0] ?? "",
       });
 
   let codespan = elements.codespan;

@@ -476,8 +476,18 @@ export let insert: InsertFn = (parent, accessor, marker, initial, options) =>
 // design, so one ambient ref).
 let windowRoot: ProxyNode | undefined
 let rendered = false
-// Ids of error windows built by the root boundary, alive only while shown.
-let errorWindows = new Set<number>()
+// Error windows built by the root boundary, by id, each with the error it
+// shows; alive only while shown.
+let errorWindows = new Map<number, unknown>()
+
+/**
+ * The error the root boundary's error window shows now, or undefined while
+ * the app's own window is up. The observable of the boundary: a test harness
+ * asserts a mount-time throw with it.
+ */
+export function shownError(): unknown {
+  return windowRoot === undefined ? undefined : errorWindows.get(windowRoot.id)
+}
 
 /**
  * Mounts a SolidRT app. Call once at the top level: `render(() => <App />)`.
@@ -513,7 +523,7 @@ export function render(code: () => any) {
         abandonedBuilds += 1
         console.error("Uncaught error: the app is replaced by the error window until reset or reload.", err)
         let win = errorWindow(err, reset)
-        errorWindows.add(win.id)
+        errorWindows.set(win.id, err)
         return win
       },
     )

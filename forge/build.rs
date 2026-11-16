@@ -1,15 +1,12 @@
-// Two target-dependent link jobs.
+// The vendored native libraries, each behind its feature.
 //
-// Android: link clang's compiler-rt builtins archive into the final artifact.
-// The NDK clang driver links libclang_rt.builtins-<arch>-android.a implicitly
-// for C code, but rustc links with -nodefaultlibs, so a builtin the vendored
-// C and C++ below call and Rust's compiler-builtins does not provide comes
-// out as an undefined symbol that only surfaces as a dlopen failure on
-// device (the bundled libffi's __clear_cache was the first case; libffi is
-// gone, and whether opus or Basis need a builtin is unverified, so the link
-// stays until an Android build without it proves otherwise: okf/tiny.md).
-// Ask the target C compiler (the NDK clang wrapper cargo-ndk points
-// CC_<target> at) where its builtins archive is and link it explicitly.
+// Android links no compiler-rt builtins archive: rustc links with
+// -nodefaultlibs, so a builtin the vendored C and C++ below call and Rust's
+// compiler-builtins does not provide would come out as an undefined symbol
+// that only surfaces as a dlopen failure on device. None does today (`llvm-nm
+// -D --undefined-only` on libmain.so, arm64-v8a and armeabi-v7a, resolves
+// against the NDK's libc/libm/libdl and the staged libraries); check the same
+// way after adding or bumping vendored code.
 //
 // Everywhere, with the `audio` feature: build the vendored libopus
 // (forge/vendor/opus, a submodule pinned to a release tag) through its own
@@ -142,9 +139,7 @@ fn main() {
   let video = std::env::var_os("CARGO_FEATURE_VIDEO").is_some();
   let video_encode = std::env::var_os("CARGO_FEATURE_VIDEO_ENCODE").is_some();
   let audio = std::env::var_os("CARGO_FEATURE_AUDIO").is_some();
-  if target_os == "android" {
-    link_android_builtins();
-  } else if video {
+  if target_os != "android" && video {
     build_libvpx(&target_os, video_encode);
   }
   if audio {
@@ -313,30 +308,6 @@ fn build_libopusfile(opus: &std::path::Path, ogg: &std::path::Path, target_os: &
     build.file(src.join(file));
   }
   build.compile("opusfile");
-}
-
-fn link_android_builtins() {
-  let compiler = cc::Build::new().get_compiler();
-  let output = compiler
-    .to_command()
-    .arg("--print-libgcc-file-name")
-    .output()
-    .expect("failed to run the target C compiler to locate clang_rt.builtins");
-  if !output.status.success() {
-    panic!("--print-libgcc-file-name failed: {}", String::from_utf8_lossy(&output.stderr));
-  }
-
-  let path_str = String::from_utf8(output.stdout).expect("non-UTF-8 compiler output");
-  let path = std::path::Path::new(path_str.trim());
-  let dir = path.parent().expect("builtins archive path has no parent directory");
-  let file = path.file_name().and_then(|name| name.to_str()).expect("builtins archive path has no file name");
-  let lib = file
-    .strip_prefix("lib")
-    .and_then(|name| name.strip_suffix(".a"))
-    .unwrap_or_else(|| panic!("unexpected builtins archive name: {file}"));
-
-  println!("cargo:rustc-link-search=native={}", dir.display());
-  println!("cargo:rustc-link-lib=static={lib}");
 }
 
 fn build_libvpx(target_os: &str, encoder: bool) {

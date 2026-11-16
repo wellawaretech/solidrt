@@ -111,6 +111,7 @@ picked by an unnormalized layer index); a shape mismatch throws at the
 bind. Volumes re-upload in place with `uploadTexture` and a box. Do not
 name an array sampler `uLayers`: that is the scene's layer mask (see
 Lights in lighting.md), seeded as an int param on every material that mentions it.
+`shaderMaterialClass` throws on a `uLayers` declared as any other type.
 
 ### shaderMaterialClass
 

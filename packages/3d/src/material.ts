@@ -1439,6 +1439,16 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // A source mentioning uLayers masks lights by the mesh's layers
   // (Material.layered); either stage may light, so both are scanned.
   let layered = /\buLayers\b/.test(opts.vertex) || /\buLayers\b/.test(opts.fragment)
+  // The scene seeds uLayers itself as the mesh's int membership mask, so
+  // a declaration of any other type would fail later at add() with an
+  // error blaming the caller's own binding; named here instead.
+  for (let source of [opts.vertex, opts.fragment]) {
+    for (let decl of source.matchAll(/\buniform\s+(?:(?:lowp|mediump|highp)\s+)?(\w+)\s+uLayers\b/g)) {
+      if (decl[1] !== "int") {
+        throw new Error("shaderMaterial declares 'uLayers' as " + decl[1] + "; the name is reserved for the scene's int layer mask (declare it 'uniform int uLayers' or rename the uniform)")
+      }
+    }
+  }
   // A source mentioning uEnv reflects the environment (Material.env; the
   // \b keeps uEnvIntensity and friends from matching, but ENVIRONMENT
   // always declares the sampler itself).

@@ -1116,3 +1116,17 @@ fn window_size_rejects_a_missing_field_and_a_non_map() {
   let err = apply_window("size", PropValue::List(vec![num(900.0), num(600.0)])).unwrap_err();
   assert_eq!(err, "size must be { width, height } or null, got a list of 2");
 }
+
+#[test]
+fn font_size_must_be_positive() {
+  // A zero or negative size draws nothing; throw like fontStretch, on the
+  // paragraph and on a span (measureText/prepareText decode through the same).
+  for kind in ["text", "span"] {
+    for bad in [0.0, -4.0] {
+      let err = apply(kind, "fontSize", num(bad)).unwrap_err();
+      assert_eq!(err, format!("fontSize must be positive, got {bad}"), "{kind}");
+    }
+    assert!(apply(kind, "fontSize", num(12.0)).is_ok(), "{kind}");
+    assert!(apply(kind, "fontSize", PropValue::Null).is_ok(), "{kind}");
+  }
+}

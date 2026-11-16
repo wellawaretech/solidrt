@@ -194,6 +194,15 @@ pub struct YuvLatch {
   noted: Option<(i64, bool)>,
   // Frames evicted by a push against a full queue: skipped, never shown.
   evicted: usize,
+  // Whether something samples the texture (`set_shown`, applied by the
+  // raster thread from `RasterCmd::ShowVideo`, ahead of every pixel
+  // observer that needs it). An unshown latch still takes on schedule, so
+  // playback and `shown_pts_us` advance, but parks the frame here instead
+  // of handing it to the upload; becoming shown hands the parked frame
+  // back, so the first observer of it sees the current frame. Unshown
+  // until something samples it.
+  shown: bool,
+  held: Option<LatchedFrame>,
 }
 
 /// What a push did.
@@ -218,6 +227,8 @@ impl YuvLatch {
       closed: false,
       noted: None,
       evicted: 0,
+      shown: false,
+      held: None,
     }
   }
 
@@ -234,7 +245,10 @@ impl YuvLatch {
         return Pushed::Full;
       }
       self.queue.pop_front();
-      self.evicted += 1;
+      // Skips count only while shown (see `take`).
+      if self.shown {
+        self.evicted += 1;
+      }
       result = Pushed::Evicted;
     }
     // Frames arrive in due order; a re-anchor (a seek without a flush, a
@@ -257,8 +271,46 @@ impl YuvLatch {
 
   /// Take the newest frame due at or before `deadline_ns` plus
   /// `lookahead_ns`, skipping every older frame that was due too; None
-  /// when nothing is. The taken frame's pts becomes `shown_pts_us`.
+  /// when nothing is. The taken frame's pts becomes `shown_pts_us`. While
+  /// the texture is unshown (`set_shown`) the frame is parked instead and
+  /// None comes back.
   pub fn take(&mut self, deadline_ns: i64, lookahead_ns: i64) -> Option<Taken> {
+    let taken = self.take_due(deadline_ns, lookahead_ns)?;
+    if self.shown {
+      return Some(taken);
+    }
+    // No skip counts while unshown: not a parked frame the new one
+    // replaces, not a superseded due frame, not an eviction. Nothing was
+    // meant to show any of them, so the compositor did not fall behind,
+    // and a clip preloaded unshown through a hitch reports no skips once
+    // shown.
+    self.held = Some(taken.frame);
+    None
+  }
+
+  /// Whether something samples the texture: an unshown one parks the
+  /// frames it takes instead of uploading them (see `take`). Becoming
+  /// shown hands back the parked frame, for the upload before any observer
+  /// samples it.
+  pub fn set_shown(&mut self, shown: bool) -> Option<Taken> {
+    let became_shown = shown && !self.shown;
+    self.shown = shown;
+    if became_shown {
+      self.take_held()
+    } else {
+      None
+    }
+  }
+
+  /// Hand back the parked frame regardless of `set_shown`: a readback or
+  /// a `copyTexture` of an unshown texture sees the current frame.
+  pub fn take_held(&mut self) -> Option<Taken> {
+    let frame = self.held.take()?;
+    Some(Taken { frame, skipped: 0, late: false })
+  }
+
+  // The take rule itself, ignoring `shown`.
+  fn take_due(&mut self, deadline_ns: i64, lookahead_ns: i64) -> Option<Taken> {
     let limit = deadline_ns + lookahead_ns;
     let mut taken: Option<LatchedFrame> = None;
     let mut skipped = 0;
@@ -314,6 +366,7 @@ impl YuvLatch {
   pub fn close(&mut self) {
     self.closed = true;
     self.queue.clear();
+    self.held = None;
   }
 
   pub fn closed(&self) -> bool {
@@ -379,6 +432,7 @@ impl YuvLatchShared {
     let mut state = self.lock();
     let mut taken: Option<Taken> = None;
     loop {
+      let queued = state.len();
       if let Some(newer) = state.take(deadline_ns, lookahead_ns) {
         taken = Some(match taken {
           // The earlier candidate is superseded: one more skipped frame.
@@ -387,6 +441,10 @@ impl YuvLatchShared {
           }
           None => newer,
         });
+      }
+      // An unshown take parks what it pops: room for a blocked producer
+      // all the same.
+      if state.len() != queued {
         self.changed.notify_all();
       }
       if !wait || state.settled(deadline_ns, lookahead_ns) {
@@ -398,6 +456,14 @@ impl YuvLatchShared {
 
   pub fn peek(&self, deadline_ns: i64, lookahead_ns: i64) -> bool {
     self.lock().peek(deadline_ns, lookahead_ns)
+  }
+
+  pub fn set_shown(&self, shown: bool) -> Option<Taken> {
+    self.lock().set_shown(shown)
+  }
+
+  pub fn take_held(&self) -> Option<Taken> {
+    self.lock().take_held()
   }
 
   pub fn shown_pts_us(&self) -> Option<i64> {

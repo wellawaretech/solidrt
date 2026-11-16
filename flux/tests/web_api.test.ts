@@ -30,6 +30,18 @@ test("a Headers init copies an instance and rejects a non-string value", () => {
   expect(() => new Headers({ "X-N": 5 })).toThrow("must be a string")
 })
 
+test("a Headers init rejects a name that is not valid text", () => {
+  // A lone surrogate has no UTF-8 form; the name is refused, never mangled.
+  expect(() => new Headers({ "X-\uD800": "1" })).toThrow("must be valid text")
+})
+
+test("a Headers init reads a name with a NUL whole", () => {
+  // A NUL inside a name does not cut it short: "a\0b" is no header "a".
+  let h = new Headers({ "a\u0000b": "1" })
+  expect(h.get("a\u0000b")).toBe("1")
+  expect(h.has("a")).toBe(false)
+})
+
 test("a buffered body iterates as one chunk", async () => {
   // A buffered body (`new Response("...")`) iterates like a streamed one: a
   // single Uint8Array chunk holding the whole payload. An empty body ends at

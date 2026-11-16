@@ -55,6 +55,12 @@ const IMPORT_STRIDE: usize = 4;
 // never succeeds: the whole fine pool.
 const IMPORT_STEPS_MAX: usize = FINE_POOL / FINE_STEP;
 
+// The most a registration walk may take before its engine counts as kept
+// alive. A guard against a hang only: a registration leaked by a failing
+// step holds the engine forever, and a walk that leaks nothing goes idle
+// long before this.
+const REGISTRATION_WALK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 // Panics from any thread since the hook was installed. rquickjs catches a
 // panic in a callback, stores it and throws a JS exception in its place;
 // the walk's own try/catch swallows that exception, so the stored panic
@@ -215,5 +221,58 @@ try {{
     }
     assert!(imported, "{module} never imported");
     assert!(failures > 0, "the import of {module} met no allocation failure");
+  }
+}
+
+// The standing registrations walked: a call that registers a listener and
+// returns the function that stops it. A step that throws must leave nothing
+// registered, or the engine never goes idle; the step that succeeds stops
+// its own registration at once. `spawn()` is not walked (see CALLS).
+const REGISTRATIONS: &[&str] =
+  &["let off = folderRef.watch(callback); off();", "let off = on(\"SIGUSR1\", callback); off();"];
+
+#[tokio::test]
+async fn registrations_at_the_memory_limit_leave_nothing_standing() {
+  let dir = TempDir::new();
+  for registration in REGISTRATIONS {
+    let code = format!(
+      r#"
+import {{ dir }} from "flux:fs";
+import {{ on }} from "flux:process";
+let folderRef = dir({folder:?});
+let callback = () => {{}};
+let call = () => {{
+  {registration}
+}};
+{fill}
+let steps = 0;
+let failures = 0;
+let succeeded = false;
+for (; steps < {WALK_STEPS_MAX} && release(); steps++) {{
+  try {{
+    call();
+    succeeded = true;
+    break;
+  }} catch {{
+    failures++;
+  }}
+}}
+head = null;
+fine = null;
+console.log(`walked ${{steps}} steps, ${{failures}} failures, succeeded ${{succeeded}}`);
+"#,
+      folder = dir.path(),
+      fill = fill(),
+    );
+    let log = tokio::time::timeout(REGISTRATION_WALK_TIMEOUT, run_limited(&code))
+      .await
+      .unwrap_or_else(|_| panic!("{registration}: a failing step left a registration standing"));
+    let walked =
+      log.lines().find(|line| line.starts_with("walked ")).unwrap_or_else(|| panic!("{registration}: no walk: {log}"));
+    assert!(!walked.contains(" 0 failures"), "{registration}: the walk met no allocation failure: {walked}");
+    assert!(
+      walked.ends_with("succeeded true"),
+      "{registration}: the walk never reached a call that succeeds: {walked}"
+    );
   }
 }

@@ -54,6 +54,11 @@ declare module "flux:video" {
      * over `rampMs` like a flux:audio playback's gain. The track also obeys
      * flux:audio's master gain and, when opened with `bus`, that bus's gain
      * and pause. A no-op without an audio track.
+     *
+     * In headless playback (the stepped clock of a test or capture) the
+     * track is silent: it is still decoded and clocked, but its sound
+     * would run in real time out of step with the frames, so it plays at
+     * gain 0 and `setGain` is a no-op.
      */
     setGain(gain: number, options?: { rampMs?: number }): void
     /** Start or resume playback. */
@@ -160,6 +165,16 @@ declare module "flux:video" {
      */
     latency?: number
     /**
+     * Seconds the sound's output path (the device buffer, the mixer, the
+     * speakers or an HDMI or Bluetooth link) delays the sound behind the
+     * picture. The player holds the picture back by this much, so the two
+     * reach the viewer together. Absent, 0.06 s, the delay of a TV's own
+     * speakers. An external speaker has its own delay: let the user set it
+     * (a settings screen), checked by eye and ear on a flash-and-beep
+     * clip. A negative or non-finite value throws.
+     */
+    audioDelay?: number
+    /**
      * The flux:audio bus the audio track plays on (a plain name created by
      * use), so `setBusGain`, `pause({ bus })` and `stop({ bus })` reach it.
      * Omitted, the track plays under the master gain alone.
@@ -185,6 +200,8 @@ declare module "flux:video" {
     fit?: "contain" | "cover"
     /** Play live, this many seconds behind the newest frame (see VideoOpenOptions). */
     latency?: number
+    /** Seconds the sound's output path delays the sound (see VideoOpenOptions). */
+    audioDelay?: number
     /** The flux:audio bus the audio track plays on (see VideoOpenOptions). */
     bus?: string
     /** Aborting it abandons the open (see VideoOpenOptions). */

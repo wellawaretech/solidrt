@@ -14,7 +14,7 @@ use std::ptr::NonNull;
 use rquickjs::atom::PredefinedAtom;
 use rquickjs::function::{FromParam, ParamRequirement, ParamsAccessor, This};
 use rquickjs::promise::Promised;
-use rquickjs::{qjs, ArrayBuffer, Ctx, Exception, FromJs, Function, IntoJs, Object, TypedArray, Value};
+use rquickjs::{qjs, Array, ArrayBuffer, Ctx, Exception, FromJs, Function, IntoJs, Object, TypedArray, Value};
 
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
@@ -46,6 +46,16 @@ impl<'js, T: FromJs<'js>> FromParam<'js> for OptArg<T> {
     }
     Ok(OptArg(Some(T::from_js(&ctx, value)?)))
   }
+}
+
+/// The length of a script's array, read as a number. `Array::len` (and so
+/// `Array::iter`, which calls it) asserts an int32 and aborts the process
+/// for a longer array (`new Array(2 ** 31)`); an array's length is always an
+/// integer below 2^32, so the number converts exactly. Walk the elements
+/// with `arr.get(i)` up to it.
+pub fn array_length(arr: &Array<'_>) -> rquickjs::Result<usize> {
+  let length: f64 = arr.as_object().get(PredefinedAtom::Length)?;
+  Ok(length as usize)
 }
 
 /// An optional string of an options object: `None` when absent,

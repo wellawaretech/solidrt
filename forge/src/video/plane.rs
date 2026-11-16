@@ -19,16 +19,17 @@ use std::time::Duration;
 use ndk::media::media_codec::{DequeuedOutputBufferInfoResult, MediaCodec, OutputBuffer};
 use ndk::native_window::NativeWindow;
 
+use super::audio::AudioOutput;
 use super::mediacodec::{create_with_retry, feed_codec, open_codec, FLAG_END_OF_STREAM};
 use super::reader::Reader;
-use super::transport::{AudioSink, Clock, VsyncGrid, RELEASE_LEAD_NS};
+use super::transport::{Clock, VsyncGrid, RELEASE_LEAD_NS};
 use super::worker::{Feed, LostSampler, Picture, Player, Presenter, PresenterHost};
 use super::StreamError;
 
 /// Open a plane player: decode the stream `reader` delivers into `window`,
 /// snapping release times onto `vsync` when the display's grid is known,
-/// and its audio track (when the stream has one and the caller provides a
-/// `sink` for it) into that sink. `plane` is the window's owner (the
+/// and its audio track (when the stream has one and the caller provides an
+/// `audio` output for it) into that output. `plane` is the window's owner (the
 /// platform's plane view), held by the player for the codec's lifetime and
 /// dropped on the worker after the codec has released the surface, so its
 /// drop may remove the view; it must be usable from that thread. Playback
@@ -40,7 +41,7 @@ pub fn open(
   window: NativeWindow,
   plane: Box<dyn Any + Send>,
   vsync: Option<VsyncGrid>,
-  sink: Option<Box<dyn AudioSink>>,
+  audio: Option<AudioOutput>,
   lost: LostSampler,
 ) -> Result<Player, String> {
   let info = reader.info().ok_or("stream not opened")?;
@@ -49,7 +50,7 @@ pub fn open(
     let codec = create_with_retry(|| open_codec(Some(&window), width, height))?;
     Ok(Box::new(SurfaceHost { codec, _window: window, _plane: plane, vsync }) as Box<dyn PresenterHost>)
   });
-  Player::open("sol-video-plane", reader, make, Clock::monotonic(), sink, lost)
+  Player::open("sol-video-plane", reader, make, Clock::monotonic(), audio, lost)
 }
 
 struct SurfaceHost {
@@ -95,12 +96,9 @@ impl Presenter for SurfacePresenter<'_> {
     let buf = match self.codec.dequeue_output_buffer(wait) {
       Ok(DequeuedOutputBufferInfoResult::Buffer(buf)) => buf,
       Ok(_) => return Ok(None),
-      Err(e) => {
-        // A codec error mid-stream (the surface went away beneath it) ends
-        // the stream; the owner learns the cause from the plane itself.
-        log::warn!("[forge::video] dequeue output: {e:?}");
-        return Ok(Some(Picture { pts_us: 0, eos: true, empty: true }));
-      }
+      // A codec error mid-stream is a decode error. When the surface went
+      // away beneath the codec, the worker ends the stream as lost instead.
+      Err(e) => return Err(StreamError::decode(format!("dequeue output: {e:?}"))),
     };
     let info = *buf.info();
     self.held = Some(buf);

@@ -61,6 +61,17 @@
         android:name="android.hardware.microphone"
         android:required="false" />
 
+    <!-- Camera support, optional so devices without a camera (TVs
+         included) still install. A packed app with the camera capability
+         declares android.permission.CAMERA, and with no uses-feature here
+         Play infers the camera (and its autofocus) as required. -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
+
     <!-- Allow downloading to the external storage on Android 5.1 and older -->
     <!-- <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="22" /> -->
 

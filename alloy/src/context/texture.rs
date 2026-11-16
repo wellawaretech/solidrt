@@ -697,6 +697,65 @@ impl Context {
     !due.is_empty()
   }
 
+  /// Whether any YUV texture exists, so a frame producer can skip
+  /// `note_shown_video`'s tree scan when none does.
+  pub fn has_yuv_textures(&self) -> bool {
+    !self.yuv_groups.borrow().is_empty()
+  }
+
+  /// At the start of the paint walk: note the texture ids the tree samples
+  /// (`RenderTree::shown_texture_ids`), and bring the shown video set up to
+  /// date before the walk's own pixel observers (node shader passes, shaded
+  /// rasterizes) go out.
+  pub fn note_shown_video(&self, referenced: HashSet<u64>) {
+    *self.tree_textures.borrow_mut() = referenced;
+    self.sync_shown_video();
+  }
+
+  /// A YUV texture's UI-side record without its GPU side, for the lib
+  /// tests of what the shown set sends (no raster thread to create planes).
+  #[cfg(test)]
+  pub(crate) fn insert_yuv_group_for_test(&self, id: u64) {
+    let latch = Arc::new(YuvLatchShared::new());
+    self.yuv_groups.borrow_mut().insert(id, YuvGroup { planes: Vec::new(), latch, frame_size: 0 });
+  }
+
+  /// Record (`Some`) or drop (`None`) the binding of `name` on `target`'s
+  /// shared slot, UI side only, as a rebind records it, for the same tests
+  /// (no raster thread to create the target).
+  #[cfg(test)]
+  pub(crate) fn bind_source_for_test(&self, target: u64, name: &str, source: Option<u64>) {
+    let mut sources = self.shader_sources.borrow_mut();
+    let record = sources.entry(target).or_default();
+    match source {
+      Some(id) => record.insert((0, name.to_string()), id),
+      None => record.remove(&(0, name.to_string())),
+    };
+  }
+
+  /// Ahead of every pixel observer's command (`RasterCmd::observes_pixels`,
+  /// a frame included): tell the raster thread which YUV textures something
+  /// samples, a tree node (as of the last `note_shown_video`) or a live
+  /// target's binding, when that set changed. The raster thread uploads
+  /// only a shown texture's frames and parks an unshown one's newest; a
+  /// texture that becomes shown uploads its parked frame on this command,
+  /// ahead of the observer on the ordered channel, so no observer samples
+  /// a stale frame.
+  pub(crate) fn sync_shown_video(&self) {
+    let groups = self.yuv_groups.borrow();
+    if groups.is_empty() && self.shown_video.borrow().is_empty() {
+      return;
+    }
+    let bound = self.shader_sources.bound();
+    let tree = self.tree_textures.borrow();
+    let shown: HashSet<u64> = groups.keys().filter(|id| tree.contains(id) || bound.contains(id)).copied().collect();
+    if *self.shown_video.borrow() == shown {
+      return;
+    }
+    *self.shown_video.borrow_mut() = shown.clone();
+    self.raster_tx.send(RasterCmd::ShowVideo { shown }).ok();
+  }
+
   /// Whether any YUV texture's producer is playing: standing frame demand,
   /// so the loop ticks on the refresh grid while video streams (a streaming
   /// camera is the same demand, reported apart: `camera_streaming`).

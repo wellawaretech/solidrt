@@ -61,6 +61,16 @@ test("settle on an app at rest runs no frame", async app => {
   expect(app.time).toBe(before)
 })
 
+test("settle comes to rest with nothing mounted", async app => {
+  let [count, setCount] = createSignal(0)
+  setTimeout(() => setCount(1), 0)
+  await app.settle()
+  expect(count()).toBe(1)
+  let before = app.time
+  await app.settle()
+  expect(app.time).toBe(before)
+})
+
 test("settle plays a running transition to its end", async app => {
   let [dim, setDim] = createSignal(false)
   let panel = app.ref()

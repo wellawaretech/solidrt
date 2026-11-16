@@ -1,6 +1,7 @@
 import { arena, createSignal, createMemo, onSettled, focusedNode, getBoundingBoxViewport } from "@solidrt/core"
 import type { PointerEvent, KeyEvent } from "@solidrt/core"
 import { registerNavAction } from "./focus-nav"
+import { theme } from "./theme"
 
 // A live view of a recognizer's state, not a snapshot: the fields are getters,
 // so a consumer that reads one inside a JSX prop or child expression tracks that
@@ -55,7 +56,9 @@ export interface PressOptions {
 // action (Enter, Space, the remote center key, the pad's south button, or
 // whatever the app bound) runs it while the node holds focus (see
 // focus-nav.ts). `focused` mirrors the node's focus for styling (a ring).
-// Key activation shows no pressed state - the focus ring is the feedback.
+// A nav activation shows the pressed state briefly (theme.motion.fast, the
+// feedback timing), so a key or pad press reads like a tap: the `select`
+// edge carries no hold to track, so the flash is timed, not held.
 // The arena and the movement recognizers (createPan, createTransform) live in
 // core; press stays here because it couples to this package's focus-nav
 // (registerNavAction). Exported: a custom control builds its own root on it
@@ -128,10 +131,28 @@ export function createPress(options: PressOptions) {
     },
   }
   let state = (): PressState => live
+
+  // The nav activation's pressed flash. Its end hands the state back to a
+  // pointer press in flight (pressed while inside), else clears it.
+  let flash: ReturnType<typeof setTimeout> | null = null
+  let endFlash = () => {
+    if (flash != null) clearTimeout(flash)
+    flash = null
+  }
+  let navActivate = () => {
+    if (options.disabled || inflight) return
+    endFlash()
+    setPressed(true)
+    flash = setTimeout(() => {
+      flash = null
+      setPressed(active != null && inside)
+    }, theme.motion.fast)
+    activate()
+  }
   let ref = (n: { id: number }) => {
     node = n
     unregisterNav?.()
-    unregisterNav = registerNavAction(n.id, activate)
+    unregisterNav = registerNavAction(n.id, navActivate)
   }
 
   let within = (e: PointerEvent) => {
@@ -158,6 +179,7 @@ export function createPress(options: PressOptions) {
   let disposed = false
   onSettled(() => () => {
     disposed = true
+    endFlash()
     disengage()
     unregisterNav?.()
   })
@@ -169,6 +191,7 @@ export function createPress(options: PressOptions) {
     onPointerDown: (e: PointerEvent) => {
       if (e.button != null && e.button !== 0) return
       if (active == null && arena.claim(e.pointerId, owner)) {
+        endFlash()
         active = e.pointerId
         inside = true
         setPressed(true)

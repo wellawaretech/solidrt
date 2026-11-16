@@ -102,9 +102,15 @@ pub fn header_pairs_from_init<'js>(val: &Value<'js>) -> rquickjs::Result<Vec<(St
   // Plain object: iterate own keys.
   if let Some(obj) = val.as_object() {
     let mut out = Vec::new();
-    for key in obj.keys::<String>() {
-      let key = key?;
-      let v: Value = obj.get(&key)?;
+    // The keys as JS strings, converted by length and validated: a key read
+    // as a Rust string straight from its atom is cut at a NUL and not
+    // checked for UTF-8. The value is read with the JS key itself.
+    for js_key in obj.keys::<rquickjs::String>() {
+      let js_key = js_key?;
+      let Ok(key) = js_key.to_string() else {
+        return Err(rquickjs::Error::new_from_js_message("init", "Headers", "a header name must be valid text"));
+      };
+      let v: Value = obj.get(js_key)?;
       let Some(s) = v.as_string() else {
         return Err(rquickjs::Error::new_from_js_message(
           "init",

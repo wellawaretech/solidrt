@@ -1,3 +1,4 @@
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::{HashMap, HashSet};
 
 use super::Context;
@@ -153,6 +154,53 @@ pub(crate) fn samples_transitively(
 /// follow in the same sweep.
 pub(crate) fn bound_sources(sources: &HashMap<u64, HashMap<(u64, String), u64>>) -> HashSet<u64> {
   sources.values().flat_map(|bindings| bindings.values().copied()).collect()
+}
+
+/// Every target's sampler bindings: target id to (entry, uniform name) to
+/// source texture id (see `Context::shader_sources`).
+pub(crate) type Bindings = HashMap<u64, HashMap<(u64, String), u64>>;
+
+/// The recorded sampler bindings of every target (see
+/// `Context::shader_sources`), with their `bound_sources` set kept for
+/// reuse: every mutable borrow raises a generation, and `bound` rebuilds
+/// the set only when the generation moved since it was last built, so a
+/// per-command reader (`Context::sync_shown_video`) costs nothing while
+/// the bindings stand still.
+pub(crate) struct ShaderSources {
+  map: RefCell<Bindings>,
+  generation: Cell<u64>,
+  bound: RefCell<HashSet<u64>>,
+  bound_at: Cell<Option<u64>>,
+}
+
+impl ShaderSources {
+  pub(crate) fn new() -> Self {
+    ShaderSources {
+      map: RefCell::new(HashMap::new()),
+      generation: Cell::new(0),
+      bound: RefCell::new(HashSet::new()),
+      bound_at: Cell::new(None),
+    }
+  }
+
+  pub(crate) fn borrow(&self) -> Ref<'_, Bindings> {
+    self.map.borrow()
+  }
+
+  pub(crate) fn borrow_mut(&self) -> RefMut<'_, Bindings> {
+    self.generation.set(self.generation.get().wrapping_add(1));
+    self.map.borrow_mut()
+  }
+
+  /// `bound_sources` of the current bindings, rebuilt only after a change.
+  pub(crate) fn bound(&self) -> Ref<'_, HashSet<u64>> {
+    let generation = self.generation.get();
+    if self.bound_at.get() != Some(generation) {
+      *self.bound.borrow_mut() = bound_sources(&self.map.borrow());
+      self.bound_at.set(Some(generation));
+    }
+    self.bound.borrow()
+  }
 }
 
 /// Collect into `changes` the flush-rendered targets whose pixels change

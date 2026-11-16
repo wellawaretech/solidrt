@@ -23,6 +23,17 @@ agents/testing.md.
 - `app.mount(ui)` takes what `render` takes (content is put in a window of
   its own) and returns a locator for the window; `app.load(() =>
   import("../src/index.tsx"))` starts a whole entry instead. Once per test.
+- A mount that throws (a contradicting prop, a component that throws while
+  it builds) puts up the error window in place of the app. `mount` still
+  resolves, but its locator is the hidden app window, not the error. To
+  assert the throw, mount with `app.mountFails(ui)`
+  instead: it resolves to the error the error window shows, and rejects
+  when the app mounted without one.
+
+  ```tsx
+  let error = await app.mountFails(() => <Scene width={64} height={64} renderScale={2} />)
+  expect(error.message).toContain("renderScale")
+  ```
 - Name a node by what the user sees, `find({ text: "Save" })`; by its
   `label` prop where it shows no text, `find({ label: "sidebar" })`
   (`label` is on every element, a stable name and nothing else); or hold a

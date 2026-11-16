@@ -140,8 +140,15 @@ fn parse_routes<'js>(
   };
 
   let mut routes = Vec::new();
-  for key in routes_obj.keys::<String>().flatten() {
-    let value: Value<'js> = routes_obj.get(&key)?;
+  // The keys as JS strings, converted by length and validated: a key read
+  // as a Rust string straight from its atom is cut at a NUL and not checked
+  // for UTF-8. The value is read with the JS key itself.
+  for js_key in routes_obj.keys::<rquickjs::String<'js>>().flatten() {
+    let Ok(key) = js_key.to_string() else {
+      logger.warn("[flux] serve route ignored: its path must be valid text");
+      continue;
+    };
+    let value: Value<'js> = routes_obj.get(js_key)?;
     // Order matters: a Function is also an object, so check it first; a Response
     // class instance is also an object, so check it before the per-method object.
     let handler = if let Some(f) = value.as_function() {
@@ -150,8 +157,12 @@ fn parse_routes<'js>(
       RouteHandler::Static(snapshot_response(&resp.borrow()))
     } else if let Some(obj) = value.as_object() {
       let mut methods = Vec::new();
-      for method in obj.keys::<String>().flatten() {
-        let mv: Value<'js> = obj.get(&method)?;
+      for js_method in obj.keys::<rquickjs::String<'js>>().flatten() {
+        let Ok(method) = js_method.to_string() else {
+          logger.warn(&format!("[flux] serve route {key} method ignored: its name must be valid text"));
+          continue;
+        };
+        let mv: Value<'js> = obj.get(js_method)?;
         match mv.as_function() {
           Some(f) => methods.push((method.to_uppercase(), f.clone())),
           None => logger.warn(&format!("[flux] serve route {key} method {method} ignored: value must be a function")),

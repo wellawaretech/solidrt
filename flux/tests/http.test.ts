@@ -228,6 +228,14 @@ test("serve answers an unmatched route with a 404 without fetch", async () => {
   })
 })
 
+test("serve keeps its valid routes beside one that is not valid text", async () => {
+  // A lone surrogate has no UTF-8 form; that route is skipped, and the
+  // routes beside it still answer.
+  await serving({ routes: { "/\uD800": () => "bad", "/ok": () => "ok" } }, async (base) => {
+    expect(await (await fetch(base + "/ok")).text()).toBe("ok")
+  })
+})
+
 test("serve routes per method", async () => {
   // A route value can be a per-method object; the request method picks the
   // handler, and an unlisted method is a 405 with an Allow header.

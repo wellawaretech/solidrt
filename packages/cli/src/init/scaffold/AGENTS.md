@@ -122,8 +122,14 @@ platform-wide and bite in every app:
 
 - FIRST check whether a dev server and its clients (possibly several) are
   already running and build against those; do not start a second `sol run`
-  when one is up. `reload` reaches every connected client; the per-client
-  tools are listed in debugging.md.
+  when one is up. Call `list_clients`; its `key` must be this project's
+  root. Without MCP, read `~/.solidrt/servers/*/live.json` (one record per
+  server: pid, port, key, projectDir) and take the record whose `key` (or
+  `projectDir`) is this project's root; the registry is machine-wide. A
+  record whose pid is gone, or whose port does not answer, is a crashed
+  server's leftover, not a live server. Do not use `ps` for this. `reload`
+  reaches every connected client; the per-client tools are listed in
+  debugging.md.
 - The dev loop (reload, logs, snapshots, the holds on reload-on-save and on
   the user's input), typechecking, headless rendering and the MCP tools:
   node_modules/@solidrt/cli/AGENTS.md and its agents/debugging.md. Read it

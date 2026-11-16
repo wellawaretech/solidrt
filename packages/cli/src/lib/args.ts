@@ -65,6 +65,7 @@ const OPTIONS = {
     device: { type: "string" },
     env: { type: "string", multiple: true },
     install: { type: "boolean" },
+    restart: { type: "boolean", default: false },
     force: { type: "boolean", default: false },
     census: { type: "boolean", default: false },
     layer: { type: "string" },
@@ -158,6 +159,11 @@ export function validateArgs() {
       if (values.apk && (values.install || values.census)) {
         usage("sol android --apk  (--apk installs the packed app; --install and --census are for the dev client)")
       }
+      // --restart only relaunches the installed client, so it installs,
+      // packs and reads nothing.
+      if (values.restart && (source || values.apk || values.install || values.force || values.census)) {
+        usage("sol android --restart  (--restart relaunches the installed client; it takes no APK, --apk, --install, --force or --census)")
+      }
       break
     case "check":
       // An entry file, or a folder whose entries are discovered (check.ts).
@@ -216,6 +222,10 @@ export function validateArgs() {
   // --device picks the adb device `android` installs on.
   if (values.device && command !== "android") {
     usage("sol android --device <serial>  (--device is only valid with the android command)")
+  }
+  // --restart cold-starts the client `android` launches.
+  if (values.restart && command !== "android") {
+    usage("sol android --restart  (--restart is only valid with the android command)")
   }
   // --env sets a variable in the environment of the client `android` launches.
   if (values.env?.length && command !== "android") {

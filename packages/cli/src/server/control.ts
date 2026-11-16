@@ -3,8 +3,10 @@ import { rebuildAndBroadcast } from "./rebuild"
 import { remapPositions } from "./remap"
 import { ENTRY_EXTENSIONS, absolute, dirname } from "./mode"
 import { file, realpath } from "flux:fs"
+import { command } from "flux:subprocess"
 import type { ServerWebSocket } from "flux:http"
 import type {
+  AndroidRestartResponse,
   ClientEntry,
   ClientsResponse,
   LoadResponse,
@@ -455,6 +457,7 @@ const CONTROL_ENDPOINTS = [
   "/__control__/settle",
   "/__control__/buffer",
   "/__control__/reload",
+  "/__control__/android-restart",
   "/__control__/load",
   "/__control__/mute",
   "/__control__/watch",
@@ -801,6 +804,29 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       let error = await rebuildAndBroadcast()
       if (error) return Response.json({ error }, { status: 502 })
       let body: ReloadResponse = { ok: true, clients: state.clients.size }
+      return Response.json(body)
+    }
+    case "/__control__/android-restart": {
+      // A true cold start of the Android client, where /reload only swaps
+      // the engine: `sol android --restart` against this server, so startup
+      // behaviour is testable from a script. It answers once the CLI has
+      // waited for the relaunched clients to connect.
+      if (req.method !== "POST") return Response.json({ error: "Android restart requires POST" }, { status: 405 })
+      let config = state.config
+      let port = state.serverUrl.slice(state.serverUrl.lastIndexOf(":") + 1)
+      let args = [...config.sol.slice(1), "android", "--restart", "--port", port]
+      let device = query.get("device")
+      if (device !== undefined) args.push("--device", device)
+      let before = new Set(clientList().map((c) => c.id))
+      let result = await command(config.sol[0]!, args, { cwd: config.cwd }).output()
+      if (!result.success) {
+        let output = [result.stdout, result.stderr].filter((t) => typeof t === "string" && t.trim()).join("\n")
+        return Response.json({ error: `Android restart failed:\n${output.trim()}` }, { status: 502 })
+      }
+      let clients = clientList()
+        .filter((c) => c.platform === "android" && !before.has(c.id))
+        .map((c) => c.id)
+      let body: AndroidRestartResponse = { ok: true, clients }
       return Response.json(body)
     }
     case "/__control__/load": {

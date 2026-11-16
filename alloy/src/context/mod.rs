@@ -82,7 +82,7 @@ pub struct Context {
   // never form. Recorded bindings are real: a rebind naming anything but an
   // active sampler2D is rejected against the right uniform table before it
   // is recorded or sent.
-  shader_sources: RefCell<HashMap<u64, HashMap<(u64, String), u64>>>,
+  shader_sources: content::ShaderSources,
   // UI-side mirror of which shader targets are manual (TargetSpec::manual):
   // validates render_target synchronously, and relaxes the sampling-cycle
   // test - the flush never renders a manual target, so a cycle is only a
@@ -173,6 +173,11 @@ pub struct Context {
   // (the draw gate peeks it, sinks push into it) and its plane ids, for
   // destroy_texture to take the planes down with the output.
   yuv_groups: RefCell<HashMap<u64, YuvGroup>>,
+  // The YUV textures the raster thread last heard are shown (see
+  // `sync_shown_video`), and the texture ids the last paint walk found the
+  // tree sampling (`note_shown_video`), one half of what decides it.
+  shown_video: RefCell<HashSet<u64>>,
+  tree_textures: RefCell<HashSet<u64>>,
   // Wakes the main loop's event wait so a pushed video frame gets its frame
   // built now rather than at the wait's timeout (the raster thread's own
   // post-present wake); None headless, where the host steps every frame
@@ -222,7 +227,7 @@ impl Context {
       submitted_frames: std::sync::atomic::AtomicU64::new(0),
       textures: TextureRegistry::new(),
       targets: RefCell::new(HashMap::new()),
-      shader_sources: RefCell::new(HashMap::new()),
+      shader_sources: content::ShaderSources::new(),
       manual_targets: RefCell::new(HashSet::new()),
       sub_targets: RefCell::new(HashMap::new()),
       depth_ids: RefCell::new(HashMap::new()),
@@ -250,6 +255,8 @@ impl Context {
       pending_destroys: RefCell::new(Vec::new()),
       borrowed: RefCell::new(HashSet::new()),
       yuv_groups: RefCell::new(HashMap::new()),
+      shown_video: RefCell::new(HashSet::new()),
+      tree_textures: RefCell::new(HashSet::new()),
       frame_wake,
       spatial: RefCell::new(Spatial::new()),
       spatial_flushed_at: Cell::new(None),
@@ -261,7 +268,17 @@ impl Context {
   /// Fire-and-forget command. A send after the raster thread exited (engine
   /// shutdown) is dropped silently; `submit` is where shutdown is detected.
   fn send(&self, cmd: RasterCmd) {
+    if cmd.observes_pixels() {
+      self.sync_shown_video();
+    }
     self.raster_tx.send(cmd).ok();
+  }
+
+  /// `send` itself, for the lib tests of what reaches the raster channel
+  /// ahead of a fire-and-forget observer (a manual target's render, a copy).
+  #[cfg(test)]
+  pub(crate) fn send_for_test(&self, cmd: RasterCmd) {
+    self.send(cmd);
   }
 
   /// The UI side of a context recovery (okf/done/gpu-context-loss.md),
@@ -338,7 +355,11 @@ impl Context {
   /// reply. Err only when the raster thread is gone (engine shutdown).
   fn rpc<T>(&self, make: impl FnOnce(mpsc::Sender<T>) -> RasterCmd) -> Result<T, String> {
     let (reply_tx, reply_rx) = mpsc::channel();
-    self.raster_tx.send(make(reply_tx)).map_err(|_| "raster thread exited".to_string())?;
+    let cmd = make(reply_tx);
+    if cmd.observes_pixels() {
+      self.sync_shown_video();
+    }
+    self.raster_tx.send(cmd).map_err(|_| "raster thread exited".to_string())?;
     reply_rx.recv().map_err(|_| "raster thread exited".to_string())
   }
 
@@ -420,6 +441,7 @@ impl Context {
     frame: u64,
   ) -> Result<(), ()> {
     self.note_submitted(frame);
+    self.sync_shown_video();
     self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: false, damage, present_at, frame }).map_err(|_| ())
   }
 
@@ -447,6 +469,7 @@ impl Context {
     frame: u64,
   ) -> Result<(), ()> {
     self.note_submitted(frame);
+    self.sync_shown_video();
     self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: true, damage, present_at, frame }).map_err(|_| ())
   }
 

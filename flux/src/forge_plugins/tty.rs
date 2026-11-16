@@ -135,14 +135,20 @@ fn subscribe<'js>(
   }
   ensure_watcher(&ctx, &state);
   let id = add_listener(&ctx, name.to_string(), callback, once);
-  Function::new(
-    ctx,
+  let unsubscribe = Function::new(
+    ctx.clone(),
     MutFn::from(move |ctx: Ctx<'_>| {
       if remove_listener(&ctx, name, id) && !any_listener(&ctx) {
         stop_watcher(&ctx);
       }
     }),
-  )
+  );
+  // An engine at its memory limit can fail this last allocation: roll the
+  // listener (and a watcher it alone kept) back, as unsubscribing does.
+  if unsubscribe.is_err() && remove_listener(&ctx, name, id) && !any_listener(&ctx) {
+    stop_watcher(&ctx);
+  }
+  unsubscribe
 }
 
 fn stop_watcher(ctx: &Ctx<'_>) {

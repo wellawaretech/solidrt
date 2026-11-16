@@ -90,7 +90,7 @@ is faster than a clip.
 **There is no `img`. Use a `texture`.** The `src` of a `texture` is a
 texture id, not a URL. Load the image with `createImage` first:
 
-```tsx
+```tsx nocheck
 let logo = createImage("https://example.com/logo.png")
 
 <texture src={logo()} />

@@ -25,8 +25,10 @@ which to add), as `dist/<name>-<abi>.apk`. For each, a copy of the target's
 runner APK is patched in place - application id (from `appId`) and label
 rewritten, the `.solapp` payload added - then re-aligned and re-signed with
 a fixed development key, so the result sideloads out of the box
-(publishing will need a real key). The runner boots the payload directly -
-no player, no dev server. Every `@solidrt/android-<abi>` package carries
+(publishing will need a real key). It is the key Player.dev is signed
+with, so Player.dev and every APK sol signs share one signer. The runner
+boots the payload directly - no player, no dev server. Every
+`@solidrt/android-<abi>` package carries
 it; in a checkout, `make android-runtime` stages it, and a target with no
 runner staged is skipped with a note. `sol android --apk` packs and
 installs in one step.

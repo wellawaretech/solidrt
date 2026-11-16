@@ -141,6 +141,11 @@ pub(crate) enum RasterCmd {
   /// the list (the present index the frame loop stamped it with), what the
   /// frame's completion is published under (see `RasterStats::retired_frames`).
   Frame { dl: DisplayList, tree_clean: bool, damage: PresentDamage, present_at: std::time::Instant, frame: u64 },
+  /// The YUV textures something samples from here on (see
+  /// `Context::sync_shown_video`): an unshown one parks its frames instead
+  /// of uploading them, and one that becomes shown uploads its parked frame
+  /// at once, so every pixel observer after this command sees it current.
+  ShowVideo { shown: std::collections::HashSet<u64> },
   /// Register the UI-side frame-request latch for missed-present (jank)
   /// accounting: the raster thread samples it (never consumes) at present
   /// time to tell a demanded gap from an idle one. Forwarded by the platform
@@ -610,6 +615,27 @@ impl RasterCmd {
         | RasterCmd::AttachWindowTap { .. }
         | RasterCmd::SetWindowTapRect { .. }
         | RasterCmd::DetachWindowTap { .. }
+    )
+  }
+
+  /// Whether this command observes pixels: its raster arm flushes the
+  /// dirty set and then samples or reads textures (a frame, a target
+  /// render, a copy, a rasterize, a node shader pass, a readback). The UI
+  /// side brings the shown video set up to date ahead of each one (see
+  /// `Context::sync_shown_video`).
+  pub(crate) fn observes_pixels(&self) -> bool {
+    matches!(
+      self,
+      RasterCmd::Frame { .. }
+        | RasterCmd::RenderTarget { .. }
+        | RasterCmd::CopyTexture { .. }
+        | RasterCmd::RasterizeDl { .. }
+        | RasterCmd::RasterizeDlInto { .. }
+        | RasterCmd::RasterizeGlyphs { .. }
+        | RasterCmd::RasterizeDlShaded { .. }
+        | RasterCmd::RerunNodeShader { .. }
+        | RasterCmd::RasterizeReadback { .. }
+        | RasterCmd::ReadTexture { .. }
     )
   }
 

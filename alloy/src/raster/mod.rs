@@ -158,11 +158,14 @@ pub struct RasterStats {
   /// (`Context::set_patch_headless_window`); the verification signal that
   /// stage 2 is engaging.
   pub(crate) partial_presents: AtomicU64,
-  /// Video frames latched into a YUV texture at a frame (see yuv.rs).
+  /// Video frames uploaded into a YUV texture at a frame (see yuv.rs); an
+  /// unshown texture's parked frames are not, until shown or read back.
   pub(crate) video_latched: AtomicU64,
   /// Video frames a latch skipped: due, but superseded by a newer due frame
   /// before a frame took them, or evicted by a producer pushing against a
-  /// full latch (the compositor fell behind the producer).
+  /// full latch (the compositor fell behind the producer). Only a shown
+  /// texture counts skips: while unshown, nothing was meant to show any
+  /// frame it drops.
   pub(crate) video_skipped: AtomicU64,
   /// Video frames latched for a deadline the draw gate's peek had found
   /// nothing due for: the producer missed its lead, and a cached boundary
@@ -1179,10 +1182,15 @@ impl RasterState {
           RasterCmd::RenderTarget { id, face, level } => {
             self.render_target_now(id, face, level);
           }
+          RasterCmd::ShowVideo { shown } => {
+            self.show_video(&shown);
+          }
           RasterCmd::CopyTexture { src, dst } => {
             // Observes src's pixels, so flush first (the same rule as
             // RenderTarget); the copy itself then seeds dst into the dirty
-            // set inside the helper.
+            // set inside the helper. A copy of an unshown video output
+            // takes its parked frame, its current one: upload it first.
+            self.latch_held_video(src);
             self.flush_dirty();
             if let Err(e) = self.copy_texture(src, dst) {
               log::warn!("[alloy] texture copy failed: {e}");
@@ -1326,6 +1334,12 @@ impl RasterState {
             reply(tx, result);
           }
           RasterCmd::ReadTexture { texture, width, height, reply: tx } => {
+            // A read of an unshown video output takes its parked frame, its
+            // current one: upload it first. Anything sampling the output is
+            // shown already, so no other read needs it.
+            if let Some(id) = self.yuv_output_of(&texture) {
+              self.latch_held_video(id);
+            }
             self.flush_dirty();
             let size = ISize::new(width as i64, height as i64);
             reply(tx, gl::read_texture_pixels(&self.gl, &texture, size));

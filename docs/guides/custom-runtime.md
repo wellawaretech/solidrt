@@ -172,7 +172,7 @@ Step 1 wrote a starter module, `runtime:hello`. It also wrote a test
 already shows that the full path works. In app code, you import a module as
 usual:
 
-```tsx
+```tsx nocheck
 import { hello } from "runtime:hello"
 
 <text>{hello()}</text>
@@ -224,7 +224,7 @@ Step 1 wrote `tests/runtime.test.tsx`. This file already imports `test`
 and `expect` from `@solidrt/test`. Add `checksum` to the import from
 `runtime:hello`, and add this test:
 
-```tsx
+```tsx nocheck
 test("checksum sums the bytes", async () => {
   expect(checksum(new Uint8Array([1, 2, 3]))).toBe(6)
 })

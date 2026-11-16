@@ -70,6 +70,7 @@ export function NavShell(props: NavShellProps) {
         {...p.layout}
         {...press.handlers}
         cursor="pointer"
+        focusable
       >
         <Surface
           role="surface"
@@ -78,7 +79,7 @@ export function NavShell(props: NavShellProps) {
           material={styled().material}
           glow={null}
           pressed={press.pressed()}
-          hovered={press.hovered() && policy.interaction !== "touch" && p.item.value !== value()}
+          hovered={(press.hovered() && policy.interaction !== "touch" && p.item.value !== value()) || (press.focused() && policy.focusRing)}
         />
         {p.item.icon}
         <text transition={colorFade()} color={labelColor(p.item)} {...typeStyle("caption")}>
@@ -130,6 +131,7 @@ export function NavShell(props: NavShellProps) {
                 marginRight={theme.spacing.sm}
                 {...press.handlers}
                 cursor="pointer"
+                focusable
               >
                 <Surface
                   role="surface"
@@ -138,7 +140,7 @@ export function NavShell(props: NavShellProps) {
                   material={styled().material}
                   glow={null}
                   pressed={press.pressed()}
-                  hovered={press.hovered() && policy.interaction !== "touch" && item.value !== value()}
+                  hovered={(press.hovered() && policy.interaction !== "touch" && item.value !== value()) || (press.focused() && policy.focusRing)}
                 />
                 {item.icon}
                 <text

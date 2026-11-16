@@ -15,7 +15,7 @@ example a clock hand or a wave.
 Add `transition` to an element. When a listed prop gets a new value, the
 element moves to the new value. It does not jump.
 
-```tsx
+```tsx nocheck
 let [pressed, setPressed] = createSignal(false)
 
 <view
@@ -45,7 +45,7 @@ spring. `delay` holds the motion before it starts.
 The `all` key covers all props of the element that can animate. A string
 alone is the short form of `all`:
 
-```tsx
+```tsx nocheck
 <view opacity={visible() ? 1 : 0} transition="200ms ease-out">
 ```
 
@@ -62,7 +62,7 @@ element then moves to the value in its props. `exit` gives the value to
 which an element moves when it is removed. The element stays on the screen
 until the exit is complete.
 
-```tsx
+```tsx nocheck
 const SLIDE = { duration: 500, bounce: 0.2, from: -80, exit: 80 } satisfies Transition
 const FADE = {
   duration: 350,
@@ -101,7 +101,7 @@ The layout moves an element when the content changes: a row above it is
 removed, a list changes its sequence, or a card gets more text. The
 `layout` key makes the element slide from its old box to its new box:
 
-```tsx
+```tsx nocheck
 const SLIDE = { duration: 400, bounce: 0.15 } satisfies Transition
 
 <For each={rows()}>
@@ -127,7 +127,7 @@ children move with it at once. Put `layout` on each level that must slide.
 `onFrame` calls your function before each frame. It gives the frame time
 in ms:
 
-```tsx
+```tsx nocheck
 let [angle, setAngle] = createSignal(0)
 onFrame((time) => setAngle(time / 1000))
 
@@ -185,7 +185,7 @@ The runtime then does not snap the element or its children, in motion and
 at rest. Use it for large text and drawn art that animate, for example a
 title with letters that move:
 
-```tsx
+```tsx nocheck
 <view pixelSnap={false}>
   <view detached scale={big() ? 1.2 : 1} transition={{ scale: { duration: 300, bounce: 0.4 } }}>
     <text detached fontSize={64}>Title</text>

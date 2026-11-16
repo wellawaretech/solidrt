@@ -421,6 +421,31 @@ fn referenced_texture_ids_covers_attached_and_detached() {
   assert_eq!(ids.len(), 2);
 }
 
+#[test]
+fn shown_texture_ids_add_the_window_shader_inputs() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, Element::with_layout(ElementKind::Window(Window::default()), Window::initial_style()));
+  tree.root = Some(1);
+  tree.create_node(2, Texture { texture_id: Some(10), ..Default::default() }.with_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  assert_eq!(tree.shown_texture_ids(), [10].into_iter().collect());
+
+  // A window shader samples its inputs over the whole frame: shown, though
+  // no element references them.
+  tree.edit(1, |el| match &mut el.kind {
+    ElementKind::Window(w) => w.set_shader(Some(crate::gpu::WindowShader {
+      program: 1,
+      params: vec![],
+      textures: vec![crate::gpu::TextureBinding::new("uVideo", 40)],
+      vertex_count: 3,
+      previous: false,
+    })),
+    _ => unreachable!(),
+  });
+  assert_eq!(tree.shown_texture_ids(), [10, 40].into_iter().collect());
+  assert!(!tree.referenced_texture_ids().contains(&40), "the destroy sweep's set is unchanged");
+}
+
 // --- bounding box -----------------------------------------------------------
 
 // Writes a computed layout directly: unit tests have no GPU/platform context,

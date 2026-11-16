@@ -132,12 +132,13 @@ impl AudioSink for FakeSink {
 
 #[test]
 fn audio_track_trims_pre_skip_and_maps_the_sink_position_to_content_time() {
-  use crate::video::audio::{AudioTrack, AUDIO_LOOKAHEAD_US, AUDIO_OUTPUT_LATENCY_US};
+  use crate::video::audio::{AudioOutput, AudioTrack, AUDIO_LOOKAHEAD_US, AUDIO_OUTPUT_LATENCY_US};
   let mut demux = WebmDemuxer::open_path(&fixture()).expect("open fixture");
   let info = demux.info().audio.clone().expect("audio track");
   let state = std::sync::Arc::new(std::sync::Mutex::new(FakeSinkState::default()));
   let sink: Box<dyn AudioSink> = Box::new(FakeSink(state.clone()));
-  let mut track = AudioTrack::new(&info, 0, sink).expect("create audio track");
+  let output = AudioOutput { sink, delay_us: AUDIO_OUTPUT_LATENCY_US };
+  let mut track = AudioTrack::new(&info, 0, output).expect("create audio track");
   assert!(track.content_time_us().is_none(), "no clock before the first push");
 
   // One feed fills the lookahead and no more.

@@ -735,6 +735,13 @@ Shaped, not started.
   QUIC listener would fix that at the cost of a certificate the clients must
   accept; whether `sol run` serves a relay for its dev clients is undecided
   too.
+- **[Let serveRelay run on a public network](backlog/p2p-relay-on-a-public-network.md)** [2026-11-16]
+  Alice shows a QR code, Bob scans it, they connect through a relay, on a
+  public network too; today the relay is plain HTTP with a random token per
+  run and no bind address, allowlist or URL override, the endpoint cannot
+  trust a self-signed relay, `connect` ignores the relay a ticket names, and a
+  relay that never comes online fails silently. The plan is decided (pin in
+  the relay URL, tickets adopted per connection) and ready to implement.
 - **[Trim p2p tickets to the addresses a peer needs](backlog/p2p-ticket-addresses.md)** [2026-09-14]
   A p2p ticket lists every interface address (VPN, container bridge, LAN,
   global IPv6), which exposes the network layout to anyone who sees it and
@@ -1040,6 +1047,11 @@ Shaped, not started.
   flux:tty raw mode and the sol repl are crossterm-backed and compile for
   Windows and Android, but neither has been run there - the Windows console
   ANSI path and Android termios from a terminal emulator are unverified.
+- **[Add the WHATWG URL global](backlog/url-global.md)** [2026-11-16]
+  flux has no URL class, so new URL(...) throws "URL is not defined" and an
+  app parses a relay URL or any URL by splitting strings; a thin
+  standards_plugins marshal over the url crate forge already pins gives the
+  standard shape.
 - **[Video playback](backlog/video-playback.md)** [2026-08-12]
   The TEXTURE video path - VP9 since 2026-09-12 (royalty-free, replaces
   H.264), WebM + Opus since 2026-09-12 (own reader, vendored libopus; MP4 and

@@ -14,6 +14,8 @@ the signal. An update changes only that location. Solid does not render
 again and does not use a virtual DOM.
 
 ```tsx
+import { createSignal } from "@solidrt/core"
+
 function Counter() {
   let [count, setCount] = createSignal(0)
   console.log("runs once")

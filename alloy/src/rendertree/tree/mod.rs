@@ -1088,8 +1088,9 @@ impl RenderTree {
   /// detached (a detached node can be re-inserted, so its reference counts):
   /// texture elements' sources and boundary shaders' extra sampler inputs.
   /// Used by the deferred-destroy sweep to decide which pending ids are
-  /// reclaimable; only called while destroys are pending, so it stays off
-  /// the per-frame path.
+  /// reclaimable, and (through `shown_texture_ids`) by the video upload
+  /// gate; called only while destroys are pending or a YUV texture exists,
+  /// so it stays off the per-frame path otherwise.
   pub fn referenced_texture_ids(&self) -> HashSet<u64> {
     let mut ids = HashSet::new();
     for element in self.texture_referencers.iter().filter_map(|id| self.nodes.get(id)) {
@@ -1105,6 +1106,21 @@ impl RenderTree {
           }
         }
         _ => {}
+      }
+    }
+    ids
+  }
+
+  /// Texture registry ids something in the tree samples: the
+  /// `referenced_texture_ids` plus the window shader's sampler inputs.
+  /// What decides whether a video texture's frames are uploaded
+  /// (`Context::note_shown_video`); called per frame only while a YUV
+  /// texture exists.
+  pub fn shown_texture_ids(&self) -> HashSet<u64> {
+    let mut ids = self.referenced_texture_ids();
+    if let Some(ElementKind::Window(w)) = self.root.and_then(|root| self.nodes.get(&root)).map(|e| &e.kind) {
+      if let Some(shader) = &w.shader {
+        ids.extend(shader.textures.iter().map(|b| b.id));
       }
     }
     ids

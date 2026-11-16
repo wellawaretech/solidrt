@@ -23,7 +23,7 @@ pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Da
     // Role names ("sans", "serif", "mono") are registered font aliases; every
     // family name passes through to the typographer as-is.
     "fontFamily" => text.set_font_family(opt(value, |v| Ok(str_of(v, "fontFamily")?.to_string()))?),
-    "fontSize" => text.set_font_size(opt_f32(value, "fontSize")?),
+    "fontSize" => text.set_font_size(opt_positive_f32(value, "fontSize")?),
     "textAlign" => text.set_text_alignment(opt(value, |v| {
       Ok(match str_of(v, "textAlign")? {
         "left" => TextAlignment::Left,
@@ -77,7 +77,7 @@ pub fn apply_span(span: &mut Span, name: &str, value: &PropValue) -> Result<Opti
   Ok(Some(match name {
     "text" => span.set_text(str_of(value, "text")?.to_string()),
     "fontFamily" => span.set_font_family(opt(value, |v| Ok(str_of(v, "fontFamily")?.to_string()))?),
-    "fontSize" => span.set_font_size(opt_f32(value, "fontSize")?),
+    "fontSize" => span.set_font_size(opt_positive_f32(value, "fontSize")?),
     "lineHeight" => span.set_line_height(opt_f32(value, "lineHeight")?),
     "fontStyle" => span.set_font_style(font_style_of(value)?),
     "fontWeight" => span.set_font_weight(font_weight_of(value)?),

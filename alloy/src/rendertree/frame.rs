@@ -98,6 +98,11 @@ impl<'d> PendingFrame<'d> {
           // revision): flush it ahead of the frame, the ordering the build
           // path gets from the paint walk.
           if let Some(change) = tree.take_pending_window_shader() {
+            // The shader's sampler inputs are shown textures, and this path
+            // has no paint walk to note them: note them here, so a video the
+            // window pass now samples (or no longer does) is announced
+            // ahead of the frame that runs the pass.
+            composite::note_shown_video(tree, alloy);
             if let Err(e) = alloy.set_window_shader(change) {
               log::warn!("[render] window shader: {e}");
             }
