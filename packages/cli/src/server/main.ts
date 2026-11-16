@@ -97,6 +97,7 @@ let config: ServerConfig = {
   capture: args.capture,
   stats: args.stats,
   tunnel: args.tunnel,
+  tunnelAddresses: args.tunnelAddresses,
   client: args.client !== null ? { args: clientArgs } : null,
 }
 state.config = config
@@ -385,7 +386,7 @@ let remembered = config.port ?? (await rememberedPort(config.serverDir))
 // connections directly alongside the TCP listener. Its UDP port follows the
 // remembered port so a ticket stays stable across restarts.
 let tunnel = config.tunnel ? await createTunnelEndpoint(remembered, config.serverDir) : null
-if (tunnel) state.tunnelTicket = await tunnel.ticket()
+if (tunnel) state.tunnelTicket = await tunnel.ticket({ addresses: config.tunnelAddresses })
 
 function bind(port: number): Server {
   return serve({

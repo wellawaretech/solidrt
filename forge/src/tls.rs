@@ -14,6 +14,10 @@
 //!   rarely names the address a client reaches it on). The handshake
 //!   signatures are still verified, so a peer that replays the certificate
 //!   without the key fails.
+//! - Per host (`HostTrust`): a set of servers (an endpoint's relays) where
+//!   a host may carry a pin, checked as above, and every other host gets
+//!   the chain and name check against the roots. One verifier for them
+//!   all, because the TLS stack that dials them takes one.
 //! - Any client key (`AnyClientKey`): a client certificate is required, any
 //!   key is accepted, and the app checks the peer's key itself (pairing).
 //!   The signatures are verified here too.
@@ -31,23 +35,24 @@
 //! P-256 key and a certificate for it, self-signed or signed by a CA made the
 //! same way, through rcgen on ring.
 
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use tokio_rustls::rustls;
 use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use tokio_rustls::rustls::client::Resumption;
+use tokio_rustls::rustls::client::{Resumption, WebPkiServerVerifier};
 use tokio_rustls::rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
 use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use tokio_rustls::rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use tokio_rustls::rustls::server::{ParsedCertificate, WebPkiClientVerifier};
 use tokio_rustls::rustls::{
-  CertificateError, CommonState, DigitallySignedStruct, DistinguishedName, OtherError, RootCertStore, SignatureScheme,
+  CertificateError, CommonState, DigitallySignedStruct, DistinguishedName, OtherError, SignatureScheme,
 };
 
-pub use tokio_rustls::rustls::{ClientConfig, ServerConfig};
+pub use tokio_rustls::rustls::{ClientConfig, RootCertStore, ServerConfig};
 
 /// The length of a pin and of a peer key: a SHA-256 hash.
 pub const PIN_LEN: usize = 32;
@@ -195,13 +200,38 @@ fn key_from_pem(pem: &[u8], what: &str) -> Result<PrivateKeyDer<'static>, String
   PrivateKeyDer::from_pem_slice(pem).map_err(|e| format!("{what}: not a PEM private key: {e}"))
 }
 
-fn add_roots(roots: &mut RootCertStore, blobs: &[Vec<u8>]) -> Result<(), String> {
+fn add_roots(roots: &mut RootCertStore, blobs: &[Vec<u8>], what: &str) -> Result<(), String> {
   for blob in blobs {
-    for cert in certs_from_pem(blob, "caCerts")? {
-      roots.add(cert).map_err(|e| format!("caCerts: {e}"))?;
+    for cert in certs_from_pem(blob, what)? {
+      roots.add(cert).map_err(|e| format!("{what}: {e}"))?;
     }
   }
   Ok(())
+}
+
+/// The roots a server's chain is checked against: the webpki roots plus
+/// `ca_certs` (PEM blobs, each possibly several certificates). Errors name
+/// `what`, the field the PEM came from.
+pub fn web_roots(ca_certs: &[Vec<u8>], what: &str) -> Result<RootCertStore, String> {
+  let mut roots = RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
+  add_roots(&mut roots, ca_certs, what)?;
+  Ok(roots)
+}
+
+/// The chain and name check against `roots` (`web_roots`), rustls's own
+/// verifier. Errors name `what`, the field the extra roots came from.
+pub fn roots_verifier(
+  roots: Arc<RootCertStore>,
+  provider: Arc<CryptoProvider>,
+  what: &str,
+) -> Result<Arc<WebPkiServerVerifier>, String> {
+  WebPkiServerVerifier::builder_with_provider(roots, provider).build().map_err(|e| format!("{what}: {e}"))
+}
+
+/// The pin check (see the module doc): the server's key against `pin`,
+/// in place of the chain and name check.
+pub fn pin_verifier(pin: [u8; PIN_LEN], provider: Arc<CryptoProvider>) -> Arc<dyn ServerCertVerifier> {
+  Arc::new(PinVerifier { pin, provider })
 }
 
 fn alpn_bytes(alpn: &[String]) -> Vec<Vec<u8>> {
@@ -235,12 +265,11 @@ fn build_client_config(opts: &ClientOptions) -> Result<ClientConfig, String> {
       if !opts.ca_certs.is_empty() {
         return Err("pin and caCerts exclude each other: a pin replaces the chain check".to_string());
       }
-      builder.dangerous().with_custom_certificate_verifier(Arc::new(PinVerifier { pin, provider }))
+      builder.dangerous().with_custom_certificate_verifier(pin_verifier(pin, provider))
     }
     None => {
-      let mut roots = RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
-      add_roots(&mut roots, &opts.ca_certs)?;
-      builder.with_root_certificates(roots)
+      let roots = web_roots(&opts.ca_certs, "caCerts")?;
+      builder.with_webpki_verifier(roots_verifier(Arc::new(roots), provider, "caCerts")?)
     }
   };
   let mut config = match (&opts.cert, &opts.key) {
@@ -273,7 +302,7 @@ pub(crate) fn server_config_with_versions(
     ClientAuth::None => builder.with_no_client_auth(),
     ClientAuth::Chain(blobs) => {
       let mut roots = RootCertStore::empty();
-      add_roots(&mut roots, blobs)?;
+      add_roots(&mut roots, blobs, "caCerts")?;
       let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
         .build()
         .map_err(|e| format!("caCerts: {e}"))?;
@@ -299,6 +328,20 @@ pub fn server_name(host: &str) -> Result<ServerName<'static>, String> {
 pub fn spki_sha256(cert: &CertificateDer<'_>) -> Option<[u8; PIN_LEN]> {
   let parsed = ParsedCertificate::try_from(cert).ok()?;
   Some(Sha256::digest(parsed.subject_public_key_info().as_ref()).into())
+}
+
+/// The leaf of a PEM certificate chain: its first certificate. Errors name
+/// `what`, the field the PEM came from.
+pub fn leaf_from_pem(pem: &[u8], what: &str) -> Result<CertificateDer<'static>, String> {
+  Ok(certs_from_pem(pem, what)?.swap_remove(0))
+}
+
+/// Whether a certificate is self-signed: its issuer equals its subject, as
+/// `generate_certificate` makes one without an `issuer`. `None` for a
+/// certificate that does not parse.
+pub fn is_self_signed(cert: &CertificateDer<'_>) -> Option<bool> {
+  let parsed = webpki::EndEntityCert::try_from(cert).ok()?;
+  Some(parsed.issuer() == parsed.subject())
 }
 
 /// The peer's key as lowercase hex (`spki_sha256` of its leaf), `None`
@@ -349,6 +392,25 @@ pub(crate) fn rustls_message(e: &(dyn std::error::Error + 'static)) -> Option<St
     }
     _ => None,
   }
+}
+
+/// An error and its sources as one message, each part once (a source
+/// whose text the message already ends with adds nothing). A TLS error of
+/// our verifiers is rendered by `rustls_message`, so a pin mismatch reads
+/// the same through fetch, a socket or a relay.
+#[cfg(any(feature = "http", feature = "p2p"))]
+pub(crate) fn error_chain_message(e: &(dyn std::error::Error + 'static)) -> String {
+  let mut message = rustls_message(e).unwrap_or_else(|| e.to_string());
+  let mut source = e.source();
+  while let Some(err) = source {
+    let part = rustls_message(err).unwrap_or_else(|| err.to_string());
+    if !message.ends_with(&part) {
+      message.push_str(": ");
+      message.push_str(&part);
+    }
+    source = err.source();
+  }
+  message
 }
 
 /// How many days a generated certificate is valid by default: 10 years, for
@@ -459,6 +521,157 @@ impl std::fmt::Display for PinMismatch {
 
 impl std::error::Error for PinMismatch {}
 
+/// The pin check of `PinVerifier` and `HostVerifier`.
+fn check_pin(pin: &[u8; PIN_LEN], end_entity: &CertificateDer<'_>) -> Result<ServerCertVerified, rustls::Error> {
+  match spki_sha256(end_entity) {
+    Some(hash) if hash == *pin => Ok(ServerCertVerified::assertion()),
+    Some(_) => Err(CertificateError::Other(OtherError(Arc::new(PinMismatch))).into()),
+    None => Err(CertificateError::BadEncoding.into()),
+  }
+}
+
+/// How a host's server is checked, by `HostTrust`: by its key (`Some`, a
+/// pin) or by its chain and name (`None`).
+pub type HostCheck = Option<[u8; PIN_LEN]>;
+
+/// The check of each host in a set of servers, shared between the owner
+/// that adds hosts and the one verifier (`verifier`) that reads it at every
+/// handshake. A host with a pin is checked by the pin alone; a host not
+/// added, or added without a pin, by the chain and name against the roots.
+/// Keyed by host, not by port: a rustls verifier sees the server name
+/// only, so every server on one host is checked one way, and `add`
+/// refuses a second, different check for a host. The verifier also
+/// records the last certificate it rejected per host (`rejection`), cleared
+/// when a certificate for that host passes: the one observation of a
+/// failed check when the stack that dials reports none. Cheaply cloned
+/// (shared tables).
+#[derive(Clone, Default)]
+pub struct HostTrust {
+  hosts: Arc<RwLock<HashMap<String, HostCheck>>>,
+  rejections: Arc<Mutex<HashMap<String, String>>>,
+}
+
+impl HostTrust {
+  pub fn new() -> HostTrust {
+    HostTrust::default()
+  }
+
+  /// Add `host` (a DNS name or an IP address) with its check. Adding a host
+  /// again with the same check is a no-op; with a different one, an error
+  /// naming what the host is checked by already.
+  pub fn add(&self, host: &str, check: HostCheck) -> Result<(), String> {
+    let key = host_key(&server_name(host)?);
+    let mut hosts = self.hosts.write().expect("TLS host trust lock");
+    match hosts.get(&key) {
+      Some(known) if *known == check => Ok(()),
+      Some(known) => {
+        let by = match known {
+          Some(_) => "another pin",
+          None => "its certificate chain (no pin)",
+        };
+        Err(format!(
+          "host {host} is already checked by {by}; one host is checked one way, so give its relays one \
+           certificate or reach them by different host names"
+        ))
+      }
+      None => {
+        hosts.insert(key, check);
+        Ok(())
+      }
+    }
+  }
+
+  /// Why the verifier last rejected a certificate of `host`, in the
+  /// message form of connectTls and fetch (`rustls_message`); `None` when
+  /// it has rejected none, or a certificate of the host passed since.
+  pub fn rejection(&self, host: &str) -> Option<String> {
+    let key = host_key(&server_name(host).ok()?);
+    self.rejections.lock().expect("TLS host rejections lock").get(&key).cloned()
+  }
+
+  /// The verifier over this table: a host's pin, else the chain and name
+  /// check against `roots`. Hosts added later are seen by it. Errors name
+  /// `what`, the field the extra roots came from.
+  pub fn verifier(
+    &self,
+    roots: Arc<RootCertStore>,
+    provider: Arc<CryptoProvider>,
+    what: &str,
+  ) -> Result<Arc<dyn ServerCertVerifier>, String> {
+    let roots = roots_verifier(roots, provider.clone(), what)?;
+    Ok(Arc::new(HostVerifier { hosts: self.hosts.clone(), rejections: self.rejections.clone(), roots, provider }))
+  }
+}
+
+/// The table key of a server name: a DNS name lowercased without a trailing
+/// dot, an IP address in its canonical text form.
+fn host_key(name: &ServerName<'_>) -> String {
+  match name {
+    ServerName::DnsName(dns) => dns.as_ref().trim_end_matches('.').to_ascii_lowercase(),
+    ServerName::IpAddress(ip) => std::net::IpAddr::from(*ip).to_string(),
+    other => format!("{other:?}"),
+  }
+}
+
+/// Verifies by `HostTrust` (see the module doc).
+#[derive(Debug)]
+struct HostVerifier {
+  hosts: Arc<RwLock<HashMap<String, HostCheck>>>,
+  rejections: Arc<Mutex<HashMap<String, String>>>,
+  roots: Arc<WebPkiServerVerifier>,
+  provider: Arc<CryptoProvider>,
+}
+
+impl ServerCertVerifier for HostVerifier {
+  fn verify_server_cert(
+    &self,
+    end_entity: &CertificateDer<'_>,
+    intermediates: &[CertificateDer<'_>],
+    server_name: &ServerName<'_>,
+    ocsp_response: &[u8],
+    now: UnixTime,
+  ) -> Result<ServerCertVerified, rustls::Error> {
+    let key = host_key(server_name);
+    let pin = self.hosts.read().expect("TLS host trust lock").get(&key).copied().flatten();
+    let verified = match pin {
+      Some(pin) => check_pin(&pin, end_entity),
+      None => self.roots.verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now),
+    };
+    let mut rejections = self.rejections.lock().expect("TLS host rejections lock");
+    match &verified {
+      Ok(_) => {
+        rejections.remove(&key);
+      }
+      Err(e) => {
+        rejections.insert(key, rustls_message(e).unwrap_or_else(|| e.to_string()));
+      }
+    }
+    verified
+  }
+
+  fn verify_tls12_signature(
+    &self,
+    message: &[u8],
+    cert: &CertificateDer<'_>,
+    dss: &DigitallySignedStruct,
+  ) -> Result<HandshakeSignatureValid, rustls::Error> {
+    verify_tls12_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+  }
+
+  fn verify_tls13_signature(
+    &self,
+    message: &[u8],
+    cert: &CertificateDer<'_>,
+    dss: &DigitallySignedStruct,
+  ) -> Result<HandshakeSignatureValid, rustls::Error> {
+    verify_tls13_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+  }
+
+  fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+    self.provider.signature_verification_algorithms.supported_schemes()
+  }
+}
+
 /// Verifies the server by its key alone (see the module doc).
 #[derive(Debug)]
 struct PinVerifier {
@@ -475,11 +688,7 @@ impl ServerCertVerifier for PinVerifier {
     _ocsp_response: &[u8],
     _now: UnixTime,
   ) -> Result<ServerCertVerified, rustls::Error> {
-    match spki_sha256(end_entity) {
-      Some(hash) if hash == self.pin => Ok(ServerCertVerified::assertion()),
-      Some(_) => Err(CertificateError::Other(OtherError(Arc::new(PinMismatch))).into()),
-      None => Err(CertificateError::BadEncoding.into()),
-    }
+    check_pin(&self.pin, end_entity)
   }
 
   fn verify_tls12_signature(

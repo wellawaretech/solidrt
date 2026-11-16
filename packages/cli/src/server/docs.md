@@ -34,6 +34,10 @@ takes the first free one from 34884 up, and prints it, so projects run side
 by side without any numbering; `--port N` pins it. Loopback only unless
 `--lan`, which is what phones and other devices need; `--tunnel` accepts
 clients over a peer-to-peer connection instead, with no network setup.
+Its ticket carries the IPv4 address of the default-route interface only
+(every IPv4 address on a machine without a default route);
+`--tunnel-addresses all` writes every interface's address, for a client
+on another of this machine's networks or a default route through a VPN.
 `--proxy-http` routes the app's `fetch` calls through the dev server, cached
 in `.solidrt-data/http-cache.db` in the project root (delete the file to
 clear), for clients on other devices that need your machine's data.

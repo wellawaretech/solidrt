@@ -19,6 +19,9 @@ mod ktx2;
 mod live;
 mod mdns;
 mod net;
+// The addresses a p2p ticket carries.
+#[cfg(feature = "p2p")]
+mod p2p_ticket;
 // Peers dial each other through the relay: both halves.
 #[cfg(all(feature = "p2p", feature = "p2p-relay"))]
 mod p2p_relay;

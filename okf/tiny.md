@@ -42,8 +42,6 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 ## DX
 
-- the dev server binds loopback only: on 2026-10-15 a tablet on the same Wi-Fi could not reach `sol run --port 34899` and `live.json` reported `address: 127.0.0.1` (earlier sessions recorded a LAN address there), so the device had to go through `adb reverse`; check whether LAN binding regressed or needs a flag, and make the Android dev loop notes say which.
-
 The `sol` CLI, the dev server, MCP, debug commands, examples and probes.
 
 - No control-API way to make a still scene draw N frames for a timing: a bench has to nudge a param through a debug command, and a nudge per debug call keeps a Mali governor at a low clock (the soft-shadows example's `frames({ count })` is the app-side form: an `onFrame` subscriber nudging a param, cancelled after the count). Add `/frames?count=n` (and the MCP tool) that demands n frames and answers when they presented, so `/stats?window=` covers exactly them and no example needs the command.

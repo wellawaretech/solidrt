@@ -71,6 +71,10 @@ run/server/demo options:
       --proxy-http       Route fetch calls through the dev server (HTTP cache enabled)
       --capture <file>   Record connected clients' key events to a script file
       --tunnel           Accept ticket-paired clients through the p2p tunnel
+      --tunnel-addresses <auto|all>  The direct addresses the tunnel ticket carries: auto (default),
+                         the default-route IPv4 only (every IPv4 without a default route); all, every
+                         interface (when the default route is a VPN, or the client is on another of
+                         this machine's networks)
       -- <args...>       Everything after -- reaches the app on every client (flux:process argv)
 
 run/client options:

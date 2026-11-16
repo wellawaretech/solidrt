@@ -57,6 +57,7 @@ const OPTIONS = {
     link: { type: "string" },
     capture: { type: "string" },
     tunnel: { type: "boolean", default: false },
+    "tunnel-addresses": { type: "string" },
     stats: { type: "boolean", default: false },
     "data-root": { type: "string" },
     client: { type: "string", short: "c" },
@@ -97,6 +98,25 @@ function resolvePort(): number | undefined {
   return port
 }
 export let port = resolvePort()
+
+// The values --tunnel-addresses takes (flux:p2p ticket's `addresses`).
+// Checked here so sol prints one line; the server checks it again for a
+// direct flux run (src/server/args.ts).
+const TUNNEL_ADDRESSES = ["auto", "all"]
+
+function checkTunnelAddresses() {
+  let raw = values["tunnel-addresses"]
+  if (raw === undefined) return
+  if (!TUNNEL_ADDRESSES.includes(raw)) {
+    console.error(`Invalid --tunnel-addresses value "${raw}": expected ${TUNNEL_ADDRESSES.join(" or ")}`)
+    process.exit(1)
+  }
+  if (!values.tunnel) {
+    console.error("--tunnel-addresses needs --tunnel")
+    process.exit(1)
+  }
+}
+checkTunnelAddresses()
 
 // Storage flags for a locally spawned client. Dev client trees live in
 // ~/.solidrt/clients/client<M>/, reached through --data-root so the client

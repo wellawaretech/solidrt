@@ -10,9 +10,15 @@
 //!   ephemeral one is generated unless `secretKey` (64 hex chars) is supplied.
 //!   `relayUrl` selects a self-hosted relay (no public relay or address lookup is
 //!   ever used); `protocols` lists what it `accept`s.
-//! - `endpoint.connect(peer, protocol)` dials a peer (by `ticket` or bare `id`)
-//!   and opens one bidirectional stream.
+//! - `endpoint.ticket(opts?)` encodes the dial token (`relay: false` for a
+//!   direct-only one, `addresses: "all"` for every direct address);
+//!   `endpoint.relayStatus()` reports the configured relay and
+//!   `endpoint.relays()` every relay the endpoint knows.
+//! - `endpoint.connect(peer, protocol, opts?)` dials a peer (by `ticket` or
+//!   bare `id`) and opens one bidirectional stream, adopting the ticket's
+//!   relay unless `adoptRelay: false`.
 //! - `endpoint.accept(protocol)` is an async-iterable of incoming streams.
+//! - `parseTicket(ticket)` splits a ticket into `{ id, relayUrl, addresses }`.
 //! - A `P2pStream` is a byte duplex as the web shapes it: `stream.readable`
 //!   reads, `stream.writable` writes, `writable.close()` ends the send half
 //!   (QUIC FIN, the recv half stays open), `writable.abort(reason)` resets it
@@ -32,7 +38,7 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 #[cfg(feature = "p2p")]
 use rquickjs::Class;
 use rquickjs::Ctx;
-#[cfg(feature = "p2p-relay")]
+#[cfg(any(feature = "p2p", feature = "p2p-relay"))]
 use rquickjs::Function;
 
 #[cfg(feature = "p2p")]
@@ -49,6 +55,8 @@ impl ModuleDef for P2pModule {
   fn declare(decl: &Declarations<'_>) -> rquickjs::Result<()> {
     #[cfg(feature = "p2p")]
     decl.declare("Endpoint")?;
+    #[cfg(feature = "p2p")]
+    decl.declare("parseTicket")?;
     #[cfg(feature = "p2p-relay")]
     decl.declare("serveRelay")?;
     Ok(())
@@ -59,6 +67,7 @@ impl ModuleDef for P2pModule {
     {
       let ctor = Class::<P2pEndpoint>::create_constructor(ctx)?.expect("Endpoint class has a constructor");
       exports.export("Endpoint", ctor)?;
+      exports.export("parseTicket", Function::new(ctx.clone(), endpoint::parse_ticket)?)?;
     }
     #[cfg(feature = "p2p-relay")]
     exports.export("serveRelay", Function::new(ctx.clone(), relay::serve_relay)?)?;

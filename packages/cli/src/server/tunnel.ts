@@ -3,11 +3,15 @@
 // on the endpoint directly (the endpoint/protocol serve options), so the
 // HTTP/WS protocol is spoken straight over each connection's first bi-stream -
 // no pump. Local-only: the endpoint uses no relay and publishes nothing, so
-// the ticket (direct addresses) is the sole carrier of addressing. Off-LAN
-// relay support is a future opt-in flag, not the default.
+// the ticket is the sole carrier of addressing: the default-route IPv4 alone
+// (ticket()'s addresses: "auto"), not every interface (VPN, container
+// bridge, IPv6), which keeps the pairing QR code small and the network
+// layout off the screen. --tunnel-addresses all (main.ts) writes every
+// address instead. Off-LAN relay support is a future opt-in flag, not the
+// default.
 
 import { Endpoint } from "flux:p2p"
-import { file } from "flux:fs"
+import { dir, file } from "flux:fs"
 import { join } from "flux:path"
 
 // The tunnel's ALPN. A protocol change bumps the suffix so old clients fail
@@ -26,7 +30,7 @@ const KEY_FILE = "tunnel.key"
  * (ephemeral on a first run), and the secret key is persisted in
  * <keyDir>/tunnel.key (generated on first run). Both are needed - a moving
  * port or a fresh key each start would change the ticket. Stable across restarts on the same network only; a new machine IP
- * still stales the ticket's addresses (that is the discovery/off-LAN story).
+ * (or a new default route) still stales the ticket's address (that is the discovery/off-LAN story).
  */
 export async function createTunnelEndpoint(port: number | null, keyDir: string): Promise<Endpoint> {
   let keyPath = join(keyDir, KEY_FILE)
@@ -41,7 +45,12 @@ export async function createTunnelEndpoint(port: number | null, keyDir: string):
   let endpoint = await Endpoint.create({ protocols: [TUNNEL_PROTOCOL], ...(port !== null ? { port } : {}), secretKey })
 
   // First run (no saved key): persist the freshly generated one so the next run
-  // reuses it and the ticket stays the same.
-  if (!secretKey) await keyFile.write(endpoint.secretKey)
+  // reuses it and the ticket stays the same. The server folder may not exist
+  // yet on a project's first run (the registry record, which creates it, is
+  // written later).
+  if (!secretKey) {
+    await dir(keyDir).create()
+    await keyFile.write(endpoint.secretKey)
+  }
   return endpoint
 }

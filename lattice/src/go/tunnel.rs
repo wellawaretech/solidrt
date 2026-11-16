@@ -71,11 +71,12 @@ fn persist_secret(hex: &str) {
 /// place of the dev server, plus the forwarder guard.
 pub async fn start(ticket: String) -> Result<(SocketAddr, Tunnel), String> {
   // Dial-only: the client never accepts and needs no relay of its own (no
-  // endpoint publishes addresses). The ticket carries the server's. An
+  // endpoint publishes addresses). The ticket carries the server's (its
+  // default-route IPv4). An
   // ephemeral bind port is fine here - the dialer is never itself dialed.
   // The secret is the client's stable identity (see load_secret).
   let secret = load_secret();
-  let endpoint = forge::p2p::Endpoint::bind(secret, None, Vec::new(), None, false).await?;
+  let endpoint = forge::p2p::Endpoint::bind(secret, None, Vec::new(), None, false, Vec::new()).await?;
   if secret.is_none() {
     persist_secret(&endpoint.secret_key_hex());
   }
@@ -100,7 +101,7 @@ async fn accept_loop(listener: TcpListener, endpoint: forge::p2p::Endpoint, tick
       // One QUIC connection per TCP connection: the server's accept loop takes
       // each incoming connection's first bi-stream. The io handle holds the
       // connection, so it lives exactly as long as the pump.
-      match endpoint.connect_io(ticket, PROTOCOL.to_string()).await {
+      match endpoint.connect_io(ticket, PROTOCOL.to_string(), forge::p2p::ConnectOptions::default()).await {
         Ok(io) => pump(tcp, io).await,
         Err(e) => log::warn!("[sgo] Tunnel dial failed: {e}"),
       }

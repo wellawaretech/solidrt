@@ -4,7 +4,8 @@
 // (okf/done/sol-command-folders.md):
 //
 //   flux server.js [file] [--project|--file] [--port N] [--lan] [--proxy-http]
-//                  [--capture f] [--tunnel] [--stats] [--minify]
+//                  [--capture f] [--tunnel [--tunnel-addresses auto|all]]
+//                  [--stats] [--minify]
 //                  [--client N [--data-root d] [--size WxH]] [-- args]
 //
 // --client N spawns the local solidrt-go client with data slot N (`sol run`);
@@ -23,6 +24,9 @@ export type ServerArgs = {
   lan: boolean
   proxyHttp: boolean
   tunnel: boolean
+  /** Which direct addresses the tunnel ticket carries (flux:p2p ticket's
+   * `addresses`): "auto" (the default-route IPv4) or "all". */
+  tunnelAddresses: TunnelAddresses
   stats: boolean
   minify: boolean
   port: number | undefined
@@ -33,6 +37,10 @@ export type ServerArgs = {
   size: string | undefined
   appArgs: string[]
 }
+
+// The values of --tunnel-addresses, as flux:p2p ticket() takes them.
+const TUNNEL_ADDRESSES = ["auto", "all"] as const
+export type TunnelAddresses = (typeof TUNNEL_ADDRESSES)[number]
 
 // A fatal usage or configuration error. flux has no exit call: an uncaught
 // error at startup ends the process with a nonzero status and the message
@@ -59,6 +67,7 @@ export function parseArgs(raw: string[] = argv): ServerArgs {
     lan: false,
     proxyHttp: false,
     tunnel: false,
+    tunnelAddresses: "auto",
     stats: false,
     minify: false,
     port: undefined,
@@ -68,6 +77,7 @@ export function parseArgs(raw: string[] = argv): ServerArgs {
     size: undefined,
     appArgs: sep === -1 ? [] : raw.slice(sep + 1),
   }
+  let tunnelAddressesGiven = false
   let value = (name: string, i: number): string => {
     let v = own[i]
     if (v === undefined || v.startsWith("--")) fail(`--${name} needs a value`)
@@ -97,6 +107,14 @@ export function parseArgs(raw: string[] = argv): ServerArgs {
       case "tunnel":
         args.tunnel = true
         break
+      case "tunnel-addresses": {
+        let v = value(name, ++i)
+        let known = TUNNEL_ADDRESSES.find((choice) => choice === v)
+        if (known === undefined) fail(`Invalid --${name} value "${v}": expected ${TUNNEL_ADDRESSES.join(" or ")}`)
+        args.tunnelAddresses = known
+        tunnelAddressesGiven = true
+        break
+      }
       case "stats":
         args.stats = true
         break
@@ -122,5 +140,6 @@ export function parseArgs(raw: string[] = argv): ServerArgs {
         fail(`Unknown flag: ${arg}`)
     }
   }
+  if (tunnelAddressesGiven && !args.tunnel) fail("--tunnel-addresses needs --tunnel")
   return args
 }

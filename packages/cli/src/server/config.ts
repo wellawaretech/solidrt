@@ -2,6 +2,8 @@
 // (mode.ts) and its environment (binaries.ts), shared with the route
 // handlers through state.ts.
 
+import type { TunnelAddresses } from "./args"
+
 export type ServerConfig = {
   /** Project mode serves the project at its root; file mode serves one file. */
   mode: "project" | "file"
@@ -49,6 +51,8 @@ export type ServerConfig = {
   stats: boolean
   /** Accept ticket-paired clients through the p2p tunnel. */
   tunnel: boolean
+  /** Which direct addresses the tunnel ticket carries (--tunnel-addresses). */
+  tunnelAddresses: TunnelAddresses
   /** The arguments of the local client to spawn once the first bundle is
    * known (its binary is resolved then: the project's own when the bundle
    * needs it, binaries.ts), or null for no local client. */

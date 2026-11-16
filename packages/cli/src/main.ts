@@ -91,6 +91,7 @@ async function launchServer(withClient: boolean, demo?: { cwd: string; entry: st
     if (values[flag]) args.push(`--${flag}`)
   }
   if (values.capture) args.push("--capture", values.capture)
+  if (values["tunnel-addresses"] !== undefined) args.push("--tunnel-addresses", values["tunnel-addresses"])
   if (withClient) {
     args.push("--client", values.client ?? "0")
     if (values["data-root"]) args.push("--data-root", values["data-root"])

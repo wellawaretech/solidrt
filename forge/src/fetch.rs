@@ -74,19 +74,10 @@ const FETCH_ALPN: [&[u8]; 2] = [b"h2", b"http/1.1"];
 
 /// A failed request as one message: reqwest's own ("error sending request
 /// for url (..)") says nothing of the cause, so the sources follow it, each
-/// once. A TLS error of our verifiers is rendered by `tls::rustls_message`.
+/// once (`tls::error_chain_message`, which renders a TLS error of our
+/// verifiers).
 fn error_message(e: &reqwest::Error) -> String {
-  let mut message = e.to_string();
-  let mut source = std::error::Error::source(e);
-  while let Some(err) = source {
-    let part = crate::tls::rustls_message(err).unwrap_or_else(|| err.to_string());
-    if !message.ends_with(&part) {
-      message.push_str(": ");
-      message.push_str(&part);
-    }
-    source = err.source();
-  }
-  message
+  crate::tls::error_chain_message(e)
 }
 
 /// An outgoing request body: buffered bytes (`bytes`), or the streamed side

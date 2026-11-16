@@ -35,7 +35,7 @@ video-encode = ["video"]
 # startTls, listenTls and generateCertificate): rustls on the ring provider
 # with the webpki roots, the stack reqwest uses for fetch, and rcgen for the
 # certificates. Implied by `http`. See okf/done/tls-and-fetch-limits.md.
-tls = ["dep:tokio-rustls", "dep:webpki-roots", "dep:rcgen", "dep:time"]
+tls = ["dep:tokio-rustls", "dep:webpki-roots", "dep:rcgen", "dep:time", "dep:rustls-webpki"]
 # forge::fetch, forge::cache, forge::http and forge::websocket (fetch,
 # WebSocket and flux:http): the HTTP client with its TLS (reqwest on rustls,
 # ring and the webpki roots), the HTTP server and the WebSocket framing, and
@@ -57,17 +57,20 @@ http = [
   "dep:percent-encoding",
 ]
 # forge::p2p (flux:p2p): direct peer-to-peer connections over iroh, its QUIC
-# and TLS stack, and the p2p accept loop of the HTTP server. Not a cargo
+# and TLS stack, and the p2p accept loop of the HTTP server. Implies `tls`
+# for the relay's certificate check (a pin, `relayCaCerts`), which shares
+# forge::tls's verifiers. Not a cargo
 # default; lattice's default set and its player turn it on. See
 # okf/backlog/module-feature-flags.md.
-p2p = ["dep:iroh", "dep:url"]
+p2p = ["tls", "dep:iroh", "dep:netwatch", "dep:url"]
 # forge::p2p::relay (flux:p2p's `serveRelay`): an iroh relay served from this
-# process over plain HTTP, the path between peers a direct UDP path does
-# not carry; the `server` half of iroh-relay. Independent of `p2p`: the
+# process over plain HTTP or HTTPS (its certificate through `tls`), the path
+# between peers a direct UDP path does not carry; the `server` half of
+# iroh-relay. Independent of `p2p`: the
 # relay needs no endpoint, so an app that serves it for others need not be
 # a peer itself. Not a cargo default (it pulls the relay's HTTP server
 # stack); lattice's default set turns it on. See okf/done/video-encode.md.
-p2p-relay = ["dep:iroh-relay", "dep:iroh-base", "dep:url"]
+p2p-relay = ["tls", "dep:iroh-relay", "dep:iroh-base", "dep:netwatch", "dep:url"]
 # forge::ktx2: compressed textures - KTX2 files of Basis Universal texel data
 # transcoded to the device's block format (ETC2, BC7), and the encoder that
 # bakes them. The vendored Basis Universal (forge/vendor/basis_universal, a
@@ -112,6 +115,10 @@ webpki-roots = { version = "=1.0.12", optional = true }
 # it). The explicit feature list keeps a future default from pulling aws-lc
 # in; `pem` and `x509-parser` read an issuer's PEM.
 rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "pem", "ring", "x509-parser"], optional = true }
+# The issuer and subject of a certificate (forge::tls::is_self_signed),
+# behind `tls`: rustls's own certificate parser, already in the tree under
+# rustls, with the features rustls turns on.
+rustls-webpki = { version = "=0.103.16", default-features = false, features = ["alloc"], optional = true }
 # The validity dates of a generated certificate (`std` for the clock).
 # Already in the tree (rcgen depends on it).
 time = { version = "=0.3.55", default-features = false, features = ["std"], optional = true }
@@ -160,6 +167,11 @@ sysinfo = { version = "=0.40.3", default-features = false, features = ["system"]
 fastwebsockets = { version = "=0.10.0", features = ["upgrade", "unstable-split"], optional = true }
 # The p2p core behind `p2p` (forge::p2p).
 iroh = { version = "=1.4.1", optional = true }
+# The default-route interface behind `p2p` and `p2p-relay`: a ticket without
+# a relay carries that interface's IPv4 only (forge::p2p `Endpoint::ticket`),
+# and the relay's URL names it (forge::p2p::relay `Relay::start`). The version
+# iroh 1.4.1 depends on, so it adds nothing to the tree; it moves with iroh.
+netwatch = { version = "=0.19.3", optional = true }
 # The relay's access token behind `p2p-relay`: a fresh secret key's bytes,
 # from the CSPRNG iroh draws its own keys from. `key` is what iroh-relay
 # turns on already, so this adds nothing to the tree.

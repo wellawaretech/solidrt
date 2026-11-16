@@ -390,6 +390,15 @@ Shaped, not started.
 - **[AVIF decoding in decodeImage](backlog/avif-decode.md)** [2026-07-19]
   The one practical web image format decodeImage lacks; pure-Rust decode does
   not exist in the image crate, so it needs the dav1d C system dependency.
+- **[Keep boundary caches under a scale written every frame](backlog/boundary-cache-under-js-written-scale.md)** [2026-11-16]
+  Under an ancestor scale that JS writes every frame, a snapshot boundary
+  re-rasterizes every frame into a new texture (2.5 fps for 40 static 1200x800
+  snapshots, against 52.7 fps for the same writes on x), because its key holds
+  the box snapped to the device grid and that box has a new logical size at
+  every scale; text-layer-motion and snapshot-raster-composite-scale decided
+  the opposite and performance.md rule 5 promises it. Fixing the key alone is
+  not enough for a wide sweep - every crossing of the motion bound re-rasters
+  every snapshot in one frame.
 - **[Native modules cannot read camera frames](backlog/camera-frame-tap.md)** [2026-10-08]
   alloy's camera pump holds every frame as upright RGBA on the CPU and hands
   it only to the texture upload and the QR decoder, so a custom runtime module
@@ -729,24 +738,23 @@ Shaped, not started.
   owner-scoped variant auto-cleaned like onFrame lets both live in the
   component they belong to.
 - **[Let two peers on different networks find a direct path](backlog/p2p-relay-across-nats.md)** [2026-11-14]
-  The self-hosted relay (`serveRelay`) runs plain HTTP with no QUIC
-  address-discovery listener, so endpoints learn no public address from it and
-  two peers behind different NATs stay on the relay for the whole call; a TLS
-  QUIC listener would fix that at the cost of a certificate the clients must
-  accept; whether `sol run` serves a relay for its dev clients is undecided
+  The self-hosted relay (`serveRelay`) has no QUIC address-discovery listener,
+  so endpoints learn no public address from it and two peers behind different
+  NATs stay on the relay for the whole call; a QUIC listener on the relay's
+  TLS certificate (pinned or CA-checked, as the HTTPS relay already is) would
+  fix that; whether `sol run` serves a relay for its dev clients is undecided
   too.
-- **[Let serveRelay run on a public network](backlog/p2p-relay-on-a-public-network.md)** [2026-11-16]
-  Alice shows a QR code, Bob scans it, they connect through a relay, on a
-  public network too; today the relay is plain HTTP with a random token per
-  run and no bind address, allowlist or URL override, the endpoint cannot
-  trust a self-signed relay, `connect` ignores the relay a ticket names, and a
-  relay that never comes online fails silently. The plan is decided (pin in
-  the relay URL, tickets adopted per connection) and ready to implement.
-- **[Trim p2p tickets to the addresses a peer needs](backlog/p2p-ticket-addresses.md)** [2026-09-14]
-  A p2p ticket lists every interface address (VPN, container bridge, LAN,
-  global IPv6), which exposes the network layout to anyone who sees it and
-  doubles the QR code; relay tickets should carry no addresses and local
-  tickets only the default-route IPv4.
+- **[Switch an endpoint's relay at runtime](backlog/p2p-set-relay-url.md)** [2026-11-16]
+  A p2p endpoint's `relayUrl` is fixed at `Endpoint.create`, so an app that
+  learns its relay later (scans a ticket, gets a new relay URL from its
+  config) or wants to drop its relay must close the endpoint and create a new
+  one, which ends every connection; an `endpoint.setRelayUrl(url | null)`
+  would switch the home relay in place.
+- **[Verify the p2p ticket's default-route address on Android](backlog/p2p-ticket-default-route-on-android.md)** [2026-11-16]
+  A ticket without a relay carries the IPv4 of the default-route interface,
+  which netwatch reads; on Android it falls back to running `ip route show
+  table 0`, unverified on an old and a current device, so an Android host may
+  write the wrong address or fall back to every IPv4.
 - **[The pacing budget measures the swap's throttle wait as pipeline cost](backlog/pacing-budget-samples-swap-throttle.md)** [2026-09-12]
   On Android the vsync signal delay sits at its 8 ms floor for a 0.1 ms frame,
   because the emission-to-present sample the budget takes includes
@@ -861,6 +869,15 @@ Shaped, not started.
   removeNode detaches and a microtask sweep frees, so control-flow reuse
   inside one tick survives but a node re-inserted in a later async tick is
   already gone, where the DOM would have kept it alive.
+- **[Switch and freeze a snapshot boundary](backlog/repaint-boundary-freeze.md)** [2026-11-16]
+  An app turns a snapshot boundary off while its subtree is live and freezes
+  it for a gesture over live content (a zoomed-out overview of live tiles, a
+  page transition, a dragged card); a repaintBoundary write reports Compose so
+  a valid texture survives the switch, an off boundary releases its texture
+  after a release age, a freeze prop keeps the texture while the subtree
+  changes (a write inside stops at the frozen node as a stale mark and notes
+  no damage), the unfreeze repaints only what changed, and snapshot-no-aa
+  splits into its own antialias prop.
 - **[Rich text editor](backlog/rich-text-editor.md)** [2026-08-18]
   TextInput edits a string, so styled runs, links, inline atoms and block
   attributes could not be authored in-app; the editor exists since 2026-08-19
@@ -926,6 +943,11 @@ Shaped, not started.
   LOD check; the per-sink hash lookups and box walks are the suspects, and a
   profile with a per-target index or a faster hasher should cut it well below
   the occlusion work that now sits beside it.
+- **[Spell out addrs in the flux module surfaces](backlog/spell-out-addrs.md)** [2026-11-16]
+  Three flux module surfaces abbreviate "addresses" as `addrs` (and one
+  `addr`), where the newer p2p ticket surface says `addresses` (ticket
+  options, parseTicket). Renaming them breaks apps that read them, so it waits
+  for a deliberate break.
 - **[A splat world larger than one cloud has seams between clouds, no tiling bake, no streaming and no merged far LOD](backlog/splat-large-worlds.md)** [2026-10-22]
   One cloud culls and thins per chunk under the view, but a world made of
   several clouds blends wrong where they meet because each sorts alone and the
@@ -1038,6 +1060,12 @@ Shaped, not started.
   generation inside the frame; core's region lifecycle (an async, abortable
   `load`, a build stepped under the slice budget, retain by count) is what the
   sprite grid and 3d use, and the tile layer predates it.
+- **[Renew a TLS certificate without a restart](backlog/tls-certificate-reload.md)** [2026-11-16]
+  A server that `serve` (flux:http), `listenTls` (flux:net) or `serveRelay`
+  (flux:p2p) runs with a certificate keeps it until the process stops, so an
+  app whose CA-signed certificate renews (every 60 to 90 days with Let's
+  Encrypt) has to restart the server; one reloadable certificate resolver in
+  forge::tls would let all three swap the certificate in place.
 - **[Decide the shape of the transform props against CSS, all at once](backlog/transform-props-css-shape.md)** [2026-08-14]
   scale/scaleX/scaleY, x/y, rotate and originX/originY each landed on their
   own; CSS gives per-axis tuples for scale and translate but nothing for
@@ -2654,6 +2682,21 @@ Finished, kept for the reasoning.
   A parent's bounds check gates descent into its children as well as its own
   hit, so a child painted outside the parent's layout box under overflow
   visible receives no pointer events.
+- **[Let serveRelay run on a public network](done/p2p-relay-on-a-public-network.md)** [2026-11-16]
+  Alice shows a QR code, Bob scans it, they connect through a relay, on a
+  public network too. Shipped - the relay takes host, tls (pinned when
+  self-signed), fixed tokens, an endpoint allowlist with setAllow and
+  clients(), and a public url; the endpoint trusts an https relay by a ?pin=
+  in its URL or by relayCaCerts, adopts the relay a ticket names per
+  connection, and reports a relay that never comes online through ticket()
+  rejecting and relayStatus().
+- **[Trim p2p tickets to the addresses a peer needs](done/p2p-ticket-addresses.md)** [2026-11-16]
+  A p2p ticket listed every interface address (VPN, container bridge, LAN,
+  global IPv6). Shipped - a relay ticket carries no address (beside a loopback
+  or link-local relay, the local one), a ticket without a relay only the
+  default-route IPv4 (every IPv4 without a default route, never IPv6), and
+  ticket({ addresses: "all" }) writes every address as before; sol server
+  --tunnel-addresses all is the tunnel's opt-out.
 - **[Demos a user can run, shipped inside the packages](done/package-demos.md)** [2026-08-25]
   Done 2026-08-25 - a package's demos/ folder is one project (shared
   package.json, tsconfig and assets/, one src/*.tsx per demo); sol demo lists
@@ -3705,6 +3748,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   is about a microsecond of call machinery each, the codec path about two, the
   accessor half that, and a bulk typed-array loop over the stream mirror the
   floor; the app's own per-instance math dominates the floor.
+- **[iroh 1.4.1 relay internals - server config, access, trust, home relay](notes/iroh-relay-internals.md)** [2026-11-16]
+  What iroh and iroh-relay 1.4.1 offer for a self-hosted relay and how the
+  endpoint side behaves: the relay server's bind and TLS config, its access
+  hook, the endpoint's custom verifier, runtime relay insertion and the token
+  lookup, home relay status and choice, and why a failed certificate check is
+  not visible through iroh.
 - **[What lit rows cost in a long list](notes/lit-list-cost.md)** [2026-09-27]
   Measured 2026-09-27 on the SM-T500 tablet, the Pixel 7 and the Philips TV -
   a 300-row list of rows dressed like the lit Item (key shadow, contact
@@ -3929,6 +3978,14 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   resolves the C runtime from the DLLs and imports VCRUNTIME140.dll,
   VCRUNTIME140_1.dll and api-ms-win-crt-*, needing the Visual C++
   redistributable to start.
+- **[iroh keeps one home relay and a relay added for one dial can take it over](upstream/iroh-single-home-relay.md)** [2026-11-16]
+  iroh 1.4.1 has a single home relay, picked by the net report's
+  preferred_relay; insert_relay re-runs the report, so a relay added only to
+  dial one peer can become the home relay and the configured one drops when
+  idle. No public API pins the home relay or keeps several. We accept and
+  document the gap; the ask is a way to pin the home relay or mark a relay
+  dial-only. A second ask: the net report's probe errors (a failed HTTPS
+  probe's TLS error) are not observable; we read them from our own verifier.
 - **[noq-udp keeps failing every send after an EIO on Android](upstream/noq-udp-android-eio-ecn-cmsg-send-stall.md)** [2026-10-17]
   On a phone whose kernel answers a GSO sendmsg with EIO, noq-udp halts
   segmentation offload but keeps attaching the ECN cmsg, which that kernel

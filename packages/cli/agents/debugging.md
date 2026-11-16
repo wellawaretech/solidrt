@@ -134,7 +134,8 @@ What the dev server (`sol run` / `sol server`) is and what it serves.
   resolution confirms a record against the server before using it.
 - The server is one flux process, complete on its own:
   `flux dist/server.js [file] [--project|--file] [--port N] [--lan]
-  [--proxy-http] [--capture f] [--tunnel] [--stats] [--client N ...] [-- args]`
+  [--proxy-http] [--capture f] [--tunnel [--tunnel-addresses auto|all]] [--stats]
+  [--client N ...] [-- args]`
   (src/server/args.ts). It finds the platform binaries, bun and sol through
   `SOLIDRT_PLATFORM_DIR`, `SOLIDRT_BUN` and `SOLIDRT_CLI`, which `sol` sets; started by
   hand in a checkout it needs only `SOLIDRT_HOME`.

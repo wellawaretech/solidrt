@@ -128,7 +128,7 @@ prints, so a phone's stock camera opens the player connected to the dev
 server (no in-app scanner needed; on iOS that is the expected flow), and
 `solidrt://app/<id>/...` launches an installed app with the rest as its
 link. Connect links and p2p tickets become shareable strings (see
-[p2p-ticket-addresses](p2p-ticket-addresses.md) on what a ticket should
+[p2p-ticket-addresses](../done/p2p-ticket-addresses.md) on what a ticket should
 then carry). A link for the *hosted* app during a dev session is
 delivered through the control API, not a scheme.
 

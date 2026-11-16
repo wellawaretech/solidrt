@@ -118,7 +118,11 @@ Some flags are for less usual setups:
 - `bun run dev --tunnel` connects devices through a peer-to-peer tunnel,
   not through the local network. Use it when the phone cannot connect to
   your computer. With `--tunnel`, the QR code contains the tunnel ticket,
-  not the address.
+  not the address. The ticket contains one address: the IPv4 address of
+  the network that has the default route. If no network has the default
+  route, the ticket contains all the IPv4 addresses. If the phone uses a different
+  network of your computer, or if a VPN has the default route, add
+  `--tunnel-addresses all`. Then the ticket contains all the addresses.
 - `bun run dev --proxy-http` sends the app's `fetch` calls through your
   computer and keeps the responses in a cache. Use it for devices that need
   data that only your computer can get.

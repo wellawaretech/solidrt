@@ -21,7 +21,9 @@ use crate::plugins::marshal::{attach_async_iterator, iter_result, with_in_flight
 use crate::plugins::value::Neutral;
 use crate::standards_plugins::body::byte_stream_readable;
 use crate::standards_plugins::streams::writable_to;
-use forge::p2p::{decode_hex32, Endpoint, Stream};
+use forge::p2p::{
+  decode_hex32, parse_ticket as parse_ticket_core, ConnectOptions, Endpoint, Stream, TicketAddresses, TicketOptions,
+};
 
 /// `next()` of the `accept` async-iterable: a promise resolving to an iterator
 /// result object (boxed so the closure has a nameable return type).
@@ -51,22 +53,27 @@ impl P2pEndpoint {
     Err(Exception::throw_message(&ctx, "use Endpoint.create() to bind a p2p endpoint"))
   }
 
-  /// Bind an endpoint. `opts`: `{ secretKey?, relayUrl?, protocols?, port?, paths? }`.
+  /// Bind an endpoint. `opts`: `{ secretKey?, relayUrl?, relayCaCerts?, protocols?, port?, paths? }`.
   /// `secretKey` is 64 hex chars (omit for an ephemeral key); `relayUrl`
-  /// selects a self-hosted relay (omit for none: direct paths only);
+  /// selects a self-hosted relay (omit for none of its own: direct paths,
+  /// plus the relays `connect` adopts from tickets);
   /// `protocols` lists the protocols this endpoint will `accept`. `port` pins
   /// the UDP bind port (IPv4-only) so the ticket stays stable across restarts;
   /// omit for an ephemeral port. `paths` is `"any"` (the default) or
-  /// `"relay"` (no UDP socket; every packet through the relay). See
+  /// `"relay"` (no UDP socket; every packet through the relay).
+  /// `relayCaCerts` are extra PEM roots for the relays' certificates (a
+  /// `relayUrl` with `?pin=` is checked by the pin instead). See
   /// `forge::p2p::Endpoint::bind`.
   #[qjs(static)]
   pub fn create<'js>(
     ctx: Ctx<'js>,
     opts: OptArg<Object<'js>>,
   ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<P2pEndpoint>>>> {
-    let (secret, relay_url, alpns, port, relay_only) = parse_create_opts(&ctx, opts.0)?;
+    let (secret, relay_url, alpns, port, relay_only, relay_ca_certs) = parse_create_opts(&ctx, opts.0)?;
     Ok(with_in_flight(&ctx, "p2p", async move {
-      Endpoint::bind(secret, relay_url, alpns, port, relay_only).await.map(|inner| P2pEndpoint { inner })
+      Endpoint::bind(secret, relay_url, alpns, port, relay_only, relay_ca_certs)
+        .await
+        .map(|inner| P2pEndpoint { inner })
     }))
   }
 
@@ -83,27 +90,67 @@ impl P2pEndpoint {
     self.inner.secret_key_hex()
   }
 
-  /// A self-contained dial token carrying this endpoint's id, home relay, and
-  /// direct addresses, so a peer can `connect` without relying on discovery.
-  pub fn ticket<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<String>>>> {
+  /// `ticket(opts?: { relay?, addresses? })`: a self-contained dial token
+  /// carrying this endpoint's id, configured relay, and direct addresses, so
+  /// a peer can `connect` without relying on discovery. Rejects when the
+  /// configured relay is not connected after the wait; `relay: false` writes
+  /// no relay (and rejects on a `paths: "relay"` endpoint); `addresses` is
+  /// `"auto"` (the default) or `"all"`, any other value throws.
+  /// See `forge::p2p::Endpoint::ticket`.
+  pub fn ticket<'js>(
+    &self,
+    ctx: Ctx<'js>,
+    opts: OptArg<Object<'js>>,
+  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<String>>>> {
+    let mut options = TicketOptions::default();
+    if let Some(opts) = opts.0 {
+      if let Some(relay) = opts.get::<_, Option<bool>>("relay")? {
+        options.relay = relay;
+      }
+      if let Some(addresses) = opts.get::<_, Option<String>>("addresses")? {
+        options.addresses = TicketAddresses::parse(&addresses).map_err(|m| Exception::throw_message(&ctx, &m))?;
+      }
+    }
     let inner = self.inner.clone();
-    Ok(with_in_flight(&ctx, "p2p", async move { Ok::<String, String>(inner.ticket().await) }))
+    Ok(with_in_flight(&ctx, "p2p", async move { inner.ticket(options).await }))
+  }
+
+  /// The configured relay's state, `{ url, connected, error? }`, or `null`
+  /// without a `relayUrl`. See `forge::p2p::Endpoint::relay_status`.
+  #[qjs(rename = "relayStatus")]
+  pub fn relay_status(&self) -> Neutral {
+    Neutral(self.inner.relay_status().into())
+  }
+
+  /// The relays this endpoint knows, `[{ url, pin?, configured, home }]`. See
+  /// `forge::p2p::Endpoint::relays`.
+  pub fn relays(&self) -> Neutral {
+    Neutral(forge::Value::list(self.inner.relays()))
   }
 
   /// Dial a peer and open one bidirectional stream over `protocol`. `peer` is
   /// either a `ticket` (preferred: connects directly, no discovery) or a bare
-  /// endpoint `id` (needs discovery to resolve the peer's address).
+  /// endpoint `id` (needs discovery to resolve the peer's address). A
+  /// ticket's relay unknown to this endpoint is adopted for the dial unless
+  /// `opts.adoptRelay` is false; see `forge::p2p::Endpoint::connect`.
   pub fn connect<'js>(
     &self,
     ctx: Ctx<'js>,
     peer: String,
     protocol: String,
+    opts: OptArg<Object<'js>>,
   ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, P2pStream>>>>> {
+    let mut options = ConnectOptions::default();
+    if let Some(opts) = opts.0 {
+      if let Some(adopt) = opts.get::<_, Option<bool>>("adoptRelay")? {
+        options.adopt_relay = adopt;
+      }
+    }
     let inner = self.inner.clone();
     let hold = PendingOps::of(&ctx).in_flight("p2p connect");
     let ctx2 = ctx.clone();
     Ok(Promised(async move {
-      let r = inner.connect(peer, protocol).await;
+      let r = inner.connect(peer, protocol, options).await;
       drop(hold);
       match r {
         Ok(stream) => P2pStream::create(&ctx2, stream),
@@ -233,14 +280,21 @@ impl P2pStream {
   }
 }
 
+/// `parseTicket(ticket)` -> `{ id, relayUrl, addresses }`; throws on a ticket
+/// that does not parse. See `forge::p2p::parse_ticket`.
+pub fn parse_ticket(ctx: Ctx<'_>, ticket: String) -> rquickjs::Result<Neutral> {
+  parse_ticket_core(&ticket).map(|t| Neutral(t.into())).map_err(|m| Exception::throw_message(&ctx, &m))
+}
+
 /// Parsed `create` options: `(secretKey bytes, relayUrl, protocols/alpns,
-/// bind port, relay-only)`, the native config `Endpoint::bind` takes.
-type CreateOpts = (Option<[u8; 32]>, Option<String>, Vec<Vec<u8>>, Option<u16>, bool);
+/// bind port, relay-only, relayCaCerts PEM blobs)`, the native config
+/// `Endpoint::bind` takes.
+type CreateOpts = (Option<[u8; 32]>, Option<String>, Vec<Vec<u8>>, Option<u16>, bool, Vec<Vec<u8>>);
 
 /// Parse the `create` options object into native config. `opts` may be absent.
 fn parse_create_opts<'js>(ctx: &Ctx<'js>, opts: Option<Object<'js>>) -> rquickjs::Result<CreateOpts> {
   let Some(opts) = opts else {
-    return Ok((None, None, Vec::new(), None, false));
+    return Ok((None, None, Vec::new(), None, false, Vec::new()));
   };
   let secret = match opts.get::<_, Option<String>>("secretKey")? {
     Some(s) => Some(decode_hex32(&s).map_err(|m| Exception::throw_message(ctx, &m))?),
@@ -257,5 +311,13 @@ fn parse_create_opts<'js>(ctx: &Ctx<'js>, opts: Option<Object<'js>>) -> rquickjs
       return Err(Exception::throw_message(ctx, &format!("paths must be \"any\" or \"relay\", not \"{other}\"")))
     }
   };
-  Ok((secret, relay_url, alpns, port, relay_only))
+  // PEM blobs as `caCerts` of `tls_client_options` (flux:net) reads them;
+  // forge parses and validates them at bind.
+  let relay_ca_certs = opts
+    .get::<_, Option<Vec<String>>>("relayCaCerts")?
+    .unwrap_or_default()
+    .into_iter()
+    .map(String::into_bytes)
+    .collect();
+  Ok((secret, relay_url, alpns, port, relay_only, relay_ca_certs))
 }
