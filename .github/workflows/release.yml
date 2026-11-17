@@ -379,7 +379,7 @@ jobs:
   build-windows:
     needs: prepare
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash
