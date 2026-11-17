@@ -50,7 +50,8 @@ Three of those props are worth knowing before you need them:
   fixed units, or a whole laid-out panel that should scale rather than
   reflow.
 - `repaintBoundary` retains the subtree's display list, and in its
-  `"snapshot"` forms its rasterized pixels too. It is the lever for putting
+  `"snapshot"` form its rasterized pixels too (`antialias={false}`
+  rasterizes them without antialiasing). It is the lever for putting
   heavy static content next to content that changes every frame. On a
   detached view the snapshot boxes the inherited frame: the nearest laid-out
   ancestor's box, or the design size under a `designSize` view.

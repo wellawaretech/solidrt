@@ -201,7 +201,11 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
     BoundaryMode::None => {}
     BoundaryMode::Recording => out.push(("repaintBoundary", ReadValue::Bool(true))),
     BoundaryMode::Snapshot => out.push(("repaintBoundary", ReadValue::Str("snapshot".into()))),
-    BoundaryMode::SnapshotNoAa => out.push(("repaintBoundary", ReadValue::Str("snapshot-no-aa".into()))),
+  }
+  // Read back wherever it is off, as the field is element-level like the
+  // boundary mode: only the off-default value reads back.
+  if !element.antialias {
+    out.push(("antialias", ReadValue::Bool(false)));
   }
   // Element-level, on every kind: only the off-default value reads back.
   if element.pixel_snap_off {

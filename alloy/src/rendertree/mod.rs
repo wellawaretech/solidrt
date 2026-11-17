@@ -461,17 +461,15 @@ impl FrameDamage {
 
 /// What a repaint boundary retains across frames: nothing, the recorded
 /// display list (skips rebuilding), or rasterized pixels (skips rasterizing
-/// too, at the cost of GPU memory and resolution-dependence). SnapshotNoAa
-/// is Snapshot rasterized single-sample: no multisampled scratch, no resolve
-/// pass, but vector content (svg paths, rotated edges) comes out hard-edged;
-/// the app author opts in per boundary.
+/// too, at the cost of GPU memory and resolution-dependence). The mode says
+/// what is kept; how a snapshot rasterizes is the element's own choice
+/// (`Element::antialias`).
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum BoundaryMode {
   #[default]
   None,
   Recording,
   Snapshot,
-  SnapshotNoAa,
 }
 
 pub struct Element {
@@ -483,6 +481,13 @@ pub struct Element {
   // Explicit repaint boundary (Flutter's RepaintBoundary / SnapshotWidget):
   // the subtree's paint result is retained while nothing inside changes.
   pub repaint_boundary: BoundaryMode,
+  // How a snapshot boundary rasterizes: multisampled (the default), or
+  // single-sample with `antialias={false}` (no multisampled scratch, no
+  // resolve pass, but vector content - svg paths, rotated edges - comes out
+  // hard-edged; the app author opts in per boundary). Read only by the
+  // snapshot arm of the paint walk, inert on any other mode. Written through
+  // `set_antialias`, which owns the damage.
+  pub antialias: bool,
   // As an inline atom of a `<text>`: out of the flow against this side, an
   // exclusion for the lines it overlaps. Meaningless anywhere else.
   pub float: Option<text::layout::Side>,
@@ -541,6 +546,7 @@ impl Element {
       layout: Some(LayoutData::new(style)),
       interaction: Some(HitConfig::default()),
       repaint_boundary: BoundaryMode::None,
+      antialias: true,
       float: None,
       clear: None,
       paint_cache: RefCell::new(None),
@@ -569,6 +575,7 @@ impl Element {
       layout: None,
       interaction: Some(HitConfig::default()),
       repaint_boundary: BoundaryMode::None,
+      antialias: true,
       float: None,
       clear: None,
       paint_cache: RefCell::new(None),
@@ -764,13 +771,10 @@ impl Element {
   /// drops a snapshot (the Recording arm would replace it), so the one new
   /// state is a node that is off and holds a snapshot
   /// (`holds_off_snapshot`), which the tree releases after an age
-  /// (RenderTree::release_off_snapshots). A switch to a snapshot mode marks
-  /// a declared boundary shader dirty: a params write or an input change
+  /// (RenderTree::release_off_snapshots). A switch to a snapshot marks a
+  /// declared boundary shader dirty: a params write or an input change
   /// while it was not a snapshot boundary reached no pass, so the pass
-  /// re-runs once over the kept source. A switch between the two snapshot
-  /// modes keeps the storage and changes the raster (antialiased or not):
-  /// Damage::Paint, which marks the snapshot stale for an in-place
-  /// re-render.
+  /// re-runs once over the kept source.
   pub fn set_repaint_boundary(&mut self, mode: BoundaryMode) -> Damage {
     let was = self.repaint_boundary;
     if was == mode {
@@ -780,11 +784,7 @@ impl Element {
     if was == BoundaryMode::Recording || mode == BoundaryMode::Recording {
       self.paint_cache.get_mut().take();
     }
-    let snapshot = |m: BoundaryMode| matches!(m, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa);
-    if snapshot(was) && snapshot(mode) {
-      return Damage::Paint;
-    }
-    if snapshot(mode) {
+    if mode == BoundaryMode::Snapshot {
       if let ElementKind::View(v) = &self.kind {
         if v.shader.is_some() {
           v.mark_shader_dirty();
@@ -792,6 +792,28 @@ impl Element {
       }
     }
     Damage::Compose
+  }
+
+  /// Write how a snapshot boundary rasterizes (`antialias`), returning the
+  /// damage. The value in force is no change: Damage::None. Another value
+  /// keeps the storage and changes the raster, so it is Damage::Paint where
+  /// a snapshot is or may be shown from it: on a snapshot boundary, and on a
+  /// node that is off and holds a snapshot for the switch back
+  /// (`holds_off_snapshot`). The walk of that damage marks the snapshot
+  /// stale, and its next snapshot paint re-renders it at the new setting,
+  /// in place at the same box and density. The storage does not depend on
+  /// the setting, so the snapshot's key does not hold it. Anywhere else the
+  /// field is inert, and the write repaints nothing: Damage::None.
+  pub fn set_antialias(&mut self, antialias: bool) -> Damage {
+    if self.antialias == antialias {
+      return Damage::None;
+    }
+    self.antialias = antialias;
+    if self.repaint_boundary == BoundaryMode::Snapshot || self.holds_off_snapshot() {
+      Damage::Paint
+    } else {
+      Damage::None
+    }
   }
 
   /// Whether the node is no repaint boundary and holds a snapshot: a

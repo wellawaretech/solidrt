@@ -284,9 +284,8 @@ fn repaint_boundary_is_view_only() {
 #[test]
 fn repaint_boundary_write_reports_the_rendertree_damage() {
   // The arm forwards to Element::set_repaint_boundary: another mode is
-  // Compose (the node's own snapshot survives a switch off and back), the
-  // mode in force is no damage, and a switch between the two snapshot modes
-  // is Paint (the same storage, another raster).
+  // Compose (the node's own snapshot survives a switch off and back), and
+  // the mode in force is no damage.
   use alloy::rendertree::BoundaryMode;
   let mut el = Element::from_kind("view").expect("known kind");
   assert_eq!(apply_el(&mut el, "repaintBoundary", text("snapshot")), Ok(Damage::Compose));
@@ -295,10 +294,53 @@ fn repaint_boundary_write_reports_the_rendertree_damage() {
   assert_eq!(apply_el(&mut el, "repaintBoundary", PropValue::Null), Ok(Damage::None), "null is off too");
   assert_eq!(apply_el(&mut el, "repaintBoundary", PropValue::Bool(true)), Ok(Damage::Compose));
   assert_eq!(apply_el(&mut el, "repaintBoundary", text("snapshot")), Ok(Damage::Compose));
-  assert_eq!(apply_el(&mut el, "repaintBoundary", text("snapshot-no-aa")), Ok(Damage::Paint));
   // A bad value throws and leaves the mode as it was.
   assert!(apply_el(&mut el, "repaintBoundary", text("pixels")).is_err());
-  assert!(el.repaint_boundary == BoundaryMode::SnapshotNoAa);
+  assert!(el.repaint_boundary == BoundaryMode::Snapshot);
+}
+
+#[test]
+fn repaint_boundary_snapshot_no_aa_names_its_replacement() {
+  // The removed value is not an alias: it throws, and the message says what
+  // to write instead. The mode is left as it was.
+  use alloy::rendertree::BoundaryMode;
+  let mut el = Element::from_kind("view").expect("known kind");
+  let err = apply_el(&mut el, "repaintBoundary", text("snapshot-no-aa")).expect_err("the removed value throws");
+  assert_eq!(
+    err,
+    "repaintBoundary=\"snapshot-no-aa\" was replaced by repaintBoundary=\"snapshot\" with antialias={false}"
+  );
+  assert!(el.repaint_boundary == BoundaryMode::None);
+  // Any other bad value names the valid ones.
+  let err = apply_el(&mut el, "repaintBoundary", text("pixels")).expect_err("a bad value throws");
+  assert_eq!(err, "repaintBoundary must be a boolean or \"snapshot\", got \"pixels\"");
+}
+
+#[test]
+fn antialias_takes_a_boolean_on_a_view() {
+  // The arm forwards to Element::set_antialias: Paint on a snapshot
+  // boundary (the same storage, another raster), inert and quiet anywhere
+  // else, never a throw off a snapshot (JSX writes props in any order).
+  // Null resets to the default, antialiased.
+  let mut el = Element::from_kind("view").expect("known kind");
+  assert_eq!(apply_el(&mut el, "antialias", PropValue::Bool(false)), Ok(Damage::None), "inert off a snapshot");
+  assert!(!el.antialias);
+  assert_eq!(apply_el(&mut el, "antialias", PropValue::Null), Ok(Damage::None), "null resets, inert");
+  assert!(el.antialias, "null is the default");
+  apply_el(&mut el, "repaintBoundary", text("snapshot")).expect("snapshot applies");
+  assert_eq!(apply_el(&mut el, "antialias", PropValue::Bool(true)), Ok(Damage::None), "the value in force");
+  assert_eq!(apply_el(&mut el, "antialias", PropValue::Bool(false)), Ok(Damage::Paint), "on a snapshot");
+  assert_eq!(apply_el(&mut el, "antialias", PropValue::Null), Ok(Damage::Paint), "null resets on a snapshot");
+  assert!(el.antialias);
+  assert!(apply("d-view", "antialias", PropValue::Bool(false)).is_ok());
+  // A value of another type throws and leaves the field as it was.
+  let err = apply_el(&mut el, "antialias", text("off")).expect_err("a string throws");
+  assert_eq!(err, "antialias must be a boolean, got \"off\"");
+  assert!(el.antialias);
+  // View-only, like repaintBoundary: name-level on other kinds.
+  let err = apply("rect", "antialias", PropValue::Bool(false)).expect_err("a rect rejects it");
+  assert!(err.starts_with("Unknown property"), "{err}");
+  assert!(err.contains("view-only"), "{err}");
 }
 
 #[test]
@@ -317,12 +359,25 @@ fn repaint_boundary_reads_back_on_a_d_view() {
   assert!(read_jsx(&el)
     .iter()
     .any(|(n, v)| *n == "repaintBoundary" && matches!(v, ReadValue::Str(s) if s == "snapshot")));
-  apply_el(&mut el, "repaintBoundary", text("snapshot-no-aa")).expect("snapshot-no-aa applies");
-  assert!(read_jsx(&el)
-    .iter()
-    .any(|(n, v)| *n == "repaintBoundary" && matches!(v, ReadValue::Str(s) if s == "snapshot-no-aa")));
   apply_el(&mut el, "repaintBoundary", PropValue::Bool(false)).expect("reset applies");
   assert!(!read_jsx(&el).iter().any(|(n, _)| *n == "repaintBoundary"), "reset emits nothing again");
+}
+
+#[test]
+fn antialias_reads_back_only_when_off() {
+  // The tree record shows `antialias: false` wherever it is set, also off a
+  // snapshot boundary where it is inert, and nothing at the default.
+  use crate::alloy_plugins::properties::{read_jsx, ReadValue};
+  let mut el = Element::from_kind("view").expect("known kind");
+  assert!(!read_jsx(&el).iter().any(|(n, _)| *n == "antialias"), "the default emits nothing");
+  apply_el(&mut el, "antialias", PropValue::Bool(false)).expect("antialias applies");
+  assert!(read_jsx(&el).iter().any(|(n, v)| *n == "antialias" && matches!(v, ReadValue::Bool(false))), "off");
+  apply_el(&mut el, "repaintBoundary", text("snapshot")).expect("snapshot applies");
+  let read = read_jsx(&el);
+  assert!(read.iter().any(|(n, v)| *n == "antialias" && matches!(v, ReadValue::Bool(false))), "on a snapshot");
+  assert!(read.iter().any(|(n, v)| *n == "repaintBoundary" && matches!(v, ReadValue::Str(s) if s == "snapshot")));
+  apply_el(&mut el, "antialias", PropValue::Bool(true)).expect("antialias applies");
+  assert!(!read_jsx(&el).iter().any(|(n, _)| *n == "antialias"), "the default again emits nothing");
 }
 
 #[test]

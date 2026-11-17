@@ -642,7 +642,7 @@ impl RenderTree {
   /// pixels to vend.
   pub fn snapshot_texture(&self, node_id: u64, alloy: &crate::Context) -> Result<u64, String> {
     let element = self.try_node(node_id).ok_or_else(|| format!("node {node_id} not found"))?;
-    if !matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa) {
+    if element.repaint_boundary != BoundaryMode::Snapshot {
       return Err(format!("node {node_id} is not a snapshot repaint boundary"));
     }
     if let Some(id) = element.snapshot_texture_id.get() {
@@ -698,11 +698,7 @@ impl RenderTree {
       .snapshot_deferrals
       .borrow_mut()
       .drain()
-      .filter(|(id, _)| {
-        self
-          .try_node(*id)
-          .is_some_and(|e| matches!(e.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa))
-      })
+      .filter(|(id, _)| self.try_node(*id).is_some_and(|e| e.repaint_boundary == BoundaryMode::Snapshot))
       .map(|(id, (place, deferral))| (place, id, deferral))
       .collect();
     taken.sort_by_key(|&(place, _, _)| place);
@@ -763,7 +759,7 @@ impl RenderTree {
           outermost = Some(cur);
           moved |= frames.get(&cur).is_none_or(cull::RecordingFrame::moved_since_recorded);
         }
-        BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa => {
+        BoundaryMode::Snapshot => {
           outermost = Some(cur);
           moved = true;
         }
@@ -1050,7 +1046,7 @@ impl RenderTree {
         // without one it is ignored with a warning), so ancestor boundaries
         // are irrelevant here.
         ElementKind::View(v) => {
-          if matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa)
+          if element.repaint_boundary == BoundaryMode::Snapshot
             && v.shader.as_ref().is_some_and(|s| s.textures.iter().any(|b| changes.contains(&b.id)))
           {
             shader_hits.push(id);
@@ -1153,7 +1149,7 @@ impl RenderTree {
             _ => lost = true,
           }
         }
-        BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa => {
+        BoundaryMode::Snapshot => {
           lost = true;
           if !snapshot_seen {
             snapshot_seen = true;

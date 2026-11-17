@@ -19,9 +19,10 @@ default was rejected.
 
 What does not need it: text is atlas-sampled, so its AA is already baked into
 the atlas, and axis-aligned rects and textures look identical at one sample.
-That is what `repaintBoundary="snapshot-no-aa"` exists for, and the name is
-deliberately unattractive so it reads as "something was given up here" to
-whoever later finds a panel looking jaggy.
+That is what `antialias={false}` on a `repaintBoundary="snapshot"` exists
+for (it replaced the `repaintBoundary="snapshot-no-aa"` value). The default
+stays antialiased, and the opt-out names what it gives up, so it reads as
+"something was given up here" to whoever later finds a panel looking jaggy.
 
 Rejected once, and worth not re-proposing without an audit: making no-AA the
 default and MSAA opt-in. It is cheaper for the common panel and silently

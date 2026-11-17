@@ -889,13 +889,12 @@ fn recording_boundary_is_not_a_bake() {
 }
 
 #[test]
-fn snapshot_no_aa_counts_as_bake() {
+fn a_snapshot_without_antialias_counts_as_bake() {
+  // How a snapshot rasterizes does not change what it holds: single-sample
+  // pixels are baked like multisampled ones.
   let mut tree = RenderTree::new();
   snapshot_over_texture(&mut tree, 7);
-  tree.edit(1, |el| {
-    el.repaint_boundary = BoundaryMode::SnapshotNoAa;
-    Damage::None
-  });
+  tree.edit(1, |el| el.set_antialias(false));
   assert!(tree.texture_content_changed(&ids(&[7])));
 }
 

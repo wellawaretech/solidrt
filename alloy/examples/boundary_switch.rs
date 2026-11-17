@@ -12,13 +12,21 @@
 //! another scale follows the snapshot rules. A vended snapshot texture id
 //! keeps its last raster while off and past the release.
 //!
+//! An `antialias` write (Element::set_antialias) on a snapshot boundary
+//! re-renders it in place, and the oval's edge is blended with antialiasing
+//! and hard without; written while off it marks the kept snapshot stale, so
+//! the switch back re-renders once without antialiasing; on a view that is
+//! no snapshot boundary and holds none it damages and repaints nothing.
+//!
 //! Scene, at display scale 1 and 1.5 (geometry stated in device px, so it
 //! rounds the same on both grids): root > holder (absolute at the origin, the
 //! window's size, scaled and translated about its top-left corner) > [outer,
 //! a Recording boundary filling it >] tile (the boundary switched,
 //! absolute) > fill (a detached rect filling it, blue), and in some cases a
 //! texture element at the tile's top-left, or a boundary shader on the tile
-//! that mixes the source with magenta by a uniform.
+//! that mixes the source with magenta by a uniform, or a red oval (a
+//! detached oval filling it) over the fill, whose curved edge shows how the
+//! raster was antialiased.
 //!
 //! Counters are (reused, rerendered, rasterized, deferred) snapshots and
 //! (recorded, reused) Recording boundaries. Every case sets the snapshot
@@ -30,8 +38,8 @@ use alloy::renderer::prelude::*;
 use alloy::renderer::{Color, DisplayListBuilder, ISize};
 use alloy::rendertree::composite::{paint_phase, PaintStats};
 use alloy::rendertree::{
-  BoundaryMode, Damage, ElementKind, OriginCoord, PaintCache, PlatformContext, Rectangle, RenderTree, Texture, View,
-  Window,
+  BoundaryMode, Damage, ElementKind, FrameDamage, OriginCoord, Oval, PaintCache, PlatformContext, Rectangle,
+  RenderTree, Texture, View, Window,
 };
 use alloy::{NodeShader, ParamValue, SamplerState, ShaderStage, TextureFormat};
 use taffy::prelude::{length, Size, Style};
@@ -84,6 +92,7 @@ const OUTER: u64 = 3;
 const TILE: u64 = 4;
 const FILL: u64 = 5;
 const TEX: u64 = 6;
+const OVAL: u64 = 7;
 
 const RED: [u8; 4] = [255, 0, 0, 255];
 const GREEN: [u8; 4] = [0, 255, 0, 255];
@@ -258,6 +267,17 @@ fn switch(tree: &mut RenderTree, mode: BoundaryMode) {
   tree.edit(TILE, |el| el.set_repaint_boundary(mode));
 }
 
+// The antialias write as the props arm performs it, on node `id`: the
+// damage the rendertree reported.
+fn write_antialias(tree: &mut RenderTree, id: u64, antialias: bool) -> Damage {
+  let mut damage = Damage::None;
+  tree.edit(id, |el| {
+    damage = el.set_antialias(antialias);
+    damage
+  });
+  damage
+}
+
 fn holder_scale(tree: &mut RenderTree, scale: f32) {
   write_view(tree, HOLDER, |v| {
     v.set_scale_x(Some(scale));
@@ -281,6 +301,8 @@ struct Scene {
   texture: Option<u64>,
   // A boundary shader over this program.
   shader: Option<u64>,
+  // A red oval filling the tile, over the fill.
+  oval: bool,
 }
 
 fn mix_shader(program: u64, amount: f32) -> NodeShader {
@@ -332,6 +354,11 @@ fn build(display_scale: f32, scene: &Scene) -> RenderTree {
   }
   if let Some(program) = scene.shader {
     write_view(&mut tree, TILE, |v| v.set_shader(Some(mix_shader(program, 0.0))));
+  }
+  if scene.oval {
+    tree.create_node(OVAL, Oval::default().no_layout());
+    tree.insert_node(TILE, OVAL, None).expect("insert");
+    write_color(&mut tree, OVAL, RED);
   }
   switch(&mut tree, BoundaryMode::Snapshot);
   tree
@@ -720,6 +747,109 @@ fn vended_case(ctx: &alloy::Context, display_scale: f32, all: &mut Vec<String>) 
   case.finish(all);
 }
 
+// The tile's pixels that are neither the oval's red nor the fill's blue:
+// the oval's edge pixels a multisampled raster blends.
+fn blended(f: &Frame) -> usize {
+  let rows = TILE_TOP as u32..(TILE_TOP + TILE_H) as u32;
+  rows
+    .flat_map(|y| (TILE_LEFT as u32..(TILE_LEFT + TILE_W) as u32).map(move |x| (x, y)))
+    .filter(|&(x, y)| {
+      let px = f.at(x as f32, y as f32);
+      !near(px, RED) && !near(px, BLUE)
+    })
+    .count()
+}
+
+// An antialias write on a snapshot boundary keeps the storage and changes
+// the raster: Paint, one re-render in place (no new texture), and the oval's
+// blended edge goes hard; written back, the antialiased picture again.
+fn antialias_case(ctx: &alloy::Context, display_scale: f32, all: &mut Vec<String>) {
+  let mut case = Case::new(format!("an antialias write re-renders a snapshot in place, at {display_scale}x"));
+  let platform = platform_at(display_scale);
+  let mut tree = build(display_scale, &Scene { oval: true, ..Scene::default() });
+  let soft = rastered(&mut case, &mut tree, &platform, ctx, false);
+  let edge = blended(&soft);
+  case.expect(edge > 0, || "antialiased, the oval's edge has no blended pixel".to_string());
+  let damage = write_antialias(&mut tree, TILE, false);
+  case.expect(damage == Damage::Paint, || format!("the write reported {damage:?}, expected Paint"));
+  case.expect(kept(&tree) == Some(false), || format!("the write marks the snapshot stale: {:?}", kept(&tree)));
+  let hard = frame(&mut tree, &platform, ctx);
+  case.counts("without", &hard, RERENDERED);
+  let hard_edge = blended(&hard);
+  println!("  blended edge pixels: {edge} antialiased, {hard_edge} without");
+  case.expect(hard_edge == 0, || format!("without, {hard_edge} blended pixels, expected none"));
+  case.expect(differs(&hard, &soft).is_some(), || "without, the same picture as antialiased".to_string());
+  still(&mut case, &mut tree, &platform, ctx, REUSED);
+  let damage = write_antialias(&mut tree, TILE, true);
+  case.expect(damage == Damage::Paint, || format!("the write back reported {damage:?}, expected Paint"));
+  let again = frame(&mut tree, &platform, ctx);
+  case.counts("with again", &again, RERENDERED);
+  case.same(&again, &soft, true, "with again, the antialiased picture");
+  still(&mut case, &mut tree, &platform, ctx, REUSED);
+  case.finish(all);
+}
+
+// Snapshot, off, antialias false, back: the write while off is Paint and
+// marks the kept snapshot stale, the off tile paints inline as before, and
+// the switch back re-renders once in place, without antialiasing: the
+// picture of a tile rasterized without it from the start.
+fn off_antialias_case(ctx: &alloy::Context, display_scale: f32, all: &mut Vec<String>) {
+  let mut case = Case::new(format!(
+    "an antialias write while off re-renders once without antialiasing at the switch back, at {display_scale}x"
+  ));
+  let platform = platform_at(display_scale);
+  let mut reference = build(display_scale, &Scene { oval: true, ..Scene::default() });
+  write_antialias(&mut reference, TILE, false);
+  let hard = frame(&mut reference, &platform, ctx);
+  case.counts("the reference without", &hard, RASTERIZED);
+  let mut tree = build(display_scale, &Scene { oval: true, ..Scene::default() });
+  let soft = rastered(&mut case, &mut tree, &platform, ctx, false);
+  case.expect(differs(&hard, &soft).is_some(), || "the reference shows the antialiased picture".to_string());
+  switch(&mut tree, BoundaryMode::None);
+  let off = frame(&mut tree, &platform, ctx);
+  case.counts("off", &off, NONE);
+  case.expect(kept(&tree) == Some(true), || format!("off keeps a valid snapshot: {:?}", kept(&tree)));
+  let damage = write_antialias(&mut tree, TILE, false);
+  case.expect(damage == Damage::Paint, || format!("the write while off reported {damage:?}, expected Paint"));
+  case.expect(kept(&tree) == Some(false), || format!("the kept snapshot is stale: {:?}", kept(&tree)));
+  let written = frame(&mut tree, &platform, ctx);
+  case.counts("off, written", &written, NONE);
+  case.same(&written, &off, true, "off, written, the same picture inline");
+  switch(&mut tree, BoundaryMode::Snapshot);
+  let back = frame(&mut tree, &platform, ctx);
+  case.counts("back", &back, RERENDERED);
+  case.same(&back, &hard, true, "back, the picture without antialiasing");
+  still(&mut case, &mut tree, &platform, ctx, REUSED);
+  case.finish(all);
+}
+
+// An antialias write where it is inert: on a view that is no boundary and
+// holds nothing (the holder), and on a Recording boundary (the outer). No
+// damage, no revision, nothing repainted: the outer replays and the
+// snapshot tile inside it is not visited.
+fn inert_antialias_case(ctx: &alloy::Context, display_scale: f32, all: &mut Vec<String>) {
+  let mut case = Case::new(format!("an antialias write off a snapshot repaints nothing, at {display_scale}x"));
+  let platform = platform_at(display_scale);
+  let mut tree = build(display_scale, &Scene { outer: true, oval: true, ..Scene::default() });
+  let before = rastered(&mut case, &mut tree, &platform, ctx, true);
+  for (name, id) in [("the holder", HOLDER), ("the outer recording", OUTER)] {
+    let revision = tree.revision();
+    let damage = write_antialias(&mut tree, id, false);
+    case.expect(damage == Damage::None, || format!("{name}: the write reported {damage:?}, expected None"));
+    case.expect(tree.revision() == revision, || format!("{name}: the write moved the revision"));
+    let f = frame(&mut tree, &platform, ctx);
+    case.counts(name, &f, NONE);
+    case.recordings(name, &f, (0, 1));
+    let damage = tree.frame_damage();
+    case.expect(damage == FrameDamage::None, || format!("{name}: the frame damage is {damage:?}, expected None"));
+    case.expect(f.stats.nodes_painted == before.stats.nodes_painted, || {
+      format!("{name}: {} nodes painted, {} before the write", f.stats.nodes_painted, before.stats.nodes_painted)
+    });
+    case.same(&f, &before, true, name);
+  }
+  case.finish(all);
+}
+
 fn mix_program(ctx: &alloy::Context) -> u64 {
   let vs = ctx.compile_shader_stage(ShaderStage::Vertex, VERTEX, true).expect("the vertex stage");
   let fs = ctx.compile_shader_stage(ShaderStage::Fragment, MIX, true).expect("the fragment stage");
@@ -750,6 +880,9 @@ fn main() {
         scale_case(&ctx, display_scale, scale, &mut all);
       }
       vended_case(&ctx, display_scale, &mut all);
+      antialias_case(&ctx, display_scale, &mut all);
+      off_antialias_case(&ctx, display_scale, &mut all);
+      inert_antialias_case(&ctx, display_scale, &mut all);
     }
     ctx.destroy_shader_program(program);
     assert!(all.is_empty(), "{} boundary switch checks failed", all.len());

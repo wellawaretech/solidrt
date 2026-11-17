@@ -250,7 +250,7 @@ pub fn backdrop_below(scene: &RenderTree, node_id: u64) -> bool {
 /// the raster or the layer - so a root is looked at, never into.
 pub(crate) fn is_backdrop_root(element: &Element) -> bool {
   let filtered = matches!(&element.kind, ElementKind::View(v) if v.active_filter().is_some());
-  filtered || matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa)
+  filtered || element.repaint_boundary == BoundaryMode::Snapshot
 }
 
 // The frame a node's detached children inherit, given the node's own box

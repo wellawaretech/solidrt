@@ -897,26 +897,34 @@ export interface ViewOwnProps extends TransformProps, InputProps {
    * bitmap; best for screen-aligned, static, raster-expensive content. On a
    * detached view the box is the inherited frame (the nearest laid-out
    * ancestor's box, or the design size under a designSize view), same as a
-   * capture.
-   *
-   * "snapshot-no-aa" is "snapshot" rasterized without anti-aliasing: cheaper
-   * (no multisampled scratch, one render pass), but vector content - svg
-   * paths, rounded corners, rotated edges - comes out hard-edged. Text and
-   * axis-aligned rects look identical, so prefer it for plain UI panels.
+   * capture. How the snapshot rasterizes is `antialias`.
    *
    * A snapshot boundary's pixels are available to the GPU stack as a live
    * texture id through `snapshotTexture(ref)`.
    */
-  repaintBoundary?: boolean | "snapshot" | "snapshot-no-aa"
+  repaintBoundary?: boolean | "snapshot"
+  /**
+   * How a repaint boundary's snapshot rasterizes (the web canvas name).
+   * true, the default, is 4x multisampled. false rasterizes it without
+   * antialiasing: cheaper (no multisampled scratch, one render pass), but
+   * vector content - svg paths, rounded corners, rotated edges - comes out
+   * hard-edged. Text and axis-aligned rects look identical, so prefer it for
+   * plain UI panels. A write re-renders a kept snapshot once, at its next
+   * paint as a snapshot.
+   *
+   * Inert off a snapshot boundary (repaintBoundary={false} or {true}): it
+   * does not throw there, and a boundary switched back to "snapshot" takes
+   * the value in force then.
+   */
+  antialias?: boolean
   /**
    * Run this view's rasterized subtree through a GPU program and composite
    * the result in its place. Requires a snapshot boundary
-   * (repaintBoundary="snapshot" or "snapshot-no-aa"; the cost is snapshot
-   * semantics, kept explicit; declared without one the shader is ignored
-   * with a warning). The pass is region-sized and split from content
-   * invalidation: a params-only change re-runs just the pass against the
-   * cached snapshot, so animating an effect over a static subtree never
-   * re-rasterizes it.
+   * (repaintBoundary="snapshot"; the cost is snapshot semantics, kept
+   * explicit; declared without one the shader is ignored with a warning).
+   * The pass is region-sized and split from content invalidation: a
+   * params-only change re-runs just the pass against the cached snapshot,
+   * so animating an effect over a static subtree never re-rasterizes it.
    *
    * The effect samples only the subtree's own pixels - grading, warping or
    * dissolving the panel works; anything needing what is behind it does not.

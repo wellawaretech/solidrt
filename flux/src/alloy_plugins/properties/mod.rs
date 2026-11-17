@@ -191,19 +191,42 @@ pub fn apply_jsx(
           .to_string(),
       );
     }
+    // The removed value names its replacement, so an app written against it
+    // learns what to write instead.
     let mode = match value {
       PropValue::Null | PropValue::Bool(false) => BoundaryMode::None,
       PropValue::Bool(true) => BoundaryMode::Recording,
       PropValue::Text(s) if s == "snapshot" => BoundaryMode::Snapshot,
-      PropValue::Text(s) if s == "snapshot-no-aa" => BoundaryMode::SnapshotNoAa,
-      _ => {
-        return Err(format!(
-          "repaintBoundary must be a boolean, \"snapshot\", or \"snapshot-no-aa\", got {}",
-          describe(value)
-        ))
+      PropValue::Text(s) if s == "snapshot-no-aa" => {
+        return Err(
+          "repaintBoundary=\"snapshot-no-aa\" was replaced by repaintBoundary=\"snapshot\" with antialias={false}"
+            .to_string(),
+        )
       }
+      _ => return Err(format!("repaintBoundary must be a boolean or \"snapshot\", got {}", describe(value))),
     };
     return Ok(el.set_repaint_boundary(mode));
+  }
+
+  // How a snapshot boundary rasterizes (see Element::antialias); true and
+  // null are the default, antialiased. View-only like repaintBoundary, whose
+  // snapshot it qualifies, and rejected the same way on other kinds. Off a
+  // snapshot boundary it is inert and does not throw: JSX writes props one
+  // at a time, in any order. The write and its damage are the rendertree's
+  // (Element::set_antialias).
+  if name == "antialias" {
+    if !matches!(el.kind, ElementKind::View(_)) {
+      return Err(
+        "Unknown property 'antialias': it says how a snapshot repaint boundary rasterizes, and repaint boundaries are view-only; wrap this element in a <view> or a <view detached>"
+          .to_string(),
+      );
+    }
+    let antialias = match value {
+      PropValue::Null | PropValue::Bool(true) => true,
+      PropValue::Bool(false) => false,
+      _ => return Err(format!("antialias must be a boolean, got {}", describe(value))),
+    };
+    return Ok(el.set_antialias(antialias));
   }
 
   // Element-level, kind-independent: as an inline atom of a <text>, float out

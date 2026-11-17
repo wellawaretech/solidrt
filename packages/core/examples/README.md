@@ -32,7 +32,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 
 ## Performance
 - `snapshot-texture.tsx` - `snapshotTexture(ref)`: a `repaintBoundary="snapshot"` view's rasterized pixels as a live texture id; a shader texture samples the panel and a sibling `<texture>` shows the warped copy. The boundary re-rasterizes only when its content changes.
-- `repaint-boundary.tsx` - `repaintBoundary` on a `<view>` to keep static content from rebuilding while a neighbor animates: `{true}` retains the recorded draw list, `"snapshot"` also retains the rasterized pixels as a GPU texture (for raster-expensive, screen-aligned, static subtrees). `"snapshot-no-aa"` rasterizes without anti-aliasing: cheaper, fine for text and axis-aligned rects, hard-edged on vector content.
+- `repaint-boundary.tsx` - `repaintBoundary` on a `<view>` to keep static content from rebuilding while a neighbor animates: `{true}` retains the recorded draw list, `"snapshot"` also retains the rasterized pixels as a GPU texture (for raster-expensive, screen-aligned, static subtrees). `antialias={false}` on a snapshot rasterizes it without anti-aliasing: cheaper, fine for text and axis-aligned rects, hard-edged on vector content.
 
 ## Scrolling
 - `scroll.tsx` - `createScroll`, the headless scroll primitive: it owns only the clamped offset (re-clamped on layout); you supply the viewport/content nodes via refs, apply the offset to `scrollX`/`scrollY`, and wire input (e.g. `onWheel`) to `scrollBy` yourself.

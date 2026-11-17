@@ -1,6 +1,7 @@
 // A repaint boundary switched between modes (Element::set_repaint_boundary):
 // the damage of the write (Compose, so the node's own snapshot survives, and
-// none for the mode in force), the ancestors that hold its old composited
+// none for the mode in force), the damage of an `antialias` write (Paint on a
+// snapshot, none where it is inert), the ancestors that hold its old composited
 // result and repaint, the caches a write drops (leaving Recording drops the
 // recording, a write to Recording drops a snapshot), the declared shader a
 // switch to a snapshot marks dirty, and the release registry of the nodes
@@ -122,8 +123,6 @@ fn a_mode_write_is_compose_and_the_mode_in_force_is_no_change() {
     (Snapshot, Damage::Compose),
     (Recording, Damage::Compose),
     (None, Damage::Compose),
-    (SnapshotNoAa, Damage::Compose),
-    (None, Damage::Compose),
   ];
   for (step, (mode, damage)) in writes.into_iter().enumerate() {
     assert_eq!(el.set_repaint_boundary(mode), damage, "write {step}");
@@ -132,13 +131,51 @@ fn a_mode_write_is_compose_and_the_mode_in_force_is_no_change() {
 }
 
 #[test]
-fn a_switch_between_the_snapshot_modes_marks_the_snapshot_stale() {
-  // The storage stays and the raster changes (antialiased or not): Paint,
-  // whose walk marks the node's own snapshot stale for an in-place re-render.
+fn an_antialias_write_is_paint_on_a_snapshot_and_inert_elsewhere() {
+  // Element::set_antialias: on a snapshot boundary the storage stays and
+  // the raster changes, Paint, whose walk marks the node's own snapshot
+  // stale for an in-place re-render. Off holding no snapshot, or a
+  // recording, the field is inert: no damage. The value in force is none
+  // anywhere. Off holding a snapshot is Paint too, which needs a raster
+  // (the GL example's).
   let mut el = View::default().with_layout();
+  assert!(el.antialias, "antialiased by default");
+  assert_eq!(el.set_antialias(false), Damage::None, "off, nothing kept");
+  assert!(!el.antialias, "the value is written");
+  assert_eq!(el.set_antialias(false), Damage::None, "off, the value in force");
+  el.set_repaint_boundary(BoundaryMode::Recording);
+  assert_eq!(el.set_antialias(true), Damage::None, "a recording");
   el.set_repaint_boundary(BoundaryMode::Snapshot);
-  assert_eq!(el.set_repaint_boundary(BoundaryMode::SnapshotNoAa), Damage::Paint);
-  assert_eq!(el.set_repaint_boundary(BoundaryMode::Snapshot), Damage::Paint);
+  assert_eq!(el.set_antialias(true), Damage::None, "a snapshot, the value in force");
+  assert_eq!(el.set_antialias(false), Damage::Paint, "a snapshot, without");
+  assert_eq!(el.set_antialias(true), Damage::Paint, "a snapshot, with again");
+  assert!(el.repaint_boundary == BoundaryMode::Snapshot, "the mode is not written");
+}
+
+#[test]
+fn an_antialias_write_repaints_only_under_a_snapshot() {
+  let stage = Stage::new();
+  let mut tree = scene(true, BoundaryMode::Snapshot);
+  assert_eq!(counts(&stage.frame(&mut tree)), (1, 0), "first");
+  assert_eq!(counts(&stage.frame(&mut tree)), (0, 1), "still");
+  // A snapshot boundary: the outer holds the tile's old composited result
+  // and records again, and the tile is noted for the screen damage.
+  tree.edit(TILE, |el| el.set_antialias(false));
+  assert_eq!(counts(&stage.frame(&mut tree)), (1, 0), "a snapshot's antialias write");
+  assert!(tree.frame_damage() != FrameDamage::None, "the tile is noted for the screen damage");
+  for look in 1..=STILL_FRAMES {
+    assert_eq!(counts(&stage.frame(&mut tree)), (0, 1), "still {look}");
+  }
+  // Off, and the refused raster formed no snapshot to keep: no damage, no
+  // revision, the outer replays.
+  switch(&mut tree, TILE, BoundaryMode::None);
+  stage.frame(&mut tree);
+  assert!(!tree.node(TILE).holds_off_snapshot(), "nothing kept");
+  let revision = tree.revision();
+  tree.edit(TILE, |el| el.set_antialias(true));
+  assert_eq!(tree.revision(), revision, "an inert write, no revision");
+  assert_eq!(counts(&stage.frame(&mut tree)), (0, 1), "an off node's antialias write");
+  assert_eq!(tree.frame_damage(), FrameDamage::None, "an inert write damages nothing");
 }
 
 #[test]
@@ -213,17 +250,17 @@ fn a_switch_to_a_snapshot_marks_a_declared_shader_dirty() {
     v.set_shader(Some(shader()));
   }
   assert!(dirty(&el), "the declaration write itself");
-  // A switch off marks nothing; one to either snapshot mode, from off or
-  // from a recording, marks the shader once.
+  // A switch off marks nothing; one to a snapshot, from off or from a
+  // recording, marks the shader once.
   el.set_repaint_boundary(BoundaryMode::Recording);
   assert!(!dirty(&el), "to Recording");
   el.set_repaint_boundary(BoundaryMode::Snapshot);
   assert!(dirty(&el), "Recording to snapshot");
   el.set_repaint_boundary(BoundaryMode::None);
   assert!(!dirty(&el), "snapshot to off");
-  el.set_repaint_boundary(BoundaryMode::SnapshotNoAa);
-  assert!(dirty(&el), "off to snapshot-no-aa");
-  el.set_repaint_boundary(BoundaryMode::SnapshotNoAa);
+  el.set_repaint_boundary(BoundaryMode::Snapshot);
+  assert!(dirty(&el), "off to snapshot");
+  el.set_repaint_boundary(BoundaryMode::Snapshot);
   assert!(!dirty(&el), "the mode in force marks nothing");
 }
 

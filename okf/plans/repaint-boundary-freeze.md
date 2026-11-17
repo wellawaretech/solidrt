@@ -69,7 +69,9 @@ usual.
 choices, named one of them by what it lacks, and would have needed a
 `"freeze-no-aa"` next. `BoundaryMode::SnapshotNoAa` goes away with it:
 the mode says what is kept, and the `antialias` field says how. An
-`antialias` write reports `Damage::Paint`. The raster changes and the
+`antialias` write reports `Damage::Paint` where a snapshot is kept (a
+snapshot boundary, or an off node that holds one) and no damage
+elsewhere. The raster changes and the
 storage does not (an in-place re-render takes `aa`, `RasterizeDlInto`),
 so the stale mark is enough and `SnapshotKey` does not take the setting.
 With `SnapshotNoAa` as a mode and the mode write at Compose, the key
@@ -370,11 +372,6 @@ as baked" rule of addition 1 are about that state alone.
   `edit`, and `release_off_snapshots` sweeps it after the paint walk.
   The release age is `SNAPSHOT_RELEASE_FRAMES`, the text layer's value:
   the storage is held through 121 paint walks after the switch.
-- A switch between `snapshot` and `snapshot-no-aa` reports
-  `Damage::Paint`: the storage stays and the raster changes.
-- Known until the `antialias` prop lands: snapshot, off, `snapshot-no-aa`
-  reuses the antialiased raster, because the cache does not hold how it
-  was rasterized.
 - A vended snapshot texture id (`snapshotTexture`) stays readable while
   the node is off and after the release, and shows the last raster. The
   id holds the texture, so with a vended id the release frees the
@@ -386,6 +383,21 @@ as baked" rule of addition 1 are about that state alone.
   bound).
 - Tests: `alloy/examples/boundary_switch.rs` (GL),
   `alloy/src/tests/boundary_switch.rs`, and a property test in flux.
+
+## The antialias prop as built (2026-11-17)
+
+- `Element::antialias` (default true) and `Element::set_antialias`,
+  which returns the damage: none for the value it has, `Damage::Paint`
+  on a snapshot boundary and on an off node that holds a snapshot, and
+  none elsewhere (the field is inert there, and nothing repaints). So an
+  `antialias` write at any time marks a kept snapshot stale, and the
+  next snapshot paint re-renders into the same storage.
+- `BoundaryMode::SnapshotNoAa` is gone. `repaintBoundary="snapshot-no-aa"`
+  throws and names its replacement.
+- The tree read shows `antialias: false` only when it is off.
+- Tests: three cases in `alloy/examples/boundary_switch.rs` (an oval's
+  edge has blended pixels with antialiasing and none without), lib tests
+  in `alloy/src/tests/boundary_switch.rs`, property tests in flux.
 
 ## Done looks like
 

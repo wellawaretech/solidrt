@@ -713,7 +713,7 @@ fn build_recursive<'a>(
   // once per declaration write (the dirty flag), not per frame. A switch to
   // a snapshot marks the flag again (Element::set_repaint_boundary), so a
   // write taken here still re-runs the pass over a kept snapshot.
-  if !matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa) {
+  if element.repaint_boundary != BoundaryMode::Snapshot {
     if let ElementKind::View(v) = &element.kind {
       if v.shader.is_some() && v.take_shader_dirty() {
         log::warn!("node {node_id} declares a shader without repaintBoundary=\"snapshot\"; not applied");
@@ -900,8 +900,7 @@ fn build_recursive<'a>(
         }));
       }
     }
-    BoundaryMode::Snapshot => boundary::snapshot_node(scene, node_id, ctx, builder, true),
-    BoundaryMode::SnapshotNoAa => boundary::snapshot_node(scene, node_id, ctx, builder, false),
+    BoundaryMode::Snapshot => boundary::snapshot_node(scene, node_id, ctx, builder, element.antialias),
   }
 }
 

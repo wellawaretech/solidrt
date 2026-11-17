@@ -505,7 +505,7 @@ pub(crate) enum RasterCmd {
   /// Rasterize a display list into a new adopted texture (snapshot repaint
   /// boundaries). Storage is exactly `width` x `height`. The handle goes
   /// back to the UI thread, which draws it. `aa: false` skips the
-  /// multisampled rig (a "snapshot-no-aa" boundary).
+  /// multisampled rig (a snapshot boundary with `antialias={false}`).
   RasterizeDl { dl: DisplayList, width: u32, height: u32, aa: bool, reply: mpsc::Sender<Result<Texture, String>> },
   /// Re-rasterize into an existing adopted texture, reusing its storage
   /// (snapshot boundary at unchanged dimensions). The texture's backing must
