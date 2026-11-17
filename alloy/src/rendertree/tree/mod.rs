@@ -20,6 +20,13 @@ use crate::rendertree::{
   Texture, ATOM_CHAR,
 };
 
+// Paint walks a boundary switched off keeps its snapshot storage for the
+// switch back before it is released (RenderTree::release_off_snapshots):
+// the text layer's release age (TEXT_LAYER_RELEASE_FRAMES, 120, two seconds
+// at 60 Hz) in the same unit, the text atlas frame, so a switch that comes
+// right back finds its storage.
+const SNAPSHOT_RELEASE_FRAMES: u64 = 120;
+
 pub struct RenderTree {
   nodes: HashMap<u64, Element>,
   pub root: Option<u64>,
@@ -40,6 +47,13 @@ pub struct RenderTree {
   // release sweep visits (release_stale_text_layers), so it costs the
   // texts with pixels and not every node.
   text_layers: RefCell<HashSet<u64>>,
+  // Nodes switched off a snapshot boundary that hold its snapshot for the
+  // switch back (Element::holds_off_snapshot), each with the text atlas
+  // frame its release age counts from: None until the first sweep after it
+  // joined (release_off_snapshots), the sweep after the walk its mode write
+  // caused. Membership is reconciled after every edit/try_edit and dropped
+  // with the node and with drop_paint_caches.
+  off_snapshots: HashMap<u64, Option<u64>>,
   // Texts and recording boundaries that kept their raster under a composite
   // scale that moved this frame and want a look at the next, to tell rest
   // from motion (text::raster_scale): the frame start gives each a Compose
@@ -100,6 +114,7 @@ impl RenderTree {
       transitions: Transitions::default(),
       released_snapshot_textures: RefCell::new(Vec::new()),
       text_layers: RefCell::new(HashSet::new()),
+      off_snapshots: HashMap::new(),
       scale_waits: RefCell::new(HashSet::new()),
       snapshot_deferrals: RefCell::new(HashMap::new()),
       recording_frames: RefCell::new(HashMap::new()),
@@ -126,9 +141,25 @@ impl RenderTree {
     }
   }
 
+  // A node that is off and holds a snapshot after a write is in the release
+  // registry (`off_snapshots`), keeping the age it already has; any other
+  // node leaves it (switched back, switched to Recording).
+  fn reconcile_off_snapshot(&mut self, node_id: u64) {
+    if self.nodes.get(&node_id).is_some_and(Element::holds_off_snapshot) {
+      self.off_snapshots.entry(node_id).or_insert(None);
+    } else {
+      self.off_snapshots.remove(&node_id);
+    }
+  }
+
   #[cfg(test)]
   pub(crate) fn texture_referencers(&self) -> &HashSet<u64> {
     &self.texture_referencers
+  }
+
+  #[cfg(test)]
+  pub(crate) fn off_snapshot_nodes(&self) -> Vec<u64> {
+    self.off_snapshots.keys().copied().collect()
   }
 
   pub fn revision(&self) -> u64 {
@@ -376,6 +407,7 @@ impl RenderTree {
     let damage = f(self.node_mut(id));
     self.reconcile_texture_referencer(id);
     self.reconcile_recording_frame(id);
+    self.reconcile_off_snapshot(id);
     self.reconcile_slide(id);
     self.apply_damage(id, damage);
     self.sync_span_parent(id);
@@ -454,6 +486,7 @@ impl RenderTree {
     // referencer index must track element state, not the damage outcome.
     self.reconcile_texture_referencer(id);
     self.reconcile_recording_frame(id);
+    self.reconcile_off_snapshot(id);
     self.reconcile_slide(id);
     let damage = result?;
     self.apply_damage(id, damage);
@@ -593,6 +626,7 @@ impl RenderTree {
     if let Some(element) = self.nodes.remove(&node_id) {
       self.texture_referencers.remove(&node_id);
       self.text_layers.borrow_mut().remove(&node_id);
+      self.off_snapshots.remove(&node_id);
       self.scale_waits.borrow_mut().remove(&node_id);
       self.snapshot_deferrals.get_mut().remove(&node_id);
       self.recording_frames.get_mut().remove(&node_id);
@@ -778,6 +812,7 @@ impl RenderTree {
       }
     }
     self.text_layers.borrow_mut().clear();
+    self.off_snapshots.clear();
     self.bump_revision();
   }
 
@@ -790,6 +825,32 @@ impl RenderTree {
     layers.retain(|&id| match self.nodes.get(&id).map(|e| &e.kind) {
       Some(ElementKind::Text(text)) => text.release_stale_layer(frame),
       _ => false,
+    });
+  }
+
+  /// Release the snapshot storage of boundaries switched off
+  /// (Element::holds_off_snapshot) that held it past SNAPSHOT_RELEASE_FRAMES
+  /// as of text atlas frame `frame`, valid or stale: the age counts from the
+  /// first sweep after the switch, and a switch back within it finds the
+  /// storage. Called once per paint walk, after it, beside the text layer
+  /// sweep: the walk never visits an off node that is culled or under a
+  /// replayed recording, and an off node's paint never looks at its cache.
+  /// A vended snapshot texture id (`snapshot_texture`) keeps its registry
+  /// entry, which holds the last raster's texture, until a raster after the
+  /// switch back publishes under it or the node is destroyed.
+  pub(crate) fn release_off_snapshots(&mut self, frame: u64) {
+    let nodes = &self.nodes;
+    self.off_snapshots.retain(|id, since| {
+      let Some(element) = nodes.get(id) else { return false };
+      if !element.holds_off_snapshot() {
+        return false;
+      }
+      let since = *since.get_or_insert(frame);
+      if frame.saturating_sub(since) > SNAPSHOT_RELEASE_FRAMES {
+        element.paint_cache.borrow_mut().take();
+        return false;
+      }
+      true
     });
   }
 
@@ -948,7 +1009,9 @@ impl RenderTree {
   ///
   /// Baked pixels, the one consumer that goes stale. Two reference shapes,
   /// two costs: a texture element under a snapshot boundary is IN the bake
-  /// and re-rasterizes (`invalidate_paint`); a boundary shader sampling the
+  /// and re-rasterizes (`invalidate_paint`), as it is in the snapshot a
+  /// boundary switched off keeps valid for the switch back, which is then
+  /// marked stale once (`content_reach`); a boundary shader sampling the
   /// id as an extra input only needs its pass re-run over the still-valid
   /// snapshot, so it gets the params-write treatment (`mark_shader_dirty` +
   /// Compose damage: ancestor recordings repaint, the bake survives). Bumps
@@ -1052,7 +1115,11 @@ impl RenderTree {
   // stale, the invalidation is a no-op then, and mode is plain element
   // state). A boundary whose own vended texture (`snapshot_texture`) is
   // the changed id does not count: its rasterization IS the change, and
-  // invalidating it would re-rasterize every frame.
+  // invalidating it would re-rasterize every frame. A node switched off a
+  // snapshot boundary that holds a VALID snapshot for the switch back
+  // (Element::holds_off_snapshot) counts as baked too, on the same terms:
+  // it paints inline, but its kept pixels hold the old content. The hit
+  // marks it stale, so a texture that changes every frame counts once.
   fn content_reach(&self, node_id: u64, texture: &Texture, texture_id: u64) -> ContentReach {
     let shown = texture.shown.get();
     let mut reach = ContentReach { node: node_id, baked: false, placed: None, bounded: false };
@@ -1093,7 +1160,12 @@ impl RenderTree {
             reach.baked = element.snapshot_texture_id.get() != Some(texture_id);
           }
         }
-        BoundaryMode::None => {}
+        BoundaryMode::None => {
+          let kept_valid = matches!(&*element.paint_cache.borrow(), Some(PaintCache::Snapshot(snap)) if snap.valid);
+          if kept_valid && element.snapshot_texture_id.get() != Some(texture_id) {
+            reach.baked = true;
+          }
+        }
       }
       lost |= blurs;
       current = element.parent;

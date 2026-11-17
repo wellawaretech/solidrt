@@ -180,9 +180,10 @@ pub fn apply_jsx(
   // (ViewOwnProps): a boundary fences a subtree, and wrapping in a view is
   // the composable way to get one. Handled here rather than in the view
   // adapter because the field lives on Element, not View. Does not affect
-  // layout; Damage::Paint clears the node's own now-stale cache along with
-  // the ancestors'. The "Unknown property" prefix makes the wrong-kind
-  // rejection warn-and-continue in core, like other name-level rejections.
+  // layout; the write and its damage are the rendertree's
+  // (Element::set_repaint_boundary). The "Unknown property" prefix makes the
+  // wrong-kind rejection warn-and-continue in core, like other name-level
+  // rejections.
   if name == "repaintBoundary" {
     if !matches!(el.kind, ElementKind::View(_)) {
       return Err(
@@ -190,7 +191,7 @@ pub fn apply_jsx(
           .to_string(),
       );
     }
-    el.repaint_boundary = match value {
+    let mode = match value {
       PropValue::Null | PropValue::Bool(false) => BoundaryMode::None,
       PropValue::Bool(true) => BoundaryMode::Recording,
       PropValue::Text(s) if s == "snapshot" => BoundaryMode::Snapshot,
@@ -202,7 +203,7 @@ pub fn apply_jsx(
         ))
       }
     };
-    return Ok(Damage::Paint);
+    return Ok(el.set_repaint_boundary(mode));
   }
 
   // Element-level, kind-independent: as an inline atom of a <text>, float out

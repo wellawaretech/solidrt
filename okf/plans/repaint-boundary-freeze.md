@@ -161,8 +161,8 @@ means. There is no second bit.
   moves, and the walk starts at the parent.
 - **Paint and Scroll** (its background, its scroll offset, `antialias`):
   the stale mark only. The raster holds them.
-- **A change of its own box** (a drag by `left`/`top`, a sibling that
-  grows, a written `width`): the layout pass notes the node and clears
+- **A change of its own box** (a sibling that grows, a written `width`,
+  a written `left`/`top`): the layout pass notes the node and clears
   from it up (`set_unrounded_layout` in
   `alloy/src/rendertree/layout/context.rs`). That clear goes past the
   frozen node to the ancestors, because the quad moves or stretches and
@@ -350,6 +350,43 @@ Stage 2:
 
 Many freezes in one frame: option A is decided.
 
+Layout props are not for animation: a node that moves every frame moves
+by `x`/`y`. The frozen node's own box change is here for correctness
+(the quad follows the box), not as a way to drag it.
+
+Stage 1, the write: `repaintBoundary` forwards to a rendertree method
+that returns the damage, as a thin plugin does. A write of the mode the
+node has reports no damage. Leaving Recording drops the recording (it
+costs nothing to make again), and a write to Recording drops a snapshot
+(the Recording arm would replace it). So only one state is new: a node
+that is off and holds a snapshot. The release registry and the "counts
+as baked" rule of addition 1 are about that state alone.
+
+## Stage 1 as built (2026-11-17)
+
+- `Element::set_repaint_boundary` owns the write and returns the damage;
+  the flux arm parses the value and forwards. The tree keeps the
+  registry of off nodes that hold a snapshot through a reconcile hook of
+  `edit`, and `release_off_snapshots` sweeps it after the paint walk.
+  The release age is `SNAPSHOT_RELEASE_FRAMES`, the text layer's value:
+  the storage is held through 121 paint walks after the switch.
+- A switch between `snapshot` and `snapshot-no-aa` reports
+  `Damage::Paint`: the storage stays and the raster changes.
+- Known until the `antialias` prop lands: snapshot, off, `snapshot-no-aa`
+  reuses the antialiased raster, because the cache does not hold how it
+  was rasterized.
+- A vended snapshot texture id (`snapshotTexture`) stays readable while
+  the node is off and after the release, and shows the last raster. The
+  id holds the texture, so with a vended id the release frees the
+  cache's handle only; the storage goes when the next raster publishes
+  under the id or the node is destroyed.
+- A switch back under another scale takes the snapshot rules: the node's
+  scale was not observed while off, so the frame of the switch back is
+  its first look (stretched, then one raster at rest; at once past the
+  bound).
+- Tests: `alloy/examples/boundary_switch.rs` (GL),
+  `alloy/src/tests/boundary_switch.rs`, and a property test in flux.
+
 ## Done looks like
 
 Stage 1:
@@ -370,7 +407,7 @@ Stage 2:
   each tile.
 - A texture whose content changes at every frame inside a frozen tile
   damages nothing.
-- A frozen node moved by `left`/`top` moves on screen.
+- A frozen node whose box a relayout moves is drawn at its new place.
 - An unfreeze with nothing changed inside rasterizes nothing
   (`snapshotsReused` 1). When the box or density moved during the
   freeze, the snapshot rules re-rasterize it as they say.

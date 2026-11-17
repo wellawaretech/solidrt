@@ -177,6 +177,8 @@ pub fn paint_phase(
   // Text layers nobody composited for a while go too (Text::release_stale_layer).
   let frame = platform.text_atlas().frame();
   tree.release_stale_text_layers(frame);
+  // So do the snapshots kept by boundaries switched off past their age.
+  tree.release_off_snapshots(frame);
   stats
 }
 
@@ -708,7 +710,9 @@ fn build_recursive<'a>(
   }
   // A view's boundary shader requires repaintBoundary="snapshot": the prop's
   // real cost is snapshot semantics, kept explicit rather than implied. Warn
-  // once per declaration write (the dirty flag), not per frame.
+  // once per declaration write (the dirty flag), not per frame. A switch to
+  // a snapshot marks the flag again (Element::set_repaint_boundary), so a
+  // write taken here still re-runs the pass over a kept snapshot.
   if !matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa) {
     if let ElementKind::View(v) = &element.kind {
       if v.shader.is_some() && v.take_shader_dirty() {

@@ -753,6 +753,54 @@ impl Element {
     self.interaction.get_or_insert_with(HitConfig::default).cursor = cursor;
   }
 
+  /// Write what the node retains as a repaint boundary (`repaint_boundary`),
+  /// returning the damage. The mode in force is no change: Damage::None.
+  /// Another mode is Damage::Compose: the ancestors hold the node's old
+  /// composited result and repaint, and the node's own snapshot survives,
+  /// so a boundary switched off and back with nothing changed inside reuses
+  /// its texture, and a change inside while off (which marks it stale)
+  /// re-renders once at the switch back. Leaving Recording drops the
+  /// recording (it costs nothing to make again) and a write to Recording
+  /// drops a snapshot (the Recording arm would replace it), so the one new
+  /// state is a node that is off and holds a snapshot
+  /// (`holds_off_snapshot`), which the tree releases after an age
+  /// (RenderTree::release_off_snapshots). A switch to a snapshot mode marks
+  /// a declared boundary shader dirty: a params write or an input change
+  /// while it was not a snapshot boundary reached no pass, so the pass
+  /// re-runs once over the kept source. A switch between the two snapshot
+  /// modes keeps the storage and changes the raster (antialiased or not):
+  /// Damage::Paint, which marks the snapshot stale for an in-place
+  /// re-render.
+  pub fn set_repaint_boundary(&mut self, mode: BoundaryMode) -> Damage {
+    let was = self.repaint_boundary;
+    if was == mode {
+      return Damage::None;
+    }
+    self.repaint_boundary = mode;
+    if was == BoundaryMode::Recording || mode == BoundaryMode::Recording {
+      self.paint_cache.get_mut().take();
+    }
+    let snapshot = |m: BoundaryMode| matches!(m, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa);
+    if snapshot(was) && snapshot(mode) {
+      return Damage::Paint;
+    }
+    if snapshot(mode) {
+      if let ElementKind::View(v) = &self.kind {
+        if v.shader.is_some() {
+          v.mark_shader_dirty();
+        }
+      }
+    }
+    Damage::Compose
+  }
+
+  /// Whether the node is no repaint boundary and holds a snapshot: a
+  /// snapshot boundary switched off keeps its storage for the switch back
+  /// (`set_repaint_boundary`), valid or stale, until the release age.
+  pub(crate) fn holds_off_snapshot(&self) -> bool {
+    self.repaint_boundary == BoundaryMode::None && matches!(&*self.paint_cache.borrow(), Some(PaintCache::Snapshot(_)))
+  }
+
   pub fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
     self.kind.build(ctx, builder);
   }

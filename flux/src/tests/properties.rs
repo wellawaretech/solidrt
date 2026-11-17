@@ -282,6 +282,26 @@ fn repaint_boundary_is_view_only() {
 }
 
 #[test]
+fn repaint_boundary_write_reports_the_rendertree_damage() {
+  // The arm forwards to Element::set_repaint_boundary: another mode is
+  // Compose (the node's own snapshot survives a switch off and back), the
+  // mode in force is no damage, and a switch between the two snapshot modes
+  // is Paint (the same storage, another raster).
+  use alloy::rendertree::BoundaryMode;
+  let mut el = Element::from_kind("view").expect("known kind");
+  assert_eq!(apply_el(&mut el, "repaintBoundary", text("snapshot")), Ok(Damage::Compose));
+  assert_eq!(apply_el(&mut el, "repaintBoundary", text("snapshot")), Ok(Damage::None));
+  assert_eq!(apply_el(&mut el, "repaintBoundary", PropValue::Bool(false)), Ok(Damage::Compose));
+  assert_eq!(apply_el(&mut el, "repaintBoundary", PropValue::Null), Ok(Damage::None), "null is off too");
+  assert_eq!(apply_el(&mut el, "repaintBoundary", PropValue::Bool(true)), Ok(Damage::Compose));
+  assert_eq!(apply_el(&mut el, "repaintBoundary", text("snapshot")), Ok(Damage::Compose));
+  assert_eq!(apply_el(&mut el, "repaintBoundary", text("snapshot-no-aa")), Ok(Damage::Paint));
+  // A bad value throws and leaves the mode as it was.
+  assert!(apply_el(&mut el, "repaintBoundary", text("pixels")).is_err());
+  assert!(el.repaint_boundary == BoundaryMode::SnapshotNoAa);
+}
+
+#[test]
 fn repaint_boundary_reads_back_on_a_d_view() {
   // The observability blind spot from an external report: repaintBoundary
   // lives on Element, not a kind, and read_jsx only walked the kind - so
