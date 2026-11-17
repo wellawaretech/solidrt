@@ -141,6 +141,10 @@ pub trait DisplayListBuilder: Sized {
 /// this in its `Default`.
 pub const DEFAULT_STROKE_WIDTH: f32 = 1.0;
 
+/// The miter limit a paint starts at, as a ratio of miter length to stroke
+/// width: the contract's default for `Paint`.
+pub const DEFAULT_STROKE_MITER: f32 = 4.0;
+
 /// How a draw paints: a solid color or a source, the style and stroke
 /// metrics, the blend mode, and the filters. Starts at a solid opaque black
 /// fill, source-over, a stroke width of `DEFAULT_STROKE_WIDTH`, butt caps,

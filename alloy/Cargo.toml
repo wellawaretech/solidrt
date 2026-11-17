@@ -6,29 +6,10 @@ edition = "2021"
 [[example]]
 name = "basic"
 
-[target.'cfg(target_os = "android")'.dependencies]
-impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys"] }
-
 # clock_gettime(CLOCK_MONOTONIC) on Android for the frame timestamp clock
 # (frame_timestamps.rs).
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.191"
-
-# impellers ships pre-generated bindings sized for 64-bit hosts; on 32-bit
-# armv7 the pointer-sized struct fields don't line up, so re-run bindgen
-# against the real target (Makefile.android sets BINDGEN_EXTRA_CLANG_ARGS).
-[target.'cfg(all(target_os = "android", target_arch = "arm"))'.dependencies]
-impellers = { version = "=0.4.3", features = ["bindgen_live"] }
-
-# Desktop targets link Impeller statically (static_link).
-[target.'cfg(target_os = "macos")'.dependencies]
-impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys", "static_link"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys", "static_link"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys", "static_link"] }
 
 [dependencies]
 log = { workspace = true }
@@ -38,8 +19,9 @@ log = { workspace = true }
 # power, the theme), the clock, the log sink and thread placement.
 ore = { workspace = true, features = ["window"] }
 # GLES bindings loaded from SDL's GL proc-address. Replaces the hand-written
-# transmute FFI in gl.rs and the former wgpu texture-allocation layer; Impeller
-# remains the renderer. glow is loader-based, so one entry covers all targets.
+# transmute FFI in gl.rs and the former wgpu texture-allocation layer; glow is
+# the one GL path, and the renderer draws through it. glow is loader-based, so
+# one entry covers all targets.
 glow = "=0.17.0"
 # CSS color-string grammar (hex, rgb()/hsl()/hwb(), named colors) for the
 # color property and the parseColor binding; the color math itself (oklab,
@@ -55,9 +37,8 @@ csscolorparser = { version = "=0.9.1", default-features = false, features = ["na
 rxing = { version = "=0.9.4", default-features = false, features = ["decoders", "multi_barcode_readers", "qrcode", "encoding_rs"] }
 # Render-tree dependencies (the retained-mode UI layer in src/rendertree).
 # taffy = flexbox layout; lyon + svgtypes = path geometry/hit-testing.
-# euclid must track the requirement impellers declares: impellers' Point/Size/
-# Rect/Matrix are euclid aliases, and the Vector alias in rendertree only
-# unifies with them while both resolve to the same euclid version.
+# The vocabulary's Point/Size/Rect/Matrix are euclid aliases
+# (renderer/vocab.rs); the pin is alloy's own.
 euclid = "=0.22.14"
 taffy = "=0.15.1"
 svgtypes = "=0.16.2"

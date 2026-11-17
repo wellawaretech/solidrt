@@ -224,9 +224,10 @@ endef
 # ANDROID_ABI and the rust target and clang triple of each ABI: platform.mk.
 NDK_HOME ?= /opt/android-ndk
 
-# armv7 needs impellers' bindgen_live (see alloy/Cargo.toml) to point at the
-# real 32-bit target. Use the bindgen-recognized BINDGEN_EXTRA_CLANG_ARGS_<target>
-# suffix (matching Cargo's TARGET env var, hyphens to underscores) rather than
+# armv7's target-side bindgen run (rquickjs-sys, built with the workspace's
+# `bindgen` feature) needs pointing at the real 32-bit target. Use the
+# bindgen-recognized BINDGEN_EXTRA_CLANG_ARGS_<target> suffix
+# (matching Cargo's TARGET env var, hyphens to underscores) rather than
 # the plain var: bindgen also runs for host-targeted build units in the same
 # build (e.g. rquickjs-macro, a proc-macro crate that always builds for the
 # host), and an unscoped value corrupts those instead of just armv7.
@@ -269,14 +270,13 @@ define check-elf-align
 endef
 
 # Cross-compile the cdylib with cargo-ndk, then stage it as libmain.so (the
-# name the Android shell loads) with the shared libs beside it: SDL, impeller,
-# and the NDK's C++ runtime when a staged lib links it (the stock build does
-# through impeller, a C++ module does), so the APK carries what is needed and
-# nothing else. Every lib is staged stripped: an APK is what this folder
-# becomes (sol swaps the libs into the stock one as they are; the checkout's
-# Gradle build would strip them, a derived APK does not), the prebuilt
-# impeller carries 220 MB of symbols, and a release libmain.so 18 MB. The
-# symbols stay in the target dir for ndk-stack.
+# name the Android shell loads) with the shared libs beside it: SDL, and the
+# NDK's C++ runtime when a staged lib links it (a C++ module does; the stock
+# build no longer does), so the APK carries what is needed and nothing else.
+# Every lib is staged stripped: an APK is what this folder becomes (sol swaps
+# the libs into the stock one as they are; the checkout's Gradle build would
+# strip them, a derived APK does not), and a release libmain.so carries 18 MB
+# of symbols. The symbols stay in the target dir for ndk-stack.
 # $(1) = label, $(2) = features, $(3) = target dir, $(4) = dist subdir
 define ndk-build
 	@echo "Building ANDROID $(1) ($(PROFILE), $(ANDROID_ABI)) $(VERSION)"
@@ -285,8 +285,7 @@ define ndk-build
 	@mkdir -p $(DIST_DIR)/$(4)/$(ANDROID_ABI)
 	$(STRIP) -o $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libmain.so $(3)/$(ANDROID_TARGET)/$(PROFILE)/lib$(LIB).so
 	$(STRIP) -o $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libSDL3.so $(3)/$(ANDROID_TARGET)/$(PROFILE)/libSDL3.so
-	$(STRIP) -o $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libimpeller.so "$$(ls -t $(3)/$(ANDROID_TARGET)/$(PROFILE)/build/impellers-*/out/libimpeller.so | head -n 1)"
-	@if $(READELF) -d $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libmain.so $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libSDL3.so $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libimpeller.so | grep -q 'NEEDED.*libc++_shared'; then \
+	@if $(READELF) -d $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libmain.so $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libSDL3.so | grep -q 'NEEDED.*libc++_shared'; then \
 	  $(STRIP) -o $(DIST_DIR)/$(4)/$(ANDROID_ABI)/libc++_shared.so $(NDK_HOME)/toolchains/llvm/prebuilt/*/sysroot/usr/lib/$(ANDROID_CLANG_TRIPLE)/libc++_shared.so; \
 	  echo "Staged libc++_shared.so beside it (a staged lib links it)"; \
 	else \

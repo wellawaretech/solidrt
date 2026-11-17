@@ -131,8 +131,7 @@ The runtime is written in [Rust](https://www.rust-lang.org), on top of [tokio](h
 - [SolidJS 2.0](https://www.solidjs.com) - the reactivity system and the universal renderer SolidRT plugs into. 
 - [QuickJS](https://github.com/quickjs-ng/quickjs) - the JavaScript engine every application runs on, embedded through the [rquickjs](https://crates.io/crates/rquickjs) bindings.
 - [SDL3](https://libsdl.org) - windowing, input, audio and camera, on every platform SolidRT targets, through the [sdl3](https://crates.io/crates/sdl3) bindings.
-- [Impeller](https://docs.flutter.dev/perf/impeller) - Flutter's 2D renderer, which draws the vector content of the render tree, via the [impellers](https://crates.io/crates/impellers) bindings.
-- [glow](https://crates.io/crates/glow) - GL bindings, loaded from SDL's GL proc addresses.
+- [glow](https://crates.io/crates/glow) - GL bindings, loaded from SDL's GL proc addresses; SolidRT's own renderer draws the render tree through them.
 - [taffy](https://crates.io/crates/taffy) - the flexbox layout engine behind every layout node.
 
 **Various dependencies**

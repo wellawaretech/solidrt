@@ -72,11 +72,6 @@ const NATIVE: Native[] = [
   { name: "SDL", what: "windowing, input and audio devices; built from source", crate: "sdl3-src", linkedBy: "sdl3-sys", files: ["SDL/LICENSE.txt"] },
   { name: "SDL_image", what: "image loading for SDL; built from source", crate: "sdl3-image-src", linkedBy: "sdl3-image-sys", files: ["SDL_image/LICENSE.txt"] },
   { name: "SDL_ttf", what: "font rendering for SDL; built from source", crate: "sdl3-ttf-src", linkedBy: "sdl3-ttf-sys", files: ["SDL_ttf/LICENSE.txt"] },
-  {
-    name: "Impeller (Flutter engine)",
-    what: "the 2D renderer; a prebuilt library of the Flutter SDK, whose license file covers the engine and everything it bundles",
-    files: ["third-party-licenses/impeller/LICENSE"],
-  },
   { name: "ANGLE", what: "OpenGL ES over the platform's graphics API; prebuilt libEGL and libGLESv2 shipped beside the binary", files: ["third-party-licenses/angle/LICENSE"], only: angle },
   { name: "QuickJS", what: "the JavaScript engine; built from source", crate: "rquickjs-sys", linkedBy: "rquickjs-sys", files: ["quickjs/LICENSE"] },
   { name: "Basis Universal", what: "compressed texture transcoder and encoder; built from source", files: ["forge/vendor/basis_universal/LICENSE", "forge/vendor/basis_universal/NOTICE"] },

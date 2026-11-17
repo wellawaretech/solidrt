@@ -1,12 +1,10 @@
 //! The renderer seam. Alloy describes a frame in its own vocabulary
 //! (`vocab`) through the recording types, and draws it through one renderer
 //! that implements the contract (`contract`); which renderer is a
-//! compile-time choice, and a build holds exactly one. Today that is
-//! Impeller (`impeller`), the only module in the workspace that names the
-//! `impellers` crate. A replacement is a second module beside it that
-//! implements the same traits; the aliases below switch under a cfg while
-//! it reaches parity (okf/done/renderer-seam.md), and nothing outside this
-//! module changes.
+//! compile-time choice, and a build holds exactly one. That is anvil
+//! (`anvil`), alloy's own (okf/plans/own-renderer.md); Impeller and its
+//! crate are gone. The aliases below are the one place that names the
+//! renderer's types, so nothing outside this module changes with it.
 //!
 //! In a test build the recording types also keep a plain-data log of what
 //! they recorded (`oplog`), which a list returns through
@@ -20,8 +18,8 @@
 //! use crate::renderer::{DisplayListBuilder, Paint, Rect};
 //! ```
 
+mod anvil;
 pub mod contract;
-mod impeller;
 #[cfg(test)]
 pub mod oplog;
 mod vocab;
@@ -29,17 +27,17 @@ mod vocab;
 pub use contract::Target;
 pub use vocab::*;
 
-pub type Renderer = impeller::Renderer;
-pub type Texture = impeller::Texture;
-pub type DisplayList = impeller::DisplayList;
-pub type DisplayListBuilder = impeller::DisplayListBuilder;
-pub type Paint = impeller::Paint;
-pub type ColorSource = impeller::ColorSource;
-pub type ColorFilter = impeller::ColorFilter;
-pub type ImageFilter = impeller::ImageFilter;
-pub type MaskFilter = impeller::MaskFilter;
-pub type Path = impeller::Path;
-pub type PathBuilder = impeller::PathBuilder;
+pub type Renderer = anvil::Renderer;
+pub type Texture = anvil::Texture;
+pub type DisplayList = anvil::DisplayList;
+pub type DisplayListBuilder = anvil::DisplayListBuilder;
+pub type Paint = anvil::Paint;
+pub type ColorSource = anvil::ColorSource;
+pub type ColorFilter = anvil::ColorFilter;
+pub type ImageFilter = anvil::ImageFilter;
+pub type MaskFilter = anvil::MaskFilter;
+pub type Path = anvil::Path;
+pub type PathBuilder = anvil::PathBuilder;
 
 /// The contract traits, anonymously: glob-import this to call the
 /// methods on the aliases above without naming the traits beside them.

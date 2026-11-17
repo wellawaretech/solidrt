@@ -8,7 +8,7 @@
 #   - dist: android-dist builds both APKs for one ABI and stages them into
 #     packages/android-<abi>/, mirroring the desktop `dist` goal.
 #
-# The .so files themselves (libmain.so with SDL, impeller and, when a lib
+# The .so files themselves (libmain.so with SDL and, when a lib
 # links it, the NDK's C++ runtime beside it, 16 KB page aligned) are the
 # runtime's build (RUNTIME_MAKE android-client / android-runtime), staged
 # into dist/android/<abi>/ and dist/android-runtime/<abi>/ for the Gradle

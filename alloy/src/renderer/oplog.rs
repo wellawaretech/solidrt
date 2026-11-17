@@ -14,8 +14,6 @@ use super::vocab::{
 };
 use std::sync::Arc;
 
-/// The miter limit a paint starts at, the contract's default for `Paint`.
-const DEFAULT_STROKE_MITER: f32 = 4.0;
 /// How far apart the two axis scales of a matrix may be and still count as
 /// one scale: float noise from composed transforms, not a real non-uniform
 /// scale.
@@ -51,7 +49,7 @@ impl Default for PaintLog {
       stroke_width: super::contract::DEFAULT_STROKE_WIDTH,
       stroke_cap: StrokeCap::Butt,
       stroke_join: StrokeJoin::Miter,
-      stroke_miter: DEFAULT_STROKE_MITER,
+      stroke_miter: super::contract::DEFAULT_STROKE_MITER,
       color_source: false,
       color_filter: false,
       image_filter: false,

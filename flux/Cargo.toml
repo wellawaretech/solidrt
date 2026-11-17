@@ -26,7 +26,7 @@ path = "src/bin/fluxrt.rs"
 default = ["compile"]
 compile = []
 # The alloy-backed GUI marshalling layer (flux::gui): render-tree / texture /
-# raf / camera / microphone bindings. Pulls alloy (SDL + Impeller + GL) and
+# raf / camera / microphone bindings. Pulls alloy (SDL + GL) and
 # ore's window part (the cursor and text input types the bindings marshal,
 # and the file dialogs flux:dialog marshals). Off by default so the headless
 # flux runtime and its bins stay GUI-free; lattice turns it on.

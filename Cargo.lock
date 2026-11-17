@@ -79,7 +79,6 @@ dependencies = [
  "half",
  "harfrust",
  "image",
- "impellers",
  "khronos-egl",
  "libc",
  "libloading 0.9.0",
@@ -1333,7 +1332,6 @@ version = "0.22.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
 dependencies = [
- "bytemuck",
  "num-traits",
 ]
 
@@ -2237,22 +2235,6 @@ name = "imagesize"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65b27460c2c92b037f3f94c538ed9a3342f3fdf923606781629ccb35f82d042a"
-
-[[package]]
-name = "impellers"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed7798694b73ba742df7865d963b2fb841daf144472e01cbf83eddc58f601990"
-dependencies = [
- "anyhow",
- "bindgen",
- "bitflags",
- "bytemuck",
- "euclid",
- "serde_json",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "indexmap"
