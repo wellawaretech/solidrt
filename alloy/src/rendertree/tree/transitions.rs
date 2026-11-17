@@ -278,14 +278,19 @@ impl RenderTree {
     let doomed = el.lifecycle.doomed;
     let parent = el.parent;
     let outer = parent.and_then(|p| self.exit_root_of(p));
+    // An exit under a frozen node shows nothing (its unlink's walk stopped
+    // there), and neither does freeing it.
+    let mut unseen = false;
     if let Some(parent_id) = parent {
       if self.nodes.contains_key(&parent_id) {
-        self.detach_node_now(parent_id, node_id);
+        unseen = self.detach_node_now(parent_id, node_id);
       }
     }
     if doomed {
       self.delete_recursive(node_id);
-      self.bump_revision();
+      if !unseen {
+        self.bump_revision();
+      }
     }
     outer
   }
@@ -646,12 +651,26 @@ impl RenderTree {
       return true;
     }
     let mut damages: Vec<(u64, Damage)> = Vec::with_capacity(tracks.len());
+    // A layout slide that changed a painted size this frame, the settle
+    // included: the next layout pass lays the node's children out against
+    // the new box, so it dirties layout like a Layout write, also where its
+    // paint walk stops at a frozen node and moves no revision of its own
+    // (RenderTree::settle_walk).
+    let mut resized = false;
     tracks.retain_mut(|t| {
       if !self.nodes.contains_key(&t.node) {
         return false;
       }
       let (value, settled) = t.advance(now);
-      let damage = self.nodes.get_mut(&t.node).map(|el| el.set_anim_value(t.prop, value)).unwrap_or(Damage::None);
+      let damage = match self.nodes.get_mut(&t.node) {
+        Some(el) => {
+          let was = el.painted_size();
+          let damage = el.set_anim_value(t.prop, value);
+          resized |= t.prop == AnimProp::Layout && el.painted_size() != was;
+          damage
+        }
+        None => Damage::None,
+      };
       damages.push((t.node, damage));
       // A painted size off the solved one needs the children laid out
       // against it this frame (layout/context.rs animated_layouts); the
@@ -679,6 +698,9 @@ impl RenderTree {
       !settled
     });
     self.apply_damage_batch(&damages);
+    if resized {
+      self.bump_revision();
+    }
     self.transitions.end_advance(tracks);
     exit_checks.sort_unstable();
     exit_checks.dedup();

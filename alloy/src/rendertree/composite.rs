@@ -37,7 +37,7 @@ pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &c
     alloy,
     hidden_depth: 0,
     animated: false,
-    paint_cleared: std::collections::HashSet::new(),
+    paint_cleared: std::collections::HashMap::new(),
   };
   taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
   // Declaring nodes the pass moved or resized slide from the box they were
@@ -719,6 +719,13 @@ fn build_recursive<'a>(
         log::warn!("node {node_id} declares a shader without repaintBoundary=\"snapshot\"; not applied");
       }
     }
+  }
+  // `freeze` holds a snapshot boundary's picture and is inert anywhere
+  // else (Element::frozen): warn once per `freeze={true}` write, at the
+  // paint after it, where the node is no snapshot boundary. Read only where
+  // it is set, so the walk pays nothing for it elsewhere.
+  if element.freeze && element.take_freeze_dirty() && element.repaint_boundary != BoundaryMode::Snapshot {
+    log::warn!("Node {node_id} sets freeze without repaintBoundary=\"snapshot\"; it holds nothing");
   }
   // Glass under a fading group: every composite path below applies this
   // view's opacity as a group - a save_layer, or the opacity argument of a

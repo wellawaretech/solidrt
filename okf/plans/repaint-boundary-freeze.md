@@ -341,11 +341,20 @@ Stage 1:
 
 Stage 2:
 
-4. **A write inside bumps no revision.** `apply_damage` bumps the
-   revision before the walk, and a bake hit bumps it too. Without a
-   change, every write inside a frozen node makes a full paint walk and
-   a submit with no damage. A write whose walk stops at a frozen node
-   bumps nothing, so a frozen tile with a video in it costs no frame.
+4. **A write inside bumps no revision, unless it dirtied layout.**
+   `apply_damage` bumps the revision before the walk, and a bake hit
+   bumps it too. Without a change, every write inside a frozen node
+   makes a full paint walk and a submit with no damage. A write whose
+   walk stops at a frozen node bumps nothing, so a frozen tile with a
+   video in it costs no paint walk. The exception is a write that
+   dirtied layout (a `Damage::Layout` write, a text's content, a
+   laid-out child or a span inserted, detached or destroyed). A frame
+   with no revision bump re-presents the retained display list and runs
+   no layout pass (`PendingFrame::commit`), so such a write must bump
+   it: the next frame runs layout, and its paint walk finds every cache
+   as it was. Layout and hit testing then stay live inside, and a frozen
+   node that its content resizes is drawn at its new box, with the
+   siblings it pushes.
 5. **A node mounted while frozen is not painted** until the unfreeze, so
    a transition written on it snaps (`lifecycle.painted`). Accepted, and
    documented with the prop.
@@ -398,6 +407,55 @@ as baked" rule of addition 1 are about that state alone.
 - Tests: three cases in `alloy/examples/boundary_switch.rs` (an oval's
   edge has blended pixels with antialiasing and none without), lib tests
   in `alloy/src/tests/boundary_switch.rs`, property tests in flux.
+
+## Stage 2 as built (2026-11-17)
+
+Built as written above, with these rules added on the way. An
+independent review found the cases of 3 to 7.
+
+1. **Frozen means: a snapshot boundary with `freeze` set that did not
+   paint inline.** Every freeze rule reads one predicate
+   (`Element::frozen`). A `freeze` left on a node that is off or a
+   Recording boundary stops nothing. A node whose snapshot path drew it
+   inline at its last paint (a box of no texels, a failed raster) holds
+   no picture, so it does not stop the walks either. A node that was
+   never painted does: nothing of it is shown.
+2. **The held bit is on the snapshot cache**, set by a paint that drew a
+   texture. A freezing node that is not held yet is never a candidate
+   for the raster budget.
+3. **The frozen node's own box.** A change of its size or its location
+   by the layout pass clears from the parent and is damaged. Another
+   change of its layout record (its scrollable overflow, which moves
+   with every child) clears nothing: it is inside the picture. A
+   `layout` transition's size slide on the frozen node counts as the
+   same event, and reports Compose.
+4. **The frozen node's own writes.** Compose as before. Paint and Scroll:
+   the stale mark only. A layout write, and `pixelSnap`: the stale mark
+   and a walk from the parent, because they can change what is around
+   the quad or where it rounds.
+5. **The revision.** A write whose walk stops bumps nothing, unless it
+   dirtied layout. A size slide inside a frozen node counts as dirtying
+   layout. A mount or a removal under a frozen node still costs one
+   rebuild with no damage: `create_node` and the destroy at the end of
+   the tick bump as before.
+6. **A vended snapshot texture** of a held node is published when the
+   snapshot is valid or held.
+7. **Known, documented with the prop.** Hover is not re-evaluated for
+   motion inside a frozen view until the pointer moves: a frame that
+   re-presents runs no hover refresh. Content that moves outside the
+   frozen box may not be hit there until the unfreeze.
+
+Measured on a release client, desktop, the repro of
+boundary-cache-under-js-written-scale at 40 tiles with a color written
+inside every tile at every frame, windows of 5 s. Not frozen, snapshot
+under the written scale: 16.9 fps, 40 snapshots re-rendered per frame.
+Frozen: 59.95 fps, no frame over 16.7 ms, 43 of 16083 nodes painted, no
+raster. That is the translate row.
+
+Tests: `alloy/examples/boundary_freeze.rs` (GL),
+`alloy/src/tests/boundary_freeze.rs`, property tests in flux. Not
+covered by either harness: a failed raster that leaves an older valid
+cache behind.
 
 ## Done looks like
 

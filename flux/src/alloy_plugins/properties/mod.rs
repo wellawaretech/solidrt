@@ -120,19 +120,15 @@ pub fn apply_jsx(
   // Element-level, kind-independent: `pixelSnap={false}` turns the rounding
   // to the device grid off for the node and its subtree (see
   // Element::pixel_snap_off); true and null are the default, rounding on.
-  // Damage::Paint brings the walk to the node; the boundary caches below
-  // notice the other rounding themselves.
+  // The write and its damage are the rendertree's
+  // (Element::set_pixel_snap_off).
   if name == "pixelSnap" {
     let off = match value {
       PropValue::Null | PropValue::Bool(true) => false,
       PropValue::Bool(false) => true,
       _ => return Err(format!("pixelSnap must be a boolean, got {}", describe(value))),
     };
-    if el.pixel_snap_off == off {
-      return Ok(Damage::None);
-    }
-    el.pixel_snap_off = off;
-    return Ok(Damage::Paint);
+    return Ok(el.set_pixel_snap_off(off));
   }
 
   // `position` is decoded here rather than in the layout style adapter because
@@ -227,6 +223,27 @@ pub fn apply_jsx(
       _ => return Err(format!("antialias must be a boolean, got {}", describe(value))),
     };
     return Ok(el.set_antialias(antialias));
+  }
+
+  // Whether a snapshot boundary holds its picture while its subtree changes
+  // (see Element::freeze); false and null are the default, live. View-only
+  // like repaintBoundary, whose snapshot it holds, and rejected the same way
+  // on other kinds. Off a snapshot boundary it is inert and does not throw:
+  // JSX writes props one at a time, in any order. The write and its damage
+  // are the rendertree's (Element::set_freeze).
+  if name == "freeze" {
+    if !matches!(el.kind, ElementKind::View(_)) {
+      return Err(
+        "Unknown property 'freeze': it holds a snapshot repaint boundary's picture, and repaint boundaries are view-only; wrap this element in a <view> or a <view detached>"
+          .to_string(),
+      );
+    }
+    let freeze = match value {
+      PropValue::Null | PropValue::Bool(false) => false,
+      PropValue::Bool(true) => true,
+      _ => return Err(format!("freeze must be a boolean, got {}", describe(value))),
+    };
+    return Ok(el.set_freeze(freeze));
   }
 
   // Element-level, kind-independent: as an inline atom of a <text>, float out

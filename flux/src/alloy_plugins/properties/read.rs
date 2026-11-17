@@ -207,6 +207,16 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
   if !element.antialias {
     out.push(("antialias", ReadValue::Bool(false)));
   }
+  // Read back wherever it is set, like antialias. Beside it, what the
+  // runtime holds: a frozen snapshot boundary whose subtree changed since
+  // its picture was taken (Element::frozen_stale), which the unfreeze
+  // repaints. Not a prop: a fact of the node, shown only while true.
+  if element.freeze {
+    out.push(("freeze", ReadValue::Bool(true)));
+  }
+  if element.frozen_stale() {
+    out.push(("snapshotStale", ReadValue::Bool(true)));
+  }
   // Element-level, on every kind: only the off-default value reads back.
   if element.pixel_snap_off {
     out.push(("pixelSnap", ReadValue::Bool(false)));

@@ -205,6 +205,14 @@ pub struct SnapshotCache {
   /// and the raster call (RasterTimer): what a deferral of its next raster
   /// for density reserves of the next walk's budget (RasterBudget).
   pub cost: Duration,
+  /// Whether it is the picture a frozen node holds (Element::freeze): set
+  /// by the node's first snapshot paint after the freeze write, when that
+  /// paint left a valid snapshot, and dropped by a `freeze` or a
+  /// `repaintBoundary` write. While it is set the paint composites this
+  /// texture whatever happened since (snapshot_node), and a dropped cache
+  /// drops it with the pixels (a context loss), so the next paint takes a
+  /// new picture. `valid` keeps its meaning: a write inside marks it stale.
+  pub held: bool,
   /// The shader half, present while a boundary shader is declared (see
   /// `View::set_shader`); its output is composited in place of `texture`.
   pub shaded: Option<ShadedCache>,
@@ -584,8 +592,10 @@ impl<'e> BoundaryComposite<'e> {
   }
 
   /// Composite a rasterization (the raw snapshot or a shader pass output) as
-  /// the boundary's quad.
+  /// the boundary's quad. The node is drawn from a texture of its own
+  /// (Element::snapshot_inline).
   fn draw_texture(&self, builder: &mut DisplayListBuilder, texture: &Texture) {
+    self.element.snapshot_inline.set(false);
     self.draw(builder, |b| {
       b.draw_texture_rect(texture, &self.src, &self.dst, TextureSampling::Linear, self.quad_paint.as_ref());
     });
@@ -594,8 +604,10 @@ impl<'e> BoundaryComposite<'e> {
   /// Rasterization failed: replay the recording inline this frame. The
   /// recording carries its own device-scale transform and content offset, so
   /// counter both before replaying; it is laid out at the key's box, so it
-  /// is stretched onto this frame's box like the quad.
+  /// is stretched onto this frame's box like the quad. The node holds no
+  /// texture of its own this frame (Element::snapshot_inline).
   fn draw_inline(&self, builder: &mut DisplayListBuilder, dl: &DisplayList) {
+    self.element.snapshot_inline.set(true);
     self.draw(builder, |b| {
       b.save();
       b.translate(self.dst.origin.x, self.dst.origin.y);
@@ -697,6 +709,11 @@ pub(super) fn draw_cached_recording(
 // the walk's raster budget (RasterBudget) and stays stretched until then.
 // All storage is exact-size. A declared boundary shader adds one pass over
 // the rasterization and composites its output instead (see View::set_shader).
+//
+// A frozen node (Element::freeze) takes its picture at its first snapshot
+// paint after the freeze write, by the rules above except that the raster
+// budget never defers it (all the freezes of a frame show one moment), and
+// holds it from then on (SnapshotCache::held, draw_held).
 pub(super) fn snapshot_node<'a>(
   scene: &'a RenderTree,
   node_id: u64,
@@ -709,6 +726,93 @@ pub(super) fn snapshot_node<'a>(
   let cull = ctx.cull.take();
   snapshot_node_unculled(scene, node_id, ctx, builder, aa);
   ctx.cull = cull;
+  // The picture is taken: the valid snapshot this paint drew is what the
+  // node holds. A paint that drew it inline (a failed raster, which may
+  // leave an older snapshot behind, a box with no texels) holds nothing and
+  // takes it at the next one.
+  let element = scene.node(node_id);
+  if element.freeze && !element.snapshot_inline.get() {
+    if let Some(PaintCache::Snapshot(snap)) = &mut *element.paint_cache.borrow_mut() {
+      if snap.valid {
+        snap.held = true;
+      }
+    }
+  }
+}
+
+// A frozen node's held picture (SnapshotCache::held), composited as it is:
+// the cached texture at the cached box and density, whatever happened since.
+// No density re-raster, no wait and no frame request, no raster budget, no
+// re-render for rest, no `pixelSnap`, validity, key or layout-size compare.
+// The quad is this frame's box (`painted`), which the texture is stretched
+// onto. The node's own backdrop and its own boundary shader stay live: a
+// pending shader write re-runs the pass over the held source. The held
+// raster's content made mid-motion is not carried into an enclosing
+// snapshot's or recording's count: its look at rest is frozen too, and it
+// would re-make the enclosing one at every visit at rest. Returns false,
+// drawing nothing, where there is no held picture, or where the shader
+// declaration needs other storage (storage_kept: an outset change, a
+// `previous` toggle, a shader declared over a plain raster); the snapshot
+// rules then rasterize the live subtree once, and that picture is held.
+#[allow(clippy::too_many_arguments)]
+fn draw_held<'a>(
+  scene: &'a RenderTree,
+  node_id: u64,
+  ctx: &mut BuildContext<'a>,
+  builder: &mut DisplayListBuilder,
+  own: Option<Matrix>,
+  frame: Size,
+  offset: (f32, f32),
+  painted: Size,
+) -> bool {
+  let element = scene.node(node_id);
+  let shader = match &element.kind {
+    ElementKind::View(v) => v.shader.as_ref(),
+    _ => None,
+  };
+  let held = match &*element.paint_cache.borrow() {
+    Some(PaintCache::Snapshot(snap)) if snap.held && storage_kept(snap, shader) => {
+      let outset = snap.shaded.as_ref().map_or(0.0, |sc| sc.outset);
+      let key = SnapshotKey { width: snap.width, height: snap.height, scale: snap.scale, outset };
+      let shaded = snap.shaded.as_ref().map(|sc| (sc.output.clone(), sc.history.clone()));
+      Some((key, snap.texture.clone(), shaded))
+    }
+    _ => None,
+  };
+  let Some((key, source, shaded)) = held else {
+    return false;
+  };
+  let hoist = match own {
+    Some(m) => Hoist::Transform(m),
+    None => Hoist::None,
+  };
+  service_captures_under_cache(scene, node_id, ctx, hoist);
+  // A grant made for it ahead of the walk is given back: no raster is due.
+  ctx.raster_budget.defers(node_id, false);
+  let quad = BoundaryComposite::new(element, own, frame, offset, painted, &key);
+  match (shader, shaded) {
+    (Some(decl), Some((output, history))) => {
+      let dirty = matches!(&element.kind, ElementKind::View(v) if v.take_shader_dirty());
+      if dirty {
+        let (tex_w, tex_h) = key.texture_dims();
+        if let Err(e) = ctx.alloy.rerun_node_shader(decl, &source, &output, history.as_ref(), tex_w, tex_h) {
+          log::warn!("boundary shader re-run failed for node {node_id}: {e}");
+        }
+      }
+      quad.draw_texture(builder, &output);
+    }
+    (None, Some(_)) => {
+      // A shader withdrawn without an outset: the pass output drops, the
+      // held source stays (as on any snapshot, snapshot_node_unculled).
+      if let Some(PaintCache::Snapshot(snap)) = &mut *element.paint_cache.borrow_mut() {
+        snap.shaded = None;
+      }
+      quad.draw_texture(builder, &source);
+    }
+    _ => quad.draw_texture(builder, &source),
+  }
+  ctx.snapshots_reused += 1;
+  true
 }
 
 fn snapshot_node_unculled<'a>(
@@ -743,6 +847,14 @@ fn snapshot_node_unculled<'a>(
   let composite = grid::scale(&inner_grid).unwrap_or(display_scale);
   let seen = text::scale_observed(element.scale_seen.get(), composite, ctx.frame);
   element.scale_seen.set(Some(seen));
+  // A frozen node's held picture is composited as it is; the scale is
+  // observed above all the same, so an unfreeze applies the rules below to
+  // a current observation. `freeze` alone says it: this is the snapshot
+  // arm, and what the last paint drew does not change what this one owes.
+  let freezing = element.freeze;
+  if freezing && draw_held(scene, node_id, ctx, builder, own, frame, offset, painted) {
+    return;
+  }
   let at_rest = seen.at_rest() || ctx.scale_at_rest;
   let factor = ctx.scale_target * scene.scale_transition_factor(node_id);
   let have = match &*element.paint_cache.borrow() {
@@ -755,13 +867,14 @@ fn snapshot_node_unculled<'a>(
   // density, its box (below) and its pixels for one more frame, composited
   // stretched exactly as a waiting one, and asks for the next frame's look,
   // also at rest, where it does not wait. Its re-render for rest is not
-  // marked stale (below) until it is granted.
+  // marked stale (below) until it is granted. A frozen node taking its
+  // picture is no candidate: the picture is taken in this frame.
   let shader_decl = match &element.kind {
     ElementKind::View(v) => v.shader.as_ref(),
     _ => None,
   };
   let stand_in = match &*element.paint_cache.borrow() {
-    Some(PaintCache::Snapshot(snap)) => {
+    Some(PaintCache::Snapshot(snap)) if !freezing => {
       budgeted(snap, ctx, density, composite, at_rest, factor, layout, painted, shader_decl)
     }
     _ => None,
@@ -854,6 +967,7 @@ fn snapshot_node_unculled<'a>(
   // Without a positive painted box there is nothing to rasterize into; paint
   // inline so overflowing content still shows up.
   if tex_w == 0 || tex_h == 0 {
+    element.snapshot_inline.set(true);
     record_node(scene, node_id, ctx, builder, Hoist::None);
     return;
   }
@@ -953,6 +1067,7 @@ fn snapshot_node_unculled<'a>(
     let raster_grid = grid::raster(scale, Vector::new(outset, outset));
     let rest_pending = record_raster(scene, node_id, ctx, &mut sub, hoist, raster_grid, raster_frame, for_rest);
     let Some(dl) = sub.build() else {
+      element.snapshot_inline.set(true);
       timer.stop(&mut ctx.raster_budget);
       return;
     };
@@ -1016,6 +1131,7 @@ fn snapshot_node_unculled<'a>(
           pixel_snap_off,
           rest_pending,
           cost,
+          held: false,
           shaded: Some(ShadedCache { output, outset, history }),
         }));
       }
@@ -1062,6 +1178,7 @@ fn snapshot_node_unculled<'a>(
   let raster_grid = grid::raster(scale, -paint_offset);
   let rest_pending = record_raster(scene, node_id, ctx, &mut sub, hoist, raster_grid, raster_frame, for_rest);
   let Some(dl) = sub.build() else {
+    element.snapshot_inline.set(true);
     timer.stop(&mut ctx.raster_budget);
     return;
   };
@@ -1094,6 +1211,7 @@ fn snapshot_node_unculled<'a>(
           pixel_snap_off,
           rest_pending,
           cost,
+          held: false,
           shaded: None,
         }));
         return;
@@ -1122,6 +1240,7 @@ fn snapshot_node_unculled<'a>(
         pixel_snap_off,
         rest_pending,
         cost,
+        held: false,
         shaded: None,
       }));
     }

@@ -1,5 +1,6 @@
 mod audio;
 mod boundary;
+mod boundary_freeze;
 mod boundary_move;
 mod boundary_switch;
 mod box_dash;

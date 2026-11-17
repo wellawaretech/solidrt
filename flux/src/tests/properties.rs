@@ -344,6 +344,61 @@ fn antialias_takes_a_boolean_on_a_view() {
 }
 
 #[test]
+fn freeze_takes_a_boolean_on_a_view() {
+  // The arm forwards to Element::set_freeze: a changing write is Compose
+  // (the node is painted, which takes the picture or lets the snapshot rules
+  // decide again; off a snapshot it is inert and warns at that paint), the
+  // value in force is no damage, and a write off a snapshot never throws (JSX
+  // writes props in any order). Null resets to the default, live. An
+  // unfreeze over a stale snapshot is Paint, which needs a raster (the GL
+  // example's, alloy/examples/boundary_freeze.rs).
+  let mut el = Element::from_kind("view").expect("known kind");
+  assert!(!el.freeze, "live by default");
+  assert_eq!(apply_el(&mut el, "freeze", PropValue::Bool(true)), Ok(Damage::Compose), "off a snapshot");
+  assert!(el.freeze && !el.frozen(), "set, and inert off a snapshot");
+  assert_eq!(apply_el(&mut el, "freeze", PropValue::Bool(true)), Ok(Damage::None), "the value in force");
+  apply_el(&mut el, "repaintBoundary", text("snapshot")).expect("snapshot applies");
+  assert!(el.frozen(), "a snapshot boundary with freeze set");
+  assert_eq!(apply_el(&mut el, "freeze", PropValue::Null), Ok(Damage::Compose), "null unfreezes");
+  assert!(!el.freeze, "null is the default");
+  assert_eq!(apply_el(&mut el, "freeze", PropValue::Bool(false)), Ok(Damage::None), "the value in force");
+  assert_eq!(apply_el(&mut el, "freeze", PropValue::Bool(true)), Ok(Damage::Compose), "on a snapshot");
+  // pixelSnap forwards to Element::set_pixel_snap_off: on a frozen view it
+  // decides how the held quad rounds in its parent's slot, Compose.
+  assert_eq!(apply_el(&mut el, "pixelSnap", PropValue::Bool(false)), Ok(Damage::Compose), "pixelSnap, frozen");
+  assert!(el.pixel_snap_off);
+  assert!(apply("d-view", "freeze", PropValue::Bool(true)).is_ok());
+  // A value of another type throws and leaves the field as it was.
+  let err = apply_el(&mut el, "freeze", text("yes")).expect_err("a string throws");
+  assert_eq!(err, "freeze must be a boolean, got \"yes\"");
+  assert!(el.freeze);
+  // View-only, like repaintBoundary: name-level on other kinds.
+  let err = apply("rect", "freeze", PropValue::Bool(true)).expect_err("a rect rejects it");
+  assert!(err.starts_with("Unknown property"), "{err}");
+  assert!(err.contains("view-only"), "{err}");
+}
+
+#[test]
+fn freeze_reads_back_while_set() {
+  // The tree record shows `freeze: true` wherever it is set, also off a
+  // snapshot boundary where it is inert, and nothing at the default. The
+  // stale mark (`snapshotStale`) needs a held raster: a node with none
+  // shows no mark.
+  use crate::alloy_plugins::properties::{read_jsx, ReadValue};
+  let has =
+    |el: &Element, name: &str| read_jsx(el).iter().any(|(n, v)| *n == name && matches!(v, ReadValue::Bool(true)));
+  let mut el = Element::from_kind("view").expect("known kind");
+  assert!(!read_jsx(&el).iter().any(|(n, _)| *n == "freeze"), "the default emits nothing");
+  apply_el(&mut el, "freeze", PropValue::Bool(true)).expect("freeze applies");
+  assert!(has(&el, "freeze"), "set off a snapshot");
+  apply_el(&mut el, "repaintBoundary", text("snapshot")).expect("snapshot applies");
+  assert!(has(&el, "freeze"), "set on a snapshot");
+  assert!(!has(&el, "snapshotStale"), "no raster held, no stale mark");
+  apply_el(&mut el, "freeze", PropValue::Bool(false)).expect("freeze applies");
+  assert!(!read_jsx(&el).iter().any(|(n, _)| *n == "freeze"), "the default again emits nothing");
+}
+
+#[test]
 fn repaint_boundary_reads_back_on_a_d_view() {
   // The observability blind spot from an external report: repaintBoundary
   // lives on Element, not a kind, and read_jsx only walked the kind - so

@@ -488,6 +488,25 @@ pub struct Element {
   // snapshot arm of the paint walk, inert on any other mode. Written through
   // `set_antialias`, which owns the damage.
   pub antialias: bool,
+  // `freeze`: on a snapshot boundary (`frozen`), the snapshot its first
+  // snapshot paint after the write takes is held while the subtree changes
+  // (SnapshotCache::held): a paint invalidation walk that reaches the node
+  // marks it stale and stops (RenderTree::invalidate_paint), and the paint
+  // composites the held texture at any scale or box
+  // (boundary::snapshot_node). Inert on any other mode. Written through
+  // `set_freeze`, which owns the damage.
+  pub freeze: bool,
+  // A `freeze={true}` write the paint walk has not looked at yet: off a
+  // snapshot boundary it warns once per write (composite::build_recursive),
+  // as a shader declared without a snapshot does.
+  freeze_dirty: Cell<bool>,
+  // Whether the snapshot arm drew the node inline at its last paint, with no
+  // texture (a box with no texels, a failed raster, nothing to record): its
+  // content is then in the frame's list or an enclosing recording, not in a
+  // picture of its own, so it holds nothing and is not `frozen` for the
+  // invalidation walks. Set and cleared by the snapshot arm
+  // (boundary::snapshot_node); false for a node it never painted.
+  pub(crate) snapshot_inline: Cell<bool>,
   // As an inline atom of a `<text>`: out of the flow against this side, an
   // exclusion for the lines it overlaps. Meaningless anywhere else.
   pub float: Option<text::layout::Side>,
@@ -547,6 +566,9 @@ impl Element {
       interaction: Some(HitConfig::default()),
       repaint_boundary: BoundaryMode::None,
       antialias: true,
+      freeze: false,
+      freeze_dirty: Cell::new(false),
+      snapshot_inline: Cell::new(false),
       float: None,
       clear: None,
       paint_cache: RefCell::new(None),
@@ -576,6 +598,9 @@ impl Element {
       interaction: Some(HitConfig::default()),
       repaint_boundary: BoundaryMode::None,
       antialias: true,
+      freeze: false,
+      freeze_dirty: Cell::new(false),
+      snapshot_inline: Cell::new(false),
       float: None,
       clear: None,
       paint_cache: RefCell::new(None),
@@ -774,7 +799,9 @@ impl Element {
   /// (RenderTree::release_off_snapshots). A switch to a snapshot marks a
   /// declared boundary shader dirty: a params write or an input change
   /// while it was not a snapshot boundary reached no pass, so the pass
-  /// re-runs once over the kept source.
+  /// re-runs once over the kept source. A kept snapshot is no longer held
+  /// (`freeze`): a switch back to a snapshot with `freeze` set takes its
+  /// picture at its next snapshot paint, as a freeze write does.
   pub fn set_repaint_boundary(&mut self, mode: BoundaryMode) -> Damage {
     let was = self.repaint_boundary;
     if was == mode {
@@ -783,6 +810,9 @@ impl Element {
     self.repaint_boundary = mode;
     if was == BoundaryMode::Recording || mode == BoundaryMode::Recording {
       self.paint_cache.get_mut().take();
+    }
+    if let Some(PaintCache::Snapshot(snap)) = self.paint_cache.get_mut() {
+      snap.held = false;
     }
     if mode == BoundaryMode::Snapshot {
       if let ElementKind::View(v) = &self.kind {
@@ -814,6 +844,101 @@ impl Element {
     } else {
       Damage::None
     }
+  }
+
+  /// Write whether a snapshot boundary holds its picture (`freeze`),
+  /// returning the damage. The value in force is no change: Damage::None.
+  /// Any other write drops the held bit, so a freeze takes its picture at
+  /// the node's next snapshot paint, and an unfreeze lets the snapshot rules
+  /// decide again.
+  ///
+  /// A freeze is Damage::Compose: the node is painted in the frame of the
+  /// write, which takes the picture of the state at the end of that batch,
+  /// whatever the order of its writes (a write inside before or after the
+  /// freeze only marks the snapshot stale). An unfreeze is Damage::Paint
+  /// where the node holds a stale snapshot (something inside changed while
+  /// it was held): the repaint takes the frozen quad's extent and the live
+  /// subtree's, and only this subtree is rasterized again. Otherwise it is
+  /// Damage::Compose: the walk then applies the snapshot rules, which reuse
+  /// the texture where its key matches and re-raster it as they say where
+  /// the box or the density moved during the freeze.
+  ///
+  /// Off a snapshot boundary the field is inert (`frozen`), but a changing
+  /// write still reports Damage::Compose, so the node is painted and a
+  /// `freeze={true}` there warns once, at paint.
+  pub fn set_freeze(&mut self, freeze: bool) -> Damage {
+    if self.freeze == freeze {
+      return Damage::None;
+    }
+    self.freeze = freeze;
+    self.freeze_dirty.set(freeze);
+    let stale = match self.paint_cache.get_mut() {
+      Some(PaintCache::Snapshot(snap)) => {
+        snap.held = false;
+        !snap.valid
+      }
+      _ => false,
+    };
+    if !freeze && stale {
+      Damage::Paint
+    } else {
+      Damage::Compose
+    }
+  }
+
+  /// Whether the node is a snapshot boundary with `freeze` set: where a
+  /// paint invalidation walk stops (RenderTree::invalidate_paint) and the
+  /// paint holds its picture. A `freeze` on a node that is off or a
+  /// Recording boundary stops nothing and holds nothing. Nor does one whose
+  /// last snapshot paint drew it inline (`snapshot_inline`): what it shows
+  /// lives where a write inside must reach. A node never painted (culled,
+  /// hidden, under a held ancestor) shows nothing of it, and stops them.
+  pub fn frozen(&self) -> bool {
+    self.freeze && self.repaint_boundary == BoundaryMode::Snapshot && !self.snapshot_inline.get()
+  }
+
+  /// Whether the node is frozen (`frozen`) and holds a stale snapshot:
+  /// something inside changed since its picture was taken, and the unfreeze
+  /// repaints it (`set_freeze`). What the tree read shows as the stale mark.
+  pub fn frozen_stale(&self) -> bool {
+    self.frozen() && matches!(&*self.paint_cache.borrow(), Some(PaintCache::Snapshot(snap)) if !snap.valid)
+  }
+
+  /// Write whether the rounding to the device grid is off for the node and
+  /// its subtree (`pixel_snap_off`, `pixelSnap={false}`), returning the
+  /// damage. The value in force is no change: Damage::None. Otherwise
+  /// Damage::Paint brings the walk to the node, and the boundary caches
+  /// below notice the other rounding themselves (boundary.rs). On a frozen
+  /// node (`frozen`) the setting also decides how its quad rounds in its
+  /// parent's slot: its snapshot is marked stale (the held raster keeps the
+  /// rounding it was made under) and the write is Damage::Compose, whose
+  /// walk passes it from the parent.
+  pub fn set_pixel_snap_off(&mut self, off: bool) -> Damage {
+    if self.pixel_snap_off == off {
+      return Damage::None;
+    }
+    self.pixel_snap_off = off;
+    if self.frozen() {
+      self.mark_snapshot_stale();
+      Damage::Compose
+    } else {
+      Damage::Paint
+    }
+  }
+
+  /// Mark the node's snapshot stale, keeping its storage: its pixels no
+  /// longer show what the subtree paints. Nothing for a node holding none.
+  pub(crate) fn mark_snapshot_stale(&self) {
+    if let Some(PaintCache::Snapshot(snap)) = &mut *self.paint_cache.borrow_mut() {
+      snap.valid = false;
+    }
+  }
+
+  /// Take the pending `freeze={true}` write flag; the paint walk consumes it
+  /// (composite::build_recursive), warning where the node is no snapshot
+  /// boundary.
+  pub(crate) fn take_freeze_dirty(&self) -> bool {
+    self.freeze_dirty.replace(false)
   }
 
   /// Whether the node is no repaint boundary and holds a snapshot: a

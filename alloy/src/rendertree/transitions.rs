@@ -795,11 +795,18 @@ impl Element {
           // backdrop) and re-lays out its children, so its own recording
           // is stale; a move alone is a translate write's damage: the
           // parent's walk places the child, so only the parent's
-          // recording goes stale.
-          if self.frame_size(Size::zero()) != was {
-            Damage::Paint
-          } else {
+          // recording goes stale. On a frozen node a size change is its
+          // quad stretching over a picture of the old box, as when a
+          // layout pass resizes it (LayoutContext::set_unrounded_layout):
+          // the snapshot is stale, and the clear passes the node from its
+          // parent.
+          if self.frame_size(Size::zero()) == was {
             Damage::Compose
+          } else if self.frozen() {
+            self.mark_snapshot_stale();
+            Damage::Compose
+          } else {
+            Damage::Paint
           }
         }
         _ => Damage::None,

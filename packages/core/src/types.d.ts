@@ -918,6 +918,49 @@ export interface ViewOwnProps extends TransformProps, InputProps {
    */
   antialias?: boolean
   /**
+   * Hold a snapshot boundary's picture while its subtree changes: "show this
+   * as it is now, until I say otherwise", for a gesture over live content (a
+   * zoom-out over live tiles, a page transition, a heavy card dragged).
+   *
+   * The picture is taken at the boundary's first snapshot paint after the
+   * write: the state at the end of that frame's writes, whatever their
+   * order. A boundary that is not painted then (offscreen) takes it when it
+   * is first painted. All the boundaries frozen in one frame are rasterized
+   * in that frame, so freezing many at once over content that was live costs
+   * one hitch. From then on the picture is held: a write inside repaints
+   * nothing and damages nothing, and the held texture is shown at any scale
+   * and any box, stretched, never rasterized again. Its own transform,
+   * opacity and filter, its own shader and its backdrop stay live, and a
+   * change of its box (a relayout, a `layout` transition) stretches the
+   * picture to the new box. A shader write that needs other storage (an
+   * outset change, `previous` toggled, a shader first declared on the frozen
+   * view, a shader with an outset withdrawn) rasterizes the live subtree
+   * once and holds that picture. A snapshot boundary inside a frozen view
+   * takes its own picture only when the frozen view repaints, and
+   * snapshotTexture(ref) of a frozen view shows the held picture.
+   *
+   * freeze={false} repaints only what changed: the boundary once, when its
+   * subtree changed while frozen, and nothing otherwise. When the scale or
+   * the box moved during the freeze, the usual snapshot rules re-rasterize it
+   * (at once past a large scale change, else once the scale rests).
+   *
+   * Layout and hit testing stay live inside a frozen subtree, so taps go to
+   * the live targets, which need not match the picture: pointerEvents="all"
+   * on the frozen view catches them as one target, pointerEvents="none" passes
+   * them through. Content that moves outside the frozen view's box while it
+   * is frozen may not be hit there until the unfreeze. Hover is not
+   * re-evaluated for motion inside a frozen view until the pointer moves:
+   * enter and leave follow the next pointer event. A node mounted inside
+   * while frozen is not painted until the unfreeze, so a transition written
+   * on it snaps.
+   *
+   * Inert off a snapshot boundary (repaintBoundary={false} or {true}): it
+   * holds nothing there and warns once per write, and does not throw, so it
+   * can be written with the mode in either order:
+   * `<view repaintBoundary={live() ? false : "snapshot"} freeze={!live()}>`.
+   */
+  freeze?: boolean
+  /**
    * Run this view's rasterized subtree through a GPU program and composite
    * the result in its place. Requires a snapshot boundary
    * (repaintBoundary="snapshot"; the cost is snapshot semantics, kept

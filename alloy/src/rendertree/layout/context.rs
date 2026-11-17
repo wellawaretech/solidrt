@@ -9,7 +9,7 @@ use taffy::{
 
 use super::super::tree::RenderTree;
 use crate::rendertree::{replaced_size, BoundaryMode, ElementKind, Measurable, MeasureContext, PlatformContext};
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 // Whether two layouts of one node differ only in where its box sits among
 // its siblings (location, order, margin): what the node's own paint is made
@@ -119,10 +119,11 @@ pub struct LayoutContext<'a> {
   // the nodes it places.
   pub animated: bool,
   // The nodes whose retained paint this pass has cleared (the `visited`
-  // set of `invalidate_paint_batched`): a box write clears up to the first
-  // ancestor an earlier write already cleared, so a resize that moves
-  // nearly every node costs one walk per node, not one per node per depth.
-  pub paint_cleared: HashSet<u64>,
+  // set of `invalidate_paint_batched`), each with whether its walk stopped
+  // at a frozen node: a box write clears up to the first ancestor an
+  // earlier write already cleared, so a resize that moves nearly every node
+  // costs one walk per node, not one per node per depth.
+  pub paint_cleared: HashMap<u64, bool>,
 }
 
 impl<'a> LayoutContext<'a> {
@@ -376,6 +377,7 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
     // device pixel where it sits.
     let origin_relative =
       element.repaint_boundary != BoundaryMode::Recording || matches!(element.kind, ElementKind::View(_));
+    let frozen = element.frozen();
     let data = element.layout_data_mut();
     // A changed layout moves or resizes painted content without any element
     // mutation (e.g. a sibling grew); retained boundary recordings above this
@@ -392,21 +394,46 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
         slides && !animated && (data.computed.location != layout.location || data.computed.size != layout.size);
       let old = data.laid_out.then(|| data.solved_box());
       let placed_only = only_placed(&data.computed, layout);
+      let was = data.computed;
       data.computed = *layout;
-      // Partial repaint: this is the one place a node moved by someone
-      // else's relayout (a sibling grew) becomes visible, so its old and
-      // new extents join the frame damage.
-      self.render_tree.note_damage(id);
       // A node that only moved keeps its own cache (a card pushed down by
       // an insert above it, by a sibling that grew): the clear starts at
       // the parent, whose paint holds the old place. Its envelope (cull.rs) is
       // stated in its own slot frame, the parent's walk translating it to
       // the place, so it stays valid too.
-      let start = match parent {
-        Some(parent) if placed_only && origin_relative => parent,
-        _ => id,
+      //
+      // A frozen node (Element::frozen) holds a picture its quad draws at
+      // this frame's box, so a change of its box's size or place is the one
+      // clear that passes it, from the parent: the ancestors hold the old
+      // quad. A size change stretches the quad over a picture of the old
+      // box: its snapshot is marked stale and its envelope goes. Any other
+      // change of its layout (its padding, its border, its content's
+      // overflow) is inside the picture, which the write that made it
+      // already marked stale (it stopped there): no clear, nothing seen.
+      let (start, seen) = if frozen {
+        let resized = was.size != layout.size;
+        if resized {
+          let element = self.render_tree.node(id);
+          element.mark_snapshot_stale();
+          element.envelope.clear();
+        }
+        let quad_moved = resized || was.location != layout.location;
+        (parent.filter(|_| quad_moved), quad_moved)
+      } else {
+        match parent {
+          Some(parent) if placed_only && origin_relative => (Some(parent), true),
+          _ => (Some(id), true),
+        }
       };
-      self.render_tree.invalidate_paint_batched(start, &mut self.paint_cleared);
+      let stopped =
+        start.is_some_and(|start| self.render_tree.invalidate_paint_batched(start, &mut self.paint_cleared));
+      // Partial repaint: this is the one place a node moved by someone
+      // else's relayout (a sibling grew) becomes visible, so its old and
+      // new extents join the frame damage. Not under a frozen node, whose
+      // held picture the box does not change (the clear stopped there).
+      if seen && !stopped {
+        self.render_tree.note_damage(id);
+      }
       if moved {
         self.render_tree.note_reflow(id, old);
       }

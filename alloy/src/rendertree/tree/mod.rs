@@ -33,8 +33,10 @@ pub struct RenderTree {
   // Content revision: bumped on structural changes and on property writes
   // whose damage says content changed (apply_damage, Compose and up).
   // None/Present writes and internal layout writes (node_mut) do not count.
-  // Lets a painter detect "tree unchanged since last build" and reuse its
-  // display list.
+  // Nor does a change whose paint walk stops at a frozen node
+  // (Element::frozen), which shows nothing new, unless it dirtied layout:
+  // the next frame must run the layout pass (`settle_walk`). Lets a painter
+  // detect "tree unchanged since last build" and reuse its display list.
   revision: u64,
   // Native transitions (see transitions.rs): the running tracks and the
   // animation clock.
@@ -278,14 +280,9 @@ impl RenderTree {
     // A detached child is not in layout_children, so inserting it cannot
     // change layout and only paint needs to catch up - except a span, whose
     // text feeds its paragraph's measure (invalidate_cache walks it up).
-    if child_has_layout || child_is_span {
-      self.invalidate_cache(parent_id);
-    }
     // The parent id carries the damage: its extent covered the subtree
     // before the insert and covers the new child after the next layout.
-    self.note_damage(parent_id);
-    self.invalidate_paint(parent_id);
-    self.bump_revision();
+    self.structural_damage(parent_id, child_has_layout || child_is_span);
 
     // The enter pass (`from`) runs at the frame's advance, not here: the
     // config and the mounted values may still be on their way.
@@ -328,13 +325,41 @@ impl RenderTree {
     if let Some(layout) = &mut self.node_mut(parent_id).layout {
       layout.layout_children.retain(|&id| id != NodeId::from(node_id));
     }
-    self.invalidate_cache(parent_id);
-    self.note_damage(parent_id);
-    self.invalidate_paint(parent_id);
-    self.bump_revision();
+    self.structural_damage(parent_id, true);
   }
 
-  fn detach_node_now(&mut self, parent_id: u64, node_id: u64) {
+  // A structural change under `parent_id` (an insert, a removal, an exit's
+  // pop-out), `layout` when it changes the parent's layout: the layout
+  // caches clear from the parent up, then the paint walk runs from the
+  // parent, and the damage and the revision follow it (`settle_walk`).
+  // Returns whether the walk stopped at a frozen node.
+  fn structural_damage(&mut self, parent_id: u64, layout: bool) -> bool {
+    if layout {
+      self.invalidate_cache(parent_id);
+    }
+    let stopped = self.invalidate_paint(parent_id);
+    self.settle_walk(parent_id, stopped, layout);
+    stopped
+  }
+
+  // The end of a change whose paint walk has run: `node` is noted for the
+  // screen damage and the revision moves, unless the walk stopped at a
+  // frozen node (Element::frozen), whose held picture still shows what the
+  // screen shows. Such a change notes nothing, and moves the revision only
+  // where it dirtied layout (`layout`): layout and hit testing stay live
+  // inside the frozen subtree, so the next frame must run the layout pass,
+  // whose paint walk then finds every cache intact.
+  fn settle_walk(&mut self, node: u64, stopped: bool, layout: bool) {
+    if !stopped {
+      self.note_damage(node);
+    }
+    if !stopped || layout {
+      self.bump_revision();
+    }
+  }
+
+  // Returns whether the removal's paint walk stopped at a frozen node.
+  fn detach_node_now(&mut self, parent_id: u64, node_id: u64) -> bool {
     let child_has_layout = self.try_node(node_id).map(|n| n.has_layout()).unwrap_or(false);
     let child_is_span = self.try_node(node_id).map(|n| matches!(n.kind, ElementKind::Span(_))).unwrap_or(false);
     let parent = self.node_mut(parent_id);
@@ -346,13 +371,8 @@ impl RenderTree {
       node.parent = None;
     }
     self.sync_text(parent_id);
-    if child_has_layout || child_is_span {
-      self.invalidate_cache(parent_id);
-    }
     // The parent's last extent covers the detached subtree's pixels.
-    self.note_damage(parent_id);
-    self.invalidate_paint(parent_id);
-    self.bump_revision();
+    self.structural_damage(parent_id, child_has_layout || child_is_span)
   }
 
   /// Frees `node_id` and its whole subtree. Call after detach_node once the node
@@ -364,6 +384,12 @@ impl RenderTree {
   /// yet: the destroy is remembered (`doomed`) and happens when the cascade
   /// settles, the root freeing its whole subtree. A doomed descendant whose
   /// root turns out to be a move is freed at the abandon instead.
+  ///
+  /// A node still linked under a frozen node (Element::frozen) changes
+  /// nothing on screen: its parent is not noted and the revision moves only
+  /// where the removal changes layout (`settle_walk`). One already unlinked
+  /// (core's flow: the detach, then the end-of-tick destroy) moves the
+  /// revision as ever, as a node's creation does.
   pub fn destroy_node(&mut self, node_id: u64) {
     if self.exit_root_of(node_id).is_some() {
       if let Some(el) = self.nodes.get_mut(&node_id) {
@@ -371,24 +397,26 @@ impl RenderTree {
       }
       return;
     }
+    let mut settled = false;
     if let Some(parent_id) = self.try_node(node_id).and_then(|n| n.parent) {
+      // A span's text feeds its paragraph's measure, as at the detach.
       let child_has_layout = self.try_node(node_id).map(|n| n.has_layout()).unwrap_or(false);
+      let child_is_span = self.try_node(node_id).is_some_and(|n| matches!(n.kind, ElementKind::Span(_)));
       if let Some(parent) = self.nodes.get_mut(&parent_id) {
         parent.children.retain(|&id| id != node_id);
         if let Some(layout) = &mut parent.layout {
           layout.layout_children.retain(|&id| id != NodeId::from(node_id));
         }
         self.sync_text(parent_id);
-        if child_has_layout {
-          self.invalidate_cache(parent_id);
-        }
         // The parent's last extent covers the destroyed subtree's pixels.
-        self.note_damage(parent_id);
-        self.invalidate_paint(parent_id);
+        self.structural_damage(parent_id, child_has_layout || child_is_span);
+        settled = true;
       }
     }
     self.delete_recursive(node_id);
-    self.bump_revision();
+    if !settled {
+      self.bump_revision();
+    }
   }
 
   /// Detach then destroy in one step. Retained for callers (and tests) that want
@@ -440,44 +468,66 @@ impl RenderTree {
   /// bump, and the ancestor invalidation walks share a visited set so
   /// common ancestors are cleared once per batch instead of once per write
   /// (the per-write walk is O(depth), and a frame of N animated nodes would
-  /// otherwise pay it N times).
+  /// otherwise pay it N times). A write whose walk stops at a frozen node
+  /// notes nothing, and moves the revision only with layout damage
+  /// (`settle_walk`); the visited set keeps each node's answer, so a walk
+  /// that ends early at a visited node takes it from there.
   pub fn apply_damage_batch(&mut self, items: &[(u64, Damage)]) {
-    let mut any = false;
-    let mut visited: HashSet<u64> = HashSet::new();
+    let mut bump = false;
+    let mut visited: HashMap<u64, bool> = HashMap::new();
     for &(node_id, damage) in items {
       if matches!(damage, Damage::None | Damage::Present) {
         continue;
       }
-      any = true;
-      self.note_damage(node_id);
-      if let Some(element) = self.try_node(node_id) {
-        element.envelope.clear();
+      let start = self.begin_damage(node_id, damage);
+      let stopped = start.is_some_and(|start| self.invalidate_paint_batched(start, &mut visited));
+      if !stopped {
+        self.note_damage(node_id);
       }
-      let walk_from = match damage {
-        Damage::None | Damage::Present => None,
-        Damage::Compose => self.try_node(node_id).and_then(|e| e.parent),
-        Damage::Scroll => {
-          let keeps_cache =
-            self.try_node(node_id).map(|e| e.repaint_boundary == BoundaryMode::Recording).unwrap_or(false);
-          if keeps_cache {
-            self.try_node(node_id).and_then(|e| e.parent)
-          } else {
-            Some(node_id)
-          }
-        }
-        Damage::Paint => Some(node_id),
-        Damage::Layout => {
-          self.invalidate_cache(node_id);
-          Some(node_id)
-        }
-      };
-      if let Some(start) = walk_from {
-        self.invalidate_paint_batched(start, &mut visited);
-      }
+      bump |= !stopped || damage == Damage::Layout;
     }
-    if any {
+    if bump {
       self.bump_revision();
     }
+  }
+
+  // What a write's damage (Compose and up) invalidates ahead of its paint
+  // walk, and where that walk starts: the node, or its parent where the
+  // node's own cache survives (Compose; Scroll on a Recording boundary,
+  // whose cache holds children only and composite re-applies clip and
+  // scroll; elsewhere a Snapshot texture lacks scrolled-out pixels, and a
+  // non-boundary has no cache of its own to keep). Layout damage clears the
+  // layout caches from the node up. The node's paint envelope (cull.rs) is
+  // stated past its own matrix and scroll, so even the damages that spare
+  // its paint cache invalidate it; the ancestors' envelopes go with the
+  // walk. Except a frozen node's own write that the walk starts at: the
+  // walk stops there, and the node's envelope stays as it was at the
+  // freeze, which covers the held quad (RenderTree::invalidate_paint).
+  //
+  // A frozen node's own Layout write can reflow what is around it without
+  // moving or resizing it (an inline atom's margin, float or clear in its
+  // text), which the ancestors hold: its snapshot is marked stale (its
+  // content's layout may change too) and the walk starts at its parent.
+  // Its own Paint and Scroll writes are inside the held raster.
+  fn begin_damage(&mut self, node_id: u64, damage: Damage) -> Option<u64> {
+    let element = self.try_node(node_id)?;
+    let start = match damage {
+      Damage::None | Damage::Present => return None,
+      Damage::Compose => element.parent,
+      Damage::Scroll if element.repaint_boundary == BoundaryMode::Recording => element.parent,
+      Damage::Layout if element.frozen() => {
+        element.mark_snapshot_stale();
+        element.parent
+      }
+      Damage::Scroll | Damage::Paint | Damage::Layout => Some(node_id),
+    };
+    if !(element.frozen() && start == Some(node_id)) {
+      element.envelope.clear();
+    }
+    if damage == Damage::Layout {
+      self.invalidate_cache(node_id);
+    }
+    start
   }
 
   pub fn try_edit<E>(&mut self, id: u64, f: impl FnOnce(&mut Element) -> Result<Damage, E>) -> Result<(), E> {
@@ -497,48 +547,24 @@ impl RenderTree {
   /// Completes a property write by invalidating what the setter reported (see
   /// `Damage`). Compose writes keep the node's own paint cache - the state is
   /// applied at composite time - and clear from the parent up, since ancestor
-  /// recordings hold the node's old composited result.
+  /// recordings hold the node's old composited result. A write whose walk
+  /// stops at a frozen node (Element::frozen: inside it, or a Paint or Scroll
+  /// write on it) shows nothing new: it notes no damage and moves the
+  /// revision only with Layout damage, for the layout pass (`settle_walk`).
   pub fn apply_damage(&mut self, node_id: u64, damage: Damage) {
-    match damage {
-      Damage::None | Damage::Present => return,
-      _ => self.bump_revision(),
+    self.apply_damage_walk(node_id, damage);
+  }
+
+  // `apply_damage`, returning whether the write's walk stopped at a frozen
+  // node.
+  fn apply_damage_walk(&mut self, node_id: u64, damage: Damage) -> bool {
+    if matches!(damage, Damage::None | Damage::Present) {
+      return false;
     }
-    self.note_damage(node_id);
-    // The node's paint envelope (cull.rs) is stated past its own matrix and
-    // scroll, so even the damages below that spare the node's own paint cache
-    // (Compose, Scroll on a Recording boundary) invalidate it; the ancestors'
-    // envelopes go with the invalidate_paint walks.
-    if let Some(element) = self.try_node(node_id) {
-      element.envelope.clear();
-    }
-    match damage {
-      Damage::None | Damage::Present => {}
-      Damage::Compose => {
-        if let Some(parent) = self.try_node(node_id).and_then(|e| e.parent) {
-          self.invalidate_paint(parent);
-        }
-      }
-      Damage::Scroll => {
-        // Like Compose on a Recording boundary (its cache holds children
-        // only; composite re-applies clip and scroll), like Paint elsewhere
-        // (a Snapshot texture lacks scrolled-out pixels; a non-boundary has
-        // no cache of its own to keep).
-        let keeps_cache =
-          self.try_node(node_id).map(|e| e.repaint_boundary == BoundaryMode::Recording).unwrap_or(false);
-        if keeps_cache {
-          if let Some(parent) = self.try_node(node_id).and_then(|e| e.parent) {
-            self.invalidate_paint(parent);
-          }
-        } else {
-          self.invalidate_paint(node_id);
-        }
-      }
-      Damage::Paint => self.invalidate_paint(node_id),
-      Damage::Layout => {
-        self.invalidate_cache(node_id);
-        self.invalidate_paint(node_id);
-      }
-    }
+    let start = self.begin_damage(node_id, damage);
+    let stopped = start.is_some_and(|start| self.invalidate_paint(start));
+    self.settle_walk(node_id, stopped, damage == Damage::Layout);
+    stopped
   }
 
   /// Take the window root's pending shader change without a paint walk. The
@@ -561,18 +587,34 @@ impl RenderTree {
   /// and costs nothing to rebuild); a stale snapshot keeps its texture and is
   /// only marked invalid, so the next raster reuses the allocation instead of
   /// rebuilding the offscreen rig.
-  pub fn invalidate_paint(&self, node_id: u64) {
+  ///
+  /// A frozen node (Element::frozen) ends the walk, whether it is reached
+  /// from below or the walk starts at it: its snapshot is marked stale and
+  /// its envelope stays (the held quad still covers what it covered), and
+  /// the ancestors keep their caches, since the held picture they composite
+  /// is unchanged. It stops at any node with `freeze` set on a snapshot
+  /// boundary, held or not: before the picture is taken, the freeze write's
+  /// own damage brings the paint that takes it. Returns whether the walk
+  /// stopped at a frozen node; the change then shows nothing new.
+  pub fn invalidate_paint(&self, node_id: u64) -> bool {
     let mut current = Some(node_id);
     while let Some(id) = current {
-      current = self.invalidate_paint_step(id);
+      match self.invalidate_paint_step(id) {
+        PaintStep::Up(parent) => current = parent,
+        PaintStep::Frozen => return true,
+      }
     }
+    false
   }
 
   // One node of the invalidate_paint walk: clear the node's retained paint
   // (a snapshot is marked stale, keeping its texture allocation) and its
-  // envelope, and hand back the parent to continue with.
-  fn invalidate_paint_step(&self, id: u64) -> Option<u64> {
-    let element = self.try_node(id)?;
+  // envelope, and hand back the parent to continue with; a frozen node is
+  // marked stale, keeps its envelope, and ends the walk.
+  fn invalidate_paint_step(&self, id: u64) -> PaintStep {
+    let Some(element) = self.try_node(id) else {
+      return PaintStep::Up(None);
+    };
     let mut cache = element.paint_cache.borrow_mut();
     match &mut *cache {
       Some(PaintCache::Snapshot(snap)) => snap.valid = false,
@@ -580,8 +622,11 @@ impl RenderTree {
         cache.take();
       }
     }
+    if element.frozen() {
+      return PaintStep::Frozen;
+    }
     element.envelope.clear();
-    element.parent
+    PaintStep::Up(element.parent)
   }
 
   /// The invalidate_paint walk for a batch of start nodes sharing one
@@ -590,14 +635,44 @@ impl RenderTree {
   /// ancestors once per frame instead of once per write, and a layout
   /// pass clears what a resize moved once per node (LayoutContext).
   /// Idempotent per node, so stopping at a visited ancestor loses nothing.
-  pub(crate) fn invalidate_paint_batched(&self, node_id: u64, visited: &mut HashSet<u64>) {
+  /// The set holds, for each node a walk cleared, whether that walk stopped
+  /// at a frozen node, and a walk that ends at a visited node returns that
+  /// answer. A frozen node is never put in it: a walk that reaches it again
+  /// stops there again, by the node's own rule, and the clear of its own box
+  /// change, which passes it, starts at its parent
+  /// (LayoutContext::set_unrounded_layout).
+  pub(crate) fn invalidate_paint_batched(&self, node_id: u64, visited: &mut HashMap<u64, bool>) -> bool {
+    let mut cleared = 0usize;
+    let mut stopped = false;
     let mut current = Some(node_id);
     while let Some(id) = current {
-      if !visited.insert(id) {
-        return;
+      if let Some(&ended) = visited.get(&id) {
+        stopped = ended;
+        break;
       }
-      current = self.invalidate_paint_step(id);
+      match self.invalidate_paint_step(id) {
+        PaintStep::Frozen => {
+          stopped = true;
+          break;
+        }
+        PaintStep::Up(parent) => {
+          visited.insert(id, false);
+          cleared += 1;
+          current = parent;
+        }
+      }
     }
+    // The nodes this walk cleared take its answer, up the same parent
+    // links. Only a stopped walk pays for it, and only under a frozen node.
+    if stopped {
+      let mut current = Some(node_id);
+      for _ in 0..cleared {
+        let Some(id) = current else { break };
+        visited.insert(id, true);
+        current = self.try_node(id).and_then(|e| e.parent);
+      }
+    }
+    stopped
   }
 
   pub(crate) fn node(&self, id: u64) -> &Element {
@@ -652,9 +727,11 @@ impl RenderTree {
     element.snapshot_texture_id.set(Some(id));
     // A boundary that already baked publishes its current pixels now; the
     // paint walk only re-publishes after a rasterization, which a static
-    // subtree may never trigger again.
+    // subtree may never trigger again. So does a frozen one that holds its
+    // picture (SnapshotCache::held), stale or not: those pixels are what is
+    // on screen, and it rasterizes nothing until the unfreeze.
     if let Some(PaintCache::Snapshot(snap)) = &*element.paint_cache.borrow() {
-      if snap.valid {
+      if snap.valid || snap.held {
         let (tex_w, tex_h) = snap.texture_dims();
         alloy.publish_snapshot_texture(id, &snap.texture, tex_w, tex_h);
       }
@@ -1014,6 +1091,14 @@ impl RenderTree {
   /// the revision only on such a hit: a frame whose GPU writes touch no
   /// snapshot boundary keeps the present-only reuse path. Returns whether
   /// anything was invalidated.
+  ///
+  /// Under a frozen node (Element::frozen) nothing shows the change: its
+  /// held picture keeps the old pixels. The content hit is dropped (no
+  /// window damage), a bake hit's walk sets the stale marks up to the frozen
+  /// node and stops there, and a shader hit on a view inside it stops there
+  /// too. None of them moves the revision or counts in the return value, so
+  /// a video in a frozen tile costs no frame. The frozen node's own shader
+  /// inputs stay live: their hit re-runs its pass.
   pub fn texture_content_changed(&mut self, changes: &DirtySet) -> bool {
     if changes.is_empty() {
       return false;
@@ -1030,6 +1115,12 @@ impl RenderTree {
         ElementKind::Texture(t) => {
           if let Some(tex) = t.texture_id.filter(|t| changes.contains(t)) {
             let reach = self.content_reach(id, t, tex);
+            if reach.frozen {
+              if reach.baked {
+                bake_hits.push(id);
+              }
+              continue;
+            }
             let shown = match (changes.rects(&tex), reach.placed) {
               (Some(rects), Some((shown, map))) => shown.window_extent(&map, rects.rects()),
               (None, Some((shown, map))) if reach.bounded => Some(shown.drawn_extent(&map)),
@@ -1064,19 +1155,23 @@ impl RenderTree {
     if bake_hits.is_empty() && shader_hits.is_empty() {
       return false;
     }
+    let mut baked = false;
     for id in &bake_hits {
-      self.invalidate_paint(*id);
+      baked |= !self.invalidate_paint(*id);
     }
+    if baked {
+      self.bump_revision();
+    }
+    let mut shaded = false;
     for id in shader_hits {
       if let Some(element) = self.try_node(id) {
         if let ElementKind::View(v) = &element.kind {
           v.mark_shader_dirty();
         }
       }
-      self.apply_damage(id, Damage::Compose);
+      shaded |= !self.apply_damage_walk(id, Damage::Compose);
     }
-    self.bump_revision();
-    true
+    baked || shaded
   }
 
   // One walk up from texture node `node_id` (`texture`), showing
@@ -1116,9 +1211,12 @@ impl RenderTree {
   // (Element::holds_off_snapshot) counts as baked too, on the same terms:
   // it paints inline, but its kept pixels hold the old content. The hit
   // marks it stale, so a texture that changes every frame counts once.
+  //
+  // Frozen is whether a frozen node (Element::frozen) is on the way, whose
+  // held picture shows none of the change (`texture_content_changed`).
   fn content_reach(&self, node_id: u64, texture: &Texture, texture_id: u64) -> ContentReach {
     let shown = texture.shown.get();
-    let mut reach = ContentReach { node: node_id, baked: false, placed: None, bounded: false };
+    let mut reach = ContentReach { node: node_id, baked: false, placed: None, bounded: false, frozen: false };
     let mut snapshot_seen = false;
     // A snapshot or a blur on the way, or a broken chain: the map is not
     // known.
@@ -1135,6 +1233,7 @@ impl RenderTree {
       if !matches!(element.repaint_boundary, BoundaryMode::None) || blurs {
         reach.node = id;
       }
+      reach.frozen |= element.frozen();
       match element.repaint_boundary {
         BoundaryMode::Recording => {
           reach.bounded = true;
@@ -1230,16 +1329,24 @@ impl RenderTree {
   }
 }
 
+// Where one node of the invalidate_paint walk sends it: up to the parent
+// (None at the top), or nowhere past a frozen node.
+enum PaintStep {
+  Up(Option<u64>),
+  Frozen,
+}
+
 // What one walk up from a texture node finds (`RenderTree::content_reach`):
 // the node whose extent stands for the texture's pixels, whether a
 // snapshot boundary bakes them, where the node shows now when that is
-// known (its draw, and its box frame's map to the window), and whether a
-// Recording boundary is on the way.
+// known (its draw, and its box frame's map to the window), whether a
+// Recording boundary is on the way, and whether a frozen node is.
 struct ContentReach {
   node: u64,
   baked: bool,
   placed: Option<(Shown, euclid::default::Transform2D<f32>)>,
   bounded: bool,
+  frozen: bool,
 }
 
 // Whether a view's filter paints past the subtree it filters: a blur with
