@@ -6,6 +6,10 @@
 // (composite::build_recursive / record_node) stays in composite.rs and calls
 // in here at each boundary node.
 
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
+
+use crate::gpu::NodeShader;
 use crate::renderer::prelude::*;
 use crate::renderer::{
   ClipOperation, DisplayList, DisplayListBuilder, Matrix, Paint, Point, Rect, Size, Texture, TextureSampling,
@@ -197,6 +201,10 @@ pub struct SnapshotCache {
   /// look), which the snapshot re-renders in place, for rest, once it is at
   /// rest (snapshot_node).
   pub rest_pending: bool,
+  /// The time its last raster or re-render took on sol-ui, the record walk
+  /// and the raster call (RasterTimer): what a deferral of its next raster
+  /// for density reserves of the next walk's budget (RasterBudget).
+  pub cost: Duration,
   /// The shader half, present while a boundary shader is declared (see
   /// `View::set_shader`); its output is composited in place of `texture`.
   pub shaded: Option<ShadedCache>,
@@ -258,6 +266,231 @@ impl SnapshotKey {
       && snap.scale == self.scale
       && snap.shaded.as_ref().map_or(0.0, |sc| sc.outset) == self.outset
   }
+}
+
+// Whether a box of `size` takes the texels of the cache's box at the
+// cache's density: the same texture, whatever the last bits of the box.
+fn same_texels(snap: &SnapshotCache, size: Size) -> bool {
+  let texels = |w: f32, h: f32| SnapshotKey { width: w, height: h, scale: snap.scale, outset: 0.0 }.texture_dims();
+  texels(size.width, size.height) == texels(snap.width, snap.height)
+}
+
+// A boundary shader's outset at a raster density: whole device pixels of it,
+// rounded up, so the margin is at least the declared one and the content
+// inside the canvas sits on the grid.
+fn shader_outset(decl: &NodeShader, scale: f32) -> f32 {
+  (decl.outset.max(0.0) * scale).ceil() / scale
+}
+
+/// A snapshot the raster budget deferred, as the walk that deferred it
+/// noted it (RenderTree::note_snapshot_deferred): how stretched its raster
+/// is (the ratio between the composite scale and the raster's, either way;
+/// 1 for a re-render for rest) and what its last raster cost on sol-ui
+/// (SnapshotCache::cost).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Deferral {
+  pub stretch: f32,
+  pub cost: Duration,
+}
+
+/// The deferred snapshots in the order a walk grants them: the most
+/// stretched first, and those stretched alike in the order they came, the
+/// order the walk before deferred them in (a stable sort).
+pub(crate) fn grant_order(deferred: &mut [(u64, Deferral)]) {
+  deferred.sort_by(|a, b| b.1.stretch.total_cmp(&a.1.stretch));
+}
+
+/// How many of the deferred snapshots' costs, in grant order, a walk grants:
+/// the first always, whatever its cost, then each while the sum of the
+/// costs up to it is within the budget (`within`). All of them without a
+/// budget.
+pub(crate) fn granted(costs: impl IntoIterator<Item = Duration>, budget: Option<Duration>) -> usize {
+  let mut sum = Duration::ZERO;
+  let mut count = 0;
+  for cost in costs {
+    sum += cost;
+    if count > 0 && !within(sum, budget) {
+      break;
+    }
+    count += 1;
+  }
+  count
+}
+
+/// Whether a walk that spent `spent` on snapshot rasters is still within the
+/// budget: below it, so a zero budget has room for none past the one raster
+/// every frame makes (a first grant, or the first candidate of a walk with
+/// no grants). Always, without a budget.
+pub(crate) fn within(spent: Duration, budget: Option<Duration>) -> bool {
+  budget.is_none_or(|budget| spent < budget)
+}
+
+/// One paint walk's snapshot raster budget (PlatformContext::
+/// set_snapshot_raster_budget): which candidates, rasters a snapshot would
+/// make for density alone over a valid raster that can stand in for them
+/// (`budgeted` says which), raster this walk and which are deferred to the
+/// next, composited stretched one more frame. Ahead of the walk the
+/// snapshots the walk before deferred are granted in grant order while
+/// their costs fit (`granted`); a granted one rasters, the others are
+/// deferred again. A candidate the walk before did not defer rasters while
+/// the time spent so far, the grants still to come included, is within the
+/// budget, and in a walk with no grants the first candidate rasters
+/// whatever its cost: every frame rasters at least one, so the work ends.
+/// The first frame of a crossing so gives the budget in walk order, and the
+/// frames after it to the most stretched. Every snapshot raster of the walk
+/// counts toward the time spent, budgeted or not (RasterTimer).
+pub(crate) struct RasterBudget {
+  budget: Option<Duration>,
+  /// Granted ahead of the walk and not visited yet, with the cost reserved
+  /// for each.
+  granted: HashMap<u64, Duration>,
+  /// Deferred by the walk before and not granted: deferred again.
+  waiting: HashSet<u64>,
+  /// The sum of the costs in `granted`.
+  reserved: Duration,
+  /// The time the walk's snapshot rasters took so far.
+  spent: Duration,
+  /// No candidate rastered yet in a walk with no grants: the next one does,
+  /// whatever its cost.
+  owed: bool,
+}
+
+impl RasterBudget {
+  /// The budget of a walk under `budget` (None: no budget), granting the
+  /// snapshots the walk before deferred (`deferred`, in the order it
+  /// deferred them).
+  pub(crate) fn for_walk(budget: Option<Duration>, mut deferred: Vec<(u64, Deferral)>) -> Self {
+    grant_order(&mut deferred);
+    let count = granted(deferred.iter().map(|(_, d)| d.cost), budget);
+    let (grants, rest) = deferred.split_at(count);
+    let granted: HashMap<u64, Duration> = grants.iter().map(|&(id, d)| (id, d.cost)).collect();
+    let reserved = granted.values().sum();
+    Self {
+      budget,
+      owed: granted.is_empty(),
+      granted,
+      waiting: rest.iter().map(|&(id, _)| id).collect(),
+      reserved,
+      spent: Duration::ZERO,
+    }
+  }
+
+  /// Whether the visit of snapshot `node_id` defers its raster: never for a
+  /// visit that is no `candidate`; for a candidate, unless it was granted,
+  /// or it was not deferred before and the budget has room or the walk owes
+  /// its one raster. A visit gives back the node's grant either way, so a
+  /// grant whose raster is no longer due reserves nothing past it.
+  pub(crate) fn defers(&mut self, node_id: u64, candidate: bool) -> bool {
+    let grant = self.granted.remove(&node_id);
+    if let Some(cost) = grant {
+      self.reserved = self.reserved.saturating_sub(cost);
+    }
+    if !candidate {
+      return false;
+    }
+    let rasters = grant.is_some()
+      || (!self.waiting.contains(&node_id) && (self.owed || within(self.spent + self.reserved, self.budget)));
+    if rasters {
+      self.owed = false;
+    }
+    !rasters
+  }
+
+  /// The time the walk's snapshot rasters took so far.
+  pub(crate) fn spent(&self) -> Duration {
+    self.spent
+  }
+
+  /// Set the time spent (RasterTimer::stop).
+  pub(crate) fn set_spent(&mut self, spent: Duration) {
+    self.spent = spent;
+  }
+}
+
+// A snapshot raster's time on sol-ui, from before its record walk to after
+// its raster call: the node's cost (SnapshotCache::cost), and what the
+// walk's time spent grows by (RasterBudget). The snapshots rastered inside
+// its record walk are inside this time too, so `stop` sets the time spent
+// from where it stood at `start` instead of adding to it.
+#[derive(Clone, Copy)]
+struct RasterTimer {
+  start: Instant,
+  spent: Duration,
+}
+
+impl RasterTimer {
+  fn start(budget: &RasterBudget) -> Self {
+    Self { start: Instant::now(), spent: budget.spent() }
+  }
+
+  // The raster's time; the walk's time spent now includes it.
+  fn stop(&self, budget: &mut RasterBudget) -> Duration {
+    let cost = self.start.elapsed();
+    budget.set_spent(self.spent + cost);
+    cost
+  }
+}
+
+// Whether the cache's storage is the storage the shader declaration needs at
+// the raster's own density: no shader over a plain raster, or over a shaded
+// one without an outset (its source texture is kept, see snapshot_node);
+// a declared one over a shaded raster with the same outset and the same
+// history. A shader declared over a plain raster, one with an outset
+// withdrawn, another outset or `previous` toggled is a storage change.
+fn storage_kept(snap: &SnapshotCache, shader: Option<&NodeShader>) -> bool {
+  match (shader, &snap.shaded) {
+    (None, None) => true,
+    (None, Some(sc)) => sc.outset <= 0.0,
+    (Some(_), None) => false,
+    (Some(decl), Some(sc)) => sc.history.is_some() == decl.previous && shader_outset(decl, snap.scale) == sc.outset,
+  }
+}
+
+// Whether this visit's raster is one the budget covers (RasterBudget), and
+// if so the raster's own density and what a deferral notes. Budgeted: a
+// raster of a snapshot that has a valid raster to stretch, made for density
+// alone - past the motion bound or at rest at a new scale (`scale`, the
+// density the rule asks for, is not the raster's), and the re-render for
+// rest of content made in motion (`rest_pending`, at rest, at the raster's
+// own density and box). Not budgeted, so None: a first raster (no cache), a
+// raster for changed content (stale), a new box (another layout size; at
+// the raster's density, a box that takes other texels), a `pixelSnap`
+// change, a shader storage change (storage_kept), a raster for a native
+// track's known end (`factor` is not 1: one raster, at the track's start),
+// and a raster inside an enclosing snapshot's raster (that raster is made
+// anyway, and its time holds this one; a deferral would make it stale at
+// the next frame). Nothing can stand in for the first group, and the last
+// two are not repeated. A deferred snapshot is then composited exactly as a
+// waiting one is: at the raster's density and box, reused.
+#[allow(clippy::too_many_arguments)]
+fn budgeted(
+  snap: &SnapshotCache,
+  ctx: &BuildContext<'_>,
+  scale: f32,
+  composite: f32,
+  at_rest: bool,
+  factor: f32,
+  layout: Size,
+  painted: Size,
+  shader: Option<&NodeShader>,
+) -> Option<(f32, Deferral)> {
+  let stands_in = snap.valid
+    && snap.pixel_snap_off == ctx.pixel_snap_off
+    && snap.layout == layout
+    && storage_kept(snap, shader)
+    && factor == 1.0
+    && !ctx.in_snapshot_raster;
+  if !stands_in {
+    return None;
+  }
+  let stretch = if scale != snap.scale {
+    (composite / snap.scale).max(snap.scale / composite)
+  } else if snap.rest_pending && at_rest && (ctx.grid.unrounded() || same_texels(snap, painted)) {
+    1.0
+  } else {
+    return None;
+  };
+  Some((snap.scale, Deferral { stretch, cost: snap.cost }))
 }
 
 /// How a snapshot boundary's result is composited at its place in the tree:
@@ -460,6 +693,8 @@ pub(super) fn draw_cached_recording(
 // painting outside the layout box is cropped (unlike a recording boundary);
 // the crop happens in untransformed local space, since the boundary's own
 // transform is hoisted out of the raster and applied to the quad instead.
+// A raster for that density alone, over a valid raster, takes its turn under
+// the walk's raster budget (RasterBudget) and stays stretched until then.
 // All storage is exact-size. A declared boundary shader adds one pass over
 // the rasterization and composites its output instead (see View::set_shader).
 pub(super) fn snapshot_node<'a>(
@@ -514,8 +749,34 @@ fn snapshot_node_unculled<'a>(
     Some(PaintCache::Snapshot(snap)) => Some(snap.scale),
     _ => None,
   };
-  let (scale, wait) = text::raster_density(have, composite, factor, at_rest);
-  if wait {
+  let (density, wait) = text::raster_density(have, composite, factor, at_rest);
+  // The raster budget (RasterBudget): a raster for density alone over a
+  // valid raster (`budgeted`) that the budget defers keeps the raster's
+  // density, its box (below) and its pixels for one more frame, composited
+  // stretched exactly as a waiting one, and asks for the next frame's look,
+  // also at rest, where it does not wait. Its re-render for rest is not
+  // marked stale (below) until it is granted.
+  let shader_decl = match &element.kind {
+    ElementKind::View(v) => v.shader.as_ref(),
+    _ => None,
+  };
+  let stand_in = match &*element.paint_cache.borrow() {
+    Some(PaintCache::Snapshot(snap)) => {
+      budgeted(snap, ctx, density, composite, at_rest, factor, layout, painted, shader_decl)
+    }
+    _ => None,
+  };
+  let deferred = ctx.raster_budget.defers(node_id, stand_in.is_some());
+  let scale = match stand_in {
+    Some((kept_scale, deferral)) if deferred => {
+      scene.note_snapshot_deferred(node_id, deferral);
+      ctx.snapshots_deferred += 1;
+      kept_scale
+    }
+    _ => density,
+  };
+  let stretched = wait || deferred;
+  if stretched {
     scene.note_scale_wait(node_id);
     ctx.platform.request_frame();
   }
@@ -525,9 +786,10 @@ fn snapshot_node_unculled<'a>(
   // every scale). A cache whose layout size and density are this one keeps
   // its box while the rounding is off (a running track, `pixelSnap={false}`),
   // while its raster is composited stretched (`wait`: a scale that moves,
-  // written every frame or not), and while this frame's box takes the same
-  // texels at that density (a scale that drifts by less than a held step,
-  // the end of an ease, the frame a track settles on): a snapshot is reused
+  // written every frame or not; or a raster the budget deferred), and while
+  // this frame's box takes the same texels at that density (a scale that
+  // drifts by less than a held step, the end of an ease, the frame a track
+  // settles on): a snapshot is reused
   // as it is under the motion, and when a track starts and ends, and the
   // last bits of a box divided by a grid scale never re-make it. Otherwise
   // the key takes this frame's box: the snapped box on a rounded grid, the
@@ -557,19 +819,16 @@ fn snapshot_node_unculled<'a>(
     }
     if snap.valid && snap.rest_pending && snap.scale == scale {
       holds_pending = true;
-      if at_rest {
+      if at_rest && !deferred {
         snap.valid = false;
       }
     }
-    if snap.layout == layout && snap.scale == scale {
-      let texels_of = |w: f32, h: f32| SnapshotKey { width: w, height: h, scale, outset: 0.0 }.texture_dims();
-      let same_texels = texels_of(painted_w, painted_h) == texels_of(snap.width, snap.height);
-      if ctx.grid.unrounded() || wait || same_texels {
-        kept = Some((snap.width, snap.height));
-      }
+    let same_layout_and_density = snap.layout == layout && snap.scale == scale;
+    if same_layout_and_density && (ctx.grid.unrounded() || stretched || same_texels(snap, painted)) {
+      kept = Some((snap.width, snap.height));
     }
   }
-  if holds_pending && !at_rest && !wait {
+  if holds_pending && !at_rest && !stretched {
     scene.note_scale_wait(node_id);
     ctx.platform.request_frame();
   }
@@ -642,7 +901,7 @@ fn snapshot_node_unculled<'a>(
     // The outset is whole device pixels (rounded up: the margin is at
     // least the declared one), so the content inside the canvas and the
     // quad it composites as both sit on the grid.
-    let outset = (decl.outset.max(0.0) * scale).ceil() / scale;
+    let outset = shader_outset(decl, scale);
     let key = SnapshotKey { outset, ..box_key };
     let (tex_w, tex_h) = key.texture_dims();
     let quad = BoundaryComposite::new(element, own, frame, offset, painted, &key);
@@ -680,7 +939,8 @@ fn snapshot_node_unculled<'a>(
     // Content changed (or the declaration needs different storage): record,
     // rasterize and run the pass in one trip. Dimension-matched storage is
     // re-rendered in place; exact storage means only an exact key match
-    // qualifies.
+    // qualifies. The trip is timed, the record walk with it (RasterTimer).
+    let timer = RasterTimer::start(&ctx.raster_budget);
     let mut sub = DisplayListBuilder::new(None);
     sub.scale(scale, scale);
     if outset > 0.0 {
@@ -692,7 +952,10 @@ fn snapshot_node_unculled<'a>(
     }
     let raster_grid = grid::raster(scale, Vector::new(outset, outset));
     let rest_pending = record_raster(scene, node_id, ctx, &mut sub, hoist, raster_grid, raster_frame, for_rest);
-    let Some(dl) = sub.build() else { return };
+    let Some(dl) = sub.build() else {
+      timer.stop(&mut ctx.raster_budget);
+      return;
+    };
 
     // Reusable storage: the source (plain or shaded), plus output and
     // history when the cache was already shaded. A plain cache's texture
@@ -733,6 +996,7 @@ fn snapshot_node_unculled<'a>(
       reuse_output.as_ref(),
       history_pass.as_ref(),
     );
+    let cost = timer.stop(&mut ctx.raster_budget);
     match result {
       Ok((source, output, history)) => {
         if retained.is_some() {
@@ -751,6 +1015,7 @@ fn snapshot_node_unculled<'a>(
           layout,
           pixel_snap_off,
           rest_pending,
+          cost,
           shaded: Some(ShadedCache { output, outset, history }),
         }));
       }
@@ -787,6 +1052,8 @@ fn snapshot_node_unculled<'a>(
     return;
   }
 
+  // The record walk and the raster call are timed together (RasterTimer).
+  let timer = RasterTimer::start(&ctx.raster_budget);
   let mut sub = DisplayListBuilder::new(None);
   sub.scale(scale, scale);
   if offset != (0.0, 0.0) {
@@ -794,7 +1061,10 @@ fn snapshot_node_unculled<'a>(
   }
   let raster_grid = grid::raster(scale, -paint_offset);
   let rest_pending = record_raster(scene, node_id, ctx, &mut sub, hoist, raster_grid, raster_frame, for_rest);
-  let Some(dl) = sub.build() else { return };
+  let Some(dl) = sub.build() else {
+    timer.stop(&mut ctx.raster_budget);
+    return;
+  };
 
   // Stale storage at unchanged dimensions is re-rendered in place: the
   // offscreen draw clears and rewrites the full allocation, so no stale
@@ -810,6 +1080,7 @@ fn snapshot_node_unculled<'a>(
   if let Some(texture) = retained {
     match ctx.alloy.render_display_list_into_texture(&dl, &texture, tex_w, tex_h, aa) {
       Ok(()) => {
+        let cost = timer.stop(&mut ctx.raster_budget);
         ctx.snapshots_rerendered += 1;
         publish_snapshot(element, ctx, &texture, tex_w, tex_h);
         quad.draw_texture(builder, &texture);
@@ -822,6 +1093,7 @@ fn snapshot_node_unculled<'a>(
           layout,
           pixel_snap_off,
           rest_pending,
+          cost,
           shaded: None,
         }));
         return;
@@ -833,7 +1105,9 @@ fn snapshot_node_unculled<'a>(
     }
   }
 
-  match ctx.alloy.render_display_list_to_texture(&dl, tex_w, tex_h, aa) {
+  let result = ctx.alloy.render_display_list_to_texture(&dl, tex_w, tex_h, aa);
+  let cost = timer.stop(&mut ctx.raster_budget);
+  match result {
     Ok(texture) => {
       ctx.snapshots_rasterized += 1;
       publish_snapshot(element, ctx, &texture, tex_w, tex_h);
@@ -847,6 +1121,7 @@ fn snapshot_node_unculled<'a>(
         layout,
         pixel_snap_off,
         rest_pending,
+        cost,
         shaded: None,
       }));
     }

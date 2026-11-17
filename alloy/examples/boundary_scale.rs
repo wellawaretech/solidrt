@@ -28,22 +28,46 @@
 //! container, counters only: there the boxes are fractional layout boxes,
 //! mapped 1:1, and a seam between them is what that prop asks for.
 //!
+//! Every case sets the snapshot raster budget itself
+//! (`PlatformContext::set_snapshot_raster_budget`), never the default: the
+//! cases above run with none, as before the budget. The budget cases run
+//! with a zero budget, one raster for density a frame, so none depends on
+//! the clock:
+//!   budget tiles: six tiles of the tiles scene's cells, three by two.
+//!     Under the written sweep and its hold, a one-shot write with an own
+//!     scale per tile (stretches that differ), a content change in the frame
+//!     of a crossing, a native track, a deferred tile destroyed, and a sweep
+//!     faster than one raster a frame follows. Which tile rastered in a
+//!     frame is read off the tiles' caches (`SnapshotCache::scale` and
+//!     `rest_pending` before and after it), and checked against the budget
+//!     rule run beside the engine (BudgetRule).
+//!   text tiles under a budget: four text tiles, a one-shot write and its
+//!     hold: the re-renders for rest come one a frame, and end hinted.
+//!
 //! Run: cargo run -p alloy --example boundary_scale
 
 use alloy::renderer::prelude::*;
 use alloy::renderer::{Color, DisplayListBuilder, ISize};
 use alloy::rendertree::composite::{paint_phase, render, PaintStats};
 use alloy::rendertree::{
-  AnimProp, AnimValue, BoundaryMode, Curve, Damage, ElementKind, FontPayload, OriginCoord, PlatformContext, Rectangle,
-  RenderTree, Text, TransitionConfig, TransitionSpec, View, Window,
+  AnimProp, AnimValue, BoundaryMode, Curve, Damage, ElementKind, FontPayload, OriginCoord, PaintCache, PlatformContext,
+  Rectangle, RenderTree, Text, TransitionConfig, TransitionSpec, View, Window,
 };
 use std::borrow::Cow;
+use std::time::Duration;
 use taffy::prelude::{length, Size, Style};
 use taffy::style::{FlexDirection, FlexWrap, Position};
 
 const W: u32 = 400;
 const H: u32 = 300;
 const DISPLAY_SCALES: [f32; 2] = [1.0, 1.5];
+
+// The snapshot raster budgets the cases run under, set on every platform so
+// none depends on the default or the clock: no budget (every raster for
+// density in the frame that asks for it, as before the budget), and zero
+// (one such raster per frame).
+const NO_BUDGET: Option<Duration> = None;
+const ZERO_BUDGET: Option<Duration> = Some(Duration::ZERO);
 
 // The written scale: REST_SCALE * 2^(SWEEP_OCTAVES * sin(SWEEP_RATE * t)),
 // one write per frame at FRAME_HZ, for one period of the sine. A sweep of
@@ -109,6 +133,35 @@ const TEXT_TILE_AT: [(f32, f32); 2] = [(10.4, 20.6), (180.7, 30.2)];
 const TEXT_LABEL: &str = "Snapshot text";
 const TEXT_SIZE: f32 = 18.0;
 const NOTO_SANS: &[u8] = include_bytes!("../assets/fonts/NotoSans.ttf");
+
+// The budget tiles: BUDGET_COLUMNS x BUDGET_ROWS tiles of the tiles scene's
+// cells, at fractional places, all in the window at the sweep's largest
+// scale.
+const BUDGET_COLUMNS: usize = 3;
+const BUDGET_ROWS: usize = 2;
+const BUDGET_TILE_W: f32 = 120.3;
+const BUDGET_TILE_H: f32 = 80.7;
+const BUDGET_ORIGIN: (f32, f32) = (10.4, 20.6);
+const BUDGET_PITCH: (f32, f32) = (130.3, 100.1);
+// The text tiles under a budget: four, two by two, so the re-renders for
+// rest come one per frame over more than two frames.
+const TEXT_BUDGET_AT: [(f32, f32); 4] = [(10.4, 20.6), (180.7, 30.2), (10.4, 80.6), (180.7, 90.2)];
+// The own scale written on budget tile i in the frame of a one-shot write:
+// 1 + i * OWN_SCALE_STEP, so the tiles' stretches grow in walk order and
+// the most stretched is the last tile. Within the motion bound on its own.
+const OWN_SCALE_STEP: f32 = 0.04;
+// A sweep fast enough that the tiles pass the motion bound faster than one
+// raster a frame can follow (2^(SWEEP_OCTAVES * FAST_SWEEP_RATE / FRAME_HZ),
+// about 1.1 a frame at its fastest: the bound in about four frames, for
+// each of six tiles), for FAST_SWEEP_PERIODS periods.
+const FAST_SWEEP_RATE: f64 = 8.0;
+const FAST_SWEEP_PERIODS: u32 = 4;
+// Hold frames after the motion, at most, before every tile has its raster
+// for rest under a zero budget: one per tile and the rest looks, with room.
+const BUDGET_HOLD_FRAMES: u32 = 24;
+// Two stretches whose difference is this close (as a fraction) are too
+// close to call which one the engine grants first.
+const ORDER_AMBIGUITY: f64 = 1e-4;
 
 // The pair scene, in device px at the resting scale (REST_SCALE times the
 // display scale): A's left edge, A's width and B's width, A's top edge,
@@ -323,18 +376,23 @@ fn build_root() -> RenderTree {
 }
 
 fn build_tiles() -> RenderTree {
+  build_tiles_at(&TILE_AT, TILE_W, TILE_H)
+}
+
+// Tiles of `w` x `h` at `at`, cells inside.
+fn build_tiles_at(at: &[(f32, f32)], w: f32, h: f32) -> RenderTree {
   let mut tree = build_root();
-  for (i, &(left, top)) in (0u64..).zip(TILE_AT.iter()) {
+  for (i, &(left, top)) in (0u64..).zip(at.iter()) {
     tree.create_node(tile_id(i), View::default().with_layout());
     tree.create_node(tile_boundary_id(i), View::default().with_layout());
     tree.insert_node(CONTAINER, tile_id(i), None).expect("insert");
     tree.insert_node(tile_id(i), tile_boundary_id(i), None).expect("insert");
     styled(&mut tree, tile_id(i), |s| {
       placed(s, left, top);
-      sized(s, TILE_W, TILE_H);
+      sized(s, w, h);
     });
     styled(&mut tree, tile_boundary_id(i), |s| {
-      sized(s, TILE_W, TILE_H);
+      sized(s, w, h);
       s.flex_direction = FlexDirection::Row;
       s.flex_wrap = FlexWrap::Wrap;
       s.gap = Size { width: length(CELL_GAP), height: length(CELL_GAP) };
@@ -355,8 +413,13 @@ fn build_tiles() -> RenderTree {
 // The text tiles; `nested` puts a Recording boundary between each
 // snapshot and its label.
 fn build_text_tiles(nested: bool) -> RenderTree {
+  build_text_tiles_at(nested, &TEXT_TILE_AT)
+}
+
+// Text tiles at `at`.
+fn build_text_tiles_at(nested: bool, at: &[(f32, f32)]) -> RenderTree {
   let mut tree = build_root();
-  for (i, &(left, top)) in (0u64..).zip(TEXT_TILE_AT.iter()) {
+  for (i, &(left, top)) in (0u64..).zip(at.iter()) {
     let (tile, label) = (tile_boundary_id(i), text_label_id(i));
     tree.create_node(tile, View::default().with_layout());
     let mut text = Text::default();
@@ -526,25 +589,29 @@ fn paint_read(tree: &mut RenderTree, platform: &PlatformContext, ctx: &alloy::Co
   (pixels, w, stats)
 }
 
-fn platform_with(fonts: Vec<FontPayload>, display_scale: f32) -> PlatformContext {
+fn platform_with(fonts: Vec<FontPayload>, display_scale: f32, budget: Option<Duration>) -> PlatformContext {
   let platform = PlatformContext::new(fonts);
   platform.set_window_size(W as f32, H as f32);
   platform.set_display_scale(display_scale);
+  platform.set_snapshot_raster_budget(budget);
   platform
 }
 
-fn platform_at(display_scale: f32) -> PlatformContext {
-  platform_with(Vec::new(), display_scale)
+fn platform_at(display_scale: f32, budget: Option<Duration>) -> PlatformContext {
+  platform_with(Vec::new(), display_scale, budget)
 }
 
 // The shipped Noto Sans as "sans", the family a text resolves by default.
-fn text_platform_at(display_scale: f32) -> PlatformContext {
-  platform_with(vec![FontPayload { alias: Some("sans".to_string()), bytes: Cow::Borrowed(NOTO_SANS) }], display_scale)
+fn text_platform_at(display_scale: f32, budget: Option<Duration>) -> PlatformContext {
+  let sans = FontPayload { alias: Some("sans".to_string()), bytes: Cow::Borrowed(NOTO_SANS) };
+  platform_with(vec![sans], display_scale, budget)
 }
 
-// A frame's snapshot counters: (reused, rerendered, rasterized).
-fn counts(stats: &PaintStats) -> (u32, u32, u32) {
-  (stats.snapshots_reused, stats.snapshots_rerendered, stats.snapshots_rasterized)
+// A frame's snapshot counters: (reused, rerendered, rasterized, deferred).
+type Counts = (u32, u32, u32, u32);
+
+fn counts(stats: &PaintStats) -> Counts {
+  (stats.snapshots_reused, stats.snapshots_rerendered, stats.snapshots_rasterized, stats.snapshots_deferred)
 }
 
 fn written_scale(frame: u32) -> f32 {
@@ -647,30 +714,33 @@ impl Rule {
   }
 }
 
-// How many frames showed each counter triple, for the summary.
-fn tally(seen: &mut Vec<((u32, u32, u32), u32)>, got: (u32, u32, u32)) {
+// How many frames showed each counter tuple, for the summary.
+fn tally(seen: &mut Vec<(Counts, u32)>, got: Counts) {
   match seen.iter_mut().find(|(c, _)| *c == got) {
     Some((_, n)) => *n += 1,
     None => seen.push((got, 1)),
   }
 }
 
-fn tally_text(seen: &[((u32, u32, u32), u32)]) -> String {
-  let parts: Vec<String> =
-    seen.iter().map(|((r, e, a), n)| format!("{n}x reused {r} rerendered {e} rasterized {a}")).collect();
+fn tally_text(seen: &[(Counts, u32)]) -> String {
+  let part = |&((r, e, a, d), n): &(Counts, u32)| {
+    let deferred = if d > 0 { format!(" deferred {d}") } else { String::new() };
+    format!("{n}x reused {r} rerendered {e} rasterized {a}{deferred}")
+  };
+  let parts: Vec<String> = seen.iter().map(part).collect();
   parts.join(", ")
 }
 
 fn tiles_case(ctx: &alloy::Context, display_scale: f32, snap_off: bool, all: &mut Vec<String>) {
-  let platform = platform_at(display_scale);
+  let platform = platform_at(display_scale, NO_BUDGET);
   let mut tree = build_tiles();
   if snap_off {
     unround(&mut tree);
   }
   let off = rounding(snap_off);
   let tiles = TILE_AT.len() as u32;
-  let reuse_all = (tiles, 0, 0);
-  let raster_all = (0, 0, tiles);
+  let reuse_all = (tiles, 0, 0, 0);
+  let raster_all = (0, 0, tiles, 0);
 
   let mut rest = Case::new(format!("tiles at rest are rasterized once, then reused{off}, at {display_scale}x"));
   let first = counts(&paint(&mut tree, &platform, ctx));
@@ -706,7 +776,7 @@ fn tiles_case(ctx: &alloy::Context, display_scale: f32, snap_off: bool, all: &mu
     let got = counts(&paint(&mut tree, &platform, ctx));
     tally(&mut seen, got);
     if content {
-      let want = (tiles - 1, 1, 0);
+      let want = (tiles - 1, 1, 0, 0);
       change.expect(got == want, || format!("frame {frame} (scale {scale}): {got:?}, expected {want:?}"));
     } else if ambiguous {
       moving.expect(got == reuse_all || got == raster_all, || {
@@ -752,10 +822,10 @@ fn tiles_case(ctx: &alloy::Context, display_scale: f32, snap_off: bool, all: &mu
 // (Rule), and reuses both otherwise; never a re-render, never a raster per
 // frame. Returns the frames that rasterized.
 fn rule_case(ctx: &alloy::Context, display_scale: f32, motion: &str, scales: &[f32], all: &mut Vec<String>) {
-  let platform = platform_at(display_scale);
+  let platform = platform_at(display_scale, NO_BUDGET);
   let mut tree = build_tiles();
   let tiles = TILE_AT.len() as u32;
-  let (reuse_all, raster_all) = ((tiles, 0, 0), (0, 0, tiles));
+  let (reuse_all, raster_all) = ((tiles, 0, 0, 0), (0, 0, tiles, 0));
   let mut case =
     Case::new(format!("tiles under {motion} rasterize only where the density rule says, at {display_scale}x"));
   for _ in 0..REST_FRAMES {
@@ -802,10 +872,10 @@ fn rule_case(ctx: &alloy::Context, display_scale: f32, motion: &str, scales: &[f
 // scale from the start, and differs from the frame the mid-motion raster
 // drew at the same density.
 fn text_case(ctx: &alloy::Context, display_scale: f32, nested: bool, all: &mut Vec<String>) {
-  let platform = text_platform_at(display_scale);
+  let platform = text_platform_at(display_scale, NO_BUDGET);
   let mut producer = Producer { frame: 0 };
   let tiles = TEXT_TILE_AT.len() as u32;
-  let (reuse_all, raster_all, rerender_all) = ((tiles, 0, 0), (0, 0, tiles), (0, tiles, 0));
+  let (reuse_all, raster_all, rerender_all) = ((tiles, 0, 0, 0), (0, 0, tiles, 0), (0, tiles, 0, 0));
   let scene = if nested { "text tiles in a recording" } else { "text tiles" };
   // The nested recordings are re-made with every raster and re-render of
   // their snapshots, and with nothing else.
@@ -912,6 +982,602 @@ fn text_case(ctx: &alloy::Context, display_scale: f32, nested: bool, all: &mut V
   one_shot.finish(all);
 }
 
+// The budget tiles' places, in walk order.
+fn budget_tile_at() -> Vec<(f32, f32)> {
+  let place = |row: usize, col: usize| {
+    (BUDGET_ORIGIN.0 + col as f32 * BUDGET_PITCH.0, BUDGET_ORIGIN.1 + row as f32 * BUDGET_PITCH.1)
+  };
+  (0..BUDGET_ROWS).flat_map(|row| (0..BUDGET_COLUMNS).map(move |col| place(row, col))).collect()
+}
+
+fn build_budget_tiles() -> RenderTree {
+  build_tiles_at(&budget_tile_at(), BUDGET_TILE_W, BUDGET_TILE_H)
+}
+
+// The snapshot boundaries of `tiles` tiles, in walk order.
+fn boundary_ids(tiles: usize) -> Vec<u64> {
+  (0..tiles as u64).map(tile_boundary_id).collect()
+}
+
+// Each snapshot's raster as the last walk left it: the scale it was made at
+// and whether it holds content for rest to re-make (`rest_pending`); None
+// without one. A tile whose state changed across a frame rastered in it.
+fn raster_states(tree: &RenderTree, ids: &[u64]) -> Vec<Option<(f32, bool)>> {
+  let state = |id: u64| {
+    let element = tree.try_node(id)?;
+    let cache = element.paint_cache.borrow();
+    match &*cache {
+      Some(PaintCache::Snapshot(snap)) => Some((snap.scale, snap.rest_pending)),
+      _ => None,
+    }
+  };
+  ids.iter().map(|&id| state(id)).collect()
+}
+
+// A tile boundary's own scale, written as an app writes it.
+fn write_own_scale(tree: &mut RenderTree, id: u64, scale: f32) {
+  tree.edit(id, |el| match &mut el.kind {
+    ElementKind::View(v) => {
+      v.set_scale_x(Some(scale));
+      v.set_scale_y(Some(scale))
+    }
+    _ => panic!("a tile boundary is a view"),
+  });
+}
+
+// The written scale of FAST_SWEEP_PERIODS periods of the fast sweep.
+fn fast_sweep() -> Vec<f32> {
+  let frames = (f64::from(FAST_SWEEP_PERIODS) * std::f64::consts::TAU / FAST_SWEEP_RATE * FRAME_HZ).ceil() as u32;
+  let at = |frame: u32| {
+    let t = f64::from(frame) / FRAME_HZ;
+    (f64::from(REST_SCALE) * (SWEEP_OCTAVES * (FAST_SWEEP_RATE * t).sin()).exp2()) as f32
+  };
+  (1..=frames).map(at).collect()
+}
+
+// One tile's side of the budget rule (BudgetRule): the density rule on its
+// own composite scale, the container's scale times its own (the display
+// scale cancels).
+#[derive(Clone)]
+struct TileRule {
+  // The composite scale its raster was made at, and its own scale.
+  have: f64,
+  own: f64,
+  // Its last composite scale, the looks that held for, and the frames left
+  // in which rest is too close to call.
+  last: f64,
+  looks: u32,
+  unsure: u32,
+}
+
+// What the budget rule says of one frame (BudgetRule::look).
+struct BudgetCall {
+  // The candidates in walk order, each with its stretch and whether its
+  // raster is the re-render for rest: a tile whose raster is due for
+  // density (past the motion bound, or at rest at a new scale), or for rest
+  // (content made in motion, at rest at the raster's own scale).
+  candidates: Vec<(usize, f64, bool)>,
+  // The tile that rasters, and whether for rest.
+  rasters: Option<(usize, bool)>,
+  // The tiles deferred, in walk order.
+  deferred: Vec<usize>,
+  // The tile granted ahead of the walk, and the first tile the walk before
+  // deferred in walk order: a grant other than that one is the most
+  // stretched first, where walk order would differ.
+  grant: Option<usize>,
+  first_deferred: Option<usize>,
+  // Whether the candidates are certain (no tile too close to a threshold to
+  // call), and whether the raster is too (the grant certain as well).
+  candidates_sure: bool,
+  raster_sure: bool,
+}
+
+// The raster budget at a zero budget (alloy's RasterBudget), run beside the
+// engine on snapshot tiles over the density rule (as Rule runs it): one
+// raster for density a frame. Ahead of a frame the tiles the frame before
+// deferred are ordered the most stretched first, ties in walk order, and
+// the first is granted: it rasters, the others are deferred again, and so
+// is every new candidate. With none deferred, the first candidate in walk
+// order rasters and the others are deferred. It is told what the engine
+// did, so a call made the other way near a threshold does not fail every
+// frame after it.
+struct BudgetRule {
+  tiles: Vec<TileRule>,
+  // The tiles the last frame deferred, in walk order, with their stretch,
+  // and whether that list is certain.
+  deferred: Vec<(usize, f64)>,
+  trusted: bool,
+}
+
+impl BudgetRule {
+  // `tiles` tiles at rest at `scale`, rasters made there.
+  fn at_rest(scale: f32, tiles: usize) -> Self {
+    let now = f64::from(scale);
+    let tile = TileRule { have: now, own: 1.0, last: now, looks: REST_LOOKS, unsure: 0 };
+    BudgetRule { tiles: vec![tile; tiles], deferred: Vec::new(), trusted: true }
+  }
+
+  // A frame at the container's `scale`, the tiles' rasters holding content
+  // for rest to re-make where `pending` says (the engine's, before it).
+  fn look(&mut self, scale: f32, pending: &[bool]) -> BudgetCall {
+    let mut candidates_sure = true;
+    let mut candidates = Vec::new();
+    for (i, tile) in self.tiles.iter_mut().enumerate() {
+      let now = f64::from(scale) * tile.own;
+      let (step_held, step_close) = held(tile.last, now);
+      tile.looks = if step_held { tile.looks + 1 } else { 0 };
+      tile.last = now;
+      tile.unsure = if step_close { REST_LOOKS + 1 } else { tile.unsure.saturating_sub(1) };
+      let at_rest = tile.looks >= REST_LOOKS;
+      let stretch = ratio(now, tile.have);
+      let (kept, kept_close) = held(tile.have, now);
+      let density = stretch > MOTION_BOUND || (at_rest && !kept);
+      let rest = !density && at_rest && pending[i];
+      candidates_sure &= (stretch - MOTION_BOUND).abs() >= BOUND_AMBIGUITY && !kept_close && tile.unsure == 0;
+      if density || rest {
+        candidates.push((i, if density { stretch } else { 1.0 }, rest));
+      }
+    }
+    let mut order = self.deferred.clone();
+    order.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let close =
+      order.len() > 1 && order[0].1 != order[1].1 && (order[0].1 - order[1].1).abs() < order[0].1 * ORDER_AMBIGUITY;
+    let grant = order.first().map(|&(i, _)| i);
+    let waiting: Vec<usize> = order.iter().skip(1).map(|&(i, _)| i).collect();
+    let mut owed = grant.is_none();
+    let mut rasters = None;
+    let mut deferred = Vec::new();
+    for &(i, _, rest) in &candidates {
+      if Some(i) == grant || (owed && !waiting.contains(&i)) {
+        rasters = Some((i, rest));
+        owed = false;
+      } else {
+        deferred.push(i);
+      }
+    }
+    BudgetCall {
+      candidates,
+      rasters,
+      deferred,
+      grant,
+      first_deferred: self.deferred.first().map(|&(i, _)| i),
+      candidates_sure,
+      raster_sure: candidates_sure && self.trusted && !close,
+    }
+  }
+
+  // What the engine did in the frame `call` was made for, at the
+  // container's `scale`: `rastered` the tiles whose raster changed, each
+  // with whether it took a new density; `deferred` its count.
+  fn observed(&mut self, scale: f32, call: &BudgetCall, rastered: &[(usize, bool)], deferred: u32) {
+    for &(i, density) in rastered {
+      if density {
+        self.tiles[i].have = f64::from(scale) * self.tiles[i].own;
+      }
+    }
+    let left = |&&(i, _, _): &&(usize, f64, bool)| !rastered.iter().any(|&(r, _)| r == i);
+    self.deferred = call.candidates.iter().filter(left).map(|&(i, stretch, _)| (i, stretch)).collect();
+    self.trusted = call.candidates_sure && self.deferred.len() as u32 == deferred;
+  }
+}
+
+// A budget case's frames at a zero budget, each checked against the rule
+// (BudgetRule): at most one raster a frame, every other snapshot reused (a
+// deferred one composited stretched, never drawn inline), and where the
+// rule is certain, how many it defers, the tile that rasters and whether
+// for rest. Counts what it saw for the summary.
+struct BudgetRun {
+  ids: Vec<u64>,
+  rule: BudgetRule,
+  // Rasters per tile, frames that deferred any, frames that deferred a
+  // re-render for rest, and frames whose grant was not the first deferred
+  // tile in walk order.
+  rastered: Vec<u32>,
+  deferring: u32,
+  rest_deferring: u32,
+  out_of_walk_order: u32,
+  seen: Vec<(Counts, u32)>,
+}
+
+impl BudgetRun {
+  fn new(ids: Vec<u64>, rule: BudgetRule) -> Self {
+    let tiles = ids.len();
+    BudgetRun {
+      ids,
+      rule,
+      rastered: vec![0; tiles],
+      deferring: 0,
+      rest_deferring: 0,
+      out_of_walk_order: 0,
+      seen: Vec::new(),
+    }
+  }
+
+  // One frame at the container's `scale`, written already, produced by
+  // `produce`: checked, and told to the rule. Returns the rule's call, the
+  // tiles that rastered and the frame's stats.
+  fn frame(
+    &mut self,
+    case: &mut Case,
+    what: &str,
+    scale: f32,
+    tree: &mut RenderTree,
+    produce: impl FnOnce(&mut RenderTree) -> PaintStats,
+  ) -> (BudgetCall, Vec<usize>, PaintStats) {
+    let before = raster_states(tree, &self.ids);
+    let pending: Vec<bool> = before.iter().map(|s| s.is_some_and(|(_, p)| p)).collect();
+    let call = self.rule.look(scale, &pending);
+    let stats = produce(tree);
+    let got = counts(&stats);
+    tally(&mut self.seen, got);
+    let after = raster_states(tree, &self.ids);
+    let new_density = |i: usize| before[i].map(|b| b.0) != after[i].map(|a| a.0);
+    let changed: Vec<(usize, bool)> =
+      (0..self.ids.len()).filter(|&i| before[i] != after[i]).map(|i| (i, new_density(i))).collect();
+    let tiles = self.ids.len() as u32;
+    let made = got.1 + got.2;
+    case.expect(changed.len() <= 1, || format!("{what}: {} tiles rastered: {changed:?}", changed.len()));
+    case.expect(made == changed.len() as u32 && got.0 == tiles - made && got.3 <= got.0, || {
+      format!("{what}: {got:?} for {} rastered of {tiles}", changed.len())
+    });
+    if call.candidates_sure {
+      let want = call.deferred.len() as u32;
+      case.expect(got.3 == want, || format!("{what}: deferred {}, expected {want} ({:?})", got.3, call.deferred));
+    }
+    if call.raster_sure {
+      let raster = changed.first().map(|&(i, density)| (i, !density));
+      case.expect(raster == call.rasters, || format!("{what}: rastered {raster:?}, expected {:?}", call.rasters));
+      if let Some((_, rest)) = call.rasters {
+        let kind = if rest { (1, 0) } else { (0, 1) };
+        case.expect((got.1, got.2) == kind, || format!("{what}: {got:?}, expected rerendered/rasterized {kind:?}"));
+      }
+      let granted = call.grant.is_some() && call.rasters.map(|(i, _)| i) == call.grant;
+      self.out_of_walk_order += u32::from(granted && call.grant != call.first_deferred);
+    }
+    for &(i, _) in &changed {
+      self.rastered[i] += 1;
+    }
+    self.deferring += u32::from(got.3 > 0);
+    let rest_deferred = call.candidates.iter().any(|&(i, _, rest)| rest && call.deferred.contains(&i));
+    self.rest_deferring += u32::from(rest_deferred);
+    self.rule.observed(scale, &call, &changed, got.3);
+    let rastered = changed.iter().map(|&(i, _)| i).collect();
+    (call, rastered, stats)
+  }
+
+  fn summary(&self) -> String {
+    format!(
+      "{}; rasters per tile {:?}, {} frames deferring, {} granted out of walk order",
+      tally_text(&self.seen),
+      self.rastered,
+      self.deferring,
+      self.out_of_walk_order
+    )
+  }
+}
+
+// Every tile's raster made at one scale, `scale` times its own: the last
+// raster for rest of each.
+fn all_rested(tree: &RenderTree, ids: &[u64], rule: &BudgetRule, scale: f32) -> bool {
+  let states = raster_states(tree, ids);
+  let one_scale = states.windows(2).all(|w| w[0].map(|s| s.0) == w[1].map(|s| s.0));
+  let none_pending = states.iter().all(|s| s.is_some_and(|(_, pending)| !pending));
+  let held_all = rule.tiles.iter().all(|t| held(t.have, f64::from(scale) * t.own).0);
+  one_scale && none_pending && held_all
+}
+
+// The budget tiles under a zero budget: at rest every first raster is made
+// in the first frame (a first raster is not budgeted); under the written
+// sweep and its hold one raster for density a frame, the first candidate in
+// walk order at the first crossing (all tiles cross together, one shared
+// scale) and the most stretched of the deferred ones after it, every other
+// tile reused, and after the hold every tile rastered at the resting scale,
+// then all reused with none deferred.
+fn budget_sweep_case(ctx: &alloy::Context, display_scale: f32, all: &mut Vec<String>) {
+  let platform = platform_at(display_scale, ZERO_BUDGET);
+  let mut tree = build_budget_tiles();
+  let tiles = budget_tile_at().len();
+  let n = tiles as u32;
+  let mut rest = Case::new(format!(
+    "budget tiles at rest are all rasterized in the first frame under a zero budget, then reused, at {display_scale}x"
+  ));
+  let first = counts(&paint(&mut tree, &platform, ctx));
+  rest.expect(first == (0, 0, n, 0), || format!("first frame: {first:?}, expected {:?}", (0, 0, n, 0)));
+  for frame in 1..REST_FRAMES {
+    let got = counts(&paint(&mut tree, &platform, ctx));
+    rest.expect(got == (n, 0, 0, 0), || format!("rest frame {frame}: {got:?}"));
+  }
+  rest.finish(all);
+
+  let mut sweep_case = Case::new(format!(
+    "under a zero budget the written sweep rasters one budget tile a frame, the first in walk order at a crossing and the most stretched after it, every other one reused, at {display_scale}x"
+  ));
+  let mut run = BudgetRun::new(boundary_ids(tiles), BudgetRule::at_rest(REST_SCALE, tiles));
+  let mut first_crossing = None;
+  let scales = sweep();
+  for (frame, &scale) in (1u32..).zip(scales.iter()) {
+    write_scale(&mut tree, scale);
+    let what = format!("frame {frame} (scale {scale})");
+    let (call, rastered, stats) = run.frame(&mut sweep_case, &what, scale, &mut tree, |t| paint(t, &platform, ctx));
+    if first_crossing.is_none() && !call.candidates.is_empty() {
+      first_crossing = Some(frame);
+      let deferred = stats.snapshots_deferred;
+      let ok = call.candidates.len() == tiles && rastered == [0] && deferred == n - 1;
+      sweep_case.expect(ok, || {
+        format!("{what}, the first crossing: rastered {rastered:?}, deferred {deferred}, expected [0] and {}", n - 1)
+      });
+    }
+  }
+  sweep_case.expect(first_crossing.is_some(), || "the sweep never passed the motion bound".to_string());
+  println!("  budget tiles sweep at {display_scale}x: {}", run.summary());
+  sweep_case.finish(all);
+
+  let mut hold = Case::new(format!(
+    "after the sweep under a zero budget every budget tile is rastered at the resting scale, one a frame, then reused with none deferred, at {display_scale}x"
+  ));
+  let last = *scales.last().expect("a sweep");
+  for look in 1..=BUDGET_HOLD_FRAMES {
+    run.frame(&mut hold, &format!("look {look}"), last, &mut tree, |t| paint(t, &platform, ctx));
+  }
+  let got = counts(&paint(&mut tree, &platform, ctx));
+  hold.expect(got == (n, 0, 0, 0), || format!("after the hold: {got:?}"));
+  let ids = boundary_ids(tiles);
+  hold.expect(all_rested(&tree, &ids, &run.rule, last), || {
+    format!("not every tile rasterized at the resting scale: {:?}", raster_states(&tree, &ids))
+  });
+  println!("  budget tiles sweep and hold at {display_scale}x: {}", run.summary());
+  hold.finish(all);
+}
+
+// A one-shot write past the motion bound over the budget tiles, with an own
+// scale written on each tile in the same frame that grows in walk order
+// (OWN_SCALE_STEP): the stretches differ, and grow in walk order. Under a
+// zero budget the first frame rasters tile 0 (the first candidate in walk
+// order) and defers the others; then one a frame, the most stretched first:
+// the last tile, then back down to tile 1, against walk order.
+fn budget_order_case(ctx: &alloy::Context, display_scale: f32, all: &mut Vec<String>) {
+  let platform = platform_at(display_scale, NO_BUDGET);
+  let mut tree = build_budget_tiles();
+  let tiles = budget_tile_at().len();
+  let n = tiles as u32;
+  for _ in 0..REST_FRAMES {
+    paint(&mut tree, &platform, ctx);
+  }
+  platform.set_snapshot_raster_budget(ZERO_BUDGET);
+  let mut case = Case::new(format!(
+    "deferred budget tiles of different stretches are rasterized one a frame, the most stretched first, at {display_scale}x"
+  ));
+  let mut rule = BudgetRule::at_rest(REST_SCALE, tiles);
+  let target = REST_SCALE * ONE_SHOT;
+  write_scale(&mut tree, target);
+  for (i, tile) in rule.tiles.iter_mut().enumerate() {
+    let own = 1.0 + i as f32 * OWN_SCALE_STEP;
+    write_own_scale(&mut tree, tile_boundary_id(i as u64), own);
+    tile.own = f64::from(own);
+  }
+  let mut run = BudgetRun::new(boundary_ids(tiles), rule);
+  let want_order: Vec<usize> = std::iter::once(0).chain((1..tiles).rev()).collect();
+  let mut order = Vec::new();
+  for frame in 0..tiles + REST_FRAMES as usize {
+    let what = format!("frame {frame}");
+    let (_, rastered, stats) = run.frame(&mut case, &what, target, &mut tree, |t| paint(t, &platform, ctx));
+    order.extend(rastered);
+    let got = counts(&stats);
+    let want = if frame < tiles { (n - 1, 0, 1, n - 1 - frame as u32) } else { (n, 0, 0, 0) };
+    case.expect(got == want, || format!("{what}: {got:?}, expected {want:?}"));
+  }
+  case.expect(order == want_order, || format!("rastered in the order {order:?}, expected {want_order:?}"));
+  println!("  budget tiles by stretch at {display_scale}x: order {order:?}; {}", run.summary());
+  case.finish(all);
+}
+
+// A content change inside the last budget tile in the frame of a one-shot
+// write past the motion bound, under a zero budget. Its raster is not
+// budgeted: it rasterizes (at the new density, new storage) though every
+// candidate after the first is deferred, and its time counts toward the
+// time spent. That gives no density raster past the rule's one a frame: the
+// first candidate in walk order (tile 0) rasters whatever was spent, and
+// the zero budget has room for nothing else. So the frame rasterizes two
+// tiles and defers the other four, which follow one a frame in walk order
+// (their stretches are alike).
+fn budget_content_case(ctx: &alloy::Context, display_scale: f32, all: &mut Vec<String>) {
+  let platform = platform_at(display_scale, ZERO_BUDGET);
+  let mut tree = build_budget_tiles();
+  let tiles = budget_tile_at().len();
+  let n = tiles as u32;
+  let ids = boundary_ids(tiles);
+  for _ in 0..REST_FRAMES {
+    paint(&mut tree, &platform, ctx);
+  }
+  let mut case = Case::new(format!(
+    "a content change in the frame of a crossing under a zero budget is rasterized, beside the one density raster, at {display_scale}x"
+  ));
+  let changed_tile = tiles - 1;
+  write_scale(&mut tree, REST_SCALE * ONE_SHOT);
+  write_color(&mut tree, cell_rect_id(changed_tile as u64, 0), WHITE);
+  let before = raster_states(&tree, &ids);
+  let got = counts(&paint(&mut tree, &platform, ctx));
+  let after = raster_states(&tree, &ids);
+  let changed: Vec<usize> = (0..tiles).filter(|&i| before[i].map(|s| s.0) != after[i].map(|s| s.0)).collect();
+  let want = (n - 2, 0, 2, n - 2);
+  case.expect(got == want, || format!("the crossing: {got:?}, expected {want:?}"));
+  case.expect(changed == [0, changed_tile], || {
+    format!("the crossing rastered {changed:?}, expected [0, {changed_tile}]")
+  });
+  for (k, tile) in (1..changed_tile).enumerate() {
+    let before = raster_states(&tree, &ids);
+    let got = counts(&paint(&mut tree, &platform, ctx));
+    let after = raster_states(&tree, &ids);
+    let changed: Vec<usize> = (0..tiles).filter(|&i| before[i] != after[i]).collect();
+    let want = (n - 1, 0, 1, n - 3 - k as u32);
+    case.expect(got == want && changed == [tile], || {
+      format!("frame {}: {got:?} rastered {changed:?}, expected {want:?} and [{tile}]", k + 1)
+    });
+  }
+  let got = counts(&paint(&mut tree, &platform, ctx));
+  case.expect(got == (n, 0, 0, 0), || format!("after the deferred ones: {got:?}"));
+  case.finish(all);
+}
+
+// The budget tiles under a native scale track up past the motion bound,
+// under a zero budget: the raster for the track's end is made at its start
+// for every tile in that frame, not deferred, and nothing is deferred while
+// it runs or when it settles.
+fn budget_track_case(ctx: &alloy::Context, display_scale: f32, all: &mut Vec<String>) {
+  let platform = platform_at(display_scale, ZERO_BUDGET);
+  let mut tree = build_budget_tiles();
+  let n = budget_tile_at().len() as u32;
+  tree.edit(CONTAINER, |el| {
+    el.transitions = Some(Box::new(TransitionConfig { all: Some(TRACK.into()), ..Default::default() }));
+    Damage::None
+  });
+  let (direction, end) = TRACKS[0];
+  let mut case = Case::new(format!(
+    "a scale track {direction} rasterizes every budget tile for its end at its start under a zero budget, none deferred, at {display_scale}x"
+  ));
+  let frame_ms = 1000.0 / FRAME_HZ;
+  let mut now_ms = 0.0;
+  let mut step = |tree: &mut RenderTree| {
+    now_ms += frame_ms;
+    tree.set_transition_now(now_ms);
+    tree.advance_transitions();
+    counts(&paint(tree, &platform, ctx))
+  };
+  for _ in 0..REST_FRAMES {
+    step(&mut tree);
+  }
+  let started = tree.transition_write(CONTAINER, AnimProp::Scale, Some(AnimValue::Scalar(end)));
+  case.expect(started, || "the scale track did not start".to_string());
+  let mut seen = Vec::new();
+  let (mut track_frames, mut settled) = (0, 0);
+  let mut last = (0, 0, 0, 0);
+  while settled < SETTLE_FRAMES {
+    let got = step(&mut tree);
+    tally(&mut seen, got);
+    last = got;
+    if tree.unrounded(CONTAINER) {
+      track_frames += 1;
+      let want = if track_frames == 1 { (0, 0, n, 0) } else { (n, 0, 0, 0) };
+      case.expect(got == want, || format!("track frame {track_frames}: {got:?}, expected {want:?}"));
+    } else {
+      settled += 1;
+      let ok = got.1 == 0 && got.3 == 0 && got.0 + got.2 == n;
+      case.expect(ok, || format!("settled frame {settled}: {got:?}, expected none deferred"));
+    }
+  }
+  case.expect(track_frames > 0, || "the track never ran".to_string());
+  case.expect(last == (n, 0, 0, 0), || format!("the last settled frame: {last:?}"));
+  println!("  budget tiles track {direction} at {display_scale}x: {}", tally_text(&seen));
+  case.finish(all);
+}
+
+// A one-shot write past the motion bound under a zero budget defers every
+// budget tile but tile 0; then tile 1, the next to be granted, is
+// destroyed. Nothing panics, and the others are rasterized one a frame, in
+// walk order (their stretches are alike), from tile 2 on.
+fn budget_destroyed_case(ctx: &alloy::Context, display_scale: f32, all: &mut Vec<String>) {
+  let platform = platform_at(display_scale, ZERO_BUDGET);
+  let mut tree = build_budget_tiles();
+  let tiles = budget_tile_at().len();
+  let n = tiles as u32;
+  for _ in 0..REST_FRAMES {
+    paint(&mut tree, &platform, ctx);
+  }
+  let mut case = Case::new(format!(
+    "a destroyed budget tile that was deferred breaks nothing, the others are rasterized one a frame, at {display_scale}x"
+  ));
+  write_scale(&mut tree, REST_SCALE * ONE_SHOT);
+  let got = counts(&paint(&mut tree, &platform, ctx));
+  case.expect(got == (n - 1, 0, 1, n - 1), || format!("the crossing: {got:?}"));
+  let destroyed = 1;
+  tree.delete_node(CONTAINER, tile_id(destroyed));
+  let ids: Vec<u64> = (0..tiles as u64).filter(|&i| i != destroyed).map(tile_boundary_id).collect();
+  let left = n - 1;
+  for (k, tile) in (2..tiles as u64).enumerate() {
+    let before = raster_states(&tree, &ids);
+    let got = counts(&paint(&mut tree, &platform, ctx));
+    let after = raster_states(&tree, &ids);
+    let changed: Vec<u64> = (0..ids.len()).filter(|&i| before[i] != after[i]).map(|i| ids[i]).collect();
+    let want = (left - 1, 0, 1, left - 2 - k as u32);
+    let want_tile = tile_boundary_id(tile);
+    case.expect(got == want && changed == [want_tile], || {
+      format!("frame {}: {got:?} rastered {changed:?}, expected {want:?} and [{want_tile}]", k + 1)
+    });
+  }
+  let got = counts(&paint(&mut tree, &platform, ctx));
+  case.expect(got == (left, 0, 0, 0), || format!("after the deferred ones: {got:?}"));
+  case.finish(all);
+}
+
+// The budget tiles under a sweep fast enough that they pass the motion
+// bound faster than one raster a frame follows (FAST_SWEEP_RATE), under a
+// zero budget: the rule as BudgetRun checks it every frame, and over the
+// run every tile is rasterized, none skipped while the others raster again
+// and again.
+fn budget_starvation_case(ctx: &alloy::Context, display_scale: f32, all: &mut Vec<String>) {
+  let platform = platform_at(display_scale, ZERO_BUDGET);
+  let mut tree = build_budget_tiles();
+  let tiles = budget_tile_at().len();
+  for _ in 0..REST_FRAMES {
+    paint(&mut tree, &platform, ctx);
+  }
+  let mut case = Case::new(format!(
+    "under a zero budget a fast sweep rasterizes every budget tile, the most stretched first, none starved, at {display_scale}x"
+  ));
+  let mut run = BudgetRun::new(boundary_ids(tiles), BudgetRule::at_rest(REST_SCALE, tiles));
+  for (frame, scale) in (1u32..).zip(fast_sweep()) {
+    write_scale(&mut tree, scale);
+    let what = format!("frame {frame} (scale {scale})");
+    run.frame(&mut case, &what, scale, &mut tree, |t| paint(t, &platform, ctx));
+  }
+  case.expect(run.rastered.iter().all(|&r| r > 0), || format!("a tile was never rasterized: {:?}", run.rastered));
+  case.expect(run.deferring > 0, || "the sweep never deferred a raster: no pressure on the budget".to_string());
+  println!("  budget tiles fast sweep at {display_scale}x: {}", run.summary());
+  case.finish(all);
+}
+
+// Four text tiles under a one-shot write past the motion bound and its
+// hold, under a zero budget (with the labels in a Recording boundary inside
+// each snapshot where `nested`): one raster a frame, the rasters made in
+// motion holding unhinted text, then the re-renders for rest, deferred and
+// made one a frame, a nested recording re-made exactly with its snapshot;
+// every tile ends hinted, its frame the frame of a tree made at that scale.
+fn budget_text_case(ctx: &alloy::Context, display_scale: f32, nested: bool, all: &mut Vec<String>) {
+  let platform = text_platform_at(display_scale, ZERO_BUDGET);
+  let mut producer = Producer { frame: 0 };
+  let tiles = TEXT_BUDGET_AT.len();
+  let scene = if nested { "text tiles in a recording" } else { "text tiles" };
+  let mut tree = build_text_tiles_at(nested, &TEXT_BUDGET_AT);
+  for _ in 0..REST_FRAMES {
+    producer.produce(&mut tree, &platform, ctx);
+  }
+  let mut case = Case::new(format!(
+    "under a zero budget the re-renders for rest of {scene} are deferred and made one a frame, every tile ends hinted, at {display_scale}x"
+  ));
+  let target = REST_SCALE * ONE_SHOT;
+  write_scale(&mut tree, target);
+  let mut run = BudgetRun::new(boundary_ids(tiles), BudgetRule::at_rest(REST_SCALE, tiles));
+  for look in 0..=BUDGET_HOLD_FRAMES {
+    let what = format!("look {look}");
+    let (_, _, stats) = run.frame(&mut case, &what, target, &mut tree, |t| producer.produce(t, &platform, ctx));
+    let follows = !nested || stats.boundaries_recorded == stats.snapshots_rerendered + stats.snapshots_rasterized;
+    case.expect(follows, || format!("{what}: {} recorded", stats.boundaries_recorded));
+  }
+  case.expect(run.rest_deferring > 0, || "no re-render for rest was deferred".to_string());
+  let ids = boundary_ids(tiles);
+  case.expect(all_rested(&tree, &ids, &run.rule, target), || {
+    format!("not every tile made for rest: {:?}", raster_states(&tree, &ids))
+  });
+  let (rested, _, stats) = paint_read(&mut tree, &platform, ctx);
+  case.expect(counts(&stats) == (tiles as u32, 0, 0, 0), || format!("after the hold: {:?}", counts(&stats)));
+  let mut fresh = build_text_tiles_at(nested, &TEXT_BUDGET_AT);
+  write_scale(&mut fresh, target);
+  let made = paint_read(&mut fresh, &platform, ctx).0;
+  case.expect(rested == made, || "the frame at rest is not the frame of a tree made there".to_string());
+  println!("  {scene} under a zero budget at {display_scale}x: {}", run.summary());
+  case.finish(all);
+}
+
 fn pixel(pixels: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
   let i = ((y * w + x) * 4) as usize;
   [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
@@ -1001,7 +1667,7 @@ fn check_pair(case: &mut Case, pixels: &[u8], w: u32, pair: &Pair, device: f64, 
 }
 
 fn pair_written_case(ctx: &alloy::Context, display_scale: f32, pair: &Pair, snap_off: bool, all: &mut Vec<String>) {
-  let platform = platform_at(display_scale);
+  let platform = platform_at(display_scale, NO_BUDGET);
   let mut tree = build_pair(pair);
   if snap_off {
     unround(&mut tree);
@@ -1044,7 +1710,7 @@ fn pair_written_case(ctx: &alloy::Context, display_scale: f32, pair: &Pair, snap
     let got = counts(&stats);
     tally(&mut seen, got);
     if content {
-      let want = (0, PAIR_BOUNDARIES, 0);
+      let want = (0, PAIR_BOUNDARIES, 0, 0);
       case.expect(got == want, || format!("content change at frame {frame}: {got:?}, expected {want:?}"));
     }
     if got.2 > 0 {
@@ -1093,7 +1759,7 @@ fn pair_track_case(
   (direction, end): (&str, f32),
   all: &mut Vec<String>,
 ) {
-  let platform = platform_at(display_scale);
+  let platform = platform_at(display_scale, NO_BUDGET);
   let mut tree = build_pair(pair);
   tree.edit(CONTAINER, |el| {
     el.transitions = Some(Box::new(TransitionConfig { all: Some(TRACK.into()), ..Default::default() }));
@@ -1126,7 +1792,7 @@ fn pair_track_case(
     "a scale track {direction} rasterizes the pair ({}) once at its start, again at rest only for other texels, at {display_scale}x",
     pair.name
   ));
-  let (reuse_all, raster_all) = ((PAIR_BOUNDARIES, 0, 0), (0, 0, PAIR_BOUNDARIES));
+  let (reuse_all, raster_all) = ((PAIR_BOUNDARIES, 0, 0, 0), (0, 0, PAIR_BOUNDARIES, 0));
   let (fewest, most) = settle_rasters(pair, end, display_scale);
   let mut track_frames = 0;
   let mut settled = 0;
@@ -1144,7 +1810,7 @@ fn pair_track_case(
     } else {
       settled += 1;
       let ok = if settled == 1 {
-        got.1 == 0 && got.0 + got.2 == PAIR_BOUNDARIES && (fewest..=most).contains(&got.2)
+        got.1 == 0 && got.3 == 0 && got.0 + got.2 == PAIR_BOUNDARIES && (fewest..=most).contains(&got.2)
       } else {
         got == reuse_all
       };
@@ -1185,6 +1851,15 @@ fn main() {
         for track in TRACKS {
           pair_track_case(&ctx, display_scale, &pair, track, &mut all);
         }
+      }
+      budget_sweep_case(&ctx, display_scale, &mut all);
+      budget_order_case(&ctx, display_scale, &mut all);
+      budget_content_case(&ctx, display_scale, &mut all);
+      budget_track_case(&ctx, display_scale, &mut all);
+      budget_destroyed_case(&ctx, display_scale, &mut all);
+      budget_starvation_case(&ctx, display_scale, &mut all);
+      for nested in [false, true] {
+        budget_text_case(&ctx, display_scale, nested, &mut all);
       }
     }
     assert!(all.is_empty(), "{} boundary scale checks failed", all.len());

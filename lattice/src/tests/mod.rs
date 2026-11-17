@@ -9,6 +9,7 @@ mod input;
 mod manifest;
 mod modules;
 mod paced_clock;
+mod paint_policy;
 #[cfg(feature = "go")]
 mod render_writer;
 mod storage;

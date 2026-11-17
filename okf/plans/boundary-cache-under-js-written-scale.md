@@ -427,6 +427,73 @@ Measured on a release client, desktop, the repro at 40 tiles, windows of
 Findings 5 held, and the loop of Findings 6 does not form on this
 machine, where one tile rasters in about 1 ms.
 
+## Part 3 as decided (2026-11-17): a time budget
+
+Measured on the release client with parts 1 and 2 in place, the repro
+with a text label in every cell (40 tiles, 200 texts each): 40 fps, with
+most frames at 60 Hz and a frame of up to 367 ms at each crossing of the
+bound. Every text layer in every tile in view is made again in that
+frame. One rect-only tile rasters in about 1 ms on that machine, one
+text tile in about 20 ms. A frame of 367 ms is long enough to cross the
+bound again, so the loop of Findings 6 forms there. A count of rasters
+per frame fits neither tile, so the budget is a time.
+
+**What is budgeted.** A raster of a snapshot that has a valid raster to
+stretch, made for density alone: past the motion bound, at rest at a new
+scale, and the re-render for rest of content made in motion
+(`rest_pending`). Not budgeted: a first raster, a raster for changed
+content, a new box, a `pixelSnap` change, a shader storage change, a
+raster for a native track's known end (it is one raster, at the start).
+Nothing can stand in for the first group, and the last is not repeated.
+Every snapshot raster of a frame counts toward the time spent, budgeted
+or not.
+
+**A deferred snapshot** composites its raster stretched for one more
+frame, exactly as under `wait`: the key keeps the cached box and the
+cached density. It notes its stretch (the ratio between the composite
+scale and the raster's scale, either way; 1 for a re-render for rest)
+and asks for the next frame.
+
+**The grants.** Before a walk, the nodes deferred by the walk before it
+are sorted, the most stretched first, and granted in that order while
+the sum of their costs stays within the budget. The cost of a node is
+the time its last raster took on sol-ui (the record walk and the raster
+RPC), kept on its cache. The first is always granted. In the walk, a
+granted node rasters. A candidate that was not deferred before rasters
+while the time spent so far, the grants included, is within the budget.
+So the first frame of a crossing gives the budget in walk order, and the
+frames after it give it to the most stretched.
+
+**At least one.** Each frame rasters at least one candidate, whatever
+its cost, so the work always ends.
+
+**The mechanism is alloy's, the choice is lattice's.** Alloy carries
+the budget as a duration on the platform context and holds no default:
+unset, there is no budget, and every candidate rasters, as before part
+3. Zero means one candidate per frame. The tests use these two, so they
+do not depend on the clock. Lattice owns the default (a named constant,
+4 ms, a quarter of a 60 Hz frame) and sets it where it sets up the
+window's platform state. Alloy reports the fact: the paint stats count
+the deferred snapshots (`snapshotsDeferred`), and the control API's
+stats carry the four snapshot counters.
+
+Open: the app's own knob. A budget changes when a tile turns sharp,
+which is behaviour an app reasons about, so by the API design rule an
+app must be able to set it or turn it off. Its shape is not decided.
+
+**Measured with the budget** (release client, desktop, 40 tiles, windows
+of 5 s, lattice's default of 4 ms). Rects only, snapshot under the
+written scale: 59.95 fps, no frame over 16.7 ms (before the budget: one
+dropped frame at each crossing). With a text in every cell: 31.6 fps,
+the longest frame 50 ms (before the budget: 40 fps, the longest frame
+367 ms). The text scene now runs at a steady half rate, because one text
+tile costs about 20 ms and every frame rasters at least one. The work
+per second is the same; the budget spreads it. What is left there is the
+cost of one text tile.
+
+Not budgeted, known: text layers and recordings outside a snapshot,
+which pass the bound in the same frame.
+
 ## Related
 
 - [repaint-boundary-freeze](repaint-boundary-freeze.md): today a

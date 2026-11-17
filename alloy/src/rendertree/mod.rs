@@ -143,6 +143,9 @@ pub struct BuildContext<'a> {
   pub snapshots_reused: u32,
   pub snapshots_rerendered: u32,
   pub snapshots_rasterized: u32,
+  /// Snapshot boundaries whose raster for density the raster budget
+  /// deferred this frame, composited stretched (among the reused).
+  pub snapshots_deferred: u32,
   /// Glass panels whose backdrop layer was emitted ahead of a fading
   /// ancestor's opacity group this frame (composite::emit_backdrops_below).
   pub backdrops_prepainted: u32,
@@ -150,6 +153,10 @@ pub struct BuildContext<'a> {
   /// the walk emits only the glass panels' backdrop layers, faded by the
   /// pass's accumulated opacity, and draws nothing else.
   pub backdrop_pass: Option<BackdropPass>,
+  /// The walk's snapshot raster budget (boundary::RasterBudget): the grants
+  /// made ahead of it, the time its snapshot rasters took so far. Not a
+  /// walk counter: an isolated descent's rasters take time too.
+  pub(crate) raster_budget: boundary::RasterBudget,
 }
 
 /// The state of a backdrops-only pass (composite::emit_backdrops_below).
@@ -190,8 +197,10 @@ impl<'a> BuildContext<'a> {
       snapshots_reused: 0,
       snapshots_rerendered: 0,
       snapshots_rasterized: 0,
+      snapshots_deferred: 0,
       backdrops_prepainted: 0,
       backdrop_pass: None,
+      raster_budget: boundary::RasterBudget::for_walk(platform.snapshot_raster_budget(), Vec::new()),
     }
   }
 
@@ -204,6 +213,7 @@ impl<'a> BuildContext<'a> {
       snapshots_reused: self.snapshots_reused,
       snapshots_rerendered: self.snapshots_rerendered,
       snapshots_rasterized: self.snapshots_rasterized,
+      snapshots_deferred: self.snapshots_deferred,
       backdrops_prepainted: self.backdrops_prepainted,
     }
   }
@@ -214,6 +224,7 @@ impl<'a> BuildContext<'a> {
     self.snapshots_reused = stats.snapshots_reused;
     self.snapshots_rerendered = stats.snapshots_rerendered;
     self.snapshots_rasterized = stats.snapshots_rasterized;
+    self.snapshots_deferred = stats.snapshots_deferred;
     self.backdrops_prepainted = stats.backdrops_prepainted;
   }
 }
@@ -226,6 +237,7 @@ pub(crate) struct WalkStats {
   snapshots_reused: u32,
   snapshots_rerendered: u32,
   snapshots_rasterized: u32,
+  snapshots_deferred: u32,
   backdrops_prepainted: u32,
 }
 

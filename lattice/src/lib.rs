@@ -545,6 +545,26 @@ fn reset_fonts(platform: &PlatformContext, fonts: Vec<FontPayload>) {
   overlay::warm(platform);
 }
 
+/// The time a frame may spend on snapshot rasters made for density alone
+/// (a snapshot boundary whose raster passed the motion bound, came to rest
+/// at a new scale, or re-renders for rest) before alloy defers the rest to
+/// the next frames, the most stretched first, composited stretched until
+/// then (`PlatformContext::set_snapshot_raster_budget`): a quarter of a
+/// 60 Hz frame. It tunes the frame that crosses the motion bound or comes to
+/// rest: one snapshot raster takes about a millisecond (a tile of rects) to
+/// tens (a tile of text) on the JS thread, so a larger budget makes that
+/// frame longer, and a smaller one keeps more snapshots stretched for more
+/// frames.
+const SNAPSHOT_RASTER_BUDGET: std::time::Duration = std::time::Duration::from_millis(4);
+
+// The paint policy lattice chooses for the window's platform state, where
+// alloy carries out none until told: the snapshot raster budget
+// (SNAPSHOT_RASTER_BUDGET). The one place it is set; an app-facing knob
+// would set it here.
+fn apply_paint_policy(platform: &PlatformContext) {
+  platform.set_snapshot_raster_budget(Some(SNAPSHOT_RASTER_BUDGET));
+}
+
 // The mechanics of anchoring, separated from storage resolution so tests can
 // exercise deleted-cwd recovery without the process-wide storage global.
 // Ok(true) means the cwd moved; Ok(false) that it already pointed at a live
@@ -731,6 +751,7 @@ fn ui_thread(
     cadence.lock().expect("cadence policy lock poisoned").set_override(hold);
   }
   platform.set_stats_enabled(stats);
+  apply_paint_policy(&platform);
   let input_state = Arc::new(InputState::new());
   // The go client's boot rule: no app source means the player, always,
   // online or offline. Launched with a dev-server address, the player dials

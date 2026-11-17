@@ -416,7 +416,15 @@ when exactly one client is connected.
   `saveLayers`, and
   the paints that leave a tiled GPU's cheap path, `blends` (not
   source-over) and `gradients`; ops inside a reused repaint-boundary
-  recording are not re-recorded and not counted. `damagePx` is the window
+  recording are not re-recorded and not counted. `snapshotsReused`,
+  `snapshotsRerendered` and `snapshotsRasterized` count the latest walk's
+  snapshot boundaries drawn from their retained texture, re-rendered into
+  it, and rasterized into a new one; `snapshotsDeferred` counts the reused
+  ones whose raster for a new density (past the motion bound, at rest at a
+  new scale, the re-render for rest of text made in motion) the snapshot
+  raster budget left to a later frame, composited stretched until then -
+  nonzero for a few frames after a zoom crosses the bound or rests, one
+  raster or more per frame going to the most stretched. `damagePx` is the window
   area the latest frame damaged (logical px squared: 0 for a skipped
   frame, the window's area for a whole repaint) and `window.damagePx` its
   sum over the window's frames, so `?frames=1` reads the last frame that

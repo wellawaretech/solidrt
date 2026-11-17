@@ -86,6 +86,13 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
   put("cacheGets", s.cache_gets.into());
   put("cacheHits", s.cache_hits.into());
   put("nodesPainted", s.paint.nodes_painted.into());
+  // The latest walk's snapshot boundaries: drawn from their texture,
+  // re-rendered into it, rasterized into a new one, and of the reused, the
+  // ones whose raster for density the raster budget deferred.
+  put("snapshotsReused", s.paint.snapshots_reused.into());
+  put("snapshotsRerendered", s.paint.snapshots_rerendered.into());
+  put("snapshotsRasterized", s.paint.snapshots_rasterized.into());
+  put("snapshotsDeferred", s.paint.snapshots_deferred.into());
   put("backdropsPrepainted", s.paint.backdrops_prepainted.into());
   put("damagePx", (s.paint.damage_px.round() as i64).into());
   put("paintOps", paint_ops_json(&s.counters));

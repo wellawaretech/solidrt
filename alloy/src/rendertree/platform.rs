@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// A font to register: raw TTF/OTF bytes plus an optional alias the
 /// font registers under instead of its intrinsic family name ("sans", "serif"
@@ -56,6 +57,10 @@ pub struct PlatformContext {
   // Whether the debug stats overlay (HUD) is drawn. Arc'd so the dev-server
   // connection (a different thread, see go/connection.rs) can toggle it.
   stats_enabled: Arc<AtomicBool>,
+  // The time a paint walk spends on snapshot rasters for density alone
+  // (set_snapshot_raster_budget); None, no budget, unless the embedder sets
+  // one.
+  snapshot_raster_budget: Cell<Option<Duration>>,
 }
 
 // Safety: PlatformContext is only used on the UI thread.
@@ -83,6 +88,7 @@ impl PlatformContext {
       frame_requested,
       standing_demand: AtomicBool::new(false),
       stats_enabled: Arc::new(AtomicBool::new(false)),
+      snapshot_raster_budget: Cell::new(None),
     }
   }
 
@@ -271,5 +277,27 @@ impl PlatformContext {
 
   pub fn set_fps(&self, fps: u32) {
     self.fps.set(fps);
+  }
+
+  /// The time one paint walk spends on snapshot rasters made for density
+  /// alone - over a valid raster that passed the motion bound, came to rest
+  /// at a new scale, or holds content made in motion to re-make at rest -
+  /// before it defers the rest to the next frames, the most stretched
+  /// first, each composited stretched until its turn
+  /// (`PaintStats::snapshots_deferred` counts them). A first raster, a
+  /// raster for changed content, a new box and a raster for a scale track's
+  /// end are never deferred, and their time counts toward the time spent
+  /// like that of every snapshot raster. Each frame makes at least one
+  /// deferrable raster, whatever its cost, so the deferred ones all come.
+  /// None, the value until an embedder sets one, is no budget: every such
+  /// raster is made in the frame that asks for it. Zero is one such raster
+  /// per frame. Read at the start of each walk.
+  pub fn set_snapshot_raster_budget(&self, budget: Option<Duration>) {
+    self.snapshot_raster_budget.set(budget);
+  }
+
+  /// The snapshot raster budget (`set_snapshot_raster_budget`).
+  pub fn snapshot_raster_budget(&self) -> Option<Duration> {
+    self.snapshot_raster_budget.get()
   }
 }

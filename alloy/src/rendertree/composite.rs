@@ -59,6 +59,10 @@ pub struct PaintStats {
   pub snapshots_reused: u32,
   pub snapshots_rerendered: u32,
   pub snapshots_rasterized: u32,
+  /// Snapshot boundaries whose raster for density the raster budget
+  /// deferred to a later frame (PlatformContext::set_snapshot_raster_budget):
+  /// each composited its raster stretched, so it is among the reused too.
+  pub snapshots_deferred: u32,
   /// Glass panels re-filtered ahead of a fading ancestor's opacity group
   /// (emit_backdrops_below); nonzero only while such a fade runs.
   pub backdrops_prepainted: u32,
@@ -111,6 +115,10 @@ pub fn paint_phase(
   // scoped: only plain stats leave the block.
   let (mut stats, damage, regions) = {
     let mut ctx = BuildContext::new(platform, alloy);
+    // The snapshots the last walk deferred, granted for this one ahead of
+    // it, the most stretched first (boundary::RasterBudget).
+    ctx.raster_budget =
+      boundary::RasterBudget::for_walk(platform.snapshot_raster_budget(), tree.take_snapshot_deferrals());
     // The window's grid: device pixels through the display scale, with the
     // rounding off where the root itself says so (the child loop decides it
     // for every other node).
@@ -149,6 +157,7 @@ pub fn paint_phase(
       snapshots_reused: ctx.snapshots_reused,
       snapshots_rerendered: ctx.snapshots_rerendered,
       snapshots_rasterized: ctx.snapshots_rasterized,
+      snapshots_deferred: ctx.snapshots_deferred,
       backdrops_prepainted: ctx.backdrops_prepainted,
       damage_px: 0.0,
       captures: 0,

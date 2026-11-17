@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use taffy::NodeId;
 
 use crate::gpu::DirtySet;
+use crate::rendertree::boundary::Deferral;
 use crate::rendertree::cull;
 use crate::rendertree::damage::DamageLedger;
 use crate::rendertree::transitions::Transitions;
@@ -44,6 +45,11 @@ pub struct RenderTree {
   // from motion (text::raster_scale): the frame start gives each a Compose
   // damage, caches intact, so the walk reaches it.
   scale_waits: RefCell<HashSet<u64>>,
+  // Snapshot boundaries whose raster for density the raster budget deferred
+  // in the last walk (boundary::RasterBudget), each with the place it was
+  // deferred at in that walk and what it noted: the next walk grants them,
+  // the most stretched first, and takes the list. Dropped with the node.
+  snapshot_deferrals: RefCell<HashMap<u64, (usize, Deferral)>>,
   // Recording boundaries' frames as the last walk that reached each saw
   // them (cull::RecordingFrame): what content damage under a replayed
   // recording composes its window position from. Written on every visit of
@@ -95,6 +101,7 @@ impl RenderTree {
       released_snapshot_textures: RefCell::new(Vec::new()),
       text_layers: RefCell::new(HashSet::new()),
       scale_waits: RefCell::new(HashSet::new()),
+      snapshot_deferrals: RefCell::new(HashMap::new()),
       recording_frames: RefCell::new(HashMap::new()),
       texture_referencers: HashSet::new(),
       damage: DamageLedger::new(),
@@ -587,6 +594,7 @@ impl RenderTree {
       self.texture_referencers.remove(&node_id);
       self.text_layers.borrow_mut().remove(&node_id);
       self.scale_waits.borrow_mut().remove(&node_id);
+      self.snapshot_deferrals.get_mut().remove(&node_id);
       self.recording_frames.get_mut().remove(&node_id);
       if let Some(id) = element.snapshot_texture_id.get() {
         self.released_snapshot_textures.borrow_mut().push(id);
@@ -636,6 +644,35 @@ impl RenderTree {
   /// `take_scale_waits`).
   pub fn note_scale_wait(&self, node_id: u64) {
     self.scale_waits.borrow_mut().insert(node_id);
+  }
+
+  /// The paint walk deferred snapshot boundary `node_id`'s raster for
+  /// density (boundary::RasterBudget): the next walk grants it or defers it
+  /// again. A second visit in the same walk keeps its first place and
+  /// notes what it saw last.
+  pub(crate) fn note_snapshot_deferred(&self, node_id: u64, deferral: Deferral) {
+    let mut deferrals = self.snapshot_deferrals.borrow_mut();
+    let place = deferrals.len();
+    deferrals.entry(node_id).and_modify(|noted| noted.1 = deferral).or_insert((place, deferral));
+  }
+
+  /// The snapshots the last walk deferred, in the order it deferred them,
+  /// taken by the next walk: those still in the tree and still snapshot
+  /// boundaries.
+  pub(crate) fn take_snapshot_deferrals(&self) -> Vec<(u64, Deferral)> {
+    let mut taken: Vec<(usize, u64, Deferral)> = self
+      .snapshot_deferrals
+      .borrow_mut()
+      .drain()
+      .filter(|(id, _)| {
+        self
+          .try_node(*id)
+          .is_some_and(|e| matches!(e.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa))
+      })
+      .map(|(id, (place, deferral))| (place, id, deferral))
+      .collect();
+    taken.sort_by_key(|&(place, _, _)| place);
+    taken.into_iter().map(|(_, id, deferral)| (id, deferral)).collect()
   }
 
   /// A Recording boundary was visited by the paint walk: its frame's map to
