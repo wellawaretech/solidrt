@@ -105,11 +105,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   Fixing the key alone does little for this repro - at its raster cost, a
   frame that passes the motion bound lasts long enough for the next frame to
   pass it again, through about half of the sweep.
-- **[A layout move keeps a boundary's own cache](plans/boundary-layout-move-keeps-cache.md)** [2026-11-17]
-  A boundary whose box only moves (a sibling above it grew, a drag by
-  left/top) loses its own cache, because the layout pass clears from the moved
-  node up; a snapshot card in a list re-rasterizes for every insert above it,
-  though its cached content does not depend on where it is.
 - **[Report what an app can use as states, not as one yes/no list](plans/capability-states.md)** [2026-11-13]
   Flux.capabilities is a flat list of names fixed for the process, so it
   cannot say "not known yet", "only a call can tell", "the user has not
@@ -1710,6 +1705,13 @@ Finished, kept for the reasoning.
   snap a border width, for a laid-out rect and for the detached rect that
   draws every stock border, and a recording that holds such a stroke
   re-records when its scale changes.
+- **[A layout move keeps a boundary's own cache](done/boundary-layout-move-keeps-cache.md)** [2026-11-17]
+  A boundary whose box is only moved by someone else's relayout (a sibling
+  above it grew, a card was inserted above a list) loses its own cache,
+  because the layout pass clears from the moved node up; a snapshot card in a
+  list re-rasterizes for every insert above it, though its cached content does
+  not depend on where it is. A write to the node's own left/top is not this
+  case and still clears its cache - layout props are not for animation.
 - **[A bounding box read under a sliding ancestor drifts in size](done/bounding-box-size-drift-under-slide.md)** [2026-09-21]
   getBoundingBox computed a node's size from corners that already carried the
   ancestor chain's translation, so under a layout slide the width came back an

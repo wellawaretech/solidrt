@@ -113,6 +113,14 @@ pub struct RecordingCache {
   /// themselves. It is re-recorded once at rest (composite.rs), under the
   /// snapshot's re-render for rest at the latest.
   pub rest_pending: bool,
+  /// The box it was recorded at (the walk's `ctx.size`: the snapped border
+  /// box, the inherited frame for a detached boundary), which its content
+  /// is laid out at (a design-size fit, detached children filling it). At
+  /// the density it was recorded at, a replay at another box re-records it
+  /// once (composite.rs): a move that took a far edge onto another device
+  /// pixel. Under another density the box is a new logical size at every
+  /// scale, and the recording replays there by design.
+  pub size: Size,
 }
 
 /// The backdrop panels inside a Recording cache, summarized from the

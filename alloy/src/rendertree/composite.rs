@@ -765,15 +765,27 @@ fn build_recursive<'a>(
       // round: a stroke floored upright and replayed under a rotation is a
       // fraction thinner, on edges that are resampled anyway.
       let floors_strokes = grid::floors_strokes(&inner_grid);
+      // This frame's box, read ahead of the record walk below (its child
+      // loop leaves ctx.size at a child's box): what the new recording is
+      // composited at and stored for.
+      let box_size = ctx.size;
       // One whose record walk drew content made mid-motion for rest to
       // re-make (inside a snapshot raster, RecordingCache::rest_pending) is
       // re-made once at rest, the snapshot's re-render for rest included.
+      // One laid out at another box, at the density it was recorded at, is
+      // re-made: a layout move keeps the cache (set_unrounded_layout), and a
+      // far edge that rounds to another device pixel there is another box.
+      // Not compared under another density (an ancestor scale moving or
+      // moved, where the box is a new logical size at every scale and the
+      // recording replays by design), nor where there is no grid.
       let cached = match &*element.paint_cache.borrow() {
         Some(PaintCache::Recording(rec)) => {
+          let recorded_density = matches!((composite, rec.grid_scale), (Some(now), Some(made)) if now == made);
           let stale = (rec.unrounded && !ctx.grid.unrounded())
             || rec.pixel_snap_off != ctx.pixel_snap_off
             || (rec.scale_bound && !rec.floors_strokes && floors_strokes)
-            || (rec.rest_pending && at_rest);
+            || (rec.rest_pending && at_rest)
+            || (recorded_density && rec.size != box_size);
           Some((rec.dl.clone(), rec.backdrops, rec.grid_scale, rec.scale_bound, rec.rest_pending, stale))
         }
         _ => None,
@@ -861,7 +873,7 @@ fn build_recursive<'a>(
         // predates regions_before) summarize what the cache must stand in
         // for on reuse frames.
         let backdrops = boundary::BakedBackdrops::summarize(&ctx.backdrop_regions[regions_before..]);
-        boundary::draw_cached_recording(builder, element, hoisted, &dl, ctx.size);
+        boundary::draw_cached_recording(builder, element, hoisted, &dl, box_size);
         *element.paint_cache.borrow_mut() = Some(PaintCache::Recording(boundary::RecordingCache {
           dl,
           backdrops,
@@ -871,6 +883,7 @@ fn build_recursive<'a>(
           unrounded: ctx.grid.unrounded(),
           pixel_snap_off: ctx.pixel_snap_off,
           rest_pending: ctx.rest_pending > rest_pending_before,
+          size: box_size,
         }));
       }
     }

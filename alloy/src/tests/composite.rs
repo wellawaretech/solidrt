@@ -504,3 +504,54 @@ fn a_recording_made_again_for_a_new_scale_holds_its_floor() {
   let after = recorded_stroke_width(&tree);
   assert!(close(after, 1.0 / ZOOM_TO), "{after}");
 }
+
+// A clipping Recording boundary's own box, and a last child smaller than it.
+const CLIP_BOX: (f32, f32) = (100.0, 50.0);
+const LAST_CHILD: (f32, f32) = (30.0, 10.0);
+
+// A clipping Recording boundary clips at its own box on the frame that
+// records it, as on the frames that replay it: the record walk's child loop
+// leaves the walk's box at its last child's, which the composite around the
+// new recording must not read.
+#[test]
+fn a_clipping_recording_clips_at_its_own_box_on_the_record_frame() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut clipper = attached();
+  clipper.repaint_boundary = BoundaryMode::Recording;
+  tree.create_node(2, clipper);
+  tree.create_node(3, Rectangle::default().with_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.root = Some(1);
+  size(&mut tree, 1, 400.0, 300.0);
+  size(&mut tree, 2, CLIP_BOX.0, CLIP_BOX.1);
+  size(&mut tree, 3, LAST_CHILD.0, LAST_CHILD.1);
+  let style = tree.node_mut(2).style_mut().expect("laid-out node");
+  style.overflow.x = taffy::style::Overflow::Hidden;
+  style.overflow.y = taffy::style::Overflow::Hidden;
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+  platform.set_window_size(400.0, 300.0);
+  // The frame's one clip, in the list's root space (logical px at 1x).
+  let clip = |tree: &mut RenderTree| {
+    apply_content_changes(tree, &platform, &alloy);
+    let mut builder = DisplayListBuilder::new(None);
+    let stats = paint_phase(&mut builder, tree, &platform, &alloy);
+    let list = builder.build().expect("the frame builds");
+    let mut clips = crate::renderer::oplog::placed(list.ops())
+      .into_iter()
+      .filter(|p| matches!(p.op, crate::renderer::oplog::Op::ClipRect { .. }))
+      .filter_map(|p| p.device_rect());
+    let rect = clips.next().expect("the boundary clips");
+    assert!(clips.next().is_none(), "one clip");
+    ((stats.boundaries_recorded, stats.boundaries_reused), rect)
+  };
+  let own = crate::renderer::Rect::new(Point::zero(), crate::renderer::Size::new(CLIP_BOX.0, CLIP_BOX.1));
+  let (recorded, at_record) = clip(&mut tree);
+  assert_eq!(recorded, (1, 0), "the first frame records");
+  assert_eq!(at_record, own, "the record frame clips at the boundary's box");
+  let (replayed, at_replay) = clip(&mut tree);
+  assert_eq!(replayed, (0, 1), "the second frame replays");
+  assert_eq!(at_replay, own, "the replay frame clips at the boundary's box");
+}

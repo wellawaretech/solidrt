@@ -8,8 +8,20 @@ use taffy::{
 };
 
 use super::super::tree::RenderTree;
-use crate::rendertree::{replaced_size, ElementKind, Measurable, MeasureContext, PlatformContext};
+use crate::rendertree::{replaced_size, BoundaryMode, ElementKind, Measurable, MeasureContext, PlatformContext};
 use std::collections::HashSet;
+
+// Whether two layouts of one node differ only in where its box sits among
+// its siblings (location, order, margin): what the node's own paint is made
+// at is equal - its size, its border and padding (the content box,
+// LayoutData::content_box_of), its scrollbars and its scrollable overflow.
+fn only_placed(old: &Layout, new: &Layout) -> bool {
+  old.size == new.size
+    && old.border == new.border
+    && old.padding == new.padding
+    && old.scrollbar_size == new.scrollbar_size
+    && old.scrollable_overflow_rect == new.scrollable_overflow_rect
+}
 
 pub struct LayoutData {
   pub style: Style,
@@ -355,10 +367,19 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
     let animated = self.animated;
     let element = self.render_tree.node_mut(id);
     let slides = element.transitions.as_ref().is_some_and(|t| t.layout.is_some());
+    let parent = element.parent;
+    // The node's own retained paint is stated relative to its own origin, so
+    // a move leaves it valid: a View boundary's origin is on a whole device
+    // pixel wherever it lands (composite::snapped_own) and a snapshot is a
+    // raster of its own. Not a Recording boundary of another kind: it
+    // records its box offset (composite::record_node), the fraction of a
+    // device pixel where it sits.
+    let origin_relative =
+      element.repaint_boundary != BoundaryMode::Recording || matches!(element.kind, ElementKind::View(_));
     let data = element.layout_data_mut();
     // A changed layout moves or resizes painted content without any element
     // mutation (e.g. a sibling grew); retained boundary recordings above this
-    // node are stale.
+    // node are stale, and the node's own where its box changed.
     if data.computed != *layout {
       // The layout slide (tree/transitions.rs start_layout_slides) needs
       // the box a declaring node had before this write, and this is the
@@ -370,12 +391,22 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
       let moved =
         slides && !animated && (data.computed.location != layout.location || data.computed.size != layout.size);
       let old = data.laid_out.then(|| data.solved_box());
+      let placed_only = only_placed(&data.computed, layout);
       data.computed = *layout;
       // Partial repaint: this is the one place a node moved by someone
       // else's relayout (a sibling grew) becomes visible, so its old and
       // new extents join the frame damage.
       self.render_tree.note_damage(id);
-      self.render_tree.invalidate_paint_batched(id, &mut self.paint_cleared);
+      // A node that only moved keeps its own cache (a card pushed down by
+      // an insert above it, by a sibling that grew): the clear starts at
+      // the parent, whose paint holds the old place. Its envelope (cull.rs) is
+      // stated in its own slot frame, the parent's walk translating it to
+      // the place, so it stays valid too.
+      let start = match parent {
+        Some(parent) if placed_only && origin_relative => parent,
+        _ => id,
+      };
+      self.render_tree.invalidate_paint_batched(start, &mut self.paint_cleared);
       if moved {
         self.render_tree.note_reflow(id, old);
       }
