@@ -93,6 +93,7 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
   put("snapshotsRerendered", s.paint.snapshots_rerendered.into());
   put("snapshotsRasterized", s.paint.snapshots_rasterized.into());
   put("snapshotsDeferred", s.paint.snapshots_deferred.into());
+  put("snapshotRasterMs", round2(s.paint.snapshot_raster_ms).into());
   put("backdropsPrepainted", s.paint.backdrops_prepainted.into());
   put("damagePx", (s.paint.damage_px.round() as i64).into());
   put("paintOps", paint_ops_json(&s.counters));
@@ -234,6 +235,7 @@ fn window_json(
   put("backdropsPrepainted", w.backdrops_prepainted.into());
   put("textLayers", w.text_layers.into());
   put("nodesPaintedMax", w.nodes_painted_max.into());
+  put("snapshotRasterMs", round2_64(w.snapshot_raster_ms).into());
   put("damagePx", (w.damage_px.round() as i64).into());
   put("regionEnters", w.region_enters.into());
   put("regionLeaves", w.region_leaves.into());

@@ -205,13 +205,17 @@ fn push_hud_lines(text: &mut String, s: &StatsSnapshot, gpu_pct: Option<f32>) {
   }
   // Snapshot boundaries this frame: reused+rerendered+rasterized (drawn from
   // the retained texture, re-rendered into retained storage, freshly
-  // allocated), then the reused ones whose raster for density the raster
-  // budget deferred (DEF, composited stretched), when any.
+  // allocated), the UI-thread wall time of the rasters when there were any,
+  // then the reused ones whose raster for density the raster budget
+  // deferred (DEF, composited stretched), when any.
   if paint_stats.snapshots_reused + paint_stats.snapshots_rerendered + paint_stats.snapshots_rasterized > 0 {
     text.push_str(&format!(
       "\n{}+{}+{} SNP",
       paint_stats.snapshots_reused, paint_stats.snapshots_rerendered, paint_stats.snapshots_rasterized
     ));
+    if paint_stats.snapshots_rerendered + paint_stats.snapshots_rasterized > 0 {
+      text.push_str(&format!(" {:.1}ms", paint_stats.snapshot_raster_ms));
+    }
     if paint_stats.snapshots_deferred > 0 {
       text.push_str(&format!(" {} DEF", paint_stats.snapshots_deferred));
     }

@@ -209,8 +209,10 @@ Rules, in order of leverage:
    subtree stops being walked, its snapshotsReused, snapshotsRerendered,
    snapshotsRasterized and snapshotsDeferred count the latest walk's
    snapshots drawn from their texture, re-rendered into it, rasterized
-   into a new one, and left stretched by the budget, and the dev overlay's
-   BND/SNP lines count boundary reuse per frame (SNP with a DEF count while
+   into a new one, and left stretched by the budget, its snapshotRasterMs
+   (and window.snapshotRasterMs over a window) is the UI-thread time those
+   rasters took, and the dev overlay's BND/SNP lines count boundary reuse
+   per frame (SNP with the rasters' time while any, and a DEF count while
    the budget defers).
 7. Shading pixels the app already drew is a different mechanism from rule 2's
    generated textures, and both forms are a `shader` prop taking a linked

@@ -457,6 +457,51 @@ Tests: `alloy/examples/boundary_freeze.rs` (GL),
 covered by either harness: a failed raster that leaves an older valid
 cache behind.
 
+## Measured: where a raster's time goes (2026-11-17)
+
+The measurement the open question asked for, before any machinery. The
+observable is new: `snapshotRasterMs` in the paint stats, the frame
+record and the control API's `window` (its sum), and on the overlay's
+SNP line. It is the UI-thread wall time of the walk's snapshot rasters,
+the blocking round trips included. The raster thread's own time in those
+commands is `rasterCmdMs`; the difference is the wait.
+
+Release client, desktop, the probe at 40 tiles (35 in view), container
+at rest, the clock frozen for the single-frame cases so that the window
+holds nothing else. "Kept" is storage from the freeze before, within the
+release age; "fresh" is a mount from 0 tiles.
+
+| case                                             | rasters | UI wall ms | raster work ms | wait     | frame ms |
+|--------------------------------------------------|---------|-----------:|---------------:|---------:|---------:|
+| off while live, then snapshot+freeze, kept       | 35      | 31         | 22             | 9 (28%)  | 36       |
+| the same with 200 labels per tile                | 35      | 85         | 61             | 24 (28%) | 96       |
+| fresh, no text (one frame in a 5 s window)       | 35      | 41         | 33             | 8 (19%)  | 55       |
+| live snapshot tiles re-rendering every frame     | 35/frame| 4326 per 5 s| 1011 per 5 s  | 77%      | 10 fps   |
+| the same with text                               | 35/frame| 4268 per 5 s| 3251 per 5 s  | 24%      | 9 fps    |
+
+Per raster at the freeze: about 0.6 ms of raster work and 0.25 ms of
+wait without text, 1.7 ms and 0.7 ms with 200 labels. Allocation adds
+about 0.3 ms per texture on the raster side. The rest of the freeze
+frame (5 to 10 ms) is the walk that records 40 display lists.
+
+Two findings:
+
+- A freeze over tiles that are snapshot boundaries while live costs no
+  raster: they re-render at every frame, so they are valid at the freeze.
+  The expensive freeze is the documented pattern (off while live, snapshot
+  and freeze together), and there every tile rasterizes in the one frame.
+- The wait is the raster thread's queue, not the round trip. When the
+  raster thread is otherwise idle (the freeze frame) the wait is a quarter
+  of the raster's time. When it presents a heavy frame at every tick (the
+  live re-render case) the UI thread waits behind that present for three
+  quarters of each raster.
+
+So option D would take about a quarter off the freeze frame (36 to about
+27 ms at 40 plain tiles, 96 to about 72 with text), and the hitch stays:
+the frame that composites the rasters still waits for the work. D's big
+win, the live re-render case, is the pattern rule 5 steers an app away
+from. Not taken up; the measurement stays here for when a case needs it.
+
 ## Done looks like
 
 Stage 1:

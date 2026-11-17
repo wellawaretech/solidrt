@@ -424,7 +424,13 @@ when exactly one client is connected.
   new scale, the re-render for rest of text made in motion) the snapshot
   raster budget left to a later frame, composited stretched until then -
   nonzero for a few frames after a zoom crosses the bound or rests, one
-  raster or more per frame going to the most stretched. `damagePx` is the window
+  raster or more per frame going to the most stretched. `snapshotRasterMs`
+  is the UI-thread wall time those rasters took in the latest walk, and
+  `window.snapshotRasterMs` its sum over the window's frames: each raster
+  is a blocking round trip to the raster thread, so against
+  `window.rasterCmdMsPerSec` times the window's span (the raster thread's
+  own time in those commands) the difference is what the UI thread spent
+  waiting rather than what the raster cost. `damagePx` is the window
   area the latest frame damaged (logical px squared: 0 for a skipped
   frame, the window's area for a whole repaint) and `window.damagePx` its
   sum over the window's frames, so `?frames=1` reads the last frame that

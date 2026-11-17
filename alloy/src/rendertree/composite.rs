@@ -63,6 +63,12 @@ pub struct PaintStats {
   /// deferred to a later frame (PlatformContext::set_snapshot_raster_budget):
   /// each composited its raster stretched, so it is among the reused too.
   pub snapshots_deferred: u32,
+  /// The wall time the walk's snapshot rasters took on the UI thread (ms):
+  /// each raster is a blocking round trip to the raster thread, so this is
+  /// the raster-side work plus the wait for it. Against the raster thread's
+  /// own command time (RasterStats::cmd_micros) over the same frames, the
+  /// difference is the wait.
+  pub snapshot_raster_ms: f32,
   /// Glass panels re-filtered ahead of a fading ancestor's opacity group
   /// (emit_backdrops_below); nonzero only while such a fade runs.
   pub backdrops_prepainted: u32,
@@ -158,6 +164,7 @@ pub fn paint_phase(
       snapshots_rerendered: ctx.snapshots_rerendered,
       snapshots_rasterized: ctx.snapshots_rasterized,
       snapshots_deferred: ctx.snapshots_deferred,
+      snapshot_raster_ms: ctx.raster_budget.spent().as_secs_f32() * 1000.0,
       backdrops_prepainted: ctx.backdrops_prepainted,
       damage_px: 0.0,
       captures: 0,

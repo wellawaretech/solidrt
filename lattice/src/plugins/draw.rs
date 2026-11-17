@@ -417,6 +417,7 @@ impl RenderInner {
             counters,
             nodes_painted: paint_stats.nodes_painted,
             backdrops_prepainted: paint_stats.backdrops_prepainted,
+            snapshot_raster_ms: paint_stats.snapshot_raster_ms,
             damage_px: paint_stats.damage_px,
             raster: atx.raster_counters(),
             targets: atx.target_counters(),

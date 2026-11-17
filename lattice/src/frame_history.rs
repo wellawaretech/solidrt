@@ -65,6 +65,10 @@ pub struct FrameRecord {
   /// (see rendertree composite PaintStats); with nodes_painted, the paint
   /// activity of the frame, which the latest-frame stats lose on a reuse.
   pub backdrops_prepainted: u32,
+  /// The UI-thread wall time of the frame's snapshot rasters (ms, see
+  /// PaintStats): what the blocking round trips to the raster thread cost
+  /// the frame.
+  pub snapshot_raster_ms: f32,
   /// The window area the frame damaged, in logical px^2 (PaintStats): the
   /// paint walk's, or what a reused frame's content writes resolved to.
   pub damage_px: f32,
@@ -110,6 +114,11 @@ pub struct WindowSummary {
   pub text_layers: u32,
   /// The widest paint walk in the window.
   pub nodes_painted_max: u32,
+  /// The UI-thread wall time of the snapshot rasters, summed over the
+  /// window's frames (ms). Beside the raster thread's command time over the
+  /// same span (`raster_rates.cmd_ms_per_sec`), it says how much of a
+  /// raster's cost is the wait and how much the work.
+  pub snapshot_raster_ms: f64,
   /// The window area damaged, summed over the window's frames (logical
   /// px^2): over one frame, that frame's damage, where the latest-frame
   /// `damagePx` reads 0 as soon as a skipped frame follows.
@@ -292,6 +301,7 @@ impl FrameHistory {
       backdrops_prepainted: frames.iter().map(|r| r.backdrops_prepainted).sum(),
       text_layers: frames.iter().map(|r| r.counters.text_layers).sum(),
       nodes_painted_max: frames.iter().map(|r| r.nodes_painted).max().unwrap_or(0),
+      snapshot_raster_ms: frames.iter().map(|r| r.snapshot_raster_ms as f64).sum(),
       damage_px: frames.iter().map(|r| r.damage_px as f64).sum(),
       region_enters: frames.last().map_or(0, |l| l.residency.enters.saturating_sub(frames[0].residency.enters)),
       region_leaves: frames.last().map_or(0, |l| l.residency.leaves.saturating_sub(frames[0].residency.leaves)),
