@@ -33,6 +33,13 @@
 //! reached through `relayCaCerts` only, a pinned relay and `relayCaCerts`
 //! on one endpoint, a second pin for one host refused, and the pin in a
 //! relay URL parsed, validated and kept.
+//! Switching the relay (`set_relay_url`): the ticket, the status, iroh's
+//! home relay and `relays` move to the new relay, a peer on it dials the
+//! new ticket, and a connection through the old relay keeps carrying data;
+//! a known relay (adopted, or replaced before) keeps its token, so another
+//! one is refused; a new relay that never answers leaves the old one home,
+//! which the status and the ticket report; a second check for one host is
+//! refused and changes nothing.
 
 use std::time::Duration;
 
@@ -42,6 +49,7 @@ use crate::p2p::relay::relay_host_ipv4;
 use crate::p2p::{
   parse_ticket, ConnectOptions, Endpoint, Relay, RelayOptions, RelayTls, TicketAddresses, TicketOptions,
 };
+use crate::stream::ByteStream;
 use crate::tls::{generate_certificate, CertificateRequest, GeneratedCertificate, DEFAULT_CERT_VALID_DAYS};
 
 const PROTOCOL: &str = "forge-test/relay";
@@ -837,7 +845,7 @@ async fn a_pin_for_a_chain_checked_relay_and_a_token_for_a_token_less_one_are_re
   assert_eq!(endpoint.relays().len(), 2, "the relay is adopted");
   let ticket = format!("{id}|http://{TOKEN_A}@127.0.0.1:5/|");
   let error = endpoint.connect(ticket, PROTOCOL.to_string(), ConnectOptions::default()).await.err().expect("a token");
-  assert!(error.contains("this endpoint adopted it without a token"), "the error names the case: {error}");
+  assert!(error.contains("this endpoint uses it without a token"), "the error names the case: {error}");
   assert!(!error.contains(TOKEN_A), "the error carries no token: {error}");
   endpoint.close().await;
 }
@@ -969,6 +977,217 @@ async fn a_known_relay_keeps_its_token_and_adopt_relay_false_adopts_nothing() {
   bob.close().await;
   alice.close().await;
   relay.close().await;
+}
+
+/// A relay on loopback admitting `tokens` (its default token when `None`),
+/// and its URL proper.
+async fn loopback_relay(tokens: Option<Vec<String>>) -> (Relay, String) {
+  let opts = RelayOptions { host: Some("127.0.0.1".to_string()), tokens, ..RelayOptions::default() };
+  let relay = Relay::serve(opts).await.expect("the relay serves");
+  let bare = format!("http://127.0.0.1:{}/", relay.port());
+  (relay, bare)
+}
+
+/// The next chunk `readable` yields, within `DIAL_WAIT`.
+async fn read_chunk(readable: &mut ByteStream) -> Vec<u8> {
+  let next = std::future::poll_fn(|cx| readable.as_mut().poll_next(cx));
+  let chunk = tokio::time::timeout(DIAL_WAIT, next).await.expect("a chunk in time");
+  chunk.expect("the stream is open").expect("a read").to_vec()
+}
+
+/// Wait until iroh's home relays are `want`, or `DIAL_WAIT` passes.
+async fn wait_home(endpoint: &Endpoint, want: &[String]) -> Vec<String> {
+  let deadline = tokio::time::Instant::now() + DIAL_WAIT;
+  loop {
+    let homes = endpoint.home_relays();
+    if homes == want || tokio::time::Instant::now() >= deadline {
+      return homes;
+    }
+    tokio::time::sleep(HOME_POLL).await;
+  }
+}
+
+// Relay-only endpoints, so the relay is the only path: Bob's connection to
+// Alice runs through the first relay, and still carries data after Alice
+// switched to the second one.
+#[tokio::test]
+async fn set_relay_url_moves_the_endpoint_to_another_relay() {
+  let (first, first_bare) = loopback_relay(None).await;
+  let (second, second_bare) = loopback_relay(None).await;
+  let alice =
+    Endpoint::bind(None, Some(first.url().to_string()), vec![PROTOCOL.as_bytes().to_vec()], None, true, Vec::new())
+      .await
+      .expect("alice binds");
+  let old = alice.ticket(TicketOptions::default()).await.expect("alice's first relay comes online");
+  let bob =
+    Endpoint::bind(None, Some(first.url().to_string()), Vec::new(), None, true, Vec::new()).await.expect("bob binds");
+  let accepting = alice.clone();
+  let accepted = tokio::spawn(async move { accepting.accept_one(PROTOCOL.as_bytes()).await });
+  let stream = tokio::time::timeout(DIAL_WAIT, bob.connect(old, PROTOCOL.to_string(), ConnectOptions::default()))
+    .await
+    .expect("the dial completes in time")
+    .expect("the dial through the first relay succeeds");
+  stream.write(b"before".to_vec()).await.expect("a write before the switch");
+  let incoming = tokio::time::timeout(DIAL_WAIT, accepted)
+    .await
+    .expect("accept in time")
+    .expect("accept task")
+    .expect("accept")
+    .expect("alice accepted the stream");
+  let mut from_bob = incoming.readable();
+  assert_eq!(read_chunk(&mut from_bob).await, b"before");
+
+  alice.set_relay_url(second.url().to_string()).await.expect("alice switches to the second relay");
+  let ticket = alice.ticket(TicketOptions::default()).await.expect("the second relay comes online");
+  let parts = parse_ticket(&ticket).expect("a valid ticket");
+  assert_eq!(parts.relay_url.as_deref(), Some(second.url()), "the ticket names the second relay: {ticket}");
+  let status = alice.relay_status().expect("a configured relay has a status");
+  assert!(status.url == second_bare && status.connected, "the status is the second relay, connected");
+  let homes = wait_home(&alice, std::slice::from_ref(&second_bare)).await;
+  assert_eq!(homes, vec![second_bare.clone()], "iroh made the second relay home");
+  let known = alice.relays();
+  assert!(known.len() == 1 && known[0].url == second_bare && known[0].configured, "only the second relay is known");
+  assert_ne!(known[0].url, first_bare, "the first relay is gone from relays");
+
+  // The connection through the first relay keeps running, both ways.
+  stream.write(b"after".to_vec()).await.expect("a write after the switch");
+  assert_eq!(read_chunk(&mut from_bob).await, b"after");
+  incoming.write(b"reply".to_vec()).await.expect("a reply after the switch");
+  assert_eq!(read_chunk(&mut stream.readable()).await, b"reply");
+
+  // A peer on the second relay reaches Alice by her new ticket alone.
+  let carol = Endpoint::bind(None, Some(second.url().to_string()), Vec::new(), None, true, Vec::new())
+    .await
+    .expect("carol binds");
+  let accepting = alice.clone();
+  let accepted = tokio::spawn(async move { accepting.accept_one(PROTOCOL.as_bytes()).await });
+  let cut = without_addresses(&ticket);
+  let dialed = tokio::time::timeout(DIAL_WAIT, carol.connect(cut, PROTOCOL.to_string(), ConnectOptions::default()))
+    .await
+    .expect("carol's dial completes in time")
+    .expect("carol dials the new ticket");
+  dialed.write(b"hello".to_vec()).await.expect("a write over carol's stream");
+  let incoming2 =
+    tokio::time::timeout(DIAL_WAIT, accepted).await.expect("accept in time").expect("accept task").expect("accept");
+  assert!(incoming2.is_some(), "alice accepted the stream carol dialed through the second relay");
+
+  drop(incoming2);
+  drop(dialed);
+  drop(from_bob);
+  drop(incoming);
+  drop(stream);
+  carol.close().await;
+  bob.close().await;
+  alice.close().await;
+  second.close().await;
+  first.close().await;
+}
+
+#[tokio::test]
+async fn set_relay_url_keeps_a_known_relays_token() {
+  let (relay, bare) = loopback_relay(Some(vec![TOKEN_A.to_string(), TOKEN_B.to_string()])).await;
+  let url = relay.url().to_string();
+  let alice = Endpoint::bind(None, Some(url.clone()), vec![PROTOCOL.as_bytes().to_vec()], None, false, Vec::new())
+    .await
+    .expect("alice binds");
+  let ticket = without_addresses(&alice.ticket(TicketOptions::default()).await.expect("alice's relay comes online"));
+  let accepting = alice.clone();
+  let accepts = tokio::spawn(async move { while let Ok(Some(_)) = accepting.accept_one(PROTOCOL.as_bytes()).await {} });
+
+  // Bob adopts the relay with token A, then makes it his own.
+  let bob = Endpoint::bind(None, None, Vec::new(), None, false, Vec::new()).await.expect("bob binds");
+  dial(&bob, &ticket, ConnectOptions::default()).await.expect("bob adopts the relay");
+  bob.set_relay_url(url.clone()).await.expect("the adopted relay becomes bob's own");
+  let known = bob.relays();
+  assert!(known.len() == 1 && known[0].url == bare && known[0].configured, "one record, configured");
+  let own = bob.ticket(TicketOptions::default()).await.expect("bob's relay is online");
+  assert_eq!(parse_ticket(&own).expect("a valid ticket").relay_url.as_deref(), Some(url.as_str()));
+  let error = bob.set_relay_url(with_token(&url, TOKEN_B)).await.expect_err("another token for the relay");
+  assert!(
+    error.contains(&bare) && error.contains("the URL carries another token than this endpoint uses for it"),
+    "the error names the relay and the case: {error}"
+  );
+  assert!(!error.contains(TOKEN_A) && !error.contains(TOKEN_B), "the error carries no token: {error}");
+  bob.set_relay_url(url.clone()).await.expect("the configured relay again is a no-op");
+  assert_eq!(bob.relays().len(), 1, "nothing new");
+
+  // Away and back: the dropped relay keeps token A.
+  let (dead, dead_bare) = dead_relay_url();
+  bob.set_relay_url(dead).await.expect("bob switches to another relay");
+  let known = bob.relays();
+  assert!(known.len() == 1 && known[0].url == dead_bare && known[0].configured, "the dropped relay is not listed");
+  let error = dial(&bob, &ticket_with_token(&ticket, Some(TOKEN_B)), ConnectOptions::default())
+    .await
+    .expect_err("a ticket with another token for the dropped relay");
+  assert!(error.contains(&bare) && error.contains("the ticket carries another token"), "{error}");
+  let error = dial(&bob, &ticket, ConnectOptions { adopt_relay: false }).await.expect_err("not in the map");
+  assert!(error.contains("not known to this endpoint and adoptRelay is false"), "a dropped relay is unknown: {error}");
+  let error = bob.set_relay_url(with_token(&url, TOKEN_B)).await.expect_err("another token for the dropped relay");
+  assert!(error.contains(&bare) && error.contains("the URL carries another token"), "{error}");
+  bob.set_relay_url(url.clone()).await.expect("back to the dropped relay with its token");
+  let known = bob.relays();
+  assert!(known.len() == 1 && known[0].url == bare && known[0].configured, "the relay is configured again");
+  let own = bob.ticket(TicketOptions::default()).await.expect("bob is back on the relay");
+  assert_eq!(parse_ticket(&own).expect("a valid ticket").relay_url.as_deref(), Some(url.as_str()));
+
+  accepts.abort();
+  bob.close().await;
+  alice.close().await;
+  relay.close().await;
+}
+
+// iroh keeps the current home relay while no relay in its map answers, also
+// one no longer in the map.
+#[tokio::test]
+async fn set_relay_url_to_a_dead_relay_leaves_the_old_one_home() {
+  let (relay, bare) = loopback_relay(None).await;
+  let alice = Endpoint::bind(None, Some(relay.url().to_string()), Vec::new(), None, false, Vec::new())
+    .await
+    .expect("alice binds");
+  alice.ticket(TicketOptions::default()).await.expect("alice's relay comes online");
+  let (dead, dead_bare) = dead_relay_url();
+  alice.set_relay_url(dead).await.expect("alice switches to a relay nobody serves");
+  let reason = format!("iroh made {bare} the home relay");
+  assert_eq!(wait_status_error(&alice, &reason).await, reason, "the status names the old home relay");
+  let status = alice.relay_status().expect("a configured relay has a status");
+  assert!(status.url == dead_bare && !status.connected, "the status is the new relay, not connected");
+  assert_ticket_fails(&alice, &dead_bare, &reason).await;
+  let known = alice.relays();
+  assert!(known.len() == 1 && known[0].url == dead_bare && known[0].configured && !known[0].home);
+  alice.close().await;
+  relay.close().await;
+}
+
+#[tokio::test]
+async fn set_relay_url_refuses_a_second_check_for_one_host() {
+  let leaf = certificate("127.0.0.1", false, None);
+  let other = certificate("127.0.0.1", false, None);
+  let own = format!("https://token@127.0.0.1:1/?pin={}", leaf.pin);
+  let endpoint =
+    Endpoint::bind(None, Some(own), Vec::new(), None, false, Vec::new()).await.expect("the endpoint binds");
+  let unchanged = |endpoint: &Endpoint| {
+    let status = endpoint.relay_status().expect("a configured relay has a status");
+    assert_eq!(status.url, "https://127.0.0.1:1/", "the status names the relay as before");
+    let known = endpoint.relays();
+    assert!(known.len() == 1 && known[0].url == "https://127.0.0.1:1/" && known[0].configured, "as before");
+    assert_eq!(known[0].pin.as_deref(), Some(leaf.pin.as_str()), "with its pin");
+  };
+  let error = endpoint
+    .set_relay_url(format!("https://token@127.0.0.1:2/?pin={}", other.pin))
+    .await
+    .expect_err("a second pin for the host");
+  assert!(error.contains("https://127.0.0.1:2/") && error.contains("already checked"), "the error names it: {error}");
+  assert!(!error.contains("token"), "the error carries no token: {error}");
+  unchanged(&endpoint);
+  // The configured relay with another pin: the pin conflict.
+  let error = endpoint
+    .set_relay_url(format!("https://token@127.0.0.1:1/?pin={}", other.pin))
+    .await
+    .expect_err("another pin for the configured relay");
+  assert!(error.contains("the URL carries another pin"), "the error names the case: {error}");
+  assert!(!error.contains(&other.pin), "the error carries no pin: {error}");
+  unchanged(&endpoint);
+  endpoint.close().await;
 }
 
 #[test]

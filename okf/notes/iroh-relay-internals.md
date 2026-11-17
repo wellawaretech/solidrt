@@ -70,6 +70,18 @@ Read while making `serveRelay` and the endpoint's relay trust
   new one is at least a third faster. There is no public way to pin the home
   relay. So a relay added at runtime can become the home relay: always, for
   an endpoint that had none. See okf/upstream/iroh-single-home-relay.md.
+- Only relays in the current report are candidates (net_report.rs
+  ~796-813): the hysteresis applies when the old home has a latency in
+  this report. So a home relay removed from a map that still holds another
+  relay gives way at the first report that relay answers.
+- A home relay is never cleared: a report without a preferred relay gets
+  the current home filled in (src/socket.rs ~1980), even when it left the
+  map; an empty map runs no report (`re_stun`, src/socket.rs ~1773); the
+  home relay's actor never exits when idle (actor.rs:524). Third ask in
+  okf/upstream/iroh-single-home-relay.md.
+- iroh's QUIC config keeps every path alive (`HEARTBEAT_INTERVAL`, 5 s,
+  src/endpoint/quic.rs:157), so a relay actor that a connection uses stays
+  busy and does not hit its 60 s idle exit.
 - A relay whose certificate fails the check never becomes home: the net
   report's HTTPS probe (`run_https_probe` in reportgen.rs) fails first, no
   actor starts, and `home_relay_status()` has no entry and no `last_error`

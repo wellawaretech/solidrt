@@ -275,7 +275,7 @@ okf/notes/iroh-relay-internals.md.
 - **Out of this item**: the QAD listener (okf/backlog/p2p-relay-across-nats.md;
   it reuses the relay's `ServerConfig` and a `quic=` URL parameter),
   certificate renewal (okf/backlog/tls-certificate-reload.md), a runtime
-  `setRelayUrl` (okf/backlog/p2p-set-relay-url.md).
+  `setRelayUrl` (okf/done/p2p-set-relay-url.md).
 
 ## Surface
 
@@ -399,7 +399,7 @@ In the order of the plan's steps:
 
 - okf/backlog/tls-certificate-reload.md: renew the certificate of `serve`,
   `listenTls` and `serveRelay` without a restart.
-- okf/backlog/p2p-set-relay-url.md: switch an endpoint's relay at runtime.
+- okf/done/p2p-set-relay-url.md: switch an endpoint's relay at runtime.
 - okf/upstream/iroh-single-home-relay.md: pin the home relay, and expose
   the probe errors.
 - okf/backlog/p2p-relay-across-nats.md: the QAD listener.

@@ -85,19 +85,12 @@ pub struct Endpoint {
   inner: IrohEndpoint,
   /// The 32-byte secret key, kept so it can be read back for persistence.
   secret: [u8; 32],
-  /// The configured relay, if any: `ticket` waits for it to connect only
-  /// then, and writes it (with its token and pin) into the ticket;
-  /// `relay_status` reports it. The endpoint's own surface names no other
-  /// relay, except `relays`.
-  relay: Option<RelayAccess>,
-  /// The relays `connect` adopted from tickets, in adoption order, each
-  /// with the token and pin it was adopted with: what iroh's relay map
-  /// holds beside the configured relay. Adopted relays stay until the
-  /// endpoint closes (iroh's `remove_relay` would not stop a running relay
-  /// connection, see okf/notes/iroh-relay-internals.md).
-  adopted: Arc<std::sync::Mutex<Vec<RelayAccess>>>,
-  /// Serializes `connect`'s look-up-then-insert of a ticket's relay, so two
-  /// dials of one new relay insert it once.
+  /// The relays the endpoint knows, each with its access (`Relays`). A
+  /// std mutex, never held across an await: a reader clones what it needs.
+  relays: Arc<std::sync::Mutex<Relays>>,
+  /// Serializes the look-up-then-write of a relay record and iroh's map:
+  /// `connect`'s adoption of a ticket's relay (so two dials of one new
+  /// relay insert it once) and `set_relay_url`.
   adopting: Arc<Mutex<()>>,
   /// How each HTTPS relay's host is checked, read by the endpoint's one
   /// certificate verifier: the configured relay's and every adopted
@@ -107,6 +100,59 @@ pub struct Endpoint {
   /// without the relay is refused.
   relay_only: bool,
 }
+
+/// The relays an endpoint knows, each with the token and pin it was first
+/// used with.
+#[derive(Default)]
+struct Relays {
+  /// The configured relay, if any (from `bind`, or the last
+  /// `set_relay_url`): `ticket` waits for it to connect only then, and
+  /// writes it (with its token and pin) into the ticket; `relay_status`
+  /// reports it. The endpoint's own surface names no other relay, except
+  /// `relays`.
+  configured: Option<RelayAccess>,
+  /// The relays `connect` adopted from tickets, in adoption order: what
+  /// iroh's relay map holds beside the configured relay. An adopted relay
+  /// stays until the endpoint closes (iroh's `remove_relay` would not stop
+  /// a running relay connection, see okf/notes/iroh-relay-internals.md),
+  /// unless `set_relay_url` makes it the configured one.
+  adopted: Vec<RelayAccess>,
+  /// The configured relays `set_relay_url` replaced: out of iroh's relay
+  /// map, but the endpoint keeps their access, since iroh's connection to
+  /// one may still run with its token and `HostTrust` never forgets a
+  /// host's pin. A ticket naming one re-adopts it with that access, and
+  /// `set_relay_url` makes it the configured one again the same way.
+  dropped: Vec<RelayAccess>,
+}
+
+/// What `Relays` knows of one relay URL, the record cloned out.
+enum Known {
+  Configured(RelayAccess),
+  Adopted(RelayAccess),
+  Dropped(RelayAccess),
+  Unknown,
+}
+
+impl Relays {
+  /// Where `url` is recorded, if anywhere.
+  fn find(&self, url: &RelayUrl) -> Known {
+    let named = |relay: &&RelayAccess| &relay.url == url;
+    if let Some(relay) = self.configured.as_ref().filter(named) {
+      return Known::Configured(relay.clone());
+    }
+    if let Some(relay) = self.adopted.iter().find(named) {
+      return Known::Adopted(relay.clone());
+    }
+    match self.dropped.iter().find(named) {
+      Some(relay) => Known::Dropped(relay.clone()),
+      None => Known::Unknown,
+    }
+  }
+}
+
+/// What supplied a relay, as a `RelayAccess::conflict` error names it.
+const FROM_TICKET: &str = "the ticket";
+const FROM_URL: &str = "the URL";
 
 /// A configured relay as an app or a ticket names it: the URL proper, the
 /// token the relay admits (`relay::Relay` issues one), carried as the
@@ -178,27 +224,30 @@ impl RelayAccess {
     }
   }
 
-  /// How a ticket naming this known relay as `ticket` conflicts with the
-  /// access the endpoint uses for it, `None` for no conflict. `check_token`
-  /// is false for the configured relay, which admits the endpoint's own
-  /// token whatever token a ticket carries. A ticket without a token or
-  /// without a pin supplies none: the endpoint keeps the one it knows. The
-  /// error names the relay without its token or pin, and each difference.
-  fn conflict(&self, ticket: &RelayAccess, check_token: bool) -> Option<String> {
-    let token = match (&self.token, &ticket.token) {
+  /// How `named`, this known relay as a ticket or a `set_relay_url` URL
+  /// names it, conflicts with the access the endpoint uses for it, `None`
+  /// for no conflict. `from` says what supplied it (`FROM_TICKET`,
+  /// `FROM_URL`), as the error names it. `check_token` is false for the
+  /// configured relay named by a ticket, which admits the endpoint's own
+  /// token whatever token a ticket carries. A ticket or URL without a token
+  /// or without a pin supplies none: the endpoint keeps the one it knows.
+  /// The error names the relay without its token or pin, and each
+  /// difference.
+  fn conflict(&self, named: &RelayAccess, check_token: bool, from: &str) -> Option<String> {
+    let token = match (&self.token, &named.token) {
       (_, None) => None,
       _ if !check_token => None,
       (Some(known), Some(token)) if known == token => None,
-      (Some(_), Some(_)) => Some("the ticket carries another token than this endpoint uses for it"),
-      (None, Some(_)) => Some("the ticket carries a token; this endpoint adopted it without a token"),
+      (Some(_), Some(_)) => Some(format!("{from} carries another token than this endpoint uses for it")),
+      (None, Some(_)) => Some(format!("{from} carries a token; this endpoint uses it without a token")),
     };
-    let pin = match (&self.pin, &ticket.pin) {
+    let pin = match (&self.pin, &named.pin) {
       (_, None) => None,
       (Some(known), Some(pin)) if known == pin => None,
-      (Some(_), Some(_)) => Some("the ticket carries another pin than this endpoint checks it by"),
-      (None, Some(_)) => Some("the ticket pins it; this endpoint checks its certificate chain"),
+      (Some(_), Some(_)) => Some(format!("{from} carries another pin than this endpoint checks it by")),
+      (None, Some(_)) => Some(format!("{from} pins it; this endpoint checks its certificate chain")),
     };
-    let what: Vec<&str> = token.into_iter().chain(pin).collect();
+    let what: Vec<String> = token.into_iter().chain(pin).collect();
     (!what.is_empty()).then(|| {
       format!(
         "Relay {}: {}; an endpoint keeps the token and pin it first used for a relay, so a new token or key needs a \
@@ -283,7 +332,8 @@ impl TicketAddresses {
 
 /// A relay the endpoint knows, as `relays` reports it: the URL without its
 /// token or pin, the pin in hex when the relay is checked by one, whether
-/// it is the configured relay (else adopted from a ticket), and whether
+/// it is the configured relay (else adopted from a ticket; a relay that
+/// `set_relay_url` replaced is not listed), and whether
 /// iroh made it the home relay (it has an entry in iroh's home relay
 /// status, connected or not).
 pub struct KnownRelay {
@@ -309,8 +359,8 @@ impl From<KnownRelay> for Value {
 impl Endpoint {
   /// Bind an endpoint. `secret` is the 32-byte key (generated when `None`);
   /// `relay_url` selects a self-hosted relay (`None`: no relay of its own,
-  /// only those `connect` adopts from tickets), its token as the URL's user
-  /// part when the relay admits one;
+  /// only those `connect` adopts from tickets; `set_relay_url` changes it
+  /// later), its token as the URL's user part when the relay admits one;
   /// an HTTPS relay's `?pin=<hex>` replaces the chain and name check of its
   /// certificate by the key check (see `parse_relay_url`); `relay_ca_certs`
   /// (PEM blobs) are extra roots, on top of the web roots, for every HTTPS
@@ -364,8 +414,7 @@ impl Endpoint {
       Ok(Ok((inner, secret))) => Ok(Endpoint {
         inner,
         secret,
-        relay,
-        adopted: Arc::new(std::sync::Mutex::new(Vec::new())),
+        relays: Arc::new(std::sync::Mutex::new(Relays { configured: relay, ..Relays::default() })),
         adopting: Arc::new(Mutex::new(())),
         trust,
         relay_only,
@@ -402,13 +451,15 @@ impl Endpoint {
   /// the reason, since a ticket naming it would fail only later, on the
   /// peer's side. `opts.relay == false` writes no relay and skips its wait;
   /// on a relay-only endpoint (no direct address) it is an error at once,
-  /// since that ticket could not be dialed.
+  /// since that ticket could not be dialed. The relay is the one configured
+  /// when `ticket` is called: a call already waiting when `set_relay_url`
+  /// switches names the relay it started with.
   pub async fn ticket(&self, opts: TicketOptions) -> Result<String, String> {
     if !opts.relay && self.relay_only {
       return Err(RELAY_ONLY_DIRECT_TICKET.to_string());
     }
-    let relay = self.relay.as_ref().filter(|_| opts.relay);
-    match relay {
+    let relay = self.configured().filter(|_| opts.relay);
+    match &relay {
       Some(relay) => {
         if tokio::time::timeout(TICKET_WAIT, self.relay_connected(relay)).await.is_err() {
           return Err(self.not_online(relay));
@@ -418,6 +469,7 @@ impl Endpoint {
         let _ = tokio::time::timeout(TICKET_WAIT, self.direct_addr_known()).await;
       }
     }
+    let relay = relay.as_ref();
     let addr = self.inner.addr();
     let all: Vec<SocketAddr> = addr.ip_addrs().copied().collect();
     let addrs = match (opts.addresses, relay) {
@@ -459,21 +511,111 @@ impl Endpoint {
   /// (iroh's probe of the relay fails then, before it ever connects): the
   /// error is then the rejection the endpoint's verifier recorded. When iroh
   /// made another relay (one adopted from a ticket) the home relay instead,
-  /// the error says so, naming that relay without its token and pin. A
-  /// relay adopted from a ticket is never reported, even as the home relay.
+  /// the error says so, naming that relay without its token and pin; after
+  /// `set_relay_url`, until the new relay answers, that other relay is the
+  /// one it replaced. A relay adopted from a ticket is never reported, even
+  /// as the home relay.
   pub fn relay_status(&self) -> Option<RelayStatus> {
-    self.relay.as_ref().map(|relay| self.status_of(relay))
+    self.configured().map(|relay| self.status_of(&relay))
   }
 
   /// The relays this endpoint knows: the configured one first, then the
   /// ones `connect` adopted, in adoption order, each with whether iroh made
-  /// it the home relay. None is ever removed.
+  /// it the home relay. Only `set_relay_url` removes one: the configured
+  /// relay it replaces.
   pub fn relays(&self) -> Vec<KnownRelay> {
-    let adopted = self.adopted.lock().expect("adopted relays lock").clone();
+    let (configured, adopted) = {
+      let relays = self.relays.lock().expect("relays lock");
+      (relays.configured.clone(), relays.adopted.clone())
+    };
     let homes: Vec<RelayUrl> =
       self.inner.home_relay_status().get().into_iter().map(|status| status.url().clone()).collect();
-    let configured = self.relay.iter().map(|relay| relay.known(true, &homes));
+    let configured = configured.iter().map(|relay| relay.known(true, &homes));
     configured.chain(adopted.iter().map(|relay| relay.known(false, &homes))).collect()
+  }
+
+  /// The configured relay now, cloned out of the record.
+  fn configured(&self) -> Option<RelayAccess> {
+    self.relays.lock().expect("relays lock").configured.clone()
+  }
+
+  /// Make `url` the configured relay: from now on `ticket` and
+  /// `relay_status` name it, and `relays` lists it first. It parses as
+  /// `bind` parses `relay_url` (the token as the user part, `?pin=`).
+  /// Resolves once the switch is made, not when the relay connects:
+  /// `ticket` waits for that, and `relay_status` reports it.
+  ///
+  /// A relay the endpoint knows (the configured one, one `connect`
+  /// adopted, one a former `set_relay_url` replaced) keeps the token and
+  /// pin it was first used with, as for `connect` (`RelayAccess::conflict`,
+  /// the token checked: iroh's running connection to it keeps its token).
+  /// A URL with another token or pin is an error, naming the relay and
+  /// what differs; a URL without a token or without a pin uses the known
+  /// one. So a new token or key on one URL needs a new endpoint. The
+  /// configured relay named with its own access is a no-op. A new relay's
+  /// host goes into the host trust first: one host, one check, so a relay
+  /// on a host the endpoint checks another way already is an error, and
+  /// the endpoint stays as it was.
+  ///
+  /// The replaced relay always leaves iroh's relay map, even while a
+  /// connection runs through it, and its record moves to `Relays::dropped`.
+  /// It stays iroh's home relay until the new relay answers a net report
+  /// (iroh keeps the current home when no relay answered, also one out of
+  /// the map): `relay_status` then reports the new relay not connected,
+  /// with "iroh made <old> the home relay". Open connections keep running:
+  /// `remove_relay` does not stop iroh's connection to the old relay, which
+  /// lasts while a connection uses it. Tickets handed out before the
+  /// switch name the old relay, and stop reaching the endpoint once that
+  /// connection ends. Relays `connect` adopted stay in the map, so iroh
+  /// may still make one of them the home relay instead of the new one (the
+  /// gap in okf/upstream/iroh-single-home-relay.md).
+  ///
+  /// Cancel safety: a call may be dropped at any await. Past the lock, the
+  /// records and both of iroh's map writes happen in one poll: the records
+  /// first, then `insert_relay` of the new relay (unless it is in the map
+  /// already, as an adopted one is) joined with `remove_relay` of the old
+  /// one, and each writes the map before its own await (which only tells
+  /// iroh's actor to re-run the net report). So a dropped call never leaves
+  /// a map entry without a record, which would let a later ticket replace
+  /// its token unchecked, nor the old relay in the map as a dropped one. A
+  /// closed endpoint writes the records only (`insert_relay` and
+  /// `remove_relay` change nothing then), and dials nothing anyway. A
+  /// failed parse, conflict or trust check writes nothing.
+  pub async fn set_relay_url(&self, url: String) -> Result<(), String> {
+    let named = parse_relay_url(&url)?;
+    let _adopting = self.adopting.lock().await;
+    let known = self.relays.lock().expect("relays lock").find(&named.url);
+    // A known relay as `named` may use it: its known access, kept.
+    let keep = |known: RelayAccess| known.conflict(&named, true, FROM_URL).map_or(Ok(known), Err);
+    let (next, in_map) = match known {
+      Known::Configured(own) => return keep(own).map(|_| ()),
+      Known::Adopted(known) => (keep(known)?, true),
+      Known::Dropped(known) => (keep(known)?, false),
+      Known::Unknown => {
+        named.trust(&self.trust)?;
+        (named, false)
+      }
+    };
+    let old = {
+      let mut relays = self.relays.lock().expect("relays lock");
+      relays.adopted.retain(|relay| relay.url != next.url);
+      relays.dropped.retain(|relay| relay.url != next.url);
+      let old = relays.configured.replace(next.clone());
+      relays.dropped.extend(old.clone());
+      old
+    };
+    let insert = async {
+      if !in_map {
+        self.inner.insert_relay(next.url.clone(), Arc::new(next.config())).await;
+      }
+    };
+    let remove = async {
+      if let Some(old) = &old {
+        self.inner.remove_relay(&old.url).await;
+      }
+    };
+    tokio::join!(insert, remove);
+    Ok(())
   }
 
   /// The URLs of iroh's home relay entries, adopted ones included: what
@@ -520,8 +662,9 @@ impl Endpoint {
   /// Dial a peer and open one bidirectional stream over `protocol`. `peer` is a
   /// `ticket`. A bare endpoint `id` parses, but with no address lookup
   /// registered it only reaches a peer this endpoint already knows a path to.
-  /// A ticket relay this endpoint does not know yet is adopted first, unless
-  /// `opts.adopt_relay` is false (see `adopt_relay`).
+  /// A ticket relay this endpoint does not know yet, or one `set_relay_url`
+  /// replaced, is adopted first, unless `opts.adopt_relay` is false (see
+  /// `adopt_relay`).
   pub async fn connect(&self, peer: String, protocol: String, opts: ConnectOptions) -> Result<Stream, String> {
     let (conn, send, recv) = self.connect_raw(peer, protocol, opts).await?;
     Ok(Stream::open(conn, send, recv))
@@ -581,6 +724,11 @@ impl Endpoint {
   /// make an adopted relay its home relay; `ticket` and `relay_status`
   /// still name only the configured one.
   ///
+  /// A relay `set_relay_url` replaced is out of iroh's map, so it counts as
+  /// unknown when `adopt` is false. Adopting it checks the ticket against
+  /// its known access (another token is an error, as for an adopted relay)
+  /// and inserts it with that access, not the ticket's.
+  ///
   /// Cancel safety: a `connect` may be dropped at any await. Past the lock,
   /// the host trust, the record and iroh's map entry are written in one
   /// poll: `insert_relay` puts the entry into the map before its own await
@@ -589,28 +737,35 @@ impl Endpoint {
   /// later ticket replace its token unchecked. The record comes first, so
   /// the one case of a record without an entry is a closed endpoint
   /// (`insert_relay` inserts nothing then), which dials nothing anyway. A
-  /// failed trust check writes neither.
+  /// failed conflict or trust check writes neither.
   async fn adopt_relay<'a>(&self, relay: &'a RelayAccess, adopt: bool) -> Result<Option<&'a RelayUrl>, String> {
     let _adopting = self.adopting.lock().await;
-    if let Some(own) = self.relay.as_ref().filter(|own| own.url == relay.url) {
-      return match own.conflict(relay, false) {
-        Some(error) => Err(error),
-        None => Ok(Some(&relay.url)),
-      };
+    let known = self.relays.lock().expect("relays lock").find(&relay.url);
+    let adopted = match known {
+      Known::Configured(own) => {
+        return own.conflict(relay, false, FROM_TICKET).map_or(Ok(Some(&relay.url)), Err);
+      }
+      Known::Adopted(known) => {
+        return known.conflict(relay, true, FROM_TICKET).map_or(Ok(Some(&relay.url)), Err);
+      }
+      Known::Dropped(_) | Known::Unknown if !adopt => return Ok(None),
+      Known::Dropped(known) => {
+        if let Some(error) = known.conflict(relay, true, FROM_TICKET) {
+          return Err(error);
+        }
+        known
+      }
+      Known::Unknown => {
+        relay.trust(&self.trust)?;
+        relay.clone()
+      }
+    };
+    {
+      let mut relays = self.relays.lock().expect("relays lock");
+      relays.dropped.retain(|known| known.url != adopted.url);
+      relays.adopted.push(adopted.clone());
     }
-    let known = self.adopted.lock().expect("adopted relays lock").iter().find(|known| known.url == relay.url).cloned();
-    if let Some(known) = known {
-      return match known.conflict(relay, true) {
-        Some(error) => Err(error),
-        None => Ok(Some(&relay.url)),
-      };
-    }
-    if !adopt {
-      return Ok(None);
-    }
-    relay.trust(&self.trust)?;
-    self.adopted.lock().expect("adopted relays lock").push(relay.clone());
-    self.inner.insert_relay(relay.url.clone(), Arc::new(relay.config())).await;
+    self.inner.insert_relay(adopted.url.clone(), Arc::new(adopted.config())).await;
     Ok(Some(&relay.url))
   }
 
@@ -1028,7 +1183,8 @@ pub fn parse_ticket(s: &str) -> Result<Ticket, String> {
 /// `presets::N0`: N0 uses n0's public relays and registers a pkarr publisher +
 /// DNS lookup against n0's public server, announcing the endpoint's addresses
 /// off-machine. The only relays are those in `relays`: the self-hosted one
-/// `relay_url` names, and later the ones `connect` adopts from tickets.
+/// `relay_url` names, and later the ones `connect` adopts from tickets and
+/// the one `set_relay_url` names.
 async fn build_endpoint(
   secret: Option<[u8; 32]>,
   relays: RelayMap,

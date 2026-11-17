@@ -26,6 +26,7 @@ declare module "flux:p2p" {
      * peer with no direct UDP path (or one that fails) is reached through
      * it. Omit for no relay of its own: direct paths, plus the relay of a
      * ticket it {@link Endpoint.connect}s to. Never a public relay.
+     * {@link Endpoint.setRelayUrl} changes it later.
      *
      * An `https://` relay is checked by its certificate, in one of two ways:
      *
@@ -111,8 +112,10 @@ declare module "flux:p2p" {
      * connects to such a relay. The reason is kept per host, and a later
      * certificate of that host that passes the check clears it. When iroh
      * made another relay the home relay (one adopted by
-     * {@link Endpoint.connect}), it reads "iroh made <url> the home relay",
-     * the url without its token and pin.
+     * {@link Endpoint.connect}, or the relay that
+     * {@link Endpoint.setRelayUrl} replaced, until the new one answers), it
+     * reads "iroh made <url> the home relay", the url without its token
+     * and pin.
      */
     error?: string
   }
@@ -123,7 +126,11 @@ declare module "flux:p2p" {
     url: string
     /** The pin the relay is checked by (64 hex), absent for none. */
     pin?: string
-    /** `true` for the endpoint's `relayUrl`, `false` for a relay adopted by {@link Endpoint.connect}. */
+    /**
+     * `true` for the endpoint's `relayUrl` (as created, or as set by
+     * {@link Endpoint.setRelayUrl}), `false` for a relay adopted by
+     * {@link Endpoint.connect}.
+     */
     configured: boolean
     /**
      * Whether iroh made this relay the home relay now (iroh keeps one, see
@@ -280,6 +287,9 @@ declare module "flux:p2p" {
      * `relay: false` for a direct-only ticket (a peer on the same network)
      * instead. An endpoint with `paths: "relay"` has no direct address, so
      * `relay: false` rejects there at once: that ticket could not be dialed.
+     * The relay is the `relayUrl` when `ticket` is called: a call already
+     * waiting when {@link setRelayUrl} switches names the relay it started
+     * with.
      */
     ticket(opts?: TicketOptions): Promise<string>
     /**
@@ -287,15 +297,54 @@ declare module "flux:p2p" {
      * relay that has not answered yet (or never does) reads as not
      * connected, with no `error`. A relay adopted by {@link connect} is not
      * reported; one that iroh made the home relay leaves `relayUrl` not
-     * connected (see {@link connect}).
+     * connected (see {@link connect}). After {@link setRelayUrl} it reports
+     * the new relay, and until that relay answers, the error "iroh made
+     * <old url> the home relay".
      */
     relayStatus(): RelayStatus | null
     /**
      * The relays this endpoint knows: its `relayUrl` first, then the relays
-     * {@link connect} adopted, in adoption order. A relay is never removed
-     * before {@link close}.
+     * {@link connect} adopted, in adoption order. Only {@link setRelayUrl}
+     * removes one: the relay it replaces.
      */
     relays(): KnownRelay[]
+    /**
+     * Make `url` this endpoint's relay, in place: open connections and
+     * streams keep running. From then on {@link ticket} and
+     * {@link relayStatus} name it, and {@link relays} lists it first. The
+     * URL takes the form of {@link EndpointOptions.relayUrl} (the token as
+     * the user part, `?pin=`) and rejects as {@link create} does. It
+     * resolves once the switch is made, not when the relay connects:
+     * {@link ticket} waits for that, and {@link relayStatus} reports it. A
+     * use: an endpoint without a relay makes a scanned ticket's relay its
+     * own, `setRelayUrl(parseTicket(ticket).relayUrl)`.
+     *
+     * A relay this endpoint already knows (its `relayUrl`, one adopted by
+     * {@link connect}, one that `setRelayUrl` replaced before) keeps the
+     * token and pin it was first used with: the connection to it already
+     * runs with them. A URL with another token or pin rejects, naming the
+     * relay (without its token and pin) and what differs ("Relay <url>:
+     * the URL carries another token than this endpoint uses for it; ...").
+     * A URL without a token or without a pin uses the known one. So a new
+     * token or key on one URL needs a new endpoint. The current `relayUrl`
+     * with the same token and pin does nothing. The certificate check is
+     * per host, as for {@link connect}: a relay on a host this endpoint
+     * checks another way rejects, and the endpoint stays as it was.
+     *
+     * The old relay stays the home relay until the new one answers:
+     * {@link relayStatus} reports the new relay not connected then, with
+     * "iroh made <old url> the home relay". A connection through the old
+     * relay keeps running. Tickets handed out before the switch name the
+     * old relay, and stop reaching this endpoint once no connection uses
+     * it any more: hand out new ones. The gap of {@link connect} stays:
+     * iroh may still make a relay adopted by {@link connect} the home
+     * relay instead of the new one.
+     *
+     * Only a string is taken: anything else throws. An endpoint cannot drop
+     * its relay (iroh never lets go of a home relay); use
+     * `ticket({ relay: false })` to stop naming it.
+     */
+    setRelayUrl(url: string): Promise<void>
     /**
      * Dial a peer and open one bidirectional stream over `protocol`. `peer` is
      * its {@link ticket}. A bare endpoint `id` is accepted too, but with no
@@ -307,11 +356,14 @@ declare module "flux:p2p" {
      * with the ticket's token and pin, then dialled through, so an endpoint
      * with no `relayUrl` (or another one) reaches a peer on the peer's own
      * relay. `adoptRelay: false` turns this off for one connect. An adopted
-     * relay stays until {@link close} ({@link relays} lists it). It may
-     * carry this endpoint's traffic, but {@link ticket} and
-     * {@link relayStatus} still name only `relayUrl`. To make the ticket's
-     * relay the endpoint's own, read it with {@link parseTicket} and pass
-     * it as `relayUrl` to {@link create}.
+     * relay stays until {@link close} ({@link relays} lists it), unless
+     * {@link setRelayUrl} makes it the `relayUrl`. It may carry this
+     * endpoint's traffic, but {@link ticket} and {@link relayStatus} still
+     * name only `relayUrl`. To make the ticket's relay the endpoint's own,
+     * read it with {@link parseTicket} and pass it to {@link setRelayUrl}.
+     * A relay that {@link setRelayUrl} replaced is adopted again with the
+     * token and pin it was first used with (with `adoptRelay: false` it is
+     * unknown).
      *
      * A relay the endpoint already knows (its `relayUrl`, or one adopted
      * before) keeps the token and pin it was first used with: the

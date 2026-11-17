@@ -10,8 +10,10 @@
 // URLs they refuse; then the relays an endpoint knows, a ticket naming a
 // known relay with a new token, connect without adopting (a known relay is
 // used still, a ticket left with no way to dial is refused before the
-// dial), the local address beside a loopback relay, and a ticket without
-// the relay (refused on a relay-only endpoint) and the addresses it carries.
+// dial), the local address beside a loopback relay, setRelayUrl (the
+// switch to another relay, a known relay's token kept, the throw without a
+// URL), and a ticket without the relay (refused on a relay-only endpoint)
+// and the addresses it carries.
 import { expect, test } from "flux:test"
 import { Endpoint, parseTicket, serveRelay, type P2pStream } from "flux:p2p"
 import { generateCertificate } from "flux:net"
@@ -497,6 +499,34 @@ test("a known relay keeps its token, and adoptRelay: false adopts nothing", asyn
   await alice2.close()
   await accepting2
   await restarted.close()
+})
+
+// The endpoint moves to a second relay in place: its ticket, status and
+// relays name it. The relay keeps the token the endpoint first used, so
+// another one rejects, and anything but a string throws: an endpoint cannot
+// drop its relay. What the switch does to iroh's home relay and to a
+// connection through the old relay is a forge test
+// (forge/src/tests/p2p_relay.rs).
+test("setRelayUrl moves an endpoint to another relay", async () => {
+  let first = await serveRelay({ host: "127.0.0.1" })
+  let second = await serveRelay({ host: "127.0.0.1" })
+  let bare = `http://127.0.0.1:${second.port}/`
+  let endpoint = await Endpoint.create({ relayUrl: first.url })
+  await endpoint.ticket()
+  await endpoint.setRelayUrl(second.url)
+  expect(parseTicket(await endpoint.ticket()).relayUrl).toBe(second.url)
+  expect(endpoint.relayStatus()).toEqual({ url: bare, connected: true })
+  expect(endpoint.relays()).toEqual([{ url: bare, configured: true, home: true }])
+  await expect(endpoint.setRelayUrl(second.url.replace(/\/\/[^@]*@/, `//${TOKEN_B}@`))).rejects.toThrow(
+    `Relay ${bare}: the URL carries another token than this endpoint uses for it`,
+  )
+  let message =
+    "setRelayUrl: takes a relay URL; an endpoint cannot drop its relay (use ticket({ relay: false }) to stop naming it)"
+  expect(() => endpoint.setRelayUrl(null as never)).toThrow(message)
+  expect(() => Reflect.apply(endpoint.setRelayUrl, endpoint, [])).toThrow(message)
+  await endpoint.close()
+  await second.close()
+  await first.close()
 })
 
 // A relay nobody serves: ticket({ relay: false }) does not wait for it and

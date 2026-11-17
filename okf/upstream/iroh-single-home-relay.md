@@ -1,6 +1,6 @@
 ---
 title: iroh keeps one home relay and a relay added for one dial can take it over
-description: iroh 1.4.1 has a single home relay, picked by the net report's preferred_relay; insert_relay re-runs the report, so a relay added only to dial one peer can become the home relay and the configured one drops when idle. No public API pins the home relay or keeps several. We accept and document the gap; the ask is a way to pin the home relay or mark a relay dial-only. A second ask: the net report's probe errors (a failed HTTPS probe's TLS error) are not observable; we read them from our own verifier.
+description: iroh 1.4.1 has a single home relay, picked by the net report's preferred_relay; insert_relay re-runs the report, so a relay added only to dial one peer can become the home relay and the configured one drops when idle. No public API pins the home relay or keeps several. We accept and document the gap; the ask is a way to pin the home relay or mark a relay dial-only. A second ask: the net report's probe errors (a failed HTTPS probe's TLS error) are not observable; we read them from our own verifier. A third: a home relay is never cleared, so an endpoint cannot drop its relay without closing.
 project: iroh (github.com/n0-computer/iroh)
 versions: iroh 1.4.1, iroh-relay 1.4.1
 status: unfiled
@@ -89,3 +89,34 @@ Our workaround: the endpoint's own certificate verifier
 per host, and our relay status reads it from there. The ask: expose the
 last probe failure per relay, e.g. on the net report or as a status
 entry for a relay that never connected.
+
+## A third ask: a home relay is never cleared
+
+An endpoint cannot stop using its home relay. Remove it from the map
+with `remove_relay` and leave no other relay in the map, and iroh keeps
+it as the home relay:
+
+- A report without a preferred relay gets the current home filled in
+  (src/socket.rs ~1980, `handle_net_report_report`), also when that relay
+  is no longer in the map. So `my_relay.clear()` in the relay actor's
+  `on_network_change` (src/socket/transports/relay/actor.rs ~1255) is
+  never reached once there is a home relay.
+- A map that becomes empty runs no report at all: `re_stun` returns after
+  updating the direct addresses (src/socket.rs ~1773).
+- The home relay's actor never exits when idle (actor.rs:524, `if
+  !self.is_home_relay`).
+
+So the endpoint stays connected to the removed relay for as long as it
+lives. It is still reachable through addresses that name that relay, and
+if the relay goes away it reconnects with backoff, forever. A non-empty map
+behaves: the next report that a remaining relay answers moves the home
+there, because a relay that was not probed has no latency and so no
+hysteresis keeps it.
+
+What it costs us: `setRelayUrl(null)` (drop the endpoint's own relay, see
+okf/done/p2p-set-relay-url.md) cannot be offered; the app closes the
+endpoint instead.
+
+The ask: clear the home relay when it leaves the relay map and no other
+relay answers, or a way to say "no home relay" (e.g. a `remove_relay` of
+the home relay that clears it).

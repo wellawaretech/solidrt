@@ -745,12 +745,6 @@ Shaped, not started.
   TLS certificate (pinned or CA-checked, as the HTTPS relay already is) would
   fix that; whether `sol run` serves a relay for its dev clients is undecided
   too.
-- **[Switch an endpoint's relay at runtime](backlog/p2p-set-relay-url.md)** [2026-11-16]
-  A p2p endpoint's `relayUrl` is fixed at `Endpoint.create`, so an app that
-  learns its relay later (scans a ticket, gets a new relay URL from its
-  config) or wants to drop its relay must close the endpoint and create a new
-  one, which ends every connection; an `endpoint.setRelayUrl(url | null)`
-  would switch the home relay in place.
 - **[Verify the p2p ticket's default-route address on Android](backlog/p2p-ticket-default-route-on-android.md)** [2026-11-16]
   A ticket without a relay carries the IPv4 of the default-route interface,
   which netwatch reads; on Android it falls back to running `ip route show
@@ -2685,6 +2679,13 @@ Finished, kept for the reasoning.
   in its URL or by relayCaCerts, adopts the relay a ticket names per
   connection, and reports a relay that never comes online through ticket()
   rejecting and relayStatus().
+- **[Switch an endpoint's relay at runtime](done/p2p-set-relay-url.md)** [2026-11-17]
+  Shipped - `endpoint.setRelayUrl(url)` (flux:p2p) switches an endpoint's own
+  relay in place, where the app closed the endpoint and created a new one,
+  ending every connection; a known relay keeps its token and pin, the old one
+  leaves iroh's map and stays home only until the new one answers, open
+  connections keep running. Dropping the relay (`null`) is not offered: iroh
+  1.4.1 never clears a home relay.
 - **[Trim p2p tickets to the addresses a peer needs](done/p2p-ticket-addresses.md)** [2026-11-16]
   A p2p ticket listed every interface address (VPN, container bridge, LAN,
   global IPv6). Shipped - a relay ticket carries no address (beside a loopback
@@ -3986,7 +3987,9 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   idle. No public API pins the home relay or keeps several. We accept and
   document the gap; the ask is a way to pin the home relay or mark a relay
   dial-only. A second ask: the net report's probe errors (a failed HTTPS
-  probe's TLS error) are not observable; we read them from our own verifier.
+  probe's TLS error) are not observable; we read them from our own verifier. A
+  third: a home relay is never cleared, so an endpoint cannot drop its relay
+  without closing.
 - **[noq-udp keeps failing every send after an EIO on Android](upstream/noq-udp-android-eio-ecn-cmsg-send-stall.md)** [2026-10-17]
   On a phone whose kernel answers a GSO sendmsg with EIO, noq-udp halts
   segmentation offload but keeps attaching the ECN cmsg, which that kernel

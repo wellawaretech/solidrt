@@ -12,8 +12,9 @@ use std::pin::Pin;
 use std::rc::Rc;
 
 use rquickjs::class::Trace;
+use rquickjs::function::Opt;
 use rquickjs::promise::Promised;
-use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object};
+use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Value};
 
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
@@ -24,6 +25,11 @@ use crate::standards_plugins::streams::writable_to;
 use forge::p2p::{
   decode_hex32, parse_ticket as parse_ticket_core, ConnectOptions, Endpoint, Stream, TicketAddresses, TicketOptions,
 };
+
+/// What `setRelayUrl` throws for an argument that is not a string: the
+/// endpoint cannot drop its relay (iroh never clears a home relay).
+const SET_RELAY_URL_TAKES_A_URL: &str =
+  "setRelayUrl: takes a relay URL; an endpoint cannot drop its relay (use ticket({ relay: false }) to stop naming it)";
 
 /// `next()` of the `accept` async-iterable: a promise resolving to an iterator
 /// result object (boxed so the closure has a nameable return type).
@@ -126,6 +132,24 @@ impl P2pEndpoint {
   /// `forge::p2p::Endpoint::relays`.
   pub fn relays(&self) -> Neutral {
     Neutral(forge::Value::list(self.inner.relays()))
+  }
+
+  /// `setRelayUrl(url)`: make `url` the endpoint's relay, resolving once
+  /// the switch is made. Anything but a string throws (no `null`: the
+  /// endpoint cannot drop its relay). See
+  /// `forge::p2p::Endpoint::set_relay_url`.
+  #[qjs(rename = "setRelayUrl")]
+  pub fn set_relay_url<'js>(
+    &self,
+    ctx: Ctx<'js>,
+    url: Opt<Value<'js>>,
+  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
+    let url = match url.0.as_ref().and_then(Value::as_string) {
+      Some(url) => url.to_string()?,
+      None => return Err(Exception::throw_message(&ctx, SET_RELAY_URL_TAKES_A_URL)),
+    };
+    let inner = self.inner.clone();
+    Ok(with_in_flight(&ctx, "p2p", async move { inner.set_relay_url(url).await }))
   }
 
   /// Dial a peer and open one bidirectional stream over `protocol`. `peer` is
