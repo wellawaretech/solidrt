@@ -338,6 +338,95 @@ bound in the same frame, with no budget.
 The budget is built after the measurement of Findings 6, on a release
 client with parts 1 and 2 in place.
 
+## Corrections found while building parts 1 and 2 (2026-11-17)
+
+Parts 1 and 2 as written were not enough. They left a seam under a
+native scale track and after a content change while the raster is
+stretched, an independent review found three more cases that still
+re-rasterized, and a snapshot holding text paid for every raster made
+in motion four times. These rules were added. The GL example
+`alloy/examples/boundary_scale.rs` and `alloy/src/tests/boundary.rs`
+hold them.
+
+1. **The raster is laid out at the key's box.** The record walk laid the
+   content out at this frame's box (`ctx.size`), not at the key's box. A
+   raster made while the key keeps the cached box (a content change
+   while stretched, the first frame of a scale track) then held content
+   for one box in a canvas made for another, and its far edge came up
+   short. For a laid-out node the record walk now gets the key's box as
+   its frame. The quad side keeps this frame's box.
+2. **A new raster under a running track takes a box of whole texels.**
+   Under a track the box is the layout box, and `box * scale` is not
+   whole texels: the last texel is partly covered, and the stretch shows
+   it. The key keeps the cached box only while the cached density is
+   kept too. A raster for a new density is new storage anyway, and under
+   a track it takes this frame's box rounded to whole texels of its
+   density. Not under `pixelSnap={false}`: there the box stays the
+   layout box, mapped 1:1 as before. A whole-texel box would resample
+   the interior for good, and a seam between fractional boxes is what
+   `pixelSnap={false}` means.
+3. **The key keeps its box when this frame's box needs the same
+   texture.** With the layout and the density kept, the cached box
+   stands when the grid is unrounded, when the raster is stretched
+   (`wait`), or when this frame's box has the same whole-texel dims.
+   Before, a scale that moved by less than `SCALE_HELD_EPSILON` per
+   frame (the tail of an eased zoom, a slow drift) answered Keep, the
+   key took this frame's `N / m11`, which differs from the cached box in
+   the last bits, and every snapshot re-rasterized at every frame. The
+   same compare made a raster for a track's end again on the frame the
+   track settles.
+4. **The texture dims tolerate float noise.** A box of 60.000004 texels
+   was rounded up to 61, and the stretch sampled the empty column.
+   `canvas_texels` takes a count within a tolerance above a whole number
+   as that number (absolute `TEXEL_CEIL_EPSILON`, relative
+   `TEXEL_CEIL_RELATIVE`, which must stay above `SCALE_HELD_EPSILON`),
+   `src` never reaches past the texture, and
+   `RenderTree::snapshot_texture` uses the same derivation.
+5. **Inside a snapshot raster, the snapshot owns the look at rest.** A
+   text made in a raster that is not for rest is unhinted. It used to
+   ask for its own next look, and that look marked the snapshot stale:
+   one raster and three re-renders per raster made in motion. Now a text
+   or a nested recording inside a snapshot raster asks for nothing and
+   counts as content for rest to re-make (`rest_pending`, on the
+   `BuildContext` and on both caches). A snapshot that holds such
+   content re-renders once, for rest, when its scale has rested, and a
+   nested recording is recorded again there. A one-shot scale write
+   costs one raster and one re-render.
+6. **The stretch reaches the shaded outset and the inline fallback.**
+   The outset in the quad is scaled by the ratio of the two boxes, so
+   the content box lands on this frame's box, and the failed-raster
+   fallback fills this frame's box.
+
+Found on the way and fixed apart: `text::raster_density` returned a
+zoom's end recomputed as `now * factor` past the motion bound. Callers
+compare scales exactly, so a raster already made for the end was made
+again on the next frames of the track (two more rasters per zoom at a
+display scale of 1.5). A target that is the raster's own scale now keeps
+the raster.
+
+Known limits, not fixed:
+
+- **Rest under a creeping scale.** A scale that moves by less than
+  `SCALE_HELD_EPSILON` per frame is at rest at every frame, so the rest
+  rule re-rasterizes each time it has moved one held step from the
+  raster: three rasters at the end of an eased zoom (k = 0.2), one per
+  five frames under a slow drift. The fix would be a second, wider
+  tolerance for "the same scale" at rest, in the rule that text layers
+  and recordings share.
+- **Whole texels on a rounded grid.** A raster on a rounded grid whose
+  density is not the grid its box was snapped on (a boundary with a
+  scale of its own, a layout size change while stretched, a detached
+  boundary under a track) has a partly covered last texel, which a
+  stretch can show as a faint line at the far edge until the next raster
+  for density.
+
+Measured on a release client, desktop, the repro at 40 tiles, windows of
+5 s: snapshot under the written scale went from 15.4 fps (avg 65 ms) to
+58.4 fps, with one dropped frame at each crossing of the bound. The
+`pixelSnap={false}` row before the fix was 59.2 fps: the prediction of
+Findings 5 held, and the loop of Findings 6 does not form on this
+machine, where one tile rasters in about 1 ms.
+
 ## Related
 
 - [repaint-boundary-freeze](repaint-boundary-freeze.md): today a

@@ -1,4 +1,5 @@
 mod audio;
+mod boundary;
 mod box_dash;
 mod cadence;
 mod camera_tap;

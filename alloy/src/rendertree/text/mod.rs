@@ -587,6 +587,9 @@ impl Text {
     let steady = ctx.scale_target == 1.0 && last_look.is_none_or(|last| scale_held(last.scale, composite));
     let mut layer = self.layer.borrow_mut();
     let (scale, wait) = raster_density(layer.as_ref().map(|l| l.scale), composite, ctx.scale_target, at_rest);
+    // Inside a snapshot raster the snapshot owns the look at rest: the text
+    // waits for nothing and asks for no frame of its own.
+    let wait = wait && !ctx.in_snapshot_raster;
     self.scale_wait.set(wait);
     self.chosen_scale.set(Some(scale));
     if wait {
@@ -672,9 +675,16 @@ impl Text {
     // re-make it at once). It is re-made hinted when the scale rests, and
     // rest takes consecutive looks: ask for them, so a scale that stopped
     // on this very frame is not left unhinted until something else draws.
-    if hints && !layer.hinted && !at_rest {
-      self.scale_wait.set(true);
-      ctx.platform.request_frame();
+    // Inside a snapshot raster the text is counted instead, as content for
+    // rest to re-make (BuildContext::rest_pending): the snapshot makes the
+    // looks and re-renders, hinted, once it is at rest.
+    if hints && !layer.hinted {
+      if ctx.in_snapshot_raster {
+        ctx.rest_pending += 1;
+      } else if !at_rest {
+        self.scale_wait.set(true);
+        ctx.platform.request_frame();
+      }
     }
     // The content occupies the top-left rect * scale pixels of the
     // ceil-padded texture; mapping exactly that region onto the logical box

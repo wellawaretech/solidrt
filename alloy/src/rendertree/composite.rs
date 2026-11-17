@@ -765,12 +765,16 @@ fn build_recursive<'a>(
       // round: a stroke floored upright and replayed under a rotation is a
       // fraction thinner, on edges that are resampled anyway.
       let floors_strokes = grid::floors_strokes(&inner_grid);
+      // One whose record walk drew content made mid-motion for rest to
+      // re-make (inside a snapshot raster, RecordingCache::rest_pending) is
+      // re-made once at rest, the snapshot's re-render for rest included.
       let cached = match &*element.paint_cache.borrow() {
         Some(PaintCache::Recording(rec)) => {
           let stale = (rec.unrounded && !ctx.grid.unrounded())
             || rec.pixel_snap_off != ctx.pixel_snap_off
-            || (rec.scale_bound && !rec.floors_strokes && floors_strokes);
-          Some((rec.dl.clone(), rec.backdrops, rec.grid_scale, rec.scale_bound, stale))
+            || (rec.scale_bound && !rec.floors_strokes && floors_strokes)
+            || (rec.rest_pending && at_rest);
+          Some((rec.dl.clone(), rec.backdrops, rec.grid_scale, rec.scale_bound, rec.rest_pending, stale))
         }
         _ => None,
       };
@@ -785,7 +789,7 @@ fn build_recursive<'a>(
       // inside have no observation of their own from the replayed frames,
       // so the record walk tells them.
       let mut settled = false;
-      if let Some((dl, backdrops, recorded, scale_bound, stale)) = cached {
+      if let Some((dl, backdrops, recorded, scale_bound, rest_pending, stale)) = cached {
         let remake =
           stale || (scale_bound && matches!((recorded, density), (Some(have), Some((want, _))) if want != have));
         if remake {
@@ -795,9 +799,18 @@ fn build_recursive<'a>(
           element.paint_cache.borrow_mut().take();
           settled = at_rest;
         } else {
-          if scale_bound && matches!(density, Some((_, true))) {
-            scene.note_scale_wait(node_id);
-            ctx.platform.request_frame();
+          // Its own look at rest: inside a snapshot raster the snapshot's,
+          // counted as content for rest to re-make like a replay holding
+          // some; elsewhere its own wait.
+          let waits = scale_bound && matches!(density, Some((_, true)));
+          if ctx.in_snapshot_raster {
+            ctx.rest_pending += u32::from(waits || rest_pending);
+          } else {
+            if waits {
+              scene.note_scale_wait(node_id);
+              ctx.platform.request_frame();
+            }
+            ctx.rest_pending += u32::from(rest_pending);
           }
           // A capture's walk moves the cells inside to where the boundary
           // is now, which need not be where it recorded.
@@ -831,6 +844,7 @@ fn build_recursive<'a>(
       // does not invalidate it), so it must hold the whole subtree.
       let regions_before = ctx.backdrop_regions.len();
       let scale_bound_before = ctx.scale_bound;
+      let rest_pending_before = ctx.rest_pending;
       let outer_rest = ctx.scale_at_rest;
       ctx.scale_at_rest = outer_rest || settled;
       let mut sub = DisplayListBuilder::new(None);
@@ -856,6 +870,7 @@ fn build_recursive<'a>(
           floors_strokes,
           unrounded: ctx.grid.unrounded(),
           pixel_snap_off: ctx.pixel_snap_off,
+          rest_pending: ctx.rest_pending > rest_pending_before,
         }));
       }
     }

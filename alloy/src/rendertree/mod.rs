@@ -1,4 +1,4 @@
-mod boundary;
+pub(crate) mod boundary;
 pub mod composite;
 pub mod counters;
 pub mod cull;
@@ -105,6 +105,20 @@ pub struct BuildContext<'a> {
   /// scale changes. Only the recording reads it: the paint counters' text
   /// layers (counters.rs) are their own.
   pub scale_bound: u32,
+  /// Set while the walk records a snapshot boundary's raster
+  /// (boundary::record_raster): the snapshot owns the look at rest of what
+  /// its texture holds, so a text or a recording inside notes no scale wait
+  /// and asks for no frame of its own (text::build_layer, the Recording arm
+  /// of composite::build_recursive). A capture's walk is not one.
+  pub in_snapshot_raster: bool,
+  /// Content made mid-motion that must be made again when the scale rests,
+  /// drawn or kept by the walk inside a snapshot raster so far: an unhinted
+  /// text layer on a display that hints, a recording whose own look waits.
+  /// A snapshot or a recording holding such content carries its own into
+  /// an enclosing one's count when it is reused. A snapshot or a recording
+  /// reads the delta across its record walk to know it must be made again,
+  /// for rest, once it is at rest.
+  pub rest_pending: u32,
   /// Set by the walk for the node whose kind it is about to build: whether
   /// a running track moves that node's stroke width
   /// (RenderTree::stroke_width_moving). A kind's build sees only this
@@ -165,6 +179,8 @@ impl<'a> BuildContext<'a> {
       frame: platform.text_atlas().frame(),
       scale_at_rest: false,
       scale_bound: 0,
+      in_snapshot_raster: false,
+      rest_pending: 0,
       stroke_width_moving: false,
       scale_target: 1.0,
       nodes_painted: 0,

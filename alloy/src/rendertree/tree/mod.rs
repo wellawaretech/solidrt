@@ -613,9 +613,7 @@ impl RenderTree {
     // subtree may never trigger again.
     if let Some(PaintCache::Snapshot(snap)) = &*element.paint_cache.borrow() {
       if snap.valid {
-        let outset = snap.shaded.as_ref().map_or(0.0, |sc| sc.outset);
-        let tex_w = ((snap.width + 2.0 * outset) * snap.scale).ceil() as u32;
-        let tex_h = ((snap.height + 2.0 * outset) * snap.scale).ceil() as u32;
+        let (tex_w, tex_h) = snap.texture_dims();
         alloy.publish_snapshot_texture(id, &snap.texture, tex_w, tex_h);
       }
     }
