@@ -95,6 +95,21 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   unloaded (HLOD), streaming sources beyond cameras, and the handler lifecycle
   (load, abort, sliced build, unload, retain, state) in core so a 2d
   population handler is the same machinery one dimension down.
+- **[Keep boundary caches under a scale written every frame](plans/boundary-cache-under-js-written-scale.md)** [2026-11-16]
+  Under an ancestor scale that JS writes every frame, a snapshot boundary
+  re-rasterizes every frame into a new texture (2.5 fps for 40 static 1200x800
+  snapshots, against 52.7 fps for the same writes on x), because its key holds
+  the box snapped to the device grid and that box has a new logical size at
+  every scale; text-layer-motion and snapshot-raster-composite-scale decided
+  the opposite, and performance.md rule 5 promises even fewer re-rasters.
+  Fixing the key alone does little for this repro - at its raster cost, a
+  frame that passes the motion bound lasts long enough for the next frame to
+  pass it again, through about half of the sweep.
+- **[A layout move keeps a boundary's own cache](plans/boundary-layout-move-keeps-cache.md)** [2026-11-17]
+  A boundary whose box only moves (a sibling above it grew, a drag by
+  left/top) loses its own cache, because the layout pass clears from the moved
+  node up; a snapshot card in a list re-rasterizes for every insert above it,
+  though its cached content does not depend on where it is.
 - **[Report what an app can use as states, not as one yes/no list](plans/capability-states.md)** [2026-11-13]
   Flux.capabilities is a flat list of names fixed for the process, so it
   cannot say "not known yet", "only a call can tell", "the user has not
@@ -117,6 +132,15 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   could not build; the embed moves to a program crate (runtime/, the stock
   program and the shape of every custom one), the CLI package ships the
   bundles, and a custom runtime embeds them from its node_modules.
+- **[Switch and freeze a snapshot boundary](plans/repaint-boundary-freeze.md)** [2026-11-16]
+  An app turns a snapshot boundary off while its subtree is live and freezes
+  it for a gesture over live content (a zoomed-out overview of live tiles, a
+  page transition, a dragged card); a repaintBoundary write reports Compose so
+  a valid texture survives the switch, an off boundary releases its texture
+  after a release age, a freeze prop keeps the texture while the subtree
+  changes (a write inside stops at the frozen node as a stale mark and notes
+  no damage), the unfreeze repaints only what changed, and snapshot-no-aa
+  splits into its own antialias prop.
 - **[Spatial audio - emitter and listener nodes on the spatial core](plans/spatial-audio-emitters.md)** [2026-08-30]
   A playback bound to a spatial node (or a fixed position) and heard by a
   listener (a node, or a target's view - the camera), the core writing its
@@ -390,16 +414,6 @@ Shaped, not started.
 - **[AVIF decoding in decodeImage](backlog/avif-decode.md)** [2026-07-19]
   The one practical web image format decodeImage lacks; pure-Rust decode does
   not exist in the image crate, so it needs the dav1d C system dependency.
-- **[Keep boundary caches under a scale written every frame](backlog/boundary-cache-under-js-written-scale.md)** [2026-11-16]
-  Under an ancestor scale that JS writes every frame, a snapshot boundary
-  re-rasterizes every frame into a new texture (2.5 fps for 40 static 1200x800
-  snapshots, against 52.7 fps for the same writes on x), because its key holds
-  the box snapped to the device grid and that box has a new logical size at
-  every scale; text-layer-motion and snapshot-raster-composite-scale decided
-  the opposite, and performance.md rule 5 promises even fewer re-rasters.
-  Fixing the key alone does little for this repro - at its raster cost, a
-  frame that passes the motion bound lasts long enough for the next frame to
-  pass it again, through about half of the sweep.
 - **[Native modules cannot read camera frames](backlog/camera-frame-tap.md)** [2026-10-08]
   alloy's camera pump holds every frame as upright RGBA on the CPU and hands
   it only to the texture upload and the QR decoder, so a custom runtime module
@@ -864,15 +878,6 @@ Shaped, not started.
   removeNode detaches and a microtask sweep frees, so control-flow reuse
   inside one tick survives but a node re-inserted in a later async tick is
   already gone, where the DOM would have kept it alive.
-- **[Switch and freeze a snapshot boundary](backlog/repaint-boundary-freeze.md)** [2026-11-16]
-  An app turns a snapshot boundary off while its subtree is live and freezes
-  it for a gesture over live content (a zoomed-out overview of live tiles, a
-  page transition, a dragged card); a repaintBoundary write reports Compose so
-  a valid texture survives the switch, an off boundary releases its texture
-  after a release age, a freeze prop keeps the texture while the subtree
-  changes (a write inside stops at the frozen node as a stale mark and notes
-  no damage), the unfreeze repaints only what changed, and snapshot-no-aa
-  splits into its own antialias prop.
 - **[Rich text editor](backlog/rich-text-editor.md)** [2026-08-18]
   TextInput edits a string, so styled runs, links, inline atoms and block
   attributes could not be authored in-app; the editor exists since 2026-08-19

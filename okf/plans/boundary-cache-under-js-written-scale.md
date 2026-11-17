@@ -303,8 +303,40 @@ As decided in Findings 6. Recommended: the per-frame budget, the most
 stretched first.
 
 `grid::snap_box` stays as it is. The rounding is correct at rest, and
-[pixel-snap-scroll-and-js-motion](pixel-snap-scroll-and-js-motion.md)
+[pixel-snap-scroll-and-js-motion](../backlog/pixel-snap-scroll-and-js-motion.md)
 owns whether a JS-written value rounds at all.
+
+## Review 2026-11-17
+
+Findings 2 and 3 were checked against the code and hold. Parts 1 and 2
+stand as written. Three additions, which are part of this item:
+
+1. **The re-raster at rest takes the budget too.** When the scale holds,
+   every snapshot re-rasters in the same frame (40 tiles, one hitch at
+   the end of every zoom). Part 3 as first written covered only the
+   crossings of the bound. The budget covers every re-raster for density
+   of a snapshot that has a valid raster to stretch: past the bound, and
+   at rest. A first raster and a raster for changed content are not
+   budgeted (nothing can stand in for them).
+2. **"Most stretched first" needs two frames.** The walk meets the
+   candidates in tree order, so a plain counter gives the budget to the
+   first tiles in the tree, and in a fast sweep the later tiles never
+   get a turn. A node over the budget keeps its raster, notes its
+   stretch ratio and requests the next frame. The next frame grants the
+   most stretched of the noted nodes first. What is left of the budget
+   goes in walk order.
+3. **Known limit: a detached boundary sized by its inherited frame.** A
+   detached boundary without a size of its own takes its box from the
+   frame it inherits, which is the parent's snapped size. That size is
+   new at every scale, so `snap.layout == layout` fails and part 1 does
+   not keep its box. Not fixed here. A detached boundary with its own
+   `w`/`h`, or a laid-out one, is not affected.
+
+Not owned here: text layers outside a snapshot also pass the motion
+bound in the same frame, with no budget.
+
+The budget is built after the measurement of Findings 6, on a release
+client with parts 1 and 2 in place.
 
 ## Related
 
@@ -368,6 +400,6 @@ one raster is made cheaper, and rule 5 in
 `packages/core/agents/performance.md`. The damage (`kinds/view.rs`) and
 the `BoundaryMode::Recording` arm in `composite.rs` are not involved.
 The fix must not wait for
-[pixel-snap-scroll-and-js-motion](pixel-snap-scroll-and-js-motion.md):
+[pixel-snap-scroll-and-js-motion](../backlog/pixel-snap-scroll-and-js-motion.md):
 whatever the rounding, a static boundary under a moving ancestor scale
 keeps its cache.

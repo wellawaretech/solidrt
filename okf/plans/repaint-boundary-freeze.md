@@ -312,6 +312,44 @@ sol-ui against `cmd_micros` (the raster stats' time for non-frame
 commands on sol-raster). The difference is the wait, which D removes.
 The rest is work, which only C hides. B is not recommended.
 
+## Review 2026-11-17
+
+The design was checked against the code and holds. Five additions, which
+are part of this item:
+
+Stage 1:
+
+1. **A texture content change while off.** "The validity is already
+   correct while the mode is off" holds for tree writes, not for texture
+   content. `content_reach` decides `baked` by the boundary mode, so a
+   video, a camera feed or a draw target inside an off boundary leaves
+   the kept snapshot valid, and the switch back shows the old pixels. A
+   node that is not a snapshot boundary but holds a valid snapshot
+   counts as baked. The hit marks it stale, so it counts once and not at
+   every content frame.
+2. **A shader while off.** The "shader without a snapshot" warning takes
+   the shader's dirty flag, and the shader input hits of
+   `texture_content_changed` look at the mode. A params write or an
+   input change while off is then lost, and the switch back composites
+   the old pass output. The switch to snapshot marks a declared shader
+   dirty, so the pass runs once over the kept source.
+3. **The release sweep runs after a paint walk only**, as the text layer
+   sweep does. An app at rest keeps an off boundary's texture until its
+   next paint. Accepted.
+
+Stage 2:
+
+4. **A write inside bumps no revision.** `apply_damage` bumps the
+   revision before the walk, and a bake hit bumps it too. Without a
+   change, every write inside a frozen node makes a full paint walk and
+   a submit with no damage. A write whose walk stops at a frozen node
+   bumps nothing, so a frozen tile with a video in it costs no frame.
+5. **A node mounted while frozen is not painted** until the unfreeze, so
+   a transition written on it snaps (`lifecycle.painted`). Accepted, and
+   documented with the prop.
+
+Many freezes in one frame: option A is decided.
+
 ## Done looks like
 
 Stage 1:
