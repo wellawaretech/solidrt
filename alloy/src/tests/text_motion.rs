@@ -1,7 +1,8 @@
 // Raster hysteresis for text under a scale animation
 // (okf/done/text-layer-motion.md): the rule a text layer and a recording
 // boundary share, and a recording under a scale write that replays while
-// the scale moves and re-records once it holds. Headless, so the text's
+// the scale moves and re-records once it holds; one that holds nothing made
+// for one scale (a fill) replays throughout. Headless, so the text's
 // own glyph pass fails and it holds no layer; the rule on a layer that
 // exists is pinned on the function, the boundary's side on the walk.
 use crate::renderer::prelude::*;
@@ -26,6 +27,25 @@ fn size(tree: &mut RenderTree, id: u64, w: f32, h: f32) {
 const ROOT: u64 = 1;
 const ZOOMER: u64 = 2;
 const LABEL: u64 = 3;
+const HOLDER: u64 = 4;
+const PLAIN: u64 = 5;
+const FILL: u64 = 6;
+
+// The holder's scale as an app writes it from a frame callback, one write
+// per frame and no track: WRITE_REST * 2^sin(WRITE_RATE * t) at WRITE_HZ,
+// for WRITE_FRAMES frames. The sweep passes the motion bound of a raster
+// made at rest, where content made for one scale would be re-made in
+// flight.
+const WRITE_REST: f32 = 0.5;
+// Radians of the sine per second.
+const WRITE_RATE: f32 = 2.0;
+const WRITE_HZ: f32 = 60.0;
+const WRITE_FRAMES: u32 = 60;
+// Frames painted after the last write: past the rest looks.
+const HOLD_FRAMES: u32 = 6;
+// Where the boundary sits in the holder: a fraction off the grid, so its
+// snapped box is a new size at every scale.
+const PLAIN_AT: f32 = 10.4;
 
 // root(1, 400x300) > zoomer(2, 200x100, a Recording boundary) > label(3)
 fn tree_with_label() -> RenderTree {
@@ -133,6 +153,40 @@ fn a_known_zoom_rasters_for_its_end_at_once() {
   assert!((made - 2.0).abs() < 1e-6 && !wait);
 }
 
+// A zoom up from ZOOM_FROM to ZOOM_TO under a display scale of
+// ZOOM_DISPLAY, looked at ZOOM_LOOKS times on the way up while the scale is
+// still below ZOOM_FAR_BELOW: there the composite scale is past the motion
+// bound (1.5) from the zoom's end.
+const ZOOM_DISPLAY: f32 = 1.5;
+const ZOOM_FROM: f32 = 0.5;
+const ZOOM_TO: f32 = 0.9;
+const ZOOM_FAR_BELOW: f32 = 0.58;
+const ZOOM_LOOKS: u32 = 200;
+
+#[test]
+fn a_raster_made_for_a_zoom_end_is_kept_past_the_bound_through_float_noise() {
+  // The chain as the walk composes it: the composite scale, and the factor
+  // to where the track takes it, the end recomputed from both at every
+  // look.
+  let chain = |s: f32| (ZOOM_DISPLAY * s, ZOOM_TO / s);
+  let step = (ZOOM_FAR_BELOW - ZOOM_FROM) / ZOOM_LOOKS as f32;
+  // The first look of the zoom makes the raster for its end.
+  let (now, factor) = chain(ZOOM_FROM + step);
+  let (have, wait) = raster_density(Some(ZOOM_DISPLAY * ZOOM_FROM), now, factor, false);
+  assert!(!wait && scale_held(have, now * factor), "{have}");
+  // Every later look past the bound keeps it, at exactly its scale, also
+  // where the end recomputed differs from it in the last bits.
+  let mut noisy = 0;
+  for look in 2..ZOOM_LOOKS {
+    let (now, factor) = chain(ZOOM_FROM + step * look as f32);
+    if now * factor != have {
+      noisy += 1;
+    }
+    assert_eq!(raster_density(Some(have), now, factor, false), (have, false), "look {look} at {now}");
+  }
+  assert!(noisy > 0, "no look recomputed the end with float noise");
+}
+
 #[test]
 fn a_scale_is_at_rest_after_three_consecutive_looks() {
   // The first look holds nothing; every look a frame later at the same
@@ -203,4 +257,76 @@ fn a_recording_under_a_zoom_replays_in_motion_and_re_records_at_rest() {
     assert_eq!((back.boundaries_recorded, back.boundaries_reused), (0, 1));
   }
   assert_eq!(label_scale(&tree), Some(1.1));
+}
+
+// root(1, 400x300) > holder(4, scaled about its top-left by the writes) >
+// plain(5, a Recording boundary a fraction off the grid) > fill(6, a rect
+// filling it, filled only)
+fn tree_with_fill() -> RenderTree {
+  let mut tree = RenderTree::new();
+  tree.create_node(ROOT, View::default().with_layout());
+  tree.create_node(HOLDER, View::default().with_layout());
+  let mut plain = View::default().with_layout();
+  plain.repaint_boundary = BoundaryMode::Recording;
+  tree.create_node(PLAIN, plain);
+  tree.create_node(FILL, Rectangle::default().with_layout());
+  tree.insert_node(ROOT, HOLDER, None).expect("insert");
+  tree.insert_node(HOLDER, PLAIN, None).expect("insert");
+  tree.insert_node(PLAIN, FILL, None).expect("insert");
+  tree.root = Some(ROOT);
+  size(&mut tree, ROOT, 400.0, 300.0);
+  size(&mut tree, HOLDER, 300.0, 200.0);
+  size(&mut tree, PLAIN, 100.0, 50.0);
+  size(&mut tree, FILL, 100.0, 50.0);
+  let style = tree.node_mut(PLAIN).style_mut().expect("laid-out node");
+  style.margin.left = length(PLAIN_AT);
+  style.margin.top = length(PLAIN_AT);
+  tree.edit(HOLDER, |e| {
+    let ElementKind::View(view) = &mut e.kind else { panic!("the holder is a view") };
+    view.set_origin_x(Some(OriginCoord::Px(0.0)));
+    view.set_origin_y(Some(OriginCoord::Px(0.0)))
+  });
+  tree.edit(FILL, |el| {
+    el.kind.paint_mut().expect("a rect paints").set_color(Some(crate::renderer::Color::new_srgba(1.0, 1.0, 1.0, 1.0)))
+  });
+  tree
+}
+
+// The holder's scale written as an app writes it: a Compose damage, no
+// track.
+fn write_holder_scale(tree: &mut RenderTree, scale: f32) {
+  tree.edit(HOLDER, |e| {
+    let ElementKind::View(view) = &mut e.kind else { panic!("the holder is a view") };
+    view.set_scale_x(Some(scale));
+    view.set_scale_y(Some(scale))
+  });
+}
+
+#[test]
+fn a_fill_only_recording_under_a_scale_written_every_frame_replays_and_never_re_records() {
+  let mut tree = tree_with_fill();
+  let platform = crate::tests::text_platform();
+  let alloy = headless();
+  platform.set_window_size(400.0, 300.0);
+  let paint = |tree: &mut RenderTree| {
+    apply_content_changes(tree, &platform, &alloy);
+    paint_phase(&mut DisplayListBuilder::new(None), tree, &platform, &alloy)
+  };
+  write_holder_scale(&mut tree, WRITE_REST);
+  let first = paint(&mut tree);
+  assert_eq!((first.boundaries_recorded, first.boundaries_reused), (1, 0));
+  // A new scale at every frame, past the motion bound too: a fill holds
+  // nothing made for one scale, so the recording replays at every frame.
+  for frame in 1..=WRITE_FRAMES {
+    let t = frame as f32 / WRITE_HZ;
+    let scale = WRITE_REST * (WRITE_RATE * t).sin().exp2();
+    write_holder_scale(&mut tree, scale);
+    let moving = paint(&mut tree);
+    assert_eq!((moving.boundaries_recorded, moving.boundaries_reused), (0, 1), "frame {frame} at {scale}");
+  }
+  // The scale holds: past the rest looks, nothing re-records either.
+  for look in 1..=HOLD_FRAMES {
+    let holding = paint(&mut tree);
+    assert_eq!((holding.boundaries_recorded, holding.boundaries_reused), (0, 1), "look {look}");
+  }
 }

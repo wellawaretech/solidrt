@@ -356,7 +356,12 @@ pub(crate) fn raster_scale(have: f32, now: f32, at_rest: bool) -> RasterScale {
 /// at its start, where the motion hides it, and nothing is left to do when
 /// the scale rests, so the text does not step there
 /// (okf/done/pixel-snap-at-draw.md). Past the bound a downward zoom
-/// keeps its raster and minifies it until it is within the bound.
+/// keeps its raster and minifies it until it is within the bound. Past the
+/// bound the raster is re-made for the larger of now and the end, unless
+/// that is the raster's own scale (a raster already made for the end of a
+/// zoom up that `now` is still far below): then the raster is kept, with
+/// its exact scale, so a caller comparing scales exactly does not re-make
+/// it for an end recomputed with float noise.
 pub(crate) fn raster_density(have: Option<f32>, now: f32, factor: f32, at_rest: bool) -> (f32, bool) {
   let end = (factor != 1.0 && factor > 0.0 && factor.is_finite()).then(|| now * factor);
   let ahead = end.filter(|&end| end > now);
@@ -370,7 +375,13 @@ pub(crate) fn raster_density(have: Option<f32>, now: f32, factor: f32, at_rest: 
   };
   let up = ahead.filter(|&end| end > have && !scale_held(have, end));
   match raster_scale(have, now, at_rest) {
-    RasterScale::Rerasterize => (ahead.map_or(now, |end| end.max(now)), false),
+    RasterScale::Rerasterize => {
+      // A target that is the raster's own scale keeps it, its exact scale
+      // too: an end recomputed every frame as `now * factor` is the same
+      // end up to float noise.
+      let target = ahead.map_or(now, |end| end.max(now));
+      (if scale_held(have, target) { have } else { target }, false)
+    }
     RasterScale::Keep => (up.unwrap_or(have), false),
     RasterScale::Wait => match up {
       Some(end) => (end, false),
