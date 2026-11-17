@@ -216,12 +216,17 @@ Three facts hold for every texture and target:
 wherever a texture id is - a `<texture>`, a shader or draw target binding,
 a 3d material. The id is allocated on first call and stable for the node's
 lifetime; the runtime re-points it after every re-rasterization, which
-happens only when the subtree changes, so a static panel sampled by an
-animated consumer costs no repaint. Premultiplied, top-left origin, cropped
-to the layout box. Empty until the boundary's first paint. The boundary owns
-it: `destroyTexture` on it throws, and unmounting the boundary releases it
-on the deferred-destroy path (a consumer still sampling it keeps the last
-pixels). A boundary showing its own texture is not a feedback loop: its
+happens when the subtree or its box changes and when its scale moves (past
+a ratio of 1.5, and once at rest), never because a consumer animates, so a
+static panel sampled by an animated consumer costs no repaint. While the
+boundary is switched off
+(`repaintBoundary={false}`) the id keeps the last raster, and on a frozen
+view (`freeze`) it shows the held picture. Premultiplied, top-left origin,
+cropped to the layout box. Empty until the boundary's first paint. The
+boundary owns it: `destroyTexture` on it throws, and unmounting the
+boundary releases it on the deferred-destroy path (a consumer still
+sampling it keeps the last pixels). A boundary showing its own texture is
+not a feedback loop: its
 rasterization is the change, so it does not re-invalidate itself.
 
 ## Readback

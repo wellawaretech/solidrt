@@ -54,6 +54,9 @@ Three of those props are worth knowing before you need them:
   rasterizes them without antialiasing). It is the lever for putting
   heavy static content next to content that changes every frame. On a
   detached view the snapshot boxes the inherited frame: the nearest laid-out
-  ancestor's box, or the design size under a `designSize` view.
+  ancestor's box, or the design size under a `designSize` view. `freeze`
+  holds a snapshot's picture while its subtree keeps changing, for a
+  gesture over live content such as a zoom-out over live tiles or a page
+  transition.
 - `clipRadius` rounds the clip, and only does anything when `overflow` is
   non-visible.

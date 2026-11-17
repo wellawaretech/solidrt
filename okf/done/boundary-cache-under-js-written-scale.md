@@ -51,8 +51,8 @@ one 170 ms frame, and presented 10 frames in 700 ms.
 
 ## Why it is a bug
 
-[text-layer-motion](../done/text-layer-motion.md) and
-[snapshot-raster-composite-scale](../done/snapshot-raster-composite-scale.md)
+[text-layer-motion](text-layer-motion.md) and
+[snapshot-raster-composite-scale](snapshot-raster-composite-scale.md)
 decided this case: while the scale moves, the existing raster is
 composited stretched. It is re-made at once only past
 `LAYER_SCALE_MOTION_BOUND` (a ratio of 1.5), and once when the scale has
@@ -493,6 +493,24 @@ cost of one text tile.
 
 Not budgeted, known: text layers and recordings outside a snapshot,
 which pass the bound in the same frame.
+
+## State (2026-11-17)
+
+Built: parts 1 and 2 with the corrections, the budget of part 3, the
+tests, and rule 5 of `packages/core/agents/performance.md`. The probe
+is `probes/boundary-scale-probe.tsx`, with `mode`, `report` and
+`result` debug commands; `probes/` is not tracked, so it is local.
+
+Open, each its own item if it is taken up:
+
+- The app's knob for the raster budget
+  ([snapshot-raster-budget-knob](../backlog/snapshot-raster-budget-knob.md)).
+- The two known limits above (rest under a creeping scale, whole texels
+  on a rounded grid), and a detached boundary sized by its inherited
+  frame.
+- A text inside a snapshot is cached twice: as its own layer texture,
+  and in the snapshot. One text tile of 200 labels costs about 20 ms to
+  raster, which is what a zoom over text tiles now costs.
 
 ## Related
 

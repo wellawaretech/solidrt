@@ -110,12 +110,36 @@ Rules, in order of leverage:
    boundary node itself (or any ancestor) are hoisted out of the cache and
    applied at composite time, so animating x/y/scale/rotate/opacity of a
    boundary does NOT re-raster it (verified by A/B measurement - the damage
-   system classifies these as Compose and keeps the node's own cache). One
-   exception, for crispness: a boundary holding text that comes to rest at
-   a new scale re-records once there (a snapshot boundary re-rasterizes
-   once), so its content is rasterized at the resting size instead of
-   stretched, and a scale transition with a known end rasters for that end
-   as it starts; a press scale that returns to 1 never re-rasters.
+   system classifies these as Compose and keeps the node's own cache).
+   Scale keeps the cache too, with one rule for crispness. Under a scale
+   animation on the boundary or any ancestor, written from JS every frame
+   or run by a transition, the cached raster is composited stretched while
+   the scale moves. It is re-made in flight only once the scale has moved
+   past a ratio of 1.5 from the scale it was rasterized at, and once when
+   the scale comes to rest at a new value, so the content ends sharp at
+   the resting size. Every snapshot boundary re-rasterizes at rest at a new
+   scale, with or without text; a recording boundary re-records for scale
+   only when it holds text or strokes. A scale transition with a known end
+   rasters once for that end as it starts; a press scale that returns to
+   its value never re-rasters. So the cost of a zoom is each snapshot's
+   content rasterized once per crossing of the 1.5 ratio and once at rest,
+   and heavy content inside many snapshots (hundreds of texts per tile) is
+   what makes a zoom expensive. Snapshots under one ancestor scale cross
+   and rest together, so the runtime spreads their re-rasters over frames:
+   each frame re-rasters at least one, and as many as fit a small time
+   budget (4 ms), the most stretched first; the others stay stretched and
+   follow in the next frames, so a tile can be soft for a few frames after
+   a fast zoom (get_stats' snapshotsDeferred counts them). A first raster
+   and a raster for changed content are never deferred. One re-raster per
+   frame happens whatever it costs, so a zoom over many tiles that each
+   take longer than a frame to raster runs below the display rate while
+   they are re-made.
+   A relayout that only moves a boundary (a sibling above it grew, an item
+   inserted above a list of boundary cards) keeps its cache: it is reused
+   at the new place (a snapshot re-rasters once if the move rounds its box
+   to another device pixel). A change of its size re-makes it, and so does
+   a write to the node's own `left`/`top`: layout props are not for
+   animation, so move a node every frame with `x`/`y`.
    What DOES invalidate the cache is any paint or content change inside the
    subtree - colors, path data, text, a Show toggling - so drive animation
    with transforms and keep the cached content itself static. Off a boundary,
@@ -137,16 +161,57 @@ Rules, in order of leverage:
    exactly what the paint walk still enters. The exception where a boundary
    on the animator itself pays is transform/opacity animation of the boundary
    node - the hoisting described above.
+   Switching the mode is cheap, so a boundary can follow its content.
+   Snapshot, off, snapshot with nothing changed inside reuses the texture;
+   a change inside while off re-renders once at the switch back, into the
+   same storage when the box and scale are unchanged. An off boundary keeps
+   its texture for 120 painted frames (about two seconds), then releases
+   it. So turn a boundary off (`repaintBoundary={false}`) while its content
+   is live - content that changes every frame re-rasterizes a snapshot
+   every frame, which costs more than no boundary - and back to "snapshot"
+   when it is static.
+   Freeze for a gesture over live content (a zoomed-out overview of live
+   tiles, a page transition, a heavy card dragged by `x`/`y`): `freeze` on
+   a `repaintBoundary="snapshot"` view holds the snapshot's picture while
+   the subtree keeps changing, at any scale or box (stretched, never
+   re-rastered). The picture is taken at the view's first snapshot
+   paint after the write (the state at the end of that frame's writes).
+   Writes inside then cost no paint: measured, frozen tiles with a write
+   inside every tile every frame cost what a plain translate costs.
+   `freeze={false}` repaints that view once when its subtree changed while
+   frozen, and nothing otherwise; when the scale or the box moved during
+   the freeze, the rules above re-raster it. A frozen picture keeps the
+   density it was taken at, so after a zoom, unfreeze and freeze again to
+   make it sharp. The live-tile pattern combines the switch and the
+   freeze: `repaintBoundary={live() ? false : "snapshot"} freeze={!live()}`.
+   Traps: taps still go to the live targets inside, which need not match
+   the picture (`pointerEvents="all"` on the frozen view catches them as
+   one target, `"none"` passes them through); hover is not re-evaluated
+   for motion inside until the pointer moves; a node mounted while frozen
+   is not painted until the unfreeze, so a transition written on it snaps;
+   a freeze over content that was live pays a raster at that moment (rule
+   6); and off a snapshot boundary `freeze` is inert, with a warning.
 6. "snapshot" boundaries pay first-frame texture allocation + raster:
    creating many at once (dealing a board of 64 sprites) is a visible
-   one-frame hiccup - pool or pre-warm if that moment matters. The texture
-   is sized by the view's box: the layout box on a view, the inherited
-   frame on a detached view (so a detached view directly under the window
-   snapshots the whole window - box it tighter when the content is small).
+   one-frame hiccup - pool or pre-warm if that moment matters. A freeze
+   over content that was live pays the same raster at that moment, for
+   every view frozen in that frame at once (freezing many live tiles is one
+   hitch), and the allocation too when the boundary was off for longer
+   than its texture is kept (rule 5). The texture is sized by the view's
+   box: the layout box on a view, the inherited frame on a detached view
+   (so a detached view directly under the window snapshots the whole
+   window - box it tighter when the content is small).
    Confirm a boundary actually engaged rather than trusting the prop:
-   get_render_tree props reads repaintBoundary back, get_stats' nodesPainted
-   drops when the fenced subtree stops being walked, and the dev overlay's
-   BND/SNP lines count boundary reuse per frame.
+   get_render_tree props reads repaintBoundary back (with `antialias:
+   false` when antialiasing is off, `freeze: true` when set, and
+   `snapshotStale: true` while a frozen snapshot's subtree has changed
+   since its picture), get_stats' nodesPainted drops when the fenced
+   subtree stops being walked, its snapshotsReused, snapshotsRerendered,
+   snapshotsRasterized and snapshotsDeferred count the latest walk's
+   snapshots drawn from their texture, re-rendered into it, rasterized
+   into a new one, and left stretched by the budget, and the dev overlay's
+   BND/SNP lines count boundary reuse per frame (SNP with a DEF count while
+   the budget defers).
 7. Shading pixels the app already drew is a different mechanism from rule 2's
    generated textures, and both forms are a `shader` prop taking a linked
    program from compileShader/linkProgram (@solidrt/core/gpu), not a

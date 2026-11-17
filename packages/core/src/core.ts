@@ -353,8 +353,9 @@ export function getLayoutBox(node: { id: number }): BoundingBox | null {
  * GPU consumer - a `<texture>`, a shader or draw target binding, a 3d
  * material - samples by id. Allocated on the first call and stable for the
  * node's lifetime; the runtime re-points it at the current pixels after every
- * rasterization, and only when the subtree changes (a static panel on an
- * animated consumer costs no repaint). Empty until the first paint. Owned by
+ * rasterization, which happens when the subtree or its box changes and when
+ * its scale moves (past a ratio of 1.5, and once at rest), never because a
+ * consumer animates (a static panel on an animated consumer costs no repaint). Empty until the first paint. Owned by
  * the boundary: `destroyTexture` throws on it, and unmounting the boundary
  * releases it. Throws if the node is not a snapshot boundary. Not a readback:
  * for pixels on the CPU use `captureSnapshot`.

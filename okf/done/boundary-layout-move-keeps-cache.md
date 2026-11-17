@@ -30,7 +30,7 @@ clears the node's own cache before the layout pass runs, and that stays
 as it is.
 
 Found by reading, while reviewing
-[boundary-cache-under-js-written-scale](../plans/boundary-cache-under-js-written-scale.md).
+[boundary-cache-under-js-written-scale](boundary-cache-under-js-written-scale.md).
 Confirm it with the paint counters before the fix.
 
 ## Proposed fix

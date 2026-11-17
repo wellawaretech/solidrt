@@ -283,9 +283,35 @@ moves core's peerDependencies and the scaffold's pins
   translate it with the transform `x`/`y` (or scale/rotate), never by animating
   `left`/`top`/`margin`/`width`. Common trap: `left`/`top` read like "position"
   but they are LAYOUT offsets (for `position:absolute`), so driving them every
-  frame reflows the tree. Anchor the element once with layout (e.g.
-  `position:absolute` at `left:0,top:0`, or just let normal flow place it) and
-  then translate it with `x`/`y`.
+  frame reflows the tree (and on a repaint boundary re-makes its cache every
+  frame). Anchor the element once with layout (e.g. `position:absolute` at
+  `left:0,top:0`, or just let normal flow place it) and then translate it
+  with `x`/`y`.
+
+- Repaint boundaries are view props. `repaintBoundary={true}` keeps the
+  subtree's recorded draw list and `repaintBoundary="snapshot"` keeps its
+  pixels as a texture, each reused until something inside changes.
+  Transforms and opacity on the boundary or any ancestor apply at
+  composite time and keep the cache; under a moving scale a snapshot is
+  composited stretched, re-rasterized only past a ratio of 1.5 and once at
+  rest. Fence the static bulk next to the animators: content that changes
+  every frame re-rasterizes a snapshot every frame, which costs more than
+  no boundary. Switching the mode is
+  cheap (snapshot, off, snapshot with nothing changed inside reuses the
+  texture), so turn a boundary off while its content is live.
+  `antialias={false}` rasterizes a snapshot without its 4x multisampling:
+  cheaper, with hard-edged vector content (the old
+  `repaintBoundary="snapshot-no-aa"` throws and names this). `freeze` on a
+  snapshot view holds its picture while the subtree keeps changing,
+  stretched under any scale, until `freeze={false}`: for a gesture over
+  live content (a zoom-out over live tiles, a page transition, a heavy
+  card dragged); the live-tile pattern is
+  `repaintBoundary={live() ? false : "snapshot"} freeze={!live()}`. The
+  trap: layout and hit testing stay live inside a frozen view, so taps
+  reach the live targets, not what the picture shows (`pointerEvents="all"`
+  on the frozen view takes them as one target). Both props are inert off a
+  snapshot boundary. agents/performance.md rules 5 and 6 have the scale
+  rule, the switch, the freeze's other traps and what each costs.
 
 - Measuring layout: never re-derive an element's position with your own
   arithmetic - the layout engine already knows, so ask it.
