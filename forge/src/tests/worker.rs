@@ -263,7 +263,9 @@ fn released(rig: &Rig) -> Vec<(i64, i64, i64)> {
 }
 
 /// A device on the fake sink: consumes at the track's rate while the sink
-/// is not paused, until dropped.
+/// is not paused, until dropped. It consumes by the wall time that passed,
+/// not by the sleep it asked for: a loaded host wakes the thread late, and
+/// a device that fell behind real time would read as audio drift.
 struct Consumer {
   stop: Arc<AtomicBool>,
   thread: Option<JoinHandle<()>>,
@@ -273,12 +275,20 @@ fn consuming(state: Arc<Mutex<FakeSinkState>>) -> Consumer {
   let stop = Arc::new(AtomicBool::new(false));
   let stopped = stop.clone();
   let thread = thread::spawn(move || {
+    let mut last = Instant::now();
+    let mut playing = Duration::ZERO;
+    let mut consumed = 0;
     while !stopped.load(Ordering::Relaxed) {
       thread::sleep(Duration::from_millis(1));
+      let now = Instant::now();
       let mut s = lock(&state);
       if !s.paused {
-        s.consume(AUDIO_RATE / 1000);
+        playing += now - last;
+        let due = (playing.as_nanos() * AUDIO_RATE as u128 / Duration::from_secs(1).as_nanos()) as usize;
+        s.consume(due - consumed);
+        consumed = due;
       }
+      last = now;
     }
   });
   Consumer { stop, thread: Some(thread) }
@@ -480,7 +490,10 @@ fn the_first_frame_anchors_on_the_sound_when_a_sink_consumes() {
     let delay_ns = delay_us * 1000;
     assert!(held_ns >= delay_ns - SLACK_NS, "first frame due {held_ns}ns after play, expected the {delay_ns}ns delay");
     assert!(held_ns < delay_ns + PROMPT.as_nanos() as i64, "first frame due {held_ns}ns after play");
-    assert_eq!(released_now[1].1 - first_ns, FRAME_US * 1000, "the second frame follows the anchor");
+    // A slow decode may drop the frames right after the first; whichever
+    // is released next is due at the anchor plus its content time.
+    let (next_pts, next_ns, _) = released_now[1];
+    assert_eq!(next_ns - first_ns, next_pts * 1000, "the next released frame follows the anchor");
     assert!(lock(&state).pushed_frames > 0, "the track was fed");
     drop(consumer);
   }
