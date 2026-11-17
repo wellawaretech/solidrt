@@ -1,8 +1,9 @@
 // flux:net over TLS: connectTls to listenTls with a private CA and ALPN,
 // mutual TLS, the pin, startTls after a plain-text exchange (as the client
 // and as the server), half-close, a stalled client, session resumption and
-// generated certificates. Loopback only, with the forge fixtures (their
-// README says how they were made).
+// generated certificates, and a certificate renewed while the listener
+// runs. Loopback only, with the forge fixtures (their README says how they
+// were made).
 import { expect, test } from "flux:test"
 import { createHttpClient, serve } from "flux:http"
 import {
@@ -418,6 +419,56 @@ test("a generated CA issues a certificate that a caCerts client trusts", async (
   conn.close()
   peer.close()
   listener.close()
+})
+
+// The renewal: a new handshake gets the new key, the connection made before
+// keeps the old one and its data still flows, and a full handshake pinned to
+// the old key (resume: false, so the certificate is checked) is refused.
+test("setCertificate renews a listenTls certificate for new handshakes", async () => {
+  let first = generateCertificate({ names: ["localhost"] })
+  let second = generateCertificate({ names: ["localhost"] })
+  let { listener, conn, peer } = await tlsPair({ cert: first.cert, key: first.key }, { pin: first.pin })
+  let port = portOf(listener.localAddr)
+  listener.setCertificate(second)
+  let accepted = accept(listener)
+  let renewed = await connectTls("localhost", port, { pin: second.pin })
+  expect(renewed.peerKey).toBe(second.pin)
+  ;(await accepted).close()
+  renewed.close()
+  expect(conn.peerKey).toBe(first.pin)
+  await write(conn, "still open")
+  expect(await readText(peer)).toBe("still open")
+  accept(listener)
+  await expect(connectTls("localhost", port, { pin: first.pin, resume: false })).rejects.toThrow(
+    "does not match the pin",
+  )
+  conn.close()
+  peer.close()
+  listener.close()
+})
+
+test("setCertificate checks the pair and keeps the current one on a bad one", async () => {
+  let first = generateCertificate({ names: ["localhost"] })
+  let second = generateCertificate({ names: ["localhost"] })
+  let listener = await listenTls(0, first)
+  expect(() => listener.setCertificate({ cert: second.cert, key: first.key })).toThrow(
+    "setCertificate: key: does not belong to cert",
+  )
+  expect(() => listener.setCertificate({ cert: "not a pem", key: second.key })).toThrow("setCertificate: cert")
+  expect(() => listener.setCertificate({ cert: second.cert } as never)).toThrow("cert and key are required")
+  expect(() => Reflect.apply(listener.setCertificate, listener, [])).toThrow("setCertificate: takes { cert, key }")
+  for (let kept of ["caCerts", "anyClientCert", "alpn"]) {
+    expect(() => listener.setCertificate({ ...second, [kept]: [] } as never)).toThrow(`${kept} stays as the server`)
+  }
+  let accepted = accept(listener)
+  let conn = await connectTls("localhost", portOf(listener.localAddr), { pin: first.pin, resume: false })
+  expect(conn.peerKey).toBe(first.pin)
+  ;(await accepted).close()
+  conn.close()
+  listener.close()
+  let plain = await listen(0)
+  expect(() => plain.setCertificate(first)).toThrow("setCertificate: a plain TCP listener has no certificate")
+  plain.close()
 })
 
 test("generateCertificate checks its options", () => {

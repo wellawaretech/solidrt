@@ -11,6 +11,7 @@ use rquickjs::function::Opt;
 use rquickjs::promise::Promised;
 use rquickjs::{Ctx, Exception, JsLifetime, Object, Value};
 
+use crate::forge_plugins::net::certificate_arg;
 use crate::pending::{Hold, PendingOps};
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{with_in_flight, OptArg};
@@ -63,6 +64,16 @@ impl P2pRelay {
   /// The endpoint ids connected to the relay now.
   pub fn clients(&self) -> Vec<String> {
     self.inner.clients()
+  }
+
+  /// `setCertificate({ cert, key })`: the certificate an HTTPS relay
+  /// presents from the next handshake on, its URL unchanged; see
+  /// `forge::p2p::Relay::set_certificate`.
+  #[qjs(rename = "setCertificate")]
+  pub fn set_certificate<'js>(&self, ctx: Ctx<'js>, tls: OptArg<Value<'js>>) -> rquickjs::Result<()> {
+    let (cert, key) = certificate_arg(&ctx, tls)?;
+    let set = self.inner.set_certificate(&cert, &key);
+    set.map_err(|m| Exception::throw_message(&ctx, &format!("setCertificate: {m}")))
   }
 
   /// Stop the relay; the connections it carries end.

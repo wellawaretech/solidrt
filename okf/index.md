@@ -1061,12 +1061,6 @@ Shaped, not started.
   generation inside the frame; core's region lifecycle (an async, abortable
   `load`, a build stepped under the slice budget, retain by count) is what the
   sprite grid and 3d use, and the tile layer predates it.
-- **[Renew a TLS certificate without a restart](backlog/tls-certificate-reload.md)** [2026-11-16]
-  A server that `serve` (flux:http), `listenTls` (flux:net) or `serveRelay`
-  (flux:p2p) runs with a certificate keeps it until the process stops, so an
-  app whose CA-signed certificate renews (every 60 to 90 days with Let's
-  Encrypt) has to restart the server; one reloadable certificate resolver in
-  forge::tls would let all three swap the certificate in place.
 - **[Decide the shape of the transform props against CSS, all at once](backlog/transform-props-css-shape.md)** [2026-08-14]
   scale/scaleX/scaleY, x/y, rotate and originX/originY each landed on their
   own; CSS gives per-axis tuples for scale and translate but nothing for
@@ -3335,6 +3329,12 @@ Finished, kept for the reasoning.
   fetch, a shared forge::tls with TLS sockets in flux:net, TLS options for
   fetch through a client object, and wss:// - in that order, one stage per
   item.
+- **[Renew a TLS certificate without a restart](done/tls-certificate-reload.md)** [2026-11-17]
+  Shipped - serve (flux:http), listenTls (flux:net) and serveRelay (flux:p2p)
+  take setCertificate({ cert, key }), which checks the pair and swaps it for
+  new handshakes while open connections keep theirs; one reloadable resolver
+  (forge::tls::ServerCert) backs all three, and a relay's url never changes,
+  so a pinned relay renews only on the same key.
 - **[Close the TLS gaps left by tls-and-fetch-limits](done/tls-follow-ups.md)** [2026-11-05]
   The gaps tls-and-fetch-limits left "until a real app needs it" - HTTPS (and
   h2) in serve, startTls as the server, certificate generation, subprotocols

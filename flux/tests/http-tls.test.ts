@@ -1,9 +1,11 @@
 // flux:http serving HTTPS: serve({ tls }) fetched through a createHttpClient
 // client that trusts the private CA, the client certificate's key through
-// server.peerKey, and the tls option errors. Loopback only, with the forge
-// fixtures (their README says how they were made).
+// server.peerKey, the tls option errors, and a certificate renewed while
+// the server runs. Loopback only, with the forge fixtures (their README says
+// how they were made).
 import { expect, test } from "flux:test"
 import { createHttpClient, serve } from "flux:http"
+import { generateCertificate } from "flux:net"
 import CA from "../../forge/src/tests/data/tls/ca.pem" with { type: "text" }
 import SERVER from "../../forge/src/tests/data/tls/server.pem" with { type: "text" }
 import SERVER_KEY from "../../forge/src/tests/data/tls/server-key.pem" with { type: "text" }
@@ -79,4 +81,37 @@ test("bad tls options throw before anything binds", () => {
     "exclude each other",
   )
   expect(() => serve({ tls: { cert: "not a pem", key: SERVER_KEY } })).toThrow("serve: tls: cert")
+})
+
+// A client pinned to the new key reaches the renewed server; the client
+// pinned to the old key keeps its open connection, and a new client pinned
+// to the old key is refused.
+test("setCertificate renews the certificate of an HTTPS server", async () => {
+  let first = generateCertificate({ names: ["127.0.0.1"] })
+  let second = generateCertificate({ names: ["127.0.0.1"] })
+  let server = serve({ host: "127.0.0.1", tls: first, fetch: () => "hello" })
+  let before = createHttpClient({ pin: first.pin })
+  let after = createHttpClient({ pin: second.pin })
+  let stale = createHttpClient({ pin: first.pin })
+  try {
+    expect(await (await fetch(server.url, { client: before })).text()).toBe("hello")
+    server.setCertificate(second)
+    expect(await (await fetch(server.url, { client: after })).text()).toBe("hello")
+    expect(await (await fetch(server.url, { client: before })).text()).toBe("hello")
+    await expect(fetch(server.url, { client: stale })).rejects.toThrow("does not match the pin")
+    expect(() => server.setCertificate({ cert: first.cert, key: second.key })).toThrow(
+      "setCertificate: key: does not belong to cert",
+    )
+    expect(() => server.setCertificate({ ...first, anyClientCert: true } as never)).toThrow(
+      "anyClientCert stays as the server",
+    )
+  } finally {
+    server.close()
+    before.close()
+    after.close()
+    stale.close()
+  }
+  let plain = serve({ host: "127.0.0.1", fetch: () => "plain" })
+  expect(() => plain.setCertificate(first)).toThrow("setCertificate: a plain HTTP server has no certificate")
+  plain.close()
 })

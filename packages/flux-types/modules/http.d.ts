@@ -187,6 +187,17 @@ declare module "flux:http" {
      */
     peerKey(req: Request): string | null
     /**
+     * Renew the certificate of an HTTPS server while it serves, with no
+     * restart: handshakes from now on present the new `cert` and `key`
+     * (PEM, as in {@link ServeTlsOptions}), and the connections made before
+     * keep the certificate they were made with. A `generateCertificate`
+     * result of `flux:net` passes as it is. The client policy stays as the
+     * server started (`caCerts` and `anyClientCert` throw). Throws, keeping
+     * the current certificate, when either is not PEM or the key is not the
+     * certificate's. Throws on a server without {@link ServeOptions.tls}.
+     */
+    setCertificate(tls: { cert: string; key: string }): void
+    /**
      * Stop accepting new connections and gracefully shut down open ones. Safe to
      * call more than once.
      */
@@ -262,7 +273,8 @@ declare module "flux:http" {
      * `http/1.1` by ALPN. The WebSocket upgrade is HTTP/1.1 only, so a
      * browser opens its WebSocket on a connection of its own. `p2p`
      * connections are not affected: iroh encrypts them already. A malformed
-     * certificate or key throws before anything binds.
+     * certificate or key throws before anything binds. Renew the
+     * certificate with {@link Server.setCertificate}.
      */
     tls?: ServeTlsOptions
   }

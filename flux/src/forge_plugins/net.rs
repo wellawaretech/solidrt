@@ -209,8 +209,8 @@ fn start_tls_server_role<'js>(ctx: &Ctx<'js>, opts: &Object<'js>) -> rquickjs::R
   }
   let alpn = opts.get::<_, Option<Vec<String>>>("alpn")?.unwrap_or_default();
   let options = tls_server_options(ctx, "startTls", opts, alpn)?;
-  let config = forge::tls::server_config(&options).map_err(|m| throw(&m))?;
-  Ok(forge::net::TlsRole::Server(config))
+  let server = forge::tls::server_config(&options).map_err(|m| throw(&m))?;
+  Ok(forge::net::TlsRole::Server(server.config))
 }
 
 /// `listenTls(port, { cert, key, host?, alpn?, caCerts?, anyClientCert? })`
@@ -228,11 +228,11 @@ fn net_listen_tls<'js>(
     Some(o) => tls_server_options(&ctx, "listenTls", o, alpn)?,
     None => return Err(throw("cert and key are required")),
   };
-  let config = forge::tls::server_config(&options).map_err(|m| throw(&m))?;
+  let server = forge::tls::server_config(&options).map_err(|m| throw(&m))?;
   let hold = PendingOps::of(&ctx).in_flight("listen");
   let ctx2 = ctx.clone();
   Ok(Promised(async move {
-    let r = forge::net::listen_tls(&host, port, config).await;
+    let r = forge::net::listen_tls(&host, port, server).await;
     drop(hold);
     match r {
       Ok(listener) => NetListener::create(&ctx2, listener),
@@ -264,6 +264,31 @@ pub(crate) fn tls_server_options<'js>(
     (None, false) => forge::tls::ClientAuth::None,
   };
   Ok(forge::tls::ServerOptions { cert: cert.into_bytes(), key: key.into_bytes(), alpn, client_auth })
+}
+
+/// What a TLS server keeps from its start and `setCertificate` does not
+/// change: the client policy, the ALPN list, a relay's `pinned`.
+const KEPT_FROM_START: [&str; 4] = ["caCerts", "anyClientCert", "alpn", "pinned"];
+
+/// The argument of `setCertificate` (of a `listenTls` listener, an HTTPS
+/// `serve`, an HTTPS relay): `{ cert, key }`, PEM, as bytes. A
+/// `generateCertificate` result passes as it is (its `pin` is not read);
+/// an option the server keeps from its start throws, so a call that means
+/// to change it does not pass silently.
+pub(crate) fn certificate_arg<'js>(ctx: &Ctx<'js>, tls: OptArg<Value<'js>>) -> rquickjs::Result<(Vec<u8>, Vec<u8>)> {
+  let throw = |m: &str| Exception::throw_message(ctx, &format!("setCertificate: {m}"));
+  let Some(tls) = tls.0.and_then(|v| v.into_object()) else {
+    return Err(throw("takes { cert, key }"));
+  };
+  for kept in KEPT_FROM_START {
+    if tls.get::<_, Option<Value<'js>>>(kept)?.is_some() {
+      return Err(throw(&format!("{kept} stays as the server started; only cert and key change")));
+    }
+  }
+  let (Some(cert), Some(key)) = (tls.get::<_, Option<String>>("cert")?, tls.get::<_, Option<String>>("key")?) else {
+    return Err(throw("cert and key are required"));
+  };
+  Ok((cert.into_bytes(), key.into_bytes()))
 }
 
 /// The app's TLS client configs (`EngineConfig::tls_client_configs`),
@@ -614,6 +639,16 @@ impl NetListener {
   pub fn close(&self) -> rquickjs::Result<()> {
     self.inner.close();
     Ok(())
+  }
+
+  /// `setCertificate({ cert, key })`: the certificate a `listenTls`
+  /// listener presents from the next handshake on; see
+  /// `forge::net::Listener::set_certificate`.
+  #[qjs(rename = "setCertificate")]
+  pub fn set_certificate<'js>(&self, ctx: Ctx<'js>, tls: OptArg<Value<'js>>) -> rquickjs::Result<()> {
+    let (cert, key) = certificate_arg(&ctx, tls)?;
+    let set = self.inner.set_certificate(&cert, &key);
+    set.map_err(|m| Exception::throw_message(&ctx, &format!("setCertificate: {m}")))
   }
 
   /// The bound local address (with the OS-assigned port when `0` was requested).

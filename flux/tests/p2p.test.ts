@@ -4,7 +4,8 @@
 // then the same pair through a relay served here, and an endpoint with no
 // relay that reaches a peer on the relay its ticket names; then the relay's
 // options: tokens, host, allowlist (over HTTPS too), clients, the URL of an
-// HTTPS relay, and the validation throws; then endpoints that trust an HTTPS
+// HTTPS relay, its certificate renewed in place, and the validation throws;
+// then endpoints that trust an HTTPS
 // relay by the pin in its URL, with relayCaCerts beside it, and the relay
 // URLs they refuse; then the relays an endpoint knows, a ticket naming a
 // known relay with a new token, connect without adopting (a known relay is
@@ -264,6 +265,47 @@ test("an HTTPS relay's URL carries the pin of its self-signed certificate", asyn
   let proxied = await serveRelay({ token: TOKEN_A, url: "https://relay.example.test/" })
   expect(proxied.url).toBe(`https://${TOKEN_A}@relay.example.test/`)
   await proxied.close()
+})
+
+// A CA-signed relay is unpinned, so it renews to any key: here a leaf of
+// another CA. The endpoint connected before stays connected; one that
+// trusts only the new CA reaches the renewed relay. The URL stays.
+test("setCertificate renews an HTTPS relay's certificate and keeps its url", async () => {
+  let oldCa = generateCertificate({ names: ["old-ca.test"], isCa: true })
+  let newCa = generateCertificate({ names: ["new-ca.test"], isCa: true })
+  let relay = await serveRelay({
+    host: "127.0.0.1",
+    tls: generateCertificate({ names: ["127.0.0.1"], issuer: oldCa }),
+  })
+  let url = relay.url
+  expect(url.includes("pin=")).toBe(false)
+  let before = await Endpoint.create({ relayUrl: url, relayCaCerts: [oldCa.cert] })
+  await before.ticket()
+  expect(await clientsReach(relay, 1)).toEqual([before.id])
+  relay.setCertificate(generateCertificate({ names: ["127.0.0.1"], issuer: newCa }))
+  expect(relay.url).toBe(url)
+  let after = await Endpoint.create({ relayUrl: url, relayCaCerts: [newCa.cert] })
+  expect(parseTicket(await after.ticket()).relayUrl).toBe(url)
+  expect(relay.clients()).toEqual([before.id, after.id].sort())
+  await after.close()
+  await before.close()
+  await relay.close()
+})
+
+test("setCertificate keeps a pinned relay's key and needs tls", async () => {
+  let made = generateCertificate({ names: ["127.0.0.1"] })
+  let pinned = await serveRelay({ host: "127.0.0.1", tls: made })
+  let url = pinned.url
+  expect(() => pinned.setCertificate(generateCertificate({ names: ["127.0.0.1"] }))).toThrow(
+    "setCertificate: cert: another key than the pin in this relay's url names",
+  )
+  expect(() => pinned.setCertificate({ ...made, pinned: false } as never)).toThrow("pinned stays as the server")
+  pinned.setCertificate(made)
+  expect(pinned.url).toBe(url)
+  await pinned.close()
+  let plain = await serveRelay({ host: "127.0.0.1" })
+  expect(() => plain.setCertificate(made)).toThrow("setCertificate: a plain HTTP relay has no certificate")
+  await plain.close()
 })
 
 test("serveRelay throws on an invalid option", () => {

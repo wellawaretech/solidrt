@@ -22,6 +22,12 @@
 //!   key is accepted, and the app checks the peer's key itself (pairing).
 //!   The signatures are verified here too.
 //!
+//! A server presents its certificate through `ServerCert`, the config's
+//! certificate resolver, which the server's owner keeps: `set` swaps the
+//! certificate and key while the server runs (a renewal), the next
+//! handshake presents the new pair, and the connections made before keep
+//! the one they were made with.
+//!
 //! Session resumption is automatic. A connection over the config
 //! `ClientConfigs` keeps for its options resumes a session from an earlier
 //! connection with equal options to the same server name (a config owns its
@@ -47,9 +53,11 @@ use tokio_rustls::rustls::crypto::{verify_tls12_signature, verify_tls13_signatur
 use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use tokio_rustls::rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
-use tokio_rustls::rustls::server::{ParsedCertificate, WebPkiClientVerifier};
+use tokio_rustls::rustls::server::{ClientHello, ParsedCertificate, ResolvesServerCert, WebPkiClientVerifier};
+use tokio_rustls::rustls::sign::CertifiedKey;
 use tokio_rustls::rustls::{
-  CertificateError, CommonState, DigitallySignedStruct, DistinguishedName, OtherError, SignatureScheme,
+  CertificateError, CommonState, DigitallySignedStruct, DistinguishedName, InconsistentKeys, OtherError,
+  SignatureScheme,
 };
 
 pub use tokio_rustls::rustls::{ClientConfig, RootCertStore, ServerConfig};
@@ -283,9 +291,66 @@ fn build_client_config(opts: &ClientOptions) -> Result<ClientConfig, String> {
   Ok(config)
 }
 
+/// The certificate and key a TLS server presents, replaceable while it
+/// serves (see the module doc): the server's config resolves every
+/// handshake through it. Cheaply cloned (one shared slot).
+#[derive(Clone, Debug)]
+pub struct ServerCert {
+  current: Arc<RwLock<Arc<CertifiedKey>>>,
+}
+
+impl ServerCert {
+  /// A certificate chain (PEM, the leaf first) and its private key (PEM).
+  /// Errors name `cert` or `key`, and a key that is not the leaf's is one.
+  pub fn from_pem(cert: &[u8], key: &[u8]) -> Result<ServerCert, String> {
+    Ok(ServerCert { current: Arc::new(RwLock::new(Arc::new(certified_key(cert, key)?))) })
+  }
+
+  /// Present `cert` and `key` (PEM) from the next handshake on. The pair is
+  /// checked first, with the errors of `from_pem`, so a bad one leaves the
+  /// current pair in place.
+  pub fn set(&self, cert: &[u8], key: &[u8]) -> Result<(), String> {
+    let next = Arc::new(certified_key(cert, key)?);
+    *self.current.write().expect("TLS server certificate lock") = next;
+    Ok(())
+  }
+}
+
+impl ResolvesServerCert for ServerCert {
+  fn resolve(&self, _hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+    Some(self.current.read().expect("TLS server certificate lock").clone())
+  }
+}
+
+/// A certificate chain and its key as rustls presents them, the key
+/// checked against the leaf (by their SubjectPublicKeyInfo).
+fn certified_key(cert: &[u8], key: &[u8]) -> Result<CertifiedKey, String> {
+  let chain = certs_from_pem(cert, "cert")?;
+  let key = provider().key_provider.load_private_key(key_from_pem(key, "key")?).map_err(|e| format!("key: {e}"))?;
+  let certified = CertifiedKey::new(chain, key);
+  match certified.keys_match() {
+    // A key whose public half rustls cannot read is not checked (as
+    // `with_single_cert` does); every key of the ring provider is read.
+    Ok(()) | Err(rustls::Error::InconsistentKeys(InconsistentKeys::Unknown)) => Ok(certified),
+    Err(rustls::Error::InconsistentKeys(InconsistentKeys::KeyMismatch)) => {
+      Err("key: does not belong to cert".to_string())
+    }
+    Err(e) => Err(format!("cert: {e}")),
+  }
+}
+
+/// A TLS server's config and the certificate it presents, as
+/// `server_config` builds them: the config goes to the acceptors, the
+/// certificate (the config's resolver) to the server's owner, who renews it.
+#[derive(Clone)]
+pub struct ServerTls {
+  pub config: Arc<ServerConfig>,
+  pub cert: ServerCert,
+}
+
 /// Build a server config: the identity, the client authentication, the
 /// ALPN list.
-pub fn server_config(opts: &ServerOptions) -> Result<Arc<ServerConfig>, String> {
+pub fn server_config(opts: &ServerOptions) -> Result<ServerTls, String> {
   server_config_with_versions(opts, rustls::DEFAULT_VERSIONS)
 }
 
@@ -293,7 +358,7 @@ pub fn server_config(opts: &ServerOptions) -> Result<Arc<ServerConfig>, String> 
 pub(crate) fn server_config_with_versions(
   opts: &ServerOptions,
   versions: &[&'static rustls::SupportedProtocolVersion],
-) -> Result<Arc<ServerConfig>, String> {
+) -> Result<ServerTls, String> {
   let provider = provider();
   let builder = ServerConfig::builder_with_provider(provider.clone())
     .with_protocol_versions(versions)
@@ -310,11 +375,10 @@ pub(crate) fn server_config_with_versions(
     }
     ClientAuth::AnyKey => builder.with_client_cert_verifier(Arc::new(AnyClientKey { provider })),
   };
-  let mut config = builder
-    .with_single_cert(certs_from_pem(&opts.cert, "cert")?, key_from_pem(&opts.key, "key")?)
-    .map_err(|e| format!("cert and key: {e}"))?;
+  let cert = ServerCert::from_pem(&opts.cert, &opts.key)?;
+  let mut config = builder.with_cert_resolver(Arc::new(cert.clone()));
   config.alpn_protocols = alpn_bytes(&opts.alpn);
-  Ok(Arc::new(config))
+  Ok(ServerTls { config: Arc::new(config), cert })
 }
 
 /// The server name to verify and send as SNI: a DNS name, or an IP address

@@ -5,7 +5,7 @@
 
 use std::future::{poll_fn, Future};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tokio::sync::{watch, Notify};
@@ -15,7 +15,7 @@ use super::tls::{server_config_of, CA, CLIENT, CLIENT_KEY, CLIENT_PIN, SERVER, S
 use super::websocket::run;
 use crate::fetch::{send, Client};
 use crate::http::*;
-use crate::logger::default_logger;
+use crate::logger::{default_logger, LogLevel, Logger};
 use crate::stream::ByteStream;
 use crate::tls::{client_config, ClientAuth, ClientOptions, ServerConfig};
 use crate::websocket::{
@@ -29,6 +29,9 @@ const SERVE_ALPN: [&str; 2] = ["h2", "http/1.1"];
 /// How long a round trip may take beside a stalled client: well under the
 /// handshake limit, so a handshake that waited on the stalled one fails it.
 const STALL_BUDGET: Duration = Duration::from_secs(2);
+
+/// How long a stopped connection may take to finish its closing handshake.
+const CLOSE_BUDGET: Duration = Duration::from_secs(2);
 
 /// Start an HTTPS server on 127.0.0.1 over `config`, answering with
 /// `handler`; its port and its shutdown signal. Must run on a `LocalSet`.
@@ -77,7 +80,7 @@ async fn echo_peer_key(parts: RequestParts) -> Reply {
 }
 
 fn ca_server(client_auth: ClientAuth) -> Arc<ServerConfig> {
-  server_config_of(SERVER, SERVER_KEY, client_auth, &SERVE_ALPN)
+  server_config_of(SERVER, SERVER_KEY, client_auth, &SERVE_ALPN).config
 }
 
 fn private_ca() -> ClientOptions {
@@ -167,6 +170,51 @@ async fn a_stalled_client_does_not_hold_up_the_next_handshake() {
     let (_, body) = round_trip.await.expect("within the budget").expect("fetch");
     assert_eq!(body, format!("GET / 127.0.0.1:{port}"));
     shared.stop();
+  })
+  .await;
+}
+
+#[tokio::test]
+async fn a_client_hanging_up_on_a_graceful_shutdown_is_no_error() {
+  local(async {
+    let listener = bind_listener("127.0.0.1", 0).expect("bind");
+    let port = listener.local_addr().expect("bound address").port();
+    let shared = ServerShared::new();
+    let warnings = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink = warnings.clone();
+    let logger = Logger::new(Box::new(move |level, msg| {
+      if level == LogLevel::Warn {
+        sink.lock().unwrap_or_else(PoisonError::into_inner).push(msg.to_string());
+      }
+    }));
+    let client = fetch_client(&private_ca());
+    let url = format!("https://127.0.0.1:{port}/");
+    let fetch = spawn_local(async move {
+      let fetched = get(&client, &url).await;
+      (client, fetched)
+    });
+    let (sock, _) = listener.accept().await.expect("accept");
+    let exec = LocalExecutor::new(|fut| {
+      spawn_local(fut);
+    });
+    let conn = spawn_local(serve_tls_connection(
+      sock,
+      ca_server(ClientAuth::None),
+      None,
+      echo_request,
+      logger,
+      shared.subscribe(),
+      exec,
+    ));
+    let (client, fetched) = fetch.await.expect("fetch task");
+    assert!(fetched.expect("fetch").0, "the client agreed h2");
+    // The server's closing handshake (GOAWAY and PING, then its TLS
+    // close_notify) is still running when the client closes its pooled
+    // connection, so the close_notify meets a reset socket: a broken pipe.
+    shared.stop();
+    drop(client);
+    tokio::time::timeout(CLOSE_BUDGET, conn).await.expect("the connection closes").expect("connection task");
+    assert_eq!(*warnings.lock().unwrap_or_else(PoisonError::into_inner), Vec::<String>::new());
   })
   .await;
 }

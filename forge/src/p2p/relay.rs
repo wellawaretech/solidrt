@@ -13,7 +13,8 @@
 //! carried as the user part of the URL it hands out, so a port that happens
 //! to be reachable from further away is not an open relay; an allowlist of
 //! endpoint ids narrows that further. Never a public relay: the app hosts
-//! this one.
+//! this one. An HTTPS relay renews its certificate in place
+//! (`set_certificate`) and keeps its URL.
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -78,7 +79,7 @@ pub struct RelaySetup {
   tokens: Vec<String>,
   allow: Option<HashSet<EndpointId>>,
   url: Option<Url>,
-  tls: Option<(crate::tls::ServerConfig, Option<String>)>,
+  tls: Option<(crate::tls::ServerTls, Option<String>)>,
 }
 
 impl RelayOptions {
@@ -121,20 +122,17 @@ impl RelayOptions {
           alpn: Vec::new(),
           client_auth: crate::tls::ClientAuth::None,
         };
-        let config = crate::tls::server_config(&options).map_err(|e| format!("tls: {e}"))?;
+        let server = crate::tls::server_config(&options).map_err(|e| format!("tls: {e}"))?;
         let leaf = crate::tls::leaf_from_pem(&options.cert, "tls: cert")?;
         let pinned = match tls.pinned {
           Some(pinned) => pinned,
           None => crate::tls::is_self_signed(&leaf).ok_or_else(|| "tls: cert: does not parse".to_string())?,
         };
         let pin = match pinned {
-          true => {
-            let hash = crate::tls::spki_sha256(&leaf).ok_or_else(|| "tls: cert: does not parse".to_string())?;
-            Some(super::encode_hex(&hash))
-          }
+          true => Some(leaf_pin(&leaf).ok_or_else(|| "tls: cert: does not parse".to_string())?),
           false => None,
         };
-        Some((Arc::unwrap_or_clone(config), pin))
+        Some((server, pin))
       }
       None => None,
     };
@@ -147,9 +145,9 @@ impl RelayOptions {
   }
 }
 
-/// A running relay: its port and URL, its access policy, and `close`.
-/// Cheaply cloned (the server sits behind an `Arc`); the relay stops at
-/// `close` or when the last clone is dropped.
+/// A running relay: its port and URL, its access policy, its certificate
+/// with TLS, and `close`. Cheaply cloned (the server sits behind an `Arc`);
+/// the relay stops at `close` or when the last clone is dropped.
 #[derive(Clone)]
 pub struct Relay {
   server: Arc<Mutex<Option<Server>>>,
@@ -157,6 +155,15 @@ pub struct Relay {
   policy: Arc<Policy>,
   port: u16,
   url: String,
+  tls: Option<ServedCert>,
+}
+
+/// The certificate an HTTPS relay presents, and the pin its URL carries
+/// (`None` when unpinned), which every certificate it renews to keeps.
+#[derive(Clone)]
+struct ServedCert {
+  cert: crate::tls::ServerCert,
+  pin: Option<String>,
 }
 
 impl Relay {
@@ -179,11 +186,15 @@ impl Relay {
   pub async fn start(setup: RelaySetup) -> Result<Relay, String> {
     let bind = SocketAddr::new(setup.host, setup.port);
     let policy = Arc::new(Policy::new(setup.tokens.clone(), setup.allow));
-    let (mut relay, pin) = match setup.tls {
-      Some((server_config, pin)) => {
+    // iroh-relay (1.4.1) wraps a manual config in its acceptor as it is, so
+    // the config's resolver, the `ServerCert` kept here, is asked at every
+    // handshake: `set_certificate` reaches the running server.
+    let (mut relay, served) = match setup.tls {
+      Some((server, pin)) => {
         let mut relay = RelayConfig::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)));
+        let server_config = Arc::unwrap_or_clone(server.config);
         relay.tls = Some(TlsConfig::new(bind, CertConfig::Manual { server_config }));
-        (relay, pin)
+        (relay, Some(ServedCert { cert: server.cert, pin }))
       }
       None => (RelayConfig::new(bind), None),
     };
@@ -209,11 +220,18 @@ impl Relay {
       }
     };
     url.set_username(&setup.tokens[0]).map_err(|_| "relay: the URL takes no token".to_string())?;
-    if let Some(pin) = pin {
+    if let Some(pin) = served.as_ref().and_then(|served| served.pin.as_ref()) {
       url.set_query(Some(&format!("{}={pin}", super::PIN_PARAM)));
     }
     let service = server.relay_service().cloned();
-    Ok(Relay { server: Arc::new(Mutex::new(Some(server))), service, policy, port: bound.port(), url: url.to_string() })
+    Ok(Relay {
+      server: Arc::new(Mutex::new(Some(server))),
+      service,
+      policy,
+      port: bound.port(),
+      url: url.to_string(),
+      tls: served,
+    })
   }
 
   /// The port the relay listens on (the HTTPS one with TLS).
@@ -248,6 +266,30 @@ impl Relay {
     self.policy.clients()
   }
 
+  /// Present `cert` and `key` (PEM) from the next TLS handshake on; the
+  /// connections made before keep theirs. `url` never changes, so a pinned
+  /// relay takes only a certificate on the key its pin names (a new key
+  /// would change the pin every ticket and endpoint holds), and an unpinned
+  /// one any pair, which clients check by its chain. An error for a plain
+  /// HTTP relay, another key on a pinned one, and a bad pair; the current
+  /// pair stays in place.
+  pub fn set_certificate(&self, cert: &[u8], key: &[u8]) -> Result<(), String> {
+    let Some(served) = &self.tls else {
+      return Err("a plain HTTP relay has no certificate (serve it with tls)".to_string());
+    };
+    if let Some(pin) = &served.pin {
+      let leaf = crate::tls::leaf_from_pem(cert, "cert")?;
+      if leaf_pin(&leaf).as_ref() != Some(pin) {
+        return Err(
+          "cert: another key than the pin in this relay's url names; a pinned relay keeps its key (serve a new \
+           relay, with a new url, for a new key)"
+            .to_string(),
+        );
+      }
+    }
+    served.cert.set(cert, key)
+  }
+
   /// Stop the relay: its listener closes and the connections it carries
   /// end. Idempotent.
   pub async fn close(&self) {
@@ -258,6 +300,12 @@ impl Relay {
       }
     }
   }
+}
+
+/// The pin of a leaf certificate in its URL form (lowercase hex); `None`
+/// for a certificate that does not parse.
+fn leaf_pin(leaf: &tokio_rustls::rustls::pki_types::CertificateDer<'_>) -> Option<String> {
+  crate::tls::spki_sha256(leaf).map(|hash| super::encode_hex(&hash))
 }
 
 /// A token is URL-safe (it travels as the URL's user part unencoded) and at

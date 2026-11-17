@@ -472,12 +472,13 @@ pub struct Listener {
   tls: Option<TlsAccept>,
 }
 
-/// The TLS side of a `listen_tls` listener: the acceptor, and the
-/// handshakes in flight, each a task of its own so a stalled client holds
-/// up no other.
+/// The TLS side of a `listen_tls` listener: the acceptor, the certificate
+/// it presents (`set_certificate`), and the handshakes in flight, each a
+/// task of its own so a stalled client holds up no other.
 #[cfg(feature = "tls")]
 struct TlsAccept {
   acceptor: TlsAcceptor,
+  cert: tls::ServerCert,
   handshakes: Mutex<tokio::task::JoinSet<Option<Conn>>>,
 }
 
@@ -496,10 +497,13 @@ pub async fn listen(host: &str, port: u16) -> Result<Listener, String> {
 /// handshake as the server finished. A handshake that fails or takes longer
 /// than `tls::HANDSHAKE_TIMEOUT` drops its connection and never reaches `accept`.
 #[cfg(feature = "tls")]
-pub async fn listen_tls(host: &str, port: u16, config: Arc<tls::ServerConfig>) -> Result<Listener, String> {
+pub async fn listen_tls(host: &str, port: u16, server: tls::ServerTls) -> Result<Listener, String> {
   let mut listener = listen(host, port).await?;
-  listener.tls =
-    Some(TlsAccept { acceptor: TlsAcceptor::from(config), handshakes: Mutex::new(tokio::task::JoinSet::new()) });
+  listener.tls = Some(TlsAccept {
+    acceptor: TlsAcceptor::from(server.config),
+    cert: server.cert,
+    handshakes: Mutex::new(tokio::task::JoinSet::new()),
+  });
   Ok(listener)
 }
 
@@ -568,6 +572,19 @@ impl Listener {
         handshakes.abort_all();
       }
     }
+  }
+
+  /// Present `cert` and `key` (PEM) from the next handshake on
+  /// (`tls::ServerCert::set`); the connections accepted before keep theirs.
+  /// An error for a bad pair, which leaves the current one in place, and
+  /// for a plain listener (`listen`, every listener of a build without TLS).
+  pub fn set_certificate(&self, cert: &[u8], key: &[u8]) -> Result<(), String> {
+    #[cfg(feature = "tls")]
+    if let Some(tls) = &self.tls {
+      return tls.cert.set(cert, key);
+    }
+    let _ = (cert, key);
+    Err("a plain TCP listener has no certificate (listen, not listenTls)".to_string())
   }
 
   /// The bound local address (with the OS-assigned port when `0` was requested).

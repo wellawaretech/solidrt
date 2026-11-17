@@ -422,8 +422,8 @@ declare module "flux:p2p" {
      * A CA-signed certificate comes from the app's own ACME client (such as
      * certbot), or the relay sits behind a reverse proxy that terminates
      * TLS: then no `tls`, `host: "127.0.0.1"`, and `url` the proxy's public
-     * `https://` URL. The runtime has no built-in ACME. To renew, restart
-     * the relay with the new certificate; a fixed `token` keeps its URL.
+     * `https://` URL. The runtime has no built-in ACME. Renew the
+     * certificate with {@link Relay.setCertificate}, with no restart.
      */
     tls?: { cert: string; key: string; pinned?: boolean }
     /**
@@ -481,6 +481,25 @@ declare module "flux:p2p" {
     setAllow(ids: string[] | null): void
     /** The endpoint ids connected to the relay now. */
     clients(): string[]
+    /**
+     * Renew the certificate of an HTTPS relay while it serves: handshakes
+     * from now on present the new `cert` and `key` (PEM, as in
+     * {@link RelayOptions.tls}), and the clients connected before stay
+     * connected. A `generateCertificate` result passes as it is.
+     *
+     * {@link url} never changes. So a pinned relay takes only a certificate
+     * on the same key: a new key changes the pin that every ticket, QR code
+     * and endpoint holds, and an endpoint cannot take a new pin for a relay
+     * it knows. For a new key, close the relay and serve a new one, with a
+     * new URL. An unpinned relay takes any key (clients check its chain):
+     * this is the Let's Encrypt renewal, which makes a new key each time.
+     * `pinned` stays as the relay started (passing it throws).
+     *
+     * Throws, keeping the current certificate, on another key for a pinned
+     * relay, when either is not PEM, and when the key is not the
+     * certificate's. Throws on a relay without `tls`.
+     */
+    setCertificate(tls: { cert: string; key: string }): void
     /** Stop the relay: its listener closes and the connections it carries end. */
     close(): Promise<void>
   }

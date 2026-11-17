@@ -55,7 +55,7 @@ const SERVER_ALPN: [&str; 2] = ["h2", "http/1.1"];
 /// A TLS WebSocket server on 127.0.0.1 with the private CA's certificate,
 /// echoing text with no subprotocol picked unless one is offered.
 async fn wss_echo_server() -> u16 {
-  wss_echo_server_over(server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &SERVER_ALPN), Pick::First).await
+  wss_echo_server_over(server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &SERVER_ALPN).config, Pick::First).await
 }
 
 /// A TLS WebSocket server on 127.0.0.1 over `config` that echoes text
@@ -185,7 +185,7 @@ async fn an_untrusted_wss_server_reports_error_then_close() {
 
 #[tokio::test]
 async fn wss_echoes_to_a_self_signed_server_through_a_pin() {
-  let server = server_config_of(SELF_SIGNED, SELF_SIGNED_KEY, ClientAuth::None, &SERVER_ALPN);
+  let server = server_config_of(SELF_SIGNED, SELF_SIGNED_KEY, ClientAuth::None, &SERVER_ALPN).config;
   let port = wss_echo_server_over(server, Pick::First).await;
   let pin = parse_pin(SELF_SIGNED_PIN).expect("pin");
   let tls = client_config(&ClientOptions { pin: Some(pin), ..Default::default() }).expect("client config");
@@ -205,7 +205,7 @@ async fn the_server_picks_one_of_the_offered_subprotocols() {
 
 #[tokio::test]
 async fn a_server_that_picks_no_subprotocol_agrees_on_none() {
-  let server = server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &SERVER_ALPN);
+  let server = server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &SERVER_ALPN).config;
   let port = wss_echo_server_over(server, Pick::Nothing).await;
   let (events, protocol) = run_offering(&format!("wss://localhost:{port}/echo"), private_ca(), &["chat"]).await;
   assert_eq!(events, ["open", "text: hello", "close: 1000 true"]);
@@ -214,7 +214,7 @@ async fn a_server_that_picks_no_subprotocol_agrees_on_none() {
 
 #[tokio::test]
 async fn a_pick_that_was_not_offered_fails_the_connection() {
-  let server = server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &SERVER_ALPN);
+  let server = server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &SERVER_ALPN).config;
   let port = wss_echo_server_over(server, Pick::Unoffered).await;
   let url = format!("wss://localhost:{port}/echo");
   let error = format!("error: connect failed: the server picked a subprotocol that was not offered: {UNOFFERED}");

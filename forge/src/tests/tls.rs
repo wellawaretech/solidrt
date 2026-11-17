@@ -43,7 +43,7 @@ fn port_of(listener: &Listener) -> u16 {
   listener.local_addr().rsplit(':').next().and_then(|p| p.parse().ok()).expect("listener port")
 }
 
-pub(super) fn server_config_of(cert: &[u8], key: &[u8], client_auth: ClientAuth, alpn: &[&str]) -> Arc<ServerConfig> {
+pub(super) fn server_config_of(cert: &[u8], key: &[u8], client_auth: ClientAuth, alpn: &[&str]) -> ServerTls {
   server_config(&ServerOptions {
     cert: cert.to_vec(),
     key: key.to_vec(),
@@ -65,7 +65,7 @@ fn with_client_cert(opts: ClientOptions) -> ClientOptions {
 /// the client's result, and the connection the listener accepted (if any
 /// by `QUIET_MS` after the client's handshake).
 async fn handshake(
-  server: Arc<ServerConfig>,
+  server: ServerTls,
   client: &ClientOptions,
   name: &str,
 ) -> (Result<Conn, String>, Option<Conn>, Listener) {
@@ -236,7 +236,7 @@ async fn half_close_sends_close_notify_and_keeps_reading() {
 async fn a_peer_that_skips_close_notify_ends_the_read() {
   let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
   let port = listener.local_addr().expect("addr").port();
-  let acceptor = TlsAcceptor::from(server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &[]));
+  let acceptor = TlsAcceptor::from(server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &[]).config);
   let server = tokio::spawn(async move {
     let (tcp, _) = listener.accept().await.expect("accept");
     let mut tls = acceptor.accept(tcp).await.expect("server handshake");
@@ -259,7 +259,7 @@ async fn a_peer_that_skips_close_notify_ends_the_read() {
 /// A STARTTLS server: answers one plain-text line with `OK`, then does the
 /// TLS handshake on the same socket and echoes one chunk over it.
 async fn starttls_server() -> u16 {
-  starttls_server_over(server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &[])).await
+  starttls_server_over(server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &[]).config).await
 }
 
 /// `starttls_server` over `config`: a config shared with a `listen_tls`
@@ -352,7 +352,7 @@ async fn start_tls_upgrades_both_sides_of_a_plain_connection() {
   server.write(b"OK\r\n".to_vec()).await.expect("answer");
   assert_eq!(soon(next_chunk(&mut client.readable())).await, Ok(Some(b"OK\r\n".to_vec())));
 
-  let as_server = TlsRole::Server(server_config_of(SERVER, SERVER_KEY, ClientAuth::AnyKey, &[]));
+  let as_server = TlsRole::Server(server_config_of(SERVER, SERVER_KEY, ClientAuth::AnyKey, &[]).config);
   let config = client_config(&with_client_cert(private_ca_client())).expect("client config");
   let (server_tls, client_tls) = tokio::join!(
     start_tls(&server, CONNECT_MS, as_server),
@@ -388,7 +388,7 @@ fn generated(names: &[&str], is_ca: bool, issuer: Option<&GeneratedCertificate>)
   .expect("generate certificate")
 }
 
-fn served(made: &GeneratedCertificate) -> Arc<ServerConfig> {
+fn served(made: &GeneratedCertificate) -> ServerTls {
   server_config_of(made.cert.as_bytes(), made.key.as_bytes(), ClientAuth::None, &[])
 }
 
@@ -467,6 +467,70 @@ fn generate_certificate_errors_name_the_field() {
   generate_certificate(&wildcard).expect("a wildcard name");
 }
 
+// ---- renewal -----------------------------------------------------------------
+
+fn pinned_to(made: &GeneratedCertificate) -> ClientOptions {
+  ClientOptions { pin: Some(parse_pin(&made.pin).expect("pin")), ..Default::default() }
+}
+
+/// Why a full handshake by `client` with `listener` fails (no session to
+/// resume, so the certificate is checked), the accept running beside it.
+async fn refusal(listener: &Listener, client: &ClientOptions) -> String {
+  let config = client_config_without_resumption(client).expect("client config");
+  let name = server_name("localhost").expect("name");
+  let connect = connect_tls("127.0.0.1", port_of(listener), CONNECT_MS, config, name, None);
+  let refused = tokio::select! {
+    connected = connect => connected.err(),
+    // A failed handshake never reaches accept: only a passing one ends here.
+    _ = listener.accept() => None,
+  };
+  refused.expect("the handshake fails")
+}
+
+#[tokio::test]
+async fn a_listener_presents_a_new_certificate_to_new_handshakes() {
+  let first = generated(&["localhost"], false, None);
+  let second = generated(&["localhost"], false, None);
+  let listener = listen_tls("127.0.0.1", 0, served(&first)).await.expect("listen_tls");
+  let configs = ClientConfigs::new();
+  let (before, accepted) = greeted(&listener, &configs, &pinned_to(&first)).await;
+  listener.set_certificate(second.cert.as_bytes(), second.key.as_bytes()).expect("set certificate");
+  let (after, _accepted) = greeted(&listener, &configs, &pinned_to(&second)).await;
+  assert_eq!(after.peer_key(), Some(second.pin.clone()), "a new handshake gets the new certificate");
+  assert_eq!(before.peer_key(), Some(first.pin.clone()));
+  before.write(b"still open".to_vec()).await.expect("write");
+  assert_eq!(soon(next_chunk(&mut accepted.readable())).await, Ok(Some(b"still open".to_vec())));
+  let err = refusal(&listener, &pinned_to(&first)).await;
+  assert!(err.contains("does not match the pin"), "the old key is gone: {err}");
+}
+
+#[tokio::test]
+async fn a_bad_pair_leaves_the_certificate_in_place() {
+  let first = generated(&["localhost"], false, None);
+  let second = generated(&["localhost"], false, None);
+  let listener = listen_tls("127.0.0.1", 0, served(&first)).await.expect("listen_tls");
+  let err = listener.set_certificate(second.cert.as_bytes(), first.key.as_bytes()).err().expect("a mismatch");
+  assert_eq!(err, "key: does not belong to cert");
+  let err = listener.set_certificate(b"not a pem", second.key.as_bytes()).err().expect("no certificate");
+  assert!(err.starts_with("cert: "), "{err}");
+  let err = listener.set_certificate(second.cert.as_bytes(), b"not a pem").err().expect("no key");
+  assert!(err.starts_with("key: "), "{err}");
+  let (client, _accepted) = greeted(&listener, &ClientConfigs::new(), &pinned_to(&first)).await;
+  assert_eq!(client.peer_key(), Some(first.pin.clone()), "the first pair still serves");
+
+  let options = ServerOptions {
+    cert: SERVER.to_vec(),
+    key: SELF_SIGNED_KEY.to_vec(),
+    alpn: Vec::new(),
+    client_auth: ClientAuth::None,
+  };
+  let err = server_config(&options).err().expect("a mismatch at the start");
+  assert_eq!(err, "key: does not belong to cert");
+  let plain = listen("127.0.0.1", 0).await.expect("listen");
+  let err = plain.set_certificate(first.cert.as_bytes(), first.key.as_bytes()).err().expect("a plain listener");
+  assert!(err.contains("no certificate"), "{err}");
+}
+
 // ---- session resumption ------------------------------------------------------
 
 /// What a resumption test's server sends first, after each handshake.
@@ -496,7 +560,7 @@ async fn greeted_over(listener: &Listener, config: Arc<ClientConfig>, client: &C
 
 /// Two connections with equal options to `server`: the first a full
 /// handshake, the second resumed, on both sides.
-async fn second_connection_resumes(server: Arc<ServerConfig>) {
+async fn second_connection_resumes(server: ServerTls) {
   let listener = listen_tls("127.0.0.1", 0, server).await.expect("listen_tls");
   let configs = ClientConfigs::new();
   let (client, accepted) = greeted(&listener, &configs, &private_ca_client()).await;
@@ -577,7 +641,7 @@ async fn start_tls_resumes_a_connect_tls_session() {
   let (first, _accepted) = greeted(&listener, &configs, &private_ca_client()).await;
   assert!(!first.resumed());
 
-  let port = starttls_server_over(server).await;
+  let port = starttls_server_over(server.config).await;
   let conn = connect("127.0.0.1", port, CONNECT_MS).await.expect("connect");
   conn.write(b"STARTTLS\r\n".to_vec()).await.expect("write");
   assert_eq!(soon(next_chunk(&mut conn.readable())).await, Ok(Some(b"OK\r\n".to_vec())));

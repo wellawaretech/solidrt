@@ -25,7 +25,9 @@
 //! replacement (which drops a live client) over HTTP and HTTPS, the connected
 //! clients, the URL override (keeping the pin of an HTTPS relay), the
 //! validation errors, and an HTTPS relay's port and URL (its pin by default
-//! for a self-signed leaf only) with a handshake by pin.
+//! for a self-signed leaf only) with a handshake by pin, and its renewal in
+//! place (a new key on an unpinned relay, the same key only on a pinned one,
+//! the URL kept).
 //! Endpoint trust: an HTTPS relay reached by the pin in its URL (through an
 //! adopted ticket relay too), refused on a wrong pin, a CA-signed one
 //! reached through `relayCaCerts` only, a pinned relay and `relayCaCerts`
@@ -571,6 +573,51 @@ async fn tls_relay_leaves_a_ca_signed_leaf_unpinned() {
   let pinned = tls_relay(&leaf, Some(true)).await;
   assert!(pinned.url().ends_with(&format!("/?pin={}", leaf.pin)), "pinned: true pins it: {}", pinned.url());
   pinned.close().await;
+}
+
+// The certificate renews in place: iroh-relay asks the resolver at every
+// handshake, so the running relay presents the new pair, and the URL stays.
+#[tokio::test]
+async fn an_unpinned_relay_renews_its_certificate() {
+  let ca = certificate("relay-ca.test", true, None);
+  let first = certificate("127.0.0.1", false, Some(&ca));
+  let second = certificate("127.0.0.1", false, Some(&ca));
+  let relay = tls_relay(&first, None).await;
+  let url = relay.url().to_string();
+  handshake(relay.port(), &first.pin).await.expect("the first key");
+  relay.set_certificate(second.cert.as_bytes(), second.key.as_bytes()).expect("an unpinned relay takes a new key");
+  handshake(relay.port(), &second.pin).await.expect("the new key");
+  assert!(handshake(relay.port(), &first.pin).await.is_err(), "the first key is gone");
+  assert_eq!(relay.url(), url, "the URL stays");
+  let endpoint = Endpoint::bind(None, Some(url), Vec::new(), None, false, vec![ca.cert.clone().into_bytes()])
+    .await
+    .expect("the endpoint binds");
+  endpoint.ticket(TicketOptions::default()).await.expect("the renewed relay is reached through relayCaCerts");
+  endpoint.close().await;
+  relay.close().await;
+}
+
+#[tokio::test]
+async fn a_pinned_relay_keeps_its_key() {
+  let leaf = certificate("127.0.0.1", false, None);
+  let relay = tls_relay(&leaf, None).await;
+  let url = relay.url().to_string();
+  let other = certificate("127.0.0.1", false, None);
+  let err = relay.set_certificate(other.cert.as_bytes(), other.key.as_bytes()).err().expect("another key");
+  assert!(err.contains("a pinned relay keeps its key"), "{err}");
+  let err = relay.set_certificate(leaf.cert.as_bytes(), other.key.as_bytes()).err().expect("a mismatch");
+  assert_eq!(err, "key: does not belong to cert");
+  relay.set_certificate(leaf.cert.as_bytes(), leaf.key.as_bytes()).expect("the same key");
+  handshake(relay.port(), &leaf.pin).await.expect("the pinned key still serves");
+  assert_eq!(relay.url(), url, "the URL stays");
+  relay.close().await;
+
+  let plain = Relay::serve(RelayOptions { host: Some("127.0.0.1".to_string()), ..RelayOptions::default() })
+    .await
+    .expect("the relay serves");
+  let err = plain.set_certificate(leaf.cert.as_bytes(), leaf.key.as_bytes()).err().expect("a plain relay");
+  assert!(err.contains("no certificate"), "{err}");
+  plain.close().await;
 }
 
 /// `url` with its `?pin=` replaced by `pin`.

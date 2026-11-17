@@ -414,9 +414,34 @@ where
   })
 }
 
+/// Whether a connection error is the peer having hung up: an I/O error,
+/// anywhere in the chain, that says the other side closed or reset the
+/// connection. A server that asked the connection to close expects this.
+fn peer_hung_up(e: &hyper::Error) -> bool {
+  let mut source = std::error::Error::source(e);
+  while let Some(err) = source {
+    if let Some(io) = err.downcast_ref::<std::io::Error>() {
+      return matches!(
+        io.kind(),
+        std::io::ErrorKind::BrokenPipe
+          | std::io::ErrorKind::ConnectionReset
+          | std::io::ErrorKind::ConnectionAborted
+          | std::io::ErrorKind::NotConnected
+          | std::io::ErrorKind::UnexpectedEof
+      );
+    }
+    source = err.source();
+  }
+  false
+}
+
 /// Run a hyper connection `conn` to its end. On a stop signal, finish any
 /// in-flight request then close (`graceful` asks the connection to); an idle
 /// keep-alive connection has nothing in flight, so it closes promptly.
+/// Closing is a handshake with the peer (an HTTP/2 GOAWAY and PING, the TLS
+/// close_notify), and a peer that hangs up before it ends has done what the
+/// server asked: its reset or broken pipe ends the connection without a
+/// report. Every other error, and any error before the stop, is reported.
 async fn drive<C>(conn: C, graceful: impl FnOnce(Pin<&mut C>), logger: Logger, mut shutdown_rx: watch::Receiver<bool>)
 where
   C: Future<Output = Result<(), hyper::Error>>,
@@ -430,8 +455,9 @@ where
     }
     _ = wait_for_stop(&mut shutdown_rx) => {
       graceful(conn.as_mut());
-      if let Err(e) = conn.as_mut().await {
-        logger.warn(&format!("[flux] serve connection error: {e}"));
+      match conn.as_mut().await {
+        Err(e) if !peer_hung_up(&e) => logger.warn(&format!("[flux] serve connection error: {e}")),
+        _ => {}
       }
     }
   }

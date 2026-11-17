@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::forge_plugins::net::tls_server_options;
+use crate::forge_plugins::net::{certificate_arg, tls_server_options};
 #[cfg(feature = "p2p")]
 use crate::forge_plugins::p2p::P2pEndpoint;
 use crate::forge_plugins::websocket::{message_payload, parse_ws_handlers, spawn_socket, ServeUpgrade, WsHandlers};
@@ -375,9 +375,10 @@ pub struct Server {
   /// The pub/sub topic registry shared with every socket of this server.
   #[qjs(skip_trace)]
   topics: Topics,
-  /// Whether `serve` got a `tls` option: the TCP listener serves HTTPS.
+  /// The certificate the TCP listener presents when `serve` got a `tls`
+  /// option (it serves HTTPS); `None` for plain HTTP.
   #[qjs(skip_trace)]
-  tls: bool,
+  cert: Option<forge::tls::ServerCert>,
 }
 
 #[rquickjs::methods]
@@ -498,8 +499,22 @@ impl Server {
 
   #[qjs(get)]
   pub fn url(&self) -> String {
-    let scheme = if self.tls { "https" } else { "http" };
+    let scheme = if self.cert.is_some() { "https" } else { "http" };
     format!("{scheme}://{}:{}/", self.host, self.port)
+  }
+
+  /// `setCertificate({ cert, key })`: the certificate the TCP listener
+  /// presents from the next handshake on (`forge::tls::ServerCert::set`);
+  /// the connections made before keep theirs. Throws for a bad pair, which
+  /// leaves the current one in place, and on a server without `tls`.
+  #[qjs(rename = "setCertificate")]
+  pub fn set_certificate<'js>(&self, ctx: Ctx<'js>, tls: OptArg<Value<'js>>) -> rquickjs::Result<()> {
+    let throw = |m: &str| Exception::throw_message(&ctx, &format!("setCertificate: {m}"));
+    let (cert, key) = certificate_arg(&ctx, tls)?;
+    match &self.cert {
+      Some(served) => served.set(&cert, &key).map_err(|m| throw(&m)),
+      None => Err(throw("a plain HTTP server has no certificate (serve it with tls)")),
+    }
   }
 }
 
@@ -554,13 +569,13 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
 
   // The `tls` option: the TCP listener serves HTTPS, `h2` or `http/1.1` by
   // ALPN. Parsed before anything binds, so a bad option throws first.
-  let tls_config = match opts.get::<_, Option<Object<'js>>>("tls")? {
+  let tls_server = match opts.get::<_, Option<Object<'js>>>("tls")? {
     Some(o) => {
       let alpn = SERVE_TLS_ALPN.iter().map(|p| p.to_string()).collect();
       let options = tls_server_options(&ctx, "serve: tls", &o, alpn)?;
-      let config =
+      let server =
         forge::tls::server_config(&options).map_err(|m| Exception::throw_message(&ctx, &format!("serve: tls: {m}")))?;
-      Some(config)
+      Some(server)
     }
     None => None,
   };
@@ -585,7 +600,7 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
       host,
       has_websocket: websocket.is_some(),
       topics: Topics::default(),
-      tls: tls_config.is_some(),
+      cert: tls_server.as_ref().map(|server| server.cert.clone()),
     },
   )?;
   let handlers = Handlers { fetch_fn, error_fn, routes, websocket, server: server.clone() };
@@ -600,9 +615,9 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
     let accept_logger = loop_logger.clone();
     // With `tls`, one executor per server spawns the HTTP/2 streams of its
     // connections on the JS executor, as their request futures are not `Send`.
-    let tls = tls_config.map(|config| {
+    let tls = tls_server.map(|server| {
       let exec_ctx = loop_ctx.clone();
-      (config, LocalExecutor::new(move |fut| exec_ctx.spawn(fut)))
+      (server.config, LocalExecutor::new(move |fut| exec_ctx.spawn(fut)))
     });
     // Each accepted socket spawns its own connection task. Spawning stays here in
     // the marshalling layer (the engine-free core hands sockets back through this

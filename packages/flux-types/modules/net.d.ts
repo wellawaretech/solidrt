@@ -292,6 +292,18 @@ declare module "flux:net" {
     readonly localAddr: string
     /** Close the listener: release the port and end the iteration. */
     close(): void
+    /**
+     * Renew the certificate of a {@link listenTls} listener while it
+     * listens: handshakes from now on present the new `cert` and `key`
+     * (PEM, as in {@link ListenTlsOptions}), and the connections accepted
+     * before keep the certificate they were made with. A
+     * {@link generateCertificate} result passes as it is. The client policy
+     * and the ALPN list stay as the listener started (`caCerts`,
+     * `anyClientCert` and `alpn` throw). Throws, keeping the current
+     * certificate, when either is not PEM or the key is not the
+     * certificate's. Throws on a {@link listen} listener.
+     */
+    setCertificate(tls: { cert: string; key: string }): void
     [Symbol.asyncIterator](): AsyncIterator<Conn>
   }
 
@@ -420,7 +432,8 @@ declare module "flux:net" {
    * Bind a TLS {@link Listener} on `port` (0 = OS-assigned). Its connections
    * arrive with the handshake done: a client that stalls does not hold up
    * the next one, and a failed handshake (or one longer than 10 s) is
-   * dropped and never arrives.
+   * dropped and never arrives. Renew its certificate with
+   * {@link Listener.setCertificate}.
    *
    * Only with the "tls" capability; without it this throws.
    */

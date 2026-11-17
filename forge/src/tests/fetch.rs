@@ -428,7 +428,7 @@ async fn get(client: &Client, limits: &HostLimits, url: &str) -> Result<Response
 }
 
 fn ca_server() -> Arc<ServerConfig> {
-  server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &["h2", "http/1.1"])
+  server_config_of(SERVER, SERVER_KEY, ClientAuth::None, &["h2", "http/1.1"]).config
 }
 
 #[tokio::test]
@@ -445,7 +445,7 @@ async fn a_client_with_ca_certs_trusts_a_private_ca() {
 
 #[tokio::test]
 async fn mutual_tls_presents_the_client_certificate() {
-  let url = tls_server(server_config_of(SERVER, SERVER_KEY, ClientAuth::Chain(vec![CA.to_vec()]), &[])).await;
+  let url = tls_server(server_config_of(SERVER, SERVER_KEY, ClientAuth::Chain(vec![CA.to_vec()]), &[]).config).await;
   let limits = HostLimits::new(2);
   let with_cert = ClientOptions {
     ca_certs: vec![CA.to_vec()],
@@ -460,7 +460,7 @@ async fn mutual_tls_presents_the_client_certificate() {
 
 #[tokio::test]
 async fn a_pinned_client_trusts_the_key_and_rejects_another() {
-  let url = tls_server(server_config_of(SELF_SIGNED, SELF_SIGNED_KEY, ClientAuth::None, &[])).await;
+  let url = tls_server(server_config_of(SELF_SIGNED, SELF_SIGNED_KEY, ClientAuth::None, &[]).config).await;
   let limits = HostLimits::new(2);
   let pinned = |pin: &str| tls_client(ClientOptions { pin: Some(parse_pin(pin).expect("pin")), ..Default::default() });
   assert_eq!(get(&pinned(SELF_SIGNED_PIN), &limits, &url).await.expect("fetch").status, 200);
