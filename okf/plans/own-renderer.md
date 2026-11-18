@@ -842,3 +842,155 @@ CPU came from `/proc`. The TV's dev client is the branch's from
   frames that demand every refresh; reads split into a high group near
   the frame period and a low group that is the work, and only the low
   group compares renderers.
+
+### Stage 2: the fill program (2026-11-18)
+
+Plain rect fills (kind rect, untextured, no stroke, no rounded clip) draw
+through a third program, `fill`: it reads `vDevice`, `vColor` and `vClip`,
+applies the clip box as a factor and never discards, as the glyph program
+already did; no derivatives, no kind branch. A batch carries its program
+(`BatchProgram` in `walk.rs`: fill, shape, glyph). A plain rect joins an
+open fill batch, or rides along in an open shape batch when its device
+area is below `FILL_FOLD_AREA` (65,536 device pixels, a tuning value to
+re-read on the TV), so a list that interleaves rects with other shapes
+does not multiply its draw calls; a large rect, or one with no shape
+batch open (every app background), opens a fill batch. The area is the
+unclipped quad's. Pixel output is identical: the six core examples
+differ in no pixel from the branch's output before the change, and the
+shape program's rect arm computed coverage 1 with the same clip
+predicate, so discard against writing zero is the same under
+premultiplied source-over. One case draws in two calls where it drew in
+one: rects first, then a texture, then a rect (the leading rects are a
+fill batch now).
+
+TV (Philips TPM171E, Mali-T860, 1920x1080 at 50 Hz, release client of
+the fill-program tree over `aed5ba5a`, cadence hold off, clock x5 on the
+mover, three reads of 10 s after a 100 s idle; "before" is the stage 2
+measurement above):
+
+| probe | before: GPU ms / frame | after: GPU ms / frame | frames / 10 s | missed | inst / frame | dc / frame | frameWorkMean ms |
+|---|---|---|---|---|---|---|---|
+| prose bench, window patch off | 31.8 (186 frames) | 13.3 | 500, 500, 500 | 0 | 1646 | 2.0 | 22.4 |
+| dense mover, patch on | 8.7 | 4.2 | 500, 500, 500 | 0 | 665 | 1.03 | 8.8 |
+| dense mover, patch off | 9.1 | 3.4 | 500, 500, 500 | 0 | 801 | 1.02 | 6.9 |
+
+The prose bench's full frame is now the text's 7.6 ms plus about 5.7 ms
+of fills and compositor; the dense mover's full frame of 801 rects in one
+call is 3.4 ms, below the patch-on frame's 4.2 (the patch route's resolve
+and copy). The desktop is unchanged (zero pixel diff; draw calls per
+frame as before but for the case above).
+
+**Stage 2 is done.** Its Done criteria hold under the default partial
+repaint and with the window patch off: the dense mover and the prose
+bench run locked at 50 fps on the TV, and a screen of prose draws in two
+or three batches. Open from the stage, into the backlog or later stages:
+the partial-repaint patch that is a third of the window on the mover
+probes under both renderers (`okf/backlog/repaint-patch-union.md`); the
+sampler-array TV read, not taken (its design is above); `FILL_FOLD_AREA`
+not yet re-read on the TV.
+
+### What the fill program taught
+
+- The fragment program's shape, not the instance count, set the Mali's
+  cost: the same 801 rects in the same single draw call went from 9.1 ms
+  to 3.4 ms by dropping discards, derivatives and unused varyings from
+  the program they draw through. Stage 3's mesh program and stage 4's
+  direct shaders should start minimal and grow, not share an uber-shader.
+- A batch's program is a property of the batch, and a cheap-program
+  instance may ride along in an expensive-program batch (the shape
+  program draws a rect correctly) when that saves a draw call: the
+  decision is an area threshold, because the saving is per fragment and
+  the cost is per call.
+- The reference for a refactor that must not move pixels is the branch's
+  own output before the change, not main: a zero diff at tolerance 0 is
+  a stronger check than any diff against Impeller.
+
+### Where anvil lives (2026-11-18)
+
+anvil is a module behind the seam, `alloy/src/renderer/anvil/` (the plan
+named `anvil.rs`; it grew into a folder). Its name and Impeller's
+precedent point at a renderer of its own, outside alloy, owning more
+than Impeller did, not less. Three scopes are in play:
+
+1. **anvil today** owns less than Impeller: the recording and the
+   execution of one list. Impeller also owned its surfaces and render
+   targets; for anvil those sit in `alloy/src/gl/`.
+2. **Impeller's scope plus the GL toolkit.** anvil takes the renderer
+   work below and the toolkit, and alloy's own GL code builds on that
+   toolkit. That is more than Impeller, which never offered a GL layer
+   for alloy's code to use.
+3. **All of `gl/`.** Scope 2 plus the host work below.
+
+The proposal is scope 2, with the open items below decided case by
+case.
+
+**Renderer work**, into anvil:
+
+- `gl/draw.rs` and `gl/rig.rs`: a list drawn into a texture, a retained
+  layer or the window, through the MSAA rig (Impeller's surface and
+  render-target role).
+- `gl/glyphs.rs`, the old glyph pass. Stage 2 ported it into anvil
+  (`draw_glyphs`, `KIND_GLYPH`), so a `<text>` no longer uses it; it
+  stays only because the stats overlay draws its text through it and
+  `Text::rasterize`. Nothing in the plan removes it yet: the overlay
+  moves to `draw_glyphs` and the pass goes. Stage 7 moves the glyph
+  vocabulary out of `alloy/src/gpu/glyphs.rs` but does not say where;
+  with the pass gone, its home is anvil.
+- The GL toolkit anvil already leans on: texture creation and the
+  sampler cache (`texture.rs`), upload staging (`staging.rs`), stage
+  compile (`program.rs`), target readback (`readback.rs`).
+
+**Host work**, staying in alloy:
+
+- Context bootstrap over ore's GL surface and EGL (`context.rs`,
+  `egl_headless.rs`): a renderer crate does not depend on ore.
+- Robustness and context-loss recovery (`robustness.rs`): what to do on
+  a reset is a policy, and policy is the host's.
+
+**Open:**
+
+- The app-facing `gpu` protocol executors, about 5000 lines: programs,
+  passes, targets, buffers, storage, slicing, entry, timing. They carry
+  out a plain vocabulary over GL with no policy of their own, and stage
+  4 draws app programs straight into anvil's frame, so anvil is a
+  defensible home, maybe the cleaner one. If they stay in alloy, they
+  build on anvil's toolkit, never the other way round.
+- The window tap (`tap.rs`): either side.
+
+**The links that point the wrong way** for a cut today: `gl/draw.rs`
+imports `raster::{DamageRect, WindowRoute}`, `gl/rig.rs` reads `backend`
+and `egl_headless` for its probes, and anvil imports `gpu`'s glyph
+types (`GlyphQuad`, `CoveragePolicy`, `GlyphGradient`, `RAMP_WIDTH`).
+Each becomes a plain value passed in or a type that moves with anvil.
+
+**Timing.** Not inside stage 2, whose rect fast path is next. Each of
+stages 3 to 6 adds code that reaches into `gl/`, so the cut is cheapest
+before stage 3: first a top-level `alloy/src/anvil/` with no `crate::`
+import back into alloy (the contract, the vocabulary and the toolkit as
+its surface), then the crate split, which by then is mechanical. Not
+decided yet.
+
+**Decided (2026-11-18).** anvil becomes a crate, `anvil/`, holding what
+the seam holds today: the contract, the vocabulary, the op log (a cargo
+feature, `oplog`, that alloy enables for its tests only, since
+`cfg(test)` does not cross a crate boundary), the recording and the
+execution, and the glyph vocabulary from `gpu/glyphs.rs`. It depends on
+glow, euclid and log, nothing of ours. `alloy/src/renderer/mod.rs` stays
+as a re-export so nothing outside it changes. Two corrections to the
+section above led there: anvil uses none of the "toolkit" (`texture.rs`,
+`staging.rs`, `program.rs`, `readback.rs`): its executor compiles its own
+programs, owns its samplers and uploads its instance buffer itself; and
+`program.rs` and `texture.rs` are not a neutral GL layer but the gpu
+protocol's halves, built on `gpu::vocab` and `gpu::texture`, so pulling
+them into anvil would make the renderer depend on the app-facing
+protocol, the wrong direction. Scope 2 as written is therefore not a
+cut that exists. `draw.rs` and `rig.rs` (the surface role, the MSAA
+target) stay in alloy until stage 6's target pool gives anvil a target
+abstraction of its own; that is when the question is asked again, with
+`gl/draw.rs`'s `WindowRoute` and `DamageRect` as the values to pass in.
+The old glyph pass goes now, not at stage 7: its one consumer, the stats
+HUD's text (`Text::rasterize`), records its runs through `draw_glyphs`
+like the tree walk and rasterizes the list through the general
+list-to-texture path, and `GlyphGroup`, `RasterCmd::RasterizeGlyphs` and
+`gl/glyphs.rs` leave with it. The app-facing gpu executors stay in alloy
+(they carry out what lattice chooses, alloy's role).

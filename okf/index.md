@@ -863,6 +863,13 @@ Shaped, not started.
   removeNode detaches and a microtask sweep frees, so control-flow reuse
   inside one tick survives but a node re-inserted in a later async tick is
   already gone, where the DOM would have kept it alive.
+- **[The partial-repaint patch on the mover probes is a third of the window](backlog/repaint-patch-union.md)** [2026-11-18]
+  On the dense and sparse mover probes the window's repaint patch reaches from
+  the mover's older left edge to the window's right edge and from the top of
+  the window to the mover's bottom, about 410,000 device pixels for a 20 px
+  mover, under Impeller and anvil alike; the route's union of this frame's
+  damage with the ring of the last age-1 frames' damage is the suspect, in
+  particular a fold of an empty rect with a non-zero origin.
 - **[Rich text editor](backlog/rich-text-editor.md)** [2026-08-18]
   TextInput edits a string, so styled runs, links, inline atoms and block
   attributes could not be authored in-app; the editor exists since 2026-08-19
