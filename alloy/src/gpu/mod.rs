@@ -40,8 +40,8 @@ pub use order::{
 };
 pub use order_worker::{OrderCounters, OrderWorker, PackedJob, SortJob};
 pub use resources::{
-  DrawListFacts, GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo,
-  GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, LostContent,
+  DrawListFacts, GpuBufferInfo, GpuBufferLayoutInfo, GpuPaintShaderInfo, GpuPipelineInfo, GpuProgramInfo,
+  GpuRegionInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, LostContent,
 };
 pub use spec::{DepthStorage, DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use texture::{

@@ -160,6 +160,8 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       num(&mut out, "textDecorationThickness", text.underline_thickness);
     }
     ElementKind::Span(_) => {} // its text already rides the snapshot
+    // Its own props are not marshalled yet.
+    ElementKind::Shader(_) => {}
     ElementKind::Texture(tex) => {
       if let Some(id) = tex.texture_id {
         out.push(("src", ReadValue::Int(id as i64)));

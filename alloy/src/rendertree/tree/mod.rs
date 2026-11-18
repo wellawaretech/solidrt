@@ -1082,6 +1082,10 @@ impl RenderTree {
   /// snapshot boundary keeps the present-only reuse path. Returns whether
   /// anything was invalidated.
   ///
+  /// A shader element sampling a changed id as an input is simpler: Paint
+  /// damage on the whole node (`apply_damage`), which re-records it and the
+  /// recordings and bakes above it, and moves the revision.
+  ///
   /// Under a frozen node (Element::frozen) nothing shows the change: its
   /// held picture keeps the old pixels. The content hit is dropped (no
   /// window damage), a bake hit's walk sets the stale marks up to the frozen
@@ -1095,6 +1099,8 @@ impl RenderTree {
     }
     let mut bake_hits: Vec<u64> = Vec::new();
     let mut shader_hits: Vec<u64> = Vec::new();
+    // Shader elements whose inputs changed: the whole node is paint damage.
+    let mut paint_hits: Vec<u64> = Vec::new();
     // Per node showing a changed id: the node whose extent stands for its
     // pixels, with the window extent the change stays inside; None is that
     // whole node.
@@ -1123,6 +1129,13 @@ impl RenderTree {
             }
           }
         }
+        // A shader element samples its inputs as it draws: the whole node is
+        // the damage, and a recording or bake over it goes with it.
+        ElementKind::Shader(s) => {
+          if s.input_ids().any(|t| changes.contains(&t)) {
+            paint_hits.push(id);
+          }
+        }
         // The shader only runs on the view's OWN snapshot boundary (declared
         // without one it is ignored with a warning), so ancestor boundaries
         // are irrelevant here.
@@ -1142,8 +1155,12 @@ impl RenderTree {
         None => self.note_damage(node),
       }
     }
+    let mut painted = false;
+    for id in paint_hits {
+      painted |= !self.apply_damage_walk(id, Damage::Paint);
+    }
     if bake_hits.is_empty() && shader_hits.is_empty() {
-      return false;
+      return painted;
     }
     let mut baked = false;
     for id in &bake_hits {
@@ -1161,7 +1178,7 @@ impl RenderTree {
       }
       shaded |= !self.apply_damage_walk(id, Damage::Compose);
     }
-    baked || shaded
+    baked || shaded || painted
   }
 
   // One walk up from texture node `node_id` (`texture`), showing
@@ -1278,7 +1295,8 @@ impl RenderTree {
 
   /// Texture registry ids referenced by any live element, attached or
   /// detached (a detached node can be re-inserted, so its reference counts):
-  /// texture elements' sources and boundary shaders' extra sampler inputs.
+  /// texture elements' sources, shader elements' inputs and boundary
+  /// shaders' extra sampler inputs.
   /// Used by the deferred-destroy sweep to decide which pending ids are
   /// reclaimable, and (through `shown_texture_ids`) by the video upload
   /// gate; called only while destroys are pending or a YUV texture exists,
@@ -1292,6 +1310,7 @@ impl RenderTree {
             ids.insert(id);
           }
         }
+        ElementKind::Shader(s) => ids.extend(s.input_ids()),
         ElementKind::View(v) => {
           if let Some(shader) = &v.shader {
             ids.extend(shader.textures.iter().map(|b| b.id));

@@ -135,7 +135,8 @@ pub enum AlloyEvent {
   // The GL context was lost and the engine rebuilt every GPU resource on a
   // fresh one (okf/done/gpu-context-loss.md): `handles` are the new
   // renderer adoptions per texture id for the UI thread's registry (its old
-  // ones belong to the dead context), `lost` the ids whose content the app
+  // ones belong to the dead context), `paint_shaders` the paint shaders
+  // linked again per id, `lost` the ids whose content the app
   // alone can re-supply, `guilty` whether the driver attributed the reset to
   // this context's own work (a pass past its hang timeout; the app's load
   // to lower, since the engine stops recovering after a few such resets in
@@ -144,6 +145,7 @@ pub enum AlloyEvent {
   // and tells the app.
   ContextRestored {
     handles: Vec<(u64, crate::renderer::Texture)>,
+    paint_shaders: Vec<(u64, crate::renderer::PaintShader)>,
     lost: crate::gpu::LostContent,
     guilty: bool,
     losses: u64,

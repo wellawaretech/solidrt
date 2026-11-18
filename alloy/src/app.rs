@@ -547,8 +547,8 @@ impl App {
               event_tx.send(e).ok();
             }
           }
-          Ok(FrameOutput::ContextRestored { handles, lost, guilty, losses }) => {
-            event_tx.send(AlloyEvent::ContextRestored { handles, lost, guilty, losses }).ok();
+          Ok(FrameOutput::ContextRestored { handles, paint_shaders, lost, guilty, losses }) => {
+            event_tx.send(AlloyEvent::ContextRestored { handles, paint_shaders, lost, guilty, losses }).ok();
           }
           Err(mpsc::TryRecvError::Empty) => break,
           Err(mpsc::TryRecvError::Disconnected) => {

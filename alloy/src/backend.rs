@@ -42,11 +42,13 @@ pub enum FrameOutput {
   ContextLost { detail: String, reply: mpsc::Sender<Option<Box<dyn GlBinding>>> },
   /// The raster thread rebuilt every GPU resource on the fresh context:
   /// `handles` are the new renderer adoptions per texture id, for the UI
-  /// thread's registry (its old ones belong to the dead context), and
-  /// `lost` what the app has to re-supply. Forwarded to the UI thread as
-  /// `AlloyEvent::ContextRestored`.
+  /// thread's registry (its old ones belong to the dead context),
+  /// `paint_shaders` the paint shaders linked again per id, for the paint
+  /// shader registry, and `lost` what the app has to re-supply. Forwarded
+  /// to the UI thread as `AlloyEvent::ContextRestored`.
   ContextRestored {
     handles: Vec<(u64, crate::renderer::Texture)>,
+    paint_shaders: Vec<(u64, crate::renderer::PaintShader)>,
     lost: crate::gpu::LostContent,
     guilty: bool,
     losses: u64,

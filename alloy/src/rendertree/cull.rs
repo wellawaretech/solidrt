@@ -297,6 +297,7 @@ fn own_extent(element: &Element, platform: &PlatformContext, inherited: Size) ->
     ElementKind::Rectangle(r) => with_shadow(r.local_bounds(frame), AA_OUTSET, &r.shadow),
     ElementKind::Oval(o) => with_shadow(o.local_bounds(frame), AA_OUTSET, &o.shadow),
     ElementKind::Texture(t) => inflate(t.local_bounds(frame), AA_OUTSET),
+    ElementKind::Shader(t) => inflate(t.local_bounds(frame), AA_OUTSET),
     ElementKind::Text(t) => match t.painted_extent(platform, content) {
       Some(r) => inflate(r, AA_OUTSET),
       None => Extent::Unbounded,

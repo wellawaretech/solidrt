@@ -322,6 +322,8 @@ pub fn apply_jsx(
     ElementKind::Text(text) => text::apply(text, name, value)?,
     ElementKind::Span(span) => text::apply_span(span, name, value)?,
     ElementKind::Texture(tex) => texture::apply(tex, name, value, gpu_params)?,
+    // Its own props are not marshalled yet: only the layout props reach it.
+    ElementKind::Shader(_) => None,
   };
   if let Some(damage) = handled {
     return Ok(damage);

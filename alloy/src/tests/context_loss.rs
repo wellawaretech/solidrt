@@ -167,7 +167,7 @@ fn recovery_rebuilds_every_object_behind_its_id() {
     let fresh: Box<dyn GlBinding> = Box::new(HeadlessEglBinding(platform_egl));
     reply.send(Some(fresh)).expect("recover awaits the reply");
     match rx.recv() {
-      Ok(FrameOutput::ContextRestored { handles, lost, guilty, losses }) => {
+      Ok(FrameOutput::ContextRestored { handles, lost, guilty, losses, .. }) => {
         // The test forced a guilty reset, the first of this process.
         assert!(guilty);
         assert_eq!(losses, 1);

@@ -3,7 +3,7 @@
 //! the enum every new GPU feature extends first; the calling conventions
 //! (fire-and-forget vs blocking RPC) are documented on the module.
 
-use crate::renderer::{DisplayList, Texture};
+use crate::renderer::{DisplayList, PaintShader, Texture};
 use std::sync::mpsc;
 
 use crate::gpu::{
@@ -390,6 +390,21 @@ pub(crate) enum RasterCmd {
   /// alive (and keep rendering); the GL program is deleted when the last user
   /// goes.
   DestroyProgram { id: u64 },
+  /// Link a paint shader (`Context::create_paint_shader`): the fragment
+  /// source behind the renderer's own vertex stage, kept with its label so
+  /// a context recovery links it again. Link errors reach JS via the reply;
+  /// success carries the renderer's handle, for the UI-side registry the
+  /// element draws from, and the reflected uniform table for the
+  /// validation mirror.
+  CreatePaintShader {
+    id: u64,
+    source: String,
+    label: Option<String>,
+    reply: mpsc::Sender<Result<(PaintShader, UniformTable), String>>,
+  },
+  /// Drop a paint shader's record. The GL program goes when the last handle
+  /// drops: a retained recording that drew it keeps it until then.
+  DestroyPaintShader { id: u64 },
   /// Declare (Some) or clear (None) the window shader. Fire-and-forget on
   /// this ordered channel, so it applies exactly between two frames. The
   /// declared program is held by Rc while active; the layer texture is

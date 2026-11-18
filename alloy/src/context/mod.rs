@@ -20,6 +20,7 @@ pub(crate) mod content;
 mod draw_list;
 mod mirror;
 mod order;
+mod paint_shader;
 mod program;
 mod spatial;
 mod target;
@@ -27,6 +28,7 @@ mod texture;
 mod window_tap;
 
 pub use capture::{CaptureDone, CaptureInfo};
+pub use paint_shader::{PaintShaderEntry, PaintShaderRegistry};
 pub use texture::YuvFrameSink;
 
 #[cfg(test)]
@@ -50,7 +52,8 @@ pub use window_tap::WindowTap;
 // with the raster-side gpu/ files where one exists: mirror.rs (the UI-side
 // validation mirrors), texture.rs (pixel textures, YUV, destroy/reclaim),
 // buffer.rs (vertex buffers and write leases), program.rs (stages,
-// programs, pipelines), target.rs (render targets, draw lists,
+// programs, pipelines), paint_shader.rs (paint shaders and their registry),
+// target.rs (render targets, draw lists,
 // params/bindings/range updates), capture.rs (node captures and readbacks),
 // spatial.rs (the spatial core's sink writer), content.rs (content-change
 // tracking and the sampler-graph walks). This file holds the struct and the
@@ -65,6 +68,10 @@ pub struct Context {
   // Frames submitted so far, as a count (see `submitted_frames`).
   submitted_frames: std::sync::atomic::AtomicU64,
   pub textures: TextureRegistry,
+  /// The paint shaders by id (see context/paint_shader.rs): the handles a
+  /// `<shader>` element draws with and their uniform tables.
+  pub paint_shaders: PaintShaderRegistry,
+  next_paint_shader_id: Cell<u64>,
   // UI-side mirror of the raster thread's shader map (see TargetMirror):
   // enough to validate the fire-and-forget updates - params, sampler
   // rebinds, draw counts - synchronously at the call site, without an RPC.
@@ -226,6 +233,8 @@ impl Context {
       stats,
       submitted_frames: std::sync::atomic::AtomicU64::new(0),
       textures: TextureRegistry::new(),
+      paint_shaders: PaintShaderRegistry::new(),
+      next_paint_shader_id: Cell::new(1),
       targets: RefCell::new(HashMap::new()),
       shader_sources: content::ShaderSources::new(),
       manual_targets: RefCell::new(HashSet::new()),
@@ -287,12 +296,24 @@ impl Context {
   /// to the dead context), mark every target's content changed (its pixels
   /// are new, so a baked snapshot over one re-bakes), and tell the raster
   /// thread the handles it refuses frames over are gone (`RasterCmd::Resync`).
+  /// The paint shaders linked again take their new handles the same way.
   /// The caller drops the render tree's paint caches and the text atlas's
   /// GPU side around this, then requests a frame.
-  pub fn restore_handles(&self, handles: Vec<(u64, crate::renderer::Texture)>) {
+  pub fn restore_handles(
+    &self,
+    handles: Vec<(u64, crate::renderer::Texture)>,
+    paint_shaders: Vec<(u64, crate::renderer::PaintShader)>,
+  ) {
     for (id, handle) in handles {
       self.textures.replace_handle(id, handle);
     }
+    let restored: std::collections::HashSet<u64> = paint_shaders.iter().map(|(id, _)| *id).collect();
+    for (id, handle) in paint_shaders {
+      self.paint_shaders.replace_handle(id, handle);
+    }
+    // A shader the new context refused keeps no stale handle (its program
+    // died with the old context and its name may be reused).
+    self.paint_shaders.retain_restored(&restored);
     let targets: Vec<u64> = self.targets.borrow().keys().copied().collect();
     self.content_changes.borrow_mut().extend(targets);
     self.send(RasterCmd::Resync);
@@ -560,6 +581,7 @@ impl Context {
       pipelines: Vec::new(),
       render_pipelines: Vec::new(),
       programs: Vec::new(),
+      paint_shaders: Vec::new(),
       window_shader: None,
     });
     // The draw lists are UI-side: their facts join the raster thread's

@@ -39,6 +39,7 @@ mod release;
 mod repaint;
 mod resample;
 mod router;
+mod shader;
 mod spatial;
 mod spatial_collide;
 mod spatial_emitters;

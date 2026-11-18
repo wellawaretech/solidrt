@@ -99,6 +99,7 @@ impl Hittable for ElementKind {
       ElementKind::Oval(n) => n.is_in_bounds(point, ctx),
       ElementKind::Path(n) => n.is_in_bounds(point, ctx),
       ElementKind::Texture(n) => n.is_in_bounds(point, ctx),
+      ElementKind::Shader(n) => n.is_in_bounds(point, ctx),
       ElementKind::Span(_) => false,
       // The border-box test: right for anything whose hit area is its frame.
       ElementKind::Window(_) | ElementKind::View(_) | ElementKind::Line(_) | ElementKind::Text(_) => {

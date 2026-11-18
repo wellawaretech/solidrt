@@ -606,6 +606,11 @@ pub(crate) struct RasterState {
   // targets hold their program by Rc, so removal here only deletes the GL
   // program once no user is left (see gpu::release_program).
   programs: HashMap<u64, Rc<ShaderProgram>>,
+  // Paint shaders (`RasterCmd::CreatePaintShader`) in their own id space:
+  // the source and label a recovery links again from, and the renderer's
+  // handle. Removal drops this handle only; a retained recording that drew
+  // the shader holds its own, and the program goes with the last one.
+  paint_shaders: HashMap<u64, PaintShaderRecord>,
   // Shared render pipelines (program + draw state) in their own id space.
   // Targets hold their pipeline by Rc, like programs.
   render_pipelines: HashMap<u64, Rc<RenderPipeline>>,
@@ -688,6 +693,19 @@ struct WindowShaderState {
   /// frame, rotated with `layer` before each resolve. Same ownership rules as
   /// `layer`; freed when `previous` is withdrawn or the shader clears.
   prev_layer: Option<LayerTarget>,
+}
+
+/// A linked paint shader as the raster thread keeps it: the fragment
+/// source as the app gave it and the create's label (what a context
+/// recovery links again from, and what the resource inventory lists), and
+/// the renderer's handle.
+struct PaintShaderRecord {
+  source: String,
+  label: Option<String>,
+  // Held, never read: the raster side's own share of the program, which
+  // the record's removal gives up.
+  #[allow(dead_code)]
+  handle: crate::renderer::PaintShader,
 }
 
 struct LayerTarget {
@@ -873,6 +891,7 @@ impl RasterState {
       target_depths: HashMap::new(),
       depth_owners: HashMap::new(),
       programs: HashMap::new(),
+      paint_shaders: HashMap::new(),
       render_pipelines: HashMap::new(),
       stages: HashMap::new(),
       buffers: HashMap::new(),
@@ -1174,6 +1193,12 @@ impl RasterState {
             if let Some(program) = self.programs.remove(&id) {
               release_program(&self.gl, program);
             }
+          }
+          RasterCmd::CreatePaintShader { id, source, label, reply: tx } => {
+            reply(tx, self.create_paint_shader(id, source, label));
+          }
+          RasterCmd::DestroyPaintShader { id } => {
+            self.paint_shaders.remove(&id);
           }
           RasterCmd::SetWindowShader { shader } => {
             self.set_window_shader(shader);

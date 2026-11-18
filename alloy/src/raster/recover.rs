@@ -9,8 +9,8 @@
 //! the renderer's: it is dropped while the context it was created on is
 //! still current, before the binding is released. The old registries stay
 //! alive through the rebuild as the blueprint - a texture's size, shape,
-//! format and sampling, a buffer's size, a program's sources, a target's draw
-//! list - and drop afterwards.
+//! format and sampling, a buffer's size, a program's sources, a paint
+//! shader's source, a target's draw list - and drop afterwards.
 
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -18,7 +18,7 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 
 use crate::renderer::prelude::*;
-use crate::renderer::{ISize, Texture};
+use crate::renderer::{ISize, PaintShader, Texture};
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -83,6 +83,7 @@ impl RasterState {
       target_depths,
       depth_owners,
       programs,
+      paint_shaders,
       render_pipelines,
       stages,
       buffers,
@@ -217,6 +218,15 @@ impl RasterState {
           state.programs.insert(*id, Rc::new(program));
         }
         Err(e) => log::warn!("[alloy] context recovery: program {id} not rebuilt: {e}"),
+      }
+    }
+    // Paint shaders from their sources, on the new renderer; the UI side
+    // takes the new handles with the texture adoptions.
+    let mut paint_handles: Vec<(u64, PaintShader)> = Vec::new();
+    for (id, old) in paint_shaders {
+      match state.create_paint_shader(id, old.source, old.label) {
+        Ok((handle, _)) => paint_handles.push((id, handle)),
+        Err(e) => log::warn!("[alloy] context recovery: paint shader {id} not rebuilt: {e}"),
       }
     }
     for (id, old) in &render_pipelines {
@@ -362,7 +372,7 @@ impl RasterState {
     );
     state
       .tx
-      .send(FrameOutput::ContextRestored { handles, lost, guilty, losses })
+      .send(FrameOutput::ContextRestored { handles, paint_shaders: paint_handles, lost, guilty, losses })
       .map_err(|_| "the platform loop is gone".to_string())?;
     if let Some(wake) = &state.wake {
       wake();

@@ -167,13 +167,14 @@ pub fn alloy_context(ctx: &Ctx<'_>) -> Option<Arc<alloy::Context>> {
 /// The UI side of a GL context recovery (okf/done/gpu-context-loss.md),
 /// from alloy's `ContextRestored` event: the render tree's paint caches and
 /// text layers go (textures of the dead context), the platform's text
-/// state forgets its GPU side, the texture registry takes the new handles
-/// and the raster thread is resynced, and a frame is requested to rebuild
-/// everything. `lost` is trimmed of what the engine refills itself (the
+/// state forgets its GPU side, the texture and paint shader registries take
+/// the new handles and the raster thread is resynced, and a frame is
+/// requested to rebuild everything. `lost` is trimmed of what the engine refills itself (the
 /// text atlas) before the app hears it. No-op before the GUI is installed.
 pub(crate) fn restore_context(
   ctx: &Ctx<'_>,
   handles: Vec<(u64, alloy::renderer::Texture)>,
+  paint_shaders: Vec<(u64, alloy::renderer::PaintShader)>,
   lost: &mut alloy::LostContent,
 ) {
   let Some(gui) = try_gui(ctx) else { return };
@@ -181,7 +182,7 @@ pub(crate) fn restore_context(
     tree.0.borrow_mut().drop_paint_caches();
   }
   gui.platform.gpu_reset();
-  gui.alloy.restore_handles(handles);
+  gui.alloy.restore_handles(handles, paint_shaders);
   if let Some(atlas) = gui.platform.text_atlas_texture_id() {
     lost.textures.retain(|id| *id != atlas);
   }

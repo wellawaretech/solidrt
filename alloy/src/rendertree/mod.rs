@@ -19,7 +19,7 @@ pub use frame::{Commit, FrameBuilder, FrameDriver, PendingFrame};
 pub use hit::{EventInterest, HitConfig, PointerEvents};
 pub use kinds::{
   fit_rects, FilterState, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle,
-  ShadowState, Shown, Texture, TextureFit, View, Window, DEFAULT_STROKE_WIDTH,
+  Shader, ShadowState, Shown, Texture, TextureFit, View, Window, DEFAULT_STROKE_WIDTH,
 };
 pub use layout::{base_style, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
@@ -295,6 +295,7 @@ pub enum ElementKind {
   Text(Text),
   Span(Span),
   Texture(Texture),
+  Shader(Shader),
   // Audio(Audio),
 }
 
@@ -313,6 +314,7 @@ impl ElementKind {
       ElementKind::Text(_) => "text",
       ElementKind::Span(_) => "span",
       ElementKind::Texture(_) => "texture",
+      ElementKind::Shader(_) => "shader",
     }
   }
 
@@ -324,7 +326,7 @@ impl ElementKind {
       ElementKind::Path(p) => Some(&mut p.paint),
       ElementKind::Text(t) => Some(&mut t.paint),
       ElementKind::Texture(t) => Some(&mut t.paint),
-      ElementKind::Window(_) | ElementKind::View(_) | ElementKind::Span(_) => None,
+      ElementKind::Window(_) | ElementKind::View(_) | ElementKind::Span(_) | ElementKind::Shader(_) => None,
     }
   }
 
@@ -337,7 +339,7 @@ impl ElementKind {
       ElementKind::Path(p) => Some(&p.paint),
       ElementKind::Text(t) => Some(&t.paint),
       ElementKind::Texture(t) => Some(&t.paint),
-      ElementKind::Window(_) | ElementKind::View(_) | ElementKind::Span(_) => None,
+      ElementKind::Window(_) | ElementKind::View(_) | ElementKind::Span(_) | ElementKind::Shader(_) => None,
     }
   }
 
@@ -353,6 +355,7 @@ impl ElementKind {
         | ElementKind::Line(_)
         | ElementKind::Path(_)
         | ElementKind::Texture(_)
+        | ElementKind::Shader(_)
     )
   }
 
@@ -365,6 +368,7 @@ impl ElementKind {
       ElementKind::View(n) => n.local_bounds(fallback),
       ElementKind::Text(n) => n.local_bounds(fallback),
       ElementKind::Texture(n) => n.local_bounds(fallback),
+      ElementKind::Shader(n) => n.local_bounds(fallback),
       ElementKind::Line(n) => n.local_bounds(fallback),
       ElementKind::Path(n) => n.local_bounds(fallback),
       ElementKind::Window(_) | ElementKind::Span(_) => Rect::new(Point::zero(), fallback),
@@ -383,6 +387,7 @@ impl Buildable for ElementKind {
       ElementKind::Path(n) => n.build(ctx, builder),
       ElementKind::Text(n) => n.build(ctx, builder),
       ElementKind::Texture(n) => n.build(ctx, builder),
+      ElementKind::Shader(n) => n.build(ctx, builder),
       ElementKind::Span(_) => {} // ElementKind::Audio(_) => {}
     }
   }
@@ -393,6 +398,7 @@ impl Measurable for ElementKind {
     match self {
       ElementKind::Text(n) => n.measure(ctx),
       ElementKind::Texture(n) => n.measure(ctx),
+      ElementKind::Shader(n) => n.measure(ctx),
       ElementKind::Path(n) => n.measure(ctx),
       ElementKind::Oval(n) => n.measure(ctx),
       ElementKind::Line(n) => n.measure(ctx),
@@ -637,6 +643,8 @@ impl Element {
       "span" | "#text" => Span::default().no_layout(),
       "texture" => Texture::default().with_layout(),
       "d-texture" => Texture::default().no_layout(),
+      "shader" => Shader::default().with_layout(),
+      "d-shader" => Shader::default().no_layout(),
       _ => return None,
     })
   }
@@ -688,13 +696,14 @@ impl Element {
   }
 
   /// Whether this element references any texture-registry id: a texture
-  /// element with a source, or a view whose shader samples extra texture
-  /// inputs. Feeds the tree's referencer index (its membership predicate),
+  /// element with a source, a shader element with inputs, or a view whose
+  /// shader samples extra texture inputs. Feeds the tree's referencer index (its membership predicate),
   /// which keeps `texture_content_changed` and the destroy sweep at
   /// O(referencers) instead of O(nodes).
   pub(crate) fn references_textures(&self) -> bool {
     match &self.kind {
       ElementKind::Texture(t) => t.texture_id.is_some(),
+      ElementKind::Shader(s) => !s.textures.is_empty(),
       ElementKind::View(v) => v.shader.as_ref().is_some_and(|s| !s.textures.is_empty()),
       _ => false,
     }
@@ -725,6 +734,7 @@ impl Element {
       ElementKind::Path(_) => Path::initial_style(),
       ElementKind::Text(_) => Text::initial_style(),
       ElementKind::Texture(_) => Texture::initial_style(),
+      ElementKind::Shader(_) => Shader::initial_style(),
       ElementKind::Span(_) => return None,
     })
   }

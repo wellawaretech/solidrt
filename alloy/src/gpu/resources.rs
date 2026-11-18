@@ -26,6 +26,7 @@ pub struct GpuResources {
   pub pipelines: Vec<GpuPipelineInfo>,
   pub render_pipelines: Vec<GpuRenderPipelineInfo>,
   pub programs: Vec<GpuProgramInfo>,
+  pub paint_shaders: Vec<GpuPaintShaderInfo>,
   pub window_shader: Option<GpuWindowShaderInfo>,
 }
 
@@ -79,6 +80,14 @@ pub struct GpuBufferInfo {
 }
 
 pub struct GpuProgramInfo {
+  pub id: u64,
+  /// The create's debug label, when one was given.
+  pub label: Option<String>,
+}
+
+/// A registered paint shader (`Context::create_paint_shader`): a fragment
+/// program a `<shader>` element draws straight into the frame.
+pub struct GpuPaintShaderInfo {
   pub id: u64,
   /// The create's debug label, when one was given.
   pub label: Option<String>,

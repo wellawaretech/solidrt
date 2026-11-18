@@ -5,14 +5,15 @@
 use std::sync::atomic::Ordering;
 
 use crate::renderer::prelude::*;
-use crate::renderer::{ISize, Texture};
+use crate::renderer::{ISize, PaintShader, Texture, UniformInfo};
 
-use super::RasterState;
+use super::{PaintShaderRecord, RasterState};
 use crate::gl::{GpuTexture, RenderPipeline, ShaderProgram, Timed};
 use crate::gpu::{
-  AttributeTable, BufferLayout, GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo,
-  GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, PipelineDesc, SamplerState, TextureBox,
-  TextureFormat, TextureRect, TextureShape, UniformTable,
+  AttributeTable, BufferLayout, GpuBufferInfo, GpuBufferLayoutInfo, GpuPaintShaderInfo, GpuPipelineInfo,
+  GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo,
+  PipelineDesc, SamplerState, TextureBox, TextureFormat, TextureRect, TextureShape, UniformKind, UniformSlot,
+  UniformTable,
 };
 use std::rc::Rc;
 
@@ -273,6 +274,22 @@ impl RasterState {
     Ok(tables)
   }
 
+  /// Link `source` as paint shader `id` on the renderer, keeping the
+  /// record a recovery links again from, and reply with the handle and the
+  /// uniform table the UI side validates params and inputs against
+  /// (`paint_uniform_table`).
+  pub(crate) fn create_paint_shader(
+    &mut self,
+    id: u64,
+    source: String,
+    label: Option<String>,
+  ) -> Result<(PaintShader, UniformTable), String> {
+    let handle = self.renderer.create_paint_shader(&source)?;
+    let uniforms = paint_uniform_table(handle.uniforms(), &source);
+    self.paint_shaders.insert(id, PaintShaderRecord { source, label, handle: handle.clone() });
+    Ok((handle, uniforms))
+  }
+
   /// Pair a registered program with draw state under pipeline id `id`.
   pub(super) fn create_render_pipeline(
     &mut self,
@@ -490,6 +507,13 @@ impl RasterState {
       self.programs.iter().map(|(id, p)| GpuProgramInfo { id: *id, label: p.label().map(str::to_string) }).collect();
     programs.sort_by_key(|p| p.id);
 
+    let mut paint_shaders: Vec<GpuPaintShaderInfo> = self
+      .paint_shaders
+      .iter()
+      .map(|(id, record)| GpuPaintShaderInfo { id: *id, label: record.label.clone() })
+      .collect();
+    paint_shaders.sort_by_key(|p| p.id);
+
     let window_shader = self.window_shader.as_ref().map(|state| GpuWindowShaderInfo {
       program_id: state.spec.program,
       width: state.layer.as_ref().map_or(0, |l| l.width),
@@ -498,8 +522,47 @@ impl RasterState {
       pass_only_frames: self.pass_only_frames,
     });
 
-    GpuResources { textures, buffers, pipelines, render_pipelines, programs, window_shader }
+    GpuResources { textures, buffers, pipelines, render_pipelines, programs, paint_shaders, window_shader }
   }
+}
+
+// The renderer's own vertex-stage uniform in every paint shader (the
+// target's size), which the renderer sets on every draw: left out of the
+// table an app's params validate against, so no param can name it.
+const PAINT_VERTEX_UNIFORM: &str = "uSize";
+
+/// A paint shader's uniforms as the UI side validates against them: the
+/// renderer's reflection mapped onto the GPU vocabulary (a type outside
+/// the renderer's own set through `UniformKind::from_gl`), less the
+/// renderer's vertex uniform (`iResolution`, which the renderer sets too,
+/// stays, as it does in a shader texture's table), plus an `Inactive` slot
+/// for each uniform `source` declares that the compiler optimized out, so a
+/// write to it warns where a never-declared name throws, as for a linked
+/// program.
+pub(crate) fn paint_uniform_table(infos: &[UniformInfo], source: &str) -> UniformTable {
+  use crate::renderer::UniformKind as Reflected;
+  let mut table: UniformTable = infos
+    .iter()
+    .filter(|info| info.name != PAINT_VERTEX_UNIFORM)
+    .map(|info| {
+      let kind = match info.kind {
+        Reflected::Float => UniformKind::Float,
+        Reflected::Int => UniformKind::Int,
+        Reflected::Bool => UniformKind::Bool,
+        Reflected::Vec2 => UniformKind::Vec2,
+        Reflected::Vec3 => UniformKind::Vec3,
+        Reflected::Vec4 => UniformKind::Vec4,
+        Reflected::Mat4 => UniformKind::Mat4,
+        Reflected::Sampler2D => UniformKind::Sampler2D,
+        Reflected::Other(utype) => UniformKind::from_gl(utype),
+      };
+      (info.name.clone(), UniformSlot { kind, count: info.count })
+    })
+    .collect();
+  for name in crate::gl::declared_uniform_names(source) {
+    table.entry(name).or_insert(UniformSlot { kind: UniformKind::Inactive, count: 1 });
+  }
+  table
 }
 
 /// `7 (bloom-h)` with a label, `7` without: the one spelling for a labeled id

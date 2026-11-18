@@ -228,12 +228,13 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent, time_stamp_ms: f64) -> boo
     // a fresh one: the UI side swaps its handles (super::restore_context),
     // then the app hears which content it has to re-supply. Not sticky: a
     // late subscriber has nothing to restore.
-    AlloyEvent::ContextRestored { handles, lost, guilty, losses } => {
+    AlloyEvent::ContextRestored { handles, paint_shaders, lost, guilty, losses } => {
       let handles = handles.clone();
+      let paint_shaders = paint_shaders.clone();
       let mut lost = lost.clone();
       let (guilty, losses) = (*guilty, *losses as f64);
       exec.exec(move |ctx| {
-        super::restore_context(&ctx, handles, &mut lost);
+        super::restore_context(&ctx, handles, paint_shaders, &mut lost);
         let obj = Object::new(ctx.clone()).expect("create object");
         obj.set("textures", id_array(&ctx, &lost.textures)).expect("set textures");
         obj.set("buffers", id_array(&ctx, &lost.buffers)).expect("set buffers");

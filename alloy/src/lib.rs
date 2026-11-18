@@ -39,7 +39,9 @@ mod tests;
 pub use app::{setup, App};
 pub use backend::DisplayContext;
 pub use cadence::CadenceHold;
-pub use context::{CaptureDone, CaptureInfo, Context, Overlay, WindowTap, YuvFrameSink};
+pub use context::{
+  CaptureDone, CaptureInfo, Context, Overlay, PaintShaderEntry, PaintShaderRegistry, WindowTap, YuvFrameSink,
+};
 pub use event::{AlloyCommand, AlloyEvent, Arrival, EventSender};
 pub use gl::TapRect;
 pub use gpu::{

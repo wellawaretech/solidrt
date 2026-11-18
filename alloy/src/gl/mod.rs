@@ -37,11 +37,12 @@ pub(crate) use pass::{
   composite_program_over_window, copy_program_into_window, render_program_to_fbo, render_program_to_window,
   take_vertices, PassInput, TILE_CLEAR_FRAGMENT,
 };
-pub(crate) use program::{
-  compile_stage, delete_stage, release_pipeline, release_program, CompiledStage, RenderPipeline, ShaderProgram,
-};
 #[cfg(test)]
-pub(crate) use program::{declared_uniform_names, reads_instance_id};
+pub(crate) use program::reads_instance_id;
+pub(crate) use program::{
+  compile_stage, declared_uniform_names, delete_stage, release_pipeline, release_program, CompiledStage,
+  RenderPipeline, ShaderProgram,
+};
 pub(crate) use readback::{flip_rows, read_texture_pixels, read_window_pixels};
 pub(crate) use rig::{
   forget_window_samples, msrtt, probe_msrtt, supports_invalidate, window_fast_path, window_samples, MsrttFns,
