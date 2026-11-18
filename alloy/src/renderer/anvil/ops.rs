@@ -54,8 +54,7 @@ pub(super) enum Op {
     width: f32,
   },
   /// `alpha` is the paint's alpha (1 without a paint): a texture's opacity
-  /// is per op, not a group. Executed from step 3.
-  #[allow(dead_code)] // read by the executor from step 3
+  /// is per op, not a group.
   DrawTexture {
     texture: Texture,
     src: Rect,

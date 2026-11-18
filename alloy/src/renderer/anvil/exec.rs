@@ -4,6 +4,7 @@
 //! current.
 
 use super::super::contract::Target;
+use super::super::TextureSampling;
 use super::record::DisplayList;
 use super::walk::{self, Instance};
 use glow::HasContext;
@@ -23,14 +24,27 @@ const ATTR_COLOR: u32 = 3;
 const ATTR_TEX: u32 = 4;
 const ATTR_CLIP: u32 = 5;
 
+// The six instanced attributes: location and byte offset in `Instance`.
+// Enabled with divisor 1 once in `new`; re-pointed per batch in `draw`.
+const ATTRIBUTES: [(u32, usize); 6] = [
+  (ATTR_RECT, std::mem::offset_of!(Instance, rect)),
+  (ATTR_LINEAR, std::mem::offset_of!(Instance, linear)),
+  (ATTR_OFFSET, std::mem::offset_of!(Instance, offset_kind_stroke)),
+  (ATTR_COLOR, std::mem::offset_of!(Instance, color)),
+  (ATTR_TEX, std::mem::offset_of!(Instance, tex)),
+  (ATTR_CLIP, std::mem::offset_of!(Instance, clip)),
+];
+
+/// The one texture unit the shape program samples, `uTexture`'s.
+const TEXTURE_UNIT: u32 = 0;
+
 // A target's logical (0, 0) is its top: it maps to clip (-1, +1) for every
 // target, window and texture alike. Window lists are drawn unflipped and
 // offscreen lists arrive pre-flipped (raster::offscreen::flip_for_fbo),
 // which is what put texel row 0 at the top of a sampled image under
 // Impeller; gl/glyphs.rs and gl/program.rs describe the same row 0 is top
 // convention for the passes, and the plan (okf/plans/own-renderer.md)
-// pins it. Texture sampling (step 3) reads vUv with v = 0 at texel row 0,
-// no flip.
+// pins it. Texture sampling reads vUv with v = 0 at texel row 0, no flip.
 //
 // The layout(location = N) literals must match the ATTR_* constants.
 const VERTEX_SRC: &str = r"#version 300 es
@@ -73,10 +87,11 @@ void main() {
 }
 ";
 
-// Step 2 draws rect fills; steps 3 and 4 add the other kinds here. The
-// unused varyings are kept so they add only fragment code.
+// Step 3 draws rect fills and texture quads; step 4 adds the other kinds
+// here. The unused varyings are kept so it adds only fragment code.
 const FRAGMENT_SRC: &str = r"#version 300 es
 precision highp float;
+uniform sampler2D uTexture;
 in vec2 vLocal;
 in vec2 vDevice;
 flat in vec4 vColor;
@@ -84,12 +99,23 @@ flat in vec4 vClip;
 flat in vec4 vShape;
 in vec2 vUv;
 out vec4 fragColor;
+// The shape kinds, as the instance carries them (walk.rs KIND_*): they
+// must match.
+const int KIND_TEXTURE = 3;
 void main() {
   // The clip, per fragment, so a clip change never ends a batch. Under
   // MSAA the test runs per fragment, not per sample: a clip edge is hard
   // where a shape edge is antialiased. Acceptable for stage 1.
   if (any(lessThan(vDevice, vClip.xy)) || any(greaterThanEqual(vDevice, vClip.zw))) discard;
-  fragColor = vColor;
+  // The kind arrives as a flat float; rounding reads it robustly.
+  int kind = int(vShape.z + 0.5);
+  if (kind == KIND_TEXTURE) {
+    // Premultiplied texels; vColor is the op's alpha in every channel, so
+    // the multiply fades the texel as a whole.
+    fragColor = texture(uTexture, vUv) * vColor;
+  } else {
+    fragColor = vColor;
+  }
 }
 ";
 
@@ -104,6 +130,12 @@ pub(super) struct Executor {
   size_uniform: glow::UniformLocation,
   vao: glow::VertexArray,
   instances: glow::Buffer,
+  /// The two ways a texture quad samples, as sampler objects, so a bound
+  /// texture's own parameter state is never read or written: on this
+  /// shared context only a bound sampler object is a reliable contract
+  /// (raster/offscreen.rs says the same for the node shader passes).
+  sampler_linear: glow::Sampler,
+  sampler_nearest: glow::Sampler,
 }
 
 impl Executor {
@@ -119,37 +151,49 @@ impl Executor {
     let program = link_program(&gl)?;
     let size_uniform =
       gl.get_uniform_location(program, "uSize").ok_or_else(|| "shape program has no uSize uniform".to_string())?;
+    let texture_uniform = gl
+      .get_uniform_location(program, "uTexture")
+      .ok_or_else(|| "shape program has no uTexture uniform".to_string())?;
+    // A sampler uniform names a unit, not a texture: set once, the unit
+    // never changes.
+    gl.use_program(Some(program));
+    gl.uniform_1_i32(Some(&texture_uniform), TEXTURE_UNIT as i32);
+    gl.use_program(None);
+    let sampler_linear = create_sampler(&gl, glow::LINEAR, "linear")?;
+    let sampler_nearest = create_sampler(&gl, glow::NEAREST, "nearest")?;
     let vao = gl.create_vertex_array().map_err(|e| format!("shape vertex array: {e}"))?;
     let instances = gl.create_buffer().map_err(|e| format!("shape instance buffer: {e}"))?;
     gl.bind_vertex_array(Some(vao));
     gl.bind_buffer(glow::ARRAY_BUFFER, Some(instances));
-    // The pointers are captured in the VAO, so a draw only rebinds it.
-    let stride = std::mem::size_of::<Instance>() as i32;
-    let attributes = [
-      (ATTR_RECT, std::mem::offset_of!(Instance, rect)),
-      (ATTR_LINEAR, std::mem::offset_of!(Instance, linear)),
-      (ATTR_OFFSET, std::mem::offset_of!(Instance, offset_kind_stroke)),
-      (ATTR_COLOR, std::mem::offset_of!(Instance, color)),
-      (ATTR_TEX, std::mem::offset_of!(Instance, tex)),
-      (ATTR_CLIP, std::mem::offset_of!(Instance, clip)),
-    ];
-    for (location, offset) in attributes {
+    // The pointers are captured in the VAO, so a draw only rebinds it and
+    // re-points them per batch.
+    for (location, _) in ATTRIBUTES {
       gl.enable_vertex_attrib_array(location);
-      gl.vertex_attrib_pointer_f32(location, FLOATS_PER_ATTRIBUTE, glow::FLOAT, false, stride, offset as i32);
       // Every attribute is per instance: the corners come from gl_VertexID.
       gl.vertex_attrib_divisor(location, 1);
     }
+    point_attributes(&gl, 0);
     gl.bind_vertex_array(None);
     gl.bind_buffer(glow::ARRAY_BUFFER, None);
-    Ok(Executor { gl, program, size_uniform, vao, instances })
+    Ok(Executor { gl, program, size_uniform, vao, instances, sampler_linear, sampler_nearest })
+  }
+
+  /// Delete `names`: the textures whose last handle dropped since the last
+  /// draw (see `super::DeletionQueue`). On this thread, context current.
+  pub(super) fn reclaim(&self, names: Vec<glow::NativeTexture>) {
+    for name in names {
+      unsafe { self.gl.delete_texture(name) }
+    }
   }
 
   /// Draw `list` into `target`, cleared first. Sets every piece of state
   /// it uses on each draw and caches none across draws: the other passes
   /// on this context save and restore around their own work, and the
-  /// contract lets a draw leave state changed.
+  /// contract lets a draw leave state changed. The texture unit and the
+  /// sampler binding are set per batch and cleared after.
   pub(super) fn draw(&mut self, target: Target, list: &DisplayList) -> Result<(), String> {
-    let instances = walk::walk(list, target.size);
+    let walked = walk::walk(list, target.size);
+    let instances = &walked.instances;
     let (width, height) = (target.size.width as i32, target.size.height as i32);
     let gl = &self.gl;
     unsafe {
@@ -185,10 +229,33 @@ impl Executor {
       let bytes =
         std::slice::from_raw_parts(instances.as_ptr() as *const u8, instances.len() * std::mem::size_of::<Instance>());
       gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
-      // One draw for the whole list: everything shares the program and no
-      // texture in this step. Step 3 splits the run at texture changes;
-      // stage 2 batches further.
-      gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, instances.len() as i32);
+      // One draw per batch: everything shares the program, and a batch
+      // ends where the texture or its sampling changes (walk.rs); stage 2
+      // batches further. GLES 3.0 has no base instance, so a batch is
+      // drawn by re-pointing the attributes at its first instance.
+      gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
+      for batch in &walked.batches {
+        point_attributes(gl, batch.start);
+        match batch.texture {
+          Some((name, sampling)) => {
+            let sampler = match sampling {
+              TextureSampling::Linear => self.sampler_linear,
+              TextureSampling::Nearest => self.sampler_nearest,
+            };
+            gl.bind_texture(glow::TEXTURE_2D, Some(name));
+            gl.bind_sampler(TEXTURE_UNIT, Some(sampler));
+          }
+          None => {
+            gl.bind_texture(glow::TEXTURE_2D, None);
+            gl.bind_sampler(TEXTURE_UNIT, None);
+          }
+        }
+        gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, batch.count as i32);
+      }
+      gl.bind_sampler(TEXTURE_UNIT, None);
+      gl.bind_texture(glow::TEXTURE_2D, None);
+      // Leave the VAO pointing at the first instance, as `new` set it.
+      point_attributes(gl, 0);
       gl.bind_vertex_array(None);
       gl.bind_buffer(glow::ARRAY_BUFFER, None);
       gl.use_program(None);
@@ -197,6 +264,33 @@ impl Executor {
     // gl/draw.rs restore their own.
     Ok(())
   }
+}
+
+// Point the instanced attributes at instance `first` of the bound buffer.
+unsafe fn point_attributes(gl: &glow::Context, first: usize) {
+  let stride = std::mem::size_of::<Instance>();
+  for (location, offset) in ATTRIBUTES {
+    gl.vertex_attrib_pointer_f32(
+      location,
+      FLOATS_PER_ATTRIBUTE,
+      glow::FLOAT,
+      false,
+      stride as i32,
+      (first * stride + offset) as i32,
+    );
+  }
+}
+
+// A sampler object filtering with `filter` for both minification and
+// magnification, clamped at the edges. No mip selection: a texture quad's
+// Linear is bilinear at level 0, as Impeller's was.
+unsafe fn create_sampler(gl: &glow::Context, filter: u32, label: &str) -> Result<glow::Sampler, String> {
+  let sampler = gl.create_sampler().map_err(|e| format!("shape {label} sampler: {e}"))?;
+  gl.sampler_parameter_i32(sampler, glow::TEXTURE_MIN_FILTER, filter as i32);
+  gl.sampler_parameter_i32(sampler, glow::TEXTURE_MAG_FILTER, filter as i32);
+  gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+  gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+  Ok(sampler)
 }
 
 // The shape program, compiled and linked, its shaders deleted after the

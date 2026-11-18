@@ -2,13 +2,18 @@
 // aliases, the way the rendertree builds one, walked into the instances the
 // shape program draws, with no GL context. The transform stack, the
 // device-space clip, the rejection of draws outside it, nested lists and
-// the premultiplied color are all decided here, before any GL work.
+// the premultiplied color, the texture quads and their batches are all
+// decided here, before any GL work. The deferred deletion queue a texture
+// handle drops onto is tested here too, with no renderer.
 
-use crate::renderer::anvil::walk::{walk, Instance, KIND_RECT};
+use crate::renderer::anvil::walk::{walk, Batch, Instance, Walked, KIND_RECT, KIND_TEXTURE};
+use crate::renderer::anvil::{test_texture, DeletionQueue};
 use crate::renderer::prelude::*;
 use crate::renderer::{
-  ClipOperation, Color, DisplayList, DisplayListBuilder, DrawStyle, ISize, Paint, Point, Rect, Size,
+  ClipOperation, Color, DisplayList, DisplayListBuilder, DrawStyle, ISize, Paint, Point, Rect, Size, Texture,
+  TextureSampling,
 };
+use std::sync::Arc;
 
 // How far a walked value may sit from the expected one: float noise.
 const EPS: f32 = 1e-5;
@@ -42,8 +47,16 @@ fn build(b: DisplayListBuilder) -> DisplayList {
   b.build().expect("a builder always builds a list")
 }
 
-fn walked(b: DisplayListBuilder) -> Vec<Instance> {
+fn walked_all(b: DisplayListBuilder) -> Walked {
   walk(&build(b), ISize::new(TARGET as i64, TARGET as i64))
+}
+
+fn walked(b: DisplayListBuilder) -> Vec<Instance> {
+  walked_all(b).instances
+}
+
+fn name(t: &Texture) -> glow::NativeTexture {
+  t.gl_name().expect("an anvil texture always has a GL name")
 }
 
 fn offset(instance: &Instance) -> [f32; 2] {
@@ -162,4 +175,131 @@ fn stroke_and_fill_records_both_ops() {
   let mut b = DisplayListBuilder::new(None);
   b.draw_rect(&rect(10.0, 10.0, 20.0, 20.0), &stroke);
   assert_eq!(walked(b).len(), STROKE_INSTANCES);
+}
+
+#[test]
+fn a_texture_quad_maps_src_onto_dst() {
+  let t = test_texture(7, ISize::new(200, 100));
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_texture_rect(&t, &rect(50.0, 25.0, 100.0, 50.0), &rect(10.0, 10.0, 40.0, 20.0), TextureSampling::Linear, None);
+  let out = walked_all(b);
+  assert_eq!(out.instances.len(), 1);
+  let i = &out.instances[0];
+  assert!(approx(i.rect, [10.0, 10.0, 40.0, 20.0]), "{:?}", i.rect);
+  assert!(approx(i.tex, [0.25, 0.25, 0.75, 0.75]), "{:?}", i.tex);
+  assert!(approx(i.color, [1.0; 4]), "{:?}", i.color);
+  assert_eq!(i.offset_kind_stroke[2], KIND_TEXTURE);
+  assert_eq!(i.offset_kind_stroke[3], 0.0);
+  assert_eq!(out.batches, vec![Batch { start: 0, count: 1, texture: Some((name(&t), TextureSampling::Linear)) }]);
+}
+
+#[test]
+fn a_texture_quad_fades_by_the_paint_alpha() {
+  let t = test_texture(7, ISize::new(200, 100));
+  let mut b = DisplayListBuilder::new(None);
+  let half = fill(Color::new_srgba(1.0, 0.0, 0.0, 0.5));
+  b.draw_texture_rect(
+    &t,
+    &rect(0.0, 0.0, 10.0, 10.0),
+    &rect(0.0, 0.0, 10.0, 10.0),
+    TextureSampling::Linear,
+    Some(&half),
+  );
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  // The paint's RGB is ignored: only its alpha fades the texel.
+  assert!(approx(out[0].color, [0.5; 4]), "{:?}", out[0].color);
+
+  let mut b = DisplayListBuilder::new(None);
+  let none = fill(Color::new_srgba(1.0, 0.0, 0.0, 0.0));
+  b.draw_texture_rect(
+    &t,
+    &rect(0.0, 0.0, 10.0, 10.0),
+    &rect(0.0, 0.0, 10.0, 10.0),
+    TextureSampling::Linear,
+    Some(&none),
+  );
+  assert!(walked(b).is_empty());
+}
+
+#[test]
+fn the_top_of_src_is_texel_row_zero() {
+  let t = test_texture(7, ISize::new(100, 100));
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_texture_rect(&t, &rect(0.0, 30.0, 10.0, 10.0), &rect(0.0, 0.0, 10.0, 10.0), TextureSampling::Linear, None);
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  // v grows downward with src.y: no flip.
+  assert!((out[0].tex[1] - 0.3).abs() < EPS, "{:?}", out[0].tex);
+  assert!((out[0].tex[3] - 0.4).abs() < EPS, "{:?}", out[0].tex);
+}
+
+#[test]
+fn batches_split_at_texture_changes() {
+  let a = test_texture(1, ISize::new(10, 10));
+  let c = test_texture(2, ISize::new(10, 10));
+  let quad = rect(0.0, 0.0, 10.0, 10.0);
+  let linear = TextureSampling::Linear;
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &opaque())
+    .draw_texture_rect(&a, &quad, &quad, linear, None)
+    .draw_texture_rect(&a, &quad, &quad, linear, None)
+    .draw_texture_rect(&c, &quad, &quad, linear, None)
+    .draw_rect(&quad, &opaque());
+  let out = walked_all(b);
+  assert_eq!(out.instances.len(), 5);
+  assert_eq!(
+    out.batches,
+    vec![
+      Batch { start: 0, count: 3, texture: Some((name(&a), linear)) },
+      Batch { start: 3, count: 2, texture: Some((name(&c), linear)) },
+    ]
+  );
+
+  // The sampling splits a run too.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_texture_rect(&a, &quad, &quad, linear, None).draw_texture_rect(
+    &a,
+    &quad,
+    &quad,
+    TextureSampling::Nearest,
+    None,
+  );
+  let out = walked_all(b);
+  assert_eq!(
+    out.batches,
+    vec![
+      Batch { start: 0, count: 1, texture: Some((name(&a), linear)) },
+      Batch { start: 1, count: 1, texture: Some((name(&a), TextureSampling::Nearest)) },
+    ]
+  );
+}
+
+#[test]
+fn a_dropped_handle_queues_its_name_once() {
+  let queue = Arc::new(DeletionQueue::new());
+  let a = Texture::over(queue.clone(), 5, ISize::new(1, 1));
+  let five = name(&a);
+  let b = a.clone();
+  drop(a);
+  assert!(queue.drain().is_empty());
+  drop(b);
+  assert_eq!(queue.drain(), vec![five]);
+  assert!(queue.drain().is_empty());
+}
+
+#[test]
+fn texture_quads_are_rejected_by_the_clip() {
+  let t = test_texture(7, ISize::new(10, 10));
+  let mut b = DisplayListBuilder::new(None);
+  b.clip_rect(&rect(0.0, 0.0, 10.0, 10.0), ClipOperation::Intersect).draw_texture_rect(
+    &t,
+    &rect(0.0, 0.0, 5.0, 5.0),
+    &rect(20.0, 20.0, 5.0, 5.0),
+    TextureSampling::Linear,
+    None,
+  );
+  let out = walked_all(b);
+  assert!(out.instances.is_empty());
+  assert!(out.batches.is_empty());
 }
