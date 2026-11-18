@@ -1,14 +1,14 @@
 //! The pure half of a draw: a list's ops walked into the instances the
-//! three programs draw (plain rect fills, shapes, glyphs), with the save
+//! programs draw (plain rect fills, shapes, glyphs, paint shaders), with the save
 //! stack, the transforms and the clip applied and the draws outside the
 //! clip rejected. No GL here, so the walk is unit-tested without a context
 //! (`tests/anvil.rs`).
 
 use super::ops::{Image, Op, Premultiplied, Radii};
 use super::record::DisplayList;
-use super::Texture;
+use super::{PaintShader, ShaderInput, Texture};
 use crate::{CoveragePolicy, GlyphGradient, GlyphQuad};
-use crate::{ISize, Matrix, Point, Rect, Size, StrokeCap, TextureSampling};
+use crate::{ISize, Matrix, Point, Rect, ShaderParam, Size, StrokeCap, TextureSampling};
 use euclid::default::{Box2D, Point2D, Transform2D};
 use euclid::Angle;
 use std::sync::Arc;
@@ -68,6 +68,9 @@ pub const KIND_LINE: f32 = 2.0;
 /// shape program has no arm for it.
 pub const KIND_GLYPH: f32 = 3.0;
 pub const KIND_ROUNDED_RECT: f32 = 4.0;
+/// A paint shader's quad. It draws through its shader's program, which
+/// never reads the kind; the shape program has no arm for it.
+pub const KIND_PAINT: f32 = 5.0;
 /// Added to a shape kind when the instance samples its texture: coverage
 /// times texel. A texture quad is `KIND_RECT + KIND_TEXTURED`.
 pub const KIND_TEXTURED: f32 = 8.0;
@@ -108,6 +111,40 @@ pub enum BatchProgram {
   Shape,
   /// Glyph runs: the glyph program.
   Glyph,
+  /// One paint shader draw: the program of the batch's `paint` shader.
+  Paint,
+}
+
+/// What the executor needs for a paint batch beside its one instance: the
+/// shader, its params and inputs, and `resolution`, the quad's size in
+/// device pixels (`iResolution`). Equal when it holds the same handle and
+/// the same shared slices, and the same resolution.
+#[derive(Clone)]
+pub struct PaintDraw {
+  pub shader: PaintShader,
+  pub params: Arc<[ShaderParam]>,
+  pub inputs: Arc<[ShaderInput]>,
+  pub resolution: [f32; 2],
+}
+
+impl PartialEq for PaintDraw {
+  fn eq(&self, other: &PaintDraw) -> bool {
+    self.shader == other.shader
+      && Arc::ptr_eq(&self.params, &other.params)
+      && Arc::ptr_eq(&self.inputs, &other.inputs)
+      && self.resolution == other.resolution
+  }
+}
+
+impl std::fmt::Debug for PaintDraw {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("PaintDraw")
+      .field("shader", &self.shader)
+      .field("params", &self.params)
+      .field("inputs", &self.inputs.len())
+      .field("resolution", &self.resolution)
+      .finish()
+  }
 }
 
 /// A run of consecutive instances one draw issues, of one class: plain
@@ -116,7 +153,8 @@ pub enum BatchProgram {
 /// texture and sampling, small plain fills among them) or glyphs (one
 /// atlas, one coverage policy and at most one gradient). The classes draw
 /// through different programs, so a run never mixes them, except that the
-/// shape program also draws the plain fills a shape run takes.
+/// shape program also draws the plain fills a shape run takes. A paint
+/// shader draw is a run of its own, one instance.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Batch {
   pub start: usize,
@@ -132,6 +170,9 @@ pub struct Batch {
   pub policy: Option<CoveragePolicy>,
   /// A gradient run's gradient; such a run holds that one op's quads.
   pub gradient: Option<Arc<GlyphGradient>>,
+  /// Set exactly when the run is a paint shader draw (`program` is
+  /// `Paint`); `texture` is then None, the inputs bind their own units.
+  pub paint: Option<PaintDraw>,
 }
 
 /// What a walk produces: the instances in painter's order and the batches
@@ -145,7 +186,8 @@ pub struct Walked {
   /// executor scissors its clear and its draws to it. None when nothing
   /// was emitted.
   pub scissor: Option<Box2D<i32>>,
-  /// The last batch takes no further instance: a gradient run ended it.
+  /// The last batch takes no further instance: a gradient run or a paint
+  /// shader draw ended it.
   sealed: bool,
 }
 
@@ -167,14 +209,21 @@ impl Walked {
       match last {
         Some(last) if last.program == BatchProgram::Fill => last.count += 1,
         Some(last) if last.program == BatchProgram::Shape && device_area(&instance) < FILL_FOLD_AREA => last.count += 1,
-        _ => {
-          self.open(Batch { start, count: 1, program: BatchProgram::Fill, texture: None, policy: None, gradient: None })
-        }
+        _ => self.open(Batch {
+          start,
+          count: 1,
+          program: BatchProgram::Fill,
+          texture: None,
+          policy: None,
+          gradient: None,
+          paint: None,
+        }),
       }
       self.instances.push(instance);
       return;
     }
-    let shape = Batch { start, count: 1, program: BatchProgram::Shape, texture, policy: None, gradient: None };
+    let shape =
+      Batch { start, count: 1, program: BatchProgram::Shape, texture, policy: None, gradient: None, paint: None };
     match last.filter(|last| last.program == BatchProgram::Shape) {
       None => self.open(shape),
       Some(last) if texture.is_none() || last.texture == texture => last.count += 1,
@@ -223,10 +272,29 @@ impl Walked {
         texture,
         policy: Some(policy),
         gradient: gradient.cloned(),
+        paint: None,
       }),
     }
     self.sealed = gradient.is_some();
     self.instances.extend(instances);
+  }
+
+  // Append a paint shader's one `instance` as a batch of its own, sealed
+  // after it: the program is the shader's, so nothing before or after it
+  // shares its draw.
+  fn push_paint(&mut self, instance: Instance, paint: PaintDraw) {
+    let start = self.instances.len();
+    self.open(Batch {
+      start,
+      count: 1,
+      program: BatchProgram::Paint,
+      texture: None,
+      policy: None,
+      gradient: None,
+      paint: Some(paint),
+    });
+    self.sealed = true;
+    self.instances.push(instance);
   }
 
   // Open `batch` as the current one, which takes instances again.
@@ -332,6 +400,7 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, out: &mut Wal
       Op::DrawGlyphs { atlas, quads, bounds, policy, gradient } => {
         push_glyphs(state, atlas, quads, bounds, *policy, gradient.as_ref(), out)
       }
+      Op::DrawShader { rect, shader, params, inputs } => push_paint(state, rect, shader, params, inputs, out),
       Op::DrawList { list, opacity } => {
         if *opacity < 1.0 {
           unsupported!("draw_display_list below opacity 1", "the nested list draws at full opacity");
@@ -644,4 +713,32 @@ fn push_glyphs(
     instances.push(instance(state, &m2, clip, quad));
   }
   out.push_glyphs(instances, atlas.name(), policy, gradient);
+}
+
+// A paint shader's quad over `rect` under the current state, unless the
+// clip rejects it: one `KIND_PAINT` instance whose `tex` is the unit square
+// (the program's `vUV` is the quad's corner, not read from it), in a batch
+// of its own that carries the shader, its params and inputs, and the quad's
+// device size: the device lengths of the rect's x and y edges under the map.
+fn push_paint(
+  state: &State,
+  rect: &Rect,
+  shader: &PaintShader,
+  params: &Arc<[ShaderParam]>,
+  inputs: &Arc<[ShaderInput]>,
+  out: &mut Walked,
+) {
+  let Some((m2, clip)) = placed(state, rect) else { return };
+  let resolution = [rect.size.width * m2.m11.hypot(m2.m12), rect.size.height * m2.m21.hypot(m2.m22)];
+  let quad = Quad {
+    rect: *rect,
+    kind: KIND_PAINT,
+    stroke: 0.0,
+    // Unread: the program writes its own color.
+    color: [1.0; 4],
+    tex: [0.0, 0.0, 1.0, 1.0],
+    radii: [0.0; 4],
+  };
+  let paint = PaintDraw { shader: shader.clone(), params: params.clone(), inputs: inputs.clone(), resolution };
+  out.push_paint(instance(state, &m2, clip, quad), paint);
 }

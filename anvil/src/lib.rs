@@ -12,7 +12,10 @@
 //! (`walk`, pure) and draws those as instanced quads through three programs
 //! (`exec`): plain rect fills through a fill program with no discard and no
 //! derivatives, every other shape through the shape program, glyph runs
-//! through a glyph program of their own. Stage 1 draws the state ops, rect
+//! through a glyph program of their own. A paint shader (an app's fragment
+//! program, linked by `Renderer::create_paint_shader` behind anvil's own
+//! vertex stage) draws as one quad through its own program, a batch of its
+//! own per draw. Stage 1 draws the state ops, rect
 //! and oval fills and strokes, lines, texture quads and the axis-aligned
 //! intersect clip. Stage 2, step 1 adds rounded rects (per-corner radii,
 //! fill, stroke and stroke-and-fill), an axis-aligned rounded clip, and
@@ -49,8 +52,8 @@ mod vocab;
 pub use contract::Target;
 pub use glyphs::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use renderer::{
-  ColorFilter, ColorSource, DisplayList, DisplayListBuilder, ImageFilter, MaskFilter, Paint, Path, PathBuilder,
-  Renderer, Texture,
+  ColorFilter, ColorSource, DisplayList, DisplayListBuilder, ImageFilter, MaskFilter, Paint, PaintShader, Path,
+  PathBuilder, Renderer, ShaderInput, Texture,
 };
 pub use vocab::*;
 
@@ -58,6 +61,9 @@ pub use vocab::*;
 // without GL.
 #[cfg(any(test, feature = "oplog"))]
 pub use renderer::test_texture;
+// A paint shader handle with no program behind it, for the same tests.
+#[cfg(any(test, feature = "oplog"))]
+pub use renderer::test_paint_shader;
 // The pure walk, for tests that read which instances and batches a list
 // draws.
 #[cfg(feature = "oplog")]
@@ -68,7 +74,7 @@ pub use renderer::walk;
 pub mod prelude {
   pub use super::contract::{
     ColorFilter as _, ColorSource as _, DisplayList as _, DisplayListBuilder as _, ImageFilter as _, MaskFilter as _,
-    Paint as _, Path as _, PathBuilder as _, Pen as _, Renderer as _, Texture as _,
+    Paint as _, PaintShader as _, Path as _, PathBuilder as _, Pen as _, Renderer as _, Texture as _,
   };
 }
 
@@ -88,6 +94,7 @@ fn selected_renderer_implements_the_contract() {
   fn path<T: contract::Path>() {}
   fn pen<T: contract::Pen>() {}
   fn path_builder<T: contract::PathBuilder>() {}
+  fn paint_shader<T: contract::PaintShader>() {}
   renderer::<Renderer>();
   texture::<Texture>();
   display_list::<DisplayList>();
@@ -100,6 +107,7 @@ fn selected_renderer_implements_the_contract() {
   path::<Path>();
   pen::<PathBuilder>();
   path_builder::<PathBuilder>();
+  paint_shader::<PaintShader>();
 }
 
 #[cfg(test)]

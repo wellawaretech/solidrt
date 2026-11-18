@@ -160,3 +160,80 @@ pub enum BlendMode {
   Color,
   Luminosity,
 }
+
+/// What a sampled texture shows past its edge, as a paint shader's input
+/// samples it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextureWrap {
+  /// The edge texel continues.
+  Clamp,
+  /// The texture repeats.
+  Repeat,
+}
+
+/// The GLSL type of one active uniform of a paint shader, as reflected at
+/// link time. The settable set is what a param sets (the scalars, the float
+/// vectors, mat4) and the 2D sampler an input binds; any other type reflects
+/// as `Other`, carrying the raw GL type enum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum UniformKind {
+  Float,
+  Int,
+  Bool,
+  Vec2,
+  Vec3,
+  Vec4,
+  Mat4,
+  /// Bound by a `ShaderInput`, never by a param.
+  Sampler2D,
+  Other(u32),
+}
+
+impl UniformKind {
+  /// The kind of the GL uniform type `utype` (`glow::FLOAT`, ...).
+  pub fn from_gl(utype: u32) -> UniformKind {
+    match utype {
+      glow::FLOAT => UniformKind::Float,
+      glow::INT => UniformKind::Int,
+      glow::BOOL => UniformKind::Bool,
+      glow::FLOAT_VEC2 => UniformKind::Vec2,
+      glow::FLOAT_VEC3 => UniformKind::Vec3,
+      glow::FLOAT_VEC4 => UniformKind::Vec4,
+      glow::FLOAT_MAT4 => UniformKind::Mat4,
+      glow::SAMPLER_2D => UniformKind::Sampler2D,
+      _ => UniformKind::Other(utype),
+    }
+  }
+
+  /// The floats one element of the kind takes from a param; None for the
+  /// kinds no param sets (the sampler and `Other`).
+  pub fn components(self) -> Option<usize> {
+    match self {
+      UniformKind::Float | UniformKind::Int | UniformKind::Bool => Some(1),
+      UniformKind::Vec2 => Some(2),
+      UniformKind::Vec3 => Some(3),
+      UniformKind::Vec4 => Some(4),
+      UniformKind::Mat4 => Some(16),
+      UniformKind::Sampler2D | UniformKind::Other(_) => None,
+    }
+  }
+}
+
+/// One active uniform of a paint shader, as reflected at link time: an
+/// array uniform under its bare name (GL's `[0]` suffix stripped), `count`
+/// its array size, 1 for a scalar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UniformInfo {
+  pub name: String,
+  pub kind: UniformKind,
+  pub count: usize,
+}
+
+/// A paint shader param: the uniform `name` and its components flat, one
+/// element after another for an array. An int or bool uniform takes each
+/// float cast to an integer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShaderParam {
+  pub name: String,
+  pub value: Vec<f32>,
+}

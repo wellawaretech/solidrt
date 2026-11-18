@@ -15,10 +15,11 @@
 //! because those names died with the context; the new renderer drains only
 //! the queue it created, so a stale name (possibly the same number as a
 //! fresh one on the new context) is never deleted on the new context.
-//! Impeller's reactor did this quietly; anvil does it here.
+//! Impeller's reactor did this quietly; anvil does it here. A paint
+//! shader's program is held the same way, on the same queue.
 
 use crate::contract;
-use crate::ISize;
+use crate::{ISize, TextureSampling, TextureWrap, UniformInfo};
 use std::os::raw::c_void;
 use std::sync::{Arc, Mutex};
 
@@ -44,24 +45,37 @@ pub use record::{
   ColorFilter, ColorSource, DisplayList, DisplayListBuilder, ImageFilter, MaskFilter, Paint, Path, PathBuilder,
 };
 
+// The paint shader's fragment source assembly, a pure string function, for
+// the tests.
+#[cfg(test)]
+pub(crate) use exec::{paint_fragment_source, PAINT_FRAGMENT_EPILOGUE, SOURCE_HEADER};
+
+/// A GL name whose last handle dropped: a texture's or a paint shader's
+/// program.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Freed {
+  Texture(glow::NativeTexture),
+  Program(glow::NativeProgram),
+}
+
 /// Names whose last handle dropped, waiting for the raster thread to
 /// delete them at the next draw (see the module doc: a handle may drop on
 /// any thread, deletion needs the context).
-pub(crate) struct DeletionQueue(Mutex<Vec<glow::NativeTexture>>);
+pub(crate) struct DeletionQueue(Mutex<Vec<Freed>>);
 
 impl DeletionQueue {
   pub(crate) fn new() -> Self {
     DeletionQueue(Mutex::new(Vec::new()))
   }
 
-  pub(crate) fn push(&self, name: glow::NativeTexture) {
+  pub(crate) fn push(&self, name: Freed) {
     // A poisoned lock only means a panic elsewhere while it was held; the
     // vector of names is still whole, so the push goes on.
     self.0.lock().unwrap_or_else(|e| e.into_inner()).push(name);
   }
 
   /// Everything pushed so far, leaving the queue empty.
-  pub(crate) fn drain(&self) -> Vec<glow::NativeTexture> {
+  pub(crate) fn drain(&self) -> Vec<Freed> {
     // As in `push`: a poisoned lock still guards a whole vector.
     std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
   }
@@ -84,6 +98,11 @@ impl contract::Renderer for Renderer {
     // Every name is adopted, whatever its format: the callers decide by
     // format whether to adopt at all (raster/targets.rs).
     Some(Texture(Arc::new(TextureInner { name: texture, size, queue: self.queue.clone() })))
+  }
+
+  fn create_paint_shader(&self, fragment_src: &str) -> Result<PaintShader, String> {
+    let linked = self.exec.link_paint(fragment_src)?;
+    Ok(PaintShader(Arc::new(PaintShaderInner { linked, queue: self.queue.clone() })))
   }
 
   fn draw(&mut self, target: contract::Target, dl: &DisplayList) -> Result<contract::DrawReport, String> {
@@ -117,7 +136,7 @@ struct TextureInner {
 
 impl Drop for TextureInner {
   fn drop(&mut self) {
-    self.queue.push(self.name);
+    self.queue.push(Freed::Texture(self.name));
   }
 }
 
@@ -148,5 +167,81 @@ pub fn test_texture(name: u32, size: ISize) -> Texture {
 impl contract::Texture for Texture {
   fn gl_name(&self) -> Option<glow::NativeTexture> {
     Some(self.0.name)
+  }
+}
+
+/// A sampler2D input of a paint shader: the uniform `name` samples
+/// `texture` through `sampling` and `wrap`.
+#[derive(Clone)]
+pub struct ShaderInput {
+  pub name: String,
+  pub texture: Texture,
+  pub sampling: TextureSampling,
+  pub wrap: TextureWrap,
+}
+
+/// An app's fragment program, linked behind anvil's own vertex stage, that
+/// a list draws as a quad (`DisplayListBuilder::draw_shader`). Shared by
+/// handle like a texture: the program is the renderer's, and the last
+/// handle's drop pushes it onto the creating renderer's deletion queue,
+/// never deletes it itself (the module doc says why). Two handles are equal
+/// when they are clones of one.
+#[derive(Clone)]
+pub struct PaintShader(Arc<PaintShaderInner>);
+
+struct PaintShaderInner {
+  linked: exec::PaintProgram,
+  queue: Arc<DeletionQueue>,
+}
+
+impl Drop for PaintShaderInner {
+  fn drop(&mut self) {
+    self.queue.push(Freed::Program(self.linked.program));
+  }
+}
+
+impl PaintShader {
+  fn linked(&self) -> &exec::PaintProgram {
+    &self.0.linked
+  }
+
+  /// A handle over `queue` with the program name `name` and no uniforms
+  /// (test builds build one without a renderer).
+  #[cfg(any(test, feature = "oplog"))]
+  pub(crate) fn over(queue: Arc<DeletionQueue>, name: u32) -> PaintShader {
+    let program = glow::NativeProgram(std::num::NonZeroU32::new(name).expect("a GL name is never zero"));
+    let linked = exec::PaintProgram::without_gl(program);
+    PaintShader(Arc::new(PaintShaderInner { linked, queue }))
+  }
+}
+
+impl PartialEq for PaintShader {
+  fn eq(&self, other: &PaintShader) -> bool {
+    Arc::ptr_eq(&self.0, &other.0)
+  }
+}
+
+impl std::fmt::Debug for PaintShader {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_tuple("PaintShader").field(&self.0.linked.program).finish()
+  }
+}
+
+/// A paint shader handle with no renderer behind it, for tests that record
+/// and walk without GL: a dummy program name, no uniforms, and a fresh
+/// queue nobody drains, so its drop deletes nothing.
+#[cfg(any(test, feature = "oplog"))]
+pub fn test_paint_shader() -> PaintShader {
+  PaintShader::over(Arc::new(DeletionQueue::new()), TEST_PROGRAM_NAME)
+}
+
+/// The program name `test_paint_shader` carries: any non-zero name, as no
+/// GL ever sees it.
+#[cfg(any(test, feature = "oplog"))]
+const TEST_PROGRAM_NAME: u32 = 1;
+
+impl contract::PaintShader for PaintShader {
+  fn uniforms(&self) -> &[UniformInfo] {
+    &self.0.linked.infos
   }
 }

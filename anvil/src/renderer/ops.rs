@@ -3,8 +3,8 @@
 //! Arc so a retained list is recorded once and replayed by reference.
 
 use super::record::DisplayList;
-use super::Texture;
-use crate::{Color, Matrix, Point, Rect, StrokeCap, TextureSampling};
+use super::{PaintShader, ShaderInput, Texture};
+use crate::{Color, Matrix, Point, Rect, ShaderParam, StrokeCap, TextureSampling};
 use crate::{CoveragePolicy, GlyphGradient, GlyphQuad};
 use euclid::default::Transform2D;
 use std::sync::Arc;
@@ -105,6 +105,14 @@ pub(super) enum Op {
     bounds: Rect,
     policy: CoveragePolicy,
     gradient: Option<Arc<GlyphGradient>>,
+  },
+  /// A paint shader's quad over `rect`, its params and inputs shared with
+  /// the recorder's caller.
+  DrawShader {
+    rect: Rect,
+    shader: PaintShader,
+    params: Arc<[ShaderParam]>,
+    inputs: Arc<[ShaderInput]>,
   },
   /// The nested list by reference, faded as a group by `opacity`.
   DrawList {

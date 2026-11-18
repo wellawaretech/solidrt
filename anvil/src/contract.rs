@@ -18,7 +18,7 @@
 
 use super::vocab::{
   BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, ISize, Matrix, Point, Rect, RoundingRadii,
-  StrokeCap, StrokeJoin, TextureSampling, TileMode,
+  ShaderParam, StrokeCap, StrokeJoin, TextureSampling, TileMode, UniformInfo,
 };
 use crate::{CoveragePolicy, GlyphGradient, GlyphQuad};
 use std::os::raw::c_void;
@@ -61,6 +61,15 @@ pub trait Renderer: Sized {
   /// format other than RGBA8), in which case the name stays the caller's.
   fn adopt_texture(&self, texture: glow::NativeTexture, size: ISize) -> Option<super::Texture>;
 
+  /// Compile and link the fragment program `fragment_src` behind the
+  /// renderer's own vertex stage into a `PaintShader` the lists can draw
+  /// (`DisplayListBuilder::draw_shader`, which states the fragment
+  /// contract). The source is fragment-only GLSL ES with no `#version` line:
+  /// the renderer supplies the header. The error is the GL log, prefixed
+  /// with the stage that failed; a source with a `#version` line is refused
+  /// before it compiles.
+  fn create_paint_shader(&self, fragment_src: &str) -> Result<super::PaintShader, String>;
+
   /// Draw a display list into `target`, replacing its contents: the target
   /// is cleared first. The renderer may leave any GL state changed; the
   /// caller rebinds what it relies on afterwards. Returns what the draw
@@ -75,6 +84,16 @@ pub trait Texture: Clone + Send + Sync {
   /// The GL name behind the handle, for alloy's own passes to sample or
   /// render into; None when the renderer has not materialized one.
   fn gl_name(&self) -> Option<glow::NativeTexture>;
+}
+
+/// A linked paint shader: a refcounted handle, shared across threads, whose
+/// last drop releases the program.
+pub trait PaintShader: Clone + Send + Sync {
+  /// Every active uniform of the program, as reflected at link time, for
+  /// the caller to validate params and inputs against before it records
+  /// them. The renderer's own uniforms (`uSize`, and `iResolution` when the
+  /// source reads it) are among them.
+  fn uniforms(&self) -> &[UniformInfo];
 }
 
 /// A finished recording: immutable, refcounted, shared across threads.
@@ -161,6 +180,26 @@ pub trait DisplayListBuilder: Sized {
     quads: &Arc<[GlyphQuad]>,
     policy: CoveragePolicy,
     gradient: Option<&Arc<GlyphGradient>>,
+  ) -> &mut Self;
+  /// The paint shader `shader` drawn as one quad over `rect` in the current
+  /// space, under the transform and the clips in effect. The fragment
+  /// contract: `vUV` runs 0..1 over `rect` with a top-left origin;
+  /// `iResolution` is `rect`'s size in device pixels; the program writes
+  /// `fragColor`, premultiplied, which is drawn source-over; a param sets
+  /// the uniform of its name (a number a scalar, the flat components the
+  /// declared type), an input binds its texture to the sampler2D of its
+  /// name. A param or an input whose name the program has not got is
+  /// skipped, as is a param whose component count does not fit its
+  /// uniform; the caller validates against `PaintShader::uniforms`.
+  /// Rounded corners are a `clip_rounded_rect` around the draw. The params
+  /// and inputs are shared, not copied: a retained recording and an element
+  /// that keeps them hold one slice.
+  fn draw_shader(
+    &mut self,
+    rect: &Rect,
+    shader: &super::PaintShader,
+    params: &Arc<[ShaderParam]>,
+    inputs: &Arc<[super::ShaderInput]>,
   ) -> &mut Self;
   /// Nest `dl` under the current state, faded by `opacity` as a group.
   fn draw_display_list(&mut self, dl: &super::DisplayList, opacity: f32) -> &mut Self;

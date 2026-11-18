@@ -8,13 +8,13 @@
 //! executable push.
 
 use super::ops::{premultiply, Image, Op, Premultiplied, Radii};
-use super::Texture;
+use super::{PaintShader, ShaderInput, Texture};
 use crate::contract;
 #[cfg(any(test, feature = "oplog"))]
 use crate::oplog::{Op as LogOp, PaintLog, PathLog, PathSegment};
 use crate::{
-  BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, Matrix, Point, Rect, RoundingRadii, Size,
-  StrokeCap, StrokeJoin, TextureSampling, TileMode,
+  BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, Matrix, Point, Rect, RoundingRadii, ShaderParam,
+  Size, StrokeCap, StrokeJoin, TextureSampling, TileMode,
 };
 use crate::{CoveragePolicy, GlyphGradient, GlyphQuad};
 use std::sync::Arc;
@@ -413,6 +413,24 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     });
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawGlyphs { bounds, quads: quads.len(), policy, gradient: gradient.is_some() });
+    self
+  }
+
+  fn draw_shader(
+    &mut self,
+    rect: &Rect,
+    shader: &PaintShader,
+    params: &Arc<[ShaderParam]>,
+    inputs: &Arc<[ShaderInput]>,
+  ) -> &mut Self {
+    self.ops.push(Op::DrawShader {
+      rect: *rect,
+      shader: shader.clone(),
+      params: params.clone(),
+      inputs: inputs.clone(),
+    });
+    #[cfg(any(test, feature = "oplog"))]
+    self.log.push(LogOp::DrawShader { rect: *rect });
     self
   }
 

@@ -1,16 +1,18 @@
-//! The GL half of a draw: the fill, shape and glyph programs, the
-//! instance buffer under the VAO the executor owns, and the draw that
-//! uploads a list's instances (`super::walk`) and issues them, a batch
-//! through the program its kind needs. Raster thread only, with the context
-//! current.
+//! The GL half of a draw: the fill, shape and glyph programs, the paint
+//! shaders' programs linked behind anvil's vertex stage, the instance
+//! buffer under the VAO the executor owns, and the draw that uploads a
+//! list's instances (`super::walk`) and issues them, a batch through the
+//! program its kind needs. Raster thread only, with the context current.
 
 use super::record::DisplayList;
-use super::walk::{self, BatchProgram, Instance};
+use super::walk::{self, BatchProgram, Instance, PaintDraw, Walked};
+use super::Freed;
 use crate::contract::{DrawReport, Target};
 use crate::{CoveragePolicy, GlyphGradient, RAMP_WIDTH};
-use crate::{TextureSampling, TileMode};
+use crate::{TextureSampling, TextureWrap, TileMode, UniformInfo, UniformKind};
 use euclid::default::{Box2D, Point2D};
 use glow::HasContext;
+use std::collections::HashMap;
 use std::os::raw::c_void;
 
 /// Two triangles a quad, their corners derived from `gl_VertexID`.
@@ -51,6 +53,10 @@ const TEXTURE_UNIT: u32 = 0;
 const RAMP_UNIT: u32 = 1;
 /// Bytes per rgba8 ramp texel.
 const BYTES_PER_RAMP_TEXEL: usize = 4;
+/// The texture units a paint shader's inputs may take, from unit 0 on: GLES
+/// 3.0's guaranteed minimum of fragment texture units. An input past it is
+/// skipped.
+const MAX_PAINT_INPUTS: u32 = 16;
 
 /// `uGradient` for a glyph run without a gradient; a gradient's is its
 /// `GradientKind` discriminant.
@@ -63,7 +69,7 @@ const TILE_MIRROR: i32 = 2;
 const TILE_DECAL: i32 = 3;
 
 // The first lines of every shader source here.
-const SOURCE_HEADER: &str = "#version 300 es\nprecision highp float;\n";
+pub(crate) const SOURCE_HEADER: &str = "#version 300 es\nprecision highp float;\n";
 
 // A target's logical (0, 0) is its top: it maps to clip (-1, +1) for every
 // target, window and texture alike. Window lists are drawn unflipped and
@@ -154,6 +160,36 @@ const GLYPH_VERTEX: &str = r"
 out vec2 vPos;                           // the op's space, untransformed: what a gradient maps
 void main() {
   vPos = place(quadCorner());
+}
+";
+
+// A paint shader's vertex stage, after SOURCE_HEADER and VERTEX_COMMON:
+// `vUV` is the quad's corner, 0..1 over the draw's rect, top-left origin.
+const PAINT_VERTEX: &str = r"
+out vec2 vUV;
+void main() { vec2 c = quadCorner(); place(c); vUV = c; }
+";
+
+// What a paint shader's source reads beside FRAGMENT_COMMON (`fragColor`
+// among it): the corner varying and the quad's size in device pixels.
+const PAINT_FRAGMENT_PREAMBLE: &str = r"
+in vec2 vUV;
+uniform vec2 iResolution;
+";
+
+// The name the app's `main` is renamed to, by macro, so the epilogue's
+// `main` calls it. A name no app source would use; the call in
+// PAINT_FRAGMENT_EPILOGUE must match it.
+const PAINT_MAIN: &str = "solidrt_paint_main";
+
+// After the app's source: its main, then the clip factor the glyph program
+// applies, a multiply, never a discard. `fragColor` is premultiplied, so
+// the one factor fades all four channels.
+pub(crate) const PAINT_FRAGMENT_EPILOGUE: &str = r"
+void main() {
+  solidrt_paint_main();
+  float inside = float(all(greaterThanEqual(vDevice, vClip.xy)) && all(lessThan(vDevice, vClip.zw)));
+  fragColor *= inside * roundedClip();
 }
 ";
 
@@ -468,6 +504,56 @@ void main() {
 }
 ";
 
+/// The fragment source a paint shader compiles from the app's `src`:
+/// anvil's header, the common fragment inputs and the paint preamble, the
+/// source with its `main` renamed by macro under `#line 1` (so a compile
+/// error's line numbers are the app's), and the epilogue that calls it and
+/// applies the clips. A source with a `#version` line is refused: a paint
+/// shader is fragment-only GLSL ES, and anvil supplies the header.
+pub(crate) fn paint_fragment_source(src: &str) -> Result<String, String> {
+  // A `#version` directive, not the word in a comment: the same test alloy's
+  // preamble injection makes, so a shader-texture source is accepted here
+  // exactly when it is accepted there.
+  if src.lines().any(|line| line.trim_start().starts_with("#version")) {
+    return Err(
+      "A paint shader source is fragment-only GLSL ES without a #version line: anvil supplies the header".to_string(),
+    );
+  }
+  let renamed = format!("#define main {PAINT_MAIN}\n#line 1\n{src}\n#undef main\n");
+  Ok([SOURCE_HEADER, FRAGMENT_COMMON, PAINT_FRAGMENT_PREAMBLE, &renamed, PAINT_FRAGMENT_EPILOGUE].concat())
+}
+
+/// A paint shader's active uniforms by bare name: location, kind and
+/// array size.
+type UniformTable = HashMap<String, (glow::UniformLocation, UniformKind, usize)>;
+
+/// A linked paint shader program and what a draw sets on it, as reflected
+/// at link: `uSize`, `iResolution` when the source reads it, and every
+/// active uniform by name (`uniforms`, for params and inputs; `infos`, the
+/// same as the contract's `PaintShader::uniforms` returns them).
+pub(super) struct PaintProgram {
+  pub(super) program: glow::Program,
+  size: glow::UniformLocation,
+  resolution: Option<glow::UniformLocation>,
+  uniforms: UniformTable,
+  pub(super) infos: Vec<UniformInfo>,
+}
+
+impl PaintProgram {
+  /// `program` with no uniforms and a placeholder `uSize`, for a test
+  /// handle no GL ever draws.
+  #[cfg(any(test, feature = "oplog"))]
+  pub(super) fn without_gl(program: glow::Program) -> PaintProgram {
+    PaintProgram {
+      program,
+      size: glow::NativeUniformLocation(0),
+      resolution: None,
+      uniforms: HashMap::new(),
+      infos: Vec::new(),
+    }
+  }
+}
+
 /// The GL half: the three programs, the instance buffer and the draw. Lives
 /// as long as the renderer, which the raster thread drops before it releases
 /// the context (raster/recover.rs), so the GL names here die with it and
@@ -483,12 +569,13 @@ pub(super) struct Executor {
   glyph: Program,
   vao: glow::VertexArray,
   instances: glow::Buffer,
-  /// The two ways a texture quad samples, as sampler objects, so a bound
-  /// texture's own parameter state is never read or written: on this
+  /// The sampler objects per (sampling, wrap), created on first use, so a
+  /// bound texture's own parameter state is never read or written: on this
   /// shared context only a bound sampler object is a reliable contract
-  /// (raster/offscreen.rs says the same for the node shader passes).
-  sampler_linear: glow::Sampler,
-  sampler_nearest: glow::Sampler,
+  /// (raster/offscreen.rs says the same for the node shader passes). The
+  /// texture batches and the ramp sample clamped; a paint shader's input
+  /// takes its own wrap.
+  samplers: HashMap<(TextureSampling, TextureWrap), glow::Sampler>,
   /// The glyph runs' policy and gradient uniforms, set per glyph batch.
   glyph_uniforms: GlyphUniforms,
   /// The gradient ramp (`RAMP_WIDTH` x 1 rgba8, straight-alpha sRGB),
@@ -566,8 +653,6 @@ impl Executor {
     gl.uniform_1_i32(Some(&ramp_uniform), RAMP_UNIT as i32);
     gl.use_program(None);
     let ramp = create_ramp(&gl)?;
-    let sampler_linear = create_sampler(&gl, glow::LINEAR, "linear")?;
-    let sampler_nearest = create_sampler(&gl, glow::NEAREST, "nearest")?;
     let vao = gl.create_vertex_array().map_err(|e| format!("shape vertex array: {e}"))?;
     let instances = gl.create_buffer().map_err(|e| format!("shape instance buffer: {e}"))?;
     gl.bind_vertex_array(Some(vao));
@@ -582,14 +667,52 @@ impl Executor {
     point_attributes(&gl, 0);
     gl.bind_vertex_array(None);
     gl.bind_buffer(glow::ARRAY_BUFFER, None);
-    Ok(Executor { gl, fill, shape, glyph, vao, instances, sampler_linear, sampler_nearest, glyph_uniforms, ramp })
+    let samplers = HashMap::new();
+    Ok(Executor { gl, fill, shape, glyph, vao, instances, samplers, glyph_uniforms, ramp })
   }
 
-  /// Delete `names`: the textures whose last handle dropped since the last
-  /// draw (see `super::DeletionQueue`). On this thread, context current.
-  pub(super) fn reclaim(&self, names: Vec<glow::NativeTexture>) {
+  /// Delete `names`: the textures and paint shader programs whose last
+  /// handle dropped since the last draw (see `super::DeletionQueue`). On
+  /// this thread, context current.
+  pub(super) fn reclaim(&self, names: Vec<Freed>) {
     for name in names {
-      unsafe { self.gl.delete_texture(name) }
+      match name {
+        Freed::Texture(texture) => unsafe { self.gl.delete_texture(texture) },
+        Freed::Program(program) => unsafe { self.gl.delete_program(program) },
+      }
+    }
+  }
+
+  /// The paint shader program of the app's fragment source `fragment_src`
+  /// (`paint_fragment_source`) behind anvil's vertex stage, compiled,
+  /// linked and reflected. The error names the stage that failed, with the
+  /// GL log.
+  pub(super) fn link_paint(&self, fragment_src: &str) -> Result<PaintProgram, String> {
+    let fragment = paint_fragment_source(fragment_src)?;
+    let vertex = [SOURCE_HEADER, VERTEX_COMMON, PAINT_VERTEX].concat();
+    let gl = &self.gl;
+    unsafe {
+      // A source without a `main` fails at the epilogue's call to the
+      // renamed one: the GL log then names anvil's hidden symbol, which no
+      // app can act on, so say what the source is missing instead.
+      let program = link_program(gl, "paint", &vertex, &fragment).map_err(|e| {
+        if e.contains(PAINT_MAIN) {
+          format!("paint fragment shader: the source must define void main() ({e})")
+        } else {
+          e
+        }
+      })?;
+      let size = match uniform(gl, program, "paint", "uSize") {
+        Ok(size) => size,
+        Err(e) => {
+          gl.delete_program(program);
+          return Err(e);
+        }
+      };
+      // Optional: the compiler drops it when the source never reads it.
+      let resolution = gl.get_uniform_location(program, "iResolution");
+      let (uniforms, infos) = reflect_uniforms(gl, program);
+      Ok(PaintProgram { program, size, resolution, uniforms, infos })
     }
   }
 
@@ -602,6 +725,7 @@ impl Executor {
   /// instances written and the draw calls issued, zeros for an empty list.
   pub(super) fn draw(&mut self, target: Target, list: &DisplayList) -> Result<DrawReport, String> {
     let walked = walk::walk(list, target.size);
+    unsafe { self.create_samplers(&walked) }?;
     let instances = &walked.instances;
     let (width, height) = (target.size.width as i32, target.size.height as i32);
     let gl = &self.gl;
@@ -647,8 +771,9 @@ impl Executor {
         gl.use_program(Some(program.program));
         gl.uniform_2_f32(Some(&program.size), width as f32, height as f32);
       }
-      // The shape program is in use, as the loop left it.
-      let mut in_use = BatchProgram::Shape;
+      // The shape program is in use, as the loop left it. None after a
+      // paint batch: its program is the shader's, so the next batch binds.
+      let mut in_use = Some(BatchProgram::Shape);
       gl.bind_vertex_array(Some(self.vao));
       gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
       // Sound: Instance is repr(C) with every field an f32, so it has no
@@ -664,21 +789,29 @@ impl Executor {
       // by re-pointing the attributes at its first instance.
       let glyphs = walked.batches.iter().any(|b| b.program == BatchProgram::Glyph);
       if glyphs {
-        gl.active_texture(glow::TEXTURE0 + RAMP_UNIT);
-        gl.bind_texture(glow::TEXTURE_2D, Some(self.ramp));
-        gl.bind_sampler(RAMP_UNIT, Some(self.sampler_linear));
+        self.bind_ramp();
       }
       gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
       for batch in &walked.batches {
         point_attributes(gl, batch.start);
-        if batch.program != in_use {
+        if let Some(paint) = &batch.paint {
+          self.draw_paint(paint, [width as f32, height as f32], batch.count);
+          // The paint inputs may have taken the ramp's unit.
+          if glyphs {
+            self.bind_ramp();
+          }
+          in_use = None;
+          continue;
+        }
+        if in_use != Some(batch.program) {
           let program = match batch.program {
             BatchProgram::Fill => &self.fill,
             BatchProgram::Shape => &self.shape,
             BatchProgram::Glyph => &self.glyph,
+            BatchProgram::Paint => unreachable!("a paint batch carries its draw (walk.rs Batch)"),
           };
           gl.use_program(Some(program.program));
-          in_use = batch.program;
+          in_use = Some(batch.program);
         }
         if batch.program == BatchProgram::Glyph {
           let policy = batch.policy.expect("a glyph batch carries its coverage policy (walk.rs Batch)");
@@ -686,10 +819,7 @@ impl Executor {
         }
         match batch.texture {
           Some((name, sampling)) => {
-            let sampler = match sampling {
-              TextureSampling::Linear => self.sampler_linear,
-              TextureSampling::Nearest => self.sampler_nearest,
-            };
+            let sampler = self.sampler(sampling, TextureWrap::Clamp);
             gl.bind_texture(glow::TEXTURE_2D, Some(name));
             gl.bind_sampler(TEXTURE_UNIT, Some(sampler));
           }
@@ -724,6 +854,90 @@ impl Executor {
 }
 
 impl Executor {
+  // Create the sampler objects the batches of `walked` bind and this
+  // executor does not have yet: (sampling, clamp) for a texture batch and
+  // for the ramp a glyph batch samples, each input's own for a paint batch.
+  unsafe fn create_samplers(&mut self, walked: &Walked) -> Result<(), String> {
+    for batch in &walked.batches {
+      let ramp = (batch.program == BatchProgram::Glyph).then_some((TextureSampling::Linear, TextureWrap::Clamp));
+      let texture = batch.texture.map(|(_, sampling)| (sampling, TextureWrap::Clamp));
+      let inputs = batch.paint.iter().flat_map(|p| p.inputs.iter()).map(|i| (i.sampling, i.wrap));
+      for key in ramp.into_iter().chain(texture).chain(inputs) {
+        if !self.samplers.contains_key(&key) {
+          let sampler = create_sampler(&self.gl, key.0, key.1)?;
+          self.samplers.insert(key, sampler);
+        }
+      }
+    }
+    Ok(())
+  }
+
+  // The sampler object for (`sampling`, `wrap`), which `create_samplers`
+  // made before the draw.
+  fn sampler(&self, sampling: TextureSampling, wrap: TextureWrap) -> glow::Sampler {
+    *self.samplers.get(&(sampling, wrap)).expect("create_samplers made every sampler a draw binds")
+  }
+
+  // Bind the gradient ramp on RAMP_UNIT through the linear clamped
+  // sampler, then make TEXTURE_UNIT the active unit, as `draw` expects.
+  unsafe fn bind_ramp(&self) {
+    let gl = &self.gl;
+    gl.active_texture(glow::TEXTURE0 + RAMP_UNIT);
+    gl.bind_texture(glow::TEXTURE_2D, Some(self.ramp));
+    gl.bind_sampler(RAMP_UNIT, Some(self.sampler(TextureSampling::Linear, TextureWrap::Clamp)));
+    gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
+  }
+
+  // A paint batch of `count` instances into a target of `size` device
+  // pixels: the shader's program in use, its params set by its uniform
+  // table, `uSize` and `iResolution` set after them (so a param of either
+  // name cannot displace them), its inputs bound on units 0.. in order, one
+  // draw, and the units it used unbound again. TEXTURE_UNIT is the active
+  // unit before and after, with nothing bound on it.
+  unsafe fn draw_paint(&self, paint: &PaintDraw, size: [f32; 2], count: usize) {
+    let gl = &self.gl;
+    let shader = paint.shader.linked();
+    gl.use_program(Some(shader.program));
+    for param in paint.params.iter() {
+      // A name the program has not got is skipped: alloy validated it.
+      let Some((location, kind, elements)) = shader.uniforms.get(&param.name) else { continue };
+      apply_param(gl, &param.name, location, *kind, *elements, &param.value);
+    }
+    gl.uniform_2_f32(Some(&shader.size), size[0], size[1]);
+    if let Some(resolution) = &shader.resolution {
+      gl.uniform_2_f32(Some(resolution), paint.resolution[0], paint.resolution[1]);
+    }
+    let mut units = 0;
+    for input in paint.inputs.iter() {
+      let Some((location, kind, _)) = shader.uniforms.get(&input.name) else { continue };
+      if *kind != UniformKind::Sampler2D {
+        log::debug!("[anvil] Paint shader: input '{}' names a uniform that is not a sampler2D; skipped", input.name);
+        continue;
+      }
+      if units == MAX_PAINT_INPUTS {
+        log::debug!(
+          "[anvil] Paint shader: input '{}' is past the {MAX_PAINT_INPUTS} texture units; skipped",
+          input.name
+        );
+        continue;
+      }
+      gl.active_texture(glow::TEXTURE0 + units);
+      gl.bind_texture(glow::TEXTURE_2D, Some(input.texture.name()));
+      gl.bind_sampler(units, Some(self.sampler(input.sampling, input.wrap)));
+      gl.uniform_1_i32(Some(location), units as i32);
+      units += 1;
+    }
+    gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, count as i32);
+    for unit in 0..units {
+      gl.active_texture(glow::TEXTURE0 + unit);
+      gl.bind_sampler(unit, None);
+      gl.bind_texture(glow::TEXTURE_2D, None);
+    }
+    gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
+    gl.bind_sampler(TEXTURE_UNIT, None);
+    gl.bind_texture(glow::TEXTURE_2D, None);
+  }
+
   // A glyph batch's uniforms: `policy`, and `gradient` with its ramp
   // uploaded into the ramp texture (bound on RAMP_UNIT by `draw`), or no
   // gradient. The glyph program is in use and TEXTURE_UNIT is the active unit,
@@ -828,16 +1042,84 @@ unsafe fn point_attributes(gl: &glow::Context, first: usize) {
   }
 }
 
-// A sampler object filtering with `filter` for both minification and
-// magnification, clamped at the edges. No mip selection: a texture quad's
-// Linear is bilinear at level 0, as Impeller's was.
-unsafe fn create_sampler(gl: &glow::Context, filter: u32, label: &str) -> Result<glow::Sampler, String> {
-  let sampler = gl.create_sampler().map_err(|e| format!("shape {label} sampler: {e}"))?;
+// A sampler object filtering by `sampling` for both minification and
+// magnification, wrapping by `wrap` on both axes. No mip selection: a
+// texture quad's Linear is bilinear at level 0, as Impeller's was.
+unsafe fn create_sampler(
+  gl: &glow::Context,
+  sampling: TextureSampling,
+  wrap: TextureWrap,
+) -> Result<glow::Sampler, String> {
+  let filter = match sampling {
+    TextureSampling::Linear => glow::LINEAR,
+    TextureSampling::Nearest => glow::NEAREST,
+  };
+  let wrap_mode = match wrap {
+    TextureWrap::Clamp => glow::CLAMP_TO_EDGE,
+    TextureWrap::Repeat => glow::REPEAT,
+  };
+  let sampler = gl.create_sampler().map_err(|e| format!("{sampling:?} {wrap:?} sampler: {e}"))?;
   gl.sampler_parameter_i32(sampler, glow::TEXTURE_MIN_FILTER, filter as i32);
   gl.sampler_parameter_i32(sampler, glow::TEXTURE_MAG_FILTER, filter as i32);
-  gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-  gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+  gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_S, wrap_mode as i32);
+  gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_T, wrap_mode as i32);
   Ok(sampler)
+}
+
+// Every active uniform of `program`: by bare name (an array's `[0]`
+// stripped) to its location, kind and array size, and as the reflected
+// list. A uniform GL reports but cannot locate is left out of both.
+unsafe fn reflect_uniforms(gl: &glow::Context, program: glow::Program) -> (UniformTable, Vec<UniformInfo>) {
+  let mut uniforms = HashMap::new();
+  let mut infos = Vec::new();
+  for index in 0..gl.get_active_uniforms(program) {
+    let Some(active) = gl.get_active_uniform(program, index) else { continue };
+    let Some(location) = gl.get_uniform_location(program, &active.name) else { continue };
+    let name = active.name.strip_suffix("[0]").unwrap_or(&active.name).to_string();
+    let kind = UniformKind::from_gl(active.utype);
+    let count = active.size.max(1) as usize;
+    infos.push(UniformInfo { name: name.clone(), kind, count });
+    uniforms.insert(name, (location, kind, count));
+  }
+  (uniforms, infos)
+}
+
+// Set the param `name`'s `value` on the uniform at `location`, of `kind`
+// and `count` elements, in the program in use: the float kinds through
+// their slice setters, int and bool as each float cast to i32. A value
+// whose length is not the kind's components times the count, and a kind
+// no param sets, is skipped (alloy validated the params; this is the
+// raster side's guard).
+unsafe fn apply_param(
+  gl: &glow::Context,
+  name: &str,
+  location: &glow::UniformLocation,
+  kind: UniformKind,
+  count: usize,
+  value: &[f32],
+) {
+  let wanted = kind.components().map(|c| c * count);
+  if wanted != Some(value.len()) {
+    log::debug!(
+      "[anvil] Paint shader: param '{name}' has {} component(s), uniform {kind:?} x {count} takes {wanted:?}; skipped",
+      value.len()
+    );
+    return;
+  }
+  let location = Some(location);
+  match kind {
+    UniformKind::Float => gl.uniform_1_f32_slice(location, value),
+    UniformKind::Int | UniformKind::Bool => {
+      let ints: Vec<i32> = value.iter().map(|v| *v as i32).collect();
+      gl.uniform_1_i32_slice(location, &ints);
+    }
+    UniformKind::Vec2 => gl.uniform_2_f32_slice(location, value),
+    UniformKind::Vec3 => gl.uniform_3_f32_slice(location, value),
+    UniformKind::Vec4 => gl.uniform_4_f32_slice(location, value),
+    UniformKind::Mat4 => gl.uniform_matrix_4_f32_slice(location, false, value),
+    // No component count, so the guard above already returned.
+    UniformKind::Sampler2D | UniformKind::Other(_) => {}
+  }
 }
 
 impl Program {

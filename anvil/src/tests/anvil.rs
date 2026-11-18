@@ -6,20 +6,25 @@
 // decided here, before any GL work, as are the rounded rects' radii and
 // quads, the rounded clip in device space and the image-filled shapes'
 // uv, the glyph runs' instances and their batches, the plain rect fills'
-// batches, and the draw report
+// batches, the paint shader draws' quads and batches, and the draw report
 // and the scissor the executor takes from a walk. The deferred deletion
-// queue a texture handle drops onto is tested here too, with no renderer.
+// queue a texture or a paint shader handle drops onto is tested here too,
+// with no renderer, as is the paint shader's fragment source assembly.
 
 use crate::contract::DrawReport;
 use crate::prelude::*;
 use crate::renderer::walk::{
-  walk, Batch, BatchProgram, Instance, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, FILL_FOLD_AREA, KIND_GLYPH, KIND_LINE,
-  KIND_OVAL, KIND_RECT, KIND_ROUNDED_RECT, KIND_TEXTURED, ROUNDED_QUAD_PAD,
+  walk, Batch, BatchProgram, Instance, PaintDraw, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, FILL_FOLD_AREA, KIND_GLYPH,
+  KIND_LINE, KIND_OVAL, KIND_PAINT, KIND_RECT, KIND_ROUNDED_RECT, KIND_TEXTURED, ROUNDED_QUAD_PAD,
 };
-use crate::renderer::{report, test_texture, DeletionQueue};
+use crate::renderer::{
+  paint_fragment_source, report, test_paint_shader, test_texture, DeletionQueue, Freed, PAINT_FRAGMENT_EPILOGUE,
+  SOURCE_HEADER,
+};
 use crate::{
-  ClipOperation, Color, ColorSource, DisplayList, DisplayListBuilder, DrawStyle, ISize, Matrix, Paint, Point, Rect,
-  RoundingRadii, Size, StrokeCap, Texture, TextureSampling, TileMode,
+  ClipOperation, Color, ColorSource, DisplayList, DisplayListBuilder, DrawStyle, ISize, Matrix, Paint, PaintShader,
+  Point, Rect, RoundingRadii, ShaderInput, ShaderParam, Size, StrokeCap, Texture, TextureSampling, TextureWrap,
+  TileMode,
 };
 use crate::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, RAMP_WIDTH};
 use euclid::default::{Box2D, Point2D};
@@ -105,12 +110,12 @@ fn image_paint(t: &Texture, sampling: TextureSampling, transform: Option<&Matrix
 
 // A batch of shapes and texture quads: no glyph policy, no gradient.
 fn shapes(start: usize, count: usize, texture: Option<(glow::NativeTexture, TextureSampling)>) -> Batch {
-  Batch { start, count, program: BatchProgram::Shape, texture, policy: None, gradient: None }
+  Batch { start, count, program: BatchProgram::Shape, texture, policy: None, gradient: None, paint: None }
 }
 
 // A batch of plain rect fills: no texture, no glyph policy, no gradient.
 fn fills(start: usize, count: usize) -> Batch {
-  Batch { start, count, program: BatchProgram::Fill, texture: None, policy: None, gradient: None }
+  Batch { start, count, program: BatchProgram::Fill, texture: None, policy: None, gradient: None, paint: None }
 }
 
 fn line(from: (f32, f32), to: (f32, f32), paint: &Paint) -> Vec<Instance> {
@@ -432,7 +437,7 @@ fn a_dropped_handle_queues_its_name_once() {
   drop(a);
   assert!(queue.drain().is_empty());
   drop(b);
-  assert_eq!(queue.drain(), vec![five]);
+  assert_eq!(queue.drain(), vec![Freed::Texture(five)]);
   assert!(queue.drain().is_empty());
 }
 
@@ -751,7 +756,7 @@ fn gradient() -> GlyphGradient {
 // A glyph batch over `atlas`, sampled linearly, under `policy`.
 fn glyphs(start: usize, count: usize, atlas: &Texture, policy: CoveragePolicy) -> Batch {
   let texture = Some((name(atlas), TextureSampling::Linear));
-  Batch { start, count, program: BatchProgram::Glyph, texture, policy: Some(policy), gradient: None }
+  Batch { start, count, program: BatchProgram::Glyph, texture, policy: Some(policy), gradient: None, paint: None }
 }
 
 #[test]
@@ -976,4 +981,173 @@ fn a_rect_the_fill_program_cannot_draw_is_a_shape() {
   let mut b = DisplayListBuilder::new(None);
   b.draw_rect(&quad, &opaque()).draw_rect(&quad, &stroked(2.0));
   assert_eq!(walked_all(b).batches, vec![fills(0, 1), shapes(1, 1, None)]);
+}
+
+// One param and one input, shared as a draw_shader takes them.
+fn shader_args(t: &Texture) -> (Arc<[ShaderParam]>, Arc<[ShaderInput]>) {
+  let params: Arc<[ShaderParam]> = Arc::new([ShaderParam { name: "uTime".to_string(), value: vec![1.5] }]);
+  let inputs: Arc<[ShaderInput]> = Arc::new([ShaderInput {
+    name: "uNoise".to_string(),
+    texture: t.clone(),
+    sampling: TextureSampling::Linear,
+    wrap: TextureWrap::Repeat,
+  }]);
+  (params, inputs)
+}
+
+// A paint batch of the one instance at `start`.
+fn paint_batch(
+  start: usize,
+  shader: &PaintShader,
+  params: &Arc<[ShaderParam]>,
+  inputs: &Arc<[ShaderInput]>,
+  resolution: [f32; 2],
+) -> Batch {
+  let paint = PaintDraw { shader: shader.clone(), params: params.clone(), inputs: inputs.clone(), resolution };
+  Batch {
+    start,
+    count: 1,
+    program: BatchProgram::Paint,
+    texture: None,
+    policy: None,
+    gradient: None,
+    paint: Some(paint),
+  }
+}
+
+#[test]
+fn a_paint_shader_draws_one_quad_in_a_batch_of_its_own() {
+  let shader = test_paint_shader();
+  let t = test_texture(7, ISize::new(10, 10));
+  let (params, inputs) = shader_args(&t);
+  let mut b = DisplayListBuilder::new(None);
+  b.clip_rect(&rect(0.0, 0.0, 60.0, 50.0), ClipOperation::Intersect).translate(10.0, 20.0).scale(2.0, 3.0).draw_shader(
+    &rect(1.0, 2.0, 12.0, 8.0),
+    &shader,
+    &params,
+    &inputs,
+  );
+  let list = build(b);
+  assert_eq!(list.ops().last(), Some(&crate::oplog::Op::DrawShader { rect: rect(1.0, 2.0, 12.0, 8.0) }));
+  let out = walk(&list, ISize::new(TARGET as i64, TARGET as i64));
+  assert_eq!(out.instances.len(), 1);
+  let i = &out.instances[0];
+  // Placed as a texture quad is: the rect, the map, the unit square.
+  assert!(approx(i.rect, [1.0, 2.0, 12.0, 8.0]), "{:?}", i.rect);
+  assert!(approx(i.linear, [2.0, 0.0, 0.0, 3.0]), "{:?}", i.linear);
+  assert!(approx(i.offset_kind_stroke, [10.0, 20.0, KIND_PAINT, 0.0]), "{:?}", i.offset_kind_stroke);
+  assert!(approx(i.tex, [0.0, 0.0, 1.0, 1.0]), "{:?}", i.tex);
+  assert!(approx(i.clip, [0.0, 0.0, 60.0, 50.0]), "{:?}", i.clip);
+  // The resolution is the quad in device pixels: 12 x 8 under a 2 x 3 scale.
+  assert_eq!(out.batches, vec![paint_batch(0, &shader, &params, &inputs, [24.0, 24.0])]);
+  assert_eq!(report(&out), DrawReport { instances: 1, draw_calls: 1 });
+}
+
+#[test]
+fn a_rotated_paint_shader_measures_its_edges_in_device_pixels() {
+  let shader = test_paint_shader();
+  let (params, inputs): (Arc<[ShaderParam]>, Arc<[ShaderInput]>) = (Arc::new([]), Arc::new([]));
+  let rotation = Matrix::rotation(0.0, 0.0, 1.0, euclid::Angle::degrees(30.0));
+  let mut b = DisplayListBuilder::new(None);
+  b.translate(50.0, 50.0).transform(&rotation).scale(2.0, 2.0).draw_shader(
+    &rect(-5.0, -5.0, 10.0, 6.0),
+    &shader,
+    &params,
+    &inputs,
+  );
+  let out = walked_all(b);
+  let resolution = out.batches[0].paint.as_ref().expect("a paint batch carries its draw").resolution;
+  assert!((resolution[0] - 20.0).abs() < MAPPED_EPS && (resolution[1] - 12.0).abs() < MAPPED_EPS, "{resolution:?}");
+}
+
+#[test]
+fn a_paint_shader_ends_the_batch_before_and_after_it() {
+  let shader = test_paint_shader();
+  let (params, inputs): (Arc<[ShaderParam]>, Arc<[ShaderInput]>) = (Arc::new([]), Arc::new([]));
+  let quad = rect(0.0, 0.0, 10.0, 10.0);
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &opaque()).draw_shader(&quad, &shader, &params, &inputs).draw_rect(&quad, &opaque());
+  let paint = paint_batch(1, &shader, &params, &inputs, [10.0, 10.0]);
+  assert_eq!(walked_all(b).batches, vec![fills(0, 1), paint, fills(2, 1)]);
+
+  // Two paint draws, even of one shader, are two batches.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_shader(&quad, &shader, &params, &inputs).draw_shader(&quad, &shader, &params, &inputs);
+  let batches = walked_all(b).batches;
+  assert_eq!(
+    batches,
+    vec![
+      paint_batch(0, &shader, &params, &inputs, [10.0, 10.0]),
+      paint_batch(1, &shader, &params, &inputs, [10.0, 10.0])
+    ]
+  );
+}
+
+#[test]
+fn a_paint_shader_outside_the_clip_is_rejected() {
+  let shader = test_paint_shader();
+  let (params, inputs): (Arc<[ShaderParam]>, Arc<[ShaderInput]>) = (Arc::new([]), Arc::new([]));
+  let mut b = DisplayListBuilder::new(None);
+  b.clip_rect(&rect(0.0, 0.0, 10.0, 10.0), ClipOperation::Intersect).draw_shader(
+    &rect(20.0, 20.0, 5.0, 5.0),
+    &shader,
+    &params,
+    &inputs,
+  );
+  let out = walked_all(b);
+  assert!(out.instances.is_empty());
+  assert!(out.batches.is_empty());
+}
+
+#[test]
+fn a_paint_shader_under_a_rounded_clip_carries_it_in_device_space() {
+  let shader = test_paint_shader();
+  let (params, inputs): (Arc<[ShaderParam]>, Arc<[ShaderInput]>) = (Arc::new([]), Arc::new([]));
+  let box_ = rect(0.0, 0.0, 20.0, 10.0);
+  let mut b = DisplayListBuilder::new(None);
+  b.translate(10.0, 10.0)
+    .scale(2.0, 2.0)
+    .save()
+    .clip_rounded_rect(&box_, &RoundingRadii::circular([3.0; 4]), ClipOperation::Intersect)
+    .draw_shader(&box_, &shader, &params, &inputs)
+    .restore();
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  let i = &out[0];
+  assert!(approx(i.rclip, [10.0, 10.0, 50.0, 30.0]), "{:?}", i.rclip);
+  assert!(approx(i.rclip_radii, [6.0; 4]), "{:?}", i.rclip_radii);
+  assert!(approx(i.clip, [10.0, 10.0, 50.0, 30.0]), "{:?}", i.clip);
+}
+
+#[test]
+fn a_dropped_paint_shader_queues_its_program_once() {
+  assert!(test_paint_shader().uniforms().is_empty());
+  let queue = Arc::new(DeletionQueue::new());
+  let a = PaintShader::over(queue.clone(), 9);
+  let b = a.clone();
+  drop(a);
+  assert!(queue.drain().is_empty());
+  drop(b);
+  let nine = glow::NativeProgram(std::num::NonZeroU32::new(9).expect("nine is not zero"));
+  assert_eq!(queue.drain(), vec![Freed::Program(nine)]);
+  assert!(queue.drain().is_empty());
+}
+
+#[test]
+fn a_paint_source_with_a_version_line_is_refused() {
+  let refused = paint_fragment_source("#version 300 es\nvoid main() { fragColor = vec4(1.0); }");
+  assert!(refused.is_err_and(|e| e.contains("#version")));
+  // The directive, not the word: a comment mentioning it is fine.
+  let commented = paint_fragment_source("// no #version here\nvoid main() { fragColor = vec4(1.0); }");
+  assert!(commented.is_ok());
+}
+
+#[test]
+fn a_paint_source_is_wrapped_in_the_header_and_the_epilogue() {
+  let src = "void main() { fragColor = vec4(vUV, 0.0, 1.0); }";
+  let full = paint_fragment_source(src).expect("a source without #version assembles");
+  assert!(full.starts_with(SOURCE_HEADER), "{full}");
+  assert!(full.ends_with(PAINT_FRAGMENT_EPILOGUE), "{full}");
+  // The app's source, its main renamed, on line 1 by the directive.
+  assert!(full.contains(&format!("#line 1\n{src}\n#undef main\n")), "{full}");
 }

@@ -154,6 +154,11 @@ pub enum Op {
     policy: CoveragePolicy,
     gradient: bool,
   },
+  /// A paint shader's quad: no handle, no params and no inputs, as for a
+  /// texture draw.
+  DrawShader {
+    rect: Rect,
+  },
   /// A nested list, opened by reading `ops`.
   DrawDisplayList {
     ops: Arc<[Op]>,
@@ -183,6 +188,7 @@ impl Op {
       | Op::ClipOval { .. }
       | Op::ClipRoundedRect { .. }
       | Op::DrawGlyphs { .. }
+      | Op::DrawShader { .. }
       | Op::DrawDisplayList { .. } => None,
     }
   }
@@ -245,7 +251,8 @@ fn walk<'a>(ops: &'a [Op], base: Matrix, out: &mut Vec<Placed<'a>>) {
       | Op::DrawRoundedRect { .. }
       | Op::DrawPath { .. }
       | Op::DrawTextureRect { .. }
-      | Op::DrawGlyphs { .. } => out.push(Placed { op, to_device: current }),
+      | Op::DrawGlyphs { .. }
+      | Op::DrawShader { .. } => out.push(Placed { op, to_device: current }),
     }
   }
 }
@@ -258,7 +265,8 @@ fn axis_aligned(m: &Matrix) -> Option<euclid::default::Transform2D<f32>> {
 impl Placed<'_> {
   /// The op's box in the root list's space: a clip's rect or bounds, a
   /// rect, oval or rounded rect draw's, a texture draw's `dst`, a glyph
-  /// run's `bounds`, a layer's bounds, when `to_device` is a 2D map with no rotation or skew. None
+  /// run's `bounds`, a paint shader's `rect`, a layer's bounds, when
+  /// `to_device` is a 2D map with no rotation or skew. None
   /// for a line, a path and a nested list, and under any other matrix.
   pub fn device_rect(&self) -> Option<Rect> {
     let rect = match self.op {
@@ -272,6 +280,7 @@ impl Placed<'_> {
       | Op::DrawRoundedRect { rect, .. } => rect,
       Op::DrawTextureRect { dst, .. } => dst,
       Op::DrawGlyphs { bounds, .. } => bounds,
+      Op::DrawShader { rect, .. } => rect,
       Op::Save
       | Op::Restore
       | Op::Translate { .. }
@@ -288,8 +297,8 @@ impl Placed<'_> {
   /// `stroke_width` times the scale of `to_device`, when it is axis-aligned
   /// with one scale on both axes. Only for a draw that strokes: a line
   /// always, a rect, oval, rounded rect or path when its draw style is not
-  /// `Fill`. None for a filled draw, a layer, a texture draw, a glyph run
-  /// and the ops without a paint, and under any other matrix.
+  /// `Fill`. None for a filled draw, a layer, a texture draw, a glyph run,
+  /// a paint shader and the ops without a paint, and under any other matrix.
   pub fn device_stroke_width(&self) -> Option<f32> {
     let paint = match self.op {
       Op::DrawLine { paint, .. } => paint,
@@ -309,6 +318,7 @@ impl Placed<'_> {
       | Op::ClipRoundedRect { .. }
       | Op::DrawTextureRect { .. }
       | Op::DrawGlyphs { .. }
+      | Op::DrawShader { .. }
       | Op::DrawDisplayList { .. } => return None,
     };
     let m = axis_aligned(&self.to_device)?;
