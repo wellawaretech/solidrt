@@ -832,7 +832,6 @@ public class SolidRTActivity extends SDLActivity {
     protected String[] getLibraries() {
         return new String[] {
             "SDL3",
-            "impeller",
             "main"
         };
     }
