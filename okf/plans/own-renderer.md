@@ -95,8 +95,12 @@ The contract's conventions stay as they are, so callers do not change:
 logical pixels, y down; framebuffers drawn bottom-up, with the caller
 pre-flipping (`raster::offscreen::flip_for_fbo`); `Renderer::draw` clears
 the target first; anti-aliasing is the caller's (MSAA storage plus a
-resolve), and the renderer draws without coverage AA. Analytic edges from
-the shape shader are a later choice, not part of parity. Two conventions
+resolve) for every edge a quad provides. The edges the fragment stage
+decides (an oval's rim, a stroke band's inner edge, a round cap) get
+analytic coverage in the shape shader, because under GLES 3.0 MSAA the
+fragment stage runs once per pixel and a discard keeps or drops all of
+its samples (decided in stage 1, see Findings); coverage AA as a
+replacement for MSAA stays out of scope. Two conventions
 the contract leaves implicit, pinned here because the first pixels depend
 on them:
 

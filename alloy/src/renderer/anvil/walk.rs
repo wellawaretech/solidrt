@@ -3,11 +3,12 @@
 //! applied and the draws outside the clip rejected. No GL here, so the walk
 //! is unit-tested without a context (`tests/anvil.rs`).
 
-use super::super::{ISize, Matrix, Rect, TextureSampling};
+use super::super::{ISize, Matrix, Point, Rect, Size, StrokeCap, TextureSampling};
 use super::ops::{Op, Premultiplied};
 use super::record::DisplayList;
 use super::Texture;
 use euclid::default::{Box2D, Transform2D};
+use euclid::Angle;
 
 /// One quad for the shape program, as the instance buffer carries it. All
 /// f32 and `repr(C)`, so a slice of instances is uploaded as its bytes.
@@ -24,7 +25,9 @@ pub(crate) struct Instance {
   pub offset_kind_stroke: [f32; 4],
   /// Premultiplied color.
   pub color: [f32; 4],
-  /// The texture rect in normalized texels: u0, v0, u1, v1 (texture kind).
+  /// The texture rect in normalized texels: u0, v0, u1, v1 (texture kind),
+  /// or the line's cap and length in x and y (line kind). Unused, zero, for
+  /// rects and ovals.
   pub tex: [f32; 4],
   /// The clip in device pixels: x0, y0, x1, y1. Tested per fragment.
   pub clip: [f32; 4],
@@ -40,11 +43,15 @@ const _: () = assert!(std::mem::size_of::<Instance>() == INSTANCE_FLOATS * std::
 /// The shape kinds the fragment stage switches on. The `const int KIND_*`
 /// declarations in exec.rs's FRAGMENT_SRC must match them.
 pub(crate) const KIND_RECT: f32 = 0.0;
-#[allow(dead_code)] // emitted from step 4
 pub(crate) const KIND_OVAL: f32 = 1.0;
-#[allow(dead_code)] // emitted from step 4
 pub(crate) const KIND_LINE: f32 = 2.0;
 pub(crate) const KIND_TEXTURE: f32 = 3.0;
+
+/// The line caps, as the instance carries them in `tex.x` (line kind). The
+/// `const int CAP_*` declarations in exec.rs's FRAGMENT_SRC must match them.
+pub(crate) const CAP_BUTT: f32 = 0.0;
+pub(crate) const CAP_SQUARE: f32 = 1.0;
+pub(crate) const CAP_ROUND: f32 = 2.0;
 
 /// A run of consecutive instances one draw issues: the shape instances
 /// before any texture, or everything that shares one texture and sampling.
@@ -98,8 +105,12 @@ struct State {
 /// The instances a list draws into a target of `size` device pixels, in
 /// painter's order, with every op's state applied: the transform stack,
 /// the device-space clip, and the rejection of draws that fall outside it.
-/// Step 3 emits rect fills and texture quads; ovals, lines and strokes are
-/// step 4's and are skipped with a warning until then.
+/// Every stage 1 shape draws: rect and oval fills and strokes, lines with
+/// their caps, and texture quads. A stroke expands its quad by half the
+/// width on every side so it covers the band, which the fragment stage
+/// keeps from the quad's local coordinates. There is no hairline rule: a
+/// width of zero or below draws nothing, and a width under one device pixel
+/// draws thin, covering only some of the MSAA samples it crosses.
 pub(crate) fn walk(list: &DisplayList, size: ISize) -> Walked {
   // The target rect, not an infinite one: every instance's clip stays
   // finite (a highp float holds 1e7 but not INFINITY reliably), the
@@ -141,10 +152,9 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, out: &mut Wal
         let device = m2.outer_transformed_rect(rect).to_box2d();
         state.clip = state.clip.intersection_unchecked(&device);
       }
-      Op::DrawRect { rect, color, stroke: None } => push_rect(state, rect, *color, out),
-      Op::DrawRect { stroke: Some(_), .. } => unsupported!("a stroked rect", "the stroke is not drawn"),
-      Op::DrawOval { .. } => unsupported!("draw_oval", "the oval is not drawn"),
-      Op::DrawLine { .. } => unsupported!("draw_line", "the line is not drawn"),
+      Op::DrawRect { rect, color, stroke } => push_shape(state, rect, *color, KIND_RECT, *stroke, out),
+      Op::DrawOval { bounds, color, stroke } => push_shape(state, bounds, *color, KIND_OVAL, *stroke, out),
+      Op::DrawLine { from, to, color, width, cap } => push_line(state, *from, *to, *color, *width, *cap, out),
       Op::DrawTexture { texture, src, dst, sampling, alpha } => {
         push_texture(state, texture, src, dst, *sampling, *alpha, out)
       }
@@ -164,37 +174,104 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, out: &mut Wal
   }
 }
 
-// The 2D map and the device clip of a draw covering `rect` under the
-// current state; None when the clip rejects it.
-fn placed(state: &State, rect: &Rect) -> Option<(Transform2D<f32>, [f32; 4])> {
+// The current state's transform as the 2D map a draw uses.
+fn state_map(state: &State) -> Transform2D<f32> {
   if !state.matrix.is_2d() {
     unsupported!("a perspective transform", "the draw uses the affine part");
   }
-  let m2 = state.matrix.to_2d();
+  state.matrix.to_2d()
+}
+
+// The 2D map and the device clip of a draw covering `rect` under the
+// current state; None when the clip rejects it.
+fn placed(state: &State, rect: &Rect) -> Option<(Transform2D<f32>, [f32; 4])> {
+  let m2 = state_map(state);
+  placed_under(state, m2, rect).map(|clip| (m2, clip))
+}
+
+// The device clip of a draw covering `rect` under the 2D map `m2` (the
+// state's, or a line's own composed onto it); None when the clip rejects it.
+fn placed_under(state: &State, m2: Transform2D<f32>, rect: &Rect) -> Option<[f32; 4]> {
   let bounds = m2.outer_transformed_rect(rect).to_box2d();
   if state.clip.is_empty() || !bounds.intersects(&state.clip) {
     return None;
   }
   let clip = state.clip;
-  Some((m2, [clip.min.x, clip.min.y, clip.max.x, clip.max.y]))
+  Some([clip.min.x, clip.min.y, clip.max.x, clip.max.y])
 }
 
-// A rect fill under the current state, unless the clip rejects it or it is
-// fully transparent.
-fn push_rect(state: &State, rect: &Rect, color: Premultiplied, out: &mut Walked) {
-  let Some((m2, clip)) = placed(state, rect) else { return };
+// A rect or an oval (`kind`) under the current state, filled or stroked
+// `stroke` wide centered on its edge, unless the clip rejects it or it is
+// fully transparent. A stroke's quad is the shape's box grown by half the
+// width on every side, so it covers the outer half of the band.
+fn push_shape(state: &State, rect: &Rect, color: Premultiplied, kind: f32, stroke: Option<f32>, out: &mut Walked) {
+  let quad = match stroke {
+    None => *rect,
+    Some(s) => rect.inflate(s * 0.5, s * 0.5),
+  };
+  let Some((m2, clip)) = placed(state, &quad) else { return };
   if color[3] == 0.0 {
     return;
   }
   let instance = Instance {
-    rect: [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height],
+    rect: [quad.origin.x, quad.origin.y, quad.size.width, quad.size.height],
     linear: [m2.m11, m2.m12, m2.m21, m2.m22],
-    offset_kind_stroke: [m2.m31, m2.m32, KIND_RECT, 0.0],
+    offset_kind_stroke: [m2.m31, m2.m32, kind, stroke.unwrap_or(0.0)],
     color,
     tex: [0.0; 4],
     clip,
   };
   out.push(instance, None);
+}
+
+// A segment stroked `width` wide under the current state, unless it has no
+// width, the clip rejects it or it is fully transparent. The quad lives in
+// the segment's own frame: x from `from` along the segment, y across it,
+// extended by half the width at both ends for square and round caps. A
+// zero-length segment is a width-square dot for those caps and nothing
+// for butt caps, as Skia and Impeller draw it.
+fn push_line(
+  state: &State,
+  from: Point,
+  to: Point,
+  color: Premultiplied,
+  width: f32,
+  cap: StrokeCap,
+  out: &mut Walked,
+) {
+  if width <= 0.0 || color[3] == 0.0 {
+    return;
+  }
+  let (dx, dy) = (to.x - from.x, to.y - from.y);
+  let len = (dx * dx + dy * dy).sqrt();
+  let ext = match cap {
+    StrokeCap::Butt => 0.0,
+    StrokeCap::Square | StrokeCap::Round => width * 0.5,
+  };
+  let local = Rect::new(Point::new(-ext, -width * 0.5), Size::new(len + 2.0 * ext, width));
+  // Row vectors: local (len, 0) rotates onto (dx, dy), then moves to `from`,
+  // then takes the state's map.
+  let line_map = Transform2D::rotation(Angle::radians(dy.atan2(dx))).then(&Transform2D::translation(from.x, from.y));
+  let m = line_map.then(&state_map(state));
+  let Some(clip) = placed_under(state, m, &local) else { return };
+  let instance = Instance {
+    rect: [local.origin.x, local.origin.y, local.size.width, local.size.height],
+    linear: [m.m11, m.m12, m.m21, m.m22],
+    offset_kind_stroke: [m.m31, m.m32, KIND_LINE, width],
+    color,
+    tex: [cap_value(cap), len, 0.0, 0.0],
+    clip,
+  };
+  out.push(instance, None);
+}
+
+// The cap as the instance carries it.
+fn cap_value(cap: StrokeCap) -> f32 {
+  match cap {
+    StrokeCap::Butt => CAP_BUTT,
+    StrokeCap::Square => CAP_SQUARE,
+    StrokeCap::Round => CAP_ROUND,
+  }
 }
 
 // The texel rect `src` of `texture` mapped onto `dst` under the current

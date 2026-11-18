@@ -53,7 +53,7 @@ layout(location = 0) in vec4 aRect;      // x, y, w, h in local space
 layout(location = 1) in vec4 aLinear;    // m11, m12, m21, m22
 layout(location = 2) in vec4 aOffset;    // m31, m32 (the translation), kind, stroke width
 layout(location = 3) in vec4 aColor;     // premultiplied
-layout(location = 4) in vec4 aTex;       // u0, v0, u1, v1
+layout(location = 4) in vec4 aTex;       // u0, v0, u1, v1 (texture kind); cap, length (line kind)
 layout(location = 5) in vec4 aClip;      // x0, y0, x1, y1 in device pixels
 uniform vec2 uSize;                      // the target in device pixels
 out vec2 vLocal;                         // position within the shape, local pixels from its origin
@@ -61,6 +61,7 @@ out vec2 vDevice;                        // device pixels, y down
 flat out vec4 vColor;
 flat out vec4 vClip;
 flat out vec4 vShape;                    // w, h, kind, stroke width
+flat out vec4 vParams;                   // the line kind's cap and length
 out vec2 vUv;
 void main() {
   // One quad per instance, so this is gl_VertexID; the modulo keeps the
@@ -84,11 +85,22 @@ void main() {
   vClip = aClip;
   vShape = vec4(aRect.zw, aOffset.zw);
   vUv = aTex.xy + c * (aTex.zw - aTex.xy);
+  vParams = aTex;
 }
 ";
 
-// Step 3 draws rect fills and texture quads; step 4 adds the other kinds
-// here. The unused varyings are kept so it adds only fragment code.
+// Every shape is evaluated here from the quad's local coordinates: the
+// walk expanded a stroke's quad by half the width on every side, so the
+// un-expanded shape's half extent is the quad's less half the stroke.
+// `hs` is the quad's half size (`half` is reserved in GLSL ES 3.00).
+//
+// Anti-aliasing has two sources. The quad's own edges (a rect fill's, a
+// rect stroke's outer edge, a line body's long edges and its butt and
+// square ends) are MSAA's: the rasterizer covers them per sample. The
+// edges the fragment stage decides (an oval's rim, a stroke band's inner
+// edge, a round cap) get analytic coverage: under MSAA the fragment stage
+// runs once per pixel and a discard keeps or drops all of its samples, so
+// a discard alone would leave them aliased.
 const FRAGMENT_SRC: &str = r"#version 300 es
 precision highp float;
 uniform sampler2D uTexture;
@@ -96,12 +108,39 @@ in vec2 vLocal;
 in vec2 vDevice;
 flat in vec4 vColor;
 flat in vec4 vClip;
-flat in vec4 vShape;
+flat in vec4 vShape;      // quad w, quad h, kind, stroke width (0 = fill)
+flat in vec4 vParams;     // line kind: cap, length
 in vec2 vUv;
 out vec4 fragColor;
-// The shape kinds, as the instance carries them (walk.rs KIND_*): they
-// must match.
+// The shape kinds and line caps, as the instance carries them (walk.rs
+// KIND_* and CAP_*): they must match.
+const int KIND_RECT = 0;
+const int KIND_OVAL = 1;
+const int KIND_LINE = 2;
 const int KIND_TEXTURE = 3;
+const int CAP_ROUND = 2;
+// A radius a stroke wider than its oval would drive to zero or below;
+// keeps the normalization finite.
+const float OVAL_RADIUS_FLOOR = 1e-3;
+// How close to the center the normalized point may be before the 0/0
+// form of the oval distance is replaced by deep inside.
+const float OVAL_CENTER_EPS = 1e-4;
+// The smallest screen-space footprint a distance is divided by: a
+// constant distance (deep inside) has fwidth 0 and must read as covered.
+const float FWIDTH_FLOOR = 1e-6;
+// A distance that reads as fully inside whatever the footprint: used
+// where the quad's own edges are the shape's edges and MSAA covers them,
+// and negated, as far outside a rect stroke's hole. Large and finite,
+// never -INFINITY.
+const float INSIDE = -1e6;
+// Coverage of a fragment at signed distance d (positive outside) from an
+// edge the quad does not provide: the pixel-center distance in device
+// pixels, through fwidth, as a linear ramp one pixel wide. fwidth is in
+// screen space, so a local-unit distance divided by it is in device
+// pixels under any scale or skew.
+float coverage(float d) {
+  return clamp(0.5 - d / max(fwidth(d), FWIDTH_FLOOR), 0.0, 1.0);
+}
 void main() {
   // The clip, per fragment, so a clip change never ends a batch. Under
   // MSAA the test runs per fragment, not per sample: a clip edge is hard
@@ -113,9 +152,59 @@ void main() {
     // Premultiplied texels; vColor is the op's alpha in every channel, so
     // the multiply fades the texel as a whole.
     fragColor = texture(uTexture, vUv) * vColor;
-  } else {
-    fragColor = vColor;
+    return;
   }
+  float s = vShape.w;
+  vec2 hs = vShape.xy * 0.5;
+  // From the quad's center.
+  vec2 p = vLocal - hs;
+  // The branches below test flat per-instance values, so every fragment
+  // of one quad takes the same path and the derivatives after them are
+  // defined.
+  float d = INSIDE;
+  // A rect stroke's hole, per axis: the distance past the inner rect's
+  // edge, negative inside it. The default is far outside: no hole.
+  vec2 hole = vec2(-INSIDE);
+  if (kind == KIND_RECT) {
+    // A fill is the quad. A stroke is the quad less the inner rect, with
+    // sharp corners (a miter join); the inner edge is the analytic one.
+    // A stroke wider than the box has no inner rect and fills it.
+    vec2 inner = hs - s;
+    if (s > 0.0 && all(greaterThan(inner, vec2(0.0)))) {
+      hole = abs(p) - inner;
+    }
+  } else if (kind == KIND_OVAL) {
+    vec2 r = max(hs - s * 0.5, vec2(OVAL_RADIUS_FLOOR));
+    vec2 q = p / r;
+    float lq = length(q);
+    // The signed distance to the ellipse, gradient-normalized: |q| - 1 over
+    // |grad| = |q / r| / |q|. First-order exact for the offset curve, so a
+    // thin stroke or a circle is exact and a thick stroke on an eccentric
+    // oval is off by a few percent near the long axis. At the center both
+    // vanish; the center is deep inside, at least the smaller radius in.
+    float dist = lq < OVAL_CENTER_EPS ? -min(r.x, r.y) : (lq - 1.0) * lq / length(q / r);
+    d = s > 0.0 ? abs(dist) - s * 0.5 : dist;
+  } else if (kind == KIND_LINE) {
+    // Local x along the segment from 0 to its length, y across it; the
+    // quad extends by ext at both ends for square and round caps, and its
+    // edges are the body's and the butt and square ends'. A round cap is
+    // the segment's distance beyond the ends.
+    float len = vParams.y;
+    float ext = (vShape.x - len) * 0.5;
+    vec2 l = vec2(vLocal.x - ext, p.y);
+    float ax = max(max(-l.x, l.x - len), 0.0);
+    if (int(vParams.x + 0.5) == CAP_ROUND && ax > 0.0) {
+      d = length(vec2(ax, l.y)) - s * 0.5;
+    }
+  }
+  // The hole is covered per axis, each through its own footprint, and
+  // removed as the product: one distance through the corner's kink would
+  // count both axes' derivatives at the inner corner and leave a pixel
+  // there partly covered where the corner sits on the grid.
+  vec2 inHole = clamp(0.5 - hole / max(fwidth(hole), vec2(FWIDTH_FLOOR)), 0.0, 1.0);
+  float c = coverage(d) * (1.0 - inHole.x * inHole.y);
+  if (c <= 0.0) discard;
+  fragColor = vColor * c;
 }
 ";
 

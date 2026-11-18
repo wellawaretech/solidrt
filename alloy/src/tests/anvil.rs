@@ -6,24 +6,30 @@
 // decided here, before any GL work. The deferred deletion queue a texture
 // handle drops onto is tested here too, with no renderer.
 
-use crate::renderer::anvil::walk::{walk, Batch, Instance, Walked, KIND_RECT, KIND_TEXTURE};
+use crate::renderer::anvil::walk::{
+  walk, Batch, Instance, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, KIND_LINE, KIND_OVAL, KIND_RECT, KIND_TEXTURE,
+};
 use crate::renderer::anvil::{test_texture, DeletionQueue};
 use crate::renderer::prelude::*;
 use crate::renderer::{
-  ClipOperation, Color, DisplayList, DisplayListBuilder, DrawStyle, ISize, Paint, Point, Rect, Size, Texture,
-  TextureSampling,
+  ClipOperation, Color, DisplayList, DisplayListBuilder, DrawStyle, ISize, Paint, Point, Rect, Size, StrokeCap,
+  Texture, TextureSampling,
 };
 use std::sync::Arc;
 
 // How far a walked value may sit from the expected one: float noise.
 const EPS: f32 = 1e-5;
 
+// The same, for a point mapped through a rotation at a magnitude of tens
+// of pixels, where the trigonometry's rounding scales with the coordinate.
+const MAPPED_EPS: f32 = 1e-3;
+
 // The target every test walks into, in device pixels.
 const TARGET: f32 = 100.0;
 
-// The instances a stroke op draws: none until step 4 draws strokes, one
-// from then on.
-const STROKE_INSTANCES: usize = 0;
+// The instances a stroke op draws: none until step 4 drew strokes, one
+// from step 4 on.
+const STROKE_INSTANCES: usize = 1;
 
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
   Rect::new(Point::new(x, y), Size::new(w, h))
@@ -37,6 +43,12 @@ fn fill(color: Color) -> Paint {
 
 fn opaque() -> Paint {
   fill(Color::new_srgba(1.0, 0.0, 0.0, 1.0))
+}
+
+fn stroked(width: f32) -> Paint {
+  let mut paint = opaque();
+  paint.set_draw_style(DrawStyle::Stroke).set_stroke_width(width);
+  paint
 }
 
 fn approx(got: [f32; 4], want: [f32; 4]) -> bool {
@@ -61,6 +73,20 @@ fn name(t: &Texture) -> glow::NativeTexture {
 
 fn offset(instance: &Instance) -> [f32; 2] {
   [instance.offset_kind_stroke[0], instance.offset_kind_stroke[1]]
+}
+
+// A local point through the instance's 2D map, by hand: euclid's row-vector
+// form, device = local * m.
+fn mapped(instance: &Instance, x: f32, y: f32) -> [f32; 2] {
+  let [m11, m12, m21, m22] = instance.linear;
+  let [tx, ty] = offset(instance);
+  [x * m11 + y * m21 + tx, x * m12 + y * m22 + ty]
+}
+
+fn line(from: (f32, f32), to: (f32, f32), paint: &Paint) -> Vec<Instance> {
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_line(Point::new(from.0, from.1), Point::new(to.0, to.1), paint);
+  walked(b)
 }
 
 #[test]
@@ -302,4 +328,108 @@ fn texture_quads_are_rejected_by_the_clip() {
   let out = walked_all(b);
   assert!(out.instances.is_empty());
   assert!(out.batches.is_empty());
+}
+
+#[test]
+fn a_stroked_rect_expands_its_quad_by_half_the_width() {
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&rect(10.0, 10.0, 20.0, 20.0), &stroked(4.0));
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  let i = &out[0];
+  assert!(approx(i.rect, [8.0, 8.0, 24.0, 24.0]), "{:?}", i.rect);
+  assert!(approx(i.offset_kind_stroke, [0.0, 0.0, KIND_RECT, 4.0]), "{:?}", i.offset_kind_stroke);
+  assert_eq!(i.tex, [0.0; 4]);
+}
+
+#[test]
+fn an_oval_is_its_bounds() {
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_oval(&rect(10.0, 20.0, 30.0, 40.0), &opaque());
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  assert!(approx(out[0].rect, [10.0, 20.0, 30.0, 40.0]), "{:?}", out[0].rect);
+  assert!(approx(out[0].offset_kind_stroke, [0.0, 0.0, KIND_OVAL, 0.0]), "{:?}", out[0].offset_kind_stroke);
+
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_oval(&rect(10.0, 20.0, 30.0, 40.0), &stroked(2.0));
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  assert!(approx(out[0].rect, [9.0, 19.0, 32.0, 42.0]), "{:?}", out[0].rect);
+  assert!(approx(out[0].offset_kind_stroke, [0.0, 0.0, KIND_OVAL, 2.0]), "{:?}", out[0].offset_kind_stroke);
+}
+
+#[test]
+fn a_horizontal_line_is_a_quad_along_it() {
+  let out = line((10.0, 20.0), (50.0, 20.0), &stroked(4.0));
+  assert_eq!(out.len(), 1);
+  let i = &out[0];
+  assert!(approx(i.rect, [0.0, -2.0, 40.0, 4.0]), "{:?}", i.rect);
+  assert!(approx(i.linear, [1.0, 0.0, 0.0, 1.0]), "{:?}", i.linear);
+  assert!(approx(i.offset_kind_stroke, [10.0, 20.0, KIND_LINE, 4.0]), "{:?}", i.offset_kind_stroke);
+  assert_eq!(i.tex[0], CAP_BUTT);
+  assert!((i.tex[1] - 40.0).abs() < EPS, "{:?}", i.tex);
+}
+
+#[test]
+fn a_vertical_line_rotates_its_quad() {
+  let mut paint = stroked(2.0);
+  paint.set_stroke_cap(StrokeCap::Square);
+  let out = line((10.0, 20.0), (10.0, 50.0), &paint);
+  assert_eq!(out.len(), 1);
+  let i = &out[0];
+  assert!(approx(i.rect, [-1.0, -1.0, 32.0, 2.0]), "{:?}", i.rect);
+  // A rotation by +90 degrees in euclid's row-vector form: (len, 0) maps
+  // to (0, len).
+  assert!(approx(i.linear, [0.0, 1.0, -1.0, 0.0]), "{:?}", i.linear);
+  assert!(approx([offset(i)[0], offset(i)[1], 0.0, 0.0], [10.0, 20.0, 0.0, 0.0]), "{:?}", offset(i));
+  assert_eq!(i.tex[0], CAP_SQUARE);
+  assert!((i.tex[1] - 30.0).abs() < EPS, "{:?}", i.tex);
+  // The segment's end in local space lands on `to`.
+  let [x, y] = mapped(i, 30.0, 0.0);
+  assert!((x - 10.0).abs() < MAPPED_EPS && (y - 50.0).abs() < MAPPED_EPS, "{x} {y}");
+}
+
+#[test]
+fn a_diagonal_line_maps_its_end_onto_to() {
+  let mut paint = stroked(10.0);
+  paint.set_stroke_cap(StrokeCap::Round);
+  let out = line((0.0, 0.0), (30.0, 40.0), &paint);
+  assert_eq!(out.len(), 1);
+  let i = &out[0];
+  assert_eq!(i.tex[0], CAP_ROUND);
+  assert!((i.tex[1] - 50.0).abs() < EPS, "{:?}", i.tex);
+  assert!(approx(i.rect, [-5.0, -5.0, 60.0, 10.0]), "{:?}", i.rect);
+  let [x, y] = mapped(i, 50.0, 0.0);
+  assert!((x - 30.0).abs() < MAPPED_EPS && (y - 40.0).abs() < MAPPED_EPS, "{x} {y}");
+  // The stroke's edge at the start: half the width from `from`, across the
+  // segment.
+  let [x, y] = mapped(i, 0.0, 5.0);
+  assert!(((x * x + y * y).sqrt() - 5.0).abs() < MAPPED_EPS, "{x} {y}");
+  assert!((x * 30.0 + y * 40.0).abs() < MAPPED_EPS, "{x} {y}");
+}
+
+#[test]
+fn a_line_outside_the_clip_is_rejected() {
+  let mut b = DisplayListBuilder::new(None);
+  b.clip_rect(&rect(0.0, 0.0, 10.0, 10.0), ClipOperation::Intersect).draw_line(
+    Point::new(50.0, 50.0),
+    Point::new(60.0, 60.0),
+    &stroked(2.0),
+  );
+  assert!(walked(b).is_empty());
+
+  // A line of zero width draws nothing.
+  assert!(line((0.0, 0.0), (10.0, 0.0), &stroked(0.0)).is_empty());
+}
+
+#[test]
+fn a_line_under_the_state_transform_composes() {
+  let mut b = DisplayListBuilder::new(None);
+  // Within the target: a translation to its right edge would put the line
+  // outside the clip.
+  b.translate(50.0, 0.0).draw_line(Point::new(0.0, 0.0), Point::new(10.0, 0.0), &stroked(2.0));
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  assert_eq!(offset(&out[0]), [50.0, 0.0]);
 }

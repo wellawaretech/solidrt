@@ -85,6 +85,19 @@ fn shape_ops(
   }
 }
 
+/// A rect's stroke turns its corners with a miter join (sharp corners)
+/// only; any other join is warned once and drawn as miter. One call site
+/// for both rect methods, so the warning is one line whichever sent it.
+/// The miter limit never matters for a rect: a right angle's miter is
+/// sqrt(2) times the stroke width, under the default limit
+/// (`contract::DEFAULT_STROKE_MITER`), so `stroke_miter` stays unread.
+fn warn_non_miter_join(paint: &Paint) {
+  let strokes = paint.stroke_width > 0.0 && matches!(paint.draw_style, DrawStyle::Stroke | DrawStyle::StrokeAndFill);
+  if strokes && paint.stroke_join != StrokeJoin::Miter {
+    unsupported!("a stroke join other than miter", "the rect draws with miter joins");
+  }
+}
+
 // The arguments of the ops stage 1 does not draw (the layers, the oval
 // clip, the radii, the path) are read only by the test log.
 #[cfg_attr(not(test), allow(unused_variables))]
@@ -191,13 +204,20 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
 
   fn draw_line(&mut self, from: Point, to: Point, paint: &Paint) -> &mut Self {
     // A line always strokes, whatever the paint's draw style.
-    self.ops.push(Op::DrawLine { from, to, color: premultiply(paint.color), width: paint.stroke_width });
+    self.ops.push(Op::DrawLine {
+      from,
+      to,
+      color: premultiply(paint.color),
+      width: paint.stroke_width,
+      cap: paint.stroke_cap,
+    });
     #[cfg(test)]
     self.log.push(LogOp::DrawLine { from, to, paint: paint.log });
     self
   }
 
   fn draw_rect(&mut self, rect: &Rect, paint: &Paint) -> &mut Self {
+    warn_non_miter_join(paint);
     let rect = *rect;
     shape_ops(
       paint,
@@ -225,6 +245,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
 
   fn draw_rounded_rect(&mut self, rect: &Rect, radii: &RoundingRadii, paint: &Paint) -> &mut Self {
     unsupported!("draw_rounded_rect", "the rect draws with square corners");
+    warn_non_miter_join(paint);
     let rect = *rect;
     shape_ops(
       paint,
@@ -273,7 +294,8 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
 }
 
 /// How a draw paints, as plain data; the recording reads what stage 1
-/// draws of it (the color, the draw style, the stroke width).
+/// draws of it (the color, the draw style, the stroke width and cap, and
+/// the join, to warn when it is not miter).
 pub struct Paint {
   pub(super) color: Color,
   #[allow(dead_code)] // read by the executor from stage 3 (gradients, images)
@@ -282,11 +304,9 @@ pub struct Paint {
   #[allow(dead_code)] // read by the executor once it blends other than source-over
   pub(super) blend_mode: BlendMode,
   pub(super) stroke_width: f32,
-  #[allow(dead_code)] // read by the executor once it draws caps
   pub(super) stroke_cap: StrokeCap,
-  #[allow(dead_code)] // read by the executor once it draws joins
   pub(super) stroke_join: StrokeJoin,
-  #[allow(dead_code)] // read by the executor once it draws joins
+  #[allow(dead_code)] // read by the executor once it draws path joins
   pub(super) stroke_miter: f32,
   #[allow(dead_code)] // read by the executor from stage 6 (filters)
   pub(super) color_filter: Option<ColorFilter>,

@@ -2,7 +2,7 @@
 //! premultiplied, a paint reduced to what stage 1 draws), shared behind an
 //! Arc so a retained list is recorded once and replayed by reference.
 
-use super::super::{Color, Matrix, Point, Rect, TextureSampling};
+use super::super::{Color, Matrix, Point, Rect, StrokeCap, TextureSampling};
 use super::record::DisplayList;
 use super::Texture;
 
@@ -33,25 +33,27 @@ pub(super) enum Op {
   /// Intersect only: the difference op is stage 5 and is dropped at
   /// record time with a warning.
   ClipRect(Rect),
-  /// `stroke` None fills; Some(width) strokes centered on the edge
-  /// (drawn from step 4; skipped with a warning until then).
+  /// `stroke` None fills; Some(width) strokes centered on the edge, with
+  /// miter joins (sharp corners).
   DrawRect {
     rect: Rect,
     color: Premultiplied,
     stroke: Option<f32>,
   },
-  #[allow(dead_code)] // read by the executor from step 4
+  /// `stroke` None fills; Some(width) strokes centered on the ellipse.
   DrawOval {
     bounds: Rect,
     color: Premultiplied,
     stroke: Option<f32>,
   },
-  #[allow(dead_code)] // read by the executor from step 4
+  /// A segment stroked `width` wide, centered on it, ended by `cap` at
+  /// both ends. A width of zero or below draws nothing (the walk skips it).
   DrawLine {
     from: Point,
     to: Point,
     color: Premultiplied,
     width: f32,
+    cap: StrokeCap,
   },
   /// `alpha` is the paint's alpha (1 without a paint): a texture's opacity
   /// is per op, not a group.
