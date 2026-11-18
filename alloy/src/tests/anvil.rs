@@ -189,12 +189,17 @@ fn colors_are_premultiplied() {
 }
 
 #[test]
-fn stroke_and_fill_records_both_ops() {
+fn stroke_and_fill_covers_the_union_once() {
+  // The fill outset by half the stroke width, as one instance: the
+  // stroke's inner half must not blend over the fill a second time.
   let mut both = opaque();
   both.set_draw_style(DrawStyle::StrokeAndFill).set_stroke_width(2.0);
   let mut b = DisplayListBuilder::new(None);
   b.draw_rect(&rect(10.0, 10.0, 20.0, 20.0), &both);
-  assert_eq!(walked(b).len(), 1 + STROKE_INSTANCES);
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  assert!(approx(out[0].rect, [9.0, 9.0, 22.0, 22.0]), "{:?}", out[0].rect);
+  assert_eq!(out[0].offset_kind_stroke[3], 0.0);
 
   let mut stroke = opaque();
   stroke.set_draw_style(DrawStyle::Stroke).set_stroke_width(2.0);

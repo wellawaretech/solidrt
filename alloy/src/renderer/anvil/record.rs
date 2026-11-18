@@ -59,28 +59,29 @@ impl DisplayListBuilder {
 /// What stage 1 draws of a paint: its color, premultiplied, and the
 /// stroke width when the style strokes. A color source, a blend mode other
 /// than source-over and the filters were warned about when they were set.
-/// A stroke-and-fill pushes the fill and then the stroke (painter's order:
-/// the stroke on top); a stroke of zero or negative width pushes nothing.
+/// A stroke-and-fill covers the union of the fill and the stroke once: for
+/// the convex shapes here that is the fill outset by half the stroke
+/// width, pushed as one op (`fill` takes the outset), so a translucent
+/// color is not blended twice where the stroke's inner half would lie
+/// over the fill. A stroke of zero or negative width pushes nothing.
 fn shape_ops(
   paint: &Paint,
-  fill: impl Fn(Premultiplied) -> Op,
+  fill: impl Fn(Premultiplied, f32) -> Op,
   stroke: impl Fn(Premultiplied, f32) -> Op,
   ops: &mut Vec<Op>,
 ) {
   let color = premultiply(paint.color);
   let strokes = paint.stroke_width > 0.0;
   match paint.draw_style {
-    DrawStyle::Fill => ops.push(fill(color)),
+    DrawStyle::Fill => ops.push(fill(color, 0.0)),
     DrawStyle::Stroke => {
       if strokes {
         ops.push(stroke(color, paint.stroke_width));
       }
     }
     DrawStyle::StrokeAndFill => {
-      ops.push(fill(color));
-      if strokes {
-        ops.push(stroke(color, paint.stroke_width));
-      }
+      let outset = if strokes { paint.stroke_width * 0.5 } else { 0.0 };
+      ops.push(fill(color, outset));
     }
   }
 }
@@ -221,7 +222,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     let rect = *rect;
     shape_ops(
       paint,
-      |color| Op::DrawRect { rect, color, stroke: None },
+      |color, outset| Op::DrawRect { rect: rect.inflate(outset, outset), color, stroke: None },
       |color, width| Op::DrawRect { rect, color, stroke: Some(width) },
       &mut self.ops,
     );
@@ -234,7 +235,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     let bounds = *bounds;
     shape_ops(
       paint,
-      |color| Op::DrawOval { bounds, color, stroke: None },
+      |color, outset| Op::DrawOval { bounds: bounds.inflate(outset, outset), color, stroke: None },
       |color, width| Op::DrawOval { bounds, color, stroke: Some(width) },
       &mut self.ops,
     );
@@ -249,7 +250,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     let rect = *rect;
     shape_ops(
       paint,
-      |color| Op::DrawRect { rect, color, stroke: None },
+      |color, outset| Op::DrawRect { rect: rect.inflate(outset, outset), color, stroke: None },
       |color, width| Op::DrawRect { rect, color, stroke: Some(width) },
       &mut self.ops,
     );

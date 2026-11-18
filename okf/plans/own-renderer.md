@@ -211,7 +211,9 @@ test apps use core elements.
    examples, the findings into this plan.
 
 **Done.** `examples/hello-world` and the core-only examples render under
-anvil with a reported diff against main's binary of edge pixels only. The
+anvil with a reported diff against main's binary of edge pixels only,
+beyond the rounded corners stage 2 brings and the stroke-and-fill strokes
+main never painted. The
 contract test passes, and each unsupported op warns once. The size of
 both `release-opt` Linux clients is recorded in Findings.
 
@@ -358,3 +360,162 @@ The stripped delta is 4.0 MB, a little under the 4.5 MB of symbol bytes
 already dropped part of Impeller's dependencies. The Android APK number
 waits for the first Android build of the branch (stage 7).
 
+### Stage 1 diff against main (2026-11-18)
+
+The six core-only examples were rendered twice from the same staged
+bundle at 1280x720: by `sol render` under the anvil client, and by main's
+`release` client at `4922b6f4` with the arguments `sol render` passes.
+The resting examples (hello-world, text-flow, drag) ran with `--settle
+--duration 0.1 --fps 10`, one frame; the animated ones (recurse, spin,
+audio) with `--duration 0.5 --fps 10`, five frames. The frames were
+compared with `alloy/examples/png_diff.rs`, the diff tool stage 1 added,
+at tolerance 0. The diff is reported, not asserted: Impeller is the
+reference for "nothing moved", not for correctness.
+
+| Example | Frames | Differing pixels (frame 0) | Of | Max channel difference | Explanation |
+|---|---|---|---|---|---|
+| hello-world | 1 | 0 | 921600 | 0 | identical |
+| text-flow | 1 | 657 | 921600 | 18 | the circle's rim (644), the 1/255 rounding class (13) |
+| drag | 1 | 3438 | 921600 | 204 | rounded corners drawn square, the card outlines' edges, a few quad edge pixels |
+| recurse | 5 | 114640 (114028 to 114640) | 921600 | 255 | rounded corners drawn square, a few quad edge pixels |
+| spin | 5 | 4244 (4244 on every frame) | 921600 | 102 | the stroke-and-fill outline main never painted, rounded corners drawn square |
+| audio | 5 | 106 (106 to 110) | 921600 | 22 (22 to 61) | the dot's rim |
+
+**Rounded corners drawn square** (drag, recurse, spin; stage 2). The
+diff images mark the corner fan of every rounded rect: drag's surface
+(radius 16) and cards (radius 10, fill and outline), recurse's 25 nested
+squares (radius a quarter of the side) and its two pause pills, spin's
+four buttons (radius 20). In drag, a tolerance of 16 leaves 1204
+differing pixels, all of them in the corners. In recurse the nested
+squares shade to red in steps of about ten levels, so a corner anvil
+fills with a square's color differs from main's (the parent's color) by
+one step; a tolerance of 16 leaves 30958 pixels, the corners of the
+outer squares. These carry the large maxima (204, 255, 163).
+
+**Edges decided in the fragment stage, and quad edges under MSAA**
+(text-flow, audio, drag, recurse). Anvil gives the oval rim and a stroke
+band's inner edge analytic coverage; Impeller tessellates and resolves
+4x MSAA. The ramps differ by a few levels: text-flow's circle by at most
+18 (at (412, 220): anvil `#E2C897`, main `#DFC189`), audio's dot by 22 on
+frame 0. Audio's frame 4 reaches 61 in four pixels of the dot's leftmost
+column, at the tangent point where the analytic edge meets the quad
+edge (anvil `#0B6B97`, main `#0596D4`): the double attenuation stage 1
+accepted. Drag's 1 px card outlines on the rotated surface differ along
+their whole length by at most 16 (`#0586BEE8` against `#067EB1E9`).
+Quad edges, MSAA under both, differ only in single pixels by one sample
+of four: recurse's straight edges by 2 to 3 levels (`#110000` against
+`#140000`), drag's translucent surface edge by an alpha of 16 (0 against
+`0x10`, a quarter of its 0.25 alpha).
+
+**Text** (every example). The text layers draw identically: hello-world
+differs in no pixel, and the labels of drag, spin and audio and the
+lines and the per-glyph headline of text-flow differ in none, except 13
+pixels of text-flow's final "l" (x 591, y 464 to 475, `#827D75` against
+`#817C74`). Those are the 1/255 rounding class: a bilinear blend of two
+texels whose highp result rounds to the other unorm8 level under anvil.
+The translucent cards of drag match main to the unit inside (`#029CDCE3`
+under both), so premultiplied color blended in sRGB is the same
+convention.
+
+**Spin's stroke-and-fill.** Spin's buttons are `drawStyle="stroke-and-fill"`,
+`strokeWidth={2}`, in the translucent `rgba(60,70,90,0.4)`. Main
+(Impeller) paints only the fill: apps that used the style saw a fill.
+Anvil follows the contract and paints the stroke too, so each button
+grows by a pixel all round (the 4244 pixels above, the outline's outer
+band at alpha `0x66` where main has `0x00`, plus the corners). The first
+cut pushed the stroke as a second instance on top of the fill, and the
+stroke's inner half blended a translucent color a second time (alpha
+`0xA3` where main had `0x66`); a stroke-and-fill now records one fill of
+the shape outset by half the stroke width (`shape_ops` in
+`alloy/src/renderer/anvil/record.rs`), the union of the fill and the
+stroke covered once, as Skia covers it. A rounded rect's radii join the
+outset in stage 2. Spin draws no other difference: its ring is ovals that
+pointer input adds, empty in a render, so its five frames are identical
+under both binaries.
+
+The unsupported ops each example still hits, one warn line each:
+
+- hello-world, text-flow, audio: none.
+- drag, recurse, spin: `[alloy] Renderer: draw_rounded_rect is not
+  supported yet; the rect draws with square corners`.
+
+The animated renders are deterministic across the two binaries: recurse
+and audio move between frames (recurse's frame 0 and frame 4 differ in
+167232 pixels under main), and every frame pair differs only in the
+classes above, with the moving bounding boxes in step.
+
+ImageMagick was not enough for this: `magick compare -metric AE` on
+ImageMagick 7.1 here prints a weighted fraction, not a pixel count, which
+is what made an own tool worth writing. To rerun a diff:
+`cargo run -p alloy --example png_diff -- <a> <b> [diff] [--tolerance N]`,
+where `a` and `b` are two PNGs or two `sol render` output directories
+(frames paired by name), and `diff` a diff image or a directory of them.
+
+### What stage 1 taught
+
+- Fragment-decided edges get no MSAA. Under GLES 3.0 the fragment stage
+  runs once per pixel and a discard keeps or drops all samples together,
+  so an oval rim, a stroke band's inner edge and a round cap came out
+  stair-stepped while the quad edges were smooth. Those edges now get
+  analytic coverage, a one-pixel ramp over the signed distance divided
+  by `fwidth`, so scaled and anisotropic transforms stay right
+  (`alloy/src/renderer/anvil/exec.rs`); MSAA keeps the quad edges. Where
+  an analytic edge meets a quad edge (an oval's four tangent pixels, a
+  round cap's two junction pixels) the coverage is attenuated twice; the
+  diff shows it as audio's 61.
+- The per-fragment clip discard is hard-edged under MSAA, where shape
+  edges are antialiased. Stage 5's general clips must decide whether it
+  stays.
+- The instance layout held at 24 floats (six vec4 attributes, 96 bytes,
+  `INSTANCE_FLOATS` in `alloy/src/renderer/anvil/walk.rs`) to the end of
+  stage 1. A stroke expands the quad by half its width at walk time and
+  the fragment stage recovers the inner shape from the width; a line's
+  cap and length ride in the texture slot, which shapes do not use.
+  Stage 2's per-corner radii need a seventh attribute or the unused
+  texture rect of a rect.
+- Rect strokes use the Chebyshev inner test (sharp miter corners), not
+  the Euclidean offset of the distance, which would round the outer
+  corners. Ovals use the gradient-normalized ellipse distance, exact to
+  first order and a few percent off for thick strokes on eccentric
+  ovals. A stroke width of zero or less draws nothing (the rendertree
+  never asks for a hairline); sub-pixel widths draw thin.
+- Batches split only at a texture or sampling change; a shape instance
+  joins any run. A screen of rects and text layers is one draw per
+  text-layer change, which stage 2's text into the frame removes. Anvil
+  owns two sampler objects (linear and nearest, clamped, no mipmaps) and
+  binds them per batch, so texture-object state stays untouched.
+- A nested list's restore pops only what that list saved, and the
+  parent's state comes back after the nested walk regardless: stricter
+  than Impeller, and an unbalanced nested recording cannot leak state.
+- The initial device clip is the target rect, so every instance's clip
+  is finite and offscreen draws are rejected before GL; the rendertree's
+  "infinite" clip extents of 1e7 intersect down to the target.
+- Each draw disables `RASTERIZER_DISCARD` and `SAMPLE_COVERAGE` as well
+  as the usual states: both silently kill draws when a shared context
+  leaves them on.
+- Colors are premultiplied at record time and blended in sRGB, and the
+  text layers are sampled upright under anvil's window mapping with no
+  flip: drag's translucent cards match main to the unit and hello-world
+  differs in no pixel. `raster::offscreen::flip_for_fbo` and its callers
+  stayed unchanged.
+- The 1/255 rounding class: anvil writes 0.5 from a highp float and the
+  driver's unorm8 conversion rounds the 127.5 tie down to 127, where
+  Impeller produced 128. It shows in 13 pixels of text-flow and fails
+  the strict precheck of `alloy/examples/texture_paint.rs` (a white rect
+  at alpha 0.5); that example's other cases pass under anvil except the
+  plus blend mode (stage 6). Stage 7's parity pass decides its
+  tolerance.
+- Main never painted the stroke of a stroke-and-fill draw, so apps that
+  used the style saw a fill. Anvil paints it, as one fill outset by half
+  the stroke width, so a translucent color covers the union once.
+- `half` is a reserved word in GLSL ES 3.00.
+- The warn-once macro (`unsupported!` in
+  `alloy/src/renderer/anvil/mod.rs`) guards with a relaxed load before
+  the swap, so an op that stays partial costs a plain read per record.
+  Hello-world records only seven distinct ops.
+- `packages/cli/runtime/runtime.mk` keeps the armv7
+  `BINDGEN_EXTRA_CLANG_ARGS` variables: rquickjs-sys runs bindgen for any
+  non-host target, so they were never Impeller's alone.
+- `alloy/examples/pixel_snap.rs` passes its coverage assertions under
+  anvil; its snapshot re-make count at 1.5x fails identically on main, a
+  stale expectation of the example.
