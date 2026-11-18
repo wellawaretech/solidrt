@@ -1,6 +1,6 @@
 ---
 title: Replace Impeller with an own renderer, in stages
-description: An own renderer (anvil) behind the renderer seam, built on a branch that deletes Impeller outright, staged so minimal apps run on it first (rects, ovals, lines, texture quads, text through its layers, transforms, rect clips) and the binary size is measured against main at the first commit; then batching and rounded shapes, paths, shaders drawn straight into the frame, full clips, layers and effects, and parity. The end state draws text and generator shaders straight into the frame and keeps offscreen passes only where a pass reads its own input.
+description: An own renderer (anvil) behind the renderer seam, built on a branch that deletes Impeller outright, staged so minimal apps run on it first (rects, ovals, lines, texture quads, text through its layers, transforms, rect clips) and the binary size is measured against main at the first commit; then batching and rounded shapes, shaders drawn straight into the frame, paths, full clips, layers and effects, and parity. The end state draws text and generator shaders straight into the frame and keeps offscreen passes only where a pass reads its own input.
 created: 2026-11-17
 ---
 
@@ -266,7 +266,103 @@ with constant expressions, so it is a switch over the index.
 **Done.** The TV's dense mover probe and the text bench run locked at 50
 fps under the new renderer. A screen of prose draws in a few batches.
 
-## Stage 3: paths, lines and gradients
+## Stage 3: shaders straight into the frame
+
+Pulled ahead of paths on 2026-11-18: it is the end state's remaining
+structural piece for minimal apps (a shader panel costs one render pass
+and one texture today), and it decides the shape of the per-draw program
+path the mesh program of stage 4 will reuse.
+
+Goal: a generator shader (a fragment program whose output depends on
+position, time and uniforms alone) draws as a quad in the frame, under
+the frame's transform and clip and into its MSAA target, with no
+offscreen texture. Before, the shader drew into an offscreen texture and
+that texture was drawn; now the shader draws. Shaders that sample
+`uSource` or keep `uPrevious`, multi-pass chains, mesh pipelines,
+render-once-sample-many targets, readback and every non-shader texture
+stay with shader targets and `<texture>`, unchanged.
+
+**The API (decided 2026-11-18).** A draw primitive beside `<rect>` and
+`<texture>`, over a handle from `@solidrt/core/gpu`:
+
+```tsx
+let plasma = createPaintShader(glsl`
+  uniform float uTime;
+  void main() {
+    vec2 p = vUV * 2.0 - 1.0;
+    fragColor = vec4(vec3(0.5 + 0.5 * sin(p.x * 6.0 + uTime)), 1.0);
+  }
+`)
+<shader src={plasma} params={{ uTime: t() }} textures={{ uNoise: noise }} width={240} height={160} />
+```
+
+The fragment contract is `createShaderTexture`'s, so a source written for
+a shader texture works unchanged: `vUV` 0..1 over the element's box with
+a top-left origin, `iResolution` the box in device pixels, `fragColor`
+premultiplied, params and sampler inputs by name (a number drives a
+scalar, a flat array the declared type; a texture binding takes an id or
+`{ id, filter?, wrap? }`). The handle is source text, not a compiled stage
+id: the program cannot reuse `linkProgram`'s programs, whose vertex stage
+is the covering triangle, and anvil has to add an epilogue to the
+fragment stage, which a compiled stage object does not allow.
+`destroyPaintShader` frees it; the `create*` owner-scoped auto-free
+applies. `<shader>` takes the layout props, `params`, `textures`, and
+`radius` (its own rounded corners through the instance's rounded-clip
+slot while no rounded clip is in effect; under one it warns once and
+draws square).
+
+**In anvil.** `Renderer::create_paint_shader(fragment_src)` compiles and
+links on the raster thread: anvil's vertex stage (`VERTEX_COMMON` plus a
+`vUV` output from the quad's corner) and a fragment stage made of anvil's
+preamble (`vUV`, `iResolution`, `fragColor`, the clip inputs), the app's
+source with its `main` renamed by macro, and an epilogue that calls it and
+multiplies `fragColor` by the clip factor (the box and the rounded clip,
+as the glyph program applies them). Uniforms are reflected at link time
+into a name to (location, kind, count) table the handle keeps, and the
+reflected table is returned so alloy validates params on the UI thread as
+it does for `linkProgram`. The handle is `Arc`-shared and `Send + Sync`;
+its drop pushes the GL program onto a deletion queue beside the texture
+one, drained at the start of every draw, discarded with the renderer on a
+context loss. `DisplayListBuilder::draw_shader(rect, shader, params,
+textures)` records one op whose params and inputs are shared slices
+(the element keeps them and re-records by reference). The walk emits one
+instance (the rect, the map, the clips, `tex` the unit square) in a batch
+of its own with a `Paint` program kind; the executor uses the program,
+sets `iResolution` from the quad's device size and the params by the
+table, binds the inputs on units 0.. through sampler objects per (filter,
+wrap) it creates as it meets them, and draws. A direct draw ends the
+batch before it and the one after it.
+
+**In alloy.** `Context::create_paint_shader` and `destroy_paint_shader`
+over a blocking RPC (`RasterCmd::CreatePaintShader`, `DestroyPaintShader`),
+a UI-side registry of handles like the texture registry, the source kept
+on the raster side so recovery relinks and the context-restored event
+carries the new handles, a `Shader` element kind (`kinds/shader.rs`) that
+records `draw_shader` from the registry's handle and the texture
+registry's handles for its inputs (a missing id warns and the input is
+skipped, as a node shader's does), and a row in the resource inventory.
+Params and texture writes are paint damage on the node.
+
+**In flux and core.** The `shader` tag and its props in `alloy_plugins`
+and `types.d.ts`; `createPaintShader`, `destroyPaintShader` in `gpu.ts`;
+`packages/core/examples/paint-shader.tsx`; `docs/shaders.md` gains a
+"Paint" section stating which programs are a `<shader>` and which stay a
+shader texture, `docs/drawing.md` the element.
+
+**Measure.** A probe with a grid of shader panels, once through
+`createShaderTexture` plus `<texture>` and once through `<shader>`, on
+the desktop and the TV: GPU time per frame, draw calls, the resource
+inventory. Into Findings.
+
+**Done.** The example renders; a GL example diffs a direct draw against
+the same source through a shader texture at the same size (identical but
+for the 1/255 rounding class); the paint shader draws under a rect clip,
+a rounded clip and a rotation; params and inputs validate as
+`linkProgram`'s do; a destroyed handle held by a retained recording keeps
+drawing until the recording is dropped and the program is deleted after;
+context recovery relinks; the probe's numbers are in Findings.
+
+## Stage 4: paths, lines and gradients
 
 - Fill and stroke tessellation through `lyon_tessellation` (a new pinned
   dependency; same author and same path type as the `lyon_path` and
@@ -276,24 +372,11 @@ fps under the new renderer. A screen of prose draws in a few batches.
 - The mesh is kept on the element, keyed on the geometry, the stroke
   parameters and the tessellation tolerance for the scale, and is redrawn
   without retessellating while those hold.
-- Meshes draw through a second program and batch like quads.
+- Meshes draw through a second program and batch like quads. The program
+  starts minimal, as the fill program taught.
 - Linear and radial gradients with transform and tile mode, through a
   ramp texture as the glyph pass's (`RAMP_WIDTH`). Image color sources.
 - Lines (`kinds/line.rs`) draw as paths, as today.
-
-## Stage 4: shaders straight into the frame
-
-A program drawn as a quad in the frame, under the frame's clip and into
-its MSAA target, with no offscreen texture. It applies to generator
-shaders, whose output depends only on position, time and uniforms.
-Shaders that sample `uSource` or keep `uPrevious` stay offscreen, as
-today.
-
-This is a second shader contract beside the offscreen one (`NodeShader`,
-`gpu/spec.rs`): local coordinates and the quad's size come from the
-renderer (not `gl_FragCoord` and `iResolution`), and the output is
-premultiplied. How an app declares it on a node is an API decision for
-core, made at the start of the stage. A direct shader draw ends a batch.
 
 ## Stage 5: full transforms and clips
 
@@ -341,7 +424,7 @@ core, made at the start of the stage. A direct shader draw ends a batch.
 - Vulkan or Metal backends. GLES stays the one backend
   ([graphics-backend-strategy](../notes/graphics-backend-strategy.md)).
 - Coverage AA as a replacement for MSAA.
-- Changes to the recording API the rendertree calls, beyond the stage 4
+- Changes to the recording API the rendertree calls, beyond the stage 3
   shader declaration.
 
 ## Findings
@@ -897,8 +980,8 @@ not yet re-read on the TV.
 - The fragment program's shape, not the instance count, set the Mali's
   cost: the same 801 rects in the same single draw call went from 9.1 ms
   to 3.4 ms by dropping discards, derivatives and unused varyings from
-  the program they draw through. Stage 3's mesh program and stage 4's
-  direct shaders should start minimal and grow, not share an uber-shader.
+  the program they draw through. The mesh program and the direct
+  shaders should start minimal and grow, not share an uber-shader.
 - A batch's program is a property of the batch, and a cheap-program
   instance may ride along in an expensive-program batch (the shape
   program draws a rect correctly) when that saves a draw call: the
@@ -955,7 +1038,7 @@ case.
 - The app-facing `gpu` protocol executors, about 5000 lines: programs,
   passes, targets, buffers, storage, slicing, entry, timing. They carry
   out a plain vocabulary over GL with no policy of their own, and stage
-  4 draws app programs straight into anvil's frame, so anvil is a
+  3 draws app programs straight into anvil's frame, so anvil is a
   defensible home, maybe the cleaner one. If they stay in alloy, they
   build on anvil's toolkit, never the other way round.
 - The window tap (`tap.rs`): either side.
@@ -967,8 +1050,8 @@ types (`GlyphQuad`, `CoveragePolicy`, `GlyphGradient`, `RAMP_WIDTH`).
 Each becomes a plain value passed in or a type that moves with anvil.
 
 **Timing.** Not inside stage 2, whose rect fast path is next. Each of
-stages 3 to 6 adds code that reaches into `gl/`, so the cut is cheapest
-before stage 3: first a top-level `alloy/src/anvil/` with no `crate::`
+the later stages adds code that reaches into `gl/`, so the cut is cheapest
+before them: first a top-level `alloy/src/anvil/` with no `crate::`
 import back into alloy (the contract, the vocabulary and the toolkit as
 its surface), then the crate split, which by then is mechanical. Not
 decided yet.

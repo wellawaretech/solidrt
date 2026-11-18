@@ -122,8 +122,8 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   deletes Impeller outright, staged so minimal apps run on it first (rects,
   ovals, lines, texture quads, text through its layers, transforms, rect
   clips) and the binary size is measured against main at the first commit;
-  then batching and rounded shapes, paths, shaders drawn straight into the
-  frame, full clips, layers and effects, and parity. The end state draws text
+  then batching and rounded shapes, shaders drawn straight into the frame,
+  paths, full clips, layers and effects, and parity. The end state draws text
   and generator shaders straight into the frame and keeps offscreen passes
   only where a pass reads its own input.
 - **[Spatial audio - emitter and listener nodes on the spatial core](plans/spatial-audio-emitters.md)** [2026-08-30]
