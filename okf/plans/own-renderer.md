@@ -993,7 +993,7 @@ not yet re-read on the TV.
 
 ### Stage 3: the paint shader, and the desktop measurement (2026-11-19)
 
-Steps 1 to 3 landed on 2026-11-18 and 19 (06dc74f5 anvil, bc0359f9
+Steps 1 to 3 landed on 2026-11-18 and 19 (06dc74f5 anvil, 2010a13a
 alloy, 799a07c6 flux and core, a026ebcd guides and backlog), each
 reviewed before its commit. What the implementation settled beyond the
 design above:
