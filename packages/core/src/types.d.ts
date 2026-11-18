@@ -2,7 +2,7 @@
 
 import type { Gradient } from "./color"
 import type { CursorId, CursorName } from "./cursor"
-import type { ProgramId, TextureBindings, TextureId } from "flux:gpu"
+import type { PaintShaderId, ProgramId, TextureBindings, TextureId } from "flux:gpu"
 import type { TextInputHints } from "flux:rendertree"
 import type { Element } from "solid-js"
 
@@ -1295,4 +1295,61 @@ export interface TextureProps extends PaintProps, InputProps {
   // GLSL type: 2/3/4 for `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`.
   // An undefined or null entry is skipped.
   params?: Record<string, number | number[] | Float32Array | Float64Array>
+}
+
+/**
+ * A paint shader drawn straight into the frame: the program from
+ * `createPaintShader` fills the element's box as one quad, under the frame's
+ * transform and clips, with no offscreen texture. The fragment contract is a
+ * shader texture's: `vUV` is 0..1 over the box with a top-left origin,
+ * `iResolution` is the box in device pixels, and `fragColor` is
+ * premultiplied, composited source-over. The source has no `#version` line;
+ * the runtime supplies the header.
+ *
+ * A program that only generates the pixels of one box is a `<shader>`. A
+ * program whose output something else samples, or that samples its own
+ * output (`uSource`, `uPrevious`, feedback), stays a shader texture shown
+ * through `<texture>`.
+ *
+ * The element has no paint props: `color`, `blendMode`, `drawStyle`, the
+ * stroke props and `opacity` do not apply. The program writes the pixels,
+ * premultiplied, composited source-over. The box has no intrinsic size:
+ * give it one through layout.
+ */
+export interface ShaderProps extends InputProps {
+  /**
+   * The paint shader id from `createPaintShader`; null draws nothing.
+   * `params` and `textures` are checked against the program current at
+   * their own write: after a change of `src`, a held name the new program
+   * lacks is skipped, not reported. Write them again after `src` changes.
+   */
+  src?: PaintShaderId | null
+  /**
+   * Uniform values by name, checked against `src`'s program at the write:
+   * an unknown name or a wrong component count throws, so set `src` before
+   * `params`. A number drives a scalar (`float`/`int`); a flat number array
+   * (or a Float32Array / Float64Array) drives the declared GLSL type:
+   * 2/3/4 for `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`. A write
+   * is a repaint of this element only. An undefined or null entry is
+   * skipped.
+   */
+  params?: Record<string, number | number[] | Float32Array | Float64Array>
+  /**
+   * The `sampler2D` inputs: uniform name to texture id, or
+   * `{ id, filter?, wrap? }` for a per-binding sampling override. Checked
+   * against `src`'s program at the write, like `params`: every name is an
+   * active `sampler2D`, and every id a 2D color texture (a cube map, a 3D
+   * or array texture, a sampler-only format, or an unknown id throws).
+   * When an input's
+   * content changes, the element repaints. An undefined or null entry is
+   * skipped.
+   */
+  textures?: TextureBindings
+  /**
+   * Corner radius, as on a rect: the draw is clipped to the rounded box. A
+   * single number rounds all four corners; an array is [top-left,
+   * top-right, bottom-right, bottom-left]. Animatable in its single-number
+   * form, like a rect's.
+   */
+  radius?: number | [number, number, number, number]
 }

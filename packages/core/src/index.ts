@@ -104,6 +104,7 @@ export type {
   TextAlign,
   TextOverflow,
   TextureProps,
+  ShaderProps,
   Color,
   Pct,
 } from "./types"

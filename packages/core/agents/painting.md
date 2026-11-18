@@ -23,15 +23,20 @@ shader. Escalate the element the content calls for, never the whole screen.
    subtree. Free-form shapes, decoration, diagrams, charts, anything
    positioned rather than flowed. Examples: parse-svg, detached-positioning,
    text-paint-styling.
-3. GPU textures - `createShaderTexture` puts a fragment shader in a
-   `<texture>` (moving gradients, noise, glow, dissolves, a background that
-   is alive), `createPipelineTexture` draws geometry you generate yourself
+3. GPU shaders and textures - `createPaintShader` and a `<shader>` draw a
+   fragment shader straight into the frame (moving gradients, noise, glow,
+   a background that is alive): the default for a program that only
+   generates the pixels of its own box, with no offscreen texture.
+   `createShaderTexture` puts a fragment shader in a `<texture>` instead,
+   for output something else samples or a pass that samples its own
+   output (feedback, chains, dissolves of a texture);
+   `createPipelineTexture` draws geometry you generate yourself
    (particles, point clouds, splats), and the `shader` prop post-processes
    content that already exists: on a `<view>` it grades, warps or dissolves
    that subtree, on `<window>` the whole frame. Stack `<texture>` elements
-   with `blendMode` to combine passes. Examples: gpu-shader, gpu-particles,
-   gpu-pipeline, gpu-instancing, gpu-texture-blend, view-shader,
-   window-shader.
+   with `blendMode` to combine passes. Examples: paint-shader, gpu-shader,
+   gpu-particles, gpu-pipeline, gpu-instancing, gpu-texture-blend,
+   view-shader, window-shader.
 4. 3D scenes - add `@solidrt/3d` (not a scaffold dependency): meshes,
    materials and a camera declared as Solid components, rendered into a
    texture that sits in the UI tree like any other element.

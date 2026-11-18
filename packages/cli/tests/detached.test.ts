@@ -4,7 +4,7 @@
 import { test, expect } from "flux:test"
 import { resolveDetached } from "../src/bundle/detached.ts"
 
-let PAIRED = ["view", "rect", "oval", "line", "path", "texture", "text"]
+let PAIRED = ["view", "rect", "oval", "line", "path", "texture", "shader", "text"]
 
 test("a bare or {true} detached on a paired tag compiles to its d-* form", () => {
   for (let tag of PAIRED) expect(resolveDetached(tag, "true")).toEqual({ tag: "d-" + tag })

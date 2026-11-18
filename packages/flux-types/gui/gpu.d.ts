@@ -3,8 +3,8 @@
 // on top. Each id space has its own destroyer: texture ids (the public token
 // used as `<texture src>` and sampler inputs -> destroyTexture), buffer ids
 // (-> destroyBuffer), and the raw shading layer's shader-stage ids
-// (-> destroyShader), program ids (-> destroyProgram), and render-pipeline
-// ids (-> destroyRenderPipeline).
+// (-> destroyShader), program ids (-> destroyProgram), render-pipeline
+// ids (-> destroyRenderPipeline), and paint shader ids (-> destroyPaintShader).
 // Layering: compileShader/linkProgram are the raw GL primitives (complete
 // sources, explicit header opt-in); createRenderPipeline pairs a program with
 // draw state (topology, blend, cull, depth, vertex layout - how it draws);
@@ -14,7 +14,8 @@
 // per-entry setters, sharing one depth buffer) - the multi-pass render pass.
 // createShaderTexture/createPipelineTexture are fused conveniences (compile +
 // link + pipeline + target in one call, curated preamble) - named for what
-// they return.
+// they return. createPaintShader is the one shader with no target: a
+// fragment program a `<shader>` element draws straight into the frame.
 //
 // Sampling is a per-texture property declared at creation: every create path
 // accepts `{ filter?, wrap?, mipmap? }` ("linear"/"nearest", "clamp"/"repeat",
@@ -85,6 +86,8 @@ declare module "flux:gpu" {
   export type ProgramId = number & { readonly __program: unique symbol }
   /** The render-pipeline id space ({@link createRenderPipeline}); see {@link TextureId} for the brand model. */
   export type RenderPipelineId = number & { readonly __renderPipeline: unique symbol }
+  /** The paint shader id space ({@link createPaintShader}); see {@link TextureId} for the brand model. */
+  export type PaintShaderId = number & { readonly __paintShader: unique symbol }
   /**
    * A draw-entry handle on a draw target ({@link addDraw}); see
    * {@link TextureId} for the brand model. Target-scoped and stable: an id
@@ -724,6 +727,49 @@ declare module "flux:gpu" {
    * Answered locally, no GPU round trip.
    */
   export function programAttributes(program: ProgramId): VertexAttribute[]
+  /**
+   * Link a paint shader: a fragment program that a `<shader>` element draws
+   * as a quad straight into the frame, under the frame's transform and
+   * clips, with no offscreen texture. Returns a paint shader id (its own id
+   * space, not a texture id): the `<shader src>` value. Link errors throw
+   * here, synchronously. Free with {@link destroyPaintShader}.
+   *
+   * The fragment contract is {@link createShaderTexture}'s, so a source
+   * written for a shader texture works unchanged: `vUV` is 0..1 over the
+   * element's box with a top-left origin, `iResolution` (vec2) is the box
+   * in device pixels, and `fragColor` is premultiplied, composited
+   * source-over. Params and sampler inputs go by name, through the
+   * element's `params` and `textures` props (see {@link ShaderParams} and
+   * {@link TextureBindings}); an input is a `sampler2D` over a 2D color
+   * texture. The source has no `#version` line: the runtime supplies the
+   * header (`#version 300 es`, precision, `vUV`, `iResolution`,
+   * `fragColor`), and a source with its own `#version` line throws. Take
+   * the position from `vUV` (or `vUV * iResolution`), never from
+   * `gl_FragCoord`: offscreen that is the texel, in the frame it is the
+   * window pixel.
+   *
+   * Which programs it is for: a generator, whose output depends on
+   * position, time, uniforms and the textures it samples, and only fills
+   * the one box. A program whose output something else samples, that
+   * samples its own output (`uSource`, `uPrevious`, a feedback pass), a
+   * multi-pass chain, a mesh pipeline or a target rendered once and drawn
+   * many times stays a shader texture ({@link createShaderTexture} and
+   * `<texture>`). A paint shader saves the render pass and the texture a
+   * shader texture costs per panel, and draws at the box's own resolution
+   * with no resampling.
+   *
+   * The resource inventory (`/gpu`) lists each paint shader under
+   * `paintShaders` as `{ id, label? }`.
+   */
+  export function createPaintShader(fragmentSrc: string, opts?: LabelOption): PaintShaderId
+  /**
+   * Destroy a paint shader by id. A `<shader>` naming it draws nothing
+   * from its next recording on; a recording made before (a repaint
+   * boundary's retained picture) keeps drawing it, and the GL program is
+   * deleted once the last such recording is gone. The id stops being
+   * usable for `<shader>` params and textures writes immediately.
+   */
+  export function destroyPaintShader(id: PaintShaderId): void
   export type Topology = "points" | "lines" | "line-strip" | "triangles" | "triangle-strip"
   /**
    * Blending for a pipeline's own draw. "none" (default) overwrites:

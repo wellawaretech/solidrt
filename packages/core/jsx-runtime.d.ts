@@ -9,6 +9,7 @@ import type {
   TextProps,
   SpanProps,
   TextureProps,
+  ShaderProps,
   LayoutProps,
   PositionProps,
   GeometryProps,
@@ -72,6 +73,7 @@ export namespace JSX {
   interface LineDetachedProps extends LineProps, LineGeometryProps, TransitionProps, ElementRef {}
   interface PathDetachedProps extends PathProps, PositionProps, TransitionProps, ElementRef {}
   interface TextureDetachedProps extends TextureProps, GeometryProps, TransitionProps, ElementRef {}
+  interface ShaderDetachedProps extends ShaderProps, GeometryProps, TransitionProps, ElementRef {}
   interface TextDetachedProps extends TextProps, TextGeometryProps, TransitionProps, ElementRef {}
 
   // The two branches of each paired tag. Named, so an error prints the name and
@@ -89,6 +91,8 @@ export namespace JSX {
   interface PathDetached extends PathDetachedProps, DetachedForm {}
   interface TextureLaidOut extends TextureProps, LayoutProps, TransitionProps, ElementRef, LaidOutForm, Never<GeometryProps> {}
   interface TextureDetached extends TextureDetachedProps, DetachedForm {}
+  interface ShaderLaidOut extends ShaderProps, LayoutProps, TransitionProps, ElementRef, LaidOutForm, Never<GeometryProps> {}
+  interface ShaderDetached extends ShaderDetachedProps, DetachedForm {}
   interface TextLaidOut extends TextProps, LayoutProps, TransitionProps, ElementRef, LaidOutForm, Never<TextGeometryProps> {}
   interface TextDetached extends TextDetachedProps, DetachedForm {}
 
@@ -106,6 +110,7 @@ export namespace JSX {
     line: LineLaidOut | LineDetached
     path: PathLaidOut | PathDetached
     texture: TextureLaidOut | TextureDetached
+    shader: ShaderLaidOut | ShaderDetached
     /** @deprecated Write `<view detached>`. */
     "d-view": ViewDetachedProps
     /** @deprecated Write `<rect detached>`. */
@@ -118,6 +123,8 @@ export namespace JSX {
     "d-path": PathDetachedProps
     /** @deprecated Write `<texture detached>`. */
     "d-texture": TextureDetachedProps
+    /** @deprecated Write `<shader detached>`. */
+    "d-shader": ShaderDetachedProps
     /** @deprecated Write `<text detached>`. */
     "d-text": TextDetachedProps
     // A styled run inside <text>; never has a layout box, so it has no

@@ -106,7 +106,7 @@ export type { TextureFormat } from "flux:gpu"
 // runtime, distinct types to the checker, so a cross-space slip like
 // destroyBuffer(textureId) fails to compile. Exported so apps can annotate
 // storage (`let ids: TextureId[]`).
-export type { BufferId, DrawId, ProgramId, RenderPipelineId, ShaderStageId, TextureBox, TextureId, TextureRect } from "flux:gpu"
+export type { BufferId, DrawId, PaintShaderId, ProgramId, RenderPipelineId, ShaderStageId, TextureBox, TextureId, TextureRect } from "flux:gpu"
 
 // Re-exported so callers that depend on @solidrt/core -- like @solidrt/components
 // -- need not import flux directly: destroyTexture for the manual-cleanup path
@@ -273,16 +273,45 @@ export { limits } from "flux:gpu"
 // createShaderTarget calls (and compiles nothing per pipeline or target);
 // destroyShader / destroyProgram / destroyRenderPipeline free by id space,
 // any order safe against live users. createShaderTexture/createPipelineTexture
-// remain the fused conveniences on top.
+// remain the fused conveniences on top. createPaintShader stands beside them,
+// not on this layer: a fragment program with no target, which a `<shader>`
+// element draws straight into the frame (owner-scoped like the create*
+// helpers); destroyPaintShader frees one by hand.
 export {
   compileShader,
   createRenderPipeline,
   destroyProgram,
   destroyRenderPipeline,
   destroyShader,
+  destroyPaintShader,
   linkProgram,
   programAttributes,
 } from "flux:gpu"
+
+/**
+ * Links a paint shader: a fragment program that a `<shader src={id}>`
+ * element draws as a quad straight into the frame, with no offscreen
+ * texture. The fragment contract is `createShaderTexture`'s, so a source
+ * written for a shader texture works unchanged: `vUV` is 0..1 over the
+ * element's box with a top-left origin, `iResolution` the box in device
+ * pixels, `fragColor` premultiplied, and the element's `params` and
+ * `textures` drive the uniforms and `sampler2D` inputs by name. The source
+ * has no `#version` line; the runtime supplies the header.
+ *
+ * A program that only generates the pixels of one box is a paint shader. A
+ * program whose output something else samples, or that samples its own
+ * output, stays a shader texture (`createShaderTexture` and `<texture>`).
+ *
+ * Link errors throw here. When called inside a reactive scope the shader
+ * is freed when that owner is disposed (opt out with `{ autoFree: false }`
+ * and call `destroyPaintShader`); create outside any reactive scope for an
+ * app-lifetime shader.
+ */
+export function createPaintShader(fragmentSrc: string, opts?: CreateOptions): gpu.PaintShaderId {
+  let id = gpu.createPaintShader(fragmentSrc, opts)
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyPaintShader(id))
+  return id
+}
 
 // The tag, and the screen-size clamp both sprite renderers share: the
 // GLSL function a vertex stage pastes in, its JS twin for the picker, and

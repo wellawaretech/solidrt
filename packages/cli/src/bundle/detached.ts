@@ -11,7 +11,7 @@
 // test can import it; detachedAttribute is the Babel glue around it.
 
 /** The tags with a detached form; the detached form is the tag with DETACHED_PREFIX. */
-let PAIRED_TAGS = ["view", "rect", "oval", "line", "path", "texture", "text"]
+let PAIRED_TAGS = ["view", "rect", "oval", "line", "path", "texture", "shader", "text"]
 /** The prefix of the detached wire kind: `d-view` is `<view detached>`. */
 const DETACHED_PREFIX = "d-"
 

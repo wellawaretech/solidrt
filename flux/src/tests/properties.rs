@@ -23,14 +23,14 @@ fn apply(kind: &str, name: &str, value: PropValue) -> Result<Damage, String> {
 // params). The gpu_params stub accepts every write, like a valid target.
 fn apply_el(el: &mut Element, name: &str, value: PropValue) -> Result<Damage, String> {
   let (tx, _rx) = channel();
-  apply_jsx(el, name, &value, &tx, &|_, _| Ok(()))
+  apply_jsx(el, name, &value, &tx, &|_, _| Ok(()), &|_, _| Ok(()))
 }
 
 // The variant returning the command receiver, for a property whose effect is
 // the command the element sends (the window's size declaration).
 fn apply_el_cmds(el: &mut Element, name: &str, value: PropValue) -> (Result<Damage, String>, Receiver<AlloyCommand>) {
   let (tx, rx) = channel();
-  let result = apply_jsx(el, name, &value, &tx, &|_, _| Ok(()));
+  let result = apply_jsx(el, name, &value, &tx, &|_, _| Ok(()), &|_, _| Ok(()));
   (result, rx)
 }
 
@@ -163,10 +163,17 @@ fn undefined_param_entries_marshal_as_null_and_are_skipped() {
     apply_el(&mut el, "src", num(7.0)).expect("src applies");
     let (tx, _rx) = channel();
     let seen: RefCell<Vec<String>> = RefCell::new(Vec::new());
-    apply_jsx(&mut el, "params", &value, &tx, &|_, params| {
-      *seen.borrow_mut() = params.iter().map(|(k, _)| k.clone()).collect();
-      Ok(())
-    })
+    apply_jsx(
+      &mut el,
+      "params",
+      &value,
+      &tx,
+      &|_, params| {
+        *seen.borrow_mut() = params.iter().map(|(k, _)| k.clone()).collect();
+        Ok(())
+      },
+      &|_, _| Ok(()),
+    )
     .expect("params applies");
     assert_eq!(*seen.borrow(), vec!["uA".to_string(), "uC".to_string()]);
   });
@@ -467,10 +474,17 @@ fn texture_params_route_to_the_gpu_channel() {
   apply_el(&mut el, "src", num(7.0)).expect("src applies");
   let (tx, _rx) = channel();
   let seen: RefCell<Option<(u64, usize, String)>> = RefCell::new(None);
-  let damage = apply_jsx(&mut el, "params", &map(&[("uTime", num(1.5))]), &tx, &|id, params| {
-    *seen.borrow_mut() = Some((id, params.len(), params[0].0.clone()));
-    Ok(())
-  })
+  let damage = apply_jsx(
+    &mut el,
+    "params",
+    &map(&[("uTime", num(1.5))]),
+    &tx,
+    &|id, params| {
+      *seen.borrow_mut() = Some((id, params.len(), params[0].0.clone()));
+      Ok(())
+    },
+    &|_, _| Ok(()),
+  )
   .expect("params applies");
   assert_eq!(damage, Damage::None);
   assert_eq!(*seen.borrow(), Some((7, 1, "uTime".to_string())));
@@ -489,9 +503,81 @@ fn texture_params_gpu_error_propagates() {
   let mut el = Element::from_kind("texture").expect("known kind");
   apply_el(&mut el, "src", num(7.0)).expect("src applies");
   let (tx, _rx) = channel();
-  let err = apply_jsx(&mut el, "params", &map(&[("uX", num(1.0))]), &tx, &|_, _| Err("target 7 not found".to_string()))
-    .unwrap_err();
+  let err = apply_jsx(
+    &mut el,
+    "params",
+    &map(&[("uX", num(1.0))]),
+    &tx,
+    &|_, _| Err("target 7 not found".to_string()),
+    &|_, _| Ok(()),
+  )
+  .unwrap_err();
   assert!(err.contains("not found"), "{err}");
+}
+
+// The `<shader>` element: its own props decode here; the params and
+// inputs checks against a real program need a GL context, so the stub
+// stands in for the alloy context and the tests stop at the routing.
+#[test]
+fn shader_accepts_src_radius_and_detached_geometry() {
+  assert_eq!(apply("shader", "src", num(3.0)), Ok(Damage::Paint));
+  assert_eq!(apply("shader", "src", PropValue::Null), Ok(Damage::Paint));
+  assert_eq!(apply("shader", "radius", num(8.0)), Ok(Damage::Paint));
+  assert!(apply("shader", "width", num(120.0)).is_ok());
+  for name in ["x", "y", "w", "h"] {
+    assert_eq!(apply("d-shader", name, num(10.0)), Ok(Damage::Paint), "{name}");
+    let err = apply("shader", name, num(10.0)).unwrap_err();
+    assert!(err.starts_with("Detached-only property"), "{name}: {err}");
+  }
+}
+
+#[test]
+fn shader_rejects_a_non_numeric_src() {
+  let err = apply("shader", "src", text("plasma")).unwrap_err();
+  assert!(err.contains("paint shader id"), "{err}");
+}
+
+#[test]
+fn shader_params_and_textures_before_src_name_the_fix() {
+  let err = apply("shader", "params", map(&[("uTime", num(1.0))])).unwrap_err();
+  assert!(err.contains("set src before params"), "{err}");
+  let err = apply("shader", "textures", map(&[("uNoise", num(4.0))])).unwrap_err();
+  assert!(err.contains("set src before textures"), "{err}");
+  // Clearing needs no src.
+  assert_eq!(apply("shader", "params", PropValue::Null), Ok(Damage::Paint));
+  assert_eq!(apply("shader", "textures", PropValue::Null), Ok(Damage::Paint));
+}
+
+#[test]
+fn shader_params_and_textures_are_checked_against_src() {
+  use crate::alloy_plugins::properties::PaintCheck;
+  use std::cell::RefCell;
+  let mut el = Element::from_kind("shader").expect("known kind");
+  apply_el(&mut el, "src", num(5.0)).expect("src applies");
+  let (tx, _rx) = channel();
+  let seen: RefCell<Vec<(u64, String)>> = RefCell::new(Vec::new());
+  let check = |id: u64, check: PaintCheck<'_>| {
+    let what = match check {
+      PaintCheck::Params(params) => format!("params {}", params.len()),
+      PaintCheck::Inputs(textures) => format!("inputs {}", textures.len()),
+    };
+    seen.borrow_mut().push((id, what));
+    Ok(())
+  };
+  let damage =
+    apply_jsx(&mut el, "params", &map(&[("uTime", num(1.5))]), &tx, &|_, _| Ok(()), &check).expect("params applies");
+  assert_eq!(damage, Damage::Paint);
+  apply_jsx(&mut el, "textures", &map(&[("uNoise", num(4.0))]), &tx, &|_, _| Ok(()), &check).expect("textures applies");
+  assert_eq!(*seen.borrow(), vec![(5, "params 1".to_string()), (5, "inputs 1".to_string())]);
+  // A refused write throws and leaves the element as it was.
+  let err = apply_jsx(&mut el, "params", &map(&[("uX", num(1.0))]), &tx, &|_, _| Ok(()), &|_, _| {
+    Err("unknown uniform 'uX'".to_string())
+  })
+  .unwrap_err();
+  assert!(err.contains("uX"), "{err}");
+  let ElementKind::Shader(sh) = &el.kind else { panic!("a shader element") };
+  assert_eq!(sh.params.len(), 1);
+  assert_eq!(sh.params[0].name, "uTime");
 }
 
 // The `transition` declaration: kind inference (a curve makes a tween,

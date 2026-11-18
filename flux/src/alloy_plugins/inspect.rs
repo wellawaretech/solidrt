@@ -173,6 +173,9 @@ fn read_value_json(value: super::ReadValue) -> serde_json::Value {
     super::ReadValue::Bool(b) => b.into(),
     super::ReadValue::Str(s) => s.into(),
     super::ReadValue::Nums(list) => list.into_iter().map(|n| round2(n as f32)).collect::<Vec<_>>().into(),
+    super::ReadValue::Map(entries) => {
+      entries.into_iter().map(|(k, v)| (k, read_value_json(v))).collect::<serde_json::Map<_, _>>().into()
+    }
   }
 }
 
@@ -281,9 +284,10 @@ fn label_groups(res: &alloy::GpuResources, label: Option<&str>) -> serde_json::V
     .into()
 }
 
-/// Inventory alloy's GPU bookkeeping (textures, buffers, pipelines, programs)
-/// as the record the control API's `/gpu` answers with and a test reads
-/// (`flux:test/gui` `gpu`): shaped here once, like the node record above.
+/// Inventory alloy's GPU bookkeeping (textures, buffers, pipelines, programs,
+/// paint shaders) as the record the control API's `/gpu` answers with and a
+/// test reads (`flux:test/gui` `gpu`): shaped here once, like the node
+/// record above.
 /// `label`, when given, keeps only the resources created with exactly that
 /// debug label (every list; the window shader has none and is dropped).
 /// Uniform values with more components than this are elided from a draw
@@ -577,6 +581,16 @@ pub fn gpu_record(
     })
     .collect();
 
+  let paint_shaders: Vec<serde_json::Value> = res
+    .paint_shaders
+    .iter()
+    .map(|p| {
+      let mut obj = serde_json::json!({"id": p.id});
+      insert_label(&mut obj, &p.label);
+      obj
+    })
+    .collect();
+
   let keep = |list: Vec<serde_json::Value>| -> Vec<serde_json::Value> {
     match label {
       None => list,
@@ -586,6 +600,7 @@ pub fn gpu_record(
   let mut data = serde_json::json!({
     "textures": keep(textures), "buffers": keep(buffers), "pipelines": keep(pipelines),
     "renderPipelines": keep(render_pipelines), "programs": keep(programs),
+    "paintShaders": keep(paint_shaders),
     "groups": label_groups(&res, label),
     // The damage debug switch: true while every changed target renders in
     // full (it outlives a reload).

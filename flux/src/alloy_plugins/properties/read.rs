@@ -23,6 +23,8 @@ pub enum ReadValue {
   Bool(bool),
   Str(String),
   Nums(Vec<f64>),
+  /// A nested object under JSX names (a `<shader>`'s params).
+  Map(Vec<(String, ReadValue)>),
 }
 
 /// Current property values of a node, JSX names and encodings, off-default
@@ -160,8 +162,33 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       num(&mut out, "textDecorationThickness", text.underline_thickness);
     }
     ElementKind::Span(_) => {} // its text already rides the snapshot
-    // Its own props are not marshalled yet.
-    ElementKind::Shader(_) => {}
+    ElementKind::Shader(sh) => {
+      if let Some(id) = sh.shader_id {
+        out.push(("src", ReadValue::Int(id as i64)));
+      }
+      // A one-component value reads back as the number it was written as.
+      if !sh.params.is_empty() {
+        let params = sh
+          .params
+          .iter()
+          .map(|p| {
+            let value = match p.value.as_slice() {
+              [n] => ReadValue::Num(*n as f64),
+              list => ReadValue::Nums(list.iter().map(|v| *v as f64).collect()),
+            };
+            (p.name.clone(), value)
+          })
+          .collect();
+        out.push(("params", ReadValue::Map(params)));
+      }
+      num(&mut out, "x", sh.x);
+      num(&mut out, "y", sh.y);
+      num(&mut out, "w", sh.w);
+      num(&mut out, "h", sh.h);
+      if let Some(r) = sh.radius {
+        out.push(("radius", ReadValue::Nums(r.iter().map(|v| *v as f64).collect())));
+      }
+    }
     ElementKind::Texture(tex) => {
       if let Some(id) = tex.texture_id {
         out.push(("src", ReadValue::Int(id as i64)));

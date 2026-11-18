@@ -484,9 +484,17 @@ fn set_property(ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>) 
   s.tree
     .borrow_mut()
     .try_edit(node_id, |el| {
-      super::properties::apply_jsx(el, &property, &value, &s.alloy_cmd_tx, &|id, params| {
-        s.gui.alloy.set_target_params(id, params)
-      })
+      super::properties::apply_jsx(
+        el,
+        &property,
+        &value,
+        &s.alloy_cmd_tx,
+        &|id, params| s.gui.alloy.set_target_params(id, params),
+        &|id, check| match check {
+          super::properties::PaintCheck::Params(params) => s.gui.alloy.validate_paint_params(id, params),
+          super::properties::PaintCheck::Inputs(textures) => s.gui.alloy.validate_paint_inputs(id, textures),
+        },
+      )
     })
     .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))?;
   s.gui.platform.request_frame();

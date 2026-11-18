@@ -1,8 +1,9 @@
 # Drawing
 
-The primitives that put pixels on the screen: `rect`, `oval`, `line`, `path`
-and `texture`. They share one paint vocabulary and differ only in the geometry
-they draw.
+The primitives that put pixels on the screen: `rect`, `oval`, `line`, `path`,
+`shader` and `texture`. They share one paint vocabulary and differ only in the
+geometry they draw. The `shader` element is the exception: its program
+writes the pixels, so it takes no paint props.
 
 In their layout form they take no geometry props at all. A shape derives its
 geometry from the layout box it sits in, which is why a `rect` with no props
@@ -80,6 +81,15 @@ numbers that animate (endpoints, or a polyline's `points`): a path animates
 by rebuilding its `d` string, where a line moves one number or one array.
 A path dashes like a line (see Dashing above), the pattern restarting at
 each subpath; the dash props are paint-only writes, the `d` is not re-parsed.
+
+## shader
+
+A paint shader drawn straight into the frame, over the box of the element.
+`src` is a paint shader id from `createPaintShader`. The program writes the
+pixels. No offscreen texture is used. See [Shaders](/core/shaders/) for the
+contract, and for the programs that stay a shader texture.
+
+{{ decl packages/core/src/types.d.ts ShaderProps }}
 
 ## texture
 

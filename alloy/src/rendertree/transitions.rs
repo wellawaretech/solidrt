@@ -740,6 +740,11 @@ impl Element {
         Some([a, b, c, d]) if a == b && b == c && c == d => Some(a),
         Some(_) => None,
       },
+      (ElementKind::Shader(sh), Radius) => match sh.radius {
+        None => Some(0.0),
+        Some([a, b, c, d]) if a == b && b == c && c == d => Some(a),
+        Some(_) => None,
+      },
 
       (ElementKind::Oval(o), X) if detached => Some(o.x.unwrap_or(0.0)),
       (ElementKind::Oval(o), Y) if detached => Some(o.y.unwrap_or(0.0)),
@@ -753,6 +758,11 @@ impl Element {
       (ElementKind::Texture(t), Y) if detached => Some(t.y.unwrap_or(0.0)),
       (ElementKind::Texture(t), W) if detached => t.w,
       (ElementKind::Texture(t), H) if detached => t.h,
+
+      (ElementKind::Shader(sh), X) if detached => Some(sh.x.unwrap_or(0.0)),
+      (ElementKind::Shader(sh), Y) if detached => Some(sh.y.unwrap_or(0.0)),
+      (ElementKind::Shader(sh), W) if detached => sh.w,
+      (ElementKind::Shader(sh), H) if detached => sh.h,
 
       (ElementKind::Path(p), X) if detached => Some(p.x.unwrap_or(0.0)),
       (ElementKind::Path(p), Y) if detached => Some(p.y.unwrap_or(0.0)),
@@ -870,6 +880,7 @@ impl Element {
       (ElementKind::Rectangle(r), H) if detached => r.set_h(Some(v)),
       (ElementKind::Rectangle(r), Radius) => r.set_radius(Some([v.max(0.0); 4])),
       (ElementKind::Texture(t), Radius) => t.set_radius(Some([v.max(0.0); 4])),
+      (ElementKind::Shader(sh), Radius) => sh.set_radius(Some([v.max(0.0); 4])),
 
       (ElementKind::Oval(o), X) if detached => o.set_x(Some(v)),
       (ElementKind::Oval(o), Y) if detached => o.set_y(Some(v)),
@@ -883,6 +894,11 @@ impl Element {
       (ElementKind::Texture(t), Y) if detached => t.set_y(Some(v)),
       (ElementKind::Texture(t), W) if detached => t.set_w(Some(v)),
       (ElementKind::Texture(t), H) if detached => t.set_h(Some(v)),
+
+      (ElementKind::Shader(sh), X) if detached => sh.set_x(Some(v)),
+      (ElementKind::Shader(sh), Y) if detached => sh.set_y(Some(v)),
+      (ElementKind::Shader(sh), W) if detached => sh.set_w(Some(v)),
+      (ElementKind::Shader(sh), H) if detached => sh.set_h(Some(v)),
 
       (ElementKind::Path(p), X) if detached => p.set_x(Some(v)),
       (ElementKind::Path(p), Y) if detached => p.set_y(Some(v)),

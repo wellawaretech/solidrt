@@ -38,6 +38,9 @@ struct TextureInner {
   created_programs: RefCell<HashSet<u64>>,
   created_pipelines: RefCell<HashSet<u64>>,
   created_stages: RefCell<HashSet<u64>>,
+  // Same bookkeeping for paint shaders (createPaintShader, their own id
+  // space in alloy).
+  created_paint_shaders: RefCell<HashSet<u64>>,
   // captureSnapshot is async: alloy services the request on a later paint pass
   // and invokes our completion callback (during `deliver_captures`), which moves
   // the outcome plus the promise sides here. `tick` then drains this and settles
@@ -85,6 +88,9 @@ impl Drop for TextureInner {
     }
     for id in self.created_stages.borrow_mut().drain() {
       self.gui.alloy.destroy_shader_stage(id);
+    }
+    for id in self.created_paint_shaders.borrow_mut().drain() {
+      self.gui.alloy.destroy_paint_shader(id);
     }
   }
 }
@@ -939,6 +945,7 @@ pub(crate) fn store_state(ctx: &Ctx<'_>) {
       created_programs: RefCell::new(HashSet::new()),
       created_pipelines: RefCell::new(HashSet::new()),
       created_stages: RefCell::new(HashSet::new()),
+      created_paint_shaders: RefCell::new(HashSet::new()),
       capture_settle: RefCell::new(Vec::new()),
     })))
     .expect("store texture state");
@@ -971,6 +978,8 @@ impl ModuleDef for GpuModule {
     decl.declare("destroyRenderPipeline")?;
     decl.declare("destroyProgram")?;
     decl.declare("programAttributes")?;
+    decl.declare("createPaintShader")?;
+    decl.declare("destroyPaintShader")?;
     decl.declare("createPipelineTexture")?;
     decl.declare("createBuffer")?;
     decl.declare("beginBufferWrite")?;
@@ -1023,6 +1032,8 @@ impl ModuleDef for GpuModule {
     exports.export("destroyRenderPipeline", Function::new(ctx.clone(), destroy_render_pipeline)?)?;
     exports.export("destroyProgram", Function::new(ctx.clone(), destroy_program)?)?;
     exports.export("programAttributes", Function::new(ctx.clone(), program_attributes)?)?;
+    exports.export("createPaintShader", Function::new(ctx.clone(), create_paint_shader)?)?;
+    exports.export("destroyPaintShader", Function::new(ctx.clone(), destroy_paint_shader)?)?;
     exports.export("createPipelineTexture", Function::new(ctx.clone(), create_pipeline_texture)?)?;
     exports.export("createBuffer", Function::new(ctx.clone(), create_buffer)?)?;
     exports.export("beginBufferWrite", Function::new(ctx.clone(), begin_buffer_write)?)?;
@@ -1600,6 +1611,27 @@ fn destroy_program(ctx: Ctx<'_>, id: u64) {
   let st = state(&ctx);
   st.created_programs.borrow_mut().remove(&id);
   st.gui.alloy.destroy_shader_program(id);
+}
+
+// createPaintShader(fragmentSrc, opts?) -> paint shader id: a fragment
+// program a `<shader>` element draws straight into the frame, linked
+// behind the renderer's own vertex stage. Link errors throw here.
+fn create_paint_shader(ctx: Ctx<'_>, source: String, opts: OptArg<Object<'_>>) -> rquickjs::Result<u64> {
+  let label = collect_label(&opts.0)?;
+  let st = state(&ctx);
+  let id = st
+    .gui
+    .alloy
+    .create_paint_shader(&source, label)
+    .map_err(|e| throw_str(&ctx, &format!("createPaintShader: {e}")))?;
+  st.created_paint_shaders.borrow_mut().insert(id);
+  Ok(id)
+}
+
+fn destroy_paint_shader(ctx: Ctx<'_>, id: u64) {
+  let st = state(&ctx);
+  st.created_paint_shaders.borrow_mut().remove(&id);
+  st.gui.alloy.destroy_paint_shader(id);
 }
 
 // createBuffer(data | byteLength): bytes seed the buffer; a number makes

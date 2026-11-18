@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use crate::gpu::{validate_params, validate_texture_bindings, ParamValue, TextureBinding, UniformTable};
+use crate::gpu::{validate_params, validate_texture_bindings, ParamValue, TextureBinding, UniformKind, UniformTable};
 use crate::raster::RasterCmd;
 use crate::renderer::PaintShader;
 
@@ -112,9 +112,44 @@ impl Context {
 
   /// Check a `<shader>`'s texture inputs against paint shader `id`'s
   /// uniforms (`validate_texture_bindings`): every name an active
-  /// non-array sampler, a declared but inactive name warns. As for the
-  /// params, the caller runs this before setting the inputs.
+  /// non-array sampler, a declared but inactive name warns. A paint shader
+  /// binds 2D color textures only: a slot of another sampler kind is an
+  /// error, and so is an id whose registry entry has no renderer handle (a
+  /// sampler-only format, a cube map, a 3D or array texture), which the
+  /// draw could not bind. An id the registry does not know passes: the
+  /// As for the params, the caller runs this before setting the inputs.
   pub fn validate_paint_inputs(&self, id: u64, textures: &[TextureBinding]) -> Result<(), String> {
-    validate_texture_bindings(&*self.paint_shader_uniforms(id)?, textures)
+    let uniforms = self.paint_shader_uniforms(id)?;
+    validate_texture_bindings(&uniforms, textures)?;
+    for binding in textures {
+      let Some(slot) = uniforms.get(&binding.name) else { continue };
+      match slot.kind {
+        UniformKind::Inactive => continue,
+        UniformKind::Sampler2D => {}
+        _ => {
+          return Err(format!(
+            "uniform '{}' is {}: a paint shader input is a sampler2D",
+            binding.name,
+            slot.glsl_name()
+          ))
+        }
+      }
+      // An unknown id is refused as a shader target's binding refuses it
+      // (context/target.rs), not skipped: a stale id from a signal would
+      // otherwise sample black with only a log line to show for it.
+      let Some(texture) = self.textures.get(binding.id) else {
+        return Err(format!("texture {} (sampler '{}') not found", binding.id, binding.name));
+      };
+      if texture.handle.is_none() {
+        return Err(format!(
+          "uniform '{}': texture {} is {} {}, which a paint shader cannot sample; a paint shader input is a 2D color texture",
+          binding.name,
+          binding.id,
+          texture.format.name(),
+          texture.shape.describe()
+        ));
+      }
+    }
+    Ok(())
   }
 }

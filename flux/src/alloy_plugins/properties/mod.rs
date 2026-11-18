@@ -18,6 +18,7 @@ mod paint;
 mod path;
 mod read;
 mod rectangle;
+mod shader;
 mod text;
 mod texture;
 pub mod transition;
@@ -25,6 +26,7 @@ mod view;
 mod window;
 
 pub use read::{read_jsx, ReadValue};
+pub use shader::PaintCheck;
 
 /// Font options as measureText/prepareText take them (fontFamily, fontSize,
 /// fontStyle, fontWeight, fontStretch, letterSpacing, lineHeight,
@@ -65,6 +67,10 @@ use alloy::rendertree::{
 // target state, not element state, so the write produces no tree damage and
 // the raster dirty flush paces any number of writes into one render per
 // frame. Content damage covers snapshot consumers.
+// `paint_shader` checks a `<shader>`'s params and inputs against its paint
+// shader's uniforms (Context::validate_paint_params / validate_paint_inputs
+// in production; a stub in tests) before the element takes them: the tree
+// does not validate, and the uniform table is the context's.
 // An enter animation plays once, at the first advance after the node's
 // first attach: a `from` that arrives later (a `transition` prop set from
 // an effect that runs after the mount frame) never plays, and nothing
@@ -92,6 +98,7 @@ pub fn apply_jsx(
   value: &PropValue,
   cmd_tx: &Sender<AlloyCommand>,
   gpu_params: &dyn Fn(u64, &[(String, alloy::ParamValue)]) -> Result<(), String>,
+  paint_shader: &dyn Fn(u64, PaintCheck<'_>) -> Result<(), String>,
 ) -> Result<Damage, String> {
   // Element-level, kind-independent: the native-transition declaration
   // (which properties animate on write, and how; see
@@ -322,8 +329,7 @@ pub fn apply_jsx(
     ElementKind::Text(text) => text::apply(text, name, value)?,
     ElementKind::Span(span) => text::apply_span(span, name, value)?,
     ElementKind::Texture(tex) => texture::apply(tex, name, value, gpu_params)?,
-    // Its own props are not marshalled yet: only the layout props reach it.
-    ElementKind::Shader(_) => None,
+    ElementKind::Shader(sh) => shader::apply(sh, name, value, paint_shader)?,
   };
   if let Some(damage) = handled {
     return Ok(damage);
@@ -377,7 +383,7 @@ fn is_web_background_prop(name: &str) -> bool {
 
 fn detached_only_geometry(kind: &ElementKind, name: &str) -> bool {
   match kind {
-    ElementKind::Rectangle(_) | ElementKind::Oval(_) | ElementKind::Texture(_) => {
+    ElementKind::Rectangle(_) | ElementKind::Oval(_) | ElementKind::Texture(_) | ElementKind::Shader(_) => {
       matches!(name, "x" | "y" | "w" | "h")
     }
     ElementKind::Text(_) => matches!(name, "x" | "y" | "w" | "h" | "anchor"),

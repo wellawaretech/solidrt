@@ -181,8 +181,8 @@ moves core's peerDependencies and the scaffold's pins
 - Two kinds of element:
   - Containers - `<window>`, `<view>`. Do layout + transform + pointer events.
     THEY DO NOT PAINT. A `<view>` has no background/fill prop.
-  - Draw primitives - `<rect>`, `<oval>`, `<path>`, `<texture>`, `<text>`.
-    These paint. To give a view a background, render a draw primitive (e.g.
+  - Draw primitives - `<rect>`, `<oval>`, `<path>`, `<texture>`, `<shader>`,
+    `<text>`. These paint. To give a view a background, render a draw primitive (e.g.
     `<rect detached>`) as a child, behind the content.
 
 - Paint color is the `color` prop (a CSS color string). There is NO `fill`,
@@ -194,12 +194,13 @@ moves core's peerDependencies and the scaffold's pins
   Corner radius on draw primitives: `radius` (number or [tl, tr, br, bl]);
   on `texture` too, drawn as a rounded image in one draw - use it instead of
   a rounded `clipRadius` around an image, which tiled GPUs pay dearly for.
+  On `shader` it clips the paint shader's quad to the rounded box.
 
 - Registered JSX intrinsics: `window`, `view`, `text`, `span`, `rect`, `oval`,
-  `line`, `path`, `texture`, `audio`. Seven of them have a detached form,
-  written with the `detached` attribute: `<view detached>`, `<rect detached>`,
-  `<oval detached>`, `<line detached>`, `<path detached>`,
-  `<texture detached>`, `<text detached>`. Line endpoints
+  `line`, `path`, `texture`, `shader`, `audio`. Eight of them have a detached
+  form, written with the `detached` attribute: `<view detached>`,
+  `<rect detached>`, `<oval detached>`, `<line detached>`, `<path detached>`,
+  `<texture detached>`, `<shader detached>`, `<text detached>`. Line endpoints
   (`x1`/`y1`/`x2`/`y2`) exist only on `<line detached>`; a laid-out `<line>`
   has no endpoint props and spans its layout box corner to corner. `points`
   (a flat `[x0, y0, x1, y1, ...]` array, plus `closed`) turns either form
