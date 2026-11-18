@@ -1,3 +1,4 @@
+mod anvil;
 mod audio;
 mod boundary;
 mod boundary_freeze;

@@ -1,204 +1,298 @@
 //! The recording half: what a list is built from, as plain data over the
-//! vocabulary. In this step nothing executes, so a builder keeps only the
-//! test-build log (`super::super::oplog`) and every op warns once that it
-//! is not supported yet; a paint keeps its fields for the executor of
-//! later steps. Each forwarder has one `cfg(test)` statement for the log,
-//! as the module this one replaced had beside its forward.
+//! vocabulary. A builder records anvil's executable ops (`super::ops`),
+//! resolved for the executor: colors premultiplied, a paint reduced to what
+//! stage 1 draws, the ops stage 1 cannot draw warned once and recorded as
+//! their nearest supported op or not at all. In a test build it also keeps
+//! the plain-data log (`super::super::oplog`), one `cfg(test)` statement
+//! per forwarder beside the executable push.
 
 use super::super::contract;
 #[cfg(test)]
-use super::super::oplog::{Op, PaintLog, PathLog, PathSegment};
+use super::super::oplog::{Op as LogOp, PaintLog, PathLog, PathSegment};
 use super::super::{
   BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, Matrix, Point, Rect, RoundingRadii, StrokeCap,
   StrokeJoin, TextureSampling, TileMode,
 };
+use super::ops::{premultiply, Op, Premultiplied};
 use super::Texture;
-#[cfg(test)]
 use std::sync::Arc;
 
-/// A finished recording. Holds only the test log in this step; step 2
-/// adds the executable ops (`Arc<[Op]>` of anvil's own op enum).
+/// A finished recording: the executable ops and, in a test build, the
+/// log. A list is cloned and crosses threads, so both are shared.
 #[derive(Clone)]
 pub struct DisplayList {
-  // A list is cloned and crosses threads: the log is shared.
-  #[cfg(test)]
   ops: Arc<[Op]>,
+  #[cfg(test)]
+  log: Arc<[LogOp]>,
 }
 
-impl contract::DisplayList for DisplayList {
-  #[cfg(test)]
-  fn ops(&self) -> &[Op] {
+impl DisplayList {
+  /// The executable ops, for the executor and the walk. Not named `ops`:
+  /// the contract's test-build `ops` returns the log, and an inherent
+  /// method of that name would shadow it inside this module.
+  pub(super) fn executable(&self) -> &[Op] {
     &self.ops
   }
 }
 
-pub struct DisplayListBuilder {
+impl contract::DisplayList for DisplayList {
   #[cfg(test)]
-  ops: Vec<Op>,
+  fn ops(&self) -> &[LogOp] {
+    &self.log
+  }
 }
 
-// The arguments are read only by the test log until the executor records
-// them.
+pub struct DisplayListBuilder {
+  ops: Vec<Op>,
+  #[cfg(test)]
+  log: Vec<LogOp>,
+}
+
+impl DisplayListBuilder {
+  /// The ops of a clip that cuts its shape out: none, warned once. One
+  /// call site, so the warning is one line whichever clip method sent it.
+  fn clip_difference_unsupported() {
+    unsupported!("clip_rect with the difference op", "the clip is ignored");
+  }
+}
+
+/// What stage 1 draws of a paint: its color, premultiplied, and the
+/// stroke width when the style strokes. A color source, a blend mode other
+/// than source-over and the filters were warned about when they were set.
+/// A stroke-and-fill pushes the fill and then the stroke (painter's order:
+/// the stroke on top); a stroke of zero or negative width pushes nothing.
+fn shape_ops(
+  paint: &Paint,
+  fill: impl Fn(Premultiplied) -> Op,
+  stroke: impl Fn(Premultiplied, f32) -> Op,
+  ops: &mut Vec<Op>,
+) {
+  let color = premultiply(paint.color);
+  let strokes = paint.stroke_width > 0.0;
+  match paint.draw_style {
+    DrawStyle::Fill => ops.push(fill(color)),
+    DrawStyle::Stroke => {
+      if strokes {
+        ops.push(stroke(color, paint.stroke_width));
+      }
+    }
+    DrawStyle::StrokeAndFill => {
+      ops.push(fill(color));
+      if strokes {
+        ops.push(stroke(color, paint.stroke_width));
+      }
+    }
+  }
+}
+
+// The arguments of the ops stage 1 does not draw (the layers, the oval
+// clip, the radii, the path) are read only by the test log.
 #[cfg_attr(not(test), allow(unused_variables))]
 impl contract::DisplayListBuilder for DisplayListBuilder {
   fn new(_cull: Option<&Rect>) -> Self {
     // The cull rect is ignored by design: the executor's clip rejection
     // covers it.
     DisplayListBuilder {
-      #[cfg(test)]
       ops: Vec::new(),
+      #[cfg(test)]
+      log: Vec::new(),
     }
   }
 
   fn build(self) -> Option<DisplayList> {
     Some(DisplayList {
-      #[cfg(test)]
       ops: self.ops.into(),
+      #[cfg(test)]
+      log: self.log.into(),
     })
   }
 
   fn save(&mut self) -> &mut Self {
-    unsupported!("save", "the state op is ignored");
-    #[cfg(test)]
     self.ops.push(Op::Save);
+    #[cfg(test)]
+    self.log.push(LogOp::Save);
     self
   }
 
   fn save_layer(&mut self, bounds: &Rect, paint: Option<&Paint>) -> &mut Self {
     unsupported!("save_layer", "the content draws without a layer, at full opacity and unfiltered");
+    // A plain save, so the matching restore still pops.
+    self.ops.push(Op::Save);
     #[cfg(test)]
-    self.ops.push(Op::SaveLayer { bounds: *bounds, paint: paint.map(|p| p.log) });
+    self.log.push(LogOp::SaveLayer { bounds: *bounds, paint: paint.map(|p| p.log) });
     self
   }
 
   fn save_backdrop_layer(&mut self, bounds: &Rect, paint: Option<&Paint>, filter: Option<&ImageFilter>) -> &mut Self {
     unsupported!("save_backdrop_layer", "the backdrop is not captured and the content draws in place");
+    self.ops.push(Op::Save);
     #[cfg(test)]
-    self.ops.push(Op::SaveBackdropLayer { bounds: *bounds, paint: paint.map(|p| p.log), filter: filter.is_some() });
+    self.log.push(LogOp::SaveBackdropLayer { bounds: *bounds, paint: paint.map(|p| p.log), filter: filter.is_some() });
     self
   }
 
   fn restore(&mut self) -> &mut Self {
-    unsupported!("restore", "the state op is ignored");
-    #[cfg(test)]
     self.ops.push(Op::Restore);
+    #[cfg(test)]
+    self.log.push(LogOp::Restore);
     self
   }
 
   fn translate(&mut self, x: f32, y: f32) -> &mut Self {
-    unsupported!("translate", "the transform is ignored");
-    #[cfg(test)]
     self.ops.push(Op::Translate { x, y });
+    #[cfg(test)]
+    self.log.push(LogOp::Translate { x, y });
     self
   }
 
   fn scale(&mut self, x: f32, y: f32) -> &mut Self {
-    unsupported!("scale", "the transform is ignored");
-    #[cfg(test)]
     self.ops.push(Op::Scale { x, y });
+    #[cfg(test)]
+    self.log.push(LogOp::Scale { x, y });
     self
   }
 
   fn transform(&mut self, matrix: &Matrix) -> &mut Self {
-    unsupported!("transform", "the transform is ignored");
-    #[cfg(test)]
     self.ops.push(Op::Transform(*matrix));
+    #[cfg(test)]
+    self.log.push(LogOp::Transform(*matrix));
     self
   }
 
   fn clip_rect(&mut self, rect: &Rect, op: ClipOperation) -> &mut Self {
-    unsupported!("clip_rect", "the clip is ignored");
+    match op {
+      ClipOperation::Intersect => self.ops.push(Op::ClipRect(*rect)),
+      ClipOperation::Difference => Self::clip_difference_unsupported(),
+    }
     #[cfg(test)]
-    self.ops.push(Op::ClipRect { rect: *rect, op });
+    self.log.push(LogOp::ClipRect { rect: *rect, op });
     self
   }
 
   fn clip_oval(&mut self, bounds: &Rect, op: ClipOperation) -> &mut Self {
     unsupported!("clip_oval", "the clip is ignored");
     #[cfg(test)]
-    self.ops.push(Op::ClipOval { bounds: *bounds, op });
+    self.log.push(LogOp::ClipOval { bounds: *bounds, op });
     self
   }
 
   fn clip_rounded_rect(&mut self, rect: &Rect, radii: &RoundingRadii, op: ClipOperation) -> &mut Self {
-    unsupported!("clip_rounded_rect", "the clip is ignored");
+    match op {
+      ClipOperation::Intersect => {
+        unsupported!("clip_rounded_rect", "the clip is the plain rect");
+        self.ops.push(Op::ClipRect(*rect));
+      }
+      ClipOperation::Difference => Self::clip_difference_unsupported(),
+    }
     #[cfg(test)]
-    self.ops.push(Op::ClipRoundedRect { rect: *rect, radii: *radii, op });
+    self.log.push(LogOp::ClipRoundedRect { rect: *rect, radii: *radii, op });
     self
   }
 
   fn draw_line(&mut self, from: Point, to: Point, paint: &Paint) -> &mut Self {
-    unsupported!("draw_line", "the line is not drawn");
+    // A line always strokes, whatever the paint's draw style.
+    self.ops.push(Op::DrawLine { from, to, color: premultiply(paint.color), width: paint.stroke_width });
     #[cfg(test)]
-    self.ops.push(Op::DrawLine { from, to, paint: paint.log });
+    self.log.push(LogOp::DrawLine { from, to, paint: paint.log });
     self
   }
 
   fn draw_rect(&mut self, rect: &Rect, paint: &Paint) -> &mut Self {
-    unsupported!("draw_rect", "the rect is not drawn");
+    let rect = *rect;
+    shape_ops(
+      paint,
+      |color| Op::DrawRect { rect, color, stroke: None },
+      |color, width| Op::DrawRect { rect, color, stroke: Some(width) },
+      &mut self.ops,
+    );
     #[cfg(test)]
-    self.ops.push(Op::DrawRect { rect: *rect, paint: paint.log });
+    self.log.push(LogOp::DrawRect { rect, paint: paint.log });
     self
   }
 
   fn draw_oval(&mut self, bounds: &Rect, paint: &Paint) -> &mut Self {
-    unsupported!("draw_oval", "the oval is not drawn");
+    let bounds = *bounds;
+    shape_ops(
+      paint,
+      |color| Op::DrawOval { bounds, color, stroke: None },
+      |color, width| Op::DrawOval { bounds, color, stroke: Some(width) },
+      &mut self.ops,
+    );
     #[cfg(test)]
-    self.ops.push(Op::DrawOval { bounds: *bounds, paint: paint.log });
+    self.log.push(LogOp::DrawOval { bounds, paint: paint.log });
     self
   }
 
   fn draw_rounded_rect(&mut self, rect: &Rect, radii: &RoundingRadii, paint: &Paint) -> &mut Self {
-    unsupported!("draw_rounded_rect", "the rounded rect is not drawn");
+    unsupported!("draw_rounded_rect", "the rect draws with square corners");
+    let rect = *rect;
+    shape_ops(
+      paint,
+      |color| Op::DrawRect { rect, color, stroke: None },
+      |color, width| Op::DrawRect { rect, color, stroke: Some(width) },
+      &mut self.ops,
+    );
     #[cfg(test)]
-    self.ops.push(Op::DrawRoundedRect { rect: *rect, radii: *radii, paint: paint.log });
+    self.log.push(LogOp::DrawRoundedRect { rect, radii: *radii, paint: paint.log });
     self
   }
 
   fn draw_path(&mut self, path: &Path, paint: &Paint) -> &mut Self {
     unsupported!("draw_path", "the path is not drawn");
     #[cfg(test)]
-    self.ops.push(Op::DrawPath { path: path.log.clone(), paint: paint.log });
+    self.log.push(LogOp::DrawPath { path: path.log.clone(), paint: paint.log });
     self
   }
 
   fn draw_texture_rect(
     &mut self,
-    // The log carries no texture handle, so nothing reads it until step 3.
-    _texture: &Texture,
+    texture: &Texture,
     src: &Rect,
     dst: &Rect,
     sampling: TextureSampling,
     paint: Option<&Paint>,
   ) -> &mut Self {
-    unsupported!("draw_texture_rect", "the texture is not drawn");
+    self.ops.push(Op::DrawTexture {
+      texture: texture.clone(),
+      src: *src,
+      dst: *dst,
+      sampling,
+      alpha: paint.map_or(1.0, |p| p.color.alpha),
+    });
     #[cfg(test)]
-    self.ops.push(Op::DrawTextureRect { src: *src, dst: *dst, sampling, paint: paint.map(|p| p.log) });
+    self.log.push(LogOp::DrawTextureRect { src: *src, dst: *dst, sampling, paint: paint.map(|p| p.log) });
     self
   }
 
   fn draw_display_list(&mut self, dl: &DisplayList, opacity: f32) -> &mut Self {
-    unsupported!("draw_display_list", "the nested list is not drawn");
+    self.ops.push(Op::DrawList { list: dl.clone(), opacity });
     #[cfg(test)]
-    self.ops.push(Op::DrawDisplayList { ops: dl.ops.clone(), opacity });
+    self.log.push(LogOp::DrawDisplayList { ops: dl.log.clone(), opacity });
     self
   }
 }
 
-/// How a draw paints, as plain data; the executor reads it from step 2.
-// Nothing reads the fields until the executor does.
-#[allow(dead_code)]
+/// How a draw paints, as plain data; the recording reads what stage 1
+/// draws of it (the color, the draw style, the stroke width).
 pub struct Paint {
   pub(super) color: Color,
+  #[allow(dead_code)] // read by the executor from stage 3 (gradients, images)
   pub(super) color_source: Option<ColorSource>,
   pub(super) draw_style: DrawStyle,
+  #[allow(dead_code)] // read by the executor once it blends other than source-over
   pub(super) blend_mode: BlendMode,
   pub(super) stroke_width: f32,
+  #[allow(dead_code)] // read by the executor once it draws caps
   pub(super) stroke_cap: StrokeCap,
+  #[allow(dead_code)] // read by the executor once it draws joins
   pub(super) stroke_join: StrokeJoin,
+  #[allow(dead_code)] // read by the executor once it draws joins
   pub(super) stroke_miter: f32,
+  #[allow(dead_code)] // read by the executor from stage 6 (filters)
   pub(super) color_filter: Option<ColorFilter>,
+  #[allow(dead_code)] // read by the executor from stage 6 (filters)
   pub(super) image_filter: Option<ImageFilter>,
+  #[allow(dead_code)] // read by the executor from stage 6 (filters)
   pub(super) mask_filter: Option<MaskFilter>,
   #[cfg(test)]
   log: PaintLog,

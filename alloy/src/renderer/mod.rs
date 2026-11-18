@@ -18,7 +18,7 @@
 //! use crate::renderer::{DisplayListBuilder, Paint, Rect};
 //! ```
 
-mod anvil;
+pub(crate) mod anvil;
 pub mod contract;
 #[cfg(test)]
 pub mod oplog;

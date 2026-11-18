@@ -2,11 +2,15 @@
 //! (okf/plans/own-renderer.md). A build holds exactly one renderer, and
 //! this is it: Impeller and its crate are gone from the workspace.
 //!
-//! This is the stage 1 stub. Every op records the test-build log
-//! (`super::oplog`) and warns once per process that it is not supported
-//! yet, naming itself and what happens instead; nothing is drawn. The
-//! recording types live in `record`; later steps add the executor that
-//! draws what they record.
+//! A builder records anvil's own executable ops (`ops`, recorded by
+//! `record`, beside the test-build log `super::oplog`); a draw walks them
+//! into instances (`walk`, pure) and draws those as instanced quads through
+//! one shape program (`exec`). Stage 1, step 2 draws the state ops, rect
+//! fills and the axis-aligned intersect clip; a rounded rect draws as its
+//! plain rect. What does not draw yet (strokes, ovals, lines, textures,
+//! paths, layers, the other clips, group opacity, color sources, filters,
+//! blend modes) warns once per process, naming itself and what happens
+//! instead.
 
 use super::contract;
 use super::ISize;
@@ -26,23 +30,24 @@ macro_rules! unsupported {
   }};
 }
 
+mod exec;
+mod ops;
 mod record;
+pub(crate) mod walk;
 
 pub use record::{
   ColorFilter, ColorSource, DisplayList, DisplayListBuilder, ImageFilter, MaskFilter, Paint, Path, PathBuilder,
 };
 
-/// The drawing half. Holds nothing yet: step 2 gives it a glow context
-/// over `proc_address`, the shape program and the instance buffer.
+/// The drawing half: the executor over the raster thread's GL context.
 pub struct Renderer {
-  _private: (),
+  exec: exec::Executor,
 }
 
 impl contract::Renderer for Renderer {
-  unsafe fn new(_proc_address: &mut dyn FnMut(&str) -> *mut c_void) -> Result<Self, String> {
-    // No GL work yet: step 2 builds a glow context over `proc_address`
-    // here, a second set of function pointers into the same GL context.
-    Ok(Renderer { _private: () })
+  unsafe fn new(proc_address: &mut dyn FnMut(&str) -> *mut c_void) -> Result<Self, String> {
+    // A second set of function pointers into the same GL context.
+    Ok(Renderer { exec: unsafe { exec::Executor::new(proc_address) }? })
   }
 
   fn adopt_texture(&self, texture: glow::NativeTexture, size: ISize) -> Option<Texture> {
@@ -51,12 +56,8 @@ impl contract::Renderer for Renderer {
     Some(Texture(Arc::new(TextureInner { name: texture, size })))
   }
 
-  fn draw(&mut self, _target: contract::Target, _dl: &DisplayList) -> Result<(), String> {
-    // The contract has a draw clear the target first. Every caller clears
-    // before it draws today (gl/draw.rs), so the frame is a cleared target
-    // either way; the clear becomes the executor's in step 2.
-    unsupported!("draw", "nothing is drawn");
-    Ok(())
+  fn draw(&mut self, target: contract::Target, dl: &DisplayList) -> Result<(), String> {
+    self.exec.draw(target, dl)
   }
 }
 
