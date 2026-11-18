@@ -357,8 +357,16 @@ kilobytes at most).
 
 The stripped delta is 4.0 MB, a little under the 4.5 MB of symbol bytes
 [replacing-impeller](../notes/replacing-impeller.md) counted: LTO had
-already dropped part of Impeller's dependencies. The Android APK number
-waits for the first Android build of the branch (stage 7).
+already dropped part of Impeller's dependencies.
+
+Android, armeabi-v7a (the TV's ABI), the branch's first Android build on
+2026-11-18, a debug player APK (`make android-client ANDROID_ABI=armeabi-v7a`):
+48,531,181 bytes, carrying `libmain.so` (38,537,708), `libSDL3.so` and
+`libc++_shared.so` and no `libimpeller.so`; main's 32-bit APK carried a
+4,987,340 byte `libimpeller.so` beside them. One trap: Gradle packages
+every library under `dist/android/<abi>/`, so a `libimpeller.so` staged
+there by an earlier main build rides into the branch's APK until it is
+deleted (the first build here did exactly that).
 
 ### Stage 1 diff against main (2026-11-18)
 
