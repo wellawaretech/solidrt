@@ -20,6 +20,7 @@ use alloy::{
   CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, SamplerState, RAMP_WIDTH,
 };
 use std::borrow::Cow;
+use std::sync::Arc;
 
 const NOTO_SANS: &[u8] = include_bytes!("../assets/fonts/NotoSans.ttf");
 const SIZE: f32 = 32.0;
@@ -139,7 +140,10 @@ impl Report {
 fn draw_runs(ctx: &alloy::Context, atlas: &Texture, runs: &[GlyphGroup], policy: CoveragePolicy) -> Vec<u8> {
   let mut b = DisplayListBuilder::new(None);
   for run in runs {
-    b.draw_glyphs(atlas, &run.quads, policy, run.gradient.as_ref());
+    // The contract takes the run shared, as a text keeps it.
+    let quads: Arc<[GlyphQuad]> = Arc::from(run.quads.as_slice());
+    let gradient = run.gradient.clone().map(Arc::new);
+    b.draw_glyphs(atlas, &quads, policy, gradient.as_ref());
   }
   let dl = b.build().expect("a builder always builds a list");
   let frame = ctx.render_display_list_to_texture(&dl, FRAME_W, FRAME_H, AA).expect("frame rasterization");

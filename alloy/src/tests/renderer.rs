@@ -100,10 +100,10 @@ fn every_recording_op_builds_a_list() {
   // A two-quad glyph run over a handle with no GL behind it.
   let atlas = test_texture(1, ISize::new(64, 64));
   let white = [1.0; 4];
-  let glyphs = [
+  let glyphs: Arc<[GlyphQuad]> = Arc::from(vec![
     GlyphQuad { dst: [2.0, 3.0, 4.0, 5.0], src: [0.0, 0.0, 4.0, 5.0], color: white },
     GlyphQuad { dst: [8.0, 1.0, 3.0, 6.0], src: [4.0, 0.0, 3.0, 6.0], color: white },
-  ];
+  ]);
 
   let paint = full_paint();
   let mut inner = DisplayListBuilder::new(None);

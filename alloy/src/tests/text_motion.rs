@@ -5,8 +5,9 @@
 // for one scale (a fill) replays throughout. Headless, so the text's
 // own glyph pass fails and it holds no layer; the rule on a layer that
 // exists is pinned on the function, the boundary's side on the walk.
+use super::text_raster::{runs, same_runs, settle_warm, stand_in};
 use crate::renderer::prelude::*;
-use crate::renderer::DisplayListBuilder;
+use crate::renderer::{DisplayList, DisplayListBuilder};
 use crate::rendertree::composite::{apply_content_changes, paint_phase};
 use crate::rendertree::text::{raster_density, raster_scale, scale_held, scale_observed, RasterScale, ScaleSeen, Text};
 use crate::rendertree::*;
@@ -257,6 +258,49 @@ fn a_recording_under_a_zoom_replays_in_motion_and_re_records_at_rest() {
     assert_eq!((back.boundaries_recorded, back.boundaries_reused), (0, 1));
   }
   assert_eq!(label_scale(&tree), Some(1.1));
+}
+
+#[test]
+fn a_moving_scale_re_records_the_kept_runs() {
+  // The zoomer records nothing, so the label builds at every frame; a
+  // stand-in raster thread gives the atlas a texture, so it records runs.
+  let mut tree = tree_with_label();
+  tree.node_mut(ZOOMER).repaint_boundary = BoundaryMode::None;
+  let platform = crate::tests::text_platform();
+  let alloy = stand_in();
+  platform.set_window_size(400.0, 300.0);
+  let paint = |tree: &mut RenderTree| -> DisplayList {
+    apply_content_changes(tree, &platform, &alloy);
+    let mut builder = DisplayListBuilder::new(None);
+    paint_phase(&mut builder, tree, &platform, &alloy);
+    builder.build().expect("a builder always builds a list")
+  };
+  // The first frame makes the label's run at the display scale, and its
+  // style's warm-up lands before the zoom (a move would remake it).
+  paint(&mut tree);
+  if settle_warm(&platform) {
+    paint(&mut tree);
+  }
+  // In motion the record keeps its scale, so it stays current: the frames
+  // re-record the kept runs, stretched by the zoom.
+  zoom(&mut tree, 1.03);
+  let moving = runs(&paint(&mut tree));
+  zoom(&mut tree, 1.06);
+  let still_moving = runs(&paint(&mut tree));
+  assert_eq!(label_scale(&tree), Some(1.0));
+  assert_eq!(moving.len(), 1, "one run for the label");
+  assert!(same_runs(&moving, &still_moving), "a moving scale remade the runs");
+  // Once the scale rests the label is re-made, once, for it.
+  let mut rested = None;
+  for _ in 0..HOLD_FRAMES {
+    let looked = runs(&paint(&mut tree));
+    if label_scale(&tree) == Some(1.06) {
+      rested = Some(looked);
+      break;
+    }
+  }
+  let rested = rested.expect("the scale came to rest");
+  assert!(!same_runs(&moving, &rested), "the rest kept the in-motion runs");
 }
 
 // root(1, 400x300) > holder(4, scaled about its top-left by the writes) >

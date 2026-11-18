@@ -34,6 +34,22 @@ impl DisplayList {
   pub(super) fn executable(&self) -> &[Op] {
     &self.ops
   }
+
+  /// The glyph runs the list draws, nested lists flattened in place, each
+  /// as the shared slice its op holds and the atlas it samples: a test's
+  /// read of whether a run was re-recorded by reference or remade.
+  #[cfg(test)]
+  pub(crate) fn glyph_runs(&self) -> Vec<(Arc<[GlyphQuad]>, Texture)> {
+    let mut out = Vec::new();
+    for op in self.executable() {
+      match op {
+        Op::DrawGlyphs { atlas, quads, .. } => out.push((quads.clone(), atlas.clone())),
+        Op::DrawList { list, .. } => out.extend(list.glyph_runs()),
+        _ => {}
+      }
+    }
+    out
+  }
 }
 
 impl contract::DisplayList for DisplayList {
@@ -382,17 +398,17 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   fn draw_glyphs(
     &mut self,
     atlas: &Texture,
-    quads: &[GlyphQuad],
+    quads: &Arc<[GlyphQuad]>,
     policy: CoveragePolicy,
-    gradient: Option<&GlyphGradient>,
+    gradient: Option<&Arc<GlyphGradient>>,
   ) -> &mut Self {
     let bounds = glyph_bounds(quads);
     self.ops.push(Op::DrawGlyphs {
       atlas: atlas.clone(),
-      quads: quads.into(),
+      quads: quads.clone(),
       bounds,
       policy,
-      gradient: gradient.map(|g| Arc::new(g.clone())),
+      gradient: gradient.cloned(),
     });
     #[cfg(test)]
     self.log.push(LogOp::DrawGlyphs { bounds, quads: quads.len(), policy, gradient: gradient.is_some() });

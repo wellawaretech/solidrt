@@ -22,9 +22,8 @@ use crate::rendertree::{
 
 // Paint walks a boundary switched off keeps its snapshot storage for the
 // switch back before it is released (RenderTree::release_off_snapshots):
-// the text layer's release age (TEXT_LAYER_RELEASE_FRAMES, 120, two seconds
-// at 60 Hz) in the same unit, the text atlas frame, so a switch that comes
-// right back finds its storage.
+// two seconds at 60 Hz, counted in text atlas frames, so a switch that
+// comes right back finds its storage.
 const SNAPSHOT_RELEASE_FRAMES: u64 = 120;
 
 pub struct RenderTree {
@@ -45,11 +44,11 @@ pub struct RenderTree {
   // was deleted, awaiting release by the frame loop. Interior-mutable so the
   // paint walk can drain it through the shared tree borrow it already holds.
   released_snapshot_textures: RefCell<Vec<u64>>,
-  // Text nodes whose last build recorded glyph placements (Text::has_raster):
-  // the ones a move of the text atlas or a text rendering change re-records
-  // (composite::apply_content_changes), and the ones the release sweep
-  // visits (release_stale_text_rasters), so both cost the texts drawn and
-  // not every node.
+  // Text nodes that recorded glyph placements (Text::has_raster), held
+  // until the node goes or the paint caches drop: the ones a move of the
+  // text atlas or a text rendering change re-records
+  // (composite::apply_content_changes), so that costs the texts that drew
+  // and not every node.
   text_rasters: RefCell<HashSet<u64>>,
   // Nodes switched off a snapshot boundary that hold its snapshot for the
   // switch back (Element::holds_off_snapshot), each with the text atlas
@@ -884,24 +883,12 @@ impl RenderTree {
       element.paint_cache.borrow_mut().take();
       element.envelope.clear();
       if let ElementKind::Text(text) = &element.kind {
-        text.drop_layer();
+        text.drop_raster();
       }
     }
     self.text_rasters.borrow_mut().clear();
     self.off_snapshots.clear();
     self.bump_revision();
-  }
-
-  /// Release the raster records of texts that went unbuilt long enough
-  /// (Text::release_stale_raster) as of text atlas frame `frame`: the walk
-  /// never enters a culled, hidden or scrolled-out text, so its stamp ages
-  /// on its own. Called once per paint walk, after it.
-  pub fn release_stale_text_rasters(&self, frame: u64) {
-    let mut rasters = self.text_rasters.borrow_mut();
-    rasters.retain(|&id| match self.nodes.get(&id).map(|e| &e.kind) {
-      Some(ElementKind::Text(text)) => text.release_stale_raster(frame),
-      _ => false,
-    });
   }
 
   /// Release the snapshot storage of boundaries switched off

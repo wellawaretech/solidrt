@@ -55,9 +55,9 @@ pub struct LayoutCounters {
   /// that costs a third of a tiled GPU's frame on a resizing box; and
   /// save layers (opacity and filter groups, backdrop filters). Ops inside
   /// a reused repaint-boundary recording are not re-recorded and so not
-  /// counted; its replay is one draw. `text_layers` counts the text layers
-  /// the glyph pass rasterized for the walk (a text whose pixels were
-  /// current composites its retained layer and counts a draw only).
+  /// counted; its replay is one draw. `text_layers` counts nothing since
+  /// text draws straight into the frame (a run is a draw); it stays until
+  /// stage 7 of okf/plans/own-renderer.md retires it.
   pub draws: u32,
   pub text_layers: u32,
   pub clips: u32,

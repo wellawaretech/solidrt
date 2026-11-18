@@ -6,7 +6,10 @@
 // no renderer (`renderer::test_texture`) and refuses everything else, so
 // the atlas has a texture and the walk reads back what the paint walk drew
 // (`DisplayList::ops`, `renderer::oplog::placed`, and anvil's own walk for
-// the texture a run samples). The pixels are alloy/examples/glyph_run.rs.
+// the texture a run samples), and which runs a text recorded by reference
+// from its record (anvil's `DisplayList::glyph_runs`). The pixels are
+// alloy/examples/glyph_run.rs.
+use crate::gpu::GlyphQuad;
 use crate::raster::RasterCmd;
 use crate::renderer::anvil::walk::{walk, KIND_GLYPH};
 use crate::renderer::oplog::{placed, Op};
@@ -35,11 +38,17 @@ const CELL_SLOP: f32 = 2.0;
 const EPS: f32 = 1e-3;
 // How long a test gives the glyph worker to make a style's warm-up.
 const WORKER_WAIT: Duration = Duration::from_secs(10);
+// Frames a test paints for the warm-up to land without moving the atlas:
+// a style warms once, so a move is followed by at most one more.
+const REST_ROUNDS: u32 = 3;
+// Frames the holder's recording replays without building its texts: past
+// the 120 after which a text's record used to be released.
+const STANDING_FRAMES: u32 = 150;
 
 // A context whose raster thread is a stand-in: a texture create gets a
 // handle with a fresh GL name and the asked size, every other command is
 // refused (which answers a blocked rpc). The thread ends with the context.
-fn stand_in() -> crate::Context {
+pub(super) fn stand_in() -> crate::Context {
   let stats = Arc::new(crate::raster::RasterStats::new());
   let (tx, rx) = std::sync::mpsc::channel::<RasterCmd>();
   std::thread::spawn(move || {
@@ -111,24 +120,21 @@ impl Stage {
     (builder.build().expect("a builder always builds a list"), stats)
   }
 
-  // Land the glyph worker's warm-up cells until none is queued: a text at
-  // the display scale warms its style on first sight, and a landing that
-  // grows the atlas is a move like any other. Returns whether the atlas
-  // moved while landing them.
   fn settle_warm(&self) -> bool {
-    let generation = self.platform.text_atlas_generation();
-    let started = Instant::now();
-    loop {
-      let mut atlas = self.platform.text_atlas();
-      atlas.land();
-      if atlas.queued_cells() == 0 {
-        break;
+    settle_warm(&self.platform)
+  }
+
+  // Frames until the warm-up has landed without moving the atlas: the
+  // last frame's list, whose runs the next frame keeps unless something
+  // changes.
+  fn rest(&mut self) -> DisplayList {
+    for _ in 0..REST_ROUNDS {
+      let (dl, _) = self.frame();
+      if !self.settle_warm() {
+        return dl;
       }
-      assert!(started.elapsed() < WORKER_WAIT, "the worker did not finish: {} cells queued", atlas.queued_cells());
-      drop(atlas);
-      std::thread::sleep(Duration::from_millis(1));
     }
-    self.platform.text_atlas_generation() != generation
+    panic!("the warm-up kept moving the atlas");
   }
 
   fn text(&self, id: u64) -> &Text {
@@ -144,6 +150,37 @@ impl Stage {
     let entry = self.alloy.textures.get(id).expect("the atlas is registered");
     entry.handle.as_ref().and_then(|h| h.gl_name()).expect("the atlas has a handle")
   }
+}
+
+// Land the glyph worker's warm-up cells until none is queued: a text at
+// the display scale warms its style on first sight, and a landing that
+// grows the atlas is a move like any other. Returns whether the atlas
+// moved while landing them.
+pub(super) fn settle_warm(platform: &PlatformContext) -> bool {
+  let generation = platform.text_atlas_generation();
+  let started = Instant::now();
+  loop {
+    let mut atlas = platform.text_atlas();
+    atlas.land();
+    if atlas.queued_cells() == 0 {
+      break;
+    }
+    assert!(started.elapsed() < WORKER_WAIT, "the worker did not finish: {} cells queued", atlas.queued_cells());
+    drop(atlas);
+    std::thread::sleep(Duration::from_millis(1));
+  }
+  platform.text_atlas_generation() != generation
+}
+
+// The shared quads of the frame's glyph runs, in recording order, the
+// holder's recording flattened in place.
+pub(super) fn runs(dl: &DisplayList) -> Vec<Arc<[GlyphQuad]>> {
+  dl.glyph_runs().into_iter().map(|(quads, _)| quads).collect()
+}
+
+// Whether two frames hold the very same runs, by reference.
+pub(super) fn same_runs(a: &[Arc<[GlyphQuad]>], b: &[Arc<[GlyphQuad]>]) -> bool {
+  a.len() == b.len() && a.iter().zip(b).all(|(a, b)| Arc::ptr_eq(a, b))
 }
 
 // The GL names the frame's glyph runs sample, in batch order.
@@ -263,4 +300,84 @@ fn a_move_of_the_atlas_re_records_the_texts_on_a_new_texture() {
   let warm_moved = stage.settle_warm();
   let (_, settled) = stage.frame();
   assert_eq!(settled.boundaries_recorded, u32::from(warm_moved), "warm-up moved the atlas: {warm_moved}");
+}
+
+#[test]
+fn a_text_at_rest_re_records_the_same_runs() {
+  // No recording boundary: every frame builds both texts.
+  let mut stage = Stage::new();
+  stage.tree.node_mut(HOLDER).repaint_boundary = BoundaryMode::None;
+  let first = stage.rest();
+  let generation = stage.platform.text_atlas_generation();
+  let (second, stats) = stage.frame();
+  assert_eq!(stage.platform.text_atlas_generation(), generation, "nothing moved the atlas");
+  assert_eq!((stats.boundaries_recorded, stats.boundaries_reused), (0, 0), "nothing replays");
+  // Built again, recorded by reference: the runs are the ones the record
+  // kept, not remade.
+  let (before, after) = (runs(&first), runs(&second));
+  assert_eq!(after.len(), 2, "one run per text");
+  assert!(same_runs(&before, &after), "the runs were remade");
+}
+
+#[test]
+fn an_atlas_move_refreshes_the_runs() {
+  let mut stage = Stage::new();
+  let before = stage.rest();
+  let generation = stage.platform.text_atlas_generation();
+  stage.platform.reset_fonts(vec![FontPayload {
+    alias: Some("sans".to_string()),
+    bytes: std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/NotoSans.ttf")),
+  }]);
+  assert!(stage.platform.text_atlas_generation() > generation);
+  let (after, moved) = stage.frame();
+  assert_eq!(moved.boundaries_recorded, 1, "the damage re-records the holder");
+  // Both texts read their placements again, into the new texture.
+  let (old, new) = (runs(&before), runs(&after));
+  assert_eq!((old.len(), new.len()), (2, 2));
+  assert!(old.iter().zip(&new).all(|(a, b)| !Arc::ptr_eq(a, b)), "a run outlived the move");
+  assert_eq!(glyph_names(&after), vec![stage.atlas_name()]);
+}
+
+#[test]
+fn a_color_change_refreshes_the_runs() {
+  let mut stage = Stage::new();
+  let before = runs(&stage.rest());
+  let red = crate::renderer::Color::new_srgba(1.0, 0.0, 0.0, 1.0);
+  stage.tree.edit(FIRST, |el| el.kind.paint_mut().expect("a text paints").set_color(Some(red)));
+  let (dl, changed) = stage.frame();
+  assert_eq!(changed.boundaries_recorded, 1, "the paint damage re-records the holder");
+  let after = runs(&dl);
+  assert_eq!(after.len(), 2);
+  // The recolored text remade its run in the new color; the other one
+  // re-recorded its kept run by reference.
+  assert!(!Arc::ptr_eq(&before[0], &after[0]), "the recolored run was kept");
+  assert!(after[0].iter().all(|q| q.color == [1.0, 0.0, 0.0, 1.0]), "{:?}", after[0][0].color);
+  assert!(Arc::ptr_eq(&before[1], &after[1]), "the unchanged text remade its run");
+}
+
+#[test]
+fn a_released_boundary_text_is_still_damaged_by_a_move() {
+  let mut stage = Stage::new();
+  stage.rest();
+  // The holder replays for longer than a text's record used to live
+  // unbuilt: its texts are never entered.
+  for frame in 0..STANDING_FRAMES {
+    let (_, standing) = stage.frame();
+    assert_eq!((standing.boundaries_recorded, standing.boundaries_reused), (0, 1), "frame {frame}");
+  }
+  let mut held = stage.tree.text_raster_nodes();
+  held.sort_unstable();
+  assert_eq!(held, vec![FIRST, SECOND], "the texts keep their records");
+  // A move still reaches them: the holder re-records against the new
+  // texture, so the standing recording lets go of the old one.
+  let old = stage.atlas_name();
+  stage.platform.reset_fonts(vec![FontPayload {
+    alias: Some("sans".to_string()),
+    bytes: std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/NotoSans.ttf")),
+  }]);
+  let (after, moved) = stage.frame();
+  assert_eq!(moved.boundaries_recorded, 1, "the damage re-records the holder");
+  let new = stage.atlas_name();
+  assert_ne!(new, old);
+  assert_eq!(glyph_names(&after), vec![new]);
 }

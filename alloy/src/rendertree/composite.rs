@@ -181,11 +181,8 @@ pub fn paint_phase(
   // read back or free textures) run out of the tree borrow.
   stats.captures = alloy.deliver_captures() as u32;
   release_retired_textures(tree, alloy);
-  // Text raster records nobody built for a while go too
-  // (Text::release_stale_raster).
+  // The snapshots kept by boundaries switched off past their age go too.
   let frame = platform.text_atlas().frame();
-  tree.release_stale_text_rasters(frame);
-  // So do the snapshots kept by boundaries switched off past their age.
   tree.release_off_snapshots(frame);
   stats
 }

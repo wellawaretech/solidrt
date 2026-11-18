@@ -21,6 +21,7 @@ use super::vocab::{
   StrokeCap, StrokeJoin, TextureSampling, TileMode,
 };
 use std::os::raw::c_void;
+use std::sync::Arc;
 // The glyph vocabulary lives with the glyph pass until stage 7 moves it.
 use crate::gpu::{CoveragePolicy, GlyphGradient, GlyphQuad};
 
@@ -140,13 +141,15 @@ pub trait DisplayListBuilder: Sized {
   /// quad's straight-alpha color, or from `gradient` evaluated at the quad's
   /// position in the current space (the quad's alpha still applies). Drawn
   /// source-over, premultiplied; the sampling is linear. What a `<text>`
-  /// records per paint run.
+  /// records per paint run. The run and its gradient are shared, not
+  /// copied: a retained recording and a text that keeps its runs hold the
+  /// one slice the text made.
   fn draw_glyphs(
     &mut self,
     atlas: &super::Texture,
-    quads: &[GlyphQuad],
+    quads: &Arc<[GlyphQuad]>,
     policy: CoveragePolicy,
-    gradient: Option<&GlyphGradient>,
+    gradient: Option<&Arc<GlyphGradient>>,
   ) -> &mut Self;
   /// Nest `dl` under the current state, faded by `opacity` as a group.
   fn draw_display_list(&mut self, dl: &super::DisplayList, opacity: f32) -> &mut Self;

@@ -12,7 +12,7 @@ pub use runs::{FontStyle, FontWeight, RunOverrides, RunStyle, Span, TextAlignmen
 pub use shape::{prepare_units, CaretColumns, GlyphColumns, PreparedColumns, PreparedRun, PreparedUnit};
 pub use words::{CaretStop, ShapedWord, WordCache};
 
-use crate::gpu::{GlyphGroup, GlyphQuad};
+use crate::gpu::{GlyphGradient, GlyphGroup, GlyphQuad};
 use crate::renderer::prelude::*;
 use crate::renderer::{DisplayListBuilder, Point, Rect, Size, Texture};
 use crate::rendertree::text::glyphs::{split_phase, weight_value, Face, Hint, StyleKey};
@@ -24,6 +24,7 @@ use crate::rendertree::{
 use crate::Context;
 use shape::OwnedCache;
 use std::cell::{Cell, RefCell};
+use std::sync::Arc;
 use taffy::{AvailableSpace, Display, Style};
 
 // Shaping bound: at most this many widths cached per text node. A layout pass
@@ -209,18 +210,32 @@ struct LineRun {
   y: f32,
 }
 
+/// One recorded paint run of a text: the quads as the frame draws them and
+/// the gradient they take their color from, shared with every recording
+/// that holds them.
+#[derive(Clone)]
+struct RecordedRun {
+  quads: Arc<[GlyphQuad]>,
+  gradient: Option<Arc<GlyphGradient>>,
+}
+
 /// What the last build of a `<text>` drew (okf/plans/own-renderer.md,
 /// stage 2): its glyph runs recorded straight into the frame as quads of
 /// text atlas cells, laid out in the pixels of its painted box at a raster
 /// density. The pixels are the frame's; this records at what density and
 /// with which hinting the cells were chosen, which the scale policy reads
 /// (build_layer: a raster kept under a moving scale draws the cells it was
-/// made with, stretched). Validated by fingerprint like the shaping cache
-/// beside it: the prepared cache's generation, the shaping width, the
-/// scale and the rendering generation. Released once the text goes
-/// unbuilt for `TEXT_RASTER_RELEASE_FRAMES` (scrolled out, culled,
-/// hidden), so the tree's set of texts that recorded placements stays the
-/// set of what it shows.
+/// made with, stretched), and the runs themselves. Validated by
+/// fingerprint like the shaping cache beside it: the prepared cache's
+/// generation (which moves on a paint change too), the shaping width, the
+/// scale, the rendering generation and the text atlas generation. The
+/// runs change only when one of those does, so a build the record is
+/// current for re-records them by reference, with no cell lookup, where a
+/// rebuild of the frame would otherwise remake every glyph's quad. The
+/// record owns no texture, so it is the text's for its life (dropped with
+/// the node, or with the paint caches on a context loss): an atlas move
+/// then damages every text that ever recorded, and every recording that
+/// holds one lets go of the texture it was made against.
 #[derive(Clone)]
 struct TextRaster {
   /// The box the quads are laid out in, relative to the text's origin
@@ -236,8 +251,12 @@ struct TextRaster {
   /// build_layer), and is re-made hinted once the scale rests. Never set
   /// on a display that does not hint.
   hinted: bool,
-  /// The text atlas frame this text was last built at.
-  used: u64,
+  /// The text atlas generation the placements were read at
+  /// (`PlatformContext::text_atlas_generation`): a move re-reads them.
+  atlas_generation: u64,
+  /// The runs the last build recorded; re-recorded by reference while the
+  /// record is current.
+  runs: Vec<RecordedRun>,
 }
 
 /// A text rasterized outside a tree walk (see `Text::rasterize`): the
@@ -250,11 +269,6 @@ pub struct TextImage {
   pub rect: Rect,
   pub ink: Rect,
 }
-
-// Frames a text may go unbuilt before its raster record is released: two
-// seconds at 60 Hz, the text atlas's own eviction age, so a screen that
-// comes right back keeps its density and hinting.
-const TEXT_RASTER_RELEASE_FRAMES: u64 = 120;
 
 impl std::fmt::Debug for TextRaster {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -420,9 +434,7 @@ impl Buildable for Text {
     let owned = &*owned;
     let runs = owned.runs_for(index);
     let layout = &owned.layouts[index].layout;
-    let styles = self.run_styles();
-    let line_runs = self.line_runs(owned, index);
-    self.build_layer(ctx, builder, origin, owned, index, &styles, &line_runs);
+    self.build_layer(ctx, builder, origin, owned, index);
     // CSS decorating boxes: the text's underline is one line in its own
     // style under everything (atoms excepted); a span's underline is its
     // own line in the span's style. Both may cover a run.
@@ -448,6 +460,9 @@ impl Buildable for Text {
       );
     }
     if self.runs.iter().any(|r| r.overrides.underline == Some(true)) {
+      // The per-run styles, built only when a span underline needs them:
+      // a build whose glyph record is current makes nothing else per run.
+      let styles = self.run_styles();
       decoration::draw_underlines(
         builder,
         origin,
@@ -563,7 +578,6 @@ impl Text {
   // decides to wait asks for a look at the next frame (`scale_wait`, which
   // the walk registers with the tree). What the build drew is kept (see
   // TextRaster).
-  #[allow(clippy::too_many_arguments)]
   fn build_layer(
     &self,
     ctx: &mut BuildContext<'_>,
@@ -571,8 +585,6 @@ impl Text {
     origin: Point,
     owned: &OwnedCache,
     index: usize,
-    styles: &[RunStyle],
-    line_runs: &[LineRun],
   ) {
     let composite = layer_scale(ctx);
     // At rest when the scale held over the rest looks, or when an enclosing
@@ -617,14 +629,15 @@ impl Text {
     ctx.scale_bound += 1;
     let width = owned.layouts[index].width;
     let content = Size::new(width, owned.layouts[index].layout.height);
-    let frame = ctx.frame;
     let rendering = ctx.platform.text_rendering_generation();
+    let atlas_generation = ctx.platform.text_atlas_generation();
     let current = raster.as_ref().is_some_and(|l| {
       l.generation == owned.generation
         && l.rendering == rendering
         && l.width == width
         && l.scale == scale
         && (l.hinted == hinted || !at_rest)
+        && l.atlas_generation == atlas_generation
     });
     // A raster still current draws the cells it was made with: a kept
     // raster keeps its hinting while the scale moves.
@@ -632,20 +645,53 @@ impl Text {
       Some(l) if current => l.hinted,
       _ => hinted,
     };
-    let (groups, atlas_id) =
-      self.glyph_quads(ctx.platform, ctx.alloy, styles, line_runs, content, rect.origin, scale, hinted);
-    // The atlas handle read after the flush: a growth or a repack in it
-    // replaced the registry entry with a new texture, which these
+    // A current record re-records its runs as they are: no cell lookup,
+    // no ensure, no flush. Its cells' frame stamps, which the atlas's
+    // eviction reads, then go untouched; eviction happens only at the cap,
+    // and an eviction is a move, which refreshes every text, whose ensure
+    // re-inserts and stamps what it needs. A second eviction can take only
+    // cells no live text stamped again, so it settles within two frames
+    // and loops only when the live texts' cells exceed the cap (an
+    // overflow, failed as `Full` either way).
+    let (made, atlas_id) = if current {
+      (None, ctx.platform.text_atlas_texture_id())
+    } else {
+      // The run styles and line runs are built only when the record is
+      // remade: a current record records its kept runs without them.
+      let styles = self.run_styles();
+      let line_runs = self.line_runs(owned, index);
+      let (groups, atlas_id) =
+        self.glyph_quads(ctx.platform, ctx.alloy, &styles, &line_runs, content, rect.origin, scale, hinted);
+      // The generation read after the call: its ensure may have grown or
+      // repacked the atlas, and these placements are into the texture
+      // after that move.
+      let atlas_generation = ctx.platform.text_atlas_generation();
+      let runs: Vec<RecordedRun> = groups
+        .into_iter()
+        .map(|g| RecordedRun { quads: Arc::from(g.quads), gradient: g.gradient.map(Arc::new) })
+        .collect();
+      (Some((runs, atlas_generation)), atlas_id)
+    };
+    // The atlas handle read from the registry every build: a growth or a
+    // repack replaced the registry entry with a new texture, which the
     // placements are into. None when the GPU refused the atlas (logged
-    // there): nothing to draw this frame.
+    // there): nothing to draw this frame, and nothing recorded.
     let Some(atlas) = atlas_id.and_then(|id| ctx.alloy.textures.get(id)).and_then(|e| e.handle.clone()) else {
       return;
     };
-    if !current {
-      *raster = Some(TextRaster { rect, scale, generation: owned.generation, width, rendering, hinted, used: frame });
+    if let Some((runs, atlas_generation)) = made {
+      *raster = Some(TextRaster {
+        rect,
+        scale,
+        generation: owned.generation,
+        width,
+        rendering,
+        hinted,
+        atlas_generation,
+        runs,
+      });
     }
-    let raster = raster.as_mut().expect("built above");
-    raster.used = frame;
+    let raster = raster.as_ref().expect("built above");
     // An unhinted raster on a display that hints was made while the scale
     // moved (a step of an animation, or one direct write far enough to
     // re-make it at once). It is re-made hinted when the scale rests, and
@@ -681,9 +727,9 @@ impl Text {
     builder.save();
     builder.translate(origin.x, origin.y);
     builder.scale(1.0 / raster.scale, 1.0 / raster.scale);
-    for group in &groups {
+    for run in &raster.runs {
       crate::rendertree::counters::note_draw();
-      builder.draw_glyphs(&atlas, &group.quads, policy, group.gradient.as_ref());
+      builder.draw_glyphs(&atlas, &run.quads, policy, run.gradient.as_ref());
     }
     builder.restore();
   }
@@ -920,8 +966,9 @@ impl Text {
     (groups, texture)
   }
 
-  /// Whether the last build recorded glyph placements (a raster record is
-  /// held): what an atlas move or a text rendering change re-records.
+  /// Whether a build recorded glyph placements (a raster record is held,
+  /// for the text's life): what an atlas move or a text rendering change
+  /// re-records.
   pub(crate) fn has_raster(&self) -> bool {
     self.raster.borrow().is_some()
   }
@@ -941,19 +988,8 @@ impl Text {
   /// Drop the raster record now: its placements are into a texture of a
   /// GL context that is gone (RenderTree::drop_paint_caches). The next
   /// build makes a new one; there is nothing to free.
-  pub(crate) fn drop_layer(&self) {
+  pub(crate) fn drop_raster(&self) {
     self.raster.borrow_mut().take();
-  }
-
-  /// Release the raster record once the text has gone unbuilt for the
-  /// release age by `frame` (the composite walk asks every text holding
-  /// one). Returns whether a record is still held.
-  pub(crate) fn release_stale_raster(&self, frame: u64) -> bool {
-    let mut raster = self.raster.borrow_mut();
-    if raster.as_ref().is_some_and(|l| frame.saturating_sub(l.used) > TEXT_RASTER_RELEASE_FRAMES) {
-      raster.take();
-    }
-    raster.is_some()
   }
 
   /// Bounds of a detached text in its own frame (`frame` is the box it

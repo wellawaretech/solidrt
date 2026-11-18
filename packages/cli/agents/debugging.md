@@ -407,11 +407,8 @@ when exactly one client is connected.
   with the counters under bimodal frame times. Two breakdowns name a
   cost without a reload per hypothesis: `paintOps` (top level for the
   latest rebuild, and in `window.worst`) counts the display-list ops the
-  paint walk recorded - `draws`, `textLayers` (the text layers the glyph
-  pass rasterized for the rebuild; a text whose pixels are current
-  composites its retained layer, a draw and no layer; `window.textLayers`
-  sums them over the window's frames, the count that says how often a
-  scale animation re-rasterized its labels), `clips` (of which
+  paint walk recorded - `draws`, `textLayers` (always 0: text draws
+  straight into the frame, one draw per paint run), `clips` (of which
   `roundedClips`),
   `saveLayers`, and
   the paints that leave a tiled GPU's cheap path, `blends` (not

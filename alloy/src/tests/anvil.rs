@@ -632,8 +632,8 @@ fn glyph(x: f32, y: f32, sx: f32, color: [f32; 4]) -> GlyphQuad {
 }
 
 // Two white glyphs side by side at y = 10, from x.
-fn word(x: f32) -> Vec<GlyphQuad> {
-  vec![glyph(x, 10.0, 0.0, [1.0; 4]), glyph(x + 5.0, 10.0, 4.0, [1.0; 4])]
+fn word(x: f32) -> Arc<[GlyphQuad]> {
+  Arc::from([glyph(x, 10.0, 0.0, [1.0; 4]), glyph(x + 5.0, 10.0, 4.0, [1.0; 4])])
 }
 
 // A red-to-blue linear gradient across the first hundred pixels.
@@ -659,7 +659,7 @@ fn a_glyph_run_walks_into_glyph_instances() {
   let color = [1.0, 0.5, 0.0, 0.5];
   let policy = CoveragePolicy::default();
   let mut b = DisplayListBuilder::new(None);
-  b.translate(10.0, 20.0).draw_glyphs(&atlas, &[glyph(2.0, 3.0, 16.0, color)], policy, None);
+  b.translate(10.0, 20.0).draw_glyphs(&atlas, &Arc::from([glyph(2.0, 3.0, 16.0, color)]), policy, None);
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 1);
   let i = &out.instances[0];
@@ -696,7 +696,9 @@ fn glyph_runs_are_rejected_whole_and_per_quad() {
   // A fully transparent quad is skipped; an empty run draws nothing.
   let mut b = DisplayListBuilder::new(None);
   let clear = glyph(0.0, 0.0, 0.0, [1.0, 1.0, 1.0, 0.0]);
-  b.draw_glyphs(&atlas, &[clear, glyph(5.0, 0.0, 4.0, [1.0; 4])], policy, None).draw_glyphs(&atlas, &[], policy, None);
+  let empty: Arc<[GlyphQuad]> = Arc::from([]);
+  b.draw_glyphs(&atlas, &Arc::from([clear, glyph(5.0, 0.0, 4.0, [1.0; 4])]), policy, None)
+    .draw_glyphs(&atlas, &empty, policy, None);
   let out = walked(b);
   assert_eq!(out.len(), 1);
   assert_eq!(out[0].rect[0], 5.0);
@@ -732,7 +734,7 @@ fn a_gradient_run_is_its_own_batch() {
   let atlas = test_texture(3, ISize::new(64, 32));
   let policy = CoveragePolicy::default();
   let quad = rect(0.0, 0.0, 10.0, 10.0);
-  let g = gradient();
+  let g = Arc::new(gradient());
   let mut b = DisplayListBuilder::new(None);
   b.draw_glyphs(&atlas, &word(0.0), policy, None)
     .draw_glyphs(&atlas, &word(20.0), policy, Some(&g))
@@ -740,7 +742,7 @@ fn a_gradient_run_is_its_own_batch() {
     .draw_glyphs(&atlas, &word(40.0), policy, None);
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 7);
-  let graded = Batch { gradient: Some(Arc::new(g.clone())), ..glyphs(2, 2, &atlas, policy) };
+  let graded = Batch { gradient: Some(g.clone()), ..glyphs(2, 2, &atlas, policy) };
   // Split before and after: the rect after the gradient run opens a new
   // batch, which the solid run then joins.
   assert_eq!(out.batches, vec![glyphs(0, 2, &atlas, policy), graded, glyphs(4, 3, &atlas, policy)]);
