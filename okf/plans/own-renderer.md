@@ -991,6 +991,65 @@ not yet re-read on the TV.
   own output before the change, not main: a zero diff at tolerance 0 is
   a stronger check than any diff against Impeller.
 
+### Stage 3: the paint shader, and the desktop measurement (2026-11-19)
+
+Steps 1 to 3 landed on 2026-11-18 and 19 (06dc74f5 anvil, bc0359f9
+alloy, 799a07c6 flux and core, a026ebcd guides and backlog), each
+reviewed before its commit. What the implementation settled beyond the
+design above:
+
+- The app's `main` is renamed by macro (`#define main solidrt_paint_main`)
+  under `#line 1`, so a compile error reports the app's own line, and the
+  epilogue multiplies `fragColor` by the clip factor (box and rounded
+  clip), never discards. A source with a `#version` directive (the
+  directive, not the word in a comment) is refused; a source without a
+  `main` gets an error that says so instead of the GL log's hidden symbol.
+- `uSize` and `iResolution` are set after the params, so a param cannot
+  displace them; `uSize` is left out of the UI-side uniform table, and
+  declared-but-inactive names get inactive slots, so params validate as
+  `linkProgram`'s do. An input must be an active `sampler2D` over a 2D
+  color texture the renderer holds a handle for; an unknown id throws as a
+  shader target's binding does.
+- The deletion queue holds textures and programs; a retained recording
+  keeps its program alive past `destroyPaintShader`, and the example
+  checks a list recorded before the destroy still draws. A paint shader
+  the new context refuses on recovery is culled from the UI registry, so
+  no stale program name is ever recorded.
+- Sampler objects are per (filter, wrap), created on first use; a paint
+  batch binds its inputs on units 0.. and the gradient ramp is rebound
+  after it when the frame has glyph runs.
+- `alloy/examples/paint_shader.rs`: the direct draw equals the same
+  source through a shader texture at 128x128 with a largest channel
+  difference of 0, and the rect clip, the rounded clip, a 45 degree
+  rotation and the retained list behave.
+- A `<shader>` whose input texture changes every frame re-records its
+  node and the recordings above it (`Damage::Paint`), where `<texture>`
+  takes the present-only path: accepted for the stage, in
+  `okf/backlog/shader-input-content-change-rebuilds.md`.
+
+**Desktop** (`probes/paint-shader-bench.tsx`, `route=paint|texture`,
+36 animated 160x90 panels driven by `uTime` every frame; release client
+of 799a07c6 at 60 Hz, 1280x720, scale 1; three reads of 10 s each after
+15 s; `probes/paint-shader-bench.sh` is the runner):
+
+| route | frames / 10 s | missed | draw calls / frame | offscreen passes / frame | pass GPU ms / frame | process CPU % |
+|---|---|---|---|---|---|---|
+| `<shader>` | 599 to 600 | 0 | 37 | 0 | 0 | 8.7 to 10.0 |
+| shader texture + `<texture>` | 599 to 600 | 0 | 37 | 36 | 0.68 | 10.9 to 11.8 |
+
+Both routes lock at 60 with 36 panels, so the desktop separates them
+only structurally: the texture route runs 36 offscreen passes per frame
+(0.68 ms of GPU in the pass timer, 0.29 ms of raster-thread issue time)
+and holds 37 textures and 36 pipelines in `/gpu` against one paint
+shader and one texture; the paint route's process CPU is about two
+points lower. The desktop's GPU frame timer is bimodal here as the stage
+2 measurement found (one run's paint read sat in the low group at 4.8 to
+5.1 ms per frame, the next in the high group at 15.4 with the texture
+route), so it does not compare the routes. The TV read, where the pass
+cost is tile traffic, is pending: the 32-bit APK of 799a07c6 is built
+(`dist/android/armeabi-v7a/solidrt-go.apk`) and waits for the TV and
+the maintainer's install.
+
 ### Where anvil lives (2026-11-18)
 
 anvil is a module behind the seam, `alloy/src/renderer/anvil/` (the plan

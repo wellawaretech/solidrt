@@ -1009,10 +1009,10 @@ Shaped, not started.
   1", while the same commit passes on rerun.
 - **[Drop what text kept from its layer era](backlog/text-after-direct-draw.md)** [2026-11-19]
   Since text draws straight into the frame (own-renderer stage 2), several
-  parts of the text path still follow the layer model; a paint change redoes
-  the per-glyph work, the atlas holds every glyph twice in CPU memory, the
-  layer machinery and two backlog notes are left over, and a zoom still
-  stretches then pops.
+  parts of the text path still follow the layer model; a paint change reshapes
+  the paragraph and redoes the per-glyph work, the atlas holds every glyph
+  twice in CPU memory, and the layer machinery, its names and two backlog
+  notes are left over. Three items, no pixel changes, one step.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,
@@ -1051,6 +1051,13 @@ Shaped, not started.
   make one at all - a finger drag deliberately scrolls - and no pointer
   selects a whole word; add long-press-to-select with draggable handles on
   touch, and double-click word selection for the mouse.
+- **[A text under a zoom stretches, then pops](backlog/text-zoom-distance-field.md)** [2026-11-19]
+  The raster density policy for text is the layer-era model: under a scale
+  animation a text draws its kept cells stretched and remakes them once the
+  scale rests, so a zoom is soft and then sharpens in one frame. With
+  per-glyph cells, a text in scale motion or at a large size could draw
+  distance-field cells instead, which scale without a re-raster. A design
+  question for after own-renderer stage 4.
 - **[No way to tile or repeat a texture](backlog/texture-tile-mode.md)** [2026-08-14]
   Textures always blit once into their destination rect, so a repeating
   background has to be faked with one element per tile or a shader bake;
