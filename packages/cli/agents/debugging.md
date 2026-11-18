@@ -238,7 +238,9 @@ when exactly one client is connected.
   reset without one.
 - `/gpu?label=<text>&draw=<id>` - the GPU resource inventory; `label` keeps
   only the resources created with exactly that label (ids change on reload,
-  labels do not). Each texture carries its `format` and declared `sampler`
+  labels do not). `paintShaders` lists the `createPaintShader` programs
+  (`{ id, label? }`); a `<shader>` element owns no texture, so a panel
+  drawn through one shows up here and nowhere else. Each texture carries its `format` and declared `sampler`
   (`filter`/`wrap`/`mipmap`/`anisotropy`), the creation-time state a soft
   or aliased map is usually missing, its `shape` (`2d`, `cube`, `3d`,
   `2d-array`; a volume's `depth` is its slices or layers), and its

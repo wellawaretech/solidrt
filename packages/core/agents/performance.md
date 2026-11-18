@@ -40,9 +40,13 @@ Rules, in order of leverage:
    animation library pushing interpolated values through signals pays the
    whole write path per element per frame - port it to this.
 2. Continuous effects (snow, particles, animated backgrounds) belong in a
-   fragment shader: createShaderTexture (from @solidrt/core/gpu) + `<texture
-   params={{ uTime }}>` (the shader declares `uniform float uTime;` itself -
-   the preamble declares only what the runtime fills). The whole effect then
+   fragment shader: createPaintShader (from @solidrt/core/gpu) + `<shader
+   params={{ uTime }}>` draws the program straight into the frame at the
+   element's box, with no texture and no extra pass; createShaderTexture +
+   `<texture params={{ uTime }}>` is the same program rendered to a texture
+   first, for when something else samples the output (the shader declares
+   `uniform float uTime;` itself - the preamble declares only what the
+   runtime fills). The whole effect then
    costs one setProperty per frame - the uTime write - regardless of visual
    complexity. Shader output
    must be premultiplied alpha (white flakes are `vec4(vec3(a), a)`);

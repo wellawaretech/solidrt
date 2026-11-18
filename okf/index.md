@@ -916,6 +916,12 @@ Shaped, not started.
   per option (the player's settings screen shows three); the option row's For
   callback reads the controlled value untracked at its top, so the warning may
   be naming a real stale read."
+- **[A shader element whose input texture changes every frame rebuilds its recordings](backlog/shader-input-content-change-rebuilds.md)** [2026-11-19]
+  A <shader> that samples a live texture (a video frame, a camera, a target
+  rendered per frame) takes Damage::Paint on every content change, which
+  re-records the node and every recording above it, where a <texture> showing
+  the same live id takes the present-only path; acceptable while shader panels
+  sample static inputs, to revisit when a video-backed panel shows in paintMs.
 - **[Home for cross-crate constants](backlog/shared-config-constants.md)** [2026-07-27]
   One defined home for cross-crate constants that today live as per-site
   literals (.solidrt-data, http-cache.db, the SolidRT/go identity, size caps);
@@ -1001,6 +1007,12 @@ Shaped, not started.
   An app test with { size } sometimes mounts at the run's window (1280x720)
   instead of the size it set; seen twice in CI on "a size alone keeps scale
   1", while the same commit passes on rerun.
+- **[Drop what text kept from its layer era](backlog/text-after-direct-draw.md)** [2026-11-19]
+  Since text draws straight into the frame (own-renderer stage 2), several
+  parts of the text path still follow the layer model; a paint change redoes
+  the per-glyph work, the atlas holds every glyph twice in CPU memory, the
+  layer machinery and two backlog notes are left over, and a zoom still
+  stretches then pops.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,
