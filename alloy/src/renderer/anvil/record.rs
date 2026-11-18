@@ -10,11 +10,12 @@ use super::super::contract;
 #[cfg(test)]
 use super::super::oplog::{Op as LogOp, PaintLog, PathLog, PathSegment};
 use super::super::{
-  BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, Matrix, Point, Rect, RoundingRadii, StrokeCap,
-  StrokeJoin, TextureSampling, TileMode,
+  BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, Matrix, Point, Rect, RoundingRadii, Size,
+  StrokeCap, StrokeJoin, TextureSampling, TileMode,
 };
 use super::ops::{premultiply, Image, Op, Premultiplied, Radii};
 use super::Texture;
+use crate::gpu::{CoveragePolicy, GlyphGradient, GlyphQuad};
 use std::sync::Arc;
 
 /// A finished recording: the executable ops and, in a test build, the
@@ -141,6 +142,15 @@ fn image_of(paint: &Paint) -> Option<Image> {
     unsupported!("an image source tile mode other than clamp", "the source clamps");
   }
   Some(Image { texture: texture.clone(), sampling: *sampling, to_texel })
+}
+
+/// The union of the quads' `dst` rects; an empty rect at the origin for
+/// no quads.
+fn glyph_bounds(quads: &[GlyphQuad]) -> Rect {
+  let rect = |q: &GlyphQuad| Rect::new(Point::new(q.dst[0], q.dst[1]), Size::new(q.dst[2], q.dst[3]));
+  let mut iter = quads.iter().map(rect);
+  let Some(first) = iter.next() else { return Rect::zero() };
+  iter.fold(first, |acc, r| acc.union(&r))
 }
 
 /// A rect's stroke turns its corners with a miter join (sharp corners)
@@ -366,6 +376,26 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     });
     #[cfg(test)]
     self.log.push(LogOp::DrawTextureRect { src: *src, dst: *dst, sampling, paint: paint.map(|p| p.log) });
+    self
+  }
+
+  fn draw_glyphs(
+    &mut self,
+    atlas: &Texture,
+    quads: &[GlyphQuad],
+    policy: CoveragePolicy,
+    gradient: Option<&GlyphGradient>,
+  ) -> &mut Self {
+    let bounds = glyph_bounds(quads);
+    self.ops.push(Op::DrawGlyphs {
+      atlas: atlas.clone(),
+      quads: quads.into(),
+      bounds,
+      policy,
+      gradient: gradient.map(|g| Arc::new(g.clone())),
+    });
+    #[cfg(test)]
+    self.log.push(LogOp::DrawGlyphs { bounds, quads: quads.len(), policy, gradient: gradient.is_some() });
     self
   }
 

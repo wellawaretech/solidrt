@@ -5,7 +5,9 @@
 use super::super::{Color, Matrix, Point, Rect, StrokeCap, TextureSampling};
 use super::record::DisplayList;
 use super::Texture;
+use crate::gpu::{CoveragePolicy, GlyphGradient, GlyphQuad};
 use euclid::default::Transform2D;
+use std::sync::Arc;
 
 /// A premultiplied sRGB color: (r*a, g*a, b*a, a). Blending is
 /// ONE, ONE_MINUS_SRC_ALPHA in sRGB with no linear step, the convention
@@ -92,6 +94,17 @@ pub(super) enum Op {
     dst: Rect,
     sampling: TextureSampling,
     alpha: f32,
+  },
+  /// A glyph run: `quads` over `atlas`, whose red channel is coverage,
+  /// under `policy`, colored per quad or along `gradient`. `bounds` is the
+  /// quads' union in the op's space, so the walk rejects a whole run that
+  /// falls outside the clip before it looks at a glyph.
+  DrawGlyphs {
+    atlas: Texture,
+    quads: Arc<[GlyphQuad]>,
+    bounds: Rect,
+    policy: CoveragePolicy,
+    gradient: Option<Arc<GlyphGradient>>,
   },
   /// The nested list by reference, faded as a group by `opacity`.
   DrawList {

@@ -7,12 +7,13 @@
 // wrong fails here, before a snapshot suite has to find it. Then `placed`,
 // the helper that applies the saves, restores and transforms.
 
+use crate::gpu::{CoveragePolicy, GlyphQuad};
 use crate::renderer::oplog::{placed, Op, PaintLog, PathLog, PathSegment};
 use crate::renderer::prelude::*;
 use crate::renderer::{
-  BlendMode, ClipOperation, Color, ColorFilter, ColorMatrix, ColorSource, DisplayListBuilder, DrawStyle, FillType,
-  ImageFilter, MaskFilter, Matrix, Paint, PathBuilder, Point, Rect, RoundingRadii, Size, StrokeCap, StrokeJoin,
-  TextureSampling, TileMode,
+  test_texture, BlendMode, ClipOperation, Color, ColorFilter, ColorMatrix, ColorSource, DisplayListBuilder, DrawStyle,
+  FillType, ISize, ImageFilter, MaskFilter, Matrix, Paint, PathBuilder, Point, Rect, RoundingRadii, Size, StrokeCap,
+  StrokeJoin, TextureSampling, TileMode,
 };
 use std::sync::Arc;
 
@@ -96,6 +97,14 @@ fn every_recording_op_builds_a_list() {
   pen.cubic_to(Point::new(-5.0, 5.0), Point::new(-5.0, 0.0), Point::zero()).close();
   let path = pen.build(FillType::EvenOdd);
 
+  // A two-quad glyph run over a handle with no GL behind it.
+  let atlas = test_texture(1, ISize::new(64, 64));
+  let white = [1.0; 4];
+  let glyphs = [
+    GlyphQuad { dst: [2.0, 3.0, 4.0, 5.0], src: [0.0, 0.0, 4.0, 5.0], color: white },
+    GlyphQuad { dst: [8.0, 1.0, 3.0, 6.0], src: [4.0, 0.0, 3.0, 6.0], color: white },
+  ];
+
   let paint = full_paint();
   let mut inner = DisplayListBuilder::new(None);
   inner.draw_rect(&rect(0.0, 0.0, 4.0, 4.0), &paint);
@@ -127,6 +136,7 @@ fn every_recording_op_builds_a_list() {
   b.restore();
   b.save_backdrop_layer(&rect(0.0, 0.0, 20.0, 20.0), None, None);
   b.restore();
+  b.draw_glyphs(&atlas, &glyphs, CoveragePolicy::default(), None);
   b.restore();
   let list = b.build().expect("the list builds");
 
@@ -170,6 +180,8 @@ fn every_recording_op_builds_a_list() {
     Op::Restore,
     Op::SaveBackdropLayer { bounds: layer, paint: None, filter: false },
     Op::Restore,
+    // The run's bounds are the union of its quads' `dst`.
+    Op::DrawGlyphs { bounds: rect(2.0, 1.0, 9.0, 7.0), quads: 2, policy: CoveragePolicy::default(), gradient: false },
     Op::Restore,
   ];
   let ops = list.ops();
@@ -180,6 +192,12 @@ fn every_recording_op_builds_a_list() {
   // The nested list is the inner recording, opened from the op.
   let Op::DrawDisplayList { ops: opened, .. } = &ops[13] else { panic!("op 13 nests the inner list") };
   assert_eq!(&opened[..], inner.ops());
+
+  // A glyph run is placed by its bounds, under the translate and scale in
+  // effect, and has no stroke width.
+  let run = placed(ops).into_iter().find(|p| matches!(p.op, Op::DrawGlyphs { .. })).expect("the glyph run is placed");
+  assert!(close_rect(run.device_rect(), rect(5.0, 5.0, 18.0, 21.0)), "{:?}", run.device_rect());
+  assert_eq!(run.device_stroke_width(), None);
 
   // The list is shareable: a clone is the same recording, usable from
   // another thread.

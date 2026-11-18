@@ -21,6 +21,8 @@ use super::vocab::{
   StrokeCap, StrokeJoin, TextureSampling, TileMode,
 };
 use std::os::raw::c_void;
+// The glyph vocabulary lives with the glyph pass until stage 7 moves it.
+use crate::gpu::{CoveragePolicy, GlyphGradient, GlyphQuad};
 
 /// Where a draw lands: a framebuffer by GL name (None is the window's
 /// default framebuffer, FBO 0) and its size in pixels. Every target is
@@ -131,6 +133,20 @@ pub trait DisplayListBuilder: Sized {
     dst: &Rect,
     sampling: TextureSampling,
     paint: Option<&super::Paint>,
+  ) -> &mut Self;
+  /// A run of glyph quads from a mask atlas: each quad's `dst` in the
+  /// current space, its `src` in atlas texels (row 0 the top), the atlas's
+  /// red channel as coverage, turned into color under `policy` from the
+  /// quad's straight-alpha color, or from `gradient` evaluated at the quad's
+  /// position in the current space (the quad's alpha still applies). Drawn
+  /// source-over, premultiplied; the sampling is linear. What a `<text>`
+  /// records per paint run.
+  fn draw_glyphs(
+    &mut self,
+    atlas: &super::Texture,
+    quads: &[GlyphQuad],
+    policy: CoveragePolicy,
+    gradient: Option<&GlyphGradient>,
   ) -> &mut Self;
   /// Nest `dl` under the current state, faded by `opacity` as a group.
   fn draw_display_list(&mut self, dl: &super::DisplayList, opacity: f32) -> &mut Self;

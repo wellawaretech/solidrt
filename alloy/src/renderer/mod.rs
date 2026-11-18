@@ -27,6 +27,11 @@ mod vocab;
 pub use contract::Target;
 pub use vocab::*;
 
+// A texture handle with no renderer behind it, for tests that record
+// without GL (anvil's own, re-exported for the contract test).
+#[cfg(test)]
+pub(crate) use anvil::test_texture;
+
 pub type Renderer = anvil::Renderer;
 pub type Texture = anvil::Texture;
 pub type DisplayList = anvil::DisplayList;

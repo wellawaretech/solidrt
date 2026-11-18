@@ -12,6 +12,7 @@ use super::vocab::{
   BlendMode, ClipOperation, Color, DrawStyle, FillType, Matrix, Point, Rect, RoundingRadii, StrokeCap, StrokeJoin,
   TextureSampling,
 };
+use crate::gpu::CoveragePolicy;
 use std::sync::Arc;
 
 /// How far apart the two axis scales of a matrix may be and still count as
@@ -143,6 +144,15 @@ pub enum Op {
     sampling: TextureSampling,
     paint: Option<PaintLog>,
   },
+  /// A glyph run: no atlas handle and no quads, as for a texture draw;
+  /// `bounds` is the union of the quads' `dst` (an empty rect for no
+  /// quads), `quads` their count, `gradient` whether one was passed.
+  DrawGlyphs {
+    bounds: Rect,
+    quads: usize,
+    policy: CoveragePolicy,
+    gradient: bool,
+  },
   /// A nested list, opened by reading `ops`.
   DrawDisplayList {
     ops: Arc<[Op]>,
@@ -171,6 +181,7 @@ impl Op {
       | Op::ClipRect { .. }
       | Op::ClipOval { .. }
       | Op::ClipRoundedRect { .. }
+      | Op::DrawGlyphs { .. }
       | Op::DrawDisplayList { .. } => None,
     }
   }
@@ -232,7 +243,8 @@ fn walk<'a>(ops: &'a [Op], base: Matrix, out: &mut Vec<Placed<'a>>) {
       | Op::DrawOval { .. }
       | Op::DrawRoundedRect { .. }
       | Op::DrawPath { .. }
-      | Op::DrawTextureRect { .. } => out.push(Placed { op, to_device: current }),
+      | Op::DrawTextureRect { .. }
+      | Op::DrawGlyphs { .. } => out.push(Placed { op, to_device: current }),
     }
   }
 }
@@ -244,8 +256,8 @@ fn axis_aligned(m: &Matrix) -> Option<euclid::default::Transform2D<f32>> {
 
 impl Placed<'_> {
   /// The op's box in the root list's space: a clip's rect or bounds, a
-  /// rect, oval or rounded rect draw's, a texture draw's `dst`, a layer's
-  /// bounds, when `to_device` is a 2D map with no rotation or skew. None
+  /// rect, oval or rounded rect draw's, a texture draw's `dst`, a glyph
+  /// run's `bounds`, a layer's bounds, when `to_device` is a 2D map with no rotation or skew. None
   /// for a line, a path and a nested list, and under any other matrix.
   pub fn device_rect(&self) -> Option<Rect> {
     let rect = match self.op {
@@ -258,6 +270,7 @@ impl Placed<'_> {
       | Op::DrawRect { rect, .. }
       | Op::DrawRoundedRect { rect, .. } => rect,
       Op::DrawTextureRect { dst, .. } => dst,
+      Op::DrawGlyphs { bounds, .. } => bounds,
       Op::Save
       | Op::Restore
       | Op::Translate { .. }
@@ -274,8 +287,8 @@ impl Placed<'_> {
   /// `stroke_width` times the scale of `to_device`, when it is axis-aligned
   /// with one scale on both axes. Only for a draw that strokes: a line
   /// always, a rect, oval, rounded rect or path when its draw style is not
-  /// `Fill`. None for a filled draw, a layer, a texture draw and the ops
-  /// without a paint, and under any other matrix.
+  /// `Fill`. None for a filled draw, a layer, a texture draw, a glyph run
+  /// and the ops without a paint, and under any other matrix.
   pub fn device_stroke_width(&self) -> Option<f32> {
     let paint = match self.op {
       Op::DrawLine { paint, .. } => paint,
@@ -294,6 +307,7 @@ impl Placed<'_> {
       | Op::ClipOval { .. }
       | Op::ClipRoundedRect { .. }
       | Op::DrawTextureRect { .. }
+      | Op::DrawGlyphs { .. }
       | Op::DrawDisplayList { .. } => return None,
     };
     let m = axis_aligned(&self.to_device)?;

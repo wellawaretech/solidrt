@@ -10,7 +10,11 @@
 //! clip. Stage 2, step 1 adds rounded rects (per-corner radii, fill,
 //! stroke and stroke-and-fill), an axis-aligned rounded clip, and rects,
 //! rounded rects and ovals filled with an image color source (the rounded
-//! `<texture>`). What does not draw yet (paths, layers, the other clips,
+//! `<texture>`). A glyph run draws straight from the text atlas: one
+//! instance per glyph, the atlas's red channel as coverage under the run's
+//! coverage policy, a gradient run from a ramp, so a screen of text and the
+//! shapes between it share one batch over one texture. What does not draw
+//! yet (paths, layers, the other clips,
 //! group opacity, gradients, filters, blend modes) warns once per process,
 //! naming itself and what happens instead.
 //!

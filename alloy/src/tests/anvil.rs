@@ -5,12 +5,14 @@
 // the premultiplied color, the texture quads and their batches are all
 // decided here, before any GL work, as are the rounded rects' radii and
 // quads, the rounded clip in device space and the image-filled shapes'
-// uv. The deferred deletion queue a texture handle drops onto is tested
+// uv, and the glyph runs' instances and their batches. The deferred
+// deletion queue a texture handle drops onto is tested
 // here too, with no renderer.
 
+use crate::gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, RAMP_WIDTH};
 use crate::renderer::anvil::walk::{
-  walk, Batch, Instance, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, KIND_LINE, KIND_OVAL, KIND_RECT, KIND_ROUNDED_RECT,
-  KIND_TEXTURED, ROUNDED_QUAD_PAD,
+  walk, Batch, Instance, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, KIND_GLYPH, KIND_LINE, KIND_OVAL, KIND_RECT,
+  KIND_ROUNDED_RECT, KIND_TEXTURED, ROUNDED_QUAD_PAD,
 };
 use crate::renderer::anvil::{test_texture, DeletionQueue};
 use crate::renderer::prelude::*;
@@ -96,6 +98,11 @@ fn image_paint(t: &Texture, sampling: TextureSampling, transform: Option<&Matrix
   let mut paint = opaque();
   paint.set_color_source(&ColorSource::image(t, TileMode::Clamp, TileMode::Clamp, sampling, transform));
   paint
+}
+
+// A batch of shapes and texture quads: no glyph policy, no gradient.
+fn shapes(start: usize, count: usize, texture: Option<(glow::NativeTexture, TextureSampling)>) -> Batch {
+  Batch { start, count, texture, policy: None, gradient: None }
 }
 
 fn line(from: (f32, f32), to: (f32, f32), paint: &Paint) -> Vec<Instance> {
@@ -236,7 +243,7 @@ fn a_texture_quad_maps_src_onto_dst() {
   assert!(approx(i.color, [1.0; 4]), "{:?}", i.color);
   assert_eq!(i.offset_kind_stroke[2], KIND_RECT + KIND_TEXTURED);
   assert_eq!(i.offset_kind_stroke[3], 0.0);
-  assert_eq!(out.batches, vec![Batch { start: 0, count: 1, texture: Some((name(&t), TextureSampling::Linear)) }]);
+  assert_eq!(out.batches, vec![shapes(0, 1, Some((name(&t), TextureSampling::Linear)))]);
 }
 
 #[test]
@@ -297,13 +304,7 @@ fn batches_split_at_texture_changes() {
     .draw_rect(&quad, &opaque());
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 6);
-  assert_eq!(
-    out.batches,
-    vec![
-      Batch { start: 0, count: 4, texture: Some((name(&a), linear)) },
-      Batch { start: 4, count: 2, texture: Some((name(&c), linear)) },
-    ]
-  );
+  assert_eq!(out.batches, vec![shapes(0, 4, Some((name(&a), linear))), shapes(4, 2, Some((name(&c), linear))),]);
 
   // The sampling splits a run too.
   let mut b = DisplayListBuilder::new(None);
@@ -317,10 +318,7 @@ fn batches_split_at_texture_changes() {
   let out = walked_all(b);
   assert_eq!(
     out.batches,
-    vec![
-      Batch { start: 0, count: 1, texture: Some((name(&a), linear)) },
-      Batch { start: 1, count: 1, texture: Some((name(&a), TextureSampling::Nearest)) },
-    ]
+    vec![shapes(0, 1, Some((name(&a), linear))), shapes(1, 1, Some((name(&a), TextureSampling::Nearest))),]
   );
 }
 
@@ -599,7 +597,7 @@ fn an_image_source_textures_the_shape() {
   let want = [(-pad / 2.0) / 200.0, (-pad / 2.0) / 100.0, (20.0 + pad / 2.0) / 200.0, (10.0 + pad / 2.0) / 100.0];
   assert!(approx(i.tex, want), "{:?}", i.tex);
   assert!(approx(i.color, [1.0; 4]), "{:?}", i.color);
-  assert_eq!(out.batches, vec![Batch { start: 0, count: 1, texture: Some((name(&t), TextureSampling::Linear)) }]);
+  assert_eq!(out.batches, vec![shapes(0, 1, Some((name(&t), TextureSampling::Linear)))]);
 
   // A plain rect with the same paint samples it too.
   let mut b = DisplayListBuilder::new(None);
@@ -625,5 +623,146 @@ fn a_rotated_image_source_draws_the_color() {
   assert_eq!(i.offset_kind_stroke[2], KIND_ROUNDED_RECT);
   assert!(approx(i.color, [0.5, 0.25, 0.0, 0.5]), "{:?}", i.color);
   assert_eq!(i.tex, [0.0; 4]);
-  assert_eq!(out.batches, vec![Batch { start: 0, count: 1, texture: None }]);
+  assert_eq!(out.batches, vec![shapes(0, 1, None)]);
+}
+
+// A glyph quad at (x, y), 4 x 6, sampling the atlas cell at (sx, 0).
+fn glyph(x: f32, y: f32, sx: f32, color: [f32; 4]) -> GlyphQuad {
+  GlyphQuad { dst: [x, y, 4.0, 6.0], src: [sx, 0.0, 4.0, 6.0], color }
+}
+
+// Two white glyphs side by side at y = 10, from x.
+fn word(x: f32) -> Vec<GlyphQuad> {
+  vec![glyph(x, 10.0, 0.0, [1.0; 4]), glyph(x + 5.0, 10.0, 4.0, [1.0; 4])]
+}
+
+// A red-to-blue linear gradient across the first hundred pixels.
+fn gradient() -> GlyphGradient {
+  GlyphGradient {
+    kind: GradientKind::Linear,
+    x_row: [1.0 / TARGET, 0.0, 0.0],
+    y_row: [0.0; 3],
+    tile: TileMode::Clamp,
+    ramp: vec![[255, 0, 0, 255]; RAMP_WIDTH],
+  }
+}
+
+// A glyph batch over `atlas`, sampled linearly, under `policy`.
+fn glyphs(start: usize, count: usize, atlas: &Texture, policy: CoveragePolicy) -> Batch {
+  let texture = Some((name(atlas), TextureSampling::Linear));
+  Batch { start, count, texture, policy: Some(policy), gradient: None }
+}
+
+#[test]
+fn a_glyph_run_walks_into_glyph_instances() {
+  let atlas = test_texture(3, ISize::new(64, 32));
+  let color = [1.0, 0.5, 0.0, 0.5];
+  let policy = CoveragePolicy::default();
+  let mut b = DisplayListBuilder::new(None);
+  b.translate(10.0, 20.0).draw_glyphs(&atlas, &[glyph(2.0, 3.0, 16.0, color)], policy, None);
+  let out = walked_all(b);
+  assert_eq!(out.instances.len(), 1);
+  let i = &out.instances[0];
+  // The rect is the quad's dst in the op's space, under the state's map.
+  assert!(approx(i.rect, [2.0, 3.0, 4.0, 6.0]), "{:?}", i.rect);
+  assert!(approx(i.offset_kind_stroke, [10.0, 20.0, KIND_GLYPH, 0.0]), "{:?}", i.offset_kind_stroke);
+  // The uv is src over the atlas's size, v growing downward.
+  assert!(approx(i.tex, [0.25, 0.0, 20.0 / 64.0, 6.0 / 32.0]), "{:?}", i.tex);
+  // Straight alpha: the policy reads the color as the run gave it.
+  assert!(approx(i.color, color), "{:?}", i.color);
+  assert!(approx(i.clip, [0.0, 0.0, TARGET, TARGET]), "{:?}", i.clip);
+  assert_eq!(out.batches, vec![glyphs(0, 1, &atlas, policy)]);
+}
+
+#[test]
+fn glyph_runs_are_rejected_whole_and_per_quad() {
+  let atlas = test_texture(3, ISize::new(64, 32));
+  let policy = CoveragePolicy::default();
+  // A whole run outside the clip yields nothing, not even a batch.
+  let mut b = DisplayListBuilder::new(None);
+  b.clip_rect(&rect(0.0, 0.0, 20.0, 20.0), ClipOperation::Intersect).draw_glyphs(&atlas, &word(40.0), policy, None);
+  let out = walked_all(b);
+  assert!(out.instances.is_empty());
+  assert!(out.batches.is_empty());
+
+  // A run half inside keeps the quads inside: the first glyph spans
+  // 16..20, the second 21..25 past the clip's right edge at 20.
+  let mut b = DisplayListBuilder::new(None);
+  b.clip_rect(&rect(0.0, 0.0, 20.0, 20.0), ClipOperation::Intersect).draw_glyphs(&atlas, &word(16.0), policy, None);
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  assert!(approx(out[0].rect, [16.0, 10.0, 4.0, 6.0]), "{:?}", out[0].rect);
+
+  // A fully transparent quad is skipped; an empty run draws nothing.
+  let mut b = DisplayListBuilder::new(None);
+  let clear = glyph(0.0, 0.0, 0.0, [1.0, 1.0, 1.0, 0.0]);
+  b.draw_glyphs(&atlas, &[clear, glyph(5.0, 0.0, 4.0, [1.0; 4])], policy, None).draw_glyphs(&atlas, &[], policy, None);
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  assert_eq!(out[0].rect[0], 5.0);
+}
+
+#[test]
+fn glyph_runs_batch_with_the_shapes_between_them() {
+  let atlas = test_texture(3, ISize::new(64, 32));
+  let policy = CoveragePolicy::default();
+  let quad = rect(0.0, 0.0, 10.0, 10.0);
+  // A prose screen: rects between the lines, one atlas, one policy.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &opaque()).draw_glyphs(&atlas, &word(0.0), policy, None).draw_rect(&quad, &opaque()).draw_glyphs(
+    &atlas,
+    &word(20.0),
+    policy,
+    None,
+  );
+  let out = walked_all(b);
+  assert_eq!(out.instances.len(), 6);
+  assert_eq!(out.batches, vec![glyphs(0, 6, &atlas, policy)]);
+
+  // A policy change splits the run.
+  let naive = CoveragePolicy { mode: CoverageMode::Naive, ..policy };
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_glyphs(&atlas, &word(0.0), policy, None).draw_glyphs(&atlas, &word(20.0), naive, None);
+  let out = walked_all(b);
+  assert_eq!(out.batches, vec![glyphs(0, 2, &atlas, policy), glyphs(2, 2, &atlas, naive)]);
+}
+
+#[test]
+fn a_gradient_run_is_its_own_batch() {
+  let atlas = test_texture(3, ISize::new(64, 32));
+  let policy = CoveragePolicy::default();
+  let quad = rect(0.0, 0.0, 10.0, 10.0);
+  let g = gradient();
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_glyphs(&atlas, &word(0.0), policy, None)
+    .draw_glyphs(&atlas, &word(20.0), policy, Some(&g))
+    .draw_rect(&quad, &opaque())
+    .draw_glyphs(&atlas, &word(40.0), policy, None);
+  let out = walked_all(b);
+  assert_eq!(out.instances.len(), 7);
+  let graded = Batch { gradient: Some(Arc::new(g.clone())), ..glyphs(2, 2, &atlas, policy) };
+  // Split before and after: the rect after the gradient run opens a new
+  // batch, which the solid run then joins.
+  assert_eq!(out.batches, vec![glyphs(0, 2, &atlas, policy), graded, glyphs(4, 3, &atlas, policy)]);
+}
+
+#[test]
+fn an_image_between_glyph_runs_splits_them() {
+  let atlas = test_texture(3, ISize::new(64, 32));
+  let image = test_texture(4, ISize::new(10, 10));
+  let policy = CoveragePolicy::default();
+  let quad = rect(0.0, 0.0, 10.0, 10.0);
+  let linear = TextureSampling::Linear;
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_glyphs(&atlas, &word(0.0), policy, None).draw_texture_rect(&image, &quad, &quad, linear, None).draw_glyphs(
+    &atlas,
+    &word(20.0),
+    policy,
+    None,
+  );
+  let out = walked_all(b);
+  assert_eq!(
+    out.batches,
+    vec![glyphs(0, 2, &atlas, policy), shapes(2, 1, Some((name(&image), linear))), glyphs(3, 2, &atlas, policy)]
+  );
 }
