@@ -5,6 +5,7 @@
 use super::super::{Color, Matrix, Point, Rect, StrokeCap, TextureSampling};
 use super::record::DisplayList;
 use super::Texture;
+use euclid::default::Transform2D;
 
 /// A premultiplied sRGB color: (r*a, g*a, b*a, a). Blending is
 /// ONE, ONE_MINUS_SRC_ALPHA in sRGB with no linear step, the convention
@@ -15,6 +16,22 @@ pub(super) type Premultiplied = [f32; 4];
 /// carries and the blend expects.
 pub(super) fn premultiply(c: Color) -> Premultiplied {
   [c.red * c.alpha, c.green * c.alpha, c.blue * c.alpha, c.alpha]
+}
+
+/// Four corner radii in CSS order: top-left, top-right, bottom-right,
+/// bottom-left. Clamped at record time (`record::clamp_radii`) so adjacent
+/// corners never overlap; all zero is a plain rect.
+pub(super) type Radii = [f32; 4];
+
+/// An image a shape is filled with: the texel rect of `texture` mapped onto
+/// the draw's space by scale and translate (`to_texel` is that map's
+/// inverse, local to texel, resolved at record time), sampled `sampling`,
+/// clamped at the edges.
+#[derive(Clone)]
+pub(super) struct Image {
+  pub texture: Texture,
+  pub sampling: TextureSampling,
+  pub to_texel: Transform2D<f32>,
 }
 
 /// One executable op of a list, in recording order.
@@ -33,18 +50,30 @@ pub(super) enum Op {
   /// Intersect only: the difference op is stage 5 and is dropped at
   /// record time with a warning.
   ClipRect(Rect),
+  /// Intersect only, as `ClipRect`; `radii` in the rect's own space,
+  /// clamped. The walk applies it in device space, one deep.
+  ClipRoundedRect {
+    rect: Rect,
+    radii: Radii,
+  },
   /// `stroke` None fills; Some(width) strokes centered on the edge, with
-  /// miter joins (sharp corners).
+  /// miter joins (sharp corners) where a radius is zero. `radii` all zero
+  /// is a plain rect. `image` Some fills the coverage with the image's
+  /// texels, faded by `color`'s alpha.
   DrawRect {
     rect: Rect,
+    radii: Radii,
     color: Premultiplied,
     stroke: Option<f32>,
+    image: Option<Image>,
   },
   /// `stroke` None fills; Some(width) strokes centered on the ellipse.
+  /// `image` as for `DrawRect`.
   DrawOval {
     bounds: Rect,
     color: Premultiplied,
     stroke: Option<f32>,
+    image: Option<Image>,
   },
   /// A segment stroked `width` wide, centered on it, ended by `cap` at
   /// both ends. A width of zero or below draws nothing (the walk skips it).

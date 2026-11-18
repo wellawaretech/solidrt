@@ -5,12 +5,14 @@
 //! A builder records anvil's own executable ops (`ops`, recorded by
 //! `record`, beside the test-build log `super::oplog`); a draw walks them
 //! into instances (`walk`, pure) and draws those as instanced quads through
-//! one shape program (`exec`). Stage 1, step 3 draws the state ops, rect
-//! fills, texture quads and the axis-aligned intersect clip; a rounded rect
-//! draws as its plain rect. What does not draw yet (strokes, ovals, lines,
-//! paths, layers, the other clips, group opacity, color sources, filters,
-//! blend modes) warns once per process, naming itself and what happens
-//! instead.
+//! one shape program (`exec`). Stage 1 draws the state ops, rect and oval
+//! fills and strokes, lines, texture quads and the axis-aligned intersect
+//! clip. Stage 2, step 1 adds rounded rects (per-corner radii, fill,
+//! stroke and stroke-and-fill), an axis-aligned rounded clip, and rects,
+//! rounded rects and ovals filled with an image color source (the rounded
+//! `<texture>`). What does not draw yet (paths, layers, the other clips,
+//! group opacity, gradients, filters, blend modes) warns once per process,
+//! naming itself and what happens instead.
 //!
 //! An adopted GL name belongs to the renderer that adopted it. The handle
 //! is `Arc`-shared and crosses threads (a list is recorded on the UI thread

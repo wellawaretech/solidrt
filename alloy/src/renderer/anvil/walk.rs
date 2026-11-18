@@ -4,7 +4,7 @@
 //! is unit-tested without a context (`tests/anvil.rs`).
 
 use super::super::{ISize, Matrix, Point, Rect, Size, StrokeCap, TextureSampling};
-use super::ops::{Op, Premultiplied};
+use super::ops::{Image, Op, Premultiplied, Radii};
 use super::record::DisplayList;
 use super::Texture;
 use euclid::default::{Box2D, Transform2D};
@@ -25,16 +25,26 @@ pub(crate) struct Instance {
   pub offset_kind_stroke: [f32; 4],
   /// Premultiplied color.
   pub color: [f32; 4],
-  /// The texture rect in normalized texels: u0, v0, u1, v1 (texture kind),
-  /// or the line's cap and length in x and y (line kind). Unused, zero, for
-  /// rects and ovals.
+  /// The texture rect in normalized texels at the quad's corners: u0, v0,
+  /// u1, v1 (a textured instance), or the line's cap and length in x and y
+  /// (line kind). Unused, zero, for untextured rects and ovals.
   pub tex: [f32; 4],
   /// The clip in device pixels: x0, y0, x1, y1. Tested per fragment.
   pub clip: [f32; 4],
+  /// The shape's corner radii in local pixels, CSS order; zero for the
+  /// kinds without corners.
+  pub radii: [f32; 4],
+  /// The rounded clip in effect, in device pixels: x0, y0, x1, y1. Read
+  /// only when `rclip_radii` has a non-zero entry.
+  pub rclip: [f32; 4],
+  /// The rounded clip's corner radii in device pixels, CSS order; all zero
+  /// when no rounded clip is in effect.
+  pub rclip_radii: [f32; 4],
 }
 
-/// The floats of one instance: six vec4 attributes.
-pub(crate) const INSTANCE_FLOATS: usize = 24;
+/// The floats of one instance: nine vec4 attributes (GLES 3.0 guarantees
+/// sixteen).
+pub(crate) const INSTANCE_FLOATS: usize = 36;
 
 // The upload sends a slice of instances as its bytes: no padding, every
 // field an f32.
@@ -45,7 +55,22 @@ const _: () = assert!(std::mem::size_of::<Instance>() == INSTANCE_FLOATS * std::
 pub(crate) const KIND_RECT: f32 = 0.0;
 pub(crate) const KIND_OVAL: f32 = 1.0;
 pub(crate) const KIND_LINE: f32 = 2.0;
-pub(crate) const KIND_TEXTURE: f32 = 3.0;
+pub(crate) const KIND_ROUNDED_RECT: f32 = 4.0;
+/// Added to a shape kind when the instance samples its texture: coverage
+/// times texel. A texture quad is `KIND_RECT + KIND_TEXTURED`.
+pub(crate) const KIND_TEXTURED: f32 = 8.0;
+
+/// Local pixels a rounded rect's quad extends past its edge (and past a
+/// stroke's half width), so the quad's edge never coincides with the
+/// analytic edge on a straight run, where MSAA and the ramp would both
+/// attenuate. exec.rs's GLSL const of the same name must match.
+pub(crate) const ROUNDED_QUAD_PAD: f32 = 1.0;
+
+/// How far apart the two axis scales of a transform may be and still count
+/// as one scale for a rounded clip's device radii: float noise from
+/// composed transforms, not a real non-uniform scale (the value oplog.rs
+/// uses for the same question about stroke widths).
+const UNIFORM_SCALE_EPSILON: f32 = 1e-5;
 
 /// The line caps, as the instance carries them in `tex.x` (line kind). The
 /// `const int CAP_*` declarations in exec.rs's FRAGMENT_SRC must match them.
@@ -93,20 +118,34 @@ impl Walked {
   }
 }
 
-/// The transform and the clip in effect, as `Save` pushes them.
+/// The transform and the clips in effect, as `Save` pushes them.
 #[derive(Clone, Copy)]
 struct State {
   matrix: Matrix,
   /// Device pixels. Empty (max below min) once two clips are disjoint,
-  /// which rejects every draw until the enclosing restore.
+  /// which rejects every draw until the enclosing restore. A rounded clip
+  /// narrows it to its rect too, so rejection and the box test hold.
   clip: Box2D<f32>,
+  /// The one rounded clip in effect, if any; a further one only narrows
+  /// `clip`.
+  rounded: Option<RoundedClip>,
+}
+
+/// An axis-aligned rounded clip, in device pixels: its rect and its corner
+/// radii in CSS order, at least one of them non-zero.
+#[derive(Clone, Copy)]
+struct RoundedClip {
+  rect: Box2D<f32>,
+  radii: Radii,
 }
 
 /// The instances a list draws into a target of `size` device pixels, in
 /// painter's order, with every op's state applied: the transform stack,
 /// the device-space clip, and the rejection of draws that fall outside it.
 /// Every stage 1 shape draws: rect and oval fills and strokes, lines with
-/// their caps, and texture quads. A stroke expands its quad by half the
+/// their caps, and texture quads; stage 2 adds rounded rects, one rounded
+/// clip in device space, and shapes filled with an image. A stroke expands
+/// its quad by half the
 /// width on every side so it covers the band, which the fragment stage
 /// keeps from the quad's local coordinates. There is no hairline rule: a
 /// width of zero or below draws nothing, and a width under one device pixel
@@ -116,7 +155,7 @@ pub(crate) fn walk(list: &DisplayList, size: ISize) -> Walked {
   // finite (a highp float holds 1e7 but not INFINITY reliably), the
   // rejection culls offscreen content, and the rendertree's "infinite"
   // overflow extents (composite.rs, CLIP_INF) intersect down to the target.
-  let mut state = State { matrix: Matrix::identity(), clip: Box2D::from_size(size.to_f32()) };
+  let mut state = State { matrix: Matrix::identity(), clip: Box2D::from_size(size.to_f32()), rounded: None };
   let mut stack = Vec::new();
   let mut out = Walked::default();
   walk_ops(list.executable(), &mut state, &mut stack, &mut out);
@@ -142,18 +181,21 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, out: &mut Wal
       Op::Scale { x, y } => state.matrix = Matrix::scale(*x, *y, 1.0).then(&state.matrix),
       Op::Transform(m) => state.matrix = m.then(&state.matrix),
       Op::ClipRect(rect) => {
-        if !state.matrix.is_2d() {
-          unsupported!("a clip under a perspective transform", "the clip uses the affine part");
-        }
-        let m2 = state.matrix.to_2d();
+        let m2 = clip_map(state);
         if m2.m12 != 0.0 || m2.m21 != 0.0 {
           unsupported!("a clip under a rotated transform", "the clip is the rotated rect's bounding box");
         }
         let device = m2.outer_transformed_rect(rect).to_box2d();
         state.clip = state.clip.intersection_unchecked(&device);
       }
-      Op::DrawRect { rect, color, stroke } => push_shape(state, rect, *color, KIND_RECT, *stroke, out),
-      Op::DrawOval { bounds, color, stroke } => push_shape(state, bounds, *color, KIND_OVAL, *stroke, out),
+      Op::ClipRoundedRect { rect, radii } => clip_rounded(state, rect, radii),
+      Op::DrawRect { rect, radii, color, stroke, image } => {
+        let kind = if radii.iter().all(|r| *r == 0.0) { KIND_RECT } else { KIND_ROUNDED_RECT };
+        push_shape(state, rect, kind, *radii, *color, *stroke, image.as_ref(), out)
+      }
+      Op::DrawOval { bounds, color, stroke, image } => {
+        push_shape(state, bounds, KIND_OVAL, [0.0; 4], *color, *stroke, image.as_ref(), out)
+      }
       Op::DrawLine { from, to, color, width, cap } => push_line(state, *from, *to, *color, *width, *cap, out),
       Op::DrawTexture { texture, src, dst, sampling, alpha } => {
         push_texture(state, texture, src, dst, *sampling, *alpha, out)
@@ -171,6 +213,52 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, out: &mut Wal
         *state = saved;
       }
     }
+  }
+}
+
+// The current state's transform as the 2D map a clip uses. One call site
+// for both clip ops, so the perspective warning is one line.
+fn clip_map(state: &State) -> Transform2D<f32> {
+  if !state.matrix.is_2d() {
+    unsupported!("a clip under a perspective transform", "the clip uses the affine part");
+  }
+  state.matrix.to_2d()
+}
+
+// An intersect clip to `rect` with the corner `radii` (local, CSS order,
+// clamped). The device box of the rect narrows the clip box in every case;
+// the rounded corners ride on the instances as the one rounded clip, in
+// device space, when the transform keeps the rect axis-aligned and no
+// rounded clip is in effect yet. Otherwise the clip degrades to its box,
+// warned once per cause.
+fn clip_rounded(state: &mut State, rect: &Rect, radii: &Radii) {
+  let m2 = clip_map(state);
+  let device = m2.outer_transformed_rect(rect).to_box2d();
+  state.clip = state.clip.intersection_unchecked(&device);
+  if radii.iter().all(|r| *r == 0.0) {
+    // A plain rect: the box did it.
+    return;
+  }
+  if m2.m12 != 0.0 || m2.m21 != 0.0 {
+    unsupported!("a rounded clip under a rotated transform", "the clip is the rotated rect's bounding box");
+    return;
+  }
+  if state.rounded.is_some() {
+    unsupported!("nested rounded clips", "the inner one clips as a plain rect");
+    return;
+  }
+  let (sx, sy) = (m2.m11.abs(), m2.m22.abs());
+  if (sx - sy).abs() > UNIFORM_SCALE_EPSILON {
+    unsupported!("a rounded clip under a non-uniform scale", "the corners use the smaller scale");
+  }
+  let scale = sx.min(sy);
+  let [tl, tr, br, bl] = radii.map(|r| r * scale);
+  // A mirrored axis swaps the corners: local top-left lands on device
+  // top-right under a negative x scale, on bottom-left under a negative y.
+  let [tl, tr, br, bl] = if m2.m11 < 0.0 { [tr, tl, bl, br] } else { [tl, tr, br, bl] };
+  let device_radii = if m2.m22 < 0.0 { [bl, br, tr, tl] } else { [tl, tr, br, bl] };
+  if device_radii.iter().any(|r| *r > 0.0) {
+    state.rounded = Some(RoundedClip { rect: device, radii: device_radii });
   }
 }
 
@@ -200,28 +288,89 @@ fn placed_under(state: &State, m2: Transform2D<f32>, rect: &Rect) -> Option<[f32
   Some([clip.min.x, clip.min.y, clip.max.x, clip.max.y])
 }
 
-// A rect or an oval (`kind`) under the current state, filled or stroked
-// `stroke` wide centered on its edge, unless the clip rejects it or it is
-// fully transparent. A stroke's quad is the shape's box grown by half the
-// width on every side, so it covers the outer half of the band.
-fn push_shape(state: &State, rect: &Rect, color: Premultiplied, kind: f32, stroke: Option<f32>, out: &mut Walked) {
-  let quad = match stroke {
-    None => *rect,
-    Some(s) => rect.inflate(s * 0.5, s * 0.5),
+/// What one draw puts on its instance beside the state's map and clips.
+struct Quad {
+  /// The quad in local space.
+  rect: Rect,
+  /// A `KIND_*`, with `KIND_TEXTURED` added when it samples.
+  kind: f32,
+  /// The stroke width; 0 fills.
+  stroke: f32,
+  color: Premultiplied,
+  tex: [f32; 4],
+  /// The shape's corner radii; zero for the kinds without corners.
+  radii: Radii,
+}
+
+// The one place an instance's fields are set: `quad` under the 2D map `m`
+// with the device clip `clip` (from `placed`), and the state's rounded
+// clip, zeros when none is in effect.
+fn instance(state: &State, m: &Transform2D<f32>, clip: [f32; 4], quad: Quad) -> Instance {
+  let (rclip, rclip_radii) = match state.rounded {
+    Some(r) => ([r.rect.min.x, r.rect.min.y, r.rect.max.x, r.rect.max.y], r.radii),
+    None => ([0.0; 4], [0.0; 4]),
   };
+  let rect = quad.rect;
+  Instance {
+    rect: [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height],
+    linear: [m.m11, m.m12, m.m21, m.m22],
+    offset_kind_stroke: [m.m31, m.m32, quad.kind, quad.stroke],
+    color: quad.color,
+    tex: quad.tex,
+    clip,
+    radii: quad.radii,
+    rclip,
+    rclip_radii,
+  }
+}
+
+// A rect, a rounded rect or an oval (`kind`) under the current state,
+// filled or stroked `stroke` wide centered on its edge, unless the clip
+// rejects it or it is fully transparent. A stroke's quad is the shape's box
+// grown by half the width on every side, so it covers the outer half of
+// the band; a rounded rect's grows by `ROUNDED_QUAD_PAD` more, so its
+// analytic edge never lies on the quad's. With `image` the instance
+// samples it: coverage times texel, faded by the color's alpha (the paint's
+// RGB is not used for an image, as Impeller did not use it), the uv the
+// quad's corners through the image's inverse map.
+#[allow(clippy::too_many_arguments)]
+fn push_shape(
+  state: &State,
+  rect: &Rect,
+  kind: f32,
+  radii: Radii,
+  color: Premultiplied,
+  stroke: Option<f32>,
+  image: Option<&Image>,
+  out: &mut Walked,
+) {
+  let s = stroke.unwrap_or(0.0);
+  let pad = if kind == KIND_ROUNDED_RECT { ROUNDED_QUAD_PAD } else { 0.0 };
+  let grow = s * 0.5 + pad;
+  let quad = rect.inflate(grow, grow);
   let Some((m2, clip)) = placed(state, &quad) else { return };
   if color[3] == 0.0 {
     return;
   }
-  let instance = Instance {
-    rect: [quad.origin.x, quad.origin.y, quad.size.width, quad.size.height],
-    linear: [m2.m11, m2.m12, m2.m21, m2.m22],
-    offset_kind_stroke: [m2.m31, m2.m32, kind, stroke.unwrap_or(0.0)],
-    color,
-    tex: [0.0; 4],
-    clip,
+  let (kind, color, tex, texture) = match image {
+    None => (kind, color, [0.0; 4], None),
+    Some(image) => {
+      // A texture's size is never zero (see `push_texture`).
+      let size = image.texture.size();
+      let (w, h) = (size.width as f32, size.height as f32);
+      let t0 = image.to_texel.transform_point(quad.min());
+      let t1 = image.to_texel.transform_point(quad.max());
+      // The texel is premultiplied: the alpha in all four channels fades it.
+      let faded = [color[3]; 4];
+      (
+        kind + KIND_TEXTURED,
+        faded,
+        [t0.x / w, t0.y / h, t1.x / w, t1.y / h],
+        Some((image.texture.name(), image.sampling)),
+      )
+    }
   };
-  out.push(instance, None);
+  out.push(instance(state, &m2, clip, Quad { rect: quad, kind, stroke: s, color, tex, radii }), texture);
 }
 
 // A segment stroked `width` wide under the current state, unless it has no
@@ -254,15 +403,11 @@ fn push_line(
   let line_map = Transform2D::rotation(Angle::radians(dy.atan2(dx))).then(&Transform2D::translation(from.x, from.y));
   let m = line_map.then(&state_map(state));
   let Some(clip) = placed_under(state, m, &local) else { return };
-  let instance = Instance {
-    rect: [local.origin.x, local.origin.y, local.size.width, local.size.height],
-    linear: [m.m11, m.m12, m.m21, m.m22],
-    offset_kind_stroke: [m.m31, m.m32, KIND_LINE, width],
-    color,
-    tex: [cap_value(cap), len, 0.0, 0.0],
-    clip,
-  };
-  out.push(instance, None);
+  let tex = [cap_value(cap), len, 0.0, 0.0];
+  out.push(
+    instance(state, &m, clip, Quad { rect: local, kind: KIND_LINE, stroke: width, color, tex, radii: [0.0; 4] }),
+    None,
+  );
 }
 
 // The cap as the instance carries it.
@@ -296,15 +441,16 @@ fn push_texture(
   // is at least one texel.
   let size = texture.size();
   let (w, h) = (size.width as f32, size.height as f32);
-  let instance = Instance {
-    rect: [dst.origin.x, dst.origin.y, dst.size.width, dst.size.height],
-    linear: [m2.m11, m2.m12, m2.m21, m2.m22],
-    offset_kind_stroke: [m2.m31, m2.m32, KIND_TEXTURE, 0.0],
+  let quad = Quad {
+    rect: *dst,
+    // A rect fill's coverage is 1 inside the quad: the texel as it is.
+    kind: KIND_RECT + KIND_TEXTURED,
+    stroke: 0.0,
     // The texel is premultiplied, so scaling all four channels by the
     // alpha fades it as a whole (the fragment stage multiplies).
     color: [alpha; 4],
     tex: [src.min_x() / w, src.min_y() / h, src.max_x() / w, src.max_y() / h],
-    clip,
+    radii: [0.0; 4],
   };
-  out.push(instance, Some((texture.name(), sampling)));
+  out.push(instance(state, &m2, clip, quad), Some((texture.name(), sampling)));
 }

@@ -3,17 +3,20 @@
 // shape program draws, with no GL context. The transform stack, the
 // device-space clip, the rejection of draws outside it, nested lists and
 // the premultiplied color, the texture quads and their batches are all
-// decided here, before any GL work. The deferred deletion queue a texture
-// handle drops onto is tested here too, with no renderer.
+// decided here, before any GL work, as are the rounded rects' radii and
+// quads, the rounded clip in device space and the image-filled shapes'
+// uv. The deferred deletion queue a texture handle drops onto is tested
+// here too, with no renderer.
 
 use crate::renderer::anvil::walk::{
-  walk, Batch, Instance, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, KIND_LINE, KIND_OVAL, KIND_RECT, KIND_TEXTURE,
+  walk, Batch, Instance, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, KIND_LINE, KIND_OVAL, KIND_RECT, KIND_ROUNDED_RECT,
+  KIND_TEXTURED, ROUNDED_QUAD_PAD,
 };
 use crate::renderer::anvil::{test_texture, DeletionQueue};
 use crate::renderer::prelude::*;
 use crate::renderer::{
-  ClipOperation, Color, DisplayList, DisplayListBuilder, DrawStyle, ISize, Paint, Point, Rect, Size, StrokeCap,
-  Texture, TextureSampling,
+  ClipOperation, Color, ColorSource, DisplayList, DisplayListBuilder, DrawStyle, ISize, Matrix, Paint, Point, Rect,
+  RoundingRadii, Size, StrokeCap, Texture, TextureSampling, TileMode,
 };
 use std::sync::Arc;
 
@@ -81,6 +84,18 @@ fn mapped(instance: &Instance, x: f32, y: f32) -> [f32; 2] {
   let [m11, m12, m21, m22] = instance.linear;
   let [tx, ty] = offset(instance);
   [x * m11 + y * m21 + tx, x * m12 + y * m22 + ty]
+}
+
+fn rounded(b: &mut DisplayListBuilder, r: Rect, radii: [f32; 4], paint: &Paint) {
+  b.draw_rounded_rect(&r, &RoundingRadii::circular(radii), paint);
+}
+
+// An opaque paint filled with `t`, sampled `sampling`, clamped, under the
+// image transform `transform` (texel to local).
+fn image_paint(t: &Texture, sampling: TextureSampling, transform: Option<&Matrix>) -> Paint {
+  let mut paint = opaque();
+  paint.set_color_source(&ColorSource::image(t, TileMode::Clamp, TileMode::Clamp, sampling, transform));
+  paint
 }
 
 fn line(from: (f32, f32), to: (f32, f32), paint: &Paint) -> Vec<Instance> {
@@ -219,7 +234,7 @@ fn a_texture_quad_maps_src_onto_dst() {
   assert!(approx(i.rect, [10.0, 10.0, 40.0, 20.0]), "{:?}", i.rect);
   assert!(approx(i.tex, [0.25, 0.25, 0.75, 0.75]), "{:?}", i.tex);
   assert!(approx(i.color, [1.0; 4]), "{:?}", i.color);
-  assert_eq!(i.offset_kind_stroke[2], KIND_TEXTURE);
+  assert_eq!(i.offset_kind_stroke[2], KIND_RECT + KIND_TEXTURED);
   assert_eq!(i.offset_kind_stroke[3], 0.0);
   assert_eq!(out.batches, vec![Batch { start: 0, count: 1, texture: Some((name(&t), TextureSampling::Linear)) }]);
 }
@@ -271,19 +286,22 @@ fn batches_split_at_texture_changes() {
   let c = test_texture(2, ISize::new(10, 10));
   let quad = rect(0.0, 0.0, 10.0, 10.0);
   let linear = TextureSampling::Linear;
+  // A rect filled with `a` as its image source joins `a`'s run.
+  let a_filled = image_paint(&a, linear, None);
   let mut b = DisplayListBuilder::new(None);
   b.draw_rect(&quad, &opaque())
     .draw_texture_rect(&a, &quad, &quad, linear, None)
     .draw_texture_rect(&a, &quad, &quad, linear, None)
+    .draw_rect(&quad, &a_filled)
     .draw_texture_rect(&c, &quad, &quad, linear, None)
     .draw_rect(&quad, &opaque());
   let out = walked_all(b);
-  assert_eq!(out.instances.len(), 5);
+  assert_eq!(out.instances.len(), 6);
   assert_eq!(
     out.batches,
     vec![
-      Batch { start: 0, count: 3, texture: Some((name(&a), linear)) },
-      Batch { start: 3, count: 2, texture: Some((name(&c), linear)) },
+      Batch { start: 0, count: 4, texture: Some((name(&a), linear)) },
+      Batch { start: 4, count: 2, texture: Some((name(&c), linear)) },
     ]
   );
 
@@ -437,4 +455,175 @@ fn a_line_under_the_state_transform_composes() {
   let out = walked(b);
   assert_eq!(out.len(), 1);
   assert_eq!(offset(&out[0]), [50.0, 0.0]);
+}
+
+#[test]
+fn a_rounded_rect_carries_its_radii() {
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, rect(10.0, 10.0, 20.0, 20.0), [1.0, 2.0, 3.0, 4.0], &opaque());
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  let i = &out[0];
+  assert_eq!(i.offset_kind_stroke[2], KIND_ROUNDED_RECT);
+  assert!(approx(i.radii, [1.0, 2.0, 3.0, 4.0]), "{:?}", i.radii);
+  let pad = ROUNDED_QUAD_PAD;
+  assert!(approx(i.rect, [10.0 - pad, 10.0 - pad, 20.0 + 2.0 * pad, 20.0 + 2.0 * pad]), "{:?}", i.rect);
+  // No rounded clip is in effect.
+  assert_eq!(i.rclip_radii, [0.0; 4]);
+}
+
+#[test]
+fn zero_radii_are_a_plain_rect() {
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, rect(10.0, 10.0, 20.0, 20.0), [0.0; 4], &opaque());
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  assert_eq!(out[0].offset_kind_stroke[2], KIND_RECT);
+  assert!(approx(out[0].rect, [10.0, 10.0, 20.0, 20.0]), "{:?}", out[0].rect);
+  assert_eq!(out[0].radii, [0.0; 4]);
+}
+
+#[test]
+fn radii_are_clamped_as_css_clamps_them() {
+  // 20 x 10 with 8 at every corner: the short sides ask for 10 / 16, so
+  // every radius scales to 5.
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, rect(0.0, 0.0, 20.0, 10.0), [8.0; 4], &opaque());
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  assert!(approx(out[0].radii, [5.0; 4]), "{:?}", out[0].radii);
+
+  // A negative radius reads as zero; the others are left alone.
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, rect(0.0, 0.0, 20.0, 10.0), [-3.0, 2.0, 2.0, 2.0], &opaque());
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  assert!(approx(out[0].radii, [0.0, 2.0, 2.0, 2.0]), "{:?}", out[0].radii);
+}
+
+#[test]
+fn a_rounded_stroke_pads_its_quad() {
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, rect(10.0, 10.0, 20.0, 20.0), [3.0; 4], &stroked(4.0));
+  let out = walked(b);
+  assert_eq!(out.len(), STROKE_INSTANCES);
+  let i = &out[0];
+  let grow = 2.0 + ROUNDED_QUAD_PAD;
+  assert!(approx(i.rect, [10.0 - grow, 10.0 - grow, 20.0 + 2.0 * grow, 20.0 + 2.0 * grow]), "{:?}", i.rect);
+  assert_eq!(i.offset_kind_stroke[2], KIND_ROUNDED_RECT);
+  assert_eq!(i.offset_kind_stroke[3], 4.0);
+  assert!(approx(i.radii, [3.0; 4]), "{:?}", i.radii);
+}
+
+#[test]
+fn stroke_and_fill_grows_the_radii() {
+  let mut both = opaque();
+  both.set_draw_style(DrawStyle::StrokeAndFill).set_stroke_width(2.0);
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, rect(10.0, 10.0, 20.0, 20.0), [4.0, 0.0, 4.0, 0.0], &both);
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  let i = &out[0];
+  assert_eq!(i.offset_kind_stroke[2], KIND_ROUNDED_RECT);
+  assert_eq!(i.offset_kind_stroke[3], 0.0);
+  let grow = 1.0 + ROUNDED_QUAD_PAD;
+  assert!(approx(i.rect, [10.0 - grow, 10.0 - grow, 20.0 + 2.0 * grow, 20.0 + 2.0 * grow]), "{:?}", i.rect);
+  // A sharp corner stays sharp: the miter join's outer corner.
+  assert!(approx(i.radii, [5.0, 0.0, 5.0, 0.0]), "{:?}", i.radii);
+}
+
+#[test]
+fn a_rounded_clip_lands_in_device_space() {
+  let mut b = DisplayListBuilder::new(None);
+  b.translate(10.0, 10.0).scale(2.0, 2.0).clip_rounded_rect(
+    &rect(0.0, 0.0, 20.0, 10.0),
+    &RoundingRadii::circular([3.0; 4]),
+    ClipOperation::Intersect,
+  );
+  b.draw_rect(&rect(-10.0, -10.0, TARGET, TARGET), &opaque());
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  let i = &out[0];
+  assert!(approx(i.rclip, [10.0, 10.0, 50.0, 30.0]), "{:?}", i.rclip);
+  assert!(approx(i.rclip_radii, [6.0; 4]), "{:?}", i.rclip_radii);
+  // The box clips to the rect too.
+  assert!(approx(i.clip, [10.0, 10.0, 50.0, 30.0]), "{:?}", i.clip);
+}
+
+#[test]
+fn a_nested_rounded_clip_degrades_to_a_box() {
+  let mut b = DisplayListBuilder::new(None);
+  b.clip_rounded_rect(&rect(10.0, 10.0, 60.0, 60.0), &RoundingRadii::circular([5.0; 4]), ClipOperation::Intersect)
+    .clip_rounded_rect(&rect(20.0, 20.0, 20.0, 20.0), &RoundingRadii::circular([2.0; 4]), ClipOperation::Intersect)
+    .draw_rect(&rect(0.0, 0.0, TARGET, TARGET), &opaque());
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  let i = &out[0];
+  assert!(approx(i.clip, [20.0, 20.0, 40.0, 40.0]), "{:?}", i.clip);
+  assert!(approx(i.rclip, [10.0, 10.0, 70.0, 70.0]), "{:?}", i.rclip);
+  assert!(approx(i.rclip_radii, [5.0; 4]), "{:?}", i.rclip_radii);
+}
+
+#[test]
+fn a_rounded_clip_under_rotation_is_a_box() {
+  let rotation = Matrix::rotation(0.0, 0.0, 1.0, euclid::Angle::degrees(45.0));
+  let mut b = DisplayListBuilder::new(None);
+  b.translate(50.0, 50.0)
+    .transform(&rotation)
+    .clip_rounded_rect(&rect(-10.0, -10.0, 20.0, 20.0), &RoundingRadii::circular([4.0; 4]), ClipOperation::Intersect)
+    .draw_rect(&rect(-50.0, -50.0, TARGET, TARGET), &opaque());
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  let i = &out[0];
+  assert_eq!(i.rclip_radii, [0.0; 4]);
+  // The rotated square's bounding box: half its diagonal from the center.
+  let reach = 10.0 * std::f32::consts::SQRT_2;
+  let want = [50.0 - reach, 50.0 - reach, 50.0 + reach, 50.0 + reach];
+  assert!(i.clip.iter().zip(want.iter()).all(|(a, b)| (a - b).abs() < MAPPED_EPS), "{:?}", i.clip);
+}
+
+#[test]
+fn an_image_source_textures_the_shape() {
+  // Texel (0, 0) at local (10, 10), two local pixels per texel.
+  let t = test_texture(7, ISize::new(200, 100));
+  let to_local = Matrix::new_2d(2.0, 0.0, 0.0, 2.0, 10.0, 10.0);
+  let paint = image_paint(&t, TextureSampling::Linear, Some(&to_local));
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, rect(10.0, 10.0, 40.0, 20.0), [4.0; 4], &paint);
+  let out = walked_all(b);
+  assert_eq!(out.instances.len(), 1);
+  let i = &out.instances[0];
+  assert_eq!(i.offset_kind_stroke[2], KIND_ROUNDED_RECT + KIND_TEXTURED);
+  // The padded quad's corners through the inverse map, over the size.
+  let pad = ROUNDED_QUAD_PAD;
+  let want = [(-pad / 2.0) / 200.0, (-pad / 2.0) / 100.0, (20.0 + pad / 2.0) / 200.0, (10.0 + pad / 2.0) / 100.0];
+  assert!(approx(i.tex, want), "{:?}", i.tex);
+  assert!(approx(i.color, [1.0; 4]), "{:?}", i.color);
+  assert_eq!(out.batches, vec![Batch { start: 0, count: 1, texture: Some((name(&t), TextureSampling::Linear)) }]);
+
+  // A plain rect with the same paint samples it too.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&rect(10.0, 10.0, 40.0, 20.0), &paint);
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  assert_eq!(out[0].offset_kind_stroke[2], KIND_RECT + KIND_TEXTURED);
+  assert!(approx(out[0].tex, [0.0, 0.0, 0.1, 0.1]), "{:?}", out[0].tex);
+}
+
+#[test]
+fn a_rotated_image_source_draws_the_color() {
+  let t = test_texture(7, ISize::new(200, 100));
+  let rotated =
+    Matrix::rotation(0.0, 0.0, 1.0, euclid::Angle::degrees(30.0)).then_translate(euclid::vec3(10.0, 10.0, 0.0));
+  let mut paint = image_paint(&t, TextureSampling::Linear, Some(&rotated));
+  paint.set_color(Color::new_srgba(1.0, 0.5, 0.0, 0.5));
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, rect(10.0, 10.0, 40.0, 20.0), [4.0; 4], &paint);
+  let out = walked_all(b);
+  assert_eq!(out.instances.len(), 1);
+  let i = &out.instances[0];
+  assert_eq!(i.offset_kind_stroke[2], KIND_ROUNDED_RECT);
+  assert!(approx(i.color, [0.5, 0.25, 0.0, 0.5]), "{:?}", i.color);
+  assert_eq!(i.tex, [0.0; 4]);
+  assert_eq!(out.batches, vec![Batch { start: 0, count: 1, texture: None }]);
 }

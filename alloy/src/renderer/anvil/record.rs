@@ -13,7 +13,7 @@ use super::super::{
   BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, Matrix, Point, Rect, RoundingRadii, StrokeCap,
   StrokeJoin, TextureSampling, TileMode,
 };
-use super::ops::{premultiply, Op, Premultiplied};
+use super::ops::{premultiply, Image, Op, Premultiplied, Radii};
 use super::Texture;
 use std::sync::Arc;
 
@@ -56,24 +56,28 @@ impl DisplayListBuilder {
   }
 }
 
-/// What stage 1 draws of a paint: its color, premultiplied, and the
-/// stroke width when the style strokes. A color source, a blend mode other
-/// than source-over and the filters were warned about when they were set.
-/// A stroke-and-fill covers the union of the fill and the stroke once: for
-/// the convex shapes here that is the fill outset by half the stroke
-/// width, pushed as one op (`fill` takes the outset), so a translucent
-/// color is not blended twice where the stroke's inner half would lie
-/// over the fill. A stroke of zero or negative width pushes nothing.
+/// What anvil draws of a paint: its color, premultiplied, and the stroke
+/// width when the style strokes (an image source rides beside it, see
+/// `image_of`). A gradient source, a blend mode other than source-over and
+/// the filters were warned about when they were set. A stroke-and-fill
+/// covers the union of the fill and the stroke once: for the convex shapes
+/// here that is the fill outset by half the stroke width, its non-zero
+/// corner radii grown by the same (`fill` takes the outset and the grown
+/// radii), pushed as one op, so a translucent color is not blended twice
+/// where the stroke's inner half would lie over the fill. A stroke of zero
+/// or negative width pushes nothing. `radii` are the shape's, clamped;
+/// zero for the shapes without corners.
 fn shape_ops(
   paint: &Paint,
-  fill: impl Fn(Premultiplied, f32) -> Op,
+  radii: Radii,
+  fill: impl Fn(Premultiplied, f32, Radii) -> Op,
   stroke: impl Fn(Premultiplied, f32) -> Op,
   ops: &mut Vec<Op>,
 ) {
   let color = premultiply(paint.color);
   let strokes = paint.stroke_width > 0.0;
   match paint.draw_style {
-    DrawStyle::Fill => ops.push(fill(color, 0.0)),
+    DrawStyle::Fill => ops.push(fill(color, 0.0, radii)),
     DrawStyle::Stroke => {
       if strokes {
         ops.push(stroke(color, paint.stroke_width));
@@ -81,9 +85,62 @@ fn shape_ops(
     }
     DrawStyle::StrokeAndFill => {
       let outset = if strokes { paint.stroke_width * 0.5 } else { 0.0 };
-      ops.push(fill(color, outset));
+      ops.push(fill(color, outset, grow_radii(radii, outset)));
     }
   }
+}
+
+/// `radii` for the shape outset by `outset`: a rounded corner's radius
+/// grows by the outset (the outer edge of a centered stroke), a sharp
+/// corner stays sharp (a miter join's outer corner).
+fn grow_radii(radii: Radii, outset: f32) -> Radii {
+  radii.map(|r| if r > 0.0 { r + outset } else { r })
+}
+
+/// `radii` as anvil draws them on `rect`, clamped as CSS clamps
+/// border-radius: negative radii to zero, then every radius scaled by one
+/// factor so that adjacent corners never overlap along a side, which keeps
+/// the rounded-box distance valid. The rendertree does not clamp its draw
+/// radii, so this is the one place. A corner whose x and y radii differ is
+/// warned once and uses its x radius.
+fn clamp_radii(rect: &Rect, radii: &RoundingRadii) -> Radii {
+  let corners = [radii.top_left, radii.top_right, radii.bottom_right, radii.bottom_left];
+  if corners.iter().any(|c| c.x != c.y) {
+    unsupported!("elliptical corner radii", "the corner uses its x radius");
+  }
+  let [tl, tr, br, bl] = corners.map(|c| c.x.max(0.0));
+  let (w, h) = (rect.size.width.max(0.0), rect.size.height.max(0.0));
+  // One factor for all four corners, the smallest any side asks for; a
+  // side whose two radii are zero asks for none.
+  let factor = [(w, tl + tr), (w, br + bl), (h, tl + bl), (h, tr + br)]
+    .iter()
+    .filter(|(_, sum)| *sum > 0.0)
+    .fold(1.0f32, |f, (side, sum)| f.min(side / sum));
+  [tl, tr, br, bl].map(|r| r * factor)
+}
+
+/// The image a paint's color source fills a shape with: Some for an image
+/// source whose transform (identity when none) is scale plus translate,
+/// which is what the rounded `<texture>` builds; any other transform is
+/// warned once and the shape draws its color. A tile mode other than clamp
+/// is warned once and clamps. A gradient source is None here; its warning
+/// fired when it was set.
+fn image_of(paint: &Paint) -> Option<Image> {
+  let Some(ColorSource::Image { texture, tile_x, tile_y, sampling, transform }) = &paint.color_source else {
+    return None;
+  };
+  let to_draw = transform.unwrap_or_else(Matrix::identity);
+  let to_texel =
+    if to_draw.is_2d() && to_draw.m12 == 0.0 && to_draw.m21 == 0.0 { to_draw.to_2d().inverse() } else { None };
+  // A rotated, skewed, perspective or singular map: one warning for all.
+  let Some(to_texel) = to_texel else {
+    unsupported!("an image source under a rotated transform", "the paint's color is used instead");
+    return None;
+  };
+  if *tile_x != TileMode::Clamp || *tile_y != TileMode::Clamp {
+    unsupported!("an image source tile mode other than clamp", "the source clamps");
+  }
+  Some(Image { texture: texture.clone(), sampling: *sampling, to_texel })
 }
 
 /// A rect's stroke turns its corners with a miter join (sharp corners)
@@ -99,8 +156,8 @@ fn warn_non_miter_join(paint: &Paint) {
   }
 }
 
-// The arguments of the ops stage 1 does not draw (the layers, the oval
-// clip, the radii, the path) are read only by the test log.
+// The arguments of the ops anvil does not draw yet (the layers, the oval
+// clip, the path) are read only by the test log.
 #[cfg_attr(not(test), allow(unused_variables))]
 impl contract::DisplayListBuilder for DisplayListBuilder {
   fn new(_cull: Option<&Rect>) -> Self {
@@ -193,8 +250,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   fn clip_rounded_rect(&mut self, rect: &Rect, radii: &RoundingRadii, op: ClipOperation) -> &mut Self {
     match op {
       ClipOperation::Intersect => {
-        unsupported!("clip_rounded_rect", "the clip is the plain rect");
-        self.ops.push(Op::ClipRect(*rect));
+        self.ops.push(Op::ClipRoundedRect { rect: *rect, radii: clamp_radii(rect, radii) });
       }
       ClipOperation::Difference => Self::clip_difference_unsupported(),
     }
@@ -205,6 +261,9 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
 
   fn draw_line(&mut self, from: Point, to: Point, paint: &Paint) -> &mut Self {
     // A line always strokes, whatever the paint's draw style.
+    if matches!(paint.color_source, Some(ColorSource::Image { .. })) {
+      unsupported!("an image source on a line", "the line draws the paint's color");
+    }
     self.ops.push(Op::DrawLine {
       from,
       to,
@@ -220,10 +279,18 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   fn draw_rect(&mut self, rect: &Rect, paint: &Paint) -> &mut Self {
     warn_non_miter_join(paint);
     let rect = *rect;
+    let image = image_of(paint);
     shape_ops(
       paint,
-      |color, outset| Op::DrawRect { rect: rect.inflate(outset, outset), color, stroke: None },
-      |color, width| Op::DrawRect { rect, color, stroke: Some(width) },
+      [0.0; 4],
+      |color, outset, radii| Op::DrawRect {
+        rect: rect.inflate(outset, outset),
+        radii,
+        color,
+        stroke: None,
+        image: image.clone(),
+      },
+      |color, width| Op::DrawRect { rect, radii: [0.0; 4], color, stroke: Some(width), image: image.clone() },
       &mut self.ops,
     );
     #[cfg(test)]
@@ -233,10 +300,17 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
 
   fn draw_oval(&mut self, bounds: &Rect, paint: &Paint) -> &mut Self {
     let bounds = *bounds;
+    let image = image_of(paint);
     shape_ops(
       paint,
-      |color, outset| Op::DrawOval { bounds: bounds.inflate(outset, outset), color, stroke: None },
-      |color, width| Op::DrawOval { bounds, color, stroke: Some(width) },
+      [0.0; 4],
+      |color, outset, _| Op::DrawOval {
+        bounds: bounds.inflate(outset, outset),
+        color,
+        stroke: None,
+        image: image.clone(),
+      },
+      |color, width| Op::DrawOval { bounds, color, stroke: Some(width), image: image.clone() },
       &mut self.ops,
     );
     #[cfg(test)]
@@ -245,13 +319,22 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   }
 
   fn draw_rounded_rect(&mut self, rect: &Rect, radii: &RoundingRadii, paint: &Paint) -> &mut Self {
-    unsupported!("draw_rounded_rect", "the rect draws with square corners");
+    // A miter join still turns a corner whose radius is zero.
     warn_non_miter_join(paint);
     let rect = *rect;
+    let clamped = clamp_radii(&rect, radii);
+    let image = image_of(paint);
     shape_ops(
       paint,
-      |color, outset| Op::DrawRect { rect: rect.inflate(outset, outset), color, stroke: None },
-      |color, width| Op::DrawRect { rect, color, stroke: Some(width) },
+      clamped,
+      |color, outset, radii| Op::DrawRect {
+        rect: rect.inflate(outset, outset),
+        radii,
+        color,
+        stroke: None,
+        image: image.clone(),
+      },
+      |color, width| Op::DrawRect { rect, radii: clamped, color, stroke: Some(width), image: image.clone() },
       &mut self.ops,
     );
     #[cfg(test)]
@@ -294,12 +377,11 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   }
 }
 
-/// How a draw paints, as plain data; the recording reads what stage 1
-/// draws of it (the color, the draw style, the stroke width and cap, and
-/// the join, to warn when it is not miter).
+/// How a draw paints, as plain data; the recording reads what anvil draws
+/// of it (the color, an image source, the draw style, the stroke width and
+/// cap, and the join, to warn when it is not miter).
 pub struct Paint {
   pub(super) color: Color,
-  #[allow(dead_code)] // read by the executor from stage 3 (gradients, images)
   pub(super) color_source: Option<ColorSource>,
   pub(super) draw_style: DrawStyle,
   #[allow(dead_code)] // read by the executor once it blends other than source-over
@@ -353,7 +435,10 @@ impl contract::Paint for Paint {
   }
 
   fn set_color_source(&mut self, source: &ColorSource) -> &mut Self {
-    unsupported!("a paint color source", "the paint's color is used instead");
+    // An image source draws (`image_of`); the gradients wait for stage 3.
+    if !matches!(source, ColorSource::Image { .. }) {
+      unsupported!("a gradient color source", "the paint's color is used instead");
+    }
     self.color_source = Some(source.clone());
     #[cfg(test)]
     {
@@ -450,9 +535,9 @@ impl contract::Paint for Paint {
   }
 }
 
-// The sources and filters below hold their constructor arguments; they are
-// read by the executor from stage 3 (gradients, images) and stage 6
-// (filters), and by nothing before.
+// The sources and filters below hold their constructor arguments; an image
+// source is read at record time (`image_of`), the gradients from stage 3
+// and the filters from stage 6, and by nothing before.
 
 /// What a paint draws with in place of its color.
 #[allow(dead_code)]
