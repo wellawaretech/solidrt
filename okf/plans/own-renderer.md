@@ -527,3 +527,318 @@ where `a` and `b` are two PNGs or two `sol render` output directories
 - `alloy/examples/pixel_snap.rs` passes its coverage assertions under
   anvil; its snapshot re-make count at 1.5x fails identically on main, a
   stale expectation of the example.
+
+### Stage 2: rounded shapes (2026-11-18)
+
+A rounded rect is its own kind in the shape program (`KIND_ROUNDED_RECT`
+in `alloy/src/renderer/anvil/walk.rs`): fill and stroke band are both
+analytic over the per-quadrant rounded-box distance, and the plain rect
+keeps its exact on-grid path, which `alloy/examples/pixel_snap.rs`
+checks. The quad is padded one local pixel past the edge
+(`ROUNDED_QUAD_PAD`) so a straight run is not attenuated by MSAA and the
+ramp both. Radii are circular, in CSS order, clamped at record time as
+CSS clamps them (the rendertree does not clamp for drawing); an
+elliptical corner warns once and draws with its x radius; a
+stroke-and-fill grows its non-zero radii by the outset. The axis-aligned
+`clip_rounded_rect` rides on the instance in device space, one deep (the
+device rect and its device radii, eight floats); a nested, a rotated or a
+non-uniformly scaled rounded clip degrades to the box with one warning
+each, and a mirrored transform swaps the corner radii. Any rect, rounded
+rect or oval whose paint has an image color source draws its coverage
+times the texel (the `KIND_TEXTURED` flag, the uv from the inverse image
+transform at the padded quad's corners; scale-plus-translate maps and
+clamp tiling only, the rest warns and draws the solid color); the plain
+texture quad is the same path with a rect. The instance is 36 floats in
+nine vec4 attributes.
+
+Two edge-quality decisions followed the first renders. The coverage ramp
+divided the distance by `fwidth`, an L1 norm, so a diagonal edge ramped
+over about 1.4 device pixels and read softer than the quad edges' 4x
+MSAA; the gradient's length makes every ramp one pixel wide, and
+axis-aligned edges are unchanged. A rounded shape under a rounded clip of
+the same radius (the overflow-hidden card) multiplied two ramps on the
+shared edge and showed a light rim, 0.6 where main has 1.0; the clip now
+composes as the minimum, which is the per-sample AND a stencil clip
+gives on a shared edge (0.87 at that pixel, the single ramp against four
+samples remains) and errs toward opaque by at most one pixel where two
+independent edges cross. Impeller clipped rounded rects through the
+stencil under MSAA; anvil's per-instance clip is hard-edged only where it
+is a plain box.
+
+| example | after stage 1 | rounded shapes | the two edge fixes | class |
+|---|---|---|---|---|
+| recurse | 114640 | 17294 (1452 at tolerance 16) | 15065 | rim ramps of 25 nested rounded squares |
+| drag | 3438 | 7034 (1177 at tolerance 16) | 5808 | the rotated rounded outlines' rims |
+| spin | 4244 | 3180 | 3180 | the stroke-and-fill outline main never painted |
+| hello-world | 0 | 0 | 0 | identical |
+| text-flow | 657 | 657 | 657 | unchanged |
+| audio | 106 | 106 | 106 | unchanged |
+
+Drag's raw count rose because the straight runs of its rotated rounded
+rects moved from MSAA to the ramp; at tolerance 16 it fell. Known
+limits: under a shrinking transform (a scale below 0.5) the pad covers
+less than the ramp's outer half pixel and a sliver of double attenuation
+returns (the pad should scale by the inverse axis scale); the rounded-box
+distance is continuous only while each radius is at most half the box,
+and CSS clamping admits an asymmetric pair (one corner at the full side,
+its neighbour at one pixel) that would show a seam on the axis; no render
+hits it.
+
+### Stage 2: text straight into the frame (2026-11-18)
+
+**The decision.** Recordings hold atlas cell placements, not glyph keys.
+The text atlas takes a new GL texture name on every repack (an eviction
+repack now goes through the same replace-at-id path a growth always
+took), so a retained recording keeps drawing from the texture it
+recorded against until it re-records, and the old name is freed by the
+deletion queue when its last handle drops. A move (a growth, an
+eviction, a font invalidation) bumps the atlas generation, which damages
+the text nodes and requests a frame. Keys were rejected because they
+need a raster-side cell table, a hash lookup per glyph per frame on the
+TV's weak thread, and a miss path that breaks the complete-frame rule.
+
+**The contract** gained one method, `draw_glyphs`: a run of quads from a
+mask atlas under a coverage policy, with an optional gradient, the quads
+and the gradient passed as shared `Arc`s so nothing is copied per frame.
+The glyph vocabulary stays in `alloy/src/gpu/glyphs.rs` until stage 7
+moves it. A `<text>` records its runs under a save, a translate to the
+layer origin and a scale by the inverse raster density, so at rest a
+glyph samples the atlas texels the layer sampled, once; the scale policy
+(the raster density, the stretch while a scale moves, the hinted remake
+at rest) is unchanged. The glyph pass and `Text::rasterize` stay for the
+stats overlay's own text.
+
+**In anvil** a glyph instance is `KIND_GLYPH` (slot 3; the rounded rect
+is 4): the atlas's red channel as coverage, straight-alpha color
+premultiplied in the fragment stage, the glyph pass's five coverage
+modes and the gradient ramp (four tile modes) ported, the ramp texture
+on a second unit rewritten per gradient batch. Batches key on the atlas,
+the policy and the gradient; a gradient run is its own batch.
+`alloy/examples/glyph_run.rs` draws a word through it and matches the
+old glyph pass within 3 levels per channel in every mode. A glyph's
+alpha multiplies the rounded clip's coverage (a texel under a stencil
+clip scales by the sample fraction), where a shape composes with the
+minimum.
+
+**Renders.** hello-world is identical to main on all 60 frames.
+text-flow's 13 rounding pixels became 7 (one fewer 8-bit rounding: no
+rgba8 layer stands between the atlas and the frame). drag's rotated
+labels differ by up to 50 levels because the coverage policy now applies
+to bilinearly sampled atlas coverage per device pixel instead of to layer
+pixels that were then resampled: one resampling fewer, the intended end
+state. Text ink past the layer box is no longer clipped (the layer
+clipped at its box plus one line of slack; CSS overflow is visible; no
+example relied on it). Under atlas churn (a scratch app stepping its
+font size every frame for 120 frames) no stale cell was ever drawn; the
+atlas grew from 1024 square to 16384 by 8192 R8 under the device cap of
+32768 (the pre-existing growth policy; eviction never happens on the
+desktop), and for one frame the old texture lived beside the new one. A
+static label differed by at most 2 levels after a growth past 8192 wide
+(cell re-make or phase noise). An animating app's frames vary run to run
+by up to 2 levels because the glyph worker lands cells at frame
+boundaries on its own thread; `sol render --settle` is deterministic
+because rest implies every cell has landed.
+
+**The per-text run cache.** Without the layer's currency check every
+build re-ran the per-glyph quad work; on `probes/text-prose-bench.tsx`
+(40 lines, no repaint boundary, every frame rebuilt) the UI thread's
+`paintMs` read 0.74 ms under anvil against 0.05 under main. A text now
+keeps its recorded runs with the atlas generation and, while the layer's
+old currency key and the generation hold, re-records them by reference
+with no per-glyph work; a moving scale reuses the kept runs under the
+composite transform; the run styles and line runs are built only when
+the record is remade. The 120-frame raster release sweep is gone: the
+record owns no texture, and a released text inside a standing recording
+would have pinned an old atlas, since a later move never damaged it. An
+eviction counts as a move (the packer repacks after evicting even when
+it still answers full), so a cached text that no longer touches its
+cells is refreshed with everything else and settles within two frames.
+
+| prose bench, desktop, 60 fps | paintMs | UI p50 | p95 | cpu % |
+|---|---|---|---|---|
+| anvil, before the cache | 0.74 | 0.81 | 0.93 | 7.6 |
+| anvil, with the cache | 0.09 | 0.13 | 0.17 | 3.4 |
+| main | 0.05 | 0.12 | 0.14 | 4.6 |
+
+Pixel output did not change with the cache (hello-world 0, text-flow
+587, drag 7411, spin 3060 differing pixels against main).
+`paintOps.draws` reads 38 for the bench under all three; `textLayers`
+reads 0 under both renderers and tells nothing now (stage 7 retires or
+renames it); `/gpu` lists resources, not per-frame draw calls, which is
+why the measurement added its own counters.
+
+**The glyph fill cost.** On the TV (Mali-T860, 1920x1080, scale 2) with
+the window patch off, so every frame is a full render, the prose bench's
+1646 glyph instances in one draw call cost 53.8 ms of GPU per frame
+(186 frames per 10 s, 313 missed) where the dense mover's 801 rects cost
+9.1 ms and Impeller's 27 text-layer quads cost 6.2 ms. On-device
+experiments settled the cause: a dedicated minimal glyph program (five
+attributes, two varyings, the atlas sample times the alpha,
+premultiply, no discard, no branches) draws the same frame in 7.4 ms,
+identical at mediump and highp; the same plus the full DirectWrite
+coverage math in 12.0 ms. About 0.85 million glyph fragments a frame:
+some 53 ns each through the one shape program, fifty times under the
+fill rate; under 2 ns through the dedicated one; the DirectWrite math
+adds about 5 ns. The cause is the shape program as the Midgard compiler
+sees it, nine flat vec4 and four smooth varyings read per fragment, the
+kind branches, a discard in both paths and the derivatives in
+`footprint()`, which set the fragment thread occupancy; the glyphs are
+the one draw with the area to show it. Glyph batches therefore draw
+through their own program, which clips by multiplication and never
+discards, with the coverage modes and the gradient ramp as one GLSL text
+both programs share; a glyph run no longer shares a batch with shapes.
+After it the prose bench's full frame costs 31.8 ms on the TV (the text
+itself 7.6 ms, locked at 50 on its own; the remaining 24 ms is the
+bench's full-window background and chrome through the shape program,
+whose per-fragment cost on this GPU is the next thing to trim: a plain
+rect fill pays for discards and derivatives it never uses), and the
+desktop prose screen draws in two to three draw calls, text and the
+shapes between it alternating.
+
+### Stage 2: the measurement (2026-11-18)
+
+**Counters.** `Renderer::draw` returns a `DrawReport` (instances written,
+instanced draw calls issued); the raster thread sums the reports into
+two cumulative counters beside the pass counters, and `/stats` reports
+`rendererInstances` and `rendererDrawCalls` at the top level and
+`rendererInstancesPerFrame` and `rendererDrawCallsPerFrame` in the
+window block; the overlay shows an INST/DC line. Under the window's
+partial repaint a frame's figure counts the patch the frame drew (a
+mover is two quads in one call); the whole screen is read as the
+cumulative delta around a root `/snapshot`, or on a multisampled window
+such as the TV's with `SOLIDRT_WINDOW_PATCH=off`.
+
+**Desktop** (release clients, 60 Hz, 1280x720, scale 1; main is the
+reference client of `4922b6f4`; three reads of 10 s each, the mover
+probes at clock scale 6, muted).
+
+| probe | client | frames / 10 s | missed | paintMs | GPU ms / frame | inst / frame | dc / frame | cpu % |
+|---|---|---|---|---|---|---|---|---|
+| dense, 800 rects | anvil | 598 | 0 | 0.01 | 0.6 to 2.1 (low), 14.5 to 15.0 (high) | 546 | 1.0 | 3.8 |
+| dense | main | 600 | 0 | 0.01 | 0.5 to 1.6 (low), 12.6 to 15.3 (high) | - | - | 16.5 |
+| sparse, 50 rects | anvil | 599 | 0 | 0.01 | 0.6 to 2.6 (low), 5.2 to 5.5 (high) | 30 | 1.0 | 3.1 |
+| sparse | main | 599 | 0 | 0.01 | 0.9 to 1.1 (low), 14.8 to 15.7 (high) | - | - | 4.1 |
+| prose bench | anvil | 600 | 0 | 0.04 | 15.3 | 2.0 | 1.0 | 3.4 |
+| prose bench | main | 599 | 0 | 0.05 | 15.2 | - | - | 4.8 |
+| grid of 36 textures | anvil | 599 | 0 | 0.03 | 1.0 to 1.1 | 29.8 | 28.8 | 3.4 |
+| grid | main | 600 | 0 | 0.04 | 1.0 to 1.1 | - | - | 4.4 |
+
+The desktop's GPU timer falls into two groups for both clients: a high
+group near the 60 Hz period, where the timer counts a wait for a free
+window buffer rather than draw work, and a low group that is the work;
+the prose bench reads 15.3 under both because its `onFrame` demands
+every refresh. The mover rows measure a patch of about 1100 by 300
+pixels, not the 20 px mover: the partial-repaint route builds the patch
+as the union of this frame's damage with the ring of the last age-1
+frames' damage, and on these probes the union reaches from the mover's
+older left edge to the window's right edge and from the top of the
+window to the mover's bottom, under both renderers (the stats' second
+`damagePx` reads about 494,000 under main too). The 546 and 30 instances
+per frame are the grid rects inside it; a regression test pins that the
+walk itself rejects everything outside a patch clip. Why the union
+reaches the top-right corner is an open partial-repaint question
+(`alloy/src/raster/repaint.rs`, the route's fold of the ring; a fold of
+an empty rect with a non-zero origin is the suspect), not an anvil one.
+
+Whole screen, as the cumulative delta around a root `/snapshot`: the
+dense probe is 801 quads in 1 draw call, the sparse one 51 in 1, the
+prose bench about 2212 in 1, the grid one call per texture (36). The
+UI thread is unchanged on every probe (`paintMs`, p95, 0 missed
+presents), and anvil's process CPU is below main's everywhere.
+
+**The scissor.** Impeller set a GL scissor from the list's clip, so a
+patch frame paid GPU only inside the patch; anvil applied the clip per
+fragment and cleared and drew the whole MSAA target. The walk now
+reports the union of the emitted instances' device clip boxes and the
+executor scissors its clear and its draws to it, leaving the scissor
+test off afterwards as the callers expect. On the desktop the dense
+probe's patch frame fell from 11 to 16 ms of GPU to main's level (0.6 to
+2.1); on the TV it stayed at 8.9 ms against 8.7 before, since there the
+fragments of the rects inside the patch are the cost, not the area
+outside it (the full frame reads 9.1).
+
+**Sampler array.** Not needed on the desktop: the 36-texture grid costs
+anvil 1.0 to 1.1 ms of GPU and 1.1 to 1.5 ms of frame work, the same as
+main, at one draw call per texture. The TV threshold the plan set (more
+than 2 ms of raster time per frame on the grid) was not read on the TV;
+the option stays open with its design ready.
+
+**TV** (Philips TPM171E, Mali-T860, 1920x1080 at 50 Hz, armeabi-v7a,
+the branch client of `64e51022`, cadence hold off, window patch on, 100 s
+idle then three reads of 10 s). The device's installed client of
+2026-11-12 predates `flux:haptics` in core and could not load today's
+bundles, so main's figures are the recorded ones read on this TV with
+these probes (2026-10-20 and 2026-10-08).
+
+| probe | main (recorded) | required | anvil, three reads | GPU ms | inst / frame | dc / frame |
+|---|---|---|---|---|---|---|
+| dense mover, 800 rects, clock x5 | 264 / 10 s | 495 to 500, 0 missed | 496, 499, 495; 0 missed | 8.7 | 665 | 1.02 |
+| sparse mover, clock x5 | 500 / 10 s | 500, 0 missed | 500, 500, 500; 0 missed | 3.4 | 40 | 1.01 |
+| prose bench | 50 locked, GPU 6.2 ms | 500, 0 missed, dc at most 3 | 500, 500, 500; 0 missed | 0.37 | 2 | 1.01 |
+
+The dense probe's `frameWorkMeanMs` sits around the 20 ms budget (17.8
+to 24.6) while every refresh presents, since the figure includes the
+raster thread's wait on the GPU; the raster thread uses 18 to 21 % of one
+core, the UI thread 10 to 13 %. The prose bench's cold field
+(`POST /debug?name=cold`) peaks at 9.3 ms of frame work where Impeller's
+27 layers peaked at 83 ms. With the window patch off (every frame a full
+render) the dense probe holds 499 frames at 9.1 ms of GPU with 801
+instances in one call, and the prose bench drops to 186 frames at 53.8 ms
+with 1646 instances in one call: the glyph fill cost above. No drift
+across the three reads of any probe; no same-day main APK was needed
+(the dense probe is locked, not in the 27 to 49 fps band).
+
+Tool defects met on the TV: `sol android --census` matches no
+SurfaceFlinger layer for `com.solidrt.player.dev` although it lists the
+layer; `cadenceHold` reads 1 in `/stats` although `SOLIDRT_CADENCE_HOLD=off`
+was passed in `sol_env` (throughput was read from the frame counts);
+this Android 8's `top -H` prints only the main thread, so the per-thread
+CPU came from `/proc`. The TV's dev client is the branch's from
+2026-11-18 on.
+
+### What stage 2 taught
+
+- A wide fragment program costs every fragment on Midgard. The one shape
+  program read nine flat vec4 and four smooth varyings per fragment,
+  branched on the kind, discarded in both paths and took derivatives;
+  on the Mali-T860 that put a glyph fragment at about 53 ns where a
+  dedicated program spends under 2 ns, fifty times under the fill rate,
+  and only the glyphs had the area to show it. Glyph batches now have
+  their own program; trimming the shape program's varyings is the next
+  read (its full frame of 801 rects is 9.1 ms against a floor near 6).
+- A per-fragment clip is not a scissor. Impeller scissored its GL work
+  to the list's clip; anvil cleared and drew the whole MSAA target per
+  patch frame until the walk reported the union of its clip boxes. The
+  desktop paid for it, the TV did not: there the fragments inside the
+  patch are the cost.
+- The partial-repaint patch on the mover probes is a third of the window
+  under both renderers; the route's union of the damage ring is the
+  place to look, and the mover rows of any measurement measure that
+  patch.
+- Under partial repaint the per-frame instance and draw-call figures
+  count the patch; the whole screen is the cumulative delta around a
+  root snapshot, or a patch-off run on a multisampled window.
+- Stage 1's removal of Impeller missed the bare library name in the
+  Android activity's loader list (`getLibraries()` in
+  `lattice/android/app/src/main/java/com/solidrt/app/SolidRTActivity.java`):
+  SDL's loader stopped at the missing `libimpeller.so`, `libmain.so`
+  never loaded and the first JNI call killed the process. A grep for
+  the crate name does not find a library name in Java.
+- Gradle packages every library under `dist/android/<abi>/`, so a
+  `libimpeller.so` staged by an earlier main build rode into the
+  branch's first APK until it was deleted.
+- A network `adb install` to the TV can stall for good; `adb
+  kill-server` then `adb connect`, and a `timeout` per install, make the
+  retry safe.
+- The TV's installed client is only as new as its last install: a
+  client that predates a core module (`flux:haptics`) shows an error
+  screen on today's bundles, and a same-day baseline of main on the
+  device needs main's own APK.
+- Recordings over atlas placements are sound as long as the atlas never
+  reuses a GL name while a recording may still draw from it; a new name
+  per repack plus a generation that damages the text nodes gives that
+  with no per-glyph work on the raster thread.
+- The desktop's GPU timer counts a wait for a free window buffer on
+  frames that demand every refresh; reads split into a high group near
+  the frame period and a low group that is the work, and only the low
+  group compares renderers.

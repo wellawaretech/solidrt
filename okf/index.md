@@ -117,6 +117,15 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   could not build; the embed moves to a program crate (runtime/, the stock
   program and the shape of every custom one), the CLI package ships the
   bundles, and a custom runtime embeds them from its node_modules.
+- **[Replace Impeller with an own renderer, in stages](plans/own-renderer.md)** [2026-11-17]
+  An own renderer (anvil) behind the renderer seam, built on a branch that
+  deletes Impeller outright, staged so minimal apps run on it first (rects,
+  ovals, lines, texture quads, text through its layers, transforms, rect
+  clips) and the binary size is measured against main at the first commit;
+  then batching and rounded shapes, paths, shaders drawn straight into the
+  frame, full clips, layers and effects, and parity. The end state draws text
+  and generator shaders straight into the frame and keeps offscreen passes
+  only where a pass reads its own input.
 - **[Spatial audio - emitter and listener nodes on the spatial core](plans/spatial-audio-emitters.md)** [2026-08-30]
   A playback bound to a spatial node (or a fixed position) and heard by a
   listener (a node, or a target's view - the camera), the core writing its
