@@ -69,9 +69,9 @@ const SOURCE_HEADER: &str = "#version 300 es\nprecision highp float;\n";
 // target, window and texture alike. Window lists are drawn unflipped and
 // offscreen lists arrive pre-flipped (raster::offscreen::flip_for_fbo),
 // which is what put texel row 0 at the top of a sampled image under
-// Impeller; gl/glyphs.rs and gl/program.rs describe the same row 0 is top
-// convention for the passes, and the plan (okf/plans/own-renderer.md)
-// pins it. Texture sampling reads vUv with v = 0 at texel row 0, no flip.
+// Impeller; gl/program.rs describes the same row 0 is top convention for
+// alloy's passes, and the plan (okf/plans/own-renderer.md) pins it.
+// Texture sampling reads vUv with v = 0 at texel row 0, no flip.
 //
 // The vertex stage the programs share: the instance attributes they all
 // read, the outputs their fragment stages read, and the quad's placement.
@@ -376,8 +376,9 @@ void main() {
 // pixels and the atlas's red channel carries the coverage. Its color is
 // straight alpha, the quad's own or the gradient ramp's at the parameter
 // its position in the op's space maps to, and the batch's coverage policy
-// turns the coverage into color before the fragment premultiplies; the
-// glyph pass's (gl/glyphs.rs) recipe, ported. A program of its own, so a
+// turns the coverage into color before the fragment premultiplies, as
+// `draw_glyphs` asks (contract.rs) and `CoverageMode` defines each mode
+// (glyphs.rs). A program of its own, so a
 // glyph fragment carries none of the shape program's varyings or kind
 // branches: it clips by multiplying, never discards, and reads the
 // derivatives only under a rounded clip.

@@ -1,22 +1,24 @@
-//! The text layer's draw vocabulary: the quads a `<text>` hands the glyph
-//! pass, and the policy that turns a mask's coverage into color. Plain
-//! data shared by the UI thread (which builds the quads from the text
-//! atlas's placements) and the raster thread (which draws them).
+//! The glyph vocabulary: the quads a `<text>` records through
+//! `draw_glyphs`, the gradient a run may take its color from, and the
+//! policy that turns a mask's coverage into color. Plain data shared by the
+//! UI thread (which builds the quads from the text atlas's placements and
+//! records them) and the raster thread (where the glyph program draws
+//! them).
 
 use crate::TileMode;
 
-/// One glyph of a text layer: where its cell lands in the layer, which
-/// atlas texels it samples, and the run's color.
+/// One glyph of a run: where its cell lands, which atlas texels it
+/// samples, and the run's color.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlyphQuad {
-  /// The quad in layer pixels: x, y from the layer's top-left corner (y
-  /// down), width, height. Whole pixels: the subpixel part of the pen
-  /// position is in the cell's phase.
+  /// The quad in the op's space (a text's layer pixels): x, y from its
+  /// top-left corner (y down), width, height. Whole pixels: the subpixel
+  /// part of the pen position is in the cell's phase.
   pub dst: [f32; 4],
   /// The cell in atlas texels: x, y, width, height.
   pub src: [f32; 4],
-  /// The run's color with straight alpha in 0..1; the pass premultiplies.
-  /// In a gradient group only the alpha counts.
+  /// The run's color with straight alpha in 0..1; the glyph program
+  /// premultiplies. In a gradient run only the alpha counts.
   pub color: [f32; 4],
 }
 
@@ -118,8 +120,8 @@ impl CoveragePolicy {
 /// positions along 0..1, the steps 8-bit output can show.
 pub const RAMP_WIDTH: usize = 256;
 
-/// The shape of a text run's gradient; the discriminants are the pass's
-/// `uGradient` values (0 is no gradient).
+/// The shape of a text run's gradient; the discriminants are the glyph
+/// program's `uGradient` values (0 is no gradient).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GradientKind {
   /// The parameter is the mapped x.
@@ -142,14 +144,6 @@ pub struct GlyphGradient {
   /// What the gradient does past its ends.
   pub tile: TileMode,
   /// The stop colors sampled along the parameter: `RAMP_WIDTH` texels of
-  /// straight-alpha sRGB rgba8, the ramp texture the pass samples.
+  /// straight-alpha sRGB rgba8, the ramp texture the glyph program samples.
   pub ramp: Vec<[u8; 4]>,
-}
-
-/// The quads of a text layer that share one paint: their own solid colors,
-/// or `gradient` evaluated per fragment (a quad's alpha still applies).
-#[derive(Clone, Debug, PartialEq)]
-pub struct GlyphGroup {
-  pub quads: Vec<GlyphQuad>,
-  pub gradient: Option<GlyphGradient>,
 }

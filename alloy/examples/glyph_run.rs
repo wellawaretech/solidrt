@@ -5,8 +5,7 @@
 //! read back and compared pixel for pixel with the same cells composited on
 //! the CPU - which checks the orientation, the atlas mapping and the
 //! premultiplied blend at once. Then a half-transparent red run over it,
-//! a gradient run whose color follows the ramp across the word, and every
-//! coverage mode against the glyph pass (gl/glyphs.rs) it was ported from.
+//! and a gradient run whose color follows the ramp across the word.
 //!
 //! Run: cargo run -p alloy --example glyph_run
 
@@ -16,9 +15,7 @@ use alloy::rendertree::text::glyphs::{
   AtlasPacker, CellKind, CellRequest, Fallback, FontSet, GlyphAtlas, Hint, Rasterizer, ShapeStyle, ShapedGlyphs,
 };
 use alloy::rendertree::FontPayload;
-use alloy::{
-  CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, SamplerState, RAMP_WIDTH,
-};
+use alloy::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, SamplerState, RAMP_WIDTH};
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -35,17 +32,14 @@ const RED_PEN_X: f32 = 48.0;
 // The GPU blends in 8 bits per quad while the CPU composite stays in
 // floats, so overlapping runs may differ by a rounding step or two.
 const TOLERANCE: i32 = 3;
-// The sRGB-ish gamma the remap modes were tuned around, and DirectWrite's
-// Windows default.
+// The sRGB-ish gamma the remap modes were tuned around.
 const REMAP_GAMMA: f32 = 2.2;
-const DWRITE_GAMMA: f32 = 1.8;
 // The frame is drawn multisampled, as a window frame is.
 const AA: bool = true;
 // A pixel counts as inked for the gradient read when its alpha is at least
 // this (the solid interior of a stem, not an edge).
 const INK_MIN: u8 = 200;
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const HALF_RED: [f32; 4] = [1.0, 0.0, 0.0, 0.5];
 
 fn word_quads(
@@ -137,7 +131,7 @@ impl Report {
 
 // `runs` recorded as one draw_glyphs each into a frame, drawn offscreen
 // and read back, rows top first.
-fn draw_runs(ctx: &alloy::Context, atlas: &Texture, runs: &[GlyphGroup], policy: CoveragePolicy) -> Vec<u8> {
+fn draw_runs(ctx: &alloy::Context, atlas: &Texture, runs: &[Run], policy: CoveragePolicy) -> Vec<u8> {
   let mut b = DisplayListBuilder::new(None);
   for run in runs {
     // The contract takes the run shared, as a text keeps it.
@@ -150,8 +144,15 @@ fn draw_runs(ctx: &alloy::Context, atlas: &Texture, runs: &[GlyphGroup], policy:
   ctx.read_texture(&frame, FRAME_W, FRAME_H).expect("frame readback")
 }
 
-fn solid(quads: Vec<GlyphQuad>) -> GlyphGroup {
-  GlyphGroup { quads, gradient: None }
+// One run's quads and the gradient they take their color from: what a
+// `<text>` records per paint.
+struct Run {
+  quads: Vec<GlyphQuad>,
+  gradient: Option<GlyphGradient>,
+}
+
+fn solid(quads: Vec<GlyphQuad>) -> Run {
+  Run { quads, gradient: None }
 }
 
 fn main() {
@@ -239,7 +240,7 @@ fn main() {
       tile: TileMode::Clamp,
       ramp,
     };
-    let graded = GlyphGroup { quads: white.clone(), gradient: Some(gradient) };
+    let graded = Run { quads: white.clone(), gradient: Some(gradient) };
     let graded_pixels = draw_runs(&ctx, &handle, std::slice::from_ref(&graded), naive);
     let alphas = |pixels: &[u8]| pixels.chunks(4).map(|p| p[3]).collect::<Vec<u8>>();
     report.check(
@@ -255,32 +256,6 @@ fn main() {
       "a gradient run reads red to blue across the word",
       (l[0] <= l[2] || r[2] <= r[0]).then(|| format!("first stem {l:?}, last stem {r:?}")),
     );
-
-    // Every coverage mode, white text and black, against the glyph pass:
-    // its layer is drawn at the same pixels, so the two agree texel for
-    // texel within the blend's rounding. A gradient run under the default
-    // policy too.
-    let black = word_quads(&shaped, &atlas, PEN_X, BASELINE_Y, BLACK);
-    let modes = [
-      ("naive", CoverageMode::Naive, REMAP_GAMMA),
-      ("linear light", CoverageMode::LinearLight, REMAP_GAMMA),
-      ("polarity remap", CoverageMode::PolarityRemap, REMAP_GAMMA),
-      ("polarity linear", CoverageMode::PolarityLinear, REMAP_GAMMA),
-      ("directwrite", CoverageMode::DirectWrite, DWRITE_GAMMA),
-    ];
-    let mut cases = Vec::new();
-    for (label, mode, gamma) in modes {
-      let policy = CoveragePolicy { mode, gamma, ..CoveragePolicy::default() };
-      cases.push((format!("white, {label}"), solid(white.clone()), policy));
-      cases.push((format!("black, {label}"), solid(black.clone()), policy));
-    }
-    cases.push(("gradient, directwrite".to_string(), graded, CoveragePolicy::default()));
-    for (label, run, policy) in cases {
-      let ours = draw_runs(&ctx, &handle, std::slice::from_ref(&run), policy);
-      let layer = ctx.rasterize_glyphs(vec![run], atlas.texture(), FRAME_W, FRAME_H, policy, None).expect("glyph pass");
-      let theirs = ctx.read_texture(&layer, FRAME_W, FRAME_H).expect("layer readback");
-      report.check(&format!("{label} matches the glyph pass"), mismatch(&ours, theirs.iter().map(|&v| v as i32)));
-    }
 
     atlas.destroy(&ctx);
     if !report.failed.is_empty() {

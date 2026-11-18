@@ -571,8 +571,8 @@ fn cap_value(cap: StrokeCap) -> f32 {
 
 // The texel rect `src` of `texture` mapped onto `dst` under the current
 // state, faded by `alpha`, unless the clip rejects it or it is fully
-// transparent. Texel row 0 is the top of `src` (the glyph pass writes its
-// layers that way, snapshots are pre-flipped for it), so v is not flipped:
+// transparent. Texel row 0 is the top of `src` (offscreen lists are
+// pre-flipped for it, a text layer's among them), so v is not flipped:
 // the top edge of `dst` samples `src.min_y()`.
 fn push_texture(
   state: &State,

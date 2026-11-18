@@ -47,7 +47,7 @@ mod renderer;
 mod vocab;
 
 pub use contract::Target;
-pub use glyphs::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
+pub use glyphs::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use renderer::{
   ColorFilter, ColorSource, DisplayList, DisplayListBuilder, ImageFilter, MaskFilter, Paint, Path, PathBuilder,
   Renderer, Texture,

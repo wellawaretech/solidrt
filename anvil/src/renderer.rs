@@ -30,7 +30,7 @@ macro_rules! unsupported {
     static WARNED: AtomicBool = AtomicBool::new(false);
     // A plain load once warned: the macro stays on ops recorded per frame.
     if !WARNED.load(Ordering::Relaxed) && !WARNED.swap(true, Ordering::Relaxed) {
-      log::warn!(concat!("[alloy] Renderer: ", $op, " is not supported yet; ", $effect));
+      log::warn!(concat!("[anvil] Renderer: ", $op, " is not supported yet; ", $effect));
     }
   }};
 }

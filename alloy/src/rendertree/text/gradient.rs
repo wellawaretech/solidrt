@@ -1,7 +1,7 @@
-// A run's gradient paint resolved for the glyph pass: the layer's pixels
-// mapped to the gradient's parameter, and its stops sampled into a ramp
-// (see gpu::GlyphGradient). What Impeller's color source did per paragraph
-// draw, the pass does per fragment (gl/glyphs.rs), so gradient text draws
+// A run's gradient paint resolved for anvil's glyph program: the layer's
+// pixels mapped to the gradient's parameter, and its stops sampled into a
+// ramp (see gpu::GlyphGradient). What Impeller's color source did per
+// paragraph draw, the program does per fragment, so gradient text draws
 // as a gradient and not in a solid stand-in color. Coordinates: a box
 // gradient resolves against the text's own box (its wrap width by its
 // lines' height, at the text origin); an absolute one's coordinates are
@@ -86,7 +86,7 @@ fn ramp(stops: &[GradientStop]) -> Option<Vec<[u8; 4]>> {
   Some(out)
 }
 
-/// `gradient` as the glyph pass evaluates it over a layer whose pixel
+/// `gradient` as the glyph program evaluates it over a layer whose pixel
 /// (0, 0) is `box_origin` in text-local pixels, `scale` layer pixels per
 /// logical pixel, the text's own box being `content` at the text origin.
 /// None when the gradient cannot be evaluated (no stops, a degenerate

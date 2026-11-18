@@ -13,7 +13,6 @@ mod buffer;
 mod context;
 mod draw;
 mod entry;
-mod glyphs;
 mod pass;
 mod program;
 mod readback;
@@ -34,7 +33,6 @@ pub(crate) use draw::{
   render_display_list_to_window,
 };
 pub(crate) use entry::EntryBuffers;
-pub(crate) use glyphs::{render_glyphs, GlyphRig};
 pub(crate) use pass::{
   composite_program_over_window, copy_program_into_window, render_program_to_fbo, render_program_to_window,
   take_vertices, PassInput, TILE_CLEAR_FRAGMENT,

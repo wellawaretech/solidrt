@@ -492,8 +492,6 @@ pub(crate) struct RasterState {
   // a per-call allocate/release cycle is exactly what ANGLE/D3D11 handles
   // poorly (see the OffscreenRig doc in gl/rig.rs).
   offscreen_rig: gl::OffscreenRig,
-  // The glyph pass's program and quads texture (see gl::glyphs).
-  glyph_rig: gl::GlyphRig,
   // Size of the last drawn frame, so geometry transitions are logged exactly
   // once. Diagnostic only (resize-race visibility).
   last_size: ISize,
@@ -827,7 +825,6 @@ impl RasterState {
     }
     let pass_timer = PassTimer::new(&gl);
     stats.timer_queries.store(pass_timer.supported(), Ordering::Relaxed);
-    let glyph_rig = gl::GlyphRig::new(&gl);
     let robustness = gl::Robustness::load(&gl, &*binding);
     let device = binding.device_probe();
     RasterState {
@@ -844,7 +841,6 @@ impl RasterState {
       pass_timer,
       limits,
       offscreen_rig: gl::OffscreenRig::new(),
-      glyph_rig,
       last_size: ISize::new(0, 0),
       sink,
       window_target: None,
@@ -1328,10 +1324,6 @@ impl RasterState {
           RasterCmd::RasterizeDlInto { dl, texture, width, height, aa, reply: tx } => {
             self.flush_dirty();
             reply(tx, self.rasterize_into(&dl, &texture, width, height, aa));
-          }
-          RasterCmd::RasterizeGlyphs { groups, atlas, width, height, policy, into, reply: tx } => {
-            self.flush_dirty();
-            reply(tx, self.rasterize_glyphs(&groups, atlas, width, height, policy, into));
           }
           RasterCmd::RasterizeDlShaded { dl, width, height, aa, shader, source, output, history, reply: tx } => {
             self.flush_dirty();

@@ -53,35 +53,6 @@ impl RasterState {
     Ok(())
   }
 
-  /// Draw a text layer (see `RasterCmd::RasterizeGlyphs`): the atlas is a
-  /// registry texture, bound through its declared sampler.
-  pub(super) fn rasterize_glyphs(
-    &mut self,
-    groups: &[crate::gpu::GlyphGroup],
-    atlas: u64,
-    width: u32,
-    height: u32,
-    policy: crate::gpu::CoveragePolicy,
-    into: Option<Texture>,
-  ) -> Result<Texture, String> {
-    let gpu = self.textures.get(&atlas).ok_or_else(|| format!("text atlas texture {atlas} not found"))?;
-    let sampler = self.samplers.get(gpu.sampler);
-    let atlas_size = (gpu.width, gpu.height);
-    gl::render_glyphs(
-      &self.gl,
-      &mut self.renderer,
-      &mut self.glyph_rig,
-      groups,
-      gpu.gl_texture,
-      Some(sampler),
-      atlas_size,
-      width,
-      height,
-      policy,
-      into.as_ref(),
-    )
-  }
-
   /// Rasterize a shaded snapshot boundary and run its node shader pass in
   /// one trip (see `RasterCmd::RasterizeDlShaded`). Some(texture) reuses
   /// storage in place; the UI side only passes handles whose dimensions

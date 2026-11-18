@@ -29,7 +29,7 @@ pub use damage::{DamageRects, ListDamage, PxRect, TargetDirt, DAMAGE_EDGE_PX, MA
 pub use dirt::{Dirt, DirtySet};
 pub use draw_list::{gather_list, CellIndex, DrawList, ListChange, ListOrder};
 // The glyph vocabulary is anvil's, re-exported under its former path.
-pub use anvil::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
+pub use anvil::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use lease::WriteLeases;
 pub use limits::GpuLimits;
 pub(crate) use order::check_direction;

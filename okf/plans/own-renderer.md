@@ -330,6 +330,9 @@ core, made at the start of the stage. A direct shader draw ends a batch.
   interim machinery it left behind: the text layers (`TextLayer` and its
   retention in `rendertree/text/mod.rs`) and the adoption bookkeeping
   (`TextureEntry::handle`'s `Option`, `unadopted` in `raster/targets.rs`).
+  The glyph vocabulary and the old GL glyph pass were dealt with early,
+  after stage 2 (the vocabulary lives in the `anvil` crate, the pass is
+  gone; see Findings, "Where anvil lives").
   The Impeller mentions in `alloy/CLAUDE.md`, the root CLAUDE.md and the
   `impeller-*` upstream notes are updated or closed.
 

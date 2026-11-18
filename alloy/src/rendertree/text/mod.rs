@@ -12,7 +12,7 @@ pub use runs::{FontStyle, FontWeight, RunOverrides, RunStyle, Span, TextAlignmen
 pub use shape::{prepare_units, CaretColumns, GlyphColumns, PreparedColumns, PreparedRun, PreparedUnit};
 pub use words::{CaretStop, ShapedWord, WordCache};
 
-use crate::gpu::{GlyphGradient, GlyphGroup, GlyphQuad};
+use crate::gpu::{GlyphGradient, GlyphQuad};
 use crate::renderer::prelude::*;
 use crate::renderer::{DisplayListBuilder, Point, Rect, Size, Texture};
 use crate::rendertree::text::glyphs::{split_phase, weight_value, Face, Hint, StyleKey};
@@ -660,16 +660,12 @@ impl Text {
       // remade: a current record records its kept runs without them.
       let styles = self.run_styles();
       let line_runs = self.line_runs(owned, index);
-      let (groups, atlas_id) =
+      let (runs, atlas_id) =
         self.glyph_quads(ctx.platform, ctx.alloy, &styles, &line_runs, content, rect.origin, scale, hinted);
       // The generation read after the call: its ensure may have grown or
       // repacked the atlas, and these placements are into the texture
       // after that move.
       let atlas_generation = ctx.platform.text_atlas_generation();
-      let runs: Vec<RecordedRun> = groups
-        .into_iter()
-        .map(|g| RecordedRun { quads: Arc::from(g.quads), gradient: g.gradient.map(Arc::new) })
-        .collect();
       (Some((runs, atlas_generation)), atlas_id)
     };
     // The atlas handle read from the registry every build: a growth or a
@@ -737,8 +733,8 @@ impl Text {
   /// This text drawn on its own, outside a tree walk (the stats HUD): laid
   /// out at `width`, rasterized at `scale` device pixels per logical pixel,
   /// re-rendered into `previous`'s texture while the texel size matches.
-  /// None when nothing could be drawn (no fonts, no atlas texture, a pass
-  /// failure, which is logged).
+  /// None when nothing could be drawn (no fonts, no atlas texture, a
+  /// rasterization failure, which is logged).
   pub fn rasterize(
     &self,
     platform: &PlatformContext,
@@ -789,12 +785,16 @@ impl Text {
     Some((rect, tex_w, tex_h))
   }
 
-  // Rasterize `line_runs` through the glyph pass into a texture of `tex_w`
-  // x `tex_h` texels covering `rect` at `scale` (or `into` an earlier one
-  // of that size), `hinted` as the platform's text hinting says or not at
-  // all, `content` being the text's own box (what a box gradient resolves
-  // against). Ok(None) when there is no atlas texture (the GPU refused it,
-  // logged there), Err when the pass failed.
+  // Rasterize `line_runs` into a texture of `tex_w` x `tex_h` texels
+  // covering `rect` at `scale` (or `into` an earlier one of that size),
+  // `hinted` as the platform's text hinting says or not at all, `content`
+  // being the text's own box (what a box gradient resolves against). The
+  // runs are recorded as `draw_glyphs` ops, as a tree walk records them,
+  // into a list whose space is the layer's texels (the quads are laid out
+  // in them already), and the list is rasterized like a snapshot's,
+  // single-sample: a glyph's coverage is its atlas texels. Ok(None) when
+  // there is no atlas texture (the GPU refused it, logged there), Err when
+  // the rasterization failed.
   #[allow(clippy::too_many_arguments)]
   fn draw_layer(
     &self,
@@ -810,12 +810,24 @@ impl Text {
     tex_h: u32,
     into: Option<&Texture>,
   ) -> Result<Option<Texture>, String> {
-    let (groups, atlas) = self.glyph_quads(platform, alloy, styles, line_runs, content, rect.origin, scale, hinted);
-    let Some(atlas) = atlas else {
+    let (runs, atlas_id) = self.glyph_quads(platform, alloy, styles, line_runs, content, rect.origin, scale, hinted);
+    // The atlas handle the tree walk draws from (see build_layer).
+    let Some(atlas) = atlas_id.and_then(|id| alloy.textures.get(id)).and_then(|e| e.handle.clone()) else {
       return Ok(None);
     };
-    let texture = alloy.rasterize_glyphs(groups, atlas, tex_w, tex_h, platform.coverage_policy(), into)?;
-    Ok(Some(texture))
+    let policy = platform.coverage_policy();
+    let mut builder = DisplayListBuilder::new(None);
+    for run in &runs {
+      builder.draw_glyphs(&atlas, &run.quads, policy, run.gradient.as_ref());
+    }
+    let dl = builder.build().ok_or_else(|| "the text layer's list did not build".to_string())?;
+    match into {
+      Some(texture) => {
+        alloy.render_display_list_into_texture(&dl, texture, tex_w, tex_h, false)?;
+        Ok(Some(texture.clone()))
+      }
+      None => Ok(Some(alloy.render_display_list_to_texture(&dl, tex_w, tex_h, false)?)),
+    }
   }
 
   // The placed ink of the layout at `index`, in the text's frame: from the
@@ -836,9 +848,10 @@ impl Text {
 
   // The runs' glyphs as quads in layer pixels (the box at `box_origin`
   // relative to the text origin, scaled by `scale`), their cells ensured in
-  // the text atlas, grouped by paint: the solid-colored runs together, a
-  // gradient run's quads with its gradient resolved against `content` (the
-  // text's own box). Returns the groups and the atlas texture (None when
+  // the text atlas, grouped by paint into the runs a recording draws: the
+  // solid-colored runs together, a gradient run's quads with its gradient
+  // resolved against `content` (the text's own box). Returns the runs and
+  // the atlas texture (None when
   // the GPU refused it). Each run is shaped through the word cache; a
   // glyph's pen x splits into the pixel its cell snaps to and the subpixel
   // phase the cell is made at, its baseline y snaps to a pixel row. Glyphs
@@ -859,7 +872,7 @@ impl Text {
     box_origin: Point,
     scale: f32,
     hinted: bool,
-  ) -> (Vec<GlyphGroup>, Option<u64>) {
+  ) -> (Vec<RecordedRun>, Option<u64>) {
     let fonts = platform.glyphs();
     let mut words = platform.words();
     let mut atlas = platform.text_atlas();
@@ -897,8 +910,9 @@ impl Text {
     // style is warmed on first sight.
     let mut buckets: Vec<(StyleKey, u8, Vec<u16>, bool)> = Vec::new();
     // The solid group first, then one group per gradient style in
-    // first-use order (`graded` maps a style index to its group).
-    let mut groups: Vec<GlyphGroup> = vec![GlyphGroup { quads: Vec::new(), gradient: None }];
+    // first-use order (`graded` maps a style index to its group): each
+    // group's quads, and its gradient.
+    let mut groups: Vec<(Vec<GlyphQuad>, Option<GlyphGradient>)> = vec![(Vec::new(), None)];
     let mut graded: Vec<(usize, usize)> = Vec::new();
     for run in line_runs {
       let style = &styles[run.style];
@@ -915,7 +929,7 @@ impl Text {
         Some(gradient) => match graded.iter().find(|(s, _)| *s == run.style) {
           Some((_, group)) => *group,
           None => {
-            groups.push(GlyphGroup { quads: Vec::new(), gradient: Some(gradient.clone()) });
+            groups.push((Vec::new(), Some(gradient.clone())));
             graded.push((run.style, groups.len() - 1));
             groups.len() - 1
           }
@@ -949,7 +963,7 @@ impl Text {
       if p.width == 0 {
         continue;
       }
-      groups[slot.group].quads.push(GlyphQuad {
+      groups[slot.group].0.push(GlyphQuad {
         dst: [
           (slot.px + p.left) as f32,
           (slot.baseline.round() as i32 - p.top) as f32,
@@ -960,10 +974,14 @@ impl Text {
         color: slot.color,
       });
     }
-    if groups[0].quads.is_empty() {
+    if groups[0].0.is_empty() {
       groups.remove(0);
     }
-    (groups, texture)
+    let runs = groups
+      .into_iter()
+      .map(|(quads, gradient)| RecordedRun { quads: Arc::from(quads), gradient: gradient.map(Arc::new) })
+      .collect();
+    (runs, texture)
   }
 
   /// Whether a build recorded glyph placements (a raster record is held,

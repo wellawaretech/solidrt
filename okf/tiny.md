@@ -75,4 +75,6 @@ alloy, forge, flux, lattice.
 - camera open polling: the open task and `watch_scan` (flux/src/alloy_plugins/camera.rs) sleep `OPEN_POLL_MS` in a loop until `pump_camera` leaves Pending; have alloy's camera wake a waiter instead (the init thread finishing, SDL's camera approved/denied events on the main loop in place of the `camera_permission` poll, the tap's first frame) and block on that wait from `spawn_blocking` in the plugin, keeping tokio out of alloy.
 - `alloy/examples/pixel_snap.rs` asserts one snapshot re-make at rest at 1.5x and gets (1, 0) against (0, 1) on main and the branch alike: a stale expectation, not a regression; fix the assertion.
 - `alloy/examples/texture_paint.rs` panics at its half-alpha precheck under anvil (127 against 128, the unorm8 tie rounding) and never reaches its later cases; give the precheck a tolerance of one level, as okf/plans/own-renderer.md's stage 7 will decide for the renders.
+- `alloy/examples/glyph_run.rs` lost its per-mode comparison when the GL glyph pass went: the four non-naive coverage modes (linear light, the two polarity modes, DirectWrite) have no pixel check; add a CPU reference per mode to the example.
+- `alloy/examples/text_layer.rs` (untracked) exercised the retired glyph pass and no longer builds; delete it or rewrite it over `draw_glyphs`.
 

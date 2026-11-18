@@ -519,18 +519,6 @@ pub(crate) enum RasterCmd {
     aa: bool,
     reply: mpsc::Sender<Result<(), String>>,
   },
-  /// Draw a text layer: `quads` sampled from the text atlas texture `atlas`
-  /// into an adopted texture of `width` x `height` under `policy`, or
-  /// `into` one from an earlier call at exactly that size (cleared first).
-  RasterizeGlyphs {
-    groups: Vec<crate::gpu::GlyphGroup>,
-    atlas: u64,
-    width: u32,
-    height: u32,
-    policy: crate::gpu::CoveragePolicy,
-    into: Option<Texture>,
-    reply: mpsc::Sender<Result<Texture, String>>,
-  },
   /// Rasterize a shaded snapshot boundary and run its node shader pass in
   /// one trip: the display list renders into the source texture, then
   /// `shader.program` draws one fullscreen pass over it into the output,
@@ -631,7 +619,6 @@ impl RasterCmd {
         | RasterCmd::CopyTexture { .. }
         | RasterCmd::RasterizeDl { .. }
         | RasterCmd::RasterizeDlInto { .. }
-        | RasterCmd::RasterizeGlyphs { .. }
         | RasterCmd::RasterizeDlShaded { .. }
         | RasterCmd::RerunNodeShader { .. }
         | RasterCmd::RasterizeReadback { .. }
@@ -651,7 +638,6 @@ impl RasterCmd {
         | RasterCmd::AdoptTexture { .. }
         | RasterCmd::RasterizeDl { .. }
         | RasterCmd::RasterizeDlInto { .. }
-        | RasterCmd::RasterizeGlyphs { into: Some(_), .. }
         | RasterCmd::RasterizeDlShaded { .. }
         | RasterCmd::RerunNodeShader { .. }
         | RasterCmd::RasterizeReadback { .. }
@@ -669,9 +655,6 @@ impl RasterCmd {
         reply.send(Err(error.to_string())).ok();
       }
       RasterCmd::RasterizeDlInto { reply, .. } => {
-        reply.send(Err(error.to_string())).ok();
-      }
-      RasterCmd::RasterizeGlyphs { reply, .. } => {
         reply.send(Err(error.to_string())).ok();
       }
       RasterCmd::RasterizeDlShaded { reply, .. } => {
