@@ -33,11 +33,15 @@ pub struct PlatformContext {
   // The one mask atlas every `<text>` draws from; its cells are keyed on
   // face ids of `glyphs`, so a reset voids it.
   text_atlas: RefCell<TextAtlas>,
+  // The atlas generation the frame start last saw (take_text_atlas_moved):
+  // a later one moved the cells under the texts' recorded placements.
+  text_atlas_seen: Cell<u64>,
   // How every text is rendered (see TextRendering); settable live, so a
   // policy can be judged by eye. The generation counts the changes: a text
-  // layer records the one it was drawn under and redraws on a mismatch,
-  // and the dirty flag has the next frame damage every text with a layer,
-  // which a cached recording would otherwise never rebuild.
+  // records the one its cells were chosen under and re-makes them on a
+  // mismatch, and the dirty flag has the next frame damage every text that
+  // recorded placements, which a cached recording would otherwise never
+  // rebuild.
   text_rendering: Cell<TextRendering>,
   text_rendering_generation: Cell<u64>,
   text_rendering_dirty: Cell<bool>,
@@ -77,6 +81,7 @@ impl PlatformContext {
       glyphs: RefCell::new(glyphs),
       words: RefCell::new(WordCache::default()),
       text_atlas: RefCell::new(TextAtlas::new(frame_requested.clone())),
+      text_atlas_seen: Cell::new(0),
       text_rendering: Cell::new(TextRendering::default()),
       text_rendering_generation: Cell::new(0),
       text_rendering_dirty: Cell::new(false),
@@ -115,9 +120,9 @@ impl PlatformContext {
     self.text_rendering.get()
   }
 
-  /// Change how text is rendered; every text layer redraws at the frame
-  /// this requests (a text inside a recording boundary reused since its
-  /// layer was released redraws when the recording next re-records).
+  /// Change how text is rendered; every text redraws at the frame this
+  /// requests (a text inside a recording boundary reused since its raster
+  /// record was released redraws when the recording next re-records).
   pub fn set_text_rendering(&self, rendering: TextRendering) {
     if rendering == self.text_rendering.replace(rendering) {
       return;
@@ -129,9 +134,10 @@ impl PlatformContext {
 
   /// The GPU side of the platform's text state is void (the GL context was
   /// lost and recovered, okf/done/gpu-context-loss.md): the atlas uploads
-  /// whole at the next flush, and every text layer - a texture of the dead
-  /// context - redraws, through the same generation that a rendering
-  /// change uses. Requests the frame that does it.
+  /// whole at the next flush (into a new texture), and every text -
+  /// recorded against a texture of the dead context - redraws, through the
+  /// same generation that a rendering change uses. Requests the frame that
+  /// does it.
   pub fn gpu_reset(&self) {
     self.text_atlas.borrow_mut().forget_gpu();
     self.text_rendering_generation.set(self.text_rendering_generation.get() + 1);
@@ -145,19 +151,33 @@ impl PlatformContext {
     self.text_atlas.borrow().texture_id()
   }
 
-  /// The number of `set_text_rendering` changes so far: what a text layer
+  /// The text atlas's generation (`TextAtlas::generation`): what the
+  /// texts' recorded placements were read against.
+  pub fn text_atlas_generation(&self) -> u64 {
+    self.text_atlas.borrow().generation()
+  }
+
+  /// Whether the text atlas moved its cells since this was last asked (the
+  /// frame start asks, and damages every text that recorded placements, so
+  /// its recording lets go of the texture it was made against).
+  pub fn take_text_atlas_moved(&self) -> bool {
+    let generation = self.text_atlas_generation();
+    generation != self.text_atlas_seen.replace(generation)
+  }
+
+  /// The number of `set_text_rendering` changes so far: what a text
   /// records to know it was drawn under the current policy.
   pub fn text_rendering_generation(&self) -> u64 {
     self.text_rendering_generation.get()
   }
 
   /// Whether the rendering changed since this was last asked (the frame
-  /// start asks, and damages every text with a layer).
+  /// start asks, and damages every text that recorded placements).
   pub fn take_text_rendering_dirty(&self) -> bool {
     self.text_rendering_dirty.replace(false)
   }
 
-  /// The text layers' coverage-to-color policy.
+  /// The texts' coverage-to-color policy.
   pub fn coverage_policy(&self) -> CoveragePolicy {
     self.text_rendering.get().coverage
   }

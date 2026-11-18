@@ -181,9 +181,10 @@ pub fn paint_phase(
   // read back or free textures) run out of the tree borrow.
   stats.captures = alloy.deliver_captures() as u32;
   release_retired_textures(tree, alloy);
-  // Text layers nobody composited for a while go too (Text::release_stale_layer).
+  // Text raster records nobody built for a while go too
+  // (Text::release_stale_raster).
   let frame = platform.text_atlas().frame();
-  tree.release_stale_text_layers(frame);
+  tree.release_stale_text_rasters(frame);
   // So do the snapshots kept by boundaries switched off past their age.
   tree.release_off_snapshots(frame);
   stats
@@ -215,10 +216,17 @@ pub(crate) fn apply_content_changes(tree: &mut RenderTree, platform: &PlatformCo
       changed = true;
     }
   }
-  // A changed text rendering policy redraws every layer the same way: the
-  // damage rebuilds the text, and its layer's generation no longer matches.
-  if platform.take_text_rendering_dirty() {
-    for id in tree.text_layer_nodes() {
+  // A changed text rendering policy redraws every text the same way: the
+  // damage rebuilds the text, and its raster's generation no longer
+  // matches. A move of the text atlas's cells (a growth, a repack, a font
+  // reset; the landing above may have made one) re-records every text that
+  // recorded placements: the recordings already drawn keep drawing from
+  // the texture they were made against, which the move left whole, and
+  // the re-record lets it go.
+  let rendering_dirty = platform.take_text_rendering_dirty();
+  let atlas_moved = platform.take_text_atlas_moved();
+  if rendering_dirty || atlas_moved {
+    for id in tree.text_raster_nodes() {
       if tree.try_node(id).is_some() {
         tree.apply_damage(id, crate::rendertree::Damage::Paint);
         changed = true;
@@ -1085,7 +1093,7 @@ pub(super) fn record_node<'a>(
     ctx.stroke_width_moving = matches!(&element.kind, ElementKind::Rectangle(_)) && scene.stroke_width_moving(node_id);
     element.build(ctx, builder);
     if let ElementKind::Text(text) = &element.kind {
-      scene.note_text_layer(node_id, text.has_layer());
+      scene.note_text_raster(node_id, text.has_raster());
       if text.scale_wait() {
         scene.note_scale_wait(node_id);
       }

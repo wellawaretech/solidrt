@@ -628,6 +628,56 @@ fn an_eviction_forgets_the_style_was_warmed() {
 }
 
 #[test]
+fn the_generation_moves_with_the_cells_and_not_with_a_plain_insert() {
+  let fonts = fonts(&[noto()]);
+  let latch = Arc::new(AtomicBool::new(false));
+  let mut atlas = TextAtlas::new(latch.clone());
+  assert_eq!(atlas.generation(), 0);
+  // Plain inserts into free room move no cell: the generation stands, and
+  // no frame is asked for.
+  let small = style_key(SIZE);
+  let ids = glyph_ids(&fonts, "The quick brown fox jumps over the lazy dog, 0123456789.");
+  assert_eq!(atlas.ensure(&fonts, small, 0, &ids, false), 0);
+  assert_eq!(atlas.size(), (512, 512));
+  assert_eq!(atlas.generation(), 0);
+  assert!(!latch.load(Ordering::Relaxed));
+  // A growth repacks every cell: the generation moves, and the frame that
+  // re-records the texts is asked for.
+  let big = style_key(160.0);
+  assert_eq!(atlas.ensure(&fonts, big, 0, &ids, false), 0);
+  assert!(atlas.size().0 > 512 || atlas.size().1 > 512, "grew: {:?}", atlas.size());
+  let grown = atlas.generation();
+  assert!(grown > 0);
+  assert!(latch.swap(false, Ordering::Relaxed));
+  // A font reset voids every cell: a move too.
+  atlas.invalidate_fonts();
+  assert_eq!(atlas.generation(), grown + 1);
+}
+
+#[test]
+fn an_eviction_repack_moves_the_generation() {
+  let fonts = fonts(&[noto()]);
+  let mut atlas = TextAtlas::new(Arc::new(AtomicBool::new(false)));
+  // Capped at its initial side, so a few large cells fill it.
+  atlas.set_texture_cap(512);
+  let small = style_key(SIZE);
+  atlas.begin_frame(&fonts, 1.0, 0.0, Hint::Off);
+  assert_eq!(atlas.ensure(&fonts, small, 0, &glyph_ids(&fonts, "abcdefghijklmnop"), false), 0);
+  assert_eq!(atlas.generation(), 0);
+  // Past the eviction age, large cells need the room: the stale small
+  // cells go and the rest repack, at the same size.
+  for _ in 0..200 {
+    atlas.begin_frame(&fonts, 1.0, 0.0, Hint::Off);
+  }
+  atlas.ensure(&fonts, style_key(240.0), 0, &glyph_ids(&fonts, "ABCDEFGHIJKLMNOP"), false);
+  assert_eq!(atlas.size(), (512, 512));
+  assert!(atlas.generation() > 0, "the eviction repack moved the cells");
+  // The small cells are gone: an eviction took them.
+  let gone = glyph_ids(&fonts, "a")[0];
+  assert!(atlas.placement(small, 0, gone).is_none());
+}
+
+#[test]
 fn fallback_borrows_a_missing_glyph_from_the_next_covering_face() {
   let fonts = fonts(&[mono(), noto()]);
   let sans = fonts.face(1).expect("sans");

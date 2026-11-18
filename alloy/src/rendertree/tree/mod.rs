@@ -45,10 +45,12 @@ pub struct RenderTree {
   // was deleted, awaiting release by the frame loop. Interior-mutable so the
   // paint walk can drain it through the shared tree borrow it already holds.
   released_snapshot_textures: RefCell<Vec<u64>>,
-  // Text nodes holding a layer texture (Text::has_layer): the ones the
-  // release sweep visits (release_stale_text_layers), so it costs the
-  // texts with pixels and not every node.
-  text_layers: RefCell<HashSet<u64>>,
+  // Text nodes whose last build recorded glyph placements (Text::has_raster):
+  // the ones a move of the text atlas or a text rendering change re-records
+  // (composite::apply_content_changes), and the ones the release sweep
+  // visits (release_stale_text_rasters), so both cost the texts drawn and
+  // not every node.
+  text_rasters: RefCell<HashSet<u64>>,
   // Nodes switched off a snapshot boundary that hold its snapshot for the
   // switch back (Element::holds_off_snapshot), each with the text atlas
   // frame its release age counts from: None until the first sweep after it
@@ -115,7 +117,7 @@ impl RenderTree {
       revision: 0,
       transitions: Transitions::default(),
       released_snapshot_textures: RefCell::new(Vec::new()),
-      text_layers: RefCell::new(HashSet::new()),
+      text_rasters: RefCell::new(HashSet::new()),
       off_snapshots: HashMap::new(),
       scale_waits: RefCell::new(HashSet::new()),
       snapshot_deferrals: RefCell::new(HashMap::new()),
@@ -700,7 +702,7 @@ impl RenderTree {
     }
     if let Some(element) = self.nodes.remove(&node_id) {
       self.texture_referencers.remove(&node_id);
-      self.text_layers.borrow_mut().remove(&node_id);
+      self.text_rasters.borrow_mut().remove(&node_id);
       self.off_snapshots.remove(&node_id);
       self.scale_waits.borrow_mut().remove(&node_id);
       self.snapshot_deferrals.get_mut().remove(&node_id);
@@ -739,14 +741,14 @@ impl RenderTree {
     Ok(id)
   }
 
-  /// A text node was built: whether it holds a layer now. The paint walk
-  /// notes every text it builds.
-  pub fn note_text_layer(&self, node_id: u64, has_layer: bool) {
-    let mut layers = self.text_layers.borrow_mut();
-    if has_layer {
-      layers.insert(node_id);
+  /// A text node was built: whether it recorded glyph placements. The
+  /// paint walk notes every text it builds.
+  pub fn note_text_raster(&self, node_id: u64, has_raster: bool) {
+    let mut rasters = self.text_rasters.borrow_mut();
+    if has_raster {
+      rasters.insert(node_id);
     } else {
-      layers.remove(&node_id);
+      rasters.remove(&node_id);
     }
   }
 
@@ -863,13 +865,14 @@ impl RenderTree {
     self.scale_waits.borrow_mut().drain().collect()
   }
 
-  /// The text nodes holding a layer.
-  pub fn text_layer_nodes(&self) -> Vec<u64> {
-    self.text_layers.borrow().iter().copied().collect()
+  /// The text nodes whose last build recorded glyph placements.
+  pub fn text_raster_nodes(&self) -> Vec<u64> {
+    self.text_rasters.borrow().iter().copied().collect()
   }
 
-  /// Drop every retained paint result and text layer: they are textures
-  /// and display lists of a GL context that is gone (the context-loss
+  /// Drop every retained paint result and text raster record: they are
+  /// textures, display lists and atlas placements of a GL context that is
+  /// gone (the context-loss
   /// restore, okf/done/gpu-context-loss.md). Snapshot caches go whole,
   /// allocation included (a stale snapshot otherwise keeps its texture for
   /// the next raster to reuse), and the revision moves so the next frame
@@ -884,19 +887,19 @@ impl RenderTree {
         text.drop_layer();
       }
     }
-    self.text_layers.borrow_mut().clear();
+    self.text_rasters.borrow_mut().clear();
     self.off_snapshots.clear();
     self.bump_revision();
   }
 
-  /// Release the layer textures of texts that went unbuilt long enough
-  /// (Text::release_stale_layer) as of text atlas frame `frame`: the walk
+  /// Release the raster records of texts that went unbuilt long enough
+  /// (Text::release_stale_raster) as of text atlas frame `frame`: the walk
   /// never enters a culled, hidden or scrolled-out text, so its stamp ages
   /// on its own. Called once per paint walk, after it.
-  pub fn release_stale_text_layers(&self, frame: u64) {
-    let mut layers = self.text_layers.borrow_mut();
-    layers.retain(|&id| match self.nodes.get(&id).map(|e| &e.kind) {
-      Some(ElementKind::Text(text)) => text.release_stale_layer(frame),
+  pub fn release_stale_text_rasters(&self, frame: u64) {
+    let mut rasters = self.text_rasters.borrow_mut();
+    rasters.retain(|&id| match self.nodes.get(&id).map(|e| &e.kind) {
+      Some(ElementKind::Text(text)) => text.release_stale_raster(frame),
       _ => false,
     });
   }

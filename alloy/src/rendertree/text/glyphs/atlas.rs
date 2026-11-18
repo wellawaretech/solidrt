@@ -508,9 +508,9 @@ impl<K: CellKey> GlyphAtlas<K> {
     self.packer.insert_in_place(cell)
   }
 
-  /// Upload what changed: the whole mirror after a growth (a resize at the
-  /// same id) or a repack, else the dirty rects. Returns whether anything
-  /// was sent.
+  /// Upload what changed: the whole mirror after a growth or a repack
+  /// (onto a new texture at the same id, see `flush_texture`), else the
+  /// dirty rects. Returns whether anything was sent.
   pub fn flush(&mut self, ctx: &Context) -> Result<bool, String> {
     flush_texture(ctx, self.texture, &mut self.packer)
   }
@@ -545,19 +545,19 @@ pub fn create_texture<K: CellKey>(
 }
 
 /// Upload what changed in `packer` to `texture`: the whole mirror after a
-/// growth (a resize at the same id) or a repack, else the dirty rects.
-/// Returns whether anything was sent.
+/// growth or a repack, else the dirty rects. Returns whether anything was
+/// sent. A whole mirror goes onto a new texture at the same id (a resize,
+/// at the same size for a repack): a repack moves cells as a growth does,
+/// and a recording holds placements into the texture it was made against,
+/// so that texture must stay whole under every handle that holds it until
+/// those recordings re-record. A dirty rect writes free texels only, which
+/// no placement names, so it goes into the texture in place.
 pub fn flush_texture<K: CellKey>(ctx: &Context, texture: u64, packer: &mut AtlasPacker<K>) -> Result<bool, String> {
   let (width, height) = packer.size();
   match packer.take_dirty() {
     None => Ok(false),
-    Some(Dirty::Whole { resized: true }) => {
+    Some(Dirty::Whole { .. }) => {
       ctx.resize_texture(texture, width, height, packer.mirror())?;
-      Ok(true)
-    }
-    Some(Dirty::Whole { resized: false }) => {
-      let rect = TextureRect { x: 0, y: 0, width, height, pixels: packer.mirror().to_vec() };
-      ctx.update_texture_rects(texture, vec![rect])?;
       Ok(true)
     }
     Some(Dirty::Rects(dirty)) => {

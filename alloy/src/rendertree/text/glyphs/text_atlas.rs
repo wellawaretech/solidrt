@@ -1,9 +1,14 @@
 // The text atlas: the one mask atlas every `<text>` draws from
 // (okf/done/text-own-rasterizer.md, stage 2; the completion rule from
-// okf/done/text-complete-frames.md). A cache, not a store: a text layer
-// keeps pixels and never cell references, so a cell evicted or made at a
-// stale display scale is only a miss at the layer's next rasterization,
-// and remaking is the same path as making.
+// okf/done/text-complete-frames.md). A cache, not a store: a text records
+// cell placements into the texture it drew against, and every move of the
+// cells (a growth, an eviction repack, a font reset) puts the atlas on a
+// new texture, so a recording keeps drawing from the one it was made
+// against until it re-records; a cell evicted or made at a stale display
+// scale is only a miss at the text's next build, and remaking is the same
+// path as making. A move bumps the generation, which has the next frame
+// re-record every text (composite::apply_content_changes), so the old
+// texture goes.
 //
 // The rule: a frame that draws text has every glyph it draws. A build
 // asks `ensure` for the cells of each run, and a cell the atlas lacks is
@@ -14,7 +19,7 @@
 //
 // Two sources fill the atlas:
 //
-// 1. The build (`ensure`): what a layer needs and lacks, in paint order.
+// 1. The build (`ensure`): what a text needs and lacks, in paint order.
 // 2. Warm-up on the worker: printable ASCII at every subpixel phase for a
 //    style the moment a build first sees it untransformed (`ensure` with
 //    `warm`), and whatever an app warms ahead of time (its type scale at
@@ -29,15 +34,15 @@
 // The packer exists from construction; only its texture needs the GPU
 // context and is created at the first `flush`, so cells land whether or
 // not any text has drawn yet (a `warmText` at startup) and the atlas is
-// checkable without a GPU. A layer asks for all of its cells before it
+// checkable without a GPU. A text asks for all of its cells before it
 // reads any placement, so a growth or an eviction under one of its
-// buckets moves nothing it has used; layers built earlier in the frame
-// are finished, their pixels in their own textures, before the atlas
-// moves beneath them.
+// buckets moves nothing it has used; texts built earlier in the frame
+// hold placements into the texture before the move, which the move
+// leaves whole.
 //
 // Cells are keyed on the face, the device pixels per em, the weight, the
 // style and the subpixel phase besides the glyph, so one texture serves
-// every style on screen and a glyph pass binds once per layer. Frames are
+// every style on screen and a frame's text draws over one texture. Frames are
 // stamped on every use so a full atlas evicts what nobody drew lately; an
 // eviction also forgets that the style was warmed, so its next first sight
 // warms it again.
@@ -220,6 +225,8 @@ pub struct TextAtlas {
   // The platform's frame request latch: what a warm-up asked for ahead of
   // use sets, so the frame that submits it runs.
   frame_request: Arc<AtomicBool>,
+  // Counts the moves of the cells (see generation).
+  generation: u64,
 }
 
 impl TextAtlas {
@@ -244,6 +251,7 @@ impl TextAtlas {
       warm_requests: Vec::new(),
       frame: 0,
       frame_request,
+      generation: 0,
     }
   }
 
@@ -295,12 +303,21 @@ impl TextAtlas {
     self.warmed.contains(&style)
   }
 
-  /// The frames begun so far: what a text layer stamps its last use with.
+  /// The frames begun so far: what a text stamps its last use with.
   pub fn frame(&self) -> u64 {
     self.frame
   }
 
-  /// The atlas texture, once a layer flushed it.
+  /// What the texts' recorded placements were read against: moves with
+  /// every move of the cells (an insert that grew or repacked the atlas, a
+  /// font reset), never with a plain insert. The frame producer damages the
+  /// texts that recorded placements when it moves
+  /// (`composite::apply_content_changes`).
+  pub fn generation(&self) -> u64 {
+    self.generation
+  }
+
+  /// The atlas texture, once a text flushed it.
   pub fn texture(&self) -> Option<u64> {
     self.texture
   }
@@ -316,9 +333,11 @@ impl TextAtlas {
   }
 
   /// The registered fonts changed (an app switch): every cell is void. The
-  /// texture is kept, cleared at the next flush; a job still on the worker
-  /// lands as nothing.
+  /// texture id is kept, cleared onto a new texture at the next flush; a
+  /// job still on the worker lands as nothing. A move of the cells: the
+  /// generation moves.
   pub fn invalidate_fonts(&mut self) {
+    self.generation += 1;
     self.packer.clear();
     self.packer.begin_frame(self.frame);
     self.pending.clear();
@@ -330,8 +349,8 @@ impl TextAtlas {
   /// Have the cells of `glyphs` for `style` at `phase` in the atlas,
   /// making what it lacks now, on this thread, growing or evicting as
   /// needed; `placement` reads them afterwards, once every bucket of the
-  /// layer was ensured. With `warm`, also warms the style's ASCII on first
-  /// sight: a layer passes it for an untransformed text, whose style every
+  /// text was ensured. With `warm`, also warms the style's ASCII on first
+  /// sight: a text passes it for an untransformed text, whose style every
   /// other text of that size shares, and not for one under a scaling
   /// transform, whose ppem is its own. Returns how many of `glyphs` have
   /// no cell even so (the rasterizer made nothing, or the atlas is at its
@@ -503,12 +522,22 @@ impl TextAtlas {
     }
   }
 
-  // Add a cell, growing or evicting as needed. A cell the atlas cannot
-  // place at its cap is failed (not asked for again) and the cap reported
-  // once. A key already present is a touch.
+  // Add a cell, growing or evicting as needed; a growth or a repack moves
+  // the generation and asks for the frame that re-records the texts, so a
+  // screen at rest lets go of the texture they were drawn against. An
+  // eviction always repacks, also when the cell still does not fit (the
+  // packer answers Full then), so an eviction is a move too. A cell the
+  // atlas cannot place at its cap is failed (not asked for again) and the
+  // cap reported once. A key already present is a touch.
   fn insert(&mut self, cell: Cell<CellKey>) {
     let key = cell.key;
-    if self.packer.insert(cell) == InsertOutcome::Full {
+    let outcome = self.packer.insert(cell);
+    let evicted = self.forget_evicted();
+    if outcome == InsertOutcome::Moved || evicted {
+      self.generation += 1;
+      self.frame_request.store(true, Ordering::Relaxed);
+    }
+    if outcome == InsertOutcome::Full {
       self.failed.insert(key);
       if !self.full_logged {
         let (width, height) = self.packer.size();
@@ -516,15 +545,16 @@ impl TextAtlas {
         self.full_logged = true;
       }
     }
-    self.forget_evicted();
   }
 
   // A style whose cells an eviction took is no longer warmed: its next
-  // first sight warms it again.
-  fn forget_evicted(&mut self) {
-    for key in self.packer.take_evicted() {
+  // first sight warms it again. Returns whether an eviction took any.
+  fn forget_evicted(&mut self) -> bool {
+    let evicted = self.packer.take_evicted();
+    for key in &evicted {
       self.warmed.remove(&key.style);
     }
+    !evicted.is_empty()
   }
 
   fn submit(&mut self, face: &Face, style: StyleKey, phase: u8, glyphs: Vec<u16>) {
