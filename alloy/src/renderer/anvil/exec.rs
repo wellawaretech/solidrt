@@ -161,20 +161,28 @@ const float OVAL_RADIUS_FLOOR = 1e-3;
 // form of the oval distance is replaced by deep inside.
 const float OVAL_CENTER_EPS = 1e-4;
 // The smallest screen-space footprint a distance is divided by: a
-// constant distance (deep inside) has fwidth 0 and must read as covered.
-const float FWIDTH_FLOOR = 1e-6;
+// constant distance (deep inside) has a zero gradient and must read as
+// covered.
+const float FOOTPRINT_FLOOR = 1e-6;
 // A distance that reads as fully inside whatever the footprint: used
 // where the quad's own edges are the shape's edges and MSAA covers them,
 // and negated, as far outside a rect stroke's hole. Large and finite,
 // never -INFINITY.
 const float INSIDE = -1e6;
+// The screen-space footprint of d: how far d changes across one device
+// pixel along the edge's normal, so a local-unit distance divided by it
+// is in device pixels under any scale or skew. The gradient's length,
+// not the L1 norm fwidth takes, which would widen a diagonal edge's
+// ramp to about 1.4 pixels.
+float footprint(float d) {
+  return max(length(vec2(dFdx(d), dFdy(d))), FOOTPRINT_FLOOR);
+}
 // Coverage of a fragment at signed distance d (positive outside) from an
 // edge the quad does not provide: the pixel-center distance in device
-// pixels, through fwidth, as a linear ramp one pixel wide. fwidth is in
-// screen space, so a local-unit distance divided by it is in device
-// pixels under any scale or skew.
+// pixels as a linear ramp one pixel wide, the box filter 4x MSAA
+// approximates on the quad edges.
 float coverage(float d) {
-  return clamp(0.5 - d / max(fwidth(d), FWIDTH_FLOOR), 0.0, 1.0);
+  return clamp(0.5 - d / footprint(d), 0.0, 1.0);
 }
 // The signed distance from p (measured from the box's center, y down) to a
 // box of half size hs with the corner radii r (tl, tr, br, bl): the
@@ -250,15 +258,20 @@ void main() {
   // removed as the product: one distance through the corner's kink would
   // count both axes' derivatives at the inner corner and leave a pixel
   // there partly covered where the corner sits on the grid.
-  vec2 inHole = clamp(0.5 - hole / max(fwidth(hole), vec2(FWIDTH_FLOOR)), 0.0, 1.0);
+  vec2 inHole = clamp(0.5 - hole / vec2(footprint(hole.x), footprint(hole.y)), 0.0, 1.0);
   float c = coverage(d) * (1.0 - inHole.x * inHole.y);
   // The rounded clip, in device space: the same distance function over
-  // the fragment's device position, multiplied in. All-zero radii mean no
-  // rounded clip is in effect (the box above already clipped).
+  // the fragment's device position, composed as the minimum, not the
+  // product. A shape whose edge lies on the clip's edge (a rounded card
+  // under an overflow clip of the same radius, the common case) would
+  // otherwise ramp twice and show a light rim; the minimum is what a
+  // per-sample stencil clip gives there, and errs toward opaque by at
+  // most one pixel where two independent edges cross. All-zero radii
+  // mean no rounded clip is in effect (the box above already clipped).
   if (any(greaterThan(vRClipRadii, vec4(0.0)))) {
     vec2 center = (vRClip.xy + vRClip.zw) * 0.5;
     vec2 half_size = (vRClip.zw - vRClip.xy) * 0.5;
-    c *= coverage(roundedBox(vDevice - center, half_size, vRClipRadii));
+    c = min(c, coverage(roundedBox(vDevice - center, half_size, vRClipRadii)));
   }
   if (c <= 0.0) discard;
   // Premultiplied texels; vColor is then the op's alpha in every channel,
