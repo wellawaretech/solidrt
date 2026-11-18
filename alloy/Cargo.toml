@@ -13,6 +13,10 @@ libc = "=0.2.191"
 
 [dependencies]
 log = { workspace = true }
+# The 2D renderer behind the renderer seam (src/renderer/): the contract and
+# vocabulary a frame is recorded in, the recording, the GLES execution and
+# the glyph vocabulary.
+anvil = { workspace = true }
 # The OS layer, with its window part: the platform (SDL's init, built by the
 # host), the window and the GL surface the raster thread draws through, the
 # platform types the events and commands carry (input, cursors, text input,
@@ -38,7 +42,7 @@ rxing = { version = "=0.9.4", default-features = false, features = ["decoders", 
 # Render-tree dependencies (the retained-mode UI layer in src/rendertree).
 # taffy = flexbox layout; lyon + svgtypes = path geometry/hit-testing.
 # The vocabulary's Point/Size/Rect/Matrix are euclid aliases
-# (renderer/vocab.rs); the pin is alloy's own.
+# (anvil's vocab.rs); the pin is alloy's own.
 euclid = "=0.22.14"
 taffy = "=0.15.1"
 svgtypes = "=0.16.2"
@@ -79,5 +83,8 @@ libloading = "=0.9.0"
 cc = "=1.11.1"
 
 [dev-dependencies]
+# The tests read back what the paint walk drew: anvil's op log
+# (`DisplayList::ops`, `renderer::oplog::placed`), test builds only.
+anvil = { workspace = true, features = ["oplog"] }
 # PNG dumps of captured pixels in the examples (image::save_buffer).
 image = { version = "=0.25.10", default-features = false, features = ["png"] }

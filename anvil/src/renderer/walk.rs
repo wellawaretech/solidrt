@@ -4,11 +4,11 @@
 //! clip rejected. No GL here, so the walk is unit-tested without a context
 //! (`tests/anvil.rs`).
 
-use super::super::{ISize, Matrix, Point, Rect, Size, StrokeCap, TextureSampling};
 use super::ops::{Image, Op, Premultiplied, Radii};
 use super::record::DisplayList;
 use super::Texture;
-use crate::gpu::{CoveragePolicy, GlyphGradient, GlyphQuad};
+use crate::{CoveragePolicy, GlyphGradient, GlyphQuad};
+use crate::{ISize, Matrix, Point, Rect, Size, StrokeCap, TextureSampling};
 use euclid::default::{Box2D, Point2D, Transform2D};
 use euclid::Angle;
 use std::sync::Arc;
@@ -17,7 +17,7 @@ use std::sync::Arc;
 /// f32 and `repr(C)`, so a slice of instances is uploaded as its bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Instance {
+pub struct Instance {
   /// The quad in local space: x, y, width, height.
   pub rect: [f32; 4],
   /// The 2x3 affine, local to device: m11, m12, m21, m22 (euclid's
@@ -49,7 +49,7 @@ pub(crate) struct Instance {
 
 /// The floats of one instance: nine vec4 attributes (GLES 3.0 guarantees
 /// sixteen).
-pub(crate) const INSTANCE_FLOATS: usize = 36;
+pub const INSTANCE_FLOATS: usize = 36;
 
 // The upload sends a slice of instances as its bytes: no padding, every
 // field an f32.
@@ -58,25 +58,25 @@ const _: () = assert!(std::mem::size_of::<Instance>() == INSTANCE_FLOATS * std::
 /// The shape kinds the shape program's fragment stage switches on. The
 /// `const int KIND_*` declarations in exec.rs's SHAPE_FRAGMENT must match
 /// them.
-pub(crate) const KIND_RECT: f32 = 0.0;
-pub(crate) const KIND_OVAL: f32 = 1.0;
-pub(crate) const KIND_LINE: f32 = 2.0;
+pub const KIND_RECT: f32 = 0.0;
+pub const KIND_OVAL: f32 = 1.0;
+pub const KIND_LINE: f32 = 2.0;
 /// A glyph quad: the atlas's red channel is its coverage, its color
 /// straight alpha, turned into color under the batch's coverage policy.
 /// It samples without `KIND_TEXTURED`, which means a premultiplied texel.
 /// It draws through the glyph program, which never reads the kind; the
 /// shape program has no arm for it.
-pub(crate) const KIND_GLYPH: f32 = 3.0;
-pub(crate) const KIND_ROUNDED_RECT: f32 = 4.0;
+pub const KIND_GLYPH: f32 = 3.0;
+pub const KIND_ROUNDED_RECT: f32 = 4.0;
 /// Added to a shape kind when the instance samples its texture: coverage
 /// times texel. A texture quad is `KIND_RECT + KIND_TEXTURED`.
-pub(crate) const KIND_TEXTURED: f32 = 8.0;
+pub const KIND_TEXTURED: f32 = 8.0;
 
 /// Local pixels a rounded rect's quad extends past its edge (and past a
 /// stroke's half width), so the quad's edge never coincides with the
 /// analytic edge on a straight run, where MSAA and the ramp would both
 /// attenuate. exec.rs's GLSL const of the same name must match.
-pub(crate) const ROUNDED_QUAD_PAD: f32 = 1.0;
+pub const ROUNDED_QUAD_PAD: f32 = 1.0;
 
 /// How far apart the two axis scales of a transform may be and still count
 /// as one scale for a rounded clip's device radii: float noise from
@@ -86,20 +86,20 @@ const UNIFORM_SCALE_EPSILON: f32 = 1e-5;
 
 /// The line caps, as the instance carries them in `tex.x` (line kind). The
 /// `const int CAP_*` declarations in exec.rs's SHAPE_FRAGMENT must match them.
-pub(crate) const CAP_BUTT: f32 = 0.0;
-pub(crate) const CAP_SQUARE: f32 = 1.0;
-pub(crate) const CAP_ROUND: f32 = 2.0;
+pub const CAP_BUTT: f32 = 0.0;
+pub const CAP_SQUARE: f32 = 1.0;
+pub const CAP_ROUND: f32 = 2.0;
 
 /// The device area, in device pixels, under which a plain rect fill rides
 /// along in an open shape batch instead of opening a fill batch of its own
 /// (256 x 256): about where the fragment cost the fill program would save
 /// on the TV's Mali meets the CPU cost of one more draw call. A tuning
 /// value, to be re-read on the TV.
-pub(crate) const FILL_FOLD_AREA: f32 = 65_536.0;
+pub const FILL_FOLD_AREA: f32 = 65_536.0;
 
 /// The program a batch draws through, by the class of its instances.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum BatchProgram {
+pub enum BatchProgram {
   /// Plain rect fills only (see `plain_fill`): the fill program, no
   /// texture.
   Fill,
@@ -118,7 +118,7 @@ pub(crate) enum BatchProgram {
 /// through different programs, so a run never mixes them, except that the
 /// shape program also draws the plain fills a shape run takes.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Batch {
+pub struct Batch {
   pub start: usize,
   pub count: usize,
   /// The program the run draws through. `Glyph` exactly when `policy` is
@@ -137,7 +137,7 @@ pub(crate) struct Batch {
 /// What a walk produces: the instances in painter's order and the batches
 /// over them, back to back and covering every instance.
 #[derive(Default)]
-pub(crate) struct Walked {
+pub struct Walked {
   pub instances: Vec<Instance>,
   pub batches: Vec<Batch>,
   /// The union of the emitted instances' device clip boxes, rounded
@@ -269,7 +269,7 @@ struct RoundedClip {
 /// keeps from the quad's local coordinates. There is no hairline rule: a
 /// width of zero or below draws nothing, and a width under one device pixel
 /// draws thin, covering only some of the MSAA samples it crosses.
-pub(crate) fn walk(list: &DisplayList, size: ISize) -> Walked {
+pub fn walk(list: &DisplayList, size: ISize) -> Walked {
   // The target rect, not an infinite one: every instance's clip stays
   // finite (a highp float holds 1e7 but not INFINITY reliably), the
   // rejection culls offscreen content, and the rendertree's "infinite"

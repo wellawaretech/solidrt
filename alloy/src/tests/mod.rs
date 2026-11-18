@@ -1,4 +1,3 @@
-mod anvil;
 mod audio;
 mod boundary;
 mod boundary_freeze;
@@ -37,7 +36,6 @@ mod path;
 mod pixel_snap;
 mod present;
 mod release;
-mod renderer;
 mod repaint;
 mod resample;
 mod router;

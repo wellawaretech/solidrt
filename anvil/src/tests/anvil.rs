@@ -1,5 +1,5 @@
-// Anvil's pure walk (renderer/anvil/walk.rs): a list built through the
-// aliases, the way the rendertree builds one, walked into the instances the
+// Anvil's pure walk (renderer/walk.rs): a list built through the crate's
+// types, the way the rendertree builds one, walked into the instances the
 // three programs draw, with no GL context. The transform stack, the
 // device-space clip, the rejection of draws outside it, nested lists and
 // the premultiplied color, the texture quads and their batches are all
@@ -10,18 +10,18 @@
 // and the scissor the executor takes from a walk. The deferred deletion
 // queue a texture handle drops onto is tested here too, with no renderer.
 
-use crate::gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, RAMP_WIDTH};
-use crate::renderer::anvil::walk::{
+use crate::contract::DrawReport;
+use crate::prelude::*;
+use crate::renderer::walk::{
   walk, Batch, BatchProgram, Instance, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, FILL_FOLD_AREA, KIND_GLYPH, KIND_LINE,
   KIND_OVAL, KIND_RECT, KIND_ROUNDED_RECT, KIND_TEXTURED, ROUNDED_QUAD_PAD,
 };
-use crate::renderer::anvil::{report, test_texture, DeletionQueue};
-use crate::renderer::contract::DrawReport;
-use crate::renderer::prelude::*;
-use crate::renderer::{
+use crate::renderer::{report, test_texture, DeletionQueue};
+use crate::{
   ClipOperation, Color, ColorSource, DisplayList, DisplayListBuilder, DrawStyle, ISize, Matrix, Paint, Point, Rect,
   RoundingRadii, Size, StrokeCap, Texture, TextureSampling, TileMode,
 };
+use crate::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, RAMP_WIDTH};
 use euclid::default::{Box2D, Point2D};
 use std::sync::Arc;
 

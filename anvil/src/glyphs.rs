@@ -3,7 +3,7 @@
 //! data shared by the UI thread (which builds the quads from the text
 //! atlas's placements) and the raster thread (which draws them).
 
-use crate::renderer::TileMode;
+use crate::TileMode;
 
 /// One glyph of a text layer: where its cell lands in the layer, which
 /// atlas texels it samples, and the run's color.

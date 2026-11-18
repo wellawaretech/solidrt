@@ -1,7 +1,7 @@
-Alloy is the window's scene and its rendering: Impeller for 2D paint, behind
-the renderer seam in `src/renderer/` (the one module that names the
-`impellers` crate, see okf/done/renderer-seam.md); glow as the single
-trusted GL path; the rendertree - Alloy's own scene graph with taffy-based
+Alloy is the window's scene and its rendering: anvil for 2D paint, a crate
+of its own behind the renderer seam in `src/renderer/` (the one module that
+names it, see okf/done/renderer-seam.md and okf/plans/own-renderer.md); glow
+as the single trusted GL path; the rendertree - Alloy's own scene graph with taffy-based
 layout (cached), hit testing and pointer routing, damage tracking, and
 compositing; and frame timing. It reaches the window, its events, the GL
 surface and the devices through ore, the OS layer, and names no SDL type.
@@ -59,7 +59,8 @@ never inline in source files.
 
 A lib test reads back what the paint walk drew: in a test build a display
 list returns its ops through `DisplayList::ops()`, and
-`renderer::oplog::placed` places each one in device pixels (test builds
-only, no cost to a shipped build). A claim about a shape's ops (its box, its
+`renderer::oplog::placed` places each one in device pixels (anvil's `oplog`
+feature, which alloy enables as a dev-dependency only: no cost to a shipped
+build). A claim about a shape's ops (its box, its
 stroke width, its paint) goes there; pixels and texture draws stay with the
 GL examples.

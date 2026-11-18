@@ -4,11 +4,11 @@
 //! through the program its kind needs. Raster thread only, with the context
 //! current.
 
-use super::super::contract::{DrawReport, Target};
-use super::super::{TextureSampling, TileMode};
 use super::record::DisplayList;
 use super::walk::{self, BatchProgram, Instance};
-use crate::gpu::{CoveragePolicy, GlyphGradient, RAMP_WIDTH};
+use crate::contract::{DrawReport, Target};
+use crate::{CoveragePolicy, GlyphGradient, RAMP_WIDTH};
+use crate::{TextureSampling, TileMode};
 use euclid::default::{Box2D, Point2D};
 use glow::HasContext;
 use std::os::raw::c_void;

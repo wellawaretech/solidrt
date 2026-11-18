@@ -1,20 +1,20 @@
 // The renderer seam: every recording op of the contract, driven through the
-// aliases the way the rendertree drives them, records and builds without a
-// GL context, and the list reads back what was recorded (renderer::oplog,
-// test builds only): every op in order with its arguments, a paint as its
+// crate's types the way the rendertree drives them, records and builds
+// without a GL context, and the list reads back what was recorded (oplog,
+// with the op log on): every op in order with its arguments, a paint as its
 // fields, a path as its segments. A renderer that implements the contract
 // but refuses an op (returns no list, panics in a forwarder) or logs it
 // wrong fails here, before a snapshot suite has to find it. Then `placed`,
 // the helper that applies the saves, restores and transforms.
 
-use crate::gpu::{CoveragePolicy, GlyphQuad};
-use crate::renderer::oplog::{placed, Op, PaintLog, PathLog, PathSegment};
-use crate::renderer::prelude::*;
-use crate::renderer::{
+use crate::oplog::{placed, Op, PaintLog, PathLog, PathSegment};
+use crate::prelude::*;
+use crate::{
   test_texture, BlendMode, ClipOperation, Color, ColorFilter, ColorMatrix, ColorSource, DisplayListBuilder, DrawStyle,
   FillType, ISize, ImageFilter, MaskFilter, Matrix, Paint, PathBuilder, Point, Rect, RoundingRadii, Size, StrokeCap,
   StrokeJoin, TextureSampling, TileMode,
 };
+use crate::{CoveragePolicy, GlyphQuad};
 use std::sync::Arc;
 
 // How far a mapped coordinate may sit from the expected one: float noise.

@@ -2,20 +2,21 @@
 //! vocabulary. A builder records anvil's executable ops (`super::ops`),
 //! resolved for the executor: colors premultiplied, a paint reduced to what
 //! stage 1 draws, the ops stage 1 cannot draw warned once and recorded as
-//! their nearest supported op or not at all. In a test build it also keeps
-//! the plain-data log (`super::super::oplog`), one `cfg(test)` statement
-//! per forwarder beside the executable push.
+//! their nearest supported op or not at all. With the op log on (the
+//! `oplog` feature, or this crate's tests) it also keeps the plain-data log
+//! (`crate::oplog`), one cfg'd statement per forwarder beside the
+//! executable push.
 
-use super::super::contract;
-#[cfg(test)]
-use super::super::oplog::{Op as LogOp, PaintLog, PathLog, PathSegment};
-use super::super::{
+use super::ops::{premultiply, Image, Op, Premultiplied, Radii};
+use super::Texture;
+use crate::contract;
+#[cfg(any(test, feature = "oplog"))]
+use crate::oplog::{Op as LogOp, PaintLog, PathLog, PathSegment};
+use crate::{
   BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, Matrix, Point, Rect, RoundingRadii, Size,
   StrokeCap, StrokeJoin, TextureSampling, TileMode,
 };
-use super::ops::{premultiply, Image, Op, Premultiplied, Radii};
-use super::Texture;
-use crate::gpu::{CoveragePolicy, GlyphGradient, GlyphQuad};
+use crate::{CoveragePolicy, GlyphGradient, GlyphQuad};
 use std::sync::Arc;
 
 /// A finished recording: the executable ops and, in a test build, the
@@ -23,7 +24,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct DisplayList {
   ops: Arc<[Op]>,
-  #[cfg(test)]
+  #[cfg(any(test, feature = "oplog"))]
   log: Arc<[LogOp]>,
 }
 
@@ -38,8 +39,8 @@ impl DisplayList {
   /// The glyph runs the list draws, nested lists flattened in place, each
   /// as the shared slice its op holds and the atlas it samples: a test's
   /// read of whether a run was re-recorded by reference or remade.
-  #[cfg(test)]
-  pub(crate) fn glyph_runs(&self) -> Vec<(Arc<[GlyphQuad]>, Texture)> {
+  #[cfg(any(test, feature = "oplog"))]
+  pub fn glyph_runs(&self) -> Vec<(Arc<[GlyphQuad]>, Texture)> {
     let mut out = Vec::new();
     for op in self.executable() {
       match op {
@@ -53,7 +54,7 @@ impl DisplayList {
 }
 
 impl contract::DisplayList for DisplayList {
-  #[cfg(test)]
+  #[cfg(any(test, feature = "oplog"))]
   fn ops(&self) -> &[LogOp] {
     &self.log
   }
@@ -61,7 +62,7 @@ impl contract::DisplayList for DisplayList {
 
 pub struct DisplayListBuilder {
   ops: Vec<Op>,
-  #[cfg(test)]
+  #[cfg(any(test, feature = "oplog"))]
   log: Vec<LogOp>,
 }
 
@@ -184,14 +185,14 @@ fn warn_non_miter_join(paint: &Paint) {
 
 // The arguments of the ops anvil does not draw yet (the layers, the oval
 // clip, the path) are read only by the test log.
-#[cfg_attr(not(test), allow(unused_variables))]
+#[cfg_attr(not(any(test, feature = "oplog")), allow(unused_variables))]
 impl contract::DisplayListBuilder for DisplayListBuilder {
   fn new(_cull: Option<&Rect>) -> Self {
     // The cull rect is ignored by design: the executor's clip rejection
     // covers it.
     DisplayListBuilder {
       ops: Vec::new(),
-      #[cfg(test)]
+      #[cfg(any(test, feature = "oplog"))]
       log: Vec::new(),
     }
   }
@@ -199,14 +200,14 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   fn build(self) -> Option<DisplayList> {
     Some(DisplayList {
       ops: self.ops.into(),
-      #[cfg(test)]
+      #[cfg(any(test, feature = "oplog"))]
       log: self.log.into(),
     })
   }
 
   fn save(&mut self) -> &mut Self {
     self.ops.push(Op::Save);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::Save);
     self
   }
@@ -215,7 +216,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     unsupported!("save_layer", "the content draws without a layer, at full opacity and unfiltered");
     // A plain save, so the matching restore still pops.
     self.ops.push(Op::Save);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::SaveLayer { bounds: *bounds, paint: paint.map(|p| p.log) });
     self
   }
@@ -223,35 +224,35 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   fn save_backdrop_layer(&mut self, bounds: &Rect, paint: Option<&Paint>, filter: Option<&ImageFilter>) -> &mut Self {
     unsupported!("save_backdrop_layer", "the backdrop is not captured and the content draws in place");
     self.ops.push(Op::Save);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::SaveBackdropLayer { bounds: *bounds, paint: paint.map(|p| p.log), filter: filter.is_some() });
     self
   }
 
   fn restore(&mut self) -> &mut Self {
     self.ops.push(Op::Restore);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::Restore);
     self
   }
 
   fn translate(&mut self, x: f32, y: f32) -> &mut Self {
     self.ops.push(Op::Translate { x, y });
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::Translate { x, y });
     self
   }
 
   fn scale(&mut self, x: f32, y: f32) -> &mut Self {
     self.ops.push(Op::Scale { x, y });
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::Scale { x, y });
     self
   }
 
   fn transform(&mut self, matrix: &Matrix) -> &mut Self {
     self.ops.push(Op::Transform(*matrix));
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::Transform(*matrix));
     self
   }
@@ -261,14 +262,14 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       ClipOperation::Intersect => self.ops.push(Op::ClipRect(*rect)),
       ClipOperation::Difference => Self::clip_difference_unsupported(),
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::ClipRect { rect: *rect, op });
     self
   }
 
   fn clip_oval(&mut self, bounds: &Rect, op: ClipOperation) -> &mut Self {
     unsupported!("clip_oval", "the clip is ignored");
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::ClipOval { bounds: *bounds, op });
     self
   }
@@ -280,7 +281,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       }
       ClipOperation::Difference => Self::clip_difference_unsupported(),
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::ClipRoundedRect { rect: *rect, radii: *radii, op });
     self
   }
@@ -297,7 +298,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       width: paint.stroke_width,
       cap: paint.stroke_cap,
     });
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawLine { from, to, paint: paint.log });
     self
   }
@@ -319,7 +320,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       |color, width| Op::DrawRect { rect, radii: [0.0; 4], color, stroke: Some(width), image: image.clone() },
       &mut self.ops,
     );
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawRect { rect, paint: paint.log });
     self
   }
@@ -339,7 +340,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       |color, width| Op::DrawOval { bounds, color, stroke: Some(width), image: image.clone() },
       &mut self.ops,
     );
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawOval { bounds, paint: paint.log });
     self
   }
@@ -363,14 +364,14 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       |color, width| Op::DrawRect { rect, radii: clamped, color, stroke: Some(width), image: image.clone() },
       &mut self.ops,
     );
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawRoundedRect { rect, radii: *radii, paint: paint.log });
     self
   }
 
   fn draw_path(&mut self, path: &Path, paint: &Paint) -> &mut Self {
     unsupported!("draw_path", "the path is not drawn");
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawPath { path: path.log.clone(), paint: paint.log });
     self
   }
@@ -390,7 +391,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       sampling,
       alpha: paint.map_or(1.0, |p| p.color.alpha),
     });
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawTextureRect { src: *src, dst: *dst, sampling, paint: paint.map(|p| p.log) });
     self
   }
@@ -410,14 +411,14 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       policy,
       gradient: gradient.cloned(),
     });
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawGlyphs { bounds, quads: quads.len(), policy, gradient: gradient.is_some() });
     self
   }
 
   fn draw_display_list(&mut self, dl: &DisplayList, opacity: f32) -> &mut Self {
     self.ops.push(Op::DrawList { list: dl.clone(), opacity });
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawDisplayList { ops: dl.log.clone(), opacity });
     self
   }
@@ -443,7 +444,7 @@ pub struct Paint {
   pub(super) image_filter: Option<ImageFilter>,
   #[allow(dead_code)] // read by the executor from stage 6 (filters)
   pub(super) mask_filter: Option<MaskFilter>,
-  #[cfg(test)]
+  #[cfg(any(test, feature = "oplog"))]
   log: PaintLog,
 }
 
@@ -464,7 +465,7 @@ impl Default for Paint {
       color_filter: None,
       image_filter: None,
       mask_filter: None,
-      #[cfg(test)]
+      #[cfg(any(test, feature = "oplog"))]
       log: PaintLog::default(),
     }
   }
@@ -473,7 +474,7 @@ impl Default for Paint {
 impl contract::Paint for Paint {
   fn set_color(&mut self, color: Color) -> &mut Self {
     self.color = color;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     {
       self.log.color = color;
     }
@@ -486,7 +487,7 @@ impl contract::Paint for Paint {
       unsupported!("a gradient color source", "the paint's color is used instead");
     }
     self.color_source = Some(source.clone());
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     {
       self.log.color_source = true;
     }
@@ -495,7 +496,7 @@ impl contract::Paint for Paint {
 
   fn set_draw_style(&mut self, style: DrawStyle) -> &mut Self {
     self.draw_style = style;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     {
       self.log.draw_style = style;
     }
@@ -507,7 +508,7 @@ impl contract::Paint for Paint {
       unsupported!("a blend mode other than source-over", "the draw blends source-over");
     }
     self.blend_mode = mode;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     {
       self.log.blend_mode = mode;
     }
@@ -516,7 +517,7 @@ impl contract::Paint for Paint {
 
   fn set_stroke_width(&mut self, width: f32) -> &mut Self {
     self.stroke_width = width;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     {
       self.log.stroke_width = width;
     }
@@ -525,7 +526,7 @@ impl contract::Paint for Paint {
 
   fn set_stroke_cap(&mut self, cap: StrokeCap) -> &mut Self {
     self.stroke_cap = cap;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     {
       self.log.stroke_cap = cap;
     }
@@ -534,7 +535,7 @@ impl contract::Paint for Paint {
 
   fn set_stroke_join(&mut self, join: StrokeJoin) -> &mut Self {
     self.stroke_join = join;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     {
       self.log.stroke_join = join;
     }
@@ -543,7 +544,7 @@ impl contract::Paint for Paint {
 
   fn set_stroke_miter(&mut self, miter: f32) -> &mut Self {
     self.stroke_miter = miter;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     {
       self.log.stroke_miter = miter;
     }
@@ -553,7 +554,7 @@ impl contract::Paint for Paint {
   fn set_color_filter(&mut self, filter: &ColorFilter) -> &mut Self {
     unsupported!("a paint color filter", "the filter is ignored");
     self.color_filter = Some(filter.clone());
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     {
       self.log.color_filter = true;
     }
@@ -563,7 +564,7 @@ impl contract::Paint for Paint {
   fn set_image_filter(&mut self, filter: &ImageFilter) -> &mut Self {
     unsupported!("a paint image filter", "the filter is ignored");
     self.image_filter = Some(filter.clone());
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     {
       self.log.image_filter = true;
     }
@@ -573,7 +574,7 @@ impl contract::Paint for Paint {
   fn set_mask_filter(&mut self, filter: &MaskFilter) -> &mut Self {
     unsupported!("a paint mask filter", "the filter is ignored");
     self.mask_filter = Some(filter.clone());
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     {
       self.log.mask_filter = true;
     }
@@ -710,7 +711,7 @@ pub struct Path {
   #[allow(dead_code)] // read by the executor from stage 3
   pub(super) fill: FillType,
   // A path is cloned and kept across frames: the log is shared.
-  #[cfg(test)]
+  #[cfg(any(test, feature = "oplog"))]
   log: Arc<PathLog>,
 }
 
@@ -718,34 +719,34 @@ impl contract::Path for Path {}
 
 #[derive(Default)]
 pub struct PathBuilder {
-  #[cfg(test)]
+  #[cfg(any(test, feature = "oplog"))]
   segments: Vec<PathSegment>,
 }
 
 // The points are read only by the test log until stage 3 keeps the
 // geometry.
-#[cfg_attr(not(test), allow(unused_variables))]
+#[cfg_attr(not(any(test, feature = "oplog")), allow(unused_variables))]
 impl contract::Pen for PathBuilder {
   fn move_to(&mut self, p: Point) -> &mut Self {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.segments.push(PathSegment::MoveTo(p));
     self
   }
 
   fn line_to(&mut self, p: Point) -> &mut Self {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.segments.push(PathSegment::LineTo(p));
     self
   }
 
   fn quadratic_to(&mut self, ctrl: Point, p: Point) -> &mut Self {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.segments.push(PathSegment::QuadraticTo { ctrl, to: p });
     self
   }
 
   fn cubic_to(&mut self, ctrl1: Point, ctrl2: Point, p: Point) -> &mut Self {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.segments.push(PathSegment::CubicTo { ctrl1, ctrl2, to: p });
     self
   }
@@ -753,7 +754,7 @@ impl contract::Pen for PathBuilder {
 
 impl contract::PathBuilder for PathBuilder {
   fn close(&mut self) -> &mut Self {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "oplog"))]
     self.segments.push(PathSegment::Close);
     self
   }
@@ -761,7 +762,7 @@ impl contract::PathBuilder for PathBuilder {
   fn build(self, fill: FillType) -> Path {
     Path {
       fill,
-      #[cfg(test)]
+      #[cfg(any(test, feature = "oplog"))]
       log: Arc::new(PathLog { segments: self.segments, fill }),
     }
   }

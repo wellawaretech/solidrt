@@ -2,10 +2,10 @@
 //! premultiplied, a paint reduced to what stage 1 draws), shared behind an
 //! Arc so a retained list is recorded once and replayed by reference.
 
-use super::super::{Color, Matrix, Point, Rect, StrokeCap, TextureSampling};
 use super::record::DisplayList;
 use super::Texture;
-use crate::gpu::{CoveragePolicy, GlyphGradient, GlyphQuad};
+use crate::{Color, Matrix, Point, Rect, StrokeCap, TextureSampling};
+use crate::{CoveragePolicy, GlyphGradient, GlyphQuad};
 use euclid::default::Transform2D;
 use std::sync::Arc;
 

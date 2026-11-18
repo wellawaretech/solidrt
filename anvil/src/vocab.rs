@@ -1,7 +1,7 @@
 //! The drawing vocabulary every renderer speaks: geometry, color and the
-//! enums a paint or an op carries. Plain data, owned by alloy, so the
-//! rendertree, the flux plugins and the overlay describe a frame without
-//! naming the renderer that draws it.
+//! enums a paint or an op carries. Plain data, re-exported by alloy's seam,
+//! so the rendertree, the flux plugins and the overlay describe a frame
+//! without naming the renderer that draws it.
 
 /// A rectangle in logical pixels, origin top-left, y down.
 pub type Rect = euclid::Rect<f32, euclid::UnknownUnit>;

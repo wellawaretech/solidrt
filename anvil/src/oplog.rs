@@ -1,9 +1,10 @@
-//! The log of what a display list recorded, for alloy's own tests: the ops
-//! in order with their arguments, a paint as the fields set on it, a path
-//! as its segments, a nested list as one op that can be opened. Plain data
-//! over the vocabulary, kept by the renderer's recording types beside their
-//! own recording. It exists in test builds only (`cfg(test)`): a shipped
-//! build has no log, no field and no branch for it.
+//! The log of what a display list recorded, for alloy's tests and anvil's:
+//! the ops in order with their arguments, a paint as the fields set on it,
+//! a path as its segments, a nested list as one op that can be opened.
+//! Plain data over the vocabulary, kept by the renderer's recording types
+//! beside their own recording. It exists only with the `oplog` feature
+//! (alloy turns it on for its tests) and in this crate's own tests: a
+//! shipped build has no log, no field and no branch for it.
 //!
 //! `placed` applies the saves, restores and transforms, so a test asks for
 //! a box in device pixels and not for raw ops.
@@ -12,7 +13,7 @@ use super::vocab::{
   BlendMode, ClipOperation, Color, DrawStyle, FillType, Matrix, Point, Rect, RoundingRadii, StrokeCap, StrokeJoin,
   TextureSampling,
 };
-use crate::gpu::CoveragePolicy;
+use crate::CoveragePolicy;
 use std::sync::Arc;
 
 /// How far apart the two axis scales of a matrix may be and still count as

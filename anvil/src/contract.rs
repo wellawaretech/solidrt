@@ -1,7 +1,7 @@
 //! The contract a renderer implements: one trait per renderer type, written
-//! against this build's aliases (`super::Texture`, `super::DisplayList`,
-//! ...), so a second implementation swaps the aliases and the compiler lists
-//! what it is missing.
+//! against the crate's concrete types (`super::Texture`,
+//! `super::DisplayList`, ...), so a second implementation swaps those
+//! re-exports and the compiler lists what it is missing.
 //!
 //! Recording and drawing are separate halves. Recording (a
 //! `DisplayListBuilder` and what it takes) runs on any thread and touches no
@@ -20,10 +20,9 @@ use super::vocab::{
   BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, ISize, Matrix, Point, Rect, RoundingRadii,
   StrokeCap, StrokeJoin, TextureSampling, TileMode,
 };
+use crate::{CoveragePolicy, GlyphGradient, GlyphQuad};
 use std::os::raw::c_void;
 use std::sync::Arc;
-// The glyph vocabulary lives with the glyph pass until stage 7 moves it.
-use crate::gpu::{CoveragePolicy, GlyphGradient, GlyphQuad};
 
 /// Where a draw lands: a framebuffer by GL name (None is the window's
 /// default framebuffer, FBO 0) and its size in pixels. Every target is
@@ -85,10 +84,10 @@ pub trait Texture: Clone + Send + Sync {
 /// from every frame that nests it.
 pub trait DisplayList: Clone + Send + Sync {
   /// The ops the list recorded, in order with their arguments, a nested
-  /// list as one op that holds its own. Test builds only: alloy's tests read
-  /// what the paint walk drew through it, so a second renderer must supply
-  /// it too.
-  #[cfg(test)]
+  /// list as one op that holds its own. With the op log only (the `oplog`
+  /// feature, or this crate's tests): alloy's tests read what the paint
+  /// walk drew through it, so a second renderer must supply it too.
+  #[cfg(any(test, feature = "oplog"))]
   fn ops(&self) -> &[super::oplog::Op];
 }
 

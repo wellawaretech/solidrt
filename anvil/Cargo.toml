@@ -1,0 +1,21 @@
+[package]
+name = "anvil"
+version = "0.0.0"
+edition = "2021"
+
+[features]
+# The plain-data log of what a display list recorded (`oplog`,
+# `DisplayList::ops`, `test_texture`, the pure `walk`), for tests that read
+# back what was drawn. A shipped build leaves it off: no log, no field and
+# no branch for it. alloy enables it for its tests only (dev-dependencies).
+oplog = []
+
+[dependencies]
+log = { workspace = true }
+# GLES bindings, loaded by the embedder's GL proc-address; the executor
+# draws through them. glow is loader-based, so one entry covers all
+# targets; alloy's pin.
+glow = "=0.17.0"
+# The vocabulary's Point/Size/Rect/Matrix are euclid aliases (vocab.rs);
+# alloy's pin.
+euclid = "=0.22.14"

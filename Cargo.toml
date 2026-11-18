@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "alloy",
+  "anvil",
   "forge",
   "flux",
   "lattice",
@@ -16,6 +17,7 @@ resolver = "2"
 # an explicit, reviewable edit (that is also what dependabot then rewrites).
 [workspace.dependencies]
 alloy = { path = "alloy" }
+anvil = { path = "anvil" }
 forge = { path = "forge" }
 flux = { path = "flux", default-features = false }
 ore = { path = "ore" }

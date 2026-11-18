@@ -1,25 +1,6 @@
-//! Anvil, alloy's own renderer behind the contract
-//! (okf/plans/own-renderer.md). A build holds exactly one renderer, and
-//! this is it: Impeller and its crate are gone from the workspace.
-//!
-//! A builder records anvil's own executable ops (`ops`, recorded by
-//! `record`, beside the test-build log `super::oplog`); a draw walks them
-//! into instances (`walk`, pure) and draws those as instanced quads
-//! through three programs (`exec`): plain rect fills through a fill
-//! program with no discard and no derivatives, every other shape through
-//! the shape program, glyph runs through a glyph program of their own. Stage 1 draws the state ops, rect and oval
-//! fills and strokes, lines, texture quads and the axis-aligned intersect
-//! clip. Stage 2, step 1 adds rounded rects (per-corner radii, fill,
-//! stroke and stroke-and-fill), an axis-aligned rounded clip, and rects,
-//! rounded rects and ovals filled with an image color source (the rounded
-//! `<texture>`). A glyph run draws straight from the text atlas: one
-//! instance per glyph, the atlas's red channel as coverage under the run's
-//! coverage policy, a gradient run from a ramp, so a screen of text is a
-//! few batches over one texture: the glyph runs, and the shapes between
-//! them in batches of their own. What does not draw
-//! yet (paths, layers, the other clips,
-//! group opacity, gradients, filters, blend modes) warns once per process,
-//! naming itself and what happens instead.
+//! The renderer and its texture handle, over the recording (`record`, its
+//! ops in `ops`), the pure walk (`walk`) and the executor (`exec`); the
+//! crate doc says what draws.
 //!
 //! An adopted GL name belongs to the renderer that adopted it. The handle
 //! is `Arc`-shared and crosses threads (a list is recorded on the UI thread
@@ -29,15 +10,15 @@
 //! context current. So a handle never deletes: its drop pushes the name
 //! onto a queue the renderer created, the executor drains that queue at the
 //! start of every `draw` and deletes the names there, and a renderer that is
-//! dropped (a context loss, `raster/recover.rs`) takes its queue with it.
+//! dropped (a context loss, alloy's `raster/recover.rs`) takes its queue with it.
 //! Handles that outlive it push onto a queue nobody drains, which is right,
 //! because those names died with the context; the new renderer drains only
 //! the queue it created, so a stale name (possibly the same number as a
 //! fresh one on the new context) is never deleted on the new context.
 //! Impeller's reactor did this quietly; anvil does it here.
 
-use super::contract;
-use super::ISize;
+use crate::contract;
+use crate::ISize;
 use std::os::raw::c_void;
 use std::sync::{Arc, Mutex};
 
@@ -57,7 +38,7 @@ macro_rules! unsupported {
 mod exec;
 mod ops;
 mod record;
-pub(crate) mod walk;
+pub mod walk;
 
 pub use record::{
   ColorFilter, ColorSource, DisplayList, DisplayListBuilder, ImageFilter, MaskFilter, Paint, Path, PathBuilder,
@@ -150,16 +131,17 @@ impl Texture {
   }
 
   /// A handle over `queue` (test builds build one without a renderer).
-  #[cfg(test)]
+  #[cfg(any(test, feature = "oplog"))]
   pub(crate) fn over(queue: Arc<DeletionQueue>, name: u32, size: ISize) -> Texture {
     let name = glow::NativeTexture(std::num::NonZeroU32::new(name).expect("a GL name is never zero"));
     Texture(Arc::new(TextureInner { name, size, queue }))
   }
 }
 
-/// A handle for the walk tests: a fresh queue nobody drains.
-#[cfg(test)]
-pub(crate) fn test_texture(name: u32, size: ISize) -> Texture {
+/// A texture handle with no renderer behind it, for tests that record
+/// without GL: a fresh queue nobody drains, so its drop deletes nothing.
+#[cfg(any(test, feature = "oplog"))]
+pub fn test_texture(name: u32, size: ISize) -> Texture {
   Texture::over(Arc::new(DeletionQueue::new()), name, size)
 }
 

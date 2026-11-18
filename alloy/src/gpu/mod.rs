@@ -14,7 +14,6 @@
 mod damage;
 mod dirt;
 mod draw_list;
-mod glyphs;
 mod lease;
 mod limits;
 mod order;
@@ -29,7 +28,8 @@ pub use damage::{project_box, BoxDamage, MAX_DAMAGE_RECTS};
 pub use damage::{DamageRects, ListDamage, PxRect, TargetDirt, DAMAGE_EDGE_PX, MAX_DAMAGE_SLOTS};
 pub use dirt::{Dirt, DirtySet};
 pub use draw_list::{gather_list, CellIndex, DrawList, ListChange, ListOrder};
-pub use glyphs::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
+// The glyph vocabulary is anvil's, re-exported under its former path.
+pub use anvil::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, RAMP_WIDTH};
 pub use lease::WriteLeases;
 pub use limits::GpuLimits;
 pub(crate) use order::check_direction;
