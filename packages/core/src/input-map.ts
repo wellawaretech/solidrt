@@ -102,7 +102,10 @@ export interface InputSource<K extends ActionKind = ActionKind> {
    */
   changedAt?: () => number | null
   deltas?: (sink: DeltaSink) => () => void
-  key?: (event: KeyEvent, down: boolean) => void
+  /** Returns true when the event changed what the source holds: a key
+   * down that does names the source's device for InputMap.device(). A
+   * source that returns nothing never counts as a key down. */
+  key?: (event: KeyEvent, down: boolean) => boolean | void
   blur?: () => void
 }
 
@@ -349,7 +352,10 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
     },
   })
   // A rate source leaving rest names its device the active one: one
-  // effect per binding, under a root disposed at unbind.
+  // effect per binding, under a root disposed at unbind. Only for sources
+  // without key events: those are named by the key down itself
+  // (forwardKey), since writes that net to the committed value within one
+  // flush (a tap, a re-press) wake no effect.
   let watchDevice = (source: InputSource): (() => void) =>
     createRoot(dispose => {
       createEffect(
@@ -384,7 +390,7 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
     s.sources.push(source)
     s.bump()
     if (source.deltas && s.kind !== "button") s.live.set(source, source.deltas(sink(s, source)))
-    if (source.rate && source.device) s.watch.set(source, watchDevice(source))
+    if (source.rate && source.device && !source.key) s.watch.set(source, watchDevice(source))
   }
   let unbindOne = (name: string, source: InputSource): void => {
     let s = state(name)
@@ -671,7 +677,7 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
       for (let source of s.sources) {
         if (seen.has(source) || !source.key) continue
         seen.add(source)
-        source.key(event, down)
+        if (source.key(event, down) === true && down) touched(source)
       }
     }
   }

@@ -71,7 +71,7 @@ function held(specs: Spec[]) {
   let [count, setCount] = createSignal(0, { ownedWrite: true })
   return {
     count,
-    key(event: KeyEvent, isDown: boolean) {
+    key(event: KeyEvent, isDown: boolean): boolean {
       // Every spec on this key is released first: a down settles the key
       // on its most specific matches (a repeat under a newly held Shift
       // moves "Tab" to "Shift+Tab" and back), an up frees them all.
@@ -79,8 +79,10 @@ function held(specs: Spec[]) {
       let before = [...down].join()
       for (let s of onKey) down.delete(s.text)
       if (isDown) for (let s of mostSpecific(onKey, s => s.mods, event)) down.add(s.text)
-      if ([...down].join() !== before) changedAt = event.timeStamp
+      let changed = [...down].join() !== before
+      if (changed) changedAt = event.timeStamp
       setCount(down.size)
+      return changed
     },
     blur() {
       if (down.size > 0) changedAt = null
