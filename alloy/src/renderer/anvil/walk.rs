@@ -1,5 +1,5 @@
 //! The pure half of a draw: a list's ops walked into the instances the
-//! shape program draws, with the save stack, the transforms and the clip
+//! two programs draw, with the save stack, the transforms and the clip
 //! applied and the draws outside the clip rejected. No GL here, so the walk
 //! is unit-tested without a context (`tests/anvil.rs`).
 
@@ -12,7 +12,7 @@ use euclid::default::{Box2D, Point2D, Transform2D};
 use euclid::Angle;
 use std::sync::Arc;
 
-/// One quad for the shape program, as the instance buffer carries it. All
+/// One quad for either program, as the instance buffer carries it. All
 /// f32 and `repr(C)`, so a slice of instances is uploaded as its bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,14 +54,17 @@ pub(crate) const INSTANCE_FLOATS: usize = 36;
 // field an f32.
 const _: () = assert!(std::mem::size_of::<Instance>() == INSTANCE_FLOATS * std::mem::size_of::<f32>());
 
-/// The shape kinds the fragment stage switches on. The `const int KIND_*`
-/// declarations in exec.rs's FRAGMENT_SRC must match them.
+/// The shape kinds the shape program's fragment stage switches on. The
+/// `const int KIND_*` declarations in exec.rs's SHAPE_FRAGMENT must match
+/// them.
 pub(crate) const KIND_RECT: f32 = 0.0;
 pub(crate) const KIND_OVAL: f32 = 1.0;
 pub(crate) const KIND_LINE: f32 = 2.0;
 /// A glyph quad: the atlas's red channel is its coverage, its color
 /// straight alpha, turned into color under the batch's coverage policy.
 /// It samples without `KIND_TEXTURED`, which means a premultiplied texel.
+/// It draws through the glyph program, which never reads the kind; the
+/// shape program has no arm for it.
 pub(crate) const KIND_GLYPH: f32 = 3.0;
 pub(crate) const KIND_ROUNDED_RECT: f32 = 4.0;
 /// Added to a shape kind when the instance samples its texture: coverage
@@ -81,14 +84,16 @@ pub(crate) const ROUNDED_QUAD_PAD: f32 = 1.0;
 const UNIFORM_SCALE_EPSILON: f32 = 1e-5;
 
 /// The line caps, as the instance carries them in `tex.x` (line kind). The
-/// `const int CAP_*` declarations in exec.rs's FRAGMENT_SRC must match them.
+/// `const int CAP_*` declarations in exec.rs's SHAPE_FRAGMENT must match them.
 pub(crate) const CAP_BUTT: f32 = 0.0;
 pub(crate) const CAP_SQUARE: f32 = 1.0;
 pub(crate) const CAP_ROUND: f32 = 2.0;
 
-/// A run of consecutive instances one draw issues: the shape instances
-/// before any texture, or everything that shares one texture and sampling,
-/// and for glyphs one coverage policy and at most one gradient.
+/// A run of consecutive instances one draw issues, of one kind class:
+/// shapes (the shape instances before any texture, or every shape that
+/// shares one texture and sampling) or glyphs (one atlas, one coverage
+/// policy and at most one gradient). The classes draw through different
+/// programs, so a glyph run never shares a batch with shapes.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Batch {
   pub start: usize,
@@ -96,8 +101,9 @@ pub(crate) struct Batch {
   /// The texture bound for the run, with its sampling; None for a run of
   /// shapes only.
   pub texture: Option<(glow::NativeTexture, TextureSampling)>,
-  /// Set when the run holds glyph instances: the policy their coverage
-  /// is turned into color with.
+  /// Set exactly when the run is glyphs: the policy their coverage is
+  /// turned into color with. The executor draws it through the glyph
+  /// program.
   pub policy: Option<CoveragePolicy>,
   /// A gradient run's gradient; such a run holds that one op's quads.
   pub gradient: Option<Arc<GlyphGradient>>,
@@ -119,15 +125,15 @@ pub(crate) struct Walked {
 }
 
 impl Walked {
-  // Append `instance` to the current batch when it can share its draw,
-  // else open a new batch. Shapes share any open batch (the shader
-  // branches on the kind; a bound sampler or a policy they never read
-  // costs nothing), so only a texture change or a sampling change ends a
-  // run.
+  // Append the shape `instance` to the current batch when it can share its
+  // draw, else open a new batch. A shape shares any open shape batch (the
+  // shader branches on the kind; a bound sampler it never reads costs
+  // nothing), so a texture change, a sampling change or a glyph run ends
+  // a run.
   fn push(&mut self, instance: Instance, texture: Option<(glow::NativeTexture, TextureSampling)>) {
     let start = self.instances.len();
     let sealed = self.sealed;
-    match self.batches.last_mut().filter(|_| !sealed) {
+    match self.batches.last_mut().filter(|last| !sealed && last.policy.is_none()) {
       None => self.open(Batch { start, count: 1, texture, policy: None, gradient: None }),
       Some(last) if texture.is_none() || last.texture == texture => last.count += 1,
       // The shapes before it do not care which sampler is bound.
@@ -142,9 +148,9 @@ impl Walked {
 
   // Append one glyph op's surviving `instances` over the atlas `atlas`
   // (sampled linearly) under `policy`. A solid run joins the current batch
-  // when that batch binds the atlas or nothing yet, has no policy or the
-  // same one, and has no gradient; a gradient run is its own batch, sealed
-  // after it, so the next instance opens a new one.
+  // when that batch is a solid glyph run over the same atlas under the
+  // same policy; a gradient run is its own batch, sealed after it, so the
+  // next instance opens a new one.
   fn push_glyphs(
     &mut self,
     instances: Vec<Instance>,
@@ -159,18 +165,11 @@ impl Walked {
     let count = instances.len();
     let texture = Some((atlas, TextureSampling::Linear));
     let joins = |last: &Batch| {
-      gradient.is_none()
-        && last.gradient.is_none()
-        && (last.texture.is_none() || last.texture == texture)
-        && last.policy.is_none_or(|p| p == policy)
+      gradient.is_none() && last.gradient.is_none() && last.texture == texture && last.policy == Some(policy)
     };
     let sealed = self.sealed;
     match self.batches.last_mut().filter(|last| !sealed && joins(last)) {
-      Some(last) => {
-        last.texture = texture;
-        last.policy = Some(policy);
-        last.count += count;
-      }
+      Some(last) => last.count += count,
       None => self.open(Batch { start, count, texture, policy: Some(policy), gradient: gradient.cloned() }),
     }
     self.sealed = gradient.is_some();

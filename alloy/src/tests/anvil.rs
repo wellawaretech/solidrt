@@ -1,6 +1,6 @@
 // Anvil's pure walk (renderer/anvil/walk.rs): a list built through the
 // aliases, the way the rendertree builds one, walked into the instances the
-// shape program draws, with no GL context. The transform stack, the
+// two programs draw, with no GL context. The transform stack, the
 // device-space clip, the rejection of draws outside it, nested lists and
 // the premultiplied color, the texture quads and their batches are all
 // decided here, before any GL work, as are the rounded rects' radii and
@@ -788,25 +788,25 @@ fn glyph_runs_are_rejected_whole_and_per_quad() {
 }
 
 #[test]
-fn glyph_runs_batch_with_the_shapes_between_them() {
+fn glyph_runs_and_shapes_take_separate_batches() {
   let atlas = test_texture(3, ISize::new(64, 32));
   let policy = CoveragePolicy::default();
   let quad = rect(0.0, 0.0, 10.0, 10.0);
-  // A prose screen: rects between the lines, one atlas, one policy.
+  // A glyph run between two rects: the run draws through the glyph
+  // program, so it is a batch of its own over the atlas, between two
+  // shape batches.
   let mut b = DisplayListBuilder::new(None);
-  b.draw_rect(&quad, &opaque()).draw_glyphs(&atlas, &word(0.0), policy, None).draw_rect(&quad, &opaque()).draw_glyphs(
-    &atlas,
-    &word(20.0),
-    policy,
-    None,
-  );
+  b.draw_rect(&quad, &opaque()).draw_glyphs(&atlas, &word(0.0), policy, None).draw_rect(&quad, &opaque());
   let out = walked_all(b);
-  assert_eq!(out.instances.len(), 6);
-  assert_eq!(out.batches, vec![glyphs(0, 6, &atlas, policy)]);
-  // Text and the shapes over one atlas: the glyph quads plus the shapes,
-  // in one draw call.
-  let (glyph_quads, shape_quads) = (4, 2);
-  assert_eq!(report(&out), DrawReport { instances: glyph_quads + shape_quads, draw_calls: 1 });
+  assert_eq!(out.batches, vec![shapes(0, 1, None), glyphs(1, 2, &atlas, policy), shapes(3, 1, None)]);
+  let (glyph_quads, shape_quads) = (2, 2);
+  assert_eq!(report(&out), DrawReport { instances: glyph_quads + shape_quads, draw_calls: 3 });
+
+  // Two runs with the same policy and nothing between them: one batch.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_glyphs(&atlas, &word(0.0), policy, None).draw_glyphs(&atlas, &word(20.0), policy, None);
+  let out = walked_all(b);
+  assert_eq!(out.batches, vec![glyphs(0, 4, &atlas, policy)]);
 
   // A policy change splits the run.
   let naive = CoveragePolicy { mode: CoverageMode::Naive, ..policy };
@@ -825,14 +825,24 @@ fn a_gradient_run_is_its_own_batch() {
   let mut b = DisplayListBuilder::new(None);
   b.draw_glyphs(&atlas, &word(0.0), policy, None)
     .draw_glyphs(&atlas, &word(20.0), policy, Some(&g))
+    .draw_glyphs(&atlas, &word(40.0), policy, None)
     .draw_rect(&quad, &opaque())
-    .draw_glyphs(&atlas, &word(40.0), policy, None);
+    .draw_glyphs(&atlas, &word(60.0), policy, None);
   let out = walked_all(b);
-  assert_eq!(out.instances.len(), 7);
+  assert_eq!(out.instances.len(), 9);
   let graded = Batch { gradient: Some(g.clone()), ..glyphs(2, 2, &atlas, policy) };
-  // Split before and after: the rect after the gradient run opens a new
-  // batch, which the solid run then joins.
-  assert_eq!(out.batches, vec![glyphs(0, 2, &atlas, policy), graded, glyphs(4, 3, &atlas, policy)]);
+  // Split before and after the gradient run; the rect is a shape batch of
+  // its own between the solid runs.
+  assert_eq!(
+    out.batches,
+    vec![
+      glyphs(0, 2, &atlas, policy),
+      graded,
+      glyphs(4, 2, &atlas, policy),
+      shapes(6, 1, None),
+      glyphs(7, 2, &atlas, policy),
+    ]
+  );
 }
 
 #[test]

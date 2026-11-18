@@ -1,7 +1,7 @@
 //! Validates the glyph run op (okf/plans/own-renderer.md, stage 2, text
 //! straight into the frame): a word's mask cells from the engine's
 //! rasterizer packed into an atlas texture, recorded as `draw_glyphs` into
-//! a display list, drawn by anvil's shape program into an offscreen frame,
+//! a display list, drawn by anvil's glyph program into an offscreen frame,
 //! read back and compared pixel for pixel with the same cells composited on
 //! the CPU - which checks the orientation, the atlas mapping and the
 //! premultiplied blend at once. Then a half-transparent red run over it,

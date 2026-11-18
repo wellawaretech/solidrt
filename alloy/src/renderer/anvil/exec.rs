@@ -1,6 +1,7 @@
-//! The GL half of a draw: the shape program, the instance buffer under the
-//! VAO the executor owns, and the draw that uploads a list's instances
-//! (`super::walk`) and issues them. Raster thread only, with the context
+//! The GL half of a draw: the shape program and the glyph program, the
+//! instance buffer under the VAO the executor owns, and the draw that
+//! uploads a list's instances (`super::walk`) and issues them, a batch
+//! through the program its kind needs. Raster thread only, with the context
 //! current.
 
 use super::super::contract::{DrawReport, Target};
@@ -18,7 +19,7 @@ const VERTICES_PER_QUAD: i32 = 6;
 const FLOATS_PER_ATTRIBUTE: i32 = 4;
 
 // The attribute locations. They must match the `layout(location = N)`
-// literals in VERTEX_SRC.
+// literals in VERTEX_COMMON and SHAPE_VERTEX.
 const ATTR_RECT: u32 = 0;
 const ATTR_LINEAR: u32 = 1;
 const ATTR_OFFSET: u32 = 2;
@@ -55,11 +56,14 @@ const BYTES_PER_RAMP_TEXEL: usize = 4;
 /// `GradientKind` discriminant.
 const NO_GRADIENT: i32 = 0;
 // `uTile` per tile mode. The `const int TILE_*` declarations in
-// FRAGMENT_SRC must match them.
+// GLYPH_FRAGMENT must match them.
 const TILE_CLAMP: i32 = 0;
 const TILE_REPEAT: i32 = 1;
 const TILE_MIRROR: i32 = 2;
 const TILE_DECAL: i32 = 3;
+
+// The first lines of every shader source here.
+const SOURCE_HEADER: &str = "#version 300 es\nprecision highp float;\n";
 
 // A target's logical (0, 0) is its top: it maps to clip (-1, +1) for every
 // target, window and texture alike. Window lists are drawn unflipped and
@@ -69,167 +73,97 @@ const TILE_DECAL: i32 = 3;
 // convention for the passes, and the plan (okf/plans/own-renderer.md)
 // pins it. Texture sampling reads vUv with v = 0 at texel row 0, no flip.
 //
-// The layout(location = N) literals must match the ATTR_* constants.
-const VERTEX_SRC: &str = r"#version 300 es
-precision highp float;
+// The vertex stage both programs share: the instance attributes they both
+// read, the outputs both fragment stages read, and the quad's placement.
+// A program reads only the attributes it declares, so the shape program
+// adds `aRadii` and both draw from the one VAO. The layout(location = N)
+// literals must match the ATTR_* constants.
+const VERTEX_COMMON: &str = r"
 layout(location = 0) in vec4 aRect;      // x, y, w, h in local space
 layout(location = 1) in vec4 aLinear;    // m11, m12, m21, m22
 layout(location = 2) in vec4 aOffset;    // m31, m32 (the translation), kind, stroke width
 layout(location = 3) in vec4 aColor;     // premultiplied; straight alpha for a glyph
 layout(location = 4) in vec4 aTex;       // u0, v0, u1, v1 for a textured instance; cap, length for a line
 layout(location = 5) in vec4 aClip;      // x0, y0, x1, y1 in device pixels
-layout(location = 6) in vec4 aRadii;     // corner radii in local pixels: tl, tr, br, bl
 layout(location = 7) in vec4 aRClip;     // the rounded clip in device pixels: x0, y0, x1, y1
 layout(location = 8) in vec4 aRClipRadii; // its corner radii in device pixels; all zero: none
 uniform vec2 uSize;                      // the target in device pixels
-out vec2 vLocal;                         // position within the shape, local pixels from its origin
 out vec2 vDevice;                        // device pixels, y down
-out vec2 vPos;                           // the op's space, untransformed: what a glyph gradient maps
+out vec2 vUv;
 flat out vec4 vColor;
 flat out vec4 vClip;
-flat out vec4 vShape;                    // w, h, kind, stroke width
-flat out vec4 vParams;                   // the line kind's cap and length
-flat out vec4 vRadii;
 flat out vec4 vRClip;
 flat out vec4 vRClipRadii;
-out vec2 vUv;
-void main() {
+// The vertex's corner of the quad, 0 or 1 per axis.
+vec2 quadCorner() {
   // One quad per instance, so this is gl_VertexID; the modulo keeps the
   // shader right if a later step draws several quads per instance.
   int corner = gl_VertexID - (gl_VertexID / 6) * 6;
   // Two triangles: (0,0) (1,0) (0,1) and (0,1) (1,0) (1,1).
-  vec2 c = vec2(
+  return vec2(
     (corner == 1 || corner == 4 || corner == 5) ? 1.0 : 0.0,
     (corner == 2 || corner == 3 || corner == 5) ? 1.0 : 0.0);
-  vec2 local = c * aRect.zw;
-  vec2 p = aRect.xy + local;
+}
+// Place the vertex at the quad's corner c: its position, and the outputs
+// both fragment stages read. Returns the point in the op's space.
+vec2 place(vec2 c) {
+  vec2 p = aRect.xy + c * aRect.zw;
   // euclid's row-vector convention: device = p * M, M = [m11 m12; m21 m22] + t.
   vec2 device = vec2(
     p.x * aLinear.x + p.y * aLinear.z + aOffset.x,
     p.x * aLinear.y + p.y * aLinear.w + aOffset.y);
   // Logical (0, 0) is the top of the target: clip y = +1.
   gl_Position = vec4(device.x / uSize.x * 2.0 - 1.0, 1.0 - device.y / uSize.y * 2.0, 0.0, 1.0);
-  vLocal = local;
   vDevice = device;
-  vPos = p;
+  vUv = aTex.xy + c * (aTex.zw - aTex.xy);
   vColor = aColor;
   vClip = aClip;
-  vShape = vec4(aRect.zw, aOffset.zw);
-  vUv = aTex.xy + c * (aTex.zw - aTex.xy);
-  vParams = aTex;
-  vRadii = aRadii;
   vRClip = aRClip;
   vRClipRadii = aRClipRadii;
+  return p;
 }
 ";
 
-// Every shape is evaluated here from the quad's local coordinates: the
-// walk expanded a stroke's quad by half the width on every side, so the
-// un-expanded shape's half extent is the quad's less half the stroke.
-// `hs` is the quad's half size (`half` is reserved in GLSL ES 3.00).
-//
-// Anti-aliasing has two sources. The quad's own edges (a rect fill's, a
-// rect stroke's outer edge, a line body's long edges and its butt and
-// square ends) are MSAA's: the rasterizer covers them per sample. The
-// edges the fragment stage decides (an oval's rim, a stroke band's inner
-// edge, a round cap) get analytic coverage: under MSAA the fragment stage
-// runs once per pixel and a discard keeps or drops all of its samples, so
-// a discard alone would leave them aliased.
-//
-// A rounded rect's fill and stroke are both analytic: the rounded-box
-// distance to the un-expanded edge, its inside for a fill and the band
-// |d| <= s/2 around it for a stroke (the centered stroke Skia draws: outer
-// radius r + s/2, inner r - s/2). Its quad is padded by ROUNDED_QUAD_PAD
-// past the stroke's half width, so a straight run's analytic edge never
-// lies on the quad's edge, where MSAA and the ramp would both attenuate
-// it; the padding fragments are past the edge and discard. The pad is in
-// local units, device pixels for a rendertree list; under a view
-// transform that shrinks, a sliver of the double attenuation may return.
-// The rounded clip is the same distance in device space, multiplied in.
-// A textured instance (KIND_TEXTURED added to its kind) multiplies its
-// coverage into the premultiplied texel.
-//
-// A glyph (KIND_GLYPH) has no analytic coverage: its quad is axis-aligned
-// at whole pixels and the atlas's red channel carries the coverage. Its
-// color is straight alpha, the quad's own or the gradient ramp's at the
-// parameter its position in the op's space maps to, and the batch's
-// coverage policy turns the coverage into color before the fragment
-// premultiplies; the glyph pass's (gl/glyphs.rs) recipe, ported.
-const FRAGMENT_SRC: &str = r"#version 300 es
-precision highp float;
-uniform sampler2D uTexture;
-uniform sampler2D uRamp;
-uniform int uMode;
-uniform float uGamma;
-uniform float uContrast;
-uniform vec4 uGammaRatios;
-uniform int uGradient;
-uniform vec3 uGradientX;
-uniform vec3 uGradientY;
-uniform int uTile;
-in vec2 vLocal;
+// The shape program's vertex stage, after SOURCE_HEADER and VERTEX_COMMON.
+const SHAPE_VERTEX: &str = r"
+layout(location = 6) in vec4 aRadii;     // corner radii in local pixels: tl, tr, br, bl
+out vec2 vLocal;                         // position within the shape, local pixels from its origin
+flat out vec4 vShape;                    // w, h, kind, stroke width
+flat out vec4 vParams;                   // the line kind's cap and length
+flat out vec4 vRadii;
+void main() {
+  vec2 c = quadCorner();
+  place(c);
+  vLocal = c * aRect.zw;
+  vShape = vec4(aRect.zw, aOffset.zw);
+  vParams = aTex;
+  vRadii = aRadii;
+}
+";
+
+// The glyph program's vertex stage, after SOURCE_HEADER and VERTEX_COMMON.
+const GLYPH_VERTEX: &str = r"
+out vec2 vPos;                           // the op's space, untransformed: what a gradient maps
+void main() {
+  vPos = place(quadCorner());
+}
+";
+
+// The fragment stage both programs share: the inputs VERTEX_COMMON writes,
+// the analytic coverage of a distance and the rounded clip over it. One
+// text, so a glyph under a rounded clip fades exactly as a shape does.
+const FRAGMENT_COMMON: &str = r"
 in vec2 vDevice;
-in vec2 vPos;
+in vec2 vUv;
 flat in vec4 vColor;
 flat in vec4 vClip;
-flat in vec4 vShape;      // quad w, quad h, kind (+ KIND_TEXTURED), stroke width (0 = fill)
-flat in vec4 vParams;     // line kind: cap, length
-flat in vec4 vRadii;      // corner radii, local pixels: tl, tr, br, bl
 flat in vec4 vRClip;      // the rounded clip in device pixels: x0, y0, x1, y1
 flat in vec4 vRClipRadii; // its corner radii in device pixels; all zero: none
-in vec2 vUv;
 out vec4 fragColor;
-// The shape kinds, the textured flag and the line caps, as the instance
-// carries them (walk.rs KIND_* and CAP_*): they must match.
-const int KIND_RECT = 0;
-const int KIND_OVAL = 1;
-const int KIND_LINE = 2;
-const int KIND_GLYPH = 3;
-const int KIND_ROUNDED_RECT = 4;
-const int KIND_TEXTURED = 8;
-const int CAP_ROUND = 2;
-// The coverage modes are CoverageMode's discriminants (0 is naive), the
-// gradient kinds GradientKind's (exec.rs NO_GRADIENT for none), the tile
-// modes exec.rs TILE_*: they must match.
-const int MODE_LINEAR_LIGHT = 1;
-const int MODE_POLARITY_REMAP = 2;
-const int MODE_POLARITY_LINEAR = 3;
-const int MODE_DIRECTWRITE = 4;
-const int NO_GRADIENT = 0;
-const int GRADIENT_LINEAR = 1;
-const int TILE_REPEAT = 1;
-const int TILE_MIRROR = 2;
-const int TILE_DECAL = 3;
-// Rec. 709 luminance weights; text whose color is above LIGHT_TEXT_LUMA is
-// light text to the polarity-aware modes.
-const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-const float LIGHT_TEXT_LUMA = 0.5;
-// DirectWrite's grayscale blend constants (Windows Terminal's
-// dwrite_helpers.hlsl, MIT): the lightness weights its contrast fade reads,
-// the fade FADE_END - FADE_SLOPE * lightness (full at 0.5, gone at 0.75),
-// and the intensity weights its alpha correction reads.
-const vec3 DWRITE_LIGHTNESS = vec3(0.30, 0.59, 0.11);
-const float DWRITE_FADE_SLOPE = 4.0;
-const float DWRITE_FADE_END = 3.0;
-const vec3 DWRITE_INTENSITY = vec3(0.25, 0.5, 0.25);
-// Local pixels a rounded rect's quad extends past its edge and its
-// stroke's half width (walk.rs ROUNDED_QUAD_PAD must match).
-const float ROUNDED_QUAD_PAD = 1.0;
-// A radius a stroke wider than its oval would drive to zero or below;
-// keeps the normalization finite.
-const float OVAL_RADIUS_FLOOR = 1e-3;
-// How close to the center the normalized point may be before the 0/0
-// form of the oval distance is replaced by deep inside.
-const float OVAL_CENTER_EPS = 1e-4;
 // The smallest screen-space footprint a distance is divided by: a
 // constant distance (deep inside) has a zero gradient and must read as
 // covered.
 const float FOOTPRINT_FLOOR = 1e-6;
-// A distance that reads as fully inside whatever the footprint: used
-// where the quad's own edges are the shape's edges and MSAA covers them,
-// and negated, as far outside a rect stroke's hole. Large and finite,
-// never -INFINITY.
-const float INSIDE = -1e6;
 // The screen-space footprint of d: how far d changes across one device
 // pixel along the edge's normal, so a local-unit distance divided by it
 // is in device pixels under any scale or skew. The gradient's length,
@@ -258,51 +192,72 @@ float roundedBox(vec2 p, vec2 hs, vec4 r) {
 // The rounded clip's coverage at this fragment, in device space: the same
 // distance function over the fragment's device position. All-zero radii
 // mean no rounded clip is in effect (the box test already clipped): 1.
+// The radii are flat, so every fragment of a quad takes the same path and
+// the derivatives stay defined.
 float roundedClip() {
   if (!any(greaterThan(vRClipRadii, vec4(0.0)))) return 1.0;
   vec2 center = (vRClip.xy + vRClip.zw) * 0.5;
   vec2 half_size = (vRClip.zw - vRClip.xy) * 0.5;
   return coverage(roundedBox(vDevice - center, half_size, vRClipRadii));
 }
-// A glyph fragment: the run's straight-alpha color, the atlas's coverage
-// under the policy, premultiplied, and the rounded clip multiplied in (as
-// the clip fades a text layer's texels).
-vec4 glyph() {
-  vec4 color = vColor;
-  if (uGradient != NO_GRADIENT) {
-    vec3 p3 = vec3(vPos, 1.0);
-    vec2 q = vec2(dot(uGradientX, p3), dot(uGradientY, p3));
-    float t = uGradient == GRADIENT_LINEAR ? q.x : length(q);
-    float inside = 1.0;
-    if (uTile == TILE_REPEAT) {
-      t = fract(t);
-    } else if (uTile == TILE_MIRROR) {
-      t = 1.0 - abs(1.0 - mod(t, 2.0));
-    } else if (uTile == TILE_DECAL) {
-      inside = (t < 0.0 || t > 1.0) ? 0.0 : 1.0;
-    }
-    vec4 g = texture(uRamp, vec2(clamp(t, 0.0, 1.0), 0.5));
-    color = vec4(g.rgb, g.a * vColor.a * inside);
-  }
-  float c = texture(uTexture, vUv).r;
-  bool light = dot(color.rgb, LUMA) > LIGHT_TEXT_LUMA;
-  if (uMode == MODE_LINEAR_LIGHT) {
-    c = light ? pow(c, 1.0 / uGamma) : 1.0 - pow(1.0 - c, 1.0 / uGamma);
-  } else if (uMode == MODE_POLARITY_REMAP) {
-    if (light) c = pow(1.0 - pow(1.0 - c, uGamma), 1.0 / uGamma);
-  } else if (uMode == MODE_POLARITY_LINEAR) {
-    if (light) c = pow(c, 1.0 / uGamma);
-  } else if (uMode == MODE_DIRECTWRITE) {
-    // The contrast boost fades with the text's lightness, the alpha
-    // correction reads its intensity.
-    float k = uContrast * clamp(dot(color.rgb, DWRITE_LIGHTNESS * -DWRITE_FADE_SLOPE) + DWRITE_FADE_END, 0.0, 1.0);
-    float f = dot(color.rgb, DWRITE_INTENSITY);
-    c = c * (k + 1.0) / (c * k + 1.0);
-    c = c + c * (1.0 - c) * ((uGammaRatios.x * f + uGammaRatios.y) * c + (uGammaRatios.z * f + uGammaRatios.w));
-  }
-  float a = c * color.a * roundedClip();
-  return vec4(color.rgb * a, a);
-}
+";
+
+// Every shape is evaluated here from the quad's local coordinates: the
+// walk expanded a stroke's quad by half the width on every side, so the
+// un-expanded shape's half extent is the quad's less half the stroke.
+// `hs` is the quad's half size (`half` is reserved in GLSL ES 3.00).
+//
+// Anti-aliasing has two sources. The quad's own edges (a rect fill's, a
+// rect stroke's outer edge, a line body's long edges and its butt and
+// square ends) are MSAA's: the rasterizer covers them per sample. The
+// edges the fragment stage decides (an oval's rim, a stroke band's inner
+// edge, a round cap) get analytic coverage: under MSAA the fragment stage
+// runs once per pixel and a discard keeps or drops all of its samples, so
+// a discard alone would leave them aliased.
+//
+// A rounded rect's fill and stroke are both analytic: the rounded-box
+// distance to the un-expanded edge, its inside for a fill and the band
+// |d| <= s/2 around it for a stroke (the centered stroke Skia draws: outer
+// radius r + s/2, inner r - s/2). Its quad is padded by ROUNDED_QUAD_PAD
+// past the stroke's half width, so a straight run's analytic edge never
+// lies on the quad's edge, where MSAA and the ramp would both attenuate
+// it; the padding fragments are past the edge and discard. The pad is in
+// local units, device pixels for a rendertree list; under a view
+// transform that shrinks, a sliver of the double attenuation may return.
+// The rounded clip is the same distance in device space, multiplied in.
+// A textured instance (KIND_TEXTURED added to its kind) multiplies its
+// coverage into the premultiplied texel. Glyphs never reach this program
+// (GLYPH_FRAGMENT draws them).
+//
+// After SOURCE_HEADER and FRAGMENT_COMMON.
+const SHAPE_FRAGMENT: &str = r"
+uniform sampler2D uTexture;
+in vec2 vLocal;
+flat in vec4 vShape;      // quad w, quad h, kind (+ KIND_TEXTURED), stroke width (0 = fill)
+flat in vec4 vParams;     // line kind: cap, length
+flat in vec4 vRadii;      // corner radii, local pixels: tl, tr, br, bl
+// The shape kinds, the textured flag and the line caps, as the instance
+// carries them (walk.rs KIND_* and CAP_*): they must match.
+const int KIND_RECT = 0;
+const int KIND_OVAL = 1;
+const int KIND_LINE = 2;
+const int KIND_ROUNDED_RECT = 4;
+const int KIND_TEXTURED = 8;
+const int CAP_ROUND = 2;
+// Local pixels a rounded rect's quad extends past its edge and its
+// stroke's half width (walk.rs ROUNDED_QUAD_PAD must match).
+const float ROUNDED_QUAD_PAD = 1.0;
+// A radius a stroke wider than its oval would drive to zero or below;
+// keeps the normalization finite.
+const float OVAL_RADIUS_FLOOR = 1e-3;
+// How close to the center the normalized point may be before the 0/0
+// form of the oval distance is replaced by deep inside.
+const float OVAL_CENTER_EPS = 1e-4;
+// A distance that reads as fully inside whatever the footprint: used
+// where the quad's own edges are the shape's edges and MSAA covers them,
+// and negated, as far outside a rect stroke's hole. Large and finite,
+// never -INFINITY.
+const float INSIDE = -1e6;
 void main() {
   // The clip, per fragment, so a clip change never ends a batch. Under
   // MSAA the test runs per fragment, not per sample: a clip edge is hard
@@ -313,12 +268,6 @@ void main() {
   int kind = int(vShape.z + 0.5);
   bool textured = kind >= KIND_TEXTURED;
   if (textured) kind -= KIND_TEXTURED;
-  // A flat per-instance test like the shape branches below, so the
-  // derivatives in the rounded clip stay defined.
-  if (kind == KIND_GLYPH) {
-    fragColor = glyph();
-    return;
-  }
   float s = vShape.w;
   vec2 hs = vShape.xy * 0.5;
   // From the quad's center.
@@ -391,15 +340,111 @@ void main() {
 }
 ";
 
-/// The GL half: the shape program, the instance buffer and the draw. Lives
+// A glyph has no analytic coverage: its quad is axis-aligned at whole
+// pixels and the atlas's red channel carries the coverage. Its color is
+// straight alpha, the quad's own or the gradient ramp's at the parameter
+// its position in the op's space maps to, and the batch's coverage policy
+// turns the coverage into color before the fragment premultiplies; the
+// glyph pass's (gl/glyphs.rs) recipe, ported. A program of its own, so a
+// glyph fragment carries none of the shape program's varyings or kind
+// branches: it clips by multiplying, never discards, and reads the
+// derivatives only under a rounded clip.
+//
+// After SOURCE_HEADER and FRAGMENT_COMMON.
+const GLYPH_FRAGMENT: &str = r"
+uniform sampler2D uTexture; // the atlas
+uniform sampler2D uRamp;
+uniform int uMode;
+uniform float uGamma;
+uniform float uContrast;
+uniform vec4 uGammaRatios;
+uniform int uGradient;
+uniform vec3 uGradientX;
+uniform vec3 uGradientY;
+uniform int uTile;
+in vec2 vPos;
+// The coverage modes are CoverageMode's discriminants (0 is naive), the
+// gradient kinds GradientKind's (exec.rs NO_GRADIENT for none), the tile
+// modes exec.rs TILE_*: they must match.
+const int MODE_LINEAR_LIGHT = 1;
+const int MODE_POLARITY_REMAP = 2;
+const int MODE_POLARITY_LINEAR = 3;
+const int MODE_DIRECTWRITE = 4;
+const int NO_GRADIENT = 0;
+const int GRADIENT_LINEAR = 1;
+const int TILE_REPEAT = 1;
+const int TILE_MIRROR = 2;
+const int TILE_DECAL = 3;
+// Rec. 709 luminance weights; text whose color is above LIGHT_TEXT_LUMA is
+// light text to the polarity-aware modes.
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+const float LIGHT_TEXT_LUMA = 0.5;
+// DirectWrite's grayscale blend constants (Windows Terminal's
+// dwrite_helpers.hlsl, MIT): the lightness weights its contrast fade reads,
+// the fade FADE_END - FADE_SLOPE * lightness (full at 0.5, gone at 0.75),
+// and the intensity weights its alpha correction reads.
+const vec3 DWRITE_LIGHTNESS = vec3(0.30, 0.59, 0.11);
+const float DWRITE_FADE_SLOPE = 4.0;
+const float DWRITE_FADE_END = 3.0;
+const vec3 DWRITE_INTENSITY = vec3(0.25, 0.5, 0.25);
+// A glyph fragment: the run's straight-alpha color, the atlas's coverage
+// under the policy, premultiplied, and `clip` (the clips' factor)
+// multiplied in, as the clip fades a text layer's texels.
+vec4 glyph(float clip) {
+  vec4 color = vColor;
+  if (uGradient != NO_GRADIENT) {
+    vec3 p3 = vec3(vPos, 1.0);
+    vec2 q = vec2(dot(uGradientX, p3), dot(uGradientY, p3));
+    float t = uGradient == GRADIENT_LINEAR ? q.x : length(q);
+    float inside = 1.0;
+    if (uTile == TILE_REPEAT) {
+      t = fract(t);
+    } else if (uTile == TILE_MIRROR) {
+      t = 1.0 - abs(1.0 - mod(t, 2.0));
+    } else if (uTile == TILE_DECAL) {
+      inside = (t < 0.0 || t > 1.0) ? 0.0 : 1.0;
+    }
+    vec4 g = texture(uRamp, vec2(clamp(t, 0.0, 1.0), 0.5));
+    color = vec4(g.rgb, g.a * vColor.a * inside);
+  }
+  float c = texture(uTexture, vUv).r;
+  bool light = dot(color.rgb, LUMA) > LIGHT_TEXT_LUMA;
+  if (uMode == MODE_LINEAR_LIGHT) {
+    c = light ? pow(c, 1.0 / uGamma) : 1.0 - pow(1.0 - c, 1.0 / uGamma);
+  } else if (uMode == MODE_POLARITY_REMAP) {
+    if (light) c = pow(1.0 - pow(1.0 - c, uGamma), 1.0 / uGamma);
+  } else if (uMode == MODE_POLARITY_LINEAR) {
+    if (light) c = pow(c, 1.0 / uGamma);
+  } else if (uMode == MODE_DIRECTWRITE) {
+    // The contrast boost fades with the text's lightness, the alpha
+    // correction reads its intensity.
+    float k = uContrast * clamp(dot(color.rgb, DWRITE_LIGHTNESS * -DWRITE_FADE_SLOPE) + DWRITE_FADE_END, 0.0, 1.0);
+    float f = dot(color.rgb, DWRITE_INTENSITY);
+    c = c * (k + 1.0) / (c * k + 1.0);
+    c = c + c * (1.0 - c) * ((uGammaRatios.x * f + uGammaRatios.y) * c + (uGammaRatios.z * f + uGammaRatios.w));
+  }
+  float a = c * color.a * clip;
+  return vec4(color.rgb * a, a);
+}
+void main() {
+  // The clip box as a factor, not a discard: a discard anywhere in a
+  // program costs every fragment its early kill. A fragment outside
+  // writes zero, which source-over leaves the target unchanged by.
+  float inside = float(all(greaterThanEqual(vDevice, vClip.xy)) && all(lessThan(vDevice, vClip.zw)));
+  fragColor = glyph(inside * roundedClip());
+}
+";
+
+/// The GL half: the two programs, the instance buffer and the draw. Lives
 /// as long as the renderer, which the raster thread drops before it releases
 /// the context (raster/recover.rs), so the GL names here die with it and
 /// Drop deletes nothing.
 pub(super) struct Executor {
   gl: glow::Context,
-  program: glow::Program,
-  /// `uSize`, the target in device pixels.
-  size_uniform: glow::UniformLocation,
+  /// Every batch without a coverage policy: shapes, images, textures.
+  shape: Program,
+  /// Every glyph batch (a batch with a coverage policy).
+  glyph: Program,
   vao: glow::VertexArray,
   instances: glow::Buffer,
   /// The two ways a texture quad samples, as sampler objects, so a bound
@@ -416,7 +461,14 @@ pub(super) struct Executor {
   ramp: glow::Texture,
 }
 
-/// The uniforms a glyph batch sets: its coverage policy and its gradient.
+/// A linked program and its `uSize`, the target in device pixels.
+struct Program {
+  program: glow::Program,
+  size: glow::UniformLocation,
+}
+
+/// The uniforms a glyph batch sets on the glyph program: its coverage
+/// policy and its gradient.
 struct GlyphUniforms {
   mode: glow::UniformLocation,
   gamma: glow::UniformLocation,
@@ -429,8 +481,9 @@ struct GlyphUniforms {
 }
 
 impl Executor {
-  /// Over the context current on the calling thread; compiles the program
-  /// now (every frame draws shapes, so the first frame must not pay it).
+  /// Over the context current on the calling thread; compiles both
+  /// programs now (every frame draws shapes and most draw text, so the
+  /// first frame must not pay them).
   ///
   /// # Safety
   /// As `contract::Renderer::new`: the context stays current on this
@@ -438,24 +491,39 @@ impl Executor {
   /// points.
   pub(super) unsafe fn new(proc_address: &mut dyn FnMut(&str) -> *mut c_void) -> Result<Self, String> {
     let gl = glow::Context::from_loader_function(|name| proc_address(name) as *const c_void);
-    let program = link_program(&gl)?;
-    let size_uniform = uniform(&gl, program, "uSize")?;
-    let texture_uniform = uniform(&gl, program, "uTexture")?;
-    let ramp_uniform = uniform(&gl, program, "uRamp")?;
+    let shape = Program::link(
+      &gl,
+      "shape",
+      &[SOURCE_HEADER, VERTEX_COMMON, SHAPE_VERTEX],
+      &[SOURCE_HEADER, FRAGMENT_COMMON, SHAPE_FRAGMENT],
+    )?;
+    let glyph = Program::link(
+      &gl,
+      "glyph",
+      &[SOURCE_HEADER, VERTEX_COMMON, GLYPH_VERTEX],
+      &[SOURCE_HEADER, FRAGMENT_COMMON, GLYPH_FRAGMENT],
+    )?;
+    let (gp, label) = (glyph.program, "glyph");
     let glyph_uniforms = GlyphUniforms {
-      mode: uniform(&gl, program, "uMode")?,
-      gamma: uniform(&gl, program, "uGamma")?,
-      contrast: uniform(&gl, program, "uContrast")?,
-      gamma_ratios: uniform(&gl, program, "uGammaRatios")?,
-      gradient: uniform(&gl, program, "uGradient")?,
-      gradient_x: uniform(&gl, program, "uGradientX")?,
-      gradient_y: uniform(&gl, program, "uGradientY")?,
-      tile: uniform(&gl, program, "uTile")?,
+      mode: uniform(&gl, gp, label, "uMode")?,
+      gamma: uniform(&gl, gp, label, "uGamma")?,
+      contrast: uniform(&gl, gp, label, "uContrast")?,
+      gamma_ratios: uniform(&gl, gp, label, "uGammaRatios")?,
+      gradient: uniform(&gl, gp, label, "uGradient")?,
+      gradient_x: uniform(&gl, gp, label, "uGradientX")?,
+      gradient_y: uniform(&gl, gp, label, "uGradientY")?,
+      tile: uniform(&gl, gp, label, "uTile")?,
     };
     // A sampler uniform names a unit, not a texture: set once, the unit
-    // never changes.
-    gl.use_program(Some(program));
-    gl.uniform_1_i32(Some(&texture_uniform), TEXTURE_UNIT as i32);
+    // never changes. Both programs sample `uTexture` (an image, a
+    // texture, the atlas) on the one unit; only the glyph program the ramp.
+    for (program, label) in [(shape.program, "shape"), (glyph.program, "glyph")] {
+      let texture_uniform = uniform(&gl, program, label, "uTexture")?;
+      gl.use_program(Some(program));
+      gl.uniform_1_i32(Some(&texture_uniform), TEXTURE_UNIT as i32);
+    }
+    let ramp_uniform = uniform(&gl, glyph.program, "glyph", "uRamp")?;
+    gl.use_program(Some(glyph.program));
     gl.uniform_1_i32(Some(&ramp_uniform), RAMP_UNIT as i32);
     gl.use_program(None);
     let ramp = create_ramp(&gl)?;
@@ -475,7 +543,7 @@ impl Executor {
     point_attributes(&gl, 0);
     gl.bind_vertex_array(None);
     gl.bind_buffer(glow::ARRAY_BUFFER, None);
-    Ok(Executor { gl, program, size_uniform, vao, instances, sampler_linear, sampler_nearest, glyph_uniforms, ramp })
+    Ok(Executor { gl, shape, glyph, vao, instances, sampler_linear, sampler_nearest, glyph_uniforms, ramp })
   }
 
   /// Delete `names`: the textures whose last handle dropped since the last
@@ -536,8 +604,12 @@ impl Executor {
       if instances.is_empty() {
         return Ok(DrawReport::default());
       }
-      gl.use_program(Some(self.program));
-      gl.uniform_2_f32(Some(&self.size_uniform), width as f32, height as f32);
+      for program in [&self.glyph, &self.shape] {
+        gl.use_program(Some(program.program));
+        gl.uniform_2_f32(Some(&program.size), width as f32, height as f32);
+      }
+      // The shape program is in use, as the loop left it.
+      let mut glyph_in_use = false;
       gl.bind_vertex_array(Some(self.vao));
       gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
       // Sound: Instance is repr(C) with every field an f32, so it has no
@@ -546,11 +618,12 @@ impl Executor {
       let bytes =
         std::slice::from_raw_parts(instances.as_ptr() as *const u8, instances.len() * std::mem::size_of::<Instance>());
       gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
-      // One draw per batch: everything shares the program, and a batch
-      // ends where the texture or its sampling changes, or a glyph run's
-      // policy or gradient (walk.rs); stage 2 batches further. GLES 3.0
-      // has no base instance, so a batch is drawn by re-pointing the
-      // attributes at its first instance.
+      // One draw per batch: a batch ends where the texture or its sampling
+      // changes, where text meets shapes, or at a glyph run's policy or
+      // gradient (walk.rs). A glyph batch draws through the glyph program,
+      // every other through the shape program, switched only where the
+      // kind changes. GLES 3.0 has no base instance, so a batch is drawn
+      // by re-pointing the attributes at its first instance.
       let glyphs = walked.batches.iter().any(|b| b.policy.is_some());
       if glyphs {
         gl.active_texture(glow::TEXTURE0 + RAMP_UNIT);
@@ -560,6 +633,11 @@ impl Executor {
       gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
       for batch in &walked.batches {
         point_attributes(gl, batch.start);
+        let glyph = batch.policy.is_some();
+        if glyph != glyph_in_use {
+          gl.use_program(Some(if glyph { self.glyph.program } else { self.shape.program }));
+          glyph_in_use = glyph;
+        }
         if let Some(policy) = batch.policy {
           self.glyph_state(policy, batch.gradient.as_deref());
         }
@@ -605,7 +683,7 @@ impl Executor {
 impl Executor {
   // A glyph batch's uniforms: `policy`, and `gradient` with its ramp
   // uploaded into the ramp texture (bound on RAMP_UNIT by `draw`), or no
-  // gradient. The program is in use and TEXTURE_UNIT is the active unit,
+  // gradient. The glyph program is in use and TEXTURE_UNIT is the active unit,
   // as `draw` left them; the active unit is TEXTURE_UNIT again after.
   unsafe fn glyph_state(&self, policy: CoveragePolicy, gradient: Option<&GlyphGradient>) {
     let (gl, u) = (&self.gl, &self.glyph_uniforms);
@@ -654,10 +732,15 @@ fn tile_uniform(tile: TileMode) -> i32 {
   }
 }
 
-// The location of the shape program's uniform `name`; an error naming it
-// when the program has none.
-unsafe fn uniform(gl: &glow::Context, program: glow::Program, name: &str) -> Result<glow::UniformLocation, String> {
-  gl.get_uniform_location(program, name).ok_or_else(|| format!("shape program has no {name} uniform"))
+// The location of the uniform `name` in `program` (`label` names it); an
+// error naming both when the program has none.
+unsafe fn uniform(
+  gl: &glow::Context,
+  program: glow::Program,
+  label: &str,
+  name: &str,
+) -> Result<glow::UniformLocation, String> {
+  gl.get_uniform_location(program, name).ok_or_else(|| format!("{label} program has no {name} uniform"))
 }
 
 // The gradient ramp texture: `RAMP_WIDTH` x 1 rgba8, a blank row until a
@@ -714,11 +797,26 @@ unsafe fn create_sampler(gl: &glow::Context, filter: u32, label: &str) -> Result
   Ok(sampler)
 }
 
-// The shape program, compiled and linked, its shaders deleted after the
+impl Program {
+  // The program `label` from the concatenated `vertex` and `fragment`
+  // source parts, linked, with its `uSize`.
+  unsafe fn link(gl: &glow::Context, label: &str, vertex: &[&str], fragment: &[&str]) -> Result<Program, String> {
+    let program = link_program(gl, label, &vertex.concat(), &fragment.concat())?;
+    let size = uniform(gl, program, label, "uSize")?;
+    Ok(Program { program, size })
+  }
+}
+
+// The program `label`, compiled and linked, its shaders deleted after the
 // link.
-unsafe fn link_program(gl: &glow::Context) -> Result<glow::Program, String> {
-  let vertex = compile_shader(gl, glow::VERTEX_SHADER, VERTEX_SRC, "vertex")?;
-  let fragment = match compile_shader(gl, glow::FRAGMENT_SHADER, FRAGMENT_SRC, "fragment") {
+unsafe fn link_program(
+  gl: &glow::Context,
+  label: &str,
+  vertex_src: &str,
+  fragment_src: &str,
+) -> Result<glow::Program, String> {
+  let vertex = compile_shader(gl, glow::VERTEX_SHADER, vertex_src, label, "vertex")?;
+  let fragment = match compile_shader(gl, glow::FRAGMENT_SHADER, fragment_src, label, "fragment") {
     Ok(fragment) => fragment,
     Err(e) => {
       gl.delete_shader(vertex);
@@ -730,7 +828,7 @@ unsafe fn link_program(gl: &glow::Context) -> Result<glow::Program, String> {
     Err(e) => {
       gl.delete_shader(vertex);
       gl.delete_shader(fragment);
-      return Err(format!("shape program: {e}"));
+      return Err(format!("{label} program: {e}"));
     }
   };
   gl.attach_shader(program, vertex);
@@ -744,19 +842,25 @@ unsafe fn link_program(gl: &glow::Context) -> Result<glow::Program, String> {
   if !linked {
     let log = gl.get_program_info_log(program);
     gl.delete_program(program);
-    return Err(format!("shape program link failed: {log}"));
+    return Err(format!("{label} program link failed: {log}"));
   }
   Ok(program)
 }
 
-unsafe fn compile_shader(gl: &glow::Context, kind: u32, source: &str, label: &str) -> Result<glow::Shader, String> {
-  let shader = gl.create_shader(kind).map_err(|e| format!("shape {label} shader: {e}"))?;
+unsafe fn compile_shader(
+  gl: &glow::Context,
+  kind: u32,
+  source: &str,
+  program: &str,
+  label: &str,
+) -> Result<glow::Shader, String> {
+  let shader = gl.create_shader(kind).map_err(|e| format!("{program} {label} shader: {e}"))?;
   gl.shader_source(shader, source);
   gl.compile_shader(shader);
   if !gl.get_shader_compile_status(shader) {
     let log = gl.get_shader_info_log(shader);
     gl.delete_shader(shader);
-    return Err(format!("shape {label} shader compile failed: {log}"));
+    return Err(format!("{program} {label} shader compile failed: {log}"));
   }
   Ok(shader)
 }
