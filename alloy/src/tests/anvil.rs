@@ -806,3 +806,36 @@ fn an_image_between_glyph_runs_splits_them() {
     vec![glyphs(0, 2, &atlas, policy), shapes(2, 1, Some((name(&image), linear))), glyphs(3, 2, &atlas, policy)]
   );
 }
+
+#[test]
+fn a_patch_clip_rejects_the_grid_outside_it() {
+  // A partial-repaint frame as gl/draw.rs records it: a clip to the patch
+  // around the frame list, whose root scales, clips to the window with the
+  // rendertree's "infinite" extents on an axis, and nests a boundary's list
+  // of a grid of rects; only the rects under the patch survive.
+  const COLS: usize = 40;
+  const ROWS: usize = 20;
+  let mut grid = DisplayListBuilder::new(None);
+  for i in 0..COLS * ROWS {
+    let (x, y) = ((i % COLS) as f32 * 10.0, (i / COLS) as f32 * 10.0);
+    grid.draw_rect(&rect(x, y, 9.0, 9.0), &opaque());
+  }
+  let grid = build(grid);
+  let mut frame = DisplayListBuilder::new(None);
+  frame.scale(1.0, 1.0);
+  frame.save();
+  frame.clip_rect(&rect(-1.0e7, 0.0, 2.0e7, 720.0), ClipOperation::Intersect);
+  frame.save();
+  frame.translate(0.0, 0.0);
+  frame.draw_display_list(&grid, 1.0);
+  frame.restore();
+  frame.draw_rect(&rect(120.0, 280.0, 20.0, 20.0), &opaque());
+  frame.restore();
+  let frame = build(frame);
+  let mut patch = DisplayListBuilder::new(None);
+  patch.clip_rect(&rect(112.0, 280.0, 28.0, 20.0), ClipOperation::Intersect);
+  patch.draw_display_list(&frame, 1.0);
+  let out = walk(&build(patch), ISize::new(1280, 720));
+  // The mover alone: the grid ends at y = 199.
+  assert_eq!(out.instances.len(), 1, "{} instances survived the patch", out.instances.len());
+}
