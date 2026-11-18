@@ -8,7 +8,7 @@ use super::ops::{Image, Op, Premultiplied, Radii};
 use super::record::DisplayList;
 use super::Texture;
 use crate::gpu::{CoveragePolicy, GlyphGradient, GlyphQuad};
-use euclid::default::{Box2D, Transform2D};
+use euclid::default::{Box2D, Point2D, Transform2D};
 use euclid::Angle;
 use std::sync::Arc;
 
@@ -109,6 +109,11 @@ pub(crate) struct Batch {
 pub(crate) struct Walked {
   pub instances: Vec<Instance>,
   pub batches: Vec<Batch>,
+  /// The union of the emitted instances' device clip boxes, rounded
+  /// outward to whole pixels: no instance draws outside it, so the
+  /// executor scissors its clear and its draws to it. None when nothing
+  /// was emitted.
+  pub scissor: Option<Box2D<i32>>,
   /// The last batch takes no further instance: a gradient run ended it.
   sealed: bool,
 }
@@ -221,7 +226,17 @@ pub(crate) fn walk(list: &DisplayList, size: ISize) -> Walked {
   let mut stack = Vec::new();
   let mut out = Walked::default();
   walk_ops(list.executable(), &mut state, &mut stack, &mut out);
+  out.scissor = scissor(&out.instances);
   out
+}
+
+// The union of `instances`' device clips, rounded outward to whole pixels;
+// None for no instances. Every clip is already intersected with the target
+// and finite (see `walk`), so the union lies inside the target.
+fn scissor(instances: &[Instance]) -> Option<Box2D<i32>> {
+  let union =
+    instances.iter().map(|i| Box2D::new(Point2D::new(i.clip[0], i.clip[1]), Point2D::new(i.clip[2], i.clip[3])));
+  union.reduce(|a, b| a.union(&b)).map(|b| b.round_out().to_i32())
 }
 
 // One list's ops. A restore pops only what this list saved (a restore with

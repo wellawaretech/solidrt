@@ -6,9 +6,8 @@
 // decided here, before any GL work, as are the rounded rects' radii and
 // quads, the rounded clip in device space and the image-filled shapes'
 // uv, the glyph runs' instances and their batches, and the draw report
-// the executor returns for a walk. The deferred
-// deletion queue a texture handle drops onto is tested
-// here too, with no renderer.
+// and the scissor the executor takes from a walk. The deferred deletion
+// queue a texture handle drops onto is tested here too, with no renderer.
 
 use crate::gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, RAMP_WIDTH};
 use crate::renderer::anvil::walk::{
@@ -22,6 +21,7 @@ use crate::renderer::{
   ClipOperation, Color, ColorSource, DisplayList, DisplayListBuilder, DrawStyle, ISize, Matrix, Paint, Point, Rect,
   RoundingRadii, Size, StrokeCap, Texture, TextureSampling, TileMode,
 };
+use euclid::default::{Box2D, Point2D};
 use std::sync::Arc;
 
 // How far a walked value may sit from the expected one: float noise.
@@ -182,6 +182,55 @@ fn the_rendertree_infinite_extent_clips_to_the_target() {
   let out = walked(b);
   assert_eq!(out.len(), 1);
   assert!(approx(out[0].clip, [0.0, 0.0, TARGET, 50.0]), "{:?}", out[0].clip);
+}
+
+fn scissor(b: DisplayListBuilder) -> Option<Box2D<i32>> {
+  walked_all(b).scissor
+}
+
+fn pixels(x0: i32, y0: i32, x1: i32, y1: i32) -> Option<Box2D<i32>> {
+  Some(Box2D::new(Point2D::new(x0, y0), Point2D::new(x1, y1)))
+}
+
+#[test]
+fn a_root_clip_is_the_scissor_rounded_outward() {
+  // A patch frame's root clip around its draws, off the pixel grid.
+  let mut b = DisplayListBuilder::new(None);
+  b.clip_rect(&rect(10.5, 20.25, 30.0, 40.0), ClipOperation::Intersect)
+    .draw_rect(&rect(0.0, 0.0, 100.0, 100.0), &opaque())
+    .draw_rect(&rect(15.0, 25.0, 5.0, 5.0), &opaque());
+  assert_eq!(scissor(b), pixels(10, 20, 41, 61));
+}
+
+#[test]
+fn an_unclipped_list_scissors_to_the_target() {
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&rect(10.0, 10.0, 5.0, 5.0), &opaque());
+  assert_eq!(scissor(b), pixels(0, 0, TARGET as i32, TARGET as i32));
+}
+
+#[test]
+fn a_list_that_emits_nothing_has_no_scissor() {
+  assert_eq!(scissor(DisplayListBuilder::new(None)), None);
+
+  // Everything rejected by the clip is nothing emitted, too.
+  let mut b = DisplayListBuilder::new(None);
+  b.clip_rect(&rect(0.0, 0.0, 10.0, 10.0), ClipOperation::Intersect).draw_rect(&rect(20.0, 20.0, 5.0, 5.0), &opaque());
+  assert_eq!(scissor(b), None);
+}
+
+#[test]
+fn two_clips_scissor_to_their_bounding_box() {
+  let mut b = DisplayListBuilder::new(None);
+  b.save()
+    .clip_rect(&rect(10.0, 10.0, 10.0, 10.0), ClipOperation::Intersect)
+    .draw_rect(&rect(0.0, 0.0, 100.0, 100.0), &opaque())
+    .restore()
+    .save()
+    .clip_rect(&rect(60.0, 70.0, 20.0, 5.0), ClipOperation::Intersect)
+    .draw_rect(&rect(0.0, 0.0, 100.0, 100.0), &opaque())
+    .restore();
+  assert_eq!(scissor(b), pixels(10, 10, 80, 75));
 }
 
 #[test]

@@ -8,6 +8,7 @@ use super::super::{TextureSampling, TileMode};
 use super::record::DisplayList;
 use super::walk::{self, Instance};
 use crate::gpu::{CoveragePolicy, GlyphGradient, RAMP_WIDTH};
+use euclid::default::{Box2D, Point2D};
 use glow::HasContext;
 use std::os::raw::c_void;
 
@@ -485,10 +486,11 @@ impl Executor {
     }
   }
 
-  /// Draw `list` into `target`, cleared first. Sets every piece of state
-  /// it uses on each draw and caches none across draws: the other passes
-  /// on this context save and restore around their own work, and the
-  /// contract lets a draw leave state changed. The texture units and the
+  /// Draw `list` into `target`, cleared first, both inside the scissor the
+  /// walk reports; the scissor test is off again on return. Sets every
+  /// piece of state it uses on each draw and caches none across draws: the
+  /// other passes on this context save and restore around their own work,
+  /// and the contract lets a draw leave state changed. The texture units and the
   /// sampler bindings are set per batch and cleared after. Reports the
   /// instances written and the draw calls issued, zeros for an empty list.
   pub(super) fn draw(&mut self, target: Target, list: &DisplayList) -> Result<DrawReport, String> {
@@ -499,7 +501,21 @@ impl Executor {
     unsafe {
       gl.bind_framebuffer(glow::FRAMEBUFFER, target.framebuffer);
       gl.viewport(0, 0, width, height);
-      gl.disable(glow::SCISSOR_TEST);
+      // The scissor is the union of the instances' clips (walk.rs), so a
+      // patch frame pays GPU, and on a tiler tile loads and stores, only
+      // inside the patch. The clear is scissored too: every caller in
+      // gl/draw.rs cleared the full target before the draw, so the pixels
+      // outside are already clear. An empty list (no scissor) clears the
+      // full target, as the contract says a draw does.
+      let full = Box2D::new(Point2D::new(0, 0), Point2D::new(width, height));
+      match walked.scissor.filter(|s| *s != full) {
+        Some(s) => {
+          gl.enable(glow::SCISSOR_TEST);
+          // GL scissor is in window coordinates, y up from the bottom.
+          gl.scissor(s.min.x, height - s.max.y, s.width(), s.height());
+        }
+        None => gl.disable(glow::SCISSOR_TEST),
+      }
       gl.color_mask(true, true, true, true);
       gl.clear_color(0.0, 0.0, 0.0, 0.0);
       // Clearing the depth and stencil of a target that has none is a
@@ -516,6 +532,7 @@ impl Executor {
       // Either would silently kill every draw while the clear still lands.
       gl.disable(glow::RASTERIZER_DISCARD);
       gl.disable(glow::SAMPLE_COVERAGE);
+      // No instances means no scissor: the test is already off here.
       if instances.is_empty() {
         return Ok(DrawReport::default());
       }
@@ -575,6 +592,9 @@ impl Executor {
       gl.bind_vertex_array(None);
       gl.bind_buffer(glow::ARRAY_BUFFER, None);
       gl.use_program(None);
+      // The callers' resolve blit after the draw honours the scissor, and
+      // they expect it off, as Impeller left it.
+      gl.disable(glow::SCISSOR_TEST);
     }
     // The framebuffer stays bound as the target: the callers in
     // gl/draw.rs restore their own.
