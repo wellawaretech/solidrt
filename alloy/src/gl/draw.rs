@@ -8,6 +8,7 @@ use super::rig::{
   EXT_RESOLVE_COPY_SRC, MSAA_SAMPLES,
 };
 use crate::raster::{DamageRect, WindowRoute};
+use crate::renderer::contract::DrawReport;
 use crate::renderer::prelude::*;
 use crate::renderer::{
   ClipOperation, DisplayList, DisplayListBuilder, ISize, Point, Rect, Renderer, Size, Target, Texture,
@@ -27,6 +28,7 @@ use glow::HasContext;
 /// the corruption's real cause was cross-context completion, a bug class the
 /// single-context raster thread ended, and the exactly-window-sized shader
 /// layer had long rendered through this same rig on Android without padding.
+/// Returns the texture with what the renderer's draw issued.
 pub(crate) fn render_display_list_to_texture(
   gl: &glow::Context,
   renderer: &mut Renderer,
@@ -34,7 +36,7 @@ pub(crate) fn render_display_list_to_texture(
   dl: &DisplayList,
   size: ISize,
   aa: bool,
-) -> Result<Texture, String> {
+) -> Result<(Texture, DrawReport), String> {
   let (width, height) = (size.width as i32, size.height as i32);
   let alloc = (width, height);
   let (alloc_width, alloc_height) = alloc;
@@ -66,8 +68,9 @@ pub(crate) fn render_display_list_to_texture(
   };
 
   match draw_offscreen_with_fallback(gl, renderer, rig, dl, tex, size, alloc, aa) {
-    Ok(()) => renderer
+    Ok(report) => renderer
       .adopt_texture(tex, ISize::new(alloc_width as i64, alloc_height as i64))
+      .map(|texture| (texture, report))
       .ok_or_else(|| "failed to adopt offscreen texture".to_string()),
     Err(e) => {
       unsafe { gl.delete_texture(tex) };
@@ -80,7 +83,7 @@ pub(crate) fn render_display_list_to_texture(
 /// reusing its storage. The texture's backing must be exactly `size` (the
 /// caller only reuses at an exact dimension match). The texture's owner is
 /// unchanged - the renderer took the GL name when the texture was first
-/// created and keeps it.
+/// created and keeps it. Returns what the renderer's draw issued.
 pub(crate) fn render_display_list_into_texture(
   gl: &glow::Context,
   renderer: &mut Renderer,
@@ -89,7 +92,7 @@ pub(crate) fn render_display_list_into_texture(
   texture: &Texture,
   size: ISize,
   aa: bool,
-) -> Result<(), String> {
+) -> Result<DrawReport, String> {
   let tex = texture.gl_name().ok_or_else(|| "texture has no GL handle".to_string())?;
   let alloc = (size.width as i32, size.height as i32);
   draw_offscreen_with_fallback(gl, renderer, rig, dl, tex, size, alloc, aa)
@@ -108,7 +111,7 @@ fn draw_offscreen_with_fallback(
   size: ISize,
   alloc: (i32, i32),
   aa: bool,
-) -> Result<(), String> {
+) -> Result<DrawReport, String> {
   // Match the window's 4x request, clamped to the driver ceiling.
   let max_samples = unsafe { gl.get_parameter_i32(glow::MAX_SAMPLES) };
   let samples = if !aa || rig.msaa_unavailable { 1 } else { MSAA_SAMPLES.min(max_samples) };
@@ -119,7 +122,7 @@ fn draw_offscreen_with_fallback(
     outcome = draw_offscreen(gl, renderer, rig, dl, tex, size, alloc, 1);
   }
   match outcome {
-    OffscreenDraw::Done => Ok(()),
+    OffscreenDraw::Done(report) => Ok(report),
     OffscreenDraw::Failed(e) => Err(e),
     // The single-sample retry above resolves to Done or Failed, so this arm
     // is unreachable; treat it as a failure defensively.
@@ -282,7 +285,7 @@ fn draw_offscreen(
     // so GL program order already sequences the draw before the sampling.
 
     match result {
-      Ok(()) => OffscreenDraw::Done,
+      Ok(report) => OffscreenDraw::Done(report),
       Err(e) => OffscreenDraw::Failed(e),
     }
   }
@@ -306,7 +309,7 @@ fn draw_offscreen(
 /// decided for it over an owned target. A patch-layer route is not drawn
 /// here: its layer is the raster state's (`RasterState::draw_to_window`
 /// draws it), and one that reaches this function is refused, never drawn
-/// whole.
+/// whole. Returns what the renderer's draw issued.
 pub(crate) fn render_display_list_to_window(
   gl: &glow::Context,
   renderer: &mut Renderer,
@@ -315,7 +318,7 @@ pub(crate) fn render_display_list_to_window(
   size: ISize,
   route: WindowRoute,
   window: Option<glow::NativeFramebuffer>,
-) -> Result<(), String> {
+) -> Result<DrawReport, String> {
   // The route is decided once, raster-side (DamageTracker::route, from
   // window_fast_path and the target); this function only executes it, so a
   // patch can never meet the fast path.
@@ -350,7 +353,8 @@ pub(crate) fn render_display_list_to_window(
 /// pass's vertex stage flips back to window orientation), while the stats
 /// overlay hands its list unflipped so the layer shares FBO 0's bottom-up
 /// convention and composites with no flip anywhere. MSAA and the no-MSAA
-/// latch behave exactly like the window path.
+/// latch behave exactly like the window path. Returns what the renderer's
+/// draw issued.
 pub(crate) fn render_display_list_to_layer(
   gl: &glow::Context,
   renderer: &mut Renderer,
@@ -358,7 +362,7 @@ pub(crate) fn render_display_list_to_layer(
   dl: &DisplayList,
   size: ISize,
   layer: glow::NativeFramebuffer,
-) -> Result<(), String> {
+) -> Result<DrawReport, String> {
   render_display_list_via_rig(gl, renderer, rig, dl, size, Some(layer), None)
 }
 
@@ -370,7 +374,7 @@ fn render_display_list_via_rig(
   size: ISize,
   dst: Option<glow::NativeFramebuffer>,
   patch: Option<DamageRect>,
-) -> Result<(), String> {
+) -> Result<DrawReport, String> {
   let max_samples = unsafe { gl.get_parameter_i32(glow::MAX_SAMPLES) };
   let samples = if rig.msaa_unavailable { 0 } else { MSAA_SAMPLES.min(max_samples) };
   let mut outcome = draw_and_resolve(gl, renderer, rig, dl, size, dst, samples, patch);
@@ -380,7 +384,7 @@ fn render_display_list_via_rig(
     outcome = draw_and_resolve(gl, renderer, rig, dl, size, dst, 0, patch);
   }
   match outcome {
-    OffscreenDraw::Done => Ok(()),
+    OffscreenDraw::Done(report) => Ok(report),
     OffscreenDraw::Failed(e) => Err(e),
     OffscreenDraw::MsaaUnavailable => Err("window framebuffer incomplete".to_string()),
   }
@@ -600,7 +604,7 @@ fn draw_and_resolve(
     gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
 
     match result {
-      Ok(()) => OffscreenDraw::Done,
+      Ok(report) => OffscreenDraw::Done(report),
       Err(e) => OffscreenDraw::Failed(e),
     }
   }

@@ -34,6 +34,16 @@ pub struct Target {
   pub size: ISize,
 }
 
+/// What one `Renderer::draw` issued: the quads it wrote to the GPU and the
+/// draw calls it made (a batch each). Cumulative counters on the raster
+/// thread sum them, so `/stats` reports instances and draw calls per
+/// frame: the number behind "a screen draws in a few batches".
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DrawReport {
+  pub instances: u32,
+  pub draw_calls: u32,
+}
+
 /// The drawing half, owned by the raster thread beside the GL context.
 pub trait Renderer: Sized {
   /// Create the renderer over the GL context current on the calling
@@ -54,8 +64,10 @@ pub trait Renderer: Sized {
 
   /// Draw a display list into `target`, replacing its contents: the target
   /// is cleared first. The renderer may leave any GL state changed; the
-  /// caller rebinds what it relies on afterwards.
-  fn draw(&mut self, target: Target, dl: &super::DisplayList) -> Result<(), String>;
+  /// caller rebinds what it relies on afterwards. Returns what the draw
+  /// issued; a draw that issued nothing (an empty list) reports zeros and
+  /// still clears the target.
+  fn draw(&mut self, target: Target, dl: &super::DisplayList) -> Result<DrawReport, String>;
 }
 
 /// A texture the renderer can draw: a refcounted handle, shared across

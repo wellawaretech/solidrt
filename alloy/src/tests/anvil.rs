@@ -5,7 +5,8 @@
 // the premultiplied color, the texture quads and their batches are all
 // decided here, before any GL work, as are the rounded rects' radii and
 // quads, the rounded clip in device space and the image-filled shapes'
-// uv, and the glyph runs' instances and their batches. The deferred
+// uv, the glyph runs' instances and their batches, and the draw report
+// the executor returns for a walk. The deferred
 // deletion queue a texture handle drops onto is tested
 // here too, with no renderer.
 
@@ -14,7 +15,8 @@ use crate::renderer::anvil::walk::{
   walk, Batch, Instance, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, KIND_GLYPH, KIND_LINE, KIND_OVAL, KIND_RECT,
   KIND_ROUNDED_RECT, KIND_TEXTURED, ROUNDED_QUAD_PAD,
 };
-use crate::renderer::anvil::{test_texture, DeletionQueue};
+use crate::renderer::anvil::{report, test_texture, DeletionQueue};
+use crate::renderer::contract::DrawReport;
 use crate::renderer::prelude::*;
 use crate::renderer::{
   ClipOperation, Color, ColorSource, DisplayList, DisplayListBuilder, DrawStyle, ISize, Matrix, Paint, Point, Rect,
@@ -320,6 +322,38 @@ fn batches_split_at_texture_changes() {
     out.batches,
     vec![shapes(0, 1, Some((name(&a), linear))), shapes(1, 1, Some((name(&a), TextureSampling::Nearest))),]
   );
+}
+
+#[test]
+fn a_draw_report_counts_instances_and_batches() {
+  let a = test_texture(1, ISize::new(10, 10));
+  let c = test_texture(2, ISize::new(10, 10));
+  let quad = rect(0.0, 0.0, 10.0, 10.0);
+  let linear = TextureSampling::Linear;
+  // Two rects, a texture quad and a rect: the shapes join the texture's
+  // run, so four instances draw in one call.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &opaque())
+    .draw_rect(&quad, &opaque())
+    .draw_texture_rect(&a, &quad, &quad, linear, None)
+    .draw_rect(&quad, &opaque());
+  let out = walked_all(b);
+  assert_eq!(out.instances.len(), 4);
+  assert_eq!(out.batches.len(), 1);
+  assert_eq!(report(&out), DrawReport { instances: 4, draw_calls: 1 });
+
+  // A second texture is a second call.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &opaque())
+    .draw_texture_rect(&a, &quad, &quad, linear, None)
+    .draw_texture_rect(&c, &quad, &quad, linear, None);
+  let out = walked_all(b);
+  assert_eq!(out.batches.len(), 2);
+  assert_eq!(report(&out), DrawReport { instances: 3, draw_calls: 2 });
+
+  // An empty list reports zeros.
+  let out = walked_all(DisplayListBuilder::new(None));
+  assert_eq!(report(&out), DrawReport::default());
 }
 
 #[test]
@@ -720,6 +754,10 @@ fn glyph_runs_batch_with_the_shapes_between_them() {
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 6);
   assert_eq!(out.batches, vec![glyphs(0, 6, &atlas, policy)]);
+  // Text and the shapes over one atlas: the glyph quads plus the shapes,
+  // in one draw call.
+  let (glyph_quads, shape_quads) = (4, 2);
+  assert_eq!(report(&out), DrawReport { instances: glyph_quads + shape_quads, draw_calls: 1 });
 
   // A policy change splits the run.
   let naive = CoveragePolicy { mode: CoverageMode::Naive, ..policy };

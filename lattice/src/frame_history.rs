@@ -162,6 +162,11 @@ pub struct RasterRates {
   /// None when the client's GL context has no timer queries.
   pub pass_exec_ms_per_frame: Option<f32>,
   pub frame_exec_ms_per_frame: Option<f32>,
+  /// The quads the renderer wrote and the instanced draw calls it made per
+  /// presented frame, over every draw on the raster thread in the window
+  /// (the frame, patches, offscreen rasters).
+  pub renderer_instances_per_frame: f32,
+  pub renderer_draw_calls_per_frame: f32,
   pub cmd_ms_per_sec: f32,
   /// The window's wall time per presented frame (ms): the span between its
   /// first and last record over the presents between them. The denominator
@@ -282,6 +287,8 @@ impl FrameHistory {
           pass_issue_ms_per_frame: d(first.raster.pass_issue_micros, last.raster.pass_issue_micros) / 1000.0 / n,
           pass_exec_ms_per_frame: exec_per_frame(first.raster.pass_exec_micros, last.raster.pass_exec_micros),
           frame_exec_ms_per_frame: exec_per_frame(first.raster.frame_exec_micros, last.raster.frame_exec_micros),
+          renderer_instances_per_frame: d(first.raster.renderer_instances, last.raster.renderer_instances) / n,
+          renderer_draw_calls_per_frame: d(first.raster.renderer_draw_calls, last.raster.renderer_draw_calls) / n,
           cmd_ms_per_sec: d(first.raster.cmd_micros, last.raster.cmd_micros) / 1000.0 / span_s,
           present_ms: span_s * 1000.0 / n,
         })

@@ -3,7 +3,7 @@
 //! (`super::walk`) and issues them. Raster thread only, with the context
 //! current.
 
-use super::super::contract::Target;
+use super::super::contract::{DrawReport, Target};
 use super::super::{TextureSampling, TileMode};
 use super::record::DisplayList;
 use super::walk::{self, Instance};
@@ -489,8 +489,9 @@ impl Executor {
   /// it uses on each draw and caches none across draws: the other passes
   /// on this context save and restore around their own work, and the
   /// contract lets a draw leave state changed. The texture units and the
-  /// sampler bindings are set per batch and cleared after.
-  pub(super) fn draw(&mut self, target: Target, list: &DisplayList) -> Result<(), String> {
+  /// sampler bindings are set per batch and cleared after. Reports the
+  /// instances written and the draw calls issued, zeros for an empty list.
+  pub(super) fn draw(&mut self, target: Target, list: &DisplayList) -> Result<DrawReport, String> {
     let walked = walk::walk(list, target.size);
     let instances = &walked.instances;
     let (width, height) = (target.size.width as i32, target.size.height as i32);
@@ -516,7 +517,7 @@ impl Executor {
       gl.disable(glow::RASTERIZER_DISCARD);
       gl.disable(glow::SAMPLE_COVERAGE);
       if instances.is_empty() {
-        return Ok(());
+        return Ok(DrawReport::default());
       }
       gl.use_program(Some(self.program));
       gl.uniform_2_f32(Some(&self.size_uniform), width as f32, height as f32);
@@ -577,7 +578,7 @@ impl Executor {
     }
     // The framebuffer stays bound as the target: the callers in
     // gl/draw.rs restore their own.
-    Ok(())
+    Ok(super::report(&walked))
   }
 }
 

@@ -104,7 +104,10 @@ impl RasterState {
       route,
       window,
     ) {
-      Ok(()) => true,
+      Ok(report) => {
+        self.stats.note_draw(report);
+        true
+      }
       Err(e) => {
         log::warn!("[alloy] frame draw failed at {}x{}: {e}; skipping frame", size.width, size.height);
         false
@@ -174,7 +177,7 @@ impl RasterState {
       }
       let layer = state.layer.as_ref().expect("layer allocated above");
 
-      gl::render_display_list_to_layer(
+      let report = gl::render_display_list_to_layer(
         &self.gl,
         &mut self.renderer,
         &mut self.offscreen_rig,
@@ -182,6 +185,7 @@ impl RasterState {
         size,
         layer.fbo,
       )?;
+      self.stats.note_draw(report);
       self.content_dirty = false;
     }
     let layer = state.layer.as_ref().expect("resolved or retained above");
@@ -278,7 +282,7 @@ impl RasterState {
       }
       let layer = ov.layer.as_ref().expect("layer ensured above");
       let size = ISize::new(width as i64, height as i64);
-      if let Err(e) = gl::render_display_list_to_layer(
+      match gl::render_display_list_to_layer(
         &self.gl,
         &mut self.renderer,
         &mut self.offscreen_rig,
@@ -286,8 +290,11 @@ impl RasterState {
         size,
         layer.fbo,
       ) {
-        log::warn!("[alloy] overlay rasterize failed: {e}");
-        return;
+        Ok(report) => self.stats.note_draw(report),
+        Err(e) => {
+          log::warn!("[alloy] overlay rasterize failed: {e}");
+          return;
+        }
       }
       ov.stale = false;
     }
@@ -369,7 +376,7 @@ impl RasterState {
     moved.translate(-(patch.x as f32), -(patch.y as f32));
     moved.draw_display_list(dl, 1.0);
     let moved = moved.build().ok_or_else(|| "empty patch display list".to_string())?;
-    gl::render_display_list_to_layer(
+    let report = gl::render_display_list_to_layer(
       &self.gl,
       &mut self.renderer,
       &mut self.offscreen_rig,
@@ -377,6 +384,7 @@ impl RasterState {
       ISize::new(width as i64, height as i64),
       layer.fbo,
     )?;
+    self.stats.note_draw(report);
     let program = ensure_copy_program(&self.gl, &mut self.copy_program)?;
     // The whole layer lands with its corner on the patch, 1:1; the scissor
     // keeps the copy to the patch itself.

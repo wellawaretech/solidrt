@@ -413,7 +413,21 @@ when exactly one client is connected.
   `saveLayers`, and
   the paints that leave a tiled GPU's cheap path, `blends` (not
   source-over) and `gradients`; ops inside a reused repaint-boundary
-  recording are not re-recorded and not counted. `snapshotsReused`,
+  recording are not re-recorded and not counted. What the renderer made
+  of those ops on the raster thread is `rendererInstances` and
+  `rendererDrawCalls` (cumulative, beside `gpuPasses`): the quads it wrote
+  and the instanced draw calls it issued, over every draw (the window
+  frame, patches, snapshot rasters, the overlay), replayed boundary
+  recordings included. `window.rendererInstancesPerFrame` and
+  `window.rendererDrawCallsPerFrame` (beside `gpuPassesPerFrame`) are the
+  same per presented frame: what that frame drew, which under the
+  window's partial repaint is the patch (a mover is two quads in one
+  call), and the whole screen only on a full frame or an offscreen
+  raster (read the cumulative delta around a root `/snapshot` for the
+  whole tree). A screen that draws in a few batches reads a
+  small `rendererDrawCallsPerFrame` beside a large
+  `rendererInstancesPerFrame`; a count that grows with the images on
+  screen says the batches split at texture changes. `snapshotsReused`,
   `snapshotsRerendered` and `snapshotsRasterized` count the latest walk's
   snapshot boundaries drawn from their retained texture, re-rendered into
   it, and rasterized into a new one; `snapshotsDeferred` counts the reused

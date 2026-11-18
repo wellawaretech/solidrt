@@ -182,3 +182,18 @@ fn window_totals_survive_a_cheaper_worst() {
   assert_eq!(w.backdrops_prepainted, 1);
   assert_eq!(w.nodes_painted_max, 80);
 }
+
+#[test]
+fn renderer_rates_are_instances_and_draw_calls_per_present() {
+  use alloy::RasterCounters;
+  let at = |at_ms: f64, frame: u64, renderer_instances: u64, renderer_draw_calls: u64| FrameRecord {
+    frame,
+    raster: RasterCounters { renderer_instances, renderer_draw_calls, ..RasterCounters::default() },
+    ..record(at_ms, 1.0, 10, 0)
+  };
+  // Ten presents: 3000 quads in 20 draw calls, 300 and 2 a frame.
+  let h = history(&[at(0.0, 0, 0, 0), at(1000.0, 10, 3000, 20)]);
+  let rates = h.summarize(Window::Ms(1000.0), 1000.0).expect("frames").raster_rates.expect("two records");
+  assert!((rates.renderer_instances_per_frame - 300.0).abs() < 1e-3);
+  assert!((rates.renderer_draw_calls_per_frame - 2.0).abs() < 1e-6);
+}

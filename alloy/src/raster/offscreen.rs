@@ -21,7 +21,10 @@ impl RasterState {
   pub(super) fn rasterize(&mut self, dl: &DisplayList, width: u32, height: u32, aa: bool) -> Result<Texture, String> {
     let size = ISize::new(width as i64, height as i64);
     let flipped = flip_for_fbo(dl, height)?;
-    gl::render_display_list_to_texture(&self.gl, &mut self.renderer, &mut self.offscreen_rig, &flipped, size, aa)
+    let (texture, report) =
+      gl::render_display_list_to_texture(&self.gl, &mut self.renderer, &mut self.offscreen_rig, &flipped, size, aa)?;
+    self.stats.note_draw(report);
+    Ok(texture)
   }
 
   /// Re-rasterize a display list into an existing renderer texture whose
@@ -37,7 +40,7 @@ impl RasterState {
   ) -> Result<(), String> {
     let size = ISize::new(width as i64, height as i64);
     let flipped = flip_for_fbo(dl, height)?;
-    gl::render_display_list_into_texture(
+    let report = gl::render_display_list_into_texture(
       &self.gl,
       &mut self.renderer,
       &mut self.offscreen_rig,
@@ -45,7 +48,9 @@ impl RasterState {
       texture,
       size,
       aa,
-    )
+    )?;
+    self.stats.note_draw(report);
+    Ok(())
   }
 
   /// Draw a text layer (see `RasterCmd::RasterizeGlyphs`): the atlas is a
@@ -99,7 +104,7 @@ impl RasterState {
     let flipped = flip_for_fbo(dl, height)?;
     let source = match source {
       Some(texture) => {
-        gl::render_display_list_into_texture(
+        let report = gl::render_display_list_into_texture(
           &self.gl,
           &mut self.renderer,
           &mut self.offscreen_rig,
@@ -108,10 +113,20 @@ impl RasterState {
           size,
           aa,
         )?;
+        self.stats.note_draw(report);
         texture
       }
       None => {
-        gl::render_display_list_to_texture(&self.gl, &mut self.renderer, &mut self.offscreen_rig, &flipped, size, aa)?
+        let (texture, report) = gl::render_display_list_to_texture(
+          &self.gl,
+          &mut self.renderer,
+          &mut self.offscreen_rig,
+          &flipped,
+          size,
+          aa,
+        )?;
+        self.stats.note_draw(report);
+        texture
       }
     };
     let history = match (shader.previous, history) {

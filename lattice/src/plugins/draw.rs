@@ -257,16 +257,17 @@ impl RenderInner {
     let snap = stats.borrow().snapshot(render_frame.frame, platform.fps(), atx.textures.len());
     *stats_snapshot.lock().expect("stats snapshot lock poisoned") = snap;
     let overlay_text = overlay_stale.then(|| {
-      // The HUD's GPU share: the frame history's own figure over the last
-      // second, read only when the HUD is drawn.
-      let gpu_pct = stats_on
+      // The HUD's raster rates (its GPU share, the renderer's instances and
+      // draw calls): the frame history's own figures over the last second,
+      // read only when the HUD is drawn.
+      let rates = stats_on
         .then(|| {
           let now_ms = crate::frame_history::now_ms();
           let history = self.history.lock().expect("frame history lock poisoned");
-          history.summarize(Window::Ms(HUD_GPU_WINDOW_MS), now_ms).and_then(|w| w.raster_rates?.gpu_share_pct())
+          history.summarize(Window::Ms(HUD_GPU_WINDOW_MS), now_ms).and_then(|w| w.raster_rates)
         })
         .flatten();
-      overlay::text(&snap, gpu_pct, stats_on, badge)
+      overlay::text(&snap, rates.as_ref(), stats_on, badge)
     });
     let overlay_refresh = overlay_text.as_ref().is_some_and(|text| {
       !self.overlay_installed.get() || self.overlay_key.get() != overlay_key || *text != *self.overlay_text.borrow()

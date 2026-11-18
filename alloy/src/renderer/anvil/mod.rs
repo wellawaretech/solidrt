@@ -102,12 +102,19 @@ impl contract::Renderer for Renderer {
     Some(Texture(Arc::new(TextureInner { name: texture, size, queue: self.queue.clone() })))
   }
 
-  fn draw(&mut self, target: contract::Target, dl: &DisplayList) -> Result<(), String> {
+  fn draw(&mut self, target: contract::Target, dl: &DisplayList) -> Result<contract::DrawReport, String> {
     // The drain comes first, so a name freed on the UI thread is reclaimed
     // on the first draw after it, before the draw's own GL work.
     self.exec.reclaim(self.queue.drain());
     self.exec.draw(target, dl)
   }
+}
+
+/// What drawing `walked` issues: every instance it wrote, and one
+/// instanced draw call per batch (`exec` draws each batch once). The walk
+/// decides both, so the tests read the report off a walk with no GL.
+pub(crate) fn report(walked: &walk::Walked) -> contract::DrawReport {
+  contract::DrawReport { instances: walked.instances.len() as u32, draw_calls: walked.batches.len() as u32 }
 }
 
 /// A GL texture the lists draw: the name and its size, shared by handle.

@@ -292,8 +292,9 @@ impl OffscreenRig {
 }
 
 pub(super) enum OffscreenDraw {
-  /// Rendered (and resolved, under MSAA) into the target texture.
-  Done,
+  /// Rendered (and resolved, under MSAA) into the target texture, with
+  /// what the renderer's draw issued.
+  Done(crate::renderer::contract::DrawReport),
   /// The multisampled framebuffer was incomplete; retry single-sample.
   MsaaUnavailable,
   /// A GL object failed to allocate or the renderer failed to draw.

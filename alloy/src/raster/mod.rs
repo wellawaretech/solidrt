@@ -63,6 +63,7 @@ use crate::gl::{
 };
 use crate::gpu::{BufferIds, DirtySet, GpuLimits, WindowShader};
 use crate::gpu::{SamplerState, TextureFormat, TextureShape};
+use crate::renderer::contract::DrawReport;
 
 /// Counters shared between the raster thread, the frame loop, and the UI
 /// thread's Context, one allocation for all of them. Diagnostics (get_stats)
@@ -138,6 +139,16 @@ pub struct RasterStats {
   /// timer queries. Per frame this is the number to hold against the
   /// refresh period; it is what explains `fence_timeouts`.
   pub(crate) frame_exec_micros: AtomicU64,
+  /// Quads the renderer wrote across every draw: the window frame,
+  /// patches, offscreen rasters (snapshots, the overlay), all renderer work
+  /// on this thread, so a per-frame figure is what the frame cost wherever
+  /// its quads went; what the per-op cost of the display list became on
+  /// the GPU side.
+  pub(crate) renderer_instances: AtomicU64,
+  /// Instanced draw calls the renderer issued across the same draws, one
+  /// per batch: a batch ends at a texture change (anvil's walk.rs), so a
+  /// screen of prose is one batch over the atlas.
+  pub(crate) renderer_draw_calls: AtomicU64,
   /// Submissions issued beyond one per draw by the submission budget
   /// (gl::slicing): a heavy draw cut into slices so no single submission
   /// runs past the kernel's hang timeout. 0 on a healthy desktop; climbing
@@ -245,6 +256,10 @@ pub struct RasterCounters {
   /// GPU-side execution time of the window draws, microseconds; None when
   /// the context has no timer queries.
   pub frame_exec_micros: Option<u64>,
+  /// Quads the renderer wrote and instanced draw calls it issued, over
+  /// every draw on the raster thread (see `RasterStats::renderer_instances`).
+  pub renderer_instances: u64,
+  pub renderer_draw_calls: u64,
   /// Submissions issued beyond one per draw by the submission budget, and
   /// the raster-thread time spent waiting on their fences (see
   /// `RasterStats`).
@@ -288,6 +303,8 @@ impl RasterStats {
         .timer_queries
         .load(Ordering::Relaxed)
         .then(|| self.frame_exec_micros.load(Ordering::Relaxed)),
+      renderer_instances: self.renderer_instances.load(Ordering::Relaxed),
+      renderer_draw_calls: self.renderer_draw_calls.load(Ordering::Relaxed),
       draw_slices: self.draw_slices.load(Ordering::Relaxed),
       slice_wait_micros: self.slice_wait_micros.load(Ordering::Relaxed),
       cmd_micros: self.cmd_micros.load(Ordering::Relaxed),
@@ -315,6 +332,8 @@ impl RasterStats {
       pass_issue_micros: AtomicU64::new(0),
       pass_exec_micros: AtomicU64::new(0),
       frame_exec_micros: AtomicU64::new(0),
+      renderer_instances: AtomicU64::new(0),
+      renderer_draw_calls: AtomicU64::new(0),
       draw_slices: AtomicU64::new(0),
       slice_wait_micros: AtomicU64::new(0),
       timer_queries: AtomicBool::new(false),
@@ -327,6 +346,13 @@ impl RasterStats {
       camera_skipped: AtomicU64::new(0),
       targets: std::sync::Mutex::new(std::sync::Arc::new(Vec::new())),
     }
+  }
+
+  /// Sum a renderer draw's report into the cumulative counters (see
+  /// `renderer_instances`).
+  pub(crate) fn note_draw(&self, report: DrawReport) {
+    self.renderer_instances.fetch_add(report.instances as u64, Ordering::Relaxed);
+    self.renderer_draw_calls.fetch_add(report.draw_calls as u64, Ordering::Relaxed);
   }
 
   /// The per-target counters as last published (see `targets`).

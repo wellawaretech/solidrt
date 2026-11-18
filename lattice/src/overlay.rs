@@ -4,6 +4,7 @@ use alloy::rendertree::text::glyphs::{weight_value, WarmRequest};
 use alloy::rendertree::text::TextImage;
 use alloy::rendertree::{FontStyle, FontWeight, PlatformContext, Text, TextAlignment};
 
+use crate::frame_history::RasterRates;
 use crate::stats::StatsSnapshot;
 
 const MIB: f32 = 1024.0 * 1024.0;
@@ -72,10 +73,10 @@ pub enum Badge {
 /// with, so the text lays out in the same logical coordinates `safe_area`
 /// is in). The first line is the badge (if any) and, with `hud` on, the
 /// stats HUD's headline figures, FPS last; the rest of the HUD follows only
-/// with `hud` on. `gpu_pct` is the GPU share over the last second's recorded
-/// frames (frame_history::RasterRates::gpu_share_pct, the same figure the
-/// stats query reports), None when there is no GPU timing source or no
-/// frame changed the picture.
+/// with `hud` on. `rates` are the raster rates over the last second's
+/// recorded frames (frame_history::RasterRates, the same figures the stats
+/// query reports: the GPU share, the renderer's instances and draw calls),
+/// None when no frame changed the picture.
 ///
 /// The text is rasterized by the glyph engine (`Text::rasterize`) into a
 /// texture the display list composites; the image comes back with the
@@ -86,7 +87,7 @@ pub enum Badge {
 /// The overlay's text for the figures `s`: the badge, the figures when
 /// `hud`, the FPS. Composed apart from the raster so a refresh whose text
 /// is unchanged (a badge over an idle app, the same FPS) is skipped.
-pub fn text(s: &StatsSnapshot, gpu_pct: Option<f32>, hud: bool, badge: Option<Badge>) -> String {
+pub fn text(s: &StatsSnapshot, rates: Option<&RasterRates>, hud: bool, badge: Option<Badge>) -> String {
   let mut text = String::new();
   match badge {
     Some(Badge::Connected) => text.push_str("CONN "),
@@ -99,7 +100,7 @@ pub fn text(s: &StatsSnapshot, gpu_pct: Option<f32>, hud: bool, badge: Option<Ba
   }
   text.push_str(&format!("{} FPS", s.fps));
   if hud {
-    push_hud_lines(&mut text, s, gpu_pct);
+    push_hud_lines(&mut text, s, rates);
   }
   text
 }
@@ -155,7 +156,7 @@ pub fn build(
 }
 
 /// The stats HUD's remaining lines, appended under the first line.
-fn push_hud_lines(text: &mut String, s: &StatsSnapshot, gpu_pct: Option<f32>) {
+fn push_hud_lines(text: &mut String, s: &StatsSnapshot, rates: Option<&RasterRates>) {
   let paint_stats = s.paint;
   // Each timing is shown as a share of the measured frame period. Every
   // figure and frame_ms are smoothed the same way on the same cadence (the
@@ -188,7 +189,7 @@ fn push_hud_lines(text: &mut String, s: &StatsSnapshot, gpu_pct: Option<f32>) {
   // 0% while the query said 16% - okf/done/stats-overlay-gpu-share.md).
   // Hidden without a GPU timing source, and while no frame changes the
   // picture.
-  if let Some(gpu_pct) = gpu_pct {
+  if let Some(gpu_pct) = rates.and_then(|r| r.gpu_share_pct()) {
     text.push_str(&format!("\nGPU {:.0}%", gpu_pct));
   }
   // Demand-gate savings/sec: frames served from the cached display list
@@ -232,6 +233,12 @@ fn push_hud_lines(text: &mut String, s: &StatsSnapshot, gpu_pct: Option<f32>) {
   let ops = s.counters;
   if ops.draws > 0 {
     text.push_str(&format!("\n{} DRW {} CLP {} LYR", ops.draws, ops.clips, ops.save_layers));
+  }
+  // What the renderer issued per presented frame over the last second:
+  // the quads it wrote and the instanced draw calls they took (INST/DC).
+  // Hidden while no frame drew through it.
+  if let Some(r) = rates.filter(|r| r.renderer_draw_calls_per_frame > 0.0) {
+    text.push_str(&format!("\n{:.0} INST {:.1} DC", r.renderer_instances_per_frame, r.renderer_draw_calls_per_frame));
   }
   if ops.text_layers > 0 {
     text.push_str(&format!("\n{} TXT", ops.text_layers));
