@@ -1,7 +1,8 @@
 //! The pure half of a draw: a list's ops walked into the instances the
-//! two programs draw, with the save stack, the transforms and the clip
-//! applied and the draws outside the clip rejected. No GL here, so the walk
-//! is unit-tested without a context (`tests/anvil.rs`).
+//! three programs draw (plain rect fills, shapes, glyphs), with the save
+//! stack, the transforms and the clip applied and the draws outside the
+//! clip rejected. No GL here, so the walk is unit-tested without a context
+//! (`tests/anvil.rs`).
 
 use super::super::{ISize, Matrix, Point, Rect, Size, StrokeCap, TextureSampling};
 use super::ops::{Image, Op, Premultiplied, Radii};
@@ -12,7 +13,7 @@ use euclid::default::{Box2D, Point2D, Transform2D};
 use euclid::Angle;
 use std::sync::Arc;
 
-/// One quad for either program, as the instance buffer carries it. All
+/// One quad for any program, as the instance buffer carries it. All
 /// f32 and `repr(C)`, so a slice of instances is uploaded as its bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -89,21 +90,45 @@ pub(crate) const CAP_BUTT: f32 = 0.0;
 pub(crate) const CAP_SQUARE: f32 = 1.0;
 pub(crate) const CAP_ROUND: f32 = 2.0;
 
-/// A run of consecutive instances one draw issues, of one kind class:
-/// shapes (the shape instances before any texture, or every shape that
-/// shares one texture and sampling) or glyphs (one atlas, one coverage
-/// policy and at most one gradient). The classes draw through different
-/// programs, so a glyph run never shares a batch with shapes.
+/// The device area, in device pixels, under which a plain rect fill rides
+/// along in an open shape batch instead of opening a fill batch of its own
+/// (256 x 256): about where the fragment cost the fill program would save
+/// on the TV's Mali meets the CPU cost of one more draw call. A tuning
+/// value, to be re-read on the TV.
+pub(crate) const FILL_FOLD_AREA: f32 = 65_536.0;
+
+/// The program a batch draws through, by the class of its instances.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum BatchProgram {
+  /// Plain rect fills only (see `plain_fill`): the fill program, no
+  /// texture.
+  Fill,
+  /// Every other shape and texture quad, and the small plain fills that
+  /// ride along with them: the shape program.
+  Shape,
+  /// Glyph runs: the glyph program.
+  Glyph,
+}
+
+/// A run of consecutive instances one draw issues, of one class: plain
+/// rect fills (untextured, unstroked, under no rounded clip), shapes (the
+/// shape instances before any texture, or every shape that shares one
+/// texture and sampling, small plain fills among them) or glyphs (one
+/// atlas, one coverage policy and at most one gradient). The classes draw
+/// through different programs, so a run never mixes them, except that the
+/// shape program also draws the plain fills a shape run takes.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Batch {
   pub start: usize,
   pub count: usize,
+  /// The program the run draws through. `Glyph` exactly when `policy` is
+  /// set; a `Fill` run has no texture.
+  pub program: BatchProgram,
   /// The texture bound for the run, with its sampling; None for a run of
-  /// shapes only.
+  /// fills, or of shapes that sample nothing.
   pub texture: Option<(glow::NativeTexture, TextureSampling)>,
-  /// Set exactly when the run is glyphs: the policy their coverage is
-  /// turned into color with. The executor draws it through the glyph
-  /// program.
+  /// Set exactly when the run is glyphs (`program` is `Glyph`): the policy
+  /// their coverage is turned into color with.
   pub policy: Option<CoveragePolicy>,
   /// A gradient run's gradient; such a run holds that one op's quads.
   pub gradient: Option<Arc<GlyphGradient>>,
@@ -126,22 +151,39 @@ pub(crate) struct Walked {
 
 impl Walked {
   // Append the shape `instance` to the current batch when it can share its
-  // draw, else open a new batch. A shape shares any open shape batch (the
-  // shader branches on the kind; a bound sampler it never reads costs
-  // nothing), so a texture change, a sampling change or a glyph run ends
-  // a run.
-  fn push(&mut self, instance: Instance, texture: Option<(glow::NativeTexture, TextureSampling)>) {
+  // draw, else open a new batch. A plain fill (`plain`, see `plain_fill`)
+  // joins an open fill batch, or an open shape batch while its device area
+  // is below FILL_FOLD_AREA (the shape program draws a rect too, and one
+  // draw call fewer where rects and other shapes interleave); otherwise it
+  // opens a fill batch. Any other shape shares only an open shape batch
+  // (the shader branches on the kind; a bound sampler it never reads costs
+  // nothing), so a texture change, a sampling change, a fill run or a
+  // glyph run ends a run.
+  fn push(&mut self, instance: Instance, texture: Option<(glow::NativeTexture, TextureSampling)>, plain: bool) {
     let start = self.instances.len();
     let sealed = self.sealed;
-    match self.batches.last_mut().filter(|last| !sealed && last.policy.is_none()) {
-      None => self.open(Batch { start, count: 1, texture, policy: None, gradient: None }),
+    let last = self.batches.last_mut().filter(|_| !sealed);
+    if plain {
+      match last {
+        Some(last) if last.program == BatchProgram::Fill => last.count += 1,
+        Some(last) if last.program == BatchProgram::Shape && device_area(&instance) < FILL_FOLD_AREA => last.count += 1,
+        _ => {
+          self.open(Batch { start, count: 1, program: BatchProgram::Fill, texture: None, policy: None, gradient: None })
+        }
+      }
+      self.instances.push(instance);
+      return;
+    }
+    let shape = Batch { start, count: 1, program: BatchProgram::Shape, texture, policy: None, gradient: None };
+    match last.filter(|last| last.program == BatchProgram::Shape) {
+      None => self.open(shape),
       Some(last) if texture.is_none() || last.texture == texture => last.count += 1,
       // The shapes before it do not care which sampler is bound.
       Some(last) if last.texture.is_none() => {
         last.texture = texture;
         last.count += 1;
       }
-      Some(_) => self.open(Batch { start, count: 1, texture, policy: None, gradient: None }),
+      Some(_) => self.open(shape),
     }
     self.instances.push(instance);
   }
@@ -165,12 +207,23 @@ impl Walked {
     let count = instances.len();
     let texture = Some((atlas, TextureSampling::Linear));
     let joins = |last: &Batch| {
-      gradient.is_none() && last.gradient.is_none() && last.texture == texture && last.policy == Some(policy)
+      last.program == BatchProgram::Glyph
+        && gradient.is_none()
+        && last.gradient.is_none()
+        && last.texture == texture
+        && last.policy == Some(policy)
     };
     let sealed = self.sealed;
     match self.batches.last_mut().filter(|last| !sealed && joins(last)) {
       Some(last) => last.count += count,
-      None => self.open(Batch { start, count, texture, policy: Some(policy), gradient: gradient.cloned() }),
+      None => self.open(Batch {
+        start,
+        count,
+        program: BatchProgram::Glyph,
+        texture,
+        policy: Some(policy),
+        gradient: gradient.cloned(),
+      }),
     }
     self.sealed = gradient.is_some();
     self.instances.extend(instances);
@@ -449,7 +502,24 @@ fn push_shape(
       )
     }
   };
-  out.push(instance(state, &m2, clip, Quad { rect: quad, kind, stroke: s, color, tex, radii }), texture);
+  let shape = instance(state, &m2, clip, Quad { rect: quad, kind, stroke: s, color, tex, radii });
+  let plain = plain_fill(&shape);
+  out.push(shape, texture, plain);
+}
+
+// Whether `instance` is a plain rect fill, which the fill program draws:
+// a rect, not textured, not stroked, under no rounded clip. Its coverage
+// is 1 inside the quad, whose edges are MSAA's.
+fn plain_fill(instance: &Instance) -> bool {
+  let [_, _, kind, stroke] = instance.offset_kind_stroke;
+  kind == KIND_RECT && stroke == 0.0 && instance.rclip_radii == [0.0; 4]
+}
+
+// The device pixels `instance`'s quad covers, unclipped: its local area
+// times the absolute determinant of its 2D map.
+fn device_area(instance: &Instance) -> f32 {
+  let [m11, m12, m21, m22] = instance.linear;
+  (m11 * m22 - m12 * m21).abs() * instance.rect[2] * instance.rect[3]
 }
 
 // A segment stroked `width` wide under the current state, unless it has no
@@ -486,6 +556,7 @@ fn push_line(
   out.push(
     instance(state, &m, clip, Quad { rect: local, kind: KIND_LINE, stroke: width, color, tex, radii: [0.0; 4] }),
     None,
+    false,
   );
 }
 
@@ -531,7 +602,7 @@ fn push_texture(
     tex: [src.min_x() / w, src.min_y() / h, src.max_x() / w, src.max_y() / h],
     radii: [0.0; 4],
   };
-  out.push(instance(state, &m2, clip, quad), Some((texture.name(), sampling)));
+  out.push(instance(state, &m2, clip, quad), Some((texture.name(), sampling)), false);
 }
 
 // One glyph run under the current state: rejected whole when its `bounds`

@@ -1,4 +1,4 @@
-//! The GL half of a draw: the shape program and the glyph program, the
+//! The GL half of a draw: the fill, shape and glyph programs, the
 //! instance buffer under the VAO the executor owns, and the draw that
 //! uploads a list's instances (`super::walk`) and issues them, a batch
 //! through the program its kind needs. Raster thread only, with the context
@@ -7,7 +7,7 @@
 use super::super::contract::{DrawReport, Target};
 use super::super::{TextureSampling, TileMode};
 use super::record::DisplayList;
-use super::walk::{self, Instance};
+use super::walk::{self, BatchProgram, Instance};
 use crate::gpu::{CoveragePolicy, GlyphGradient, RAMP_WIDTH};
 use euclid::default::{Box2D, Point2D};
 use glow::HasContext;
@@ -73,11 +73,12 @@ const SOURCE_HEADER: &str = "#version 300 es\nprecision highp float;\n";
 // convention for the passes, and the plan (okf/plans/own-renderer.md)
 // pins it. Texture sampling reads vUv with v = 0 at texel row 0, no flip.
 //
-// The vertex stage both programs share: the instance attributes they both
-// read, the outputs both fragment stages read, and the quad's placement.
+// The vertex stage the programs share: the instance attributes they all
+// read, the outputs their fragment stages read, and the quad's placement.
 // A program reads only the attributes it declares, so the shape program
-// adds `aRadii` and both draw from the one VAO. The layout(location = N)
-// literals must match the ATTR_* constants.
+// adds `aRadii` and all draw from the one VAO; the linker drops the outputs
+// a fragment stage never declares. The layout(location = N) literals must
+// match the ATTR_* constants.
 const VERTEX_COMMON: &str = r"
 layout(location = 0) in vec4 aRect;      // x, y, w, h in local space
 layout(location = 1) in vec4 aLinear;    // m11, m12, m21, m22
@@ -141,6 +142,13 @@ void main() {
 }
 ";
 
+// The fill program's vertex stage, after SOURCE_HEADER and VERTEX_COMMON.
+const FILL_VERTEX: &str = r"
+void main() {
+  place(quadCorner());
+}
+";
+
 // The glyph program's vertex stage, after SOURCE_HEADER and VERTEX_COMMON.
 const GLYPH_VERTEX: &str = r"
 out vec2 vPos;                           // the op's space, untransformed: what a gradient maps
@@ -149,7 +157,7 @@ void main() {
 }
 ";
 
-// The fragment stage both programs share: the inputs VERTEX_COMMON writes,
+// The fragment stage the shape and glyph programs share: the inputs VERTEX_COMMON writes,
 // the analytic coverage of a distance and the rounded clip over it. One
 // text, so a glyph under a rounded clip fades exactly as a shape does.
 const FRAGMENT_COMMON: &str = r"
@@ -340,6 +348,30 @@ void main() {
 }
 ";
 
+// A plain rect fill (walk.rs `plain_fill`: a rect, untextured, unstroked,
+// under no rounded clip) has no edge the fragment stage decides: the quad's
+// edges are MSAA's and its coverage is 1 inside. A program of its own,
+// because on a Midgard GPU (the Mali-T860) the shape program costs every
+// fragment its nine flat and four smooth varyings, its kind branches, its
+// discard and the derivatives in `footprint`, and a full-window background
+// pays all of that for none of it. It clips by multiplying, never discards,
+// and reads no derivative.
+//
+// After SOURCE_HEADER only.
+const FILL_FRAGMENT: &str = r"
+in vec2 vDevice;
+flat in vec4 vColor;
+flat in vec4 vClip;
+out vec4 fragColor;
+void main() {
+  // The clip box as a factor, not a discard, as in GLYPH_FRAGMENT: a
+  // fragment outside writes zero, which premultiplied source-over leaves
+  // the target unchanged by.
+  float inside = float(all(greaterThanEqual(vDevice, vClip.xy)) && all(lessThan(vDevice, vClip.zw)));
+  fragColor = vColor * inside;
+}
+";
+
 // A glyph has no analytic coverage: its quad is axis-aligned at whole
 // pixels and the atlas's red channel carries the coverage. Its color is
 // straight alpha, the quad's own or the gradient ramp's at the parameter
@@ -435,13 +467,16 @@ void main() {
 }
 ";
 
-/// The GL half: the two programs, the instance buffer and the draw. Lives
+/// The GL half: the three programs, the instance buffer and the draw. Lives
 /// as long as the renderer, which the raster thread drops before it releases
 /// the context (raster/recover.rs), so the GL names here die with it and
 /// Drop deletes nothing.
 pub(super) struct Executor {
   gl: glow::Context,
-  /// Every batch without a coverage policy: shapes, images, textures.
+  /// Every fill batch: plain rect fills.
+  fill: Program,
+  /// Every shape batch: shapes, images, textures, and the small plain
+  /// fills among them.
   shape: Program,
   /// Every glyph batch (a batch with a coverage policy).
   glyph: Program,
@@ -481,7 +516,7 @@ struct GlyphUniforms {
 }
 
 impl Executor {
-  /// Over the context current on the calling thread; compiles both
+  /// Over the context current on the calling thread; compiles the three
   /// programs now (every frame draws shapes and most draw text, so the
   /// first frame must not pay them).
   ///
@@ -491,6 +526,8 @@ impl Executor {
   /// points.
   pub(super) unsafe fn new(proc_address: &mut dyn FnMut(&str) -> *mut c_void) -> Result<Self, String> {
     let gl = glow::Context::from_loader_function(|name| proc_address(name) as *const c_void);
+    let fill =
+      Program::link(&gl, "fill", &[SOURCE_HEADER, VERTEX_COMMON, FILL_VERTEX], &[SOURCE_HEADER, FILL_FRAGMENT])?;
     let shape = Program::link(
       &gl,
       "shape",
@@ -515,8 +552,9 @@ impl Executor {
       tile: uniform(&gl, gp, label, "uTile")?,
     };
     // A sampler uniform names a unit, not a texture: set once, the unit
-    // never changes. Both programs sample `uTexture` (an image, a
-    // texture, the atlas) on the one unit; only the glyph program the ramp.
+    // never changes. The shape and glyph programs sample `uTexture` (an
+    // image, a texture, the atlas) on the one unit, only the glyph program
+    // the ramp; the fill program samples nothing.
     for (program, label) in [(shape.program, "shape"), (glyph.program, "glyph")] {
       let texture_uniform = uniform(&gl, program, label, "uTexture")?;
       gl.use_program(Some(program));
@@ -543,7 +581,7 @@ impl Executor {
     point_attributes(&gl, 0);
     gl.bind_vertex_array(None);
     gl.bind_buffer(glow::ARRAY_BUFFER, None);
-    Ok(Executor { gl, shape, glyph, vao, instances, sampler_linear, sampler_nearest, glyph_uniforms, ramp })
+    Ok(Executor { gl, fill, shape, glyph, vao, instances, sampler_linear, sampler_nearest, glyph_uniforms, ramp })
   }
 
   /// Delete `names`: the textures whose last handle dropped since the last
@@ -604,12 +642,12 @@ impl Executor {
       if instances.is_empty() {
         return Ok(DrawReport::default());
       }
-      for program in [&self.glyph, &self.shape] {
+      for program in [&self.glyph, &self.fill, &self.shape] {
         gl.use_program(Some(program.program));
         gl.uniform_2_f32(Some(&program.size), width as f32, height as f32);
       }
       // The shape program is in use, as the loop left it.
-      let mut glyph_in_use = false;
+      let mut in_use = BatchProgram::Shape;
       gl.bind_vertex_array(Some(self.vao));
       gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
       // Sound: Instance is repr(C) with every field an f32, so it has no
@@ -619,12 +657,11 @@ impl Executor {
         std::slice::from_raw_parts(instances.as_ptr() as *const u8, instances.len() * std::mem::size_of::<Instance>());
       gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
       // One draw per batch: a batch ends where the texture or its sampling
-      // changes, where text meets shapes, or at a glyph run's policy or
-      // gradient (walk.rs). A glyph batch draws through the glyph program,
-      // every other through the shape program, switched only where the
-      // kind changes. GLES 3.0 has no base instance, so a batch is drawn
+      // changes, where fills, shapes and text meet, or at a glyph run's
+      // policy or gradient (walk.rs). A batch draws through its program,
+      // switched only where the program changes. GLES 3.0 has no base instance, so a batch is drawn
       // by re-pointing the attributes at its first instance.
-      let glyphs = walked.batches.iter().any(|b| b.policy.is_some());
+      let glyphs = walked.batches.iter().any(|b| b.program == BatchProgram::Glyph);
       if glyphs {
         gl.active_texture(glow::TEXTURE0 + RAMP_UNIT);
         gl.bind_texture(glow::TEXTURE_2D, Some(self.ramp));
@@ -633,12 +670,17 @@ impl Executor {
       gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
       for batch in &walked.batches {
         point_attributes(gl, batch.start);
-        let glyph = batch.policy.is_some();
-        if glyph != glyph_in_use {
-          gl.use_program(Some(if glyph { self.glyph.program } else { self.shape.program }));
-          glyph_in_use = glyph;
+        if batch.program != in_use {
+          let program = match batch.program {
+            BatchProgram::Fill => &self.fill,
+            BatchProgram::Shape => &self.shape,
+            BatchProgram::Glyph => &self.glyph,
+          };
+          gl.use_program(Some(program.program));
+          in_use = batch.program;
         }
-        if let Some(policy) = batch.policy {
+        if batch.program == BatchProgram::Glyph {
+          let policy = batch.policy.expect("a glyph batch carries its coverage policy (walk.rs Batch)");
           self.glyph_state(policy, batch.gradient.as_deref());
         }
         match batch.texture {

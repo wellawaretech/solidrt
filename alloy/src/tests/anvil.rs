@@ -1,18 +1,19 @@
 // Anvil's pure walk (renderer/anvil/walk.rs): a list built through the
 // aliases, the way the rendertree builds one, walked into the instances the
-// two programs draw, with no GL context. The transform stack, the
+// three programs draw, with no GL context. The transform stack, the
 // device-space clip, the rejection of draws outside it, nested lists and
 // the premultiplied color, the texture quads and their batches are all
 // decided here, before any GL work, as are the rounded rects' radii and
 // quads, the rounded clip in device space and the image-filled shapes'
-// uv, the glyph runs' instances and their batches, and the draw report
+// uv, the glyph runs' instances and their batches, the plain rect fills'
+// batches, and the draw report
 // and the scissor the executor takes from a walk. The deferred deletion
 // queue a texture handle drops onto is tested here too, with no renderer.
 
 use crate::gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, RAMP_WIDTH};
 use crate::renderer::anvil::walk::{
-  walk, Batch, Instance, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, KIND_GLYPH, KIND_LINE, KIND_OVAL, KIND_RECT,
-  KIND_ROUNDED_RECT, KIND_TEXTURED, ROUNDED_QUAD_PAD,
+  walk, Batch, BatchProgram, Instance, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, FILL_FOLD_AREA, KIND_GLYPH, KIND_LINE,
+  KIND_OVAL, KIND_RECT, KIND_ROUNDED_RECT, KIND_TEXTURED, ROUNDED_QUAD_PAD,
 };
 use crate::renderer::anvil::{report, test_texture, DeletionQueue};
 use crate::renderer::contract::DrawReport;
@@ -104,7 +105,12 @@ fn image_paint(t: &Texture, sampling: TextureSampling, transform: Option<&Matrix
 
 // A batch of shapes and texture quads: no glyph policy, no gradient.
 fn shapes(start: usize, count: usize, texture: Option<(glow::NativeTexture, TextureSampling)>) -> Batch {
-  Batch { start, count, texture, policy: None, gradient: None }
+  Batch { start, count, program: BatchProgram::Shape, texture, policy: None, gradient: None }
+}
+
+// A batch of plain rect fills: no texture, no glyph policy, no gradient.
+fn fills(start: usize, count: usize) -> Batch {
+  Batch { start, count, program: BatchProgram::Fill, texture: None, policy: None, gradient: None }
 }
 
 fn line(from: (f32, f32), to: (f32, f32), paint: &Paint) -> Vec<Instance> {
@@ -344,7 +350,9 @@ fn batches_split_at_texture_changes() {
   let c = test_texture(2, ISize::new(10, 10));
   let quad = rect(0.0, 0.0, 10.0, 10.0);
   let linear = TextureSampling::Linear;
-  // A rect filled with `a` as its image source joins `a`'s run.
+  // A plain rect with no batch open is a fill run; a rect filled with `a`
+  // as its image source joins `a`'s run, and a small plain rect after it
+  // rides along in `c`'s.
   let a_filled = image_paint(&a, linear, None);
   let mut b = DisplayListBuilder::new(None);
   b.draw_rect(&quad, &opaque())
@@ -355,7 +363,10 @@ fn batches_split_at_texture_changes() {
     .draw_rect(&quad, &opaque());
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 6);
-  assert_eq!(out.batches, vec![shapes(0, 4, Some((name(&a), linear))), shapes(4, 2, Some((name(&c), linear))),]);
+  assert_eq!(
+    out.batches,
+    vec![fills(0, 1), shapes(1, 3, Some((name(&a), linear))), shapes(4, 2, Some((name(&c), linear)))]
+  );
 
   // The sampling splits a run too.
   let mut b = DisplayListBuilder::new(None);
@@ -379,8 +390,9 @@ fn a_draw_report_counts_instances_and_batches() {
   let c = test_texture(2, ISize::new(10, 10));
   let quad = rect(0.0, 0.0, 10.0, 10.0);
   let linear = TextureSampling::Linear;
-  // Two rects, a texture quad and a rect: the shapes join the texture's
-  // run, so four instances draw in one call.
+  // Two rects, a texture quad and a rect: the two rects are a fill run,
+  // the last rides along in the texture's run, so four instances draw in
+  // two calls.
   let mut b = DisplayListBuilder::new(None);
   b.draw_rect(&quad, &opaque())
     .draw_rect(&quad, &opaque())
@@ -388,12 +400,18 @@ fn a_draw_report_counts_instances_and_batches() {
     .draw_rect(&quad, &opaque());
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 4);
-  assert_eq!(out.batches.len(), 1);
-  assert_eq!(report(&out), DrawReport { instances: 4, draw_calls: 1 });
+  assert_eq!(out.batches.len(), 2);
+  assert_eq!(report(&out), DrawReport { instances: 4, draw_calls: 2 });
+
+  // Ovals before a texture take it into their run: one call.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_oval(&quad, &opaque()).draw_oval(&quad, &opaque()).draw_texture_rect(&a, &quad, &quad, linear, None);
+  let out = walked_all(b);
+  assert_eq!(report(&out), DrawReport { instances: 3, draw_calls: 1 });
 
   // A second texture is a second call.
   let mut b = DisplayListBuilder::new(None);
-  b.draw_rect(&quad, &opaque())
+  b.draw_oval(&quad, &opaque())
     .draw_texture_rect(&a, &quad, &quad, linear, None)
     .draw_texture_rect(&c, &quad, &quad, linear, None);
   let out = walked_all(b);
@@ -733,7 +751,7 @@ fn gradient() -> GlyphGradient {
 // A glyph batch over `atlas`, sampled linearly, under `policy`.
 fn glyphs(start: usize, count: usize, atlas: &Texture, policy: CoveragePolicy) -> Batch {
   let texture = Some((name(atlas), TextureSampling::Linear));
-  Batch { start, count, texture, policy: Some(policy), gradient: None }
+  Batch { start, count, program: BatchProgram::Glyph, texture, policy: Some(policy), gradient: None }
 }
 
 #[test]
@@ -794,11 +812,11 @@ fn glyph_runs_and_shapes_take_separate_batches() {
   let quad = rect(0.0, 0.0, 10.0, 10.0);
   // A glyph run between two rects: the run draws through the glyph
   // program, so it is a batch of its own over the atlas, between two
-  // shape batches.
+  // fill batches.
   let mut b = DisplayListBuilder::new(None);
   b.draw_rect(&quad, &opaque()).draw_glyphs(&atlas, &word(0.0), policy, None).draw_rect(&quad, &opaque());
   let out = walked_all(b);
-  assert_eq!(out.batches, vec![shapes(0, 1, None), glyphs(1, 2, &atlas, policy), shapes(3, 1, None)]);
+  assert_eq!(out.batches, vec![fills(0, 1), glyphs(1, 2, &atlas, policy), fills(3, 1)]);
   let (glyph_quads, shape_quads) = (2, 2);
   assert_eq!(report(&out), DrawReport { instances: glyph_quads + shape_quads, draw_calls: 3 });
 
@@ -831,17 +849,11 @@ fn a_gradient_run_is_its_own_batch() {
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 9);
   let graded = Batch { gradient: Some(g.clone()), ..glyphs(2, 2, &atlas, policy) };
-  // Split before and after the gradient run; the rect is a shape batch of
+  // Split before and after the gradient run; the rect is a fill batch of
   // its own between the solid runs.
   assert_eq!(
     out.batches,
-    vec![
-      glyphs(0, 2, &atlas, policy),
-      graded,
-      glyphs(4, 2, &atlas, policy),
-      shapes(6, 1, None),
-      glyphs(7, 2, &atlas, policy),
-    ]
+    vec![glyphs(0, 2, &atlas, policy), graded, glyphs(4, 2, &atlas, policy), fills(6, 1), glyphs(7, 2, &atlas, policy),]
   );
 }
 
@@ -897,4 +909,71 @@ fn a_patch_clip_rejects_the_grid_outside_it() {
   let out = walk(&build(patch), ISize::new(1280, 720));
   // The mover alone: the grid ends at y = 199.
   assert_eq!(out.instances.len(), 1, "{} instances survived the patch", out.instances.len());
+}
+
+#[test]
+fn plain_rects_are_a_fill_batch() {
+  let quad = rect(0.0, 0.0, 10.0, 10.0);
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &opaque()).draw_rect(&quad, &opaque()).draw_rect(&quad, &opaque());
+  assert_eq!(walked_all(b).batches, vec![fills(0, 3)]);
+
+  // A stroke-and-fill rect is one fill outset by half the width: plain.
+  let mut both = opaque();
+  both.set_draw_style(DrawStyle::StrokeAndFill).set_stroke_width(2.0);
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &opaque()).draw_rect(&quad, &both);
+  assert_eq!(walked_all(b).batches, vec![fills(0, 2)]);
+
+  // An oval after a fill run opens a shape batch.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &opaque()).draw_oval(&quad, &opaque());
+  assert_eq!(walked_all(b).batches, vec![fills(0, 1), shapes(1, 1, None)]);
+}
+
+#[test]
+fn a_small_plain_rect_rides_along_in_a_shape_batch() {
+  let quad = rect(0.0, 0.0, 10.0, 10.0);
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_oval(&quad, &opaque()).draw_rect(&quad, &opaque());
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 2, None)]);
+
+  // A large one opens a fill batch: 400 x 400 is past FILL_FOLD_AREA.
+  let large = rect(0.0, 0.0, 400.0, 400.0);
+  assert!(large.size.width * large.size.height >= FILL_FOLD_AREA);
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_oval(&quad, &opaque()).draw_rect(&large, &opaque());
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None), fills(1, 1)]);
+
+  // The area is in device pixels: the same small rect under a scale that
+  // makes it as large opens a fill batch too.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_oval(&quad, &opaque()).scale(40.0, 40.0).draw_rect(&quad, &opaque());
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None), fills(1, 1)]);
+}
+
+#[test]
+fn a_rect_the_fill_program_cannot_draw_is_a_shape() {
+  let quad = rect(10.0, 10.0, 20.0, 20.0);
+  // Under a rounded clip.
+  let mut b = DisplayListBuilder::new(None);
+  b.clip_rounded_rect(&rect(0.0, 0.0, 50.0, 50.0), &RoundingRadii::circular([5.0; 4]), ClipOperation::Intersect)
+    .draw_rect(&quad, &opaque());
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None)]);
+
+  // Stroked.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &stroked(2.0));
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None)]);
+
+  // Filled with an image.
+  let t = test_texture(7, ISize::new(10, 10));
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &image_paint(&t, TextureSampling::Linear, None));
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, Some((name(&t), TextureSampling::Linear)))]);
+
+  // After a fill run, such a rect opens a shape batch.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &opaque()).draw_rect(&quad, &stroked(2.0));
+  assert_eq!(walked_all(b).batches, vec![fills(0, 1), shapes(1, 1, None)]);
 }

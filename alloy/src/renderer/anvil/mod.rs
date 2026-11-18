@@ -4,9 +4,10 @@
 //!
 //! A builder records anvil's own executable ops (`ops`, recorded by
 //! `record`, beside the test-build log `super::oplog`); a draw walks them
-//! into instances (`walk`, pure) and draws those as instanced quads through
-//! the shape program, glyph runs through a glyph program of their own
-//! (`exec`). Stage 1 draws the state ops, rect and oval
+//! into instances (`walk`, pure) and draws those as instanced quads
+//! through three programs (`exec`): plain rect fills through a fill
+//! program with no discard and no derivatives, every other shape through
+//! the shape program, glyph runs through a glyph program of their own. Stage 1 draws the state ops, rect and oval
 //! fills and strokes, lines, texture quads and the axis-aligned intersect
 //! clip. Stage 2, step 1 adds rounded rects (per-corner radii, fill,
 //! stroke and stroke-and-fill), an axis-aligned rounded clip, and rects,
