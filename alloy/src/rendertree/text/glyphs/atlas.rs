@@ -180,9 +180,9 @@ impl<K: CellKey> AtlasPacker<K> {
     self
   }
 
-  /// Raise the growth cap to `max_side` (the device's texture size limit,
-  /// known once there is a GPU context); never lowered below the current
-  /// size, which cells already occupy.
+  /// Set the growth cap to `max_side` (the device's texture size limit,
+  /// known once there is a GPU context, or an owner's lower policy cap);
+  /// never lowered below the current size, which cells already occupy.
   pub fn set_max_side(&mut self, max_side: u32) {
     self.max_side = max_side.max(self.width).max(self.height);
   }

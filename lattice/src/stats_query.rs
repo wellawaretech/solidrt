@@ -78,6 +78,8 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
   put("reusedPerSec", s.reused.into());
   put("skippedPerSec", s.skipped.into());
   put("textures", s.textures.into());
+  put("textAtlasWidth", s.text_atlas.0.into());
+  put("textAtlasHeight", s.text_atlas.1.into());
   put("nodes", s.node_count.into());
   put("measureCalls", s.measure_calls.into());
   put("wordShapes", s.word_shapes.into());

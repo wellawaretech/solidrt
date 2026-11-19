@@ -50,6 +50,10 @@ pub struct StatsSnapshot {
   pub reused: u32,
   pub skipped: u32,
   pub textures: usize,
+  /// The text atlas's size in texels (width, height), sampled on the UI
+  /// thread as the snapshot is taken: the packer's side, what its texture
+  /// holds once flushed, at most the side cap (TEXT_ATLAS_MAX_SIDE).
+  pub text_atlas: (u32, u32),
   /// Layout-activity counters from the last full rebuild, raw (not smoothed):
   /// these are counts to reason about, not rates to watch. See
   /// alloy::rendertree::counters.
@@ -264,9 +268,9 @@ impl Stats {
   }
 
   /// Plain-data copy of the current figures for readers outside the draw loop.
-  /// `fps` and `textures` are owned by the platform/registry, so the caller
-  /// supplies them.
-  pub fn snapshot(&self, frame: u64, fps: u32, textures: usize) -> StatsSnapshot {
+  /// `fps`, `textures` and `text_atlas` are owned by the platform/registry,
+  /// so the caller supplies them.
+  pub fn snapshot(&self, frame: u64, fps: u32, textures: usize, text_atlas: (u32, u32)) -> StatsSnapshot {
     StatsSnapshot {
       frame,
       fps,
@@ -282,6 +286,7 @@ impl Stats {
       reused: self.reused,
       skipped: self.skipped,
       textures,
+      text_atlas,
       node_count: self.node_count,
       measure_calls: self.layout_counters.measure_calls,
       word_shapes: self.layout_counters.word_shapes,

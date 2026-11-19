@@ -438,7 +438,12 @@ when exactly one client is connected.
   per presented frame, count the path ops the renderer drew from their
   meshes and the meshes it tessellated (its mesh cache's misses): a
   retained screen of paths reads 0 tessellated per frame, a screen that
-  rewrites its paths reads one per path per frame. `snapshotsReused`,
+  rewrites its paths reads one per path per frame. `textAtlasWidth` and
+  `textAtlasHeight` are the text atlas's size in texels now (one byte a
+  texel on the GPU): it grows by doubling up to a fixed side cap (4096, or
+  the device's texture limit where that is lower) and at the cap evicts
+  the glyphs nobody drew in two seconds, so a churn of text sizes reads a
+  size that stops at the cap. `snapshotsReused`,
   `snapshotsRerendered` and `snapshotsRasterized` count the latest walk's
   snapshot boundaries drawn from their retained texture, re-rendered into
   it, and rasterized into a new one; `snapshotsDeferred` counts the reused

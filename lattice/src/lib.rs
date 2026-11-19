@@ -557,12 +557,20 @@ fn reset_fonts(platform: &PlatformContext, fonts: Vec<FontPayload>) {
 /// frames.
 const SNAPSHOT_RASTER_BUDGET: std::time::Duration = std::time::Duration::from_millis(4);
 
+/// The text atlas side cap, 16 MiB of R8; holds several thousand cells at
+/// 16 px; raised only by measurement (okf/plans/text-atlas-cap.md). The
+/// device's texture limit only lowers it; at the cap the atlas evicts what
+/// nobody drew lately.
+pub const TEXT_ATLAS_MAX_SIDE: u32 = 4096;
+
 // The paint policy lattice chooses for the window's platform state, where
 // alloy carries out none until told: the snapshot raster budget
-// (SNAPSHOT_RASTER_BUDGET). The one place it is set; an app-facing knob
-// would set it here.
+// (SNAPSHOT_RASTER_BUDGET) and the text atlas side cap
+// (TEXT_ATLAS_MAX_SIDE). The one place they are set; an app-facing knob
+// would set them here.
 fn apply_paint_policy(platform: &PlatformContext) {
   platform.set_snapshot_raster_budget(Some(SNAPSHOT_RASTER_BUDGET));
+  platform.text_atlas().set_side_cap(TEXT_ATLAS_MAX_SIDE);
 }
 
 // The mechanics of anchoring, separated from storage resolution so tests can

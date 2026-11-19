@@ -646,6 +646,61 @@ fn an_eviction_forgets_the_style_was_warmed() {
   assert!(atlas.is_warmed(small));
 }
 
+// The churn the side cap is checked under: a new style every step, with
+// enough frames between steps that a style is past the eviction age (120
+// frames) three steps after its last use.
+const CHURN_STEPS: usize = 16;
+const CHURN_FRAMES_PER_STEP: usize = 50;
+// The first churn style's ppem and the growth per step.
+const CHURN_FIRST_PPEM: f32 = 24.0;
+const CHURN_PPEM_STEP: f32 = 4.0;
+
+#[test]
+fn the_side_cap_holds_the_atlas_under_a_churn_of_sizes_and_evicts_there() {
+  let fonts = fonts(&[noto()]);
+  let mut atlas = TextAtlas::new(Arc::new(AtomicBool::new(false)));
+  // A policy cap of the initial side under a device that takes far more:
+  // the policy wins.
+  atlas.set_side_cap(512);
+  atlas.set_texture_cap(16384);
+  let ids = glyph_ids(&fonts, "0123456789abcdef");
+  let first = style_key(CHURN_FIRST_PPEM);
+  let mut last = first;
+  for step in 0..CHURN_STEPS {
+    let style = style_key(CHURN_FIRST_PPEM + step as f32 * CHURN_PPEM_STEP);
+    for _ in 0..CHURN_FRAMES_PER_STEP {
+      atlas.begin_frame(&fonts, 1.0, 0.0, Hint::Off);
+    }
+    // The live set fits at the cap: every cell placed, the stale ones
+    // evicted to make the room.
+    assert_eq!(atlas.ensure(&fonts, style, 0, &ids, false), 0, "step {step}");
+    assert_eq!(atlas.size(), (512, 512), "step {step}");
+    last = style;
+  }
+  // An early style is gone, the last one's cells all stand.
+  assert!(atlas.placement(first, 0, ids[0]).is_none(), "the first style was evicted");
+  for &id in &ids {
+    assert!(atlas.placement(last, 0, id).is_some(), "glyph {id} of the last style");
+  }
+}
+
+#[test]
+fn the_device_limit_lowers_the_side_cap() {
+  let fonts = fonts(&[noto()]);
+  let mut atlas = TextAtlas::new(Arc::new(AtomicBool::new(false)));
+  atlas.set_side_cap(4096);
+  atlas.set_texture_cap(1024);
+  // Large styles in one frame, nothing to evict: the atlas grows to the
+  // device's side and no further.
+  let ids = glyph_ids(&fonts, "ABCDEFGHIJKLMNOP");
+  for ppem in [160.0, 200.0, 240.0, 280.0] {
+    atlas.ensure(&fonts, style_key(ppem), 0, &ids, false);
+    let (width, height) = atlas.size();
+    assert!(width <= 1024 && height <= 1024, "at {ppem} ppem: {width}x{height}");
+  }
+  assert_eq!(atlas.size(), (1024, 1024), "grew to the device's side");
+}
+
 #[test]
 fn the_generation_moves_with_the_cells_and_not_with_a_plain_insert() {
   let fonts = fonts(&[noto()]);

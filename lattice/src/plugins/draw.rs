@@ -254,7 +254,8 @@ impl RenderInner {
     // The figures as of this frame: published for out-of-loop readers on every
     // frame event, gated or not, so a query sees current numbers even while
     // the demand gate skips draws; and what the HUD below renders.
-    let snap = stats.borrow().snapshot(render_frame.frame, platform.fps(), atx.textures.len());
+    let text_atlas = platform.text_atlas().size();
+    let snap = stats.borrow().snapshot(render_frame.frame, platform.fps(), atx.textures.len(), text_atlas);
     *stats_snapshot.lock().expect("stats snapshot lock poisoned") = snap;
     let overlay_text = overlay_stale.then(|| {
       // The HUD's raster rates (its GPU share, the renderer's instances and

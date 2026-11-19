@@ -65,7 +65,8 @@ pub const PHASES: u8 = 3;
 const EVICT_AFTER_FRAMES: u64 = 120;
 /// The growth cap before a frame has set the device's (`set_texture_cap`):
 /// the texture side GLES 3.0 guarantees, so nothing packed ahead of the
-/// first frame can exceed what the GPU takes.
+/// first frame can exceed what the GPU takes. Also the policy cap
+/// (`set_side_cap`) until the embedder sets one.
 const PROVISIONAL_MAX_SIDE: u32 = 2048;
 /// The code points a warm-up makes for a style: printable ASCII.
 const WARM_FIRST: u32 = 0x20;
@@ -227,6 +228,9 @@ pub struct TextAtlas {
   frame_request: Arc<AtomicBool>,
   // Counts the moves of the cells (see generation).
   generation: u64,
+  // The policy cap on the side (set_side_cap): the device limit only
+  // lowers it.
+  side_cap: u32,
 }
 
 impl TextAtlas {
@@ -252,14 +256,29 @@ impl TextAtlas {
       frame: 0,
       frame_request,
       generation: 0,
+      side_cap: PROVISIONAL_MAX_SIDE,
     }
+  }
+
+  /// The policy cap on the atlas side, the embedder's choice: growth stops
+  /// there and the eviction runs, however large a texture the device
+  /// takes. Applied at the next `set_texture_cap` (every frame start);
+  /// `PROVISIONAL_MAX_SIDE` until set.
+  pub fn set_side_cap(&mut self, side: u32) {
+    self.side_cap = side;
+  }
+
+  /// The policy cap on the atlas side (`set_side_cap`).
+  pub fn side_cap(&self) -> u32 {
+    self.side_cap
   }
 
   /// The growth cap: the device's texture size limit, set by the frame
   /// producer once there is a GPU context to ask (every frame start is
-  /// fine, it is a store).
+  /// fine, it is a store), lowered to the policy cap (`set_side_cap`).
+  /// Never lowered below the atlas's current size.
   pub fn set_texture_cap(&mut self, max_side: u32) {
-    self.packer.set_max_side(max_side);
+    self.packer.set_max_side(max_side.min(self.side_cap));
   }
 
   /// Start a frame's build (after its `land`): stamp the frame, and queue
