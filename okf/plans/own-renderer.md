@@ -1765,6 +1765,35 @@ TV, and the fix for each is a design change, not a tuning:
 Neither is in the stage as planned; both fold into it (stage 5 step 2c
 and 2d) rather than into new backlog items, pending the maintainer's go.
 
+Step 2c landed as c4481ee3 (the maintainer's go, 2d held for the
+question whether a segment split is standard: it is WebRender's segments
+and Skia's rrect fill op, Impeller tessellates instead). The TV, the same
+method, the client of c4481ee3:
+
+| route | panel | variant | frames / 10 s | missed / 10 s | draw calls | frame GPU ms | before 2c | stage 4 |
+|---|---|---|---|---|---|---|---|---|
+| static | plain, gradient | lines=0 radius=0 | 305 to 306 | 65 | 3 | 23.0 | 24.6 | |
+| static | rounded, gradient | lines=0 | 155 to 157 | 217 to 218 | 3 | 33.6 | 38.5 | |
+| static | plain, gradient | radius=0 | 289 | 87 | 62 | 24.2 | | 345 to 352 / 29 to 30 / 21.3 |
+| live | rounded, gradient | | 309 to 312 | 188 to 190 | 61 | 32.1 | 35.7 | 259 / 240 / 38.6 |
+
+The gradient fragment's one varying fewer and no integer division are
+worth 1.6 ms on the plain grid and 5 on the rounded one, and the live
+rounded gradient route now beats stage 4; but the plain gradient panels
+still cost 4.4 ms over the solid floor against stage 4's 1.4, and the
+static plain gradient row misses 87 presents where stage 4 missed 30.
+What is left between the two programs: one flat vec4 (`vGradMeta`) the
+old program did not read, and the kind and tile branches, which were on
+uniforms (free: the compiler specialises them) and are now on a flat
+varying, which the compiler cannot treat as uniform. The way back to the
+old count is to make the kind and the tile batch keys again (a uniform
+per batch; gradients of one kind and tile still merge, which is every
+grid) and carry the ramp row as a third smooth component of `vGrad`
+(constant per quad, so its interpolation is exact): the fill gradient
+program then reads vColor, vClip and vGrad, the three the stage 4
+program read, with uniform branches. A small step, 2c-bis, if the
+maintainer wants the item's criterion met before 2d.
+
 ### Where anvil lives (2026-11-18)
 
 anvil is a module behind the seam, `alloy/src/renderer/anvil/` (the plan
