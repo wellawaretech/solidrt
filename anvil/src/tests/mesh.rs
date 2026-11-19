@@ -9,7 +9,7 @@ use crate::prelude::*;
 use crate::renderer::mesh::MESH_CACHE_ENTRIES;
 use crate::renderer::mesh::{bucket_tolerance, gpu_slot, scale_bucket, tessellate, GpuMesh, GpuSlot, Mesh, MeshStyle};
 use crate::renderer::ramps::RampTable;
-use crate::renderer::walk::{walk, BatchProgram, Projective, Walked, TILE_CLAMP};
+use crate::renderer::walk::{walk, BatchProgram, GradientClass, Projective, Walked, TILE_CLAMP};
 use crate::renderer::{report, test_texture, DeletionQueue, Freed};
 use crate::{Affine, ClipOperation, Color, ColorSource, DisplayListBuilder, DrawStyle, FillType, ISize};
 use crate::{GradientKind, TextureSampling, TileMode};
@@ -279,7 +279,7 @@ fn a_path_walks_into_one_mesh_draw_and_redraws_from_its_cache() {
   assert_eq!(out.batches.len(), 1);
   let batch = &out.batches[0];
   assert_eq!((batch.program, batch.start, batch.count), (BatchProgram::Mesh, 0, 1));
-  assert!(batch.texture.is_none() && !batch.graded);
+  assert!(batch.texture.is_none() && batch.gradient.is_none());
   assert_eq!((out.meshes, out.tessellated), (1, 1));
   assert!(covers(&out, [15.0, 25.0]), "the square's center, offset");
   assert!(!covers(&out, [5.0, 5.0]), "the square's untranslated place");
@@ -345,7 +345,8 @@ fn a_gradient_path_carries_the_gradients_own_rows() {
   b.translate(10.0, 0.0).draw_path(&square(0.0, 0.0, 10.0), &gradient).draw_path(&square(20.0, 0.0, 10.0), &solid());
   let out = walked(b);
   assert_eq!(out.batches.len(), 2, "{:?}", out.batches);
-  assert!(out.batches[0].graded && !out.batches[1].graded);
+  let class = GradientClass { kind: GradientKind::Linear as i32 as f32, tile: TILE_CLAMP };
+  assert_eq!((out.batches[0].gradient, out.batches[1].gradient), (Some(class), None));
   let draw = out.mesh_draws[0].gradient.as_ref().expect("the first draw carries the gradient");
   assert_eq!(draw.rows, [draw.gradient.x_row, draw.gradient.y_row], "rows over the path's space");
   // The path's x 0 is the gradient's start, whatever the translation.

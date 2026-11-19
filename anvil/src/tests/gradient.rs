@@ -1,14 +1,15 @@
 // Gradients on every quad (gradient.rs, renderer/record.rs, renderer/walk.rs):
 // the affine toolkit and the ramp sampler, a paint's gradient source
 // resolved at record time, and the walk's per-instance rows, ramp rows and
-// graded batches, with no GL context.
+// gradient batches (one kind and tile each), with no GL context.
 
 use crate::prelude::*;
 use crate::renderer::ramps::RampTable;
 use crate::renderer::ramps::RAMP_ROWS;
 use crate::renderer::test_texture;
 use crate::renderer::walk::{
-  walk, BatchProgram, Instance, Walked, KIND_LINE, KIND_OVAL, KIND_RECT, KIND_ROUNDED_RECT, TILE_CLAMP, TILE_REPEAT,
+  walk, BatchProgram, GradientClass, Instance, Walked, KIND_LINE, KIND_OVAL, KIND_RECT, KIND_ROUNDED_RECT, TILE_CLAMP,
+  TILE_REPEAT,
 };
 use crate::{affine, Affine, Color, ColorSource, CoveragePolicy, GlyphQuad, GradientKind, RampGradient, RAMP_WIDTH};
 use crate::{DisplayListBuilder, DrawStyle, ISize, Paint, Point, Rect, RoundingRadii, Size, TileMode};
@@ -81,9 +82,13 @@ fn linear_clamp() -> (f32, f32) {
   (GradientKind::Linear as i32 as f32, TILE_CLAMP)
 }
 
-// Each batch's start, count, program and gradedness.
-fn programs(out: &Walked) -> Vec<(usize, usize, BatchProgram, bool)> {
-  out.batches.iter().map(|b| (b.start, b.count, b.program, b.graded)).collect()
+// The batch class of a clamped linear gradient.
+const LINEAR_CLAMP: Option<GradientClass> =
+  Some(GradientClass { kind: GradientKind::Linear as i32 as f32, tile: TILE_CLAMP });
+
+// Each batch's start, count, program and gradient class.
+fn programs(out: &Walked) -> Vec<(usize, usize, BatchProgram, Option<GradientClass>)> {
+  out.batches.iter().map(|b| (b.start, b.count, b.program, b.gradient)).collect()
 }
 
 // The kind an instance carries.
@@ -177,7 +182,7 @@ fn gradient_and_solid_rects_take_separate_fill_batches() {
   assert_eq!(out.instances.len(), 3);
   assert_eq!(
     programs(&out),
-    vec![(0, 1, BatchProgram::Fill, false), (1, 1, BatchProgram::Fill, true), (2, 1, BatchProgram::Fill, false)]
+    vec![(0, 1, BatchProgram::Fill, None), (1, 1, BatchProgram::Fill, LINEAR_CLAMP), (2, 1, BatchProgram::Fill, None)]
   );
   let i = &out.instances[1];
   assert_eq!(kind(i), KIND_RECT);
@@ -191,7 +196,7 @@ fn gradient_and_solid_rects_take_separate_fill_batches() {
 }
 
 #[test]
-fn consecutive_gradient_rects_share_one_batch() {
+fn consecutive_gradient_rects_keep_their_rows_kinds_and_tiles() {
   let quad = rect(0.0, 0.0, 10.0, 10.0);
   let mut other = sourced(linear());
   other.set_color_source(&ColorSource::linear_gradient(
@@ -205,7 +210,16 @@ fn consecutive_gradient_rects_share_one_batch() {
   let mut b = DisplayListBuilder::new(None);
   b.draw_rect(&quad, &sourced(linear())).draw_rect(&quad, &other).draw_rect(&quad, &sourced(linear()));
   let out = walked(b);
-  assert_eq!(programs(&out), vec![(0, 3, BatchProgram::Fill, true)]);
+  // The repeat tile is another batch class: three batches.
+  let linear_repeat = Some(GradientClass { kind: GradientKind::Linear as i32 as f32, tile: TILE_REPEAT });
+  assert_eq!(
+    programs(&out),
+    vec![
+      (0, 1, BatchProgram::Fill, LINEAR_CLAMP),
+      (1, 1, BatchProgram::Fill, linear_repeat),
+      (2, 1, BatchProgram::Fill, LINEAR_CLAMP)
+    ]
+  );
   // Three gradients, three ramp rows: none rewritten under another batch.
   let ramp_rows: Vec<f32> = out.instances.iter().map(|i| i.grad_x[3]).collect();
   assert_eq!(ramp_rows, vec![0.0, 1.0, 2.0]);
@@ -214,6 +228,57 @@ fn consecutive_gradient_rects_share_one_batch() {
   let linear = GradientKind::Linear as i32 as f32;
   assert_eq!(kind_tile(&out.instances[1]), (linear, TILE_REPEAT));
   assert_eq!(kind_tile(&out.instances[0]), (linear, TILE_CLAMP));
+}
+
+#[test]
+fn gradient_rects_of_two_kinds_take_two_batches() {
+  let quad = rect(0.0, 0.0, 10.0, 10.0);
+  let radial =
+    ColorSource::radial_gradient(Point::new(5.0, 5.0), 5.0, &[RED, BLUE], &[0.0, 1.0], TileMode::Clamp, None);
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &sourced(linear())).draw_rect(&quad, &sourced(radial));
+  let out = walked(b);
+  let radial_clamp = Some(GradientClass { kind: GradientKind::Radial as i32 as f32, tile: TILE_CLAMP });
+  assert_eq!(programs(&out), vec![(0, 1, BatchProgram::Fill, LINEAR_CLAMP), (1, 1, BatchProgram::Fill, radial_clamp)]);
+}
+
+#[test]
+fn gradient_rects_of_one_kind_and_tile_share_one_batch() {
+  let quad = rect(0.0, 0.0, 10.0, 10.0);
+  // Another gradient of the same kind and tile: other rows, another ramp.
+  let other = ColorSource::linear_gradient(
+    Point::zero(),
+    Point::new(AXIS, AXIS),
+    &[BLUE, RED],
+    &[0.0, 1.0],
+    TileMode::Clamp,
+    None,
+  );
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &sourced(linear())).draw_rect(&quad, &sourced(other));
+  let out = walked(b);
+  assert_eq!(programs(&out), vec![(0, 2, BatchProgram::Fill, LINEAR_CLAMP)]);
+  // Each instance still carries its own rows and ramp row.
+  assert_ne!(rows(&out.instances[0]), rows(&out.instances[1]));
+  assert_eq!((out.instances[0].grad_x[3], out.instances[1].grad_x[3]), (0.0, 1.0));
+}
+
+#[test]
+fn a_clamped_then_a_repeated_linear_gradient_take_two_batches() {
+  let quad = rect(0.0, 0.0, 10.0, 10.0);
+  let repeat = ColorSource::linear_gradient(
+    Point::zero(),
+    Point::new(AXIS, 0.0),
+    &[RED, BLUE],
+    &[0.0, 1.0],
+    TileMode::Repeat,
+    None,
+  );
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&quad, &sourced(linear())).draw_rect(&quad, &sourced(repeat));
+  let out = walked(b);
+  let linear_repeat = Some(GradientClass { kind: GradientKind::Linear as i32 as f32, tile: TILE_REPEAT });
+  assert_eq!(programs(&out), vec![(0, 1, BatchProgram::Fill, LINEAR_CLAMP), (1, 1, BatchProgram::Fill, linear_repeat)]);
 }
 
 #[test]
@@ -240,7 +305,7 @@ fn the_rows_are_the_ops_own_under_any_map() {
 }
 
 #[test]
-fn gradient_shapes_share_a_graded_shape_batch() {
+fn gradient_shapes_share_a_gradient_shape_batch() {
   let quad = rect(0.0, 0.0, 40.0, 40.0);
   let graded = sourced(linear());
   // Stroked: a gradient rounded rect fill is a rounded batch of its own.
@@ -253,24 +318,24 @@ fn gradient_shapes_share_a_graded_shape_batch() {
   let out = walked(b);
   let kinds: Vec<_> = out.instances.iter().map(kind).collect();
   assert_eq!(kinds, vec![KIND_ROUNDED_RECT, KIND_OVAL, KIND_OVAL]);
-  // The gradient shapes draw in one graded batch; the solid oval after
+  // The gradient shapes draw in one gradient batch; the solid oval after
   // them opens a solid one.
-  assert_eq!(programs(&out), vec![(0, 2, BatchProgram::Shape, true), (2, 1, BatchProgram::Shape, false)]);
+  assert_eq!(programs(&out), vec![(0, 2, BatchProgram::Shape, LINEAR_CLAMP), (2, 1, BatchProgram::Shape, None)]);
   assert_eq!(out.instances[0].color, [ALPHA; 4]);
   assert_eq!(out.instances[1].color, [ALPHA; 4]);
 }
 
 #[test]
-fn a_small_solid_fill_does_not_fold_into_a_graded_shape_batch() {
+fn a_small_solid_fill_does_not_fold_into_a_gradient_shape_batch() {
   let mut b = DisplayListBuilder::new(None);
   b.draw_oval(&rect(0.0, 0.0, 40.0, 40.0), &sourced(linear())).draw_rect(&rect(0.0, 0.0, 4.0, 4.0), &Paint::default());
   let out = walked(b);
-  assert_eq!(programs(&out), vec![(0, 1, BatchProgram::Shape, true), (1, 1, BatchProgram::Fill, false)]);
+  assert_eq!(programs(&out), vec![(0, 1, BatchProgram::Shape, LINEAR_CLAMP), (1, 1, BatchProgram::Fill, None)]);
   // Nor a gradient fill into a solid shape batch.
   let mut b = DisplayListBuilder::new(None);
   b.draw_oval(&rect(0.0, 0.0, 40.0, 40.0), &Paint::default()).draw_rect(&rect(0.0, 0.0, 4.0, 4.0), &sourced(linear()));
   let out = walked(b);
-  assert_eq!(programs(&out), vec![(0, 1, BatchProgram::Shape, false), (1, 1, BatchProgram::Fill, true)]);
+  assert_eq!(programs(&out), vec![(0, 1, BatchProgram::Shape, None), (1, 1, BatchProgram::Fill, LINEAR_CLAMP)]);
 }
 
 #[test]
@@ -310,7 +375,7 @@ fn a_line_gradient_is_in_the_op_space_not_the_segment_frame() {
     assert_eq!(out.instances.len(), 1);
     assert_eq!(kind(&out.instances[0]), KIND_LINE);
     assert_eq!(out.instances[0].color, [ALPHA; 4]);
-    assert_eq!(programs(&out), vec![(0, 1, BatchProgram::Shape, true)]);
+    assert_eq!(programs(&out), vec![(0, 1, BatchProgram::Shape, LINEAR_CLAMP)]);
     let rows = rows(&out.instances[0]);
     assert!(near(eval(&rows, 50.0 - from, 0.0).0, 0.5), "from x {from}: {rows:?}");
   }
@@ -334,7 +399,7 @@ fn a_degenerate_gradient_draws_the_paint_color() {
   let out = walked(b);
   assert_eq!(out.instances.len(), 1);
   assert!(out.instances[0].color.iter().zip(premultiplied.iter()).all(|(a, b)| near(*a, *b)));
-  assert!(!out.batches[0].graded);
+  assert_eq!(out.batches[0].gradient, None);
 }
 
 #[test]
@@ -354,7 +419,7 @@ fn gradients_past_the_ramp_rows_draw_the_paint_color() {
   assert_eq!(last.persp[3], 0.0);
   assert_eq!(
     programs(&out),
-    vec![(0, RAMP_ROWS as usize, BatchProgram::Fill, true), (RAMP_ROWS as usize, 1, BatchProgram::Fill, false)]
+    vec![(0, RAMP_ROWS as usize, BatchProgram::Fill, LINEAR_CLAMP), (RAMP_ROWS as usize, 1, BatchProgram::Fill, None)]
   );
 }
 

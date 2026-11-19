@@ -16,9 +16,9 @@ use crate::contract::DrawReport;
 use crate::prelude::*;
 use crate::renderer::ramps::RampTable;
 use crate::renderer::walk::{
-  walk, Batch, BatchProgram, Instance, PaintDraw, Projective, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, FILL_FOLD_AREA,
-  KIND_GLYPH, KIND_LINE, KIND_OVAL, KIND_PAINT, KIND_RECT, KIND_ROUNDED_RECT, KIND_TEXTURED, ROUNDED_QUAD_PAD,
-  TILE_CLAMP,
+  walk, Batch, BatchProgram, GradientClass, Instance, PaintDraw, Projective, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE,
+  FILL_FOLD_AREA, KIND_GLYPH, KIND_LINE, KIND_OVAL, KIND_PAINT, KIND_RECT, KIND_ROUNDED_RECT, KIND_TEXTURED,
+  ROUNDED_QUAD_PAD, TILE_CLAMP,
 };
 use crate::renderer::{
   paint_fragment_source, report, test_paint_shader, test_texture, DeletionQueue, Freed, PAINT_FRAGMENT_EPILOGUE,
@@ -113,7 +113,7 @@ fn image_paint(t: &Texture, sampling: TextureSampling, transform: Option<&Matrix
 
 // A batch of shapes and texture quads: no glyph policy, no gradient.
 fn shapes(start: usize, count: usize, texture: Option<(glow::NativeTexture, TextureSampling)>) -> Batch {
-  Batch { start, count, program: BatchProgram::Shape, texture, policy: None, graded: false, paint: None, stencil: 0 }
+  Batch { start, count, program: BatchProgram::Shape, texture, policy: None, gradient: None, paint: None, stencil: 0 }
 }
 
 // A batch of plain rect fills: no texture, no glyph policy, no gradient.
@@ -124,15 +124,16 @@ fn fills(start: usize, count: usize) -> Batch {
     program: BatchProgram::Fill,
     texture: None,
     policy: None,
-    graded: false,
+    gradient: None,
     paint: None,
     stencil: 0,
   }
 }
 
-// A batch of rounded fills: no texture, no glyph policy, `graded` or solid.
-fn roundeds(start: usize, count: usize, graded: bool) -> Batch {
-  Batch { start, count, program: BatchProgram::Rounded, texture: None, policy: None, graded, paint: None, stencil: 0 }
+// A batch of rounded fills: no texture, no glyph policy, of the gradient
+// class `gradient` or solid (None).
+fn roundeds(start: usize, count: usize, gradient: Option<GradientClass>) -> Batch {
+  Batch { start, count, program: BatchProgram::Rounded, texture: None, policy: None, gradient, paint: None, stencil: 0 }
 }
 
 fn line(from: (f32, f32), to: (f32, f32), paint: &Paint) -> Vec<Instance> {
@@ -751,7 +752,7 @@ fn a_perspective_image_source_draws_the_color() {
   assert!(approx(i.color, [0.5, 0.25, 0.0, 0.5]), "{:?}", i.color);
   assert_eq!(i.tex, [0.0; 4]);
   // Untextured and unstroked: a rounded fill.
-  assert_eq!(out.batches, vec![roundeds(0, 1, false)]);
+  assert_eq!(out.batches, vec![roundeds(0, 1, None)]);
 }
 
 // The view's card flip: rotate_y by `degrees` about the origin, then the
@@ -857,7 +858,7 @@ fn glyphs(start: usize, count: usize, atlas: &Texture, policy: CoveragePolicy) -
     program: BatchProgram::Glyph,
     texture,
     policy: Some(policy),
-    graded: false,
+    gradient: None,
     paint: None,
     stencil: 0,
   }
@@ -1115,14 +1116,14 @@ fn a_plain_rect_under_a_rounded_clip_is_a_rounded_fill() {
     .draw_rect(&quad, &opaque());
   let out = walked_all(b);
   assert_eq!(out.instances[0].offset_kind_stroke[2], KIND_RECT);
-  assert_eq!(out.batches, vec![roundeds(0, 2, false)]);
+  assert_eq!(out.batches, vec![roundeds(0, 2, None)]);
 
   // A rounded rect under the same clip joins the run.
   let mut b = DisplayListBuilder::new(None);
   b.clip_rounded_rect(&rect(0.0, 0.0, 50.0, 50.0), &RoundingRadii::circular([5.0; 4]), ClipOperation::Intersect)
     .draw_rect(&quad, &opaque());
   rounded(&mut b, quad, [3.0; 4], &opaque());
-  assert_eq!(walked_all(b).batches, vec![roundeds(0, 2, false)]);
+  assert_eq!(walked_all(b).batches, vec![roundeds(0, 2, None)]);
 }
 
 #[test]
@@ -1131,20 +1132,20 @@ fn rounded_rect_fills_are_a_rounded_batch() {
   // Alone.
   let mut b = DisplayListBuilder::new(None);
   rounded(&mut b, quad, [4.0; 4], &opaque());
-  assert_eq!(walked_all(b).batches, vec![roundeds(0, 1, false)]);
+  assert_eq!(walked_all(b).batches, vec![roundeds(0, 1, None)]);
 
   // Two in a row share the batch.
   let mut b = DisplayListBuilder::new(None);
   rounded(&mut b, quad, [4.0; 4], &opaque());
   rounded(&mut b, quad, [2.0, 0.0, 2.0, 0.0], &opaque());
-  assert_eq!(walked_all(b).batches, vec![roundeds(0, 2, false)]);
+  assert_eq!(walked_all(b).batches, vec![roundeds(0, 2, None)]);
 
   // A plain fill between them does not join: it opens a fill batch.
   let mut b = DisplayListBuilder::new(None);
   rounded(&mut b, quad, [4.0; 4], &opaque());
   b.draw_rect(&quad, &opaque());
   rounded(&mut b, quad, [4.0; 4], &opaque());
-  assert_eq!(walked_all(b).batches, vec![roundeds(0, 1, false), fills(1, 1), roundeds(2, 1, false)]);
+  assert_eq!(walked_all(b).batches, vec![roundeds(0, 1, None), fills(1, 1), roundeds(2, 1, None)]);
 
   // A rounded stroke is a shape.
   let mut b = DisplayListBuilder::new(None);
@@ -1161,7 +1162,7 @@ fn rounded_rect_fills_are_a_rounded_batch() {
   let mut b = DisplayListBuilder::new(None);
   rounded(&mut b, quad, [4.0; 4], &opaque());
   rounded(&mut b, quad, [4.0; 4], &stroked(2.0));
-  assert_eq!(walked_all(b).batches, vec![roundeds(0, 1, false), shapes(1, 1, None)]);
+  assert_eq!(walked_all(b).batches, vec![roundeds(0, 1, None), shapes(1, 1, None)]);
 }
 
 #[test]
@@ -1178,11 +1179,11 @@ fn a_small_rounded_rect_rides_along_in_a_shape_batch() {
   let mut b = DisplayListBuilder::new(None);
   b.draw_oval(&quad, &opaque());
   rounded(&mut b, large, [8.0; 4], &opaque());
-  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None), roundeds(1, 1, false)]);
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None), roundeds(1, 1, None)]);
 }
 
 #[test]
-fn a_gradient_rounded_rect_is_a_graded_rounded_batch() {
+fn a_gradient_rounded_rect_is_a_gradient_rounded_batch() {
   let quad = rect(10.0, 10.0, 20.0, 20.0);
   let mut graded = opaque();
   graded.set_color_source(&ColorSource::linear_gradient(
@@ -1198,7 +1199,13 @@ fn a_gradient_rounded_rect_is_a_graded_rounded_batch() {
   rounded(&mut b, quad, [4.0; 4], &graded);
   // A solid one does not join it.
   rounded(&mut b, quad, [4.0; 4], &opaque());
-  assert_eq!(walked_all(b).batches, vec![roundeds(0, 2, true), roundeds(2, 1, false)]);
+  assert_eq!(
+    walked_all(b).batches,
+    vec![
+      roundeds(0, 2, Some(GradientClass { kind: GradientKind::Linear as i32 as f32, tile: TILE_CLAMP })),
+      roundeds(2, 1, None)
+    ]
+  );
 }
 
 #[test]
@@ -1213,7 +1220,7 @@ fn a_grid_of_rounded_panels_draws_in_one_call() {
     rounded(&mut b, rect(x + 1.0, y + 1.0, CELL - 2.0, CELL - 2.0), [3.0; 4], &opaque());
   }
   let out = walked_all(b);
-  assert_eq!(out.batches, vec![roundeds(0, COLS * ROWS, false)]);
+  assert_eq!(out.batches, vec![roundeds(0, COLS * ROWS, None)]);
   assert_eq!(report(&out).draw_calls, 1);
 }
 
@@ -1244,7 +1251,7 @@ fn paint_batch(
     program: BatchProgram::Paint,
     texture: None,
     policy: None,
-    graded: false,
+    gradient: None,
     paint: Some(paint),
     stencil: 0,
   }

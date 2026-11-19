@@ -139,8 +139,8 @@ pub const CAP_ROUND: f32 = 2.0;
 /// value, to be re-read on the TV.
 pub const FILL_FOLD_AREA: f32 = 65_536.0;
 
-/// The tile modes, as `Instance::persp`'s last float and a mesh draw's
-/// `uGradMeta` carry them. The `const int TILE_*`
+/// The tile modes, as `Instance::persp`'s last float and a batch's or a
+/// mesh draw's `uGradMeta` carry them. The `const int TILE_*`
 /// declarations in exec.rs's GRADIENT_COMMON must match them.
 pub const TILE_CLAMP: f32 = 0.0;
 pub const TILE_REPEAT: f32 = 1.0;
@@ -239,7 +239,23 @@ impl std::fmt::Debug for GradientInstance {
   }
 }
 
+/// What a fill, rounded or shape batch of gradient instances holds
+/// throughout, its batch key: the gradient kind and the tile mode, as
+/// `GradientInstance::kind()` and `tile()` give them, which the batch sets
+/// as its program's `uGradMeta` uniform (exec.rs GRADIENT_BATCH). Each
+/// instance still carries its own rows and ramp row.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GradientClass {
+  pub kind: f32,
+  pub tile: f32,
+}
+
 impl GradientInstance {
+  /// The batch key this gradient draws under: its kind and its tile.
+  pub fn class(&self) -> GradientClass {
+    GradientClass { kind: self.kind(), tile: self.tile() }
+  }
+
   /// The kind as `Instance::grad_y`'s last float carries it:
   /// `GradientKind`'s discriminant, never 0.
   pub fn kind(&self) -> f32 {
@@ -272,8 +288,10 @@ fn tile_value(tile: TileMode) -> f32 {
 /// and gradient runs alike). The classes draw through different programs,
 /// so a run never mixes them, except that the shape program also draws the
 /// plain and rounded fills a solid shape run takes. A fill, a rounded or a
-/// shape run is graded or solid throughout: a graded one draws through its
-/// class's gradient variant. A paint shader draw is a run of its own, one
+/// shape run is gradient or solid throughout: a gradient one draws through its
+/// class's gradient variant and holds one gradient kind and tile mode
+/// throughout (`gradient`), its instances still carrying their own rows and
+/// ramp row. A paint shader draw is a run of its own, one
 /// instance. A path mesh is a run of its own too, one
 /// draw call per path op: its map, color, clips and source are the mesh
 /// program's uniforms (`MeshDraw`).
@@ -293,12 +311,14 @@ pub struct Batch {
   /// Set exactly when the run is glyphs (`program` is `Glyph`): the policy
   /// their coverage is turned into color with.
   pub policy: Option<CoveragePolicy>,
-  /// A fill, rounded or shape run of gradient instances, which draws
-  /// through its program's gradient variant; each instance carries its own
-  /// gradient.
-  /// A mesh batch whose draw carries a gradient. False for every other run
-  /// (a glyph run's instances carry their gradient whichever it is).
-  pub graded: bool,
+  /// Set on a fill, rounded or shape run of gradient instances, which draws
+  /// through its program's gradient variant: the one kind and tile mode
+  /// every instance of the run has, set per batch as a uniform; each
+  /// instance carries its own rows and ramp row. A mesh batch carries its
+  /// draw's class (the draw's uniforms set the program's). None for every
+  /// other run (a glyph run's instances carry their gradient, kind and tile
+  /// whichever they are).
+  pub gradient: Option<GradientClass>,
   /// Set exactly when the run is a paint shader draw (`program` is
   /// `Paint`); `texture` is then None, the inputs bind their own units.
   pub paint: Option<PaintDraw>,
@@ -393,20 +413,22 @@ pub struct Walked {
 
 impl Walked {
   // Append the shape `instance` to the current batch when it can share its
-  // draw, else open a new batch. `graded` is a class key like the program:
-  // a gradient instance joins only a graded batch, a solid one only a solid
-  // batch, so the fill program stays lean for solids. A plain fill (see
-  // `plain_fill`) joins an open fill batch of its gradedness, or, when
+  // draw, else open a new batch. `gradient`, the instance's gradient kind
+  // and tile mode (None for a solid one), is a class key like the program:
+  // a gradient instance joins only a batch of its kind and tile, whose
+  // program reads them from a uniform, a solid one only a solid batch, so
+  // the fill program stays lean for solids. A plain fill (see
+  // `plain_fill`) joins an open fill batch of its gradient class, or, when
   // solid, an open solid shape batch while its device area is below
   // FILL_FOLD_AREA (the shape program draws a rect too, and one draw call
   // fewer where rects and other shapes interleave); otherwise it opens a
   // fill batch. A rounded fill (see `rounded_fill`) follows the same rules
-  // with its own class: it joins an open rounded batch of its gradedness,
+  // with its own class: it joins an open rounded batch of its gradient class,
   // or, when solid, rides along in an open solid shape batch below the same
   // FILL_FOLD_AREA (the shape program draws a rounded rect and a rounded
   // clip too, one draw call fewer where rounded rects and other shapes
   // interleave); otherwise it opens a rounded batch. Any other shape shares
-  // only an open shape batch of its gradedness (the shader branches on the
+  // only an open shape batch of its gradient class (the shader branches on the
   // kind; a bound sampler it never reads costs nothing), so a texture
   // change, a sampling change, a fill or rounded run or a glyph run ends a
   // run. `stencil` is a key too: a batch takes only an instance of its own
@@ -415,13 +437,13 @@ impl Walked {
     &mut self,
     instance: Instance,
     texture: Option<(glow::NativeTexture, TextureSampling)>,
-    graded: bool,
+    gradient: Option<GradientClass>,
     stencil: u8,
   ) {
     let start = self.instances.len();
     let sealed = self.sealed;
     let last = self.batches.last_mut().filter(|last| !sealed && last.stencil == stencil);
-    let batch = |program| Batch { start, count: 1, program, texture, policy: None, graded, paint: None, stencil };
+    let batch = |program| Batch { start, count: 1, program, texture, policy: None, gradient, paint: None, stencil };
     // The two lean classes; an instance is at most one of them.
     let lean = if plain_fill(&instance) {
       Some(BatchProgram::Fill)
@@ -432,10 +454,10 @@ impl Walked {
     };
     if let Some(own) = lean {
       match last {
-        Some(last) if last.program == own && last.graded == graded => last.count += 1,
+        Some(last) if last.program == own && last.gradient == gradient => last.count += 1,
         Some(last)
-          if !graded
-            && !last.graded
+          if gradient.is_none()
+            && last.gradient.is_none()
             && last.program == BatchProgram::Shape
             && device_area(&instance) < FILL_FOLD_AREA =>
         {
@@ -446,7 +468,7 @@ impl Walked {
       self.instances.push(instance);
       return;
     }
-    match last.filter(|last| last.program == BatchProgram::Shape && last.graded == graded) {
+    match last.filter(|last| last.program == BatchProgram::Shape && last.gradient == gradient) {
       None => self.open(batch(BatchProgram::Shape)),
       Some(last) if texture.is_none() || last.texture == texture => last.count += 1,
       // The shapes before it do not care which sampler is bound.
@@ -486,7 +508,7 @@ impl Walked {
         program: BatchProgram::Glyph,
         texture,
         policy: Some(policy),
-        graded: false,
+        gradient: None,
         paint: None,
         stencil,
       }),
@@ -505,7 +527,7 @@ impl Walked {
       program: BatchProgram::Paint,
       texture: None,
       policy: None,
-      graded: false,
+      gradient: None,
       paint: Some(paint),
       stencil,
     });
@@ -524,7 +546,7 @@ impl Walked {
       program: BatchProgram::Mesh,
       texture: draw.texture,
       policy: None,
-      graded: draw.gradient.is_some(),
+      gradient: draw.gradient.as_ref().map(GradientInstance::class),
       paint: None,
       stencil,
     });
@@ -542,7 +564,7 @@ impl Walked {
       program: BatchProgram::Clip,
       texture: None,
       policy: None,
-      graded: false,
+      gradient: None,
       paint: None,
       stencil: 0,
     });
@@ -1142,8 +1164,8 @@ fn instance(state: &State, p: &Projective, clip: [f32; 4], quad: Quad) -> Instan
 // (the paint's RGB is not used for an image, as Impeller did not use it),
 // the uv through the image's inverse map from the quad's local space. With
 // a gradient `source` it keeps its kind and takes the gradient's color,
-// faded the same way, in a graded batch (`Walked::push`); past the ramp
-// table's rows it draws its solid color.
+// faded the same way, in a batch of its gradient's kind and tile
+// (`Walked::push`); past the ramp table's rows it draws its solid color.
 #[allow(clippy::too_many_arguments)]
 fn push_shape(
   state: &State,
@@ -1195,9 +1217,9 @@ fn push_shape(
       )
     }
   };
-  let graded = gradient.is_some();
+  let class = gradient.as_ref().map(GradientInstance::class);
   let shape = instance(state, &p, clip, Quad { rect: quad, kind, stroke: s, color, tex, radii, rows });
-  out.push(shape, texture, graded, state.depth);
+  out.push(shape, texture, class, state.depth);
 }
 
 // `image`'s map from the op's space to the normalized texel: its own map
@@ -1253,7 +1275,8 @@ fn device_area(instance: &Instance) -> f32 {
 // for butt caps, as Skia and Impeller draw it. A `gradient` is in the op's
 // space, not the segment's frame, so its rows compose with the frame map
 // (quad frame to op space); the line then takes the gradient's color in a
-// graded batch, its solid color past the ramp table's rows.
+// batch of its gradient's kind and tile, its solid color past the ramp
+// table's rows.
 #[allow(clippy::too_many_arguments)]
 fn push_line(
   state: &State,
@@ -1288,7 +1311,8 @@ fn push_line(
   let color = if gradient.is_some() { [color[3]; 4] } else { color };
   let rows = gradient_rows(gradient.as_ref());
   let quad = Quad { rect: local, kind: KIND_LINE, stroke: width, color, tex, radii: [0.0; 4], rows };
-  out.push(instance(state, &p, clip, quad), None, gradient.is_some(), state.depth);
+  let class = gradient.as_ref().map(GradientInstance::class);
+  out.push(instance(state, &p, clip, quad), None, class, state.depth);
 }
 
 // The cap as the instance carries it.
@@ -1338,7 +1362,7 @@ fn push_texture(
     radii: [0.0; 4],
     rows: texel_rows(rows),
   };
-  out.push(instance(state, &p, clip, quad), Some((texture.name(), sampling)), false, state.depth);
+  out.push(instance(state, &p, clip, quad), Some((texture.name(), sampling)), None, state.depth);
 }
 
 // One glyph run under the current state: rejected whole when its alpha is

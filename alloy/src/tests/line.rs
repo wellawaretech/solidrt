@@ -381,5 +381,5 @@ fn a_horizontal_line_paints_its_box_gradient() {
     .expect("the segment records a draw_line");
   assert!(line_paint.color_source, "the box gradient resolves against the segment's box");
   let walked = walk(&list, ISize::new(FRAME_W as i64, FRAME_H as i64), &mut RampTable::new());
-  assert!(walked.batches.iter().any(|b| b.graded), "the gradient survives the zero-height extent");
+  assert!(walked.batches.iter().any(|b| b.gradient.is_some()), "the gradient survives the zero-height extent");
 }
