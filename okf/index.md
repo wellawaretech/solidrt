@@ -1032,6 +1032,13 @@ Shaped, not started.
   An app test with { size } sometimes mounts at the run's window (1280x720)
   instead of the size it set; seen twice in CI on "a size alone keeps scale
   1", while the same commit passes on rerun.
+- **[Cap the text atlas below the device's texture limit](backlog/text-atlas-cap.md)** [2026-11-19]
+  The text atlas grows by doubling up to the GPU's maximum texture side before
+  it evicts anything, so a churning repertoire takes it to 16384x8192 on a
+  desktop GPU, 128 MiB of R8 texture held for the rest of the process;
+  browsers hold a few 2048 pages and evict at the page. Cap the side at a
+  fixed, modest size and let the existing two-second eviction run there; go
+  multi-page only if a real app overflows it.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,
