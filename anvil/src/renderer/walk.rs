@@ -61,15 +61,17 @@ pub struct Instance {
   /// The rounded clip's corner radii in device pixels, CSS order; all zero
   /// when no rounded clip is in effect.
   pub rclip_radii: [f32; 4],
-  /// The map's projective row: p1, p2, p3, 0, so w' = x * p1 + y * p2 + p3
-  /// (m14, m24, m44). A 2D map carries [0, 0, 1, 0].
+  /// The map's projective row: p1, p2, p3, so w' = x * p1 + y * p2 + p3
+  /// (m14, m24, m44), and in the spare fourth float the gradient's tile
+  /// mode (`TILE_*`, 0 without a gradient). A 2D map without a gradient
+  /// carries [0, 0, 1, 0].
   pub persp: [f32; 4],
   /// A gradient's x row over the quad's local space (3 floats) and its
   /// ramp row; a textured instance's u row over the same space and 0.
   pub grad_x: [f32; 4],
-  /// A gradient's y row (3 floats) and its kind and tile packed in one
-  /// float, `kind * GRADIENT_KIND_STRIDE + tile`; a textured instance's v
-  /// row and 0. A packed 0 means no gradient.
+  /// A gradient's y row (3 floats) and its kind (`GradientKind`'s
+  /// discriminant); a textured instance's v row and 0. A kind of 0 means
+  /// no gradient.
   pub grad_y: [f32; 4],
 }
 
@@ -137,13 +139,8 @@ pub const CAP_ROUND: f32 = 2.0;
 /// value, to be re-read on the TV.
 pub const FILL_FOLD_AREA: f32 = 65_536.0;
 
-/// The stride a gradient's kind is packed at in `Instance::grad_y`'s last
-/// float: `kind * GRADIENT_KIND_STRIDE + tile`, one more than the largest
-/// tile value, so the tile is the remainder. exec.rs's GLSL const of the
-/// same name must match.
-pub const GRADIENT_KIND_STRIDE: f32 = 4.0;
-
-/// The tile modes, as the packed float carries them. The `const int TILE_*`
+/// The tile modes, as `Instance::persp`'s last float and a mesh draw's
+/// `uGradMeta` carry them. The `const int TILE_*`
 /// declarations in exec.rs's GRADIENT_COMMON must match them.
 pub const TILE_CLAMP: f32 = 0.0;
 pub const TILE_REPEAT: f32 = 1.0;
@@ -243,14 +240,20 @@ impl std::fmt::Debug for GradientInstance {
 }
 
 impl GradientInstance {
-  /// The kind and the tile mode packed as `Instance::grad_y`'s last float
-  /// carries them: `kind * GRADIENT_KIND_STRIDE + tile`, never 0.
-  pub fn kind_tile(&self) -> f32 {
-    self.gradient.kind as i32 as f32 * GRADIENT_KIND_STRIDE + tile_value(self.gradient.tile)
+  /// The kind as `Instance::grad_y`'s last float carries it:
+  /// `GradientKind`'s discriminant, never 0.
+  pub fn kind(&self) -> f32 {
+    self.gradient.kind as i32 as f32
+  }
+
+  /// The tile mode as `Instance::persp`'s last float carries it: a
+  /// `TILE_*`.
+  pub fn tile(&self) -> f32 {
+    tile_value(self.gradient.tile)
   }
 }
 
-// The tile mode as the packed float carries it.
+// The tile mode as the instance carries it.
 fn tile_value(tile: TileMode) -> f32 {
   match tile {
     TileMode::Clamp => TILE_CLAMP,
@@ -1065,28 +1068,42 @@ struct Quad {
   tex: [f32; 4],
   /// The shape's corner radii; zero for the kinds without corners.
   radii: Radii,
-  /// `grad_x` and `grad_y`: a gradient's (`gradient_rows`), a textured
-  /// instance's texel rows (`texel_rows`), zeros otherwise.
-  rows: [[f32; 4]; 2],
+  /// `grad_x`, `grad_y` and the tile in `persp`'s last float: a
+  /// gradient's (`gradient_rows`), a textured instance's texel rows
+  /// (`texel_rows`), zeros otherwise.
+  rows: Rows,
 }
 
-// A gradient's rows, ramp row and packed kind, as `grad_x` and `grad_y`
-// carry them; zeros for none.
-fn gradient_rows(gradient: Option<&GradientInstance>) -> [[f32; 4]; 2] {
+/// What an instance's gradient slots carry: `grad_x`, `grad_y` and the
+/// tile mode that goes into `persp`'s spare last float.
+#[derive(Clone, Copy)]
+struct Rows {
+  x: [f32; 4],
+  y: [f32; 4],
+  tile: f32,
+}
+
+/// The slots of an instance without a gradient or texel rows: zeros.
+const NO_ROWS: Rows = Rows { x: [0.0; 4], y: [0.0; 4], tile: 0.0 };
+
+// A gradient's rows, ramp row, kind and tile, as `grad_x`, `grad_y` and
+// `persp`'s last float carry them, the kind and the tile apart; zeros for
+// none.
+fn gradient_rows(gradient: Option<&GradientInstance>) -> Rows {
   match gradient {
     Some(g) => {
       let [[x0, x1, x2], [y0, y1, y2]] = g.rows;
-      [[x0, x1, x2, g.row as f32], [y0, y1, y2, g.kind_tile()]]
+      Rows { x: [x0, x1, x2, g.row as f32], y: [y0, y1, y2, g.kind()], tile: g.tile() }
     }
-    None => [[0.0; 4]; 2],
+    None => NO_ROWS,
   }
 }
 
 // A textured instance's map from its local space to the normalized texel,
-// as `grad_x` and `grad_y` carry it: the packed kind 0, no gradient.
-fn texel_rows(rows: Affine) -> [[f32; 4]; 2] {
+// as `grad_x` and `grad_y` carry it: the kind 0, no gradient.
+fn texel_rows(rows: Affine) -> Rows {
   let [[u0, u1, u2], [v0, v1, v2]] = rows;
-  [[u0, u1, u2, 0.0], [v0, v1, v2, 0.0]]
+  Rows { x: [u0, u1, u2, 0.0], y: [v0, v1, v2, 0.0], tile: 0.0 }
 }
 
 // The one place an instance's fields are set: `quad` under the map `p`
@@ -1109,9 +1126,9 @@ fn instance(state: &State, p: &Projective, clip: [f32; 4], quad: Quad) -> Instan
     radii: quad.radii,
     rclip,
     rclip_radii,
-    persp: [p1, p2, p3, 0.0],
-    grad_x: quad.rows[0],
-    grad_y: quad.rows[1],
+    persp: [p1, p2, p3, quad.rows.tile],
+    grad_x: quad.rows.x,
+    grad_y: quad.rows.y,
   }
 }
 
@@ -1160,7 +1177,7 @@ fn push_shape(
     // The ramp sample is premultiplied in the program: the alpha in all
     // four channels fades it, as for an image.
     None if gradient.is_some() => (kind, [color[3]; 4], [0.0; 4], None, gradient_rows(gradient.as_ref())),
-    None => (kind, color, [0.0; 4], None, [[0.0; 4]; 2]),
+    None => (kind, color, [0.0; 4], None, NO_ROWS),
     Some(image) => {
       // A texture's size is never zero (see `push_texture`).
       let size = image.texture.size();
@@ -1396,7 +1413,7 @@ fn push_paint(
     color: [1.0; 4],
     tex: [0.0, 0.0, 1.0, 1.0],
     radii: [0.0; 4],
-    rows: [[0.0; 4]; 2],
+    rows: NO_ROWS,
   };
   let paint = PaintDraw { shader: shader.clone(), params: params.clone(), inputs: inputs.clone(), resolution };
   out.push_paint(instance(state, &p, clip, quad), paint, state.depth);

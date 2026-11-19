@@ -8,8 +8,7 @@ use crate::renderer::ramps::RampTable;
 use crate::renderer::ramps::RAMP_ROWS;
 use crate::renderer::test_texture;
 use crate::renderer::walk::{
-  walk, BatchProgram, Instance, Walked, GRADIENT_KIND_STRIDE, KIND_LINE, KIND_OVAL, KIND_RECT, KIND_ROUNDED_RECT,
-  TILE_CLAMP,
+  walk, BatchProgram, Instance, Walked, KIND_LINE, KIND_OVAL, KIND_RECT, KIND_ROUNDED_RECT, TILE_CLAMP, TILE_REPEAT,
 };
 use crate::{affine, Affine, Color, ColorSource, CoveragePolicy, GlyphQuad, GradientKind, RampGradient, RAMP_WIDTH};
 use crate::{DisplayListBuilder, DrawStyle, ISize, Paint, Point, Rect, RoundingRadii, Size, TileMode};
@@ -70,10 +69,16 @@ fn rows(instance: &Instance) -> Affine {
   [[x0, x1, x2], [y0, y1, y2]]
 }
 
-// The packed kind and tile of a clamped linear gradient, as an instance
-// carries it.
-fn linear_clamp() -> f32 {
-  GradientKind::Linear as i32 as f32 * GRADIENT_KIND_STRIDE + TILE_CLAMP
+// The kind and the tile an instance carries, apart: `grad_y`'s last float
+// and `persp`'s.
+fn kind_tile(instance: &Instance) -> (f32, f32) {
+  (instance.grad_y[3], instance.persp[3])
+}
+
+// The kind and the tile of a clamped linear gradient, as an instance
+// carries them.
+fn linear_clamp() -> (f32, f32) {
+  (GradientKind::Linear as i32 as f32, TILE_CLAMP)
 }
 
 // Each batch's start, count, program and gradedness.
@@ -178,10 +183,11 @@ fn gradient_and_solid_rects_take_separate_fill_batches() {
   assert_eq!(kind(i), KIND_RECT);
   assert_eq!(i.color, [ALPHA; 4]);
   assert_eq!(i.tex, [0.0; 4]);
-  assert_eq!(i.grad_y[3], linear_clamp());
+  assert_eq!(kind_tile(i), linear_clamp());
   assert!(out.batches[1].texture.is_none());
-  // The solid ones carry no gradient.
+  // The solid ones carry no gradient, and no tile in the projective row.
   assert_eq!((out.instances[0].grad_x, out.instances[0].grad_y), ([0.0; 4], [0.0; 4]));
+  assert_eq!(out.instances[0].persp, [0.0, 0.0, 1.0, 0.0]);
 }
 
 #[test]
@@ -203,6 +209,11 @@ fn consecutive_gradient_rects_share_one_batch() {
   // Three gradients, three ramp rows: none rewritten under another batch.
   let ramp_rows: Vec<f32> = out.instances.iter().map(|i| i.grad_x[3]).collect();
   assert_eq!(ramp_rows, vec![0.0, 1.0, 2.0]);
+  // The kind and the tile ride apart: the repeat tile in the projective
+  // row's last float, the kind alone in `grad_y`'s.
+  let linear = GradientKind::Linear as i32 as f32;
+  assert_eq!(kind_tile(&out.instances[1]), (linear, TILE_REPEAT));
+  assert_eq!(kind_tile(&out.instances[0]), (linear, TILE_CLAMP));
 }
 
 #[test]
@@ -281,8 +292,12 @@ fn a_line_gradient_is_in_the_op_space_not_the_segment_frame() {
   b.draw_line(Point::new(20.0, 0.0), Point::new(80.0, 0.0), &paint);
   let out = walked(b);
   assert_eq!(out.instances.len(), 1);
+  // The vertex stage evaluates the instance's rows at the quad's corners
+  // and the fragment reads the interpolation: the rows themselves must
+  // map quad-local (30, 0) to t 0.5.
   let local = rows(&out.instances[0]);
   assert!(near(eval(&local, 30.0, 0.0).0, 0.5), "{local:?}");
+  assert_eq!(kind_tile(&out.instances[0]), linear_clamp());
 
   let mut paint = sourced(linear());
   paint.set_stroke_width(8.0);
@@ -336,6 +351,7 @@ fn gradients_past_the_ramp_rows_draw_the_paint_color() {
   assert_eq!(out.instances.len(), RAMP_ROWS as usize + 1);
   assert!(last.color.iter().zip(premultiplied.iter()).all(|(a, b)| near(*a, *b)));
   assert_eq!(last.grad_y, [0.0; 4]);
+  assert_eq!(last.persp[3], 0.0);
   assert_eq!(
     programs(&out),
     vec![(0, RAMP_ROWS as usize, BatchProgram::Fill, true), (RAMP_ROWS as usize, 1, BatchProgram::Fill, false)]
@@ -372,6 +388,6 @@ fn a_glyph_gradient_carries_the_ops_rows() {
   // The quad is in the op's space: its rows are the gradient's own, and
   // its corner (30, 10) reads t 0.3.
   assert_eq!(rows(i), [gradient.x_row, gradient.y_row]);
-  assert_eq!(i.grad_y[3], linear_clamp());
+  assert_eq!(kind_tile(i), linear_clamp());
   assert!(near(eval(&rows(i), 30.0, 10.0).0, 0.3));
 }

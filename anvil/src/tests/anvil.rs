@@ -17,8 +17,8 @@ use crate::prelude::*;
 use crate::renderer::ramps::RampTable;
 use crate::renderer::walk::{
   walk, Batch, BatchProgram, Instance, PaintDraw, Projective, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, FILL_FOLD_AREA,
-  GRADIENT_KIND_STRIDE, KIND_GLYPH, KIND_LINE, KIND_OVAL, KIND_PAINT, KIND_RECT, KIND_ROUNDED_RECT, KIND_TEXTURED,
-  ROUNDED_QUAD_PAD,
+  KIND_GLYPH, KIND_LINE, KIND_OVAL, KIND_PAINT, KIND_RECT, KIND_ROUNDED_RECT, KIND_TEXTURED, ROUNDED_QUAD_PAD,
+  TILE_CLAMP,
 };
 use crate::renderer::{
   paint_fragment_source, report, test_paint_shader, test_texture, DeletionQueue, Freed, PAINT_FRAGMENT_EPILOGUE,
@@ -730,8 +730,8 @@ fn a_rotated_image_source_textures_the_shape() {
   let uv = |row: [f32; 4]| row[0] * local.x + row[1] * local.y + row[2];
   let (u, v) = (uv(i.grad_x), uv(i.grad_y));
   assert!((u - texel.x / 200.0).abs() < EPS && (v - texel.y / 100.0).abs() < EPS, "{u} {v}");
-  // No gradient: the packed kind is 0.
-  assert_eq!((i.grad_x[3], i.grad_y[3]), (0.0, 0.0));
+  // No gradient: the kind is 0, and so is the tile.
+  assert_eq!((i.grad_x[3], i.grad_y[3], i.persp[3]), (0.0, 0.0, 0.0));
   assert_eq!(out.batches, vec![shapes(0, 1, Some((name(&t), TextureSampling::Linear)))]);
 }
 
@@ -975,16 +975,16 @@ fn glyph_runs_join_whatever_their_gradient() {
   // between the glyph runs.
   assert_eq!(out.batches, vec![glyphs(0, 6, &atlas, policy), fills(6, 1), glyphs(7, 2, &atlas, policy)]);
   // The gradient run's quads carry its own rows (the quads are in the
-  // op's space), its ramp row and its packed kind; the solid ones zeros.
+  // op's space), its ramp row, its kind and, in the projective row's last
+  // float, its tile (clamp, 0); the solid ones zeros.
   for i in &out.instances[2..4] {
     assert_eq!(i.grad_x, [g.x_row[0], g.x_row[1], g.x_row[2], 0.0]);
-    assert_eq!(
-      i.grad_y,
-      [g.y_row[0], g.y_row[1], g.y_row[2], GradientKind::Linear as i32 as f32 * GRADIENT_KIND_STRIDE]
-    );
+    assert_eq!(i.grad_y, [g.y_row[0], g.y_row[1], g.y_row[2], GradientKind::Linear as i32 as f32]);
+    assert_eq!(i.persp, [0.0, 0.0, 1.0, TILE_CLAMP]);
   }
   for i in out.instances[0..2].iter().chain(&out.instances[4..6]) {
     assert_eq!((i.grad_x, i.grad_y), ([0.0; 4], [0.0; 4]));
+    assert_eq!(i.persp[3], 0.0);
   }
 }
 

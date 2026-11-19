@@ -9,11 +9,11 @@ use crate::prelude::*;
 use crate::renderer::mesh::MESH_CACHE_ENTRIES;
 use crate::renderer::mesh::{bucket_tolerance, gpu_slot, scale_bucket, tessellate, GpuMesh, GpuSlot, Mesh, MeshStyle};
 use crate::renderer::ramps::RampTable;
-use crate::renderer::walk::{walk, BatchProgram, Projective, Walked};
+use crate::renderer::walk::{walk, BatchProgram, Projective, Walked, TILE_CLAMP};
 use crate::renderer::{report, test_texture, DeletionQueue, Freed};
 use crate::{Affine, ClipOperation, Color, ColorSource, DisplayListBuilder, DrawStyle, FillType, ISize};
+use crate::{GradientKind, TextureSampling, TileMode};
 use crate::{Matrix, Paint, Path, PathBuilder, Point, Rect, RoundingRadii, Size, StrokeCap, StrokeJoin};
-use crate::{TextureSampling, TileMode};
 use euclid::default::{Box2D, Point2D, Transform2D};
 use lyon_path::Event;
 use std::sync::Arc;
@@ -478,6 +478,8 @@ fn a_gradient_mesh_under_perspective_keeps_its_rows_over_the_path() {
   assert!(!draw.map.is_affine(), "the map carries the perspective row");
   let gradient = draw.gradient.as_ref().expect("the draw carries the gradient");
   assert_eq!(gradient.rows, [gradient.gradient.x_row, gradient.gradient.y_row]);
+  // The kind and the tile reach the program's `uGradMeta` apart.
+  assert_eq!((gradient.kind(), gradient.tile()), (GradientKind::Linear as i32 as f32, TILE_CLAMP));
   // A path point reads the gradient's t there with no divide: the GPU
   // interpolates the path-space point perspective-correct.
   for (x, t) in [(50.0, 0.5), (35.0, 0.25)] {
