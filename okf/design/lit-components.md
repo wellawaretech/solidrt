@@ -15,10 +15,7 @@ demand-driven frames, crisp vector text), and the decisions a prototype
 settled. The model is in the package since 2026-09-27 (see "What the package
 has"); this document remains the reasoning behind it.
 
-The prototype that settled it lives in the `demo/comp` project beside this
-checkout (`src/lit/`, gallery in `src/index.tsx`; its own write-ups are
-`LIT-COMPONENTS.md`, `TERMINAL-THEME.md`, `SOLIDRT-FEEDBACK.md` and
-`TEXT-CENTERING.md` there); the package's own page is
+A prototype outside this repo settled it; the package's own page is
 packages/components/examples/lit.tsx.
 
 ## The model

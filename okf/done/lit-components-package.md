@@ -7,8 +7,8 @@ completed: 2026-09-27
 
 # Move the lit model into @solidrt/components
 
-The model is settled ([lit-components](../design/lit-components.md)); the
-prototype in `demo/comp` proves it by eye on a low-DPI Linux display. What
+The model is settled ([lit-components](../design/lit-components.md)); a
+prototype proves it by eye on a low-DPI Linux display. What
 keeps it out of the package is cost on the small targets and the shape of
 the migration.
 

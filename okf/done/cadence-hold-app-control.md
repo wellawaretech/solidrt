@@ -13,9 +13,8 @@ stays; this plan replaces its controller rules and its policy source.
 
 ## Problem
 
-Reported from the tiles game on 0.0.85
-(`demo/tiles/okf/upstream/android-cadence-hold-stuck.md`, the same lock-in
-as [cadence-hold-dvfs-lock-in](cadence-hold-dvfs-lock-in.md)):
+Reported from a game on 0.0.85 (the same lock-in as
+[cadence-hold-dvfs-lock-in](cadence-hold-dvfs-lock-in.md)):
 
 - On the Galaxy Tab A7 (SM-T500, 60 Hz) a fresh launch reads
   `cadenceHold: 3` on the idle menu within 3 s (a 453 ms first frame, then
@@ -209,9 +208,9 @@ in the core AGENTS.md index:
 ## Done looks like
 
 - On the SM-T500 and the Pixel 7, a fresh launch of
-  `packages/2d/examples/tiles.tsx` and of the tiles game never leaves hold
-  1 at the default policy, through a minute of flight and the text-heavy
-  screen.
+  `packages/2d/examples/tiles.tsx` and of a game with a text-heavy screen
+  never leaves hold 1 at the default policy, through a minute of flight
+  and that screen.
 - Sponza's tour on the Pixel at a quality whose frame fits the maximum
   (low) settles at its hold and keeps it, and reads steady by eye; at
   medium its heavy views are past the maximum, where misses are counted
@@ -236,7 +235,7 @@ in the core AGENTS.md index:
   moves to `done/`.
 
 Closed 2026-11-05 with everything above verified (see the note) except the
-desktop eye test and the tiles game's text-heavy screen, which were not run;
+desktop eye test and the game's text-heavy screen, which were not run;
 the desktop showed Sponza at medium past the maximum and at low unheld, so
 it held no cadence to judge.
 

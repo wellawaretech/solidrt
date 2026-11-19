@@ -10,7 +10,7 @@ completed: 2026-11-01
 What it looks like: launching a packed app (`sol pack --apk`) on Android
 12+ shows the system splash (icon on a dark background), then the launcher
 and wallpaper for a moment, then the app's first frame. Every cold start.
-Reported from the tiles demo.
+Reported from a packed game.
 
 ## Cause
 
@@ -159,10 +159,9 @@ reach `mSurface` (a protected static of SDLActivity). It posts
 
 ## Not in scope
 
-The hold ends on the first presented frame, not when the app is ready. For
-the tiles demo the first frame is the menu: index.tsx renders the
-background and the `/` route synchronously. Only the best-score lines
-arrive later, from an async SQLite read. An app whose first frame is a
+The hold ends on the first presented frame, not when the app is ready. An app
+that renders its first screen synchronously shows it on that frame, and
+what it reads asynchronously arrives after the splash is gone. An app whose first frame is a
 loading screen drops the splash on that frame. An app-ready signal (like
 Android's `setKeepOnScreenCondition`) is a separate API decision.
 

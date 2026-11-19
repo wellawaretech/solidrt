@@ -10,7 +10,7 @@ created: 2026-09-27
 frame it is painted in; on a tiled GPU that mid-frame read is the
 expensive operation (okf/done/backdrop-filter-android-cost.md). Measured
 with probes/glass-cost-probe.tsx: N panels of 320x140 logical px, `blur:
-28, saturate: 1.4` (the lit prototype's glass), a tinted fill and a
+28, saturate: 1.4`, a tinted fill and a
 hairline, over five stripes and a 40 px bar swept across the window by a
 frame loop at 400 px/s for 12 s; release client, cadence hold off, the
 last 10 s read from `/stats?window=10000`. `frames` is the presented count
