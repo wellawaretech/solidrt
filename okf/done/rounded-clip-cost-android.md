@@ -6,7 +6,7 @@ created: 2026-09-22
 
 # A rounded clip on a box whose size is in flight costs a third of the frame on Android
 
-Part of stage 5 of [own-renderer](own-renderer.md): that stage is not done until this item is.
+Part of stage 5 of [own-renderer](../plans/own-renderer.md). Closed 2026-11-19 on the tablet read under anvil (the stage's Findings): ten rounded panes reflowing hold 60 fps, interval 16.6 ms p50, the rounded clip about 3.5 ms of GPU span with an image under it.
 
 ## Symptom
 

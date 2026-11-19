@@ -6,7 +6,7 @@ created: 2026-11-19
 
 # Cap the text atlas below the device's texture limit
 
-Part of stage 5 of [own-renderer](own-renderer.md): that stage is not done until this item is.
+Part of stage 5 of [own-renderer](../plans/own-renderer.md). Closed 2026-11-19 (5098212e): the side is capped at 4096 by a lattice policy, the device limit only lowering it; the churn probe holds the atlas at 4096 square on the desktop and the TV with memory flat (the stage's Findings). The shrink-back follow-on is not done.
 
 ## Symptom
 

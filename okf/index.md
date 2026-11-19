@@ -147,19 +147,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   mover, under Impeller and anvil alike; the route's union of this frame's
   damage with the ring of the last age-1 frames' damage is the suspect, in
   particular a fold of an empty rect with a non-zero origin.
-- **[Keep a path's mesh on the GPU across frames](plans/retained-mesh-buffers.md)** [2026-11-19]
-  anvil transforms and uploads every cached path mesh on every frame (about 10
-  ms of raster thread per frame for thirty 64-point strokes on the armv7 TV,
-  29 ms at 256 points, with no tessellation); a mesh kept in a GPU buffer
-  across frames, drawn with its transform as a uniform or a per-draw matrix,
-  would make a retained screen of paths cost its draw calls only.
-- **[A rounded clip on a box whose size is in flight costs a third of the frame on Android](plans/rounded-clip-cost-android.md)** [2026-09-22]
-  Ten panes with overflow hidden + clipRadius, sliding and resizing on a
-  layout transition, take the Galaxy Tab A7 (Adreno 610, Impeller GLES) from
-  60 fps to 20 fps - measured from SurfaceFlinger present timestamps, not from
-  get_stats; a static rounded clip is nearly free, one resizing rounded pane
-  costs ~8 ms, ten ~13 ms, and an image under the clip pays most. Cause not
-  yet located below the display list; needs an Impeller-level look.
 - **[A lean program for rounded rect fills](plans/rounded-rect-fill-program.md)** [2026-11-19]
   A rounded rect fill goes through the shape program, whose per-fragment cost
   on the Mali-T860 (the kind branches, the discard, the derivatives, the nine
@@ -191,13 +178,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   bytes per splat; a product-quantized encoding behind the SH block's
   `encoding` field would cut the dominant texture 12x, at the price of a
   bake-time k-means to engineer and a quality judgement of its own.
-- **[Cap the text atlas below the device's texture limit](plans/text-atlas-cap.md)** [2026-11-19]
-  The text atlas grows by doubling up to the GPU's maximum texture side before
-  it evicts anything, so a churning repertoire takes it to 16384x8192 on a
-  desktop GPU, 128 MiB of R8 texture held for the rest of the process;
-  browsers hold a few 2048 pages and evict at the page. Cap the side at a
-  fixed, modest size and let the existing two-second eviction run there; go
-  multi-page only if a real app overflows it.
 - **[Documentation website](plans/website.md)** [2026-07-16]
   "A monorepo website/ generated statically by a flux script: section nav, a
   Core-first Start page, and generate-what-we-can content (API reference from
@@ -2975,10 +2955,23 @@ Finished, kept for the reasoning.
   changes (a write inside stops at the frozen node as a stale mark and notes
   no damage), the unfreeze repaints only what changed, and snapshot-no-aa
   splits into its own antialias prop.
+- **[Keep a path's mesh on the GPU across frames](done/retained-mesh-buffers.md)** [2026-11-19]
+  anvil transforms and uploads every cached path mesh on every frame (about 10
+  ms of raster thread per frame for thirty 64-point strokes on the armv7 TV,
+  29 ms at 256 points, with no tessellation); a mesh kept in a GPU buffer
+  across frames, drawn with its transform as a uniform or a per-draw matrix,
+  would make a retained screen of paths cost its draw calls only.
 - **[Root layer - render the app into a texture effects can read](done/root-layer-effects.md)** [2026-07-27]
   Invert the frame so the app draws into the offscreen MSAA rig and resolves
   into a sampleable layer texture composited to a single-sample window, giving
   whole-app effects (warp, glass, transitions) for about the cost of one quad.
+- **[A rounded clip on a box whose size is in flight costs a third of the frame on Android](done/rounded-clip-cost-android.md)** [2026-09-22]
+  Ten panes with overflow hidden + clipRadius, sliding and resizing on a
+  layout transition, take the Galaxy Tab A7 (Adreno 610, Impeller GLES) from
+  60 fps to 20 fps - measured from SurfaceFlinger present timestamps, not from
+  get_stats; a static rounded clip is nearly free, one resizing rounded pane
+  costs ~8 ms, ten ~13 ms, and an image under the clip pays most. Cause not
+  yet located below the display list; needs an Impeller-level look.
 - **[Router tabs](done/router-tabs.md)** [2026-09-25]
   "A `tabs` route in @solidrt/router: each child is a tab with its own stack,
   kept mounted and hidden while inactive, under a parent stack that holds the
@@ -3288,6 +3281,13 @@ Finished, kept for the reasoning.
   the paragraph and redoes the per-glyph work, the atlas holds every glyph
   twice in CPU memory, and the layer machinery, its names and two backlog
   notes are left over. Three items, no pixel changes, one step.
+- **[Cap the text atlas below the device's texture limit](done/text-atlas-cap.md)** [2026-11-19]
+  The text atlas grows by doubling up to the GPU's maximum texture side before
+  it evicts anything, so a churning repertoire takes it to 16384x8192 on a
+  desktop GPU, 128 MiB of R8 texture held for the rest of the process;
+  browsers hold a few 2048 pages and evict at the page. Cap the side at a
+  fixed, modest size and let the existing two-second eviction run there; go
+  multi-page only if a real app overflows it.
 - **[A frame never draws text without its glyphs](done/text-complete-frames.md)** [2026-10-09]
   A text layer whose cells are not in the atlas draws without them when the
   frame's 3 ms cell budget is spent, and the frame presents that way - a size

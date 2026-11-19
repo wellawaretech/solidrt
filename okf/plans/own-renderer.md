@@ -1512,6 +1512,259 @@ rounded program into stage 5, the reference client into stage 7. The
 polyline write cost is UI-thread work, not the renderer's, and stays in
 the backlog.
 
+### Stage 5: the text atlas cap, and the instance layout (2026-11-19)
+
+Step 3 landed first (5098212e), independent of the renderer: the text
+atlas side is capped by a lattice policy (`TEXT_ATLAS_MAX_SIDE`, 4096, set
+in `apply_paint_policy`), the device limit only lowering it, and the
+existing two-second eviction runs at the cap; `/stats` reports
+`textAtlasWidth` and `textAtlasHeight`. The churn probe
+(`probes/text-atlas-churn.tsx`) reads it on the desktop and the TV at the
+stage's measurement.
+
+Step 1a landed as 59baf506. What the implementation settled beyond the
+design above:
+
+- The device position no longer travels as a varying: every fragment
+  stage computes it from `gl_FragCoord` (`device()`), which equals the
+  old `vDevice` at pixel centres exactly, and is right under perspective
+  where a linearly interpolated position would not be (GLSL ES 3.00 has no
+  `noperspective`). The pre-stage renders of 17 entries diff at zero
+  pixels, except six pixels at one level on the paint shader example.
+- Gradients are evaluated in the quad's local space from a `vOp` varying,
+  through rows the instance carries, which reverses stage 4's device-space
+  rows on purpose: the device-to-op map is projective under perspective,
+  and one smooth vec2 varying costs less than a 3x3 and a divide per
+  fragment. No inverse remains for quads; a line composes the gradient's
+  rows with its own frame. A singular map no longer has a special case.
+- The two-corner `tex` interpolation is separable, so it cannot carry a
+  rotated image map: textured shapes and texture quads carry affine texel
+  rows in the gradient slots instead (packed kind 0), evaluated at the
+  quad's corner in the vertex stage, and an image source now draws under
+  any invertible 2D affine. `tex` stays filled because the glyph program
+  and the tests read it.
+- The ramp atlas is a 256-row texture behind a pure `RampTable`: rows by
+  the gradient's `Arc`, LRU over rows unused this draw, only newly
+  assigned rows uploaded, once per draw before any batch. A row is
+  reassigned only when a draw holds more distinct gradients than the table
+  has free rows, and that upload may wait on the previous draw; past 256
+  distinct gradients in one draw the rest draw their paint's color, warned
+  once. Gradient quads now join a batch of their class (`graded` is a
+  class key like the texture), glyph runs join whatever their gradient,
+  and the fill program stays untouched for solids.
+- Path meshes kept device-space vertices in this step, their gradient
+  and texel rows over homogeneous device pixels divided by a projective
+  denominator row, so a gradient stroke draws under perspective before
+  step 1b retains the meshes in path space; a mesh with a box corner
+  behind the eye was not drawn until then.
+
+Step 1b landed as 1a3855dd: a mesh keeps a vertex and an index buffer on
+the GPU in the path's space, uploaded at its first draw (`STATIC_DRAW`)
+and returned to the deletion queue when its `Arc` drops; a slot whose
+queue is not the drawing renderer's belongs to a renderer that died with
+its context and is replaced, the old names going onto the old queue that
+nobody drains. One draw call per path op, with the 3x3 map (a column-major
+mat3 of euclid's rows), color, clip, rounded clip, gradient rows and texel
+rows as uniforms; the mesh program places the vertex homogeneously as the
+quads do and evaluates a gradient or an image from a path-space varying,
+so no inverse and no denominator remain anywhere, and a mesh with a corner
+behind the eye is drawn and clipped by the rasterizer. The mesh VAO keeps
+the last mesh's buffers bound after a draw, which keeps a deleted buffer
+alive until the next mesh draw rebinds (GL's rule, noted in `draw`). A
+stroke-and-fill path is now two draw calls where it was one batch. The
+desktop static route (30 panels, release client, 60 Hz) after it, process
+CPU percent of one core, three reads: 64 points 7.0 to 7.9 (stage 4: 7.4
+to 8.3), 256 points 6.9 to 8.0 (stage 4: 11.2 to 12.6), both 574 frames,
+0 missed, 62 draw calls, 0 tessellated: the vertex count no longer costs
+the raster thread on the desktop. The pre-stage renders diff at zero
+pixels after both steps (the paint shader example's six pixels aside).
+
+Step 2a landed as eb5e5740: every clip draws. The axis-aligned rect box
+and the single axis-aligned rounded clip per instance stay the fast
+paths; everything else (rotation, skew, non-uniform scale, perspective,
+a rounded clip inside another, every oval clip, every difference op) goes
+through the stencil by depth counting: an intersect raises its shape
+(EQUAL, INCR), a difference raises the clip box and lowers the shape back
+(DECR), a restore replaces everything above the popped depth (LESS,
+REPLACE), and every draw batch carries the depth it tests at. What the
+implementation settled beyond the design above:
+
+- A restore covers the area the raises could have touched, not the
+  popping state's clip box: no clip draw is held to the box (neither the
+  fill nor the mesh program discards), so an intersect shape reaching
+  past the parent's box would leave its depth outside the box and cut
+  the parent's later draws there. `State.raised` carries the union, and a
+  larger area is harmless under LESS.
+- A rect clip is a quad through the fill program under its full map; a
+  rounded rect or an oval is a lyon path built once into the op
+  (`OnceLock<Path>`), tessellated through the mesh cache and retained on
+  the GPU as a path is, so a retained list keeps its clip meshes. With
+  the color mask off under MSAA the stencil edge is per sample, which is
+  the antialiasing Impeller's tessellated clips had.
+- The clip draws are not in the walk's scissor union, which is safe: a
+  draw tests the stencil only inside its box, which is inside the union,
+  and the next draw's scissored clear covers everything it will read.
+- Every rect and oval with a shadow records a difference clip, ignored
+  before this step and now three stencil draws per shadow and a batch
+  break; a shadow probe under a translucent rect, rounded rect and oval
+  differs from the pre-stage render by 135,277 pixels, the cutouts. The
+  reference set (no shadows) still diffs at zero.
+- Past stencil depth 255 a clip warns once and degrades to its box.
+
+Step 2b landed as 2f6fc29f: a `Rounded` batch class and program for a
+rounded rect fill and for a plain rect fill under an axis-aligned rounded
+clip (the rounded-box distance and its coverage, the rounded clip as the
+same minimum the shape program takes, the clip box as a factor, no
+texture, no kind branch, no discard; a gradient variant), with the fill
+program's fold rule under `FILL_FOLD_AREA` for a small one in an open
+solid shape batch. The pre-stage renders diff at zero except
+`layout-slide`: 32 pixels on the top row of rounded corners under a
+same-radius rounded clip, where the new program reads the analytic
+coverage (0.38, 0.68, 0.88, 0.98 at the four pixel centres) and the shape
+program had written a hard step. The maintainer's rule: pixel identity
+with the previous output is not the goal; a difference is explained, and
+a right one is kept. The cause, found in the review: the shape program's
+leading box-clip discard ends its lane of the 2x2 derivative quad, so on
+an edge row whose clip edge lies at an odd device coordinate the inside
+fragments lose their neighbour, `footprint()` falls to its floor and the
+corner coverage collapses to a step; the rounded program has no discard
+before its derivatives. The shape program got the same fix after the
+step: the box clip as a factor, the one discard after every derivative.
+
+**Desktop after the five steps** (`probes/path-bench.tsx`, 30 panels in 5
+columns, release client of 2f6fc29f at 60 Hz, 1280x720, three reads of
+10 s each after 15 s; `probes/path-bench.sh`):
+
+| route | points | variant | frames / 10 s | missed | draw calls / frame | meshes | tessellated | process CPU % |
+|---|---|---|---|---|---|---|---|---|
+| live | 64 | | 599 to 600 | 0 | 61 | 30 | 30 | 15.6 to 16.5 (stage 4: 15.5 to 16.4) |
+| live | 256 | | 599 to 600 | 0 | 61 | 30 | 30 | 29.9 to 30.5 (32.4 to 33.2) |
+| live | 64 | gradient=0 | 599 to 600 | 0 | 61 | 30 | 30 | 15.0 to 15.9 |
+| live | 64 | radius=0 | 599 to 600 | 0 | 61 | 30 | 30 | 15.9 to 16.8 |
+| static | 64 | | 574 | 0 | 62 | 30 | 0 | 7.5 to 9.0 (7.4 to 8.3) |
+| static | 256 | | 573 to 574 | 0 | 62 | 30 | 0 | 6.7 to 7.6 (11.2 to 12.6) |
+| static | 64 | lines=0 | 574 | 0 | 3 | 0 | 0 | 5.8 to 6.8 |
+| static | 64 | lines=0 radius=0 | 573 to 575 | 0 | 3 | 0 | 0 | 5.8 to 6.8 |
+
+The static route no longer pays per vertex (256 points reads as 64), and
+the gradient grid alone draws in three calls (the background, one merged
+batch of thirty gradient rounded panels, the veil) where stage 4 sealed a
+batch per gradient. The live route is bound on the UI thread's points
+write as before. The 61 calls with sparklines are painter's order: a
+panel, its path, the next panel.
+
+**Tablet** (Galaxy Tab A7, Adreno 610, the release client of 2f6fc29f;
+`probes/rounded-clip-panes.tsx`: ten panes of `<view overflow="hidden"
+clipRadius={16}>` with a plain fill and a 128 px texture slice under the
+clip, every pane sliding between 300x140 and 520x220 on a 2 s layout
+transition; SurfaceFlinger present timestamps of the player's BLAST layer
+over the slide, GPU span frameReady minus queue time, the client's
+per-thread CPU from /proc over 3 s):
+
+| panes | presents in the slide | interval p50 / p90 | GPU span p50 | raster thread |
+|---|---|---|---|---|
+| rounded, with the slice | 124 | 16.6 / 17.2 ms | 16.1 ms | 32 % |
+| plain (radius 0), with the slice | 124 | 16.7 / 17.1 ms | 12.5 ms | 32 % |
+| rounded, flat fill only | 122 | 16.7 / 17.3 ms | 13.8 ms | 31 % |
+
+Every row holds 60 fps where the item's table under Impeller read 50 /
+66 ms with ten rounded panes reflowing. The rounded clip's own cost is
+the GPU span's difference, about 3.5 ms with the slice under it and 1.3
+without, which is the per-fragment price of the rounded-box distance on
+every instance under the clip (the slice draws through the shape program,
+the fill through the rounded program), no longer a per-frame path or
+stencil. Adding or removing a pane at the end of the grid moves no other
+pane, so those commands slide nothing in this probe; the toggle is the
+reflow the item measures.
+
+**The text atlas churn** (`probes/text-atlas-churn.tsx`, a text stepping
+its font size by one every frame from 12 to 96, at one and at four
+styles, desktop release client, 90 s): the atlas reads 4096 x 4096 from
+the first sample and stays there, the client's resident memory flat at
+about 217 MB, 300 frames per 5 s window, 0 missed. Under the old cap the
+same churn took the atlas to 16384 x 8192 (okf/plans/text-atlas-cap.md).
+On the TV (four styles, 90 s) the atlas reads 4096 x 4096 throughout,
+resident memory flat at 141 MB, 250 frames per 5 s, 0 missed, 8.5 ms of
+GPU a frame. The item is done.
+
+**TV after the five steps** (Philips TPM171E, Mali-T860, 1920x1080 at 50
+Hz, a 960x540 logical window at scale 2, armeabi-v7a; the client of
+2f6fc29f, cadence hold off; `panels=30 columns=5`; 100 s idle then three
+reads of 10 s; per-thread CPU from `/proc`; `probes/path-bench-tv.sh`).
+The static route repaints through the veil, so its frame counts read
+against 375 and its missed presents are its rate signal; `lines=0` draws
+the panels alone, so the per-program cost reads against the plain solid
+row's floor, which is the veil's full-window fill:
+
+| route | panel | points | variant | frames / 10 s | missed / 10 s | draw calls | tessellated / frame | frame GPU ms | raster thread | stage 4 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| live | rounded, gradient | 64 | | 280 to 281 | 218 to 220 | 61 | 30 | 35.7 | 45 % | 259 / 240 / 38.6 ms / 40 % |
+| live | rounded, solid | 64 | gradient=0 | 372 | 128 to 129 | 61 | 30 | 26.9 | 51 % | |
+| live | plain, solid | 64 | gradient=0 radius=0 | 371 to 498 | 2 to 129 | 60 | 30 | 13.3 | 68 to 73 % | 494 to 500 / 0 to 6 / 14.1 / 63 to 69 % |
+| live | plain, solid | 256 | gradient=0 radius=0 | 163 to 180 | 317 to 335 | 60 | 30 | 13.9 | 57 to 64 % | 181 / 316 to 318 / 15.9 / 60 % |
+| static | rounded, gradient | 64 | | 124 to 125 | 256 | 57.5 | 0 | 37.4 | 13 % | 124 / 253 / 33.5 / 24 % |
+| static | rounded, solid | 64 | gradient=0 | 207 | 178 to 180 | 57.2 | 0 | 28.3 | 14 to 17 % | |
+| static | plain, solid | 64 | gradient=0 radius=0 | 375 | 0 | 61 | 0 | 19.7 | 21 % | 375 / 0 / 19.9 / 40 % |
+| static | plain, solid | 256 | gradient=0 radius=0 | 375 | 0 | 61 | 0 | 19.9 | 21 % | 233 to 297 / 84 to 136 / 22.3 / 85 to 91 % |
+| static | rounded, gradient | 64 | lines=0 | 124 to 126 | 249 to 252 | 3 | 0 | 38.5 | 8 to 9 % | |
+| static | rounded, solid | 64 | lines=0 gradient=0 | 251 to 252 | 172 | 3 | 0 | 29.2 | 8 % | |
+| static | plain, gradient | 64 | lines=0 radius=0 | 256 to 264 | 94 to 96 | 3 | 0 | 24.6 | 15 to 18 % | |
+| static | plain, solid | 64 | lines=0 gradient=0 radius=0 | 375 | 0 | 1 | 0 | 18.6 | 11 % | |
+
+Three things the read says:
+
+- Retained meshes hold. The static solid route at 256 points reads as
+  the 64-point one: 375 frames, 0 missed, the raster thread at 21
+  percent where stage 4 read 85 to 91 and missed 84 to 136 presents; the
+  live solid route at 256 points is unchanged (UI-bound, 30 tessellations
+  a frame). The item's "under 20 percent" reads 20.5 to 21.3; the
+  remaining share is the walk, the 61 draw calls and the present. The UI
+  thread's share did not resolve in this read (no thread above the
+  raster's stood out in `/proc`; stage 4's column came from the same
+  runner), which is a gap to close when the live route is next read.
+- The ramp atlas removed the stall but the per-instance gradient costs
+  more per fragment: the thirty plain gradient panels alone cost 6.0 ms
+  of GPU over the solid floor (24.6 against 18.6) where stage 4's uniform
+  rows cost 1.4 (21.3 against 19.9), and the batch merge the atlas bought
+  (three calls for the grid) does not pay it back on this GPU. The fill
+  gradient program gained two flat vec4 varyings (the rows) and a smooth
+  vec2 (`vOp`) over the uniform path, and unpacks the kind and tile from
+  a float with an integer division per fragment; by stage 2's measure
+  (about 1.2 ms per varying per 1.7 million fragments on this Mali) that
+  is the whole difference.
+- The lean rounded program is not lean on this GPU: thirty solid rounded
+  panels alone cost 10.6 ms over the solid floor (29.2 against 18.6),
+  where the shape program's rounded gradient panels cost about 12 over
+  it in stage 4 (33.5 against 21.3, the gradient's 1.4 taken out). The
+  branches, the texture and the discard were not the price; the program
+  reuses the shape vertex stage and reads its thirteen varyings, and the
+  rounded-box distance with its derivatives runs on every one of the 1.7
+  million fragments of panels whose corners cover a few thousand.
+
+So two of the stage's items do not meet their "Done looks like" on the
+TV, and the fix for each is a design change, not a tuning:
+
+1. The gradient's parameter belongs in the vertex stage: a linear
+   gradient's t and a radial one's (x', y') are affine in the op's space,
+   so the vertex stage maps the quad's corner through the rows and the
+   fragment reads one smooth vec2 (perspective-correct, exact), plus one
+   flat vec4 for the ramp row, the kind and the tile as separate floats.
+   That removes `vGradX`, `vGradY`, `vOp` and the integer unpack from
+   every gradient fragment; the rows stay on the instance, so the batches
+   still merge. The mesh program does the same from its uniforms.
+2. A rounded rect's analytic fragments must be few: the walk emits a
+   rounded rect fill as a plain fill of its inner rect and its four edge
+   bands (the fill program, coverage 1) and four corner quads through the
+   rounded program (nine instances, the analytic distance on a few
+   thousand fragments), the same split for a plain fill under a rounded
+   clip; and the rounded program gets a vertex stage of its own that
+   emits only what it reads. Below a size where nine instances cost more
+   than the fragments (a chip, a small button) the rect stays one rounded
+   instance; that threshold is a named constant read on the TV.
+
+Neither is in the stage as planned; both fold into it (stage 5 step 2c
+and 2d) rather than into new backlog items, pending the maintainer's go.
+
 ### Where anvil lives (2026-11-18)
 
 anvil is a module behind the seam, `alloy/src/renderer/anvil/` (the plan

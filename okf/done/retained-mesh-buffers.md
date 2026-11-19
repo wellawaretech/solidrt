@@ -6,7 +6,7 @@ created: 2026-11-19
 
 # Keep a path's mesh on the GPU across frames
 
-Part of stage 5 of [own-renderer](own-renderer.md): that stage is not done until this item is.
+Part of stage 5 of [own-renderer](../plans/own-renderer.md). Closed 2026-11-19 (1a3855dd, the TV read in the stage's Findings): the static route at 256 points holds 50 fps with 0 missed presents and the raster thread at 21 percent, where it read 85 to 91 percent with 84 to 136 missed; the cheap orphan check was skipped because the retained design removes the transform and the upload at once.
 
 The stage 4 design (okf/plans/own-renderer.md) chose per-vertex device
 positions, color and clip in a stream buffer rebuilt every draw: 40 bytes
