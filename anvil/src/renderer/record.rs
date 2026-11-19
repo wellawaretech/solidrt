@@ -1,22 +1,23 @@
 //! The recording half: what a list is built from, as plain data over the
 //! vocabulary. A builder records anvil's executable ops (`super::ops`),
 //! resolved for the executor: colors premultiplied, a paint reduced to what
-//! stage 1 draws, the ops stage 1 cannot draw warned once and recorded as
-//! their nearest supported op or not at all. With the op log on (the
+//! anvil draws (a gradient source resolved to its rows and ramp when it is
+//! set), the ops anvil cannot draw yet warned once and recorded as their
+//! nearest supported op or not at all. With the op log on (the
 //! `oplog` feature, or this crate's tests) it also keeps the plain-data log
 //! (`crate::oplog`), one cfg'd statement per forwarder beside the
 //! executable push.
 
-use super::ops::{premultiply, Image, Op, Premultiplied, Radii};
+use super::ops::{premultiply, Image, Op, Premultiplied, Radii, Source};
 use super::{PaintShader, ShaderInput, Texture};
 use crate::contract;
 #[cfg(any(test, feature = "oplog"))]
 use crate::oplog::{Op as LogOp, PaintLog, PathLog, PathSegment};
+use crate::{affine, CoveragePolicy, GlyphQuad, RampGradient};
 use crate::{
   BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, Matrix, Point, Rect, RoundingRadii, ShaderParam,
   Size, StrokeCap, StrokeJoin, TextureSampling, TileMode,
 };
-use crate::{CoveragePolicy, GlyphGradient, GlyphQuad};
 use std::sync::Arc;
 
 /// A finished recording: the executable ops and, in a test build, the
@@ -75,15 +76,15 @@ impl DisplayListBuilder {
 }
 
 /// What anvil draws of a paint: its color, premultiplied, and the stroke
-/// width when the style strokes (an image source rides beside it, see
-/// `image_of`). A gradient source, a blend mode other than source-over and
-/// the filters were warned about when they were set. A stroke-and-fill
-/// covers the union of the fill and the stroke once: for the convex shapes
-/// here that is the fill outset by half the stroke width, its non-zero
-/// corner radii grown by the same (`fill` takes the outset and the grown
-/// radii), pushed as one op, so a translucent color is not blended twice
-/// where the stroke's inner half would lie over the fill. A stroke of zero
-/// or negative width pushes nothing. `radii` are the shape's, clamped;
+/// width when the style strokes (an image or gradient source rides beside
+/// it, see `source_of`). A degenerate gradient source, a blend mode other
+/// than source-over and the filters were warned about when they were set.
+/// A stroke-and-fill covers the union of the fill and the stroke once: for
+/// the convex shapes here that is the fill outset by half the stroke width,
+/// its non-zero corner radii grown by the same (`fill` takes the outset and
+/// the grown radii), pushed as one op, so a translucent color is not
+/// blended twice where the stroke's inner half would lie over the fill. A
+/// stroke of zero or negative width pushes nothing. `radii` are the shape's, clamped;
 /// zero for the shapes without corners.
 fn shape_ops(
   paint: &Paint,
@@ -141,8 +142,8 @@ fn clamp_radii(rect: &Rect, radii: &RoundingRadii) -> Radii {
 /// source whose transform (identity when none) is scale plus translate,
 /// which is what the rounded `<texture>` builds; any other transform is
 /// warned once and the shape draws its color. A tile mode other than clamp
-/// is warned once and clamps. A gradient source is None here; its warning
-/// fired when it was set.
+/// is warned once and clamps. A gradient source is None here: the paint
+/// resolved it when it was set (`Paint::gradient`).
 fn image_of(paint: &Paint) -> Option<Image> {
   let Some(ColorSource::Image { texture, tile_x, tile_y, sampling, transform }) = &paint.color_source else {
     return None;
@@ -159,6 +160,12 @@ fn image_of(paint: &Paint) -> Option<Image> {
     unsupported!("an image source tile mode other than clamp", "the source clamps");
   }
   Some(Image { texture: texture.clone(), sampling: *sampling, to_texel })
+}
+
+/// What fills a shape drawn with `paint` in place of its color: its image
+/// (`image_of`), else its resolved gradient, else nothing.
+fn source_of(paint: &Paint) -> Option<Source> {
+  image_of(paint).map(Source::Image).or_else(|| paint.gradient.clone().map(Source::Gradient))
 }
 
 /// The union of the quads' `dst` rects; an empty rect at the origin for
@@ -297,6 +304,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       color: premultiply(paint.color),
       width: paint.stroke_width,
       cap: paint.stroke_cap,
+      gradient: paint.gradient.clone(),
     });
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawLine { from, to, paint: paint.log });
@@ -306,7 +314,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   fn draw_rect(&mut self, rect: &Rect, paint: &Paint) -> &mut Self {
     warn_non_miter_join(paint);
     let rect = *rect;
-    let image = image_of(paint);
+    let source = source_of(paint);
     shape_ops(
       paint,
       [0.0; 4],
@@ -315,9 +323,9 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         radii,
         color,
         stroke: None,
-        image: image.clone(),
+        source: source.clone(),
       },
-      |color, width| Op::DrawRect { rect, radii: [0.0; 4], color, stroke: Some(width), image: image.clone() },
+      |color, width| Op::DrawRect { rect, radii: [0.0; 4], color, stroke: Some(width), source: source.clone() },
       &mut self.ops,
     );
     #[cfg(any(test, feature = "oplog"))]
@@ -327,7 +335,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
 
   fn draw_oval(&mut self, bounds: &Rect, paint: &Paint) -> &mut Self {
     let bounds = *bounds;
-    let image = image_of(paint);
+    let source = source_of(paint);
     shape_ops(
       paint,
       [0.0; 4],
@@ -335,9 +343,9 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         bounds: bounds.inflate(outset, outset),
         color,
         stroke: None,
-        image: image.clone(),
+        source: source.clone(),
       },
-      |color, width| Op::DrawOval { bounds, color, stroke: Some(width), image: image.clone() },
+      |color, width| Op::DrawOval { bounds, color, stroke: Some(width), source: source.clone() },
       &mut self.ops,
     );
     #[cfg(any(test, feature = "oplog"))]
@@ -350,7 +358,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     warn_non_miter_join(paint);
     let rect = *rect;
     let clamped = clamp_radii(&rect, radii);
-    let image = image_of(paint);
+    let source = source_of(paint);
     shape_ops(
       paint,
       clamped,
@@ -359,9 +367,9 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         radii,
         color,
         stroke: None,
-        image: image.clone(),
+        source: source.clone(),
       },
-      |color, width| Op::DrawRect { rect, radii: clamped, color, stroke: Some(width), image: image.clone() },
+      |color, width| Op::DrawRect { rect, radii: clamped, color, stroke: Some(width), source: source.clone() },
       &mut self.ops,
     );
     #[cfg(any(test, feature = "oplog"))]
@@ -401,7 +409,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     atlas: &Texture,
     quads: &Arc<[GlyphQuad]>,
     policy: CoveragePolicy,
-    gradient: Option<&Arc<GlyphGradient>>,
+    gradient: Option<&Arc<RampGradient>>,
   ) -> &mut Self {
     let bounds = glyph_bounds(quads);
     self.ops.push(Op::DrawGlyphs {
@@ -443,11 +451,15 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
 }
 
 /// How a draw paints, as plain data; the recording reads what anvil draws
-/// of it (the color, an image source, the draw style, the stroke width and
-/// cap, and the join, to warn when it is not miter).
+/// of it (the color, an image or gradient source, the draw style, the
+/// stroke width and cap, and the join, to warn when it is not miter).
 pub struct Paint {
   pub(super) color: Color,
   pub(super) color_source: Option<ColorSource>,
+  /// The gradient source, resolved when it was set (`gradient_of`): the
+  /// rows from the draw's space and the ramp, shared by every op the paint
+  /// draws. None for no source, an image source or a degenerate gradient.
+  pub(super) gradient: Option<Arc<RampGradient>>,
   pub(super) draw_style: DrawStyle,
   #[allow(dead_code)] // read by the executor once it blends other than source-over
   pub(super) blend_mode: BlendMode,
@@ -474,6 +486,7 @@ impl Default for Paint {
     Paint {
       color: Color::new_srgba(0.0, 0.0, 0.0, 1.0),
       color_source: None,
+      gradient: None,
       draw_style: DrawStyle::Fill,
       blend_mode: BlendMode::SourceOver,
       stroke_width: contract::DEFAULT_STROKE_WIDTH,
@@ -500,10 +513,8 @@ impl contract::Paint for Paint {
   }
 
   fn set_color_source(&mut self, source: &ColorSource) -> &mut Self {
-    // An image source draws (`image_of`); the gradients wait for stage 3.
-    if !matches!(source, ColorSource::Image { .. }) {
-      unsupported!("a gradient color source", "the paint's color is used instead");
-    }
+    // An image source draws (`image_of`); a gradient resolves here, once.
+    self.gradient = gradient_of(source).map(Arc::new);
     self.color_source = Some(source.clone());
     #[cfg(any(test, feature = "oplog"))]
     {
@@ -601,8 +612,8 @@ impl contract::Paint for Paint {
 }
 
 // The sources and filters below hold their constructor arguments; an image
-// source is read at record time (`image_of`), the gradients from stage 3
-// and the filters from stage 6, and by nothing before.
+// source is read at record time (`image_of`), a gradient when a paint takes
+// it (`gradient_of`), and the filters from stage 6, by nothing before.
 
 /// What a paint draws with in place of its color.
 #[allow(dead_code)]
@@ -679,6 +690,31 @@ impl contract::ColorSource for ColorSource {
   ) -> Self {
     ColorSource::Image { texture: texture.clone(), tile_x, tile_y, sampling, transform: transform.copied() }
   }
+}
+
+/// A gradient `source` resolved to the space of the draws a paint makes:
+/// the inverse of the source's transform (identity when none) into the
+/// gradient's space, then the linear projection or the radial
+/// normalization (`RampGradient::linear`, `RampGradient::radial`). None for
+/// an image source; None too, warned once, for a degenerate gradient (a
+/// singular transform, a zero-length axis, a non-positive radius, no
+/// stops), whose shapes draw the paint's color.
+fn gradient_of(source: &ColorSource) -> Option<RampGradient> {
+  let to_space =
+    |transform: &Option<Matrix>| affine::invert(affine::of_matrix(&transform.unwrap_or_else(Matrix::identity)));
+  let resolved = match source {
+    ColorSource::Image { .. } => return None,
+    ColorSource::LinearGradient { start, end, colors, stops, tile, transform } => {
+      to_space(transform).and_then(|to_space| RampGradient::linear(*start, *end, colors, stops, *tile, to_space))
+    }
+    ColorSource::RadialGradient { center, radius, colors, stops, tile, transform } => {
+      to_space(transform).and_then(|to_space| RampGradient::radial(*center, *radius, colors, stops, *tile, to_space))
+    }
+  };
+  if resolved.is_none() {
+    warn_once!("[anvil] Renderer: a degenerate gradient source has no parameter; the paint's color is used instead");
+  }
+  resolved
 }
 
 /// A per-pixel color transform.

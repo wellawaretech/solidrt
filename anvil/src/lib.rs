@@ -1,6 +1,7 @@
 //! Anvil, the 2D renderer behind alloy's renderer seam
 //! (okf/plans/own-renderer.md). Alloy describes a frame in this crate's
-//! vocabulary (`vocab`, and the glyph vocabulary of `glyphs`) through the
+//! vocabulary (`vocab`, the glyph vocabulary of `glyphs` and the gradients
+//! of `gradient`) through the
 //! recording types, and draws it through the renderer, which implements the
 //! contract (`contract`). Which renderer is a compile-time choice, and a
 //! build holds exactly one; Impeller and its crate are gone. Alloy's
@@ -9,10 +10,11 @@
 //!
 //! A builder records anvil's own executable ops (`ops`, recorded by
 //! `record`, beside the op log `oplog`); a draw walks them into instances
-//! (`walk`, pure) and draws those as instanced quads through three programs
+//! (`walk`, pure) and draws those as instanced quads through its programs
 //! (`exec`): plain rect fills through a fill program with no discard and no
 //! derivatives, every other shape through the shape program, glyph runs
-//! through a glyph program of their own. A paint shader (an app's fragment
+//! through a glyph program of their own; the fill and the shape program
+//! each have a gradient variant, five programs in all. A paint shader (an app's fragment
 //! program, linked by `Renderer::create_paint_shader` behind anvil's own
 //! vertex stage) draws as one quad through its own program, a batch of its
 //! own per draw. Stage 1 draws the state ops, rect
@@ -24,9 +26,12 @@
 //! one instance per glyph, the atlas's red channel as coverage under the
 //! run's coverage policy, a gradient run from a ramp, so a screen of text
 //! is a few batches over one texture: the glyph runs, and the shapes
-//! between them in batches of their own. What does not draw yet (paths,
-//! layers, the other clips, group opacity, gradients, filters, blend modes)
-//! warns once per process, naming itself and what happens instead.
+//! between them in batches of their own. Stage 4, step 1 draws a paint's
+//! linear or radial gradient on rects, rounded rects, ovals and lines
+//! through the same ramp as text (`gradient`), evaluated per device pixel,
+//! a sealed batch per gradient draw. What does not draw yet (paths,
+//! layers, the other clips, group opacity, filters, blend modes) warns once
+//! per process, naming itself and what happens instead.
 //!
 //! With the `oplog` feature (alloy enables it for its tests only), and in
 //! this crate's own tests, the recording types also keep a plain-data log
@@ -44,13 +49,15 @@
 
 pub mod contract;
 mod glyphs;
+mod gradient;
 #[cfg(any(test, feature = "oplog"))]
 pub mod oplog;
 mod renderer;
 mod vocab;
 
 pub use contract::Target;
-pub use glyphs::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, RAMP_WIDTH};
+pub use glyphs::{CoverageMode, CoveragePolicy, GlyphQuad};
+pub use gradient::{affine, Affine, GradientKind, RampGradient, RAMP_WIDTH};
 pub use renderer::{
   ColorFilter, ColorSource, DisplayList, DisplayListBuilder, ImageFilter, MaskFilter, Paint, PaintShader, Path,
   PathBuilder, Renderer, ShaderInput, Texture,

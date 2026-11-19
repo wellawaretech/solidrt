@@ -12,7 +12,7 @@ pub use runs::{FontStyle, FontWeight, RunOverrides, RunStyle, Span, TextAlignmen
 pub use shape::{prepare_units, CaretColumns, GlyphColumns, PreparedColumns, PreparedRun, PreparedUnit};
 pub use words::{CaretStop, ShapedWord, WordCache};
 
-use crate::gpu::{GlyphGradient, GlyphQuad};
+use crate::gpu::{GlyphQuad, RampGradient};
 use crate::renderer::prelude::*;
 use crate::renderer::{DisplayListBuilder, Point, Rect, Size, Texture};
 use crate::rendertree::text::glyphs::{split_phase, weight_value, Face, Hint, StyleKey};
@@ -216,7 +216,7 @@ struct LineRun {
 #[derive(Clone)]
 struct RecordedRun {
   quads: Arc<[GlyphQuad]>,
-  gradient: Option<Arc<GlyphGradient>>,
+  gradient: Option<Arc<RampGradient>>,
 }
 
 /// What the last build of a `<text>` drew (okf/plans/own-renderer.md,
@@ -890,7 +890,7 @@ impl Text {
     // ASCII.
     let warm = native;
     // A style's gradient resolved once; None draws the style's solid color.
-    let gradients: Vec<Option<crate::gpu::GlyphGradient>> = styles
+    let gradients: Vec<Option<crate::gpu::RampGradient>> = styles
       .iter()
       .map(|s| s.paint.gradient.as_ref().and_then(|g| gradient::layer_gradient(g, content, box_origin, scale)))
       .collect();
@@ -912,7 +912,7 @@ impl Text {
     // The solid group first, then one group per gradient style in
     // first-use order (`graded` maps a style index to its group): each
     // group's quads, and its gradient.
-    let mut groups: Vec<(Vec<GlyphQuad>, Option<GlyphGradient>)> = vec![(Vec::new(), None)];
+    let mut groups: Vec<(Vec<GlyphQuad>, Option<RampGradient>)> = vec![(Vec::new(), None)];
     let mut graded: Vec<(usize, usize)> = Vec::new();
     for run in line_runs {
       let style = &styles[run.style];

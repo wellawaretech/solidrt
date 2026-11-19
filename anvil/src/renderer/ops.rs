@@ -1,11 +1,12 @@
 //! What a list executes: anvil's own ops, resolved at record time (colors
-//! premultiplied, a paint reduced to what stage 1 draws), shared behind an
-//! Arc so a retained list is recorded once and replayed by reference.
+//! premultiplied, a paint reduced to what anvil draws, a gradient source
+//! resolved to its rows and ramp), shared behind an Arc so a retained list
+//! is recorded once and replayed by reference.
 
 use super::record::DisplayList;
 use super::{PaintShader, ShaderInput, Texture};
 use crate::{Color, Matrix, Point, Rect, ShaderParam, StrokeCap, TextureSampling};
-use crate::{CoveragePolicy, GlyphGradient, GlyphQuad};
+use crate::{CoveragePolicy, GlyphQuad, RampGradient};
 use euclid::default::Transform2D;
 use std::sync::Arc;
 
@@ -36,6 +37,15 @@ pub(super) struct Image {
   pub to_texel: Transform2D<f32>,
 }
 
+/// What fills a shape's coverage in place of its color: an image's texels,
+/// or a gradient's color (resolved at record time, `record::Paint`), faded
+/// by the op's alpha either way.
+#[derive(Clone)]
+pub(super) enum Source {
+  Image(Image),
+  Gradient(Arc<RampGradient>),
+}
+
 /// One executable op of a list, in recording order.
 pub(super) enum Op {
   Save,
@@ -60,31 +70,34 @@ pub(super) enum Op {
   },
   /// `stroke` None fills; Some(width) strokes centered on the edge, with
   /// miter joins (sharp corners) where a radius is zero. `radii` all zero
-  /// is a plain rect. `image` Some fills the coverage with the image's
-  /// texels, faded by `color`'s alpha.
+  /// is a plain rect. `source` Some fills the coverage with the image's
+  /// texels or the gradient's color, faded by `color`'s alpha.
   DrawRect {
     rect: Rect,
     radii: Radii,
     color: Premultiplied,
     stroke: Option<f32>,
-    image: Option<Image>,
+    source: Option<Source>,
   },
   /// `stroke` None fills; Some(width) strokes centered on the ellipse.
-  /// `image` as for `DrawRect`.
+  /// `source` as for `DrawRect`.
   DrawOval {
     bounds: Rect,
     color: Premultiplied,
     stroke: Option<f32>,
-    image: Option<Image>,
+    source: Option<Source>,
   },
   /// A segment stroked `width` wide, centered on it, ended by `cap` at
   /// both ends. A width of zero or below draws nothing (the walk skips it).
+  /// `gradient` Some fills the coverage with the gradient's color, faded
+  /// by `color`'s alpha.
   DrawLine {
     from: Point,
     to: Point,
     color: Premultiplied,
     width: f32,
     cap: StrokeCap,
+    gradient: Option<Arc<RampGradient>>,
   },
   /// `alpha` is the paint's alpha (1 without a paint): a texture's opacity
   /// is per op, not a group.
@@ -104,7 +117,7 @@ pub(super) enum Op {
     quads: Arc<[GlyphQuad]>,
     bounds: Rect,
     policy: CoveragePolicy,
-    gradient: Option<Arc<GlyphGradient>>,
+    gradient: Option<Arc<RampGradient>>,
   },
   /// A paint shader's quad over `rect`, its params and inputs shared with
   /// the recorder's caller.

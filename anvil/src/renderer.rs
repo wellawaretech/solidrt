@@ -36,6 +36,19 @@ macro_rules! unsupported {
   }};
 }
 
+/// Warn once per process about a draw the renderer cannot make sense of
+/// (not a missing feature: a degenerate argument), and what it does
+/// instead.
+macro_rules! warn_once {
+  ($($arg:tt)*) => {{
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.load(Ordering::Relaxed) && !WARNED.swap(true, Ordering::Relaxed) {
+      log::warn!($($arg)*);
+    }
+  }};
+}
+
 mod exec;
 mod ops;
 mod record;

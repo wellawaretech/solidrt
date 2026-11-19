@@ -1,13 +1,14 @@
 //! The pure half of a draw: a list's ops walked into the instances the
-//! programs draw (plain rect fills, shapes, glyphs, paint shaders), with the save
-//! stack, the transforms and the clip applied and the draws outside the
-//! clip rejected. No GL here, so the walk is unit-tested without a context
-//! (`tests/anvil.rs`).
+//! programs draw (plain rect fills, shapes, glyphs, paint shaders), with the
+//! save stack, the transforms and the clip applied, the draws outside the
+//! clip rejected and a gradient's rows composed into device space. No GL
+//! here, so the walk is unit-tested without a context (`tests/anvil.rs`,
+//! `tests/gradient.rs`).
 
-use super::ops::{Image, Op, Premultiplied, Radii};
+use super::ops::{Op, Premultiplied, Radii, Source};
 use super::record::DisplayList;
 use super::{PaintShader, ShaderInput, Texture};
-use crate::{CoveragePolicy, GlyphGradient, GlyphQuad};
+use crate::{affine, Affine, CoveragePolicy, GlyphQuad, RampGradient};
 use crate::{ISize, Matrix, Point, Rect, ShaderParam, Size, StrokeCap, TextureSampling};
 use euclid::default::{Box2D, Point2D, Transform2D};
 use euclid::Angle;
@@ -147,6 +148,33 @@ impl std::fmt::Debug for PaintDraw {
   }
 }
 
+/// A gradient as one batch draws it: the gradient, shared with the op that
+/// carries it, and `rows`, which map a device pixel to the gradient's
+/// parameter space (the gradient's own rows composed with the inverse of
+/// the instance's device map), so a program evaluates it from `vDevice`
+/// alone. Equal when it holds the same gradient and the same rows.
+#[derive(Clone)]
+pub struct GradientDraw {
+  pub gradient: Arc<RampGradient>,
+  pub rows: Affine,
+}
+
+impl PartialEq for GradientDraw {
+  fn eq(&self, other: &GradientDraw) -> bool {
+    Arc::ptr_eq(&self.gradient, &other.gradient) && self.rows == other.rows
+  }
+}
+
+impl std::fmt::Debug for GradientDraw {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("GradientDraw")
+      .field("kind", &self.gradient.kind)
+      .field("tile", &self.gradient.tile)
+      .field("rows", &self.rows)
+      .finish()
+  }
+}
+
 /// A run of consecutive instances one draw issues, of one class: plain
 /// rect fills (untextured, unstroked, under no rounded clip), shapes (the
 /// shape instances before any texture, or every shape that shares one
@@ -154,7 +182,8 @@ impl std::fmt::Debug for PaintDraw {
 /// atlas, one coverage policy and at most one gradient). The classes draw
 /// through different programs, so a run never mixes them, except that the
 /// shape program also draws the plain fills a shape run takes. A paint
-/// shader draw is a run of its own, one instance.
+/// shader draw is a run of its own, one instance; so is a gradient shape,
+/// a fill or a shape whose program is that class's gradient variant.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Batch {
   pub start: usize,
@@ -168,8 +197,11 @@ pub struct Batch {
   /// Set exactly when the run is glyphs (`program` is `Glyph`): the policy
   /// their coverage is turned into color with.
   pub policy: Option<CoveragePolicy>,
-  /// A gradient run's gradient; such a run holds that one op's quads.
-  pub gradient: Option<Arc<GlyphGradient>>,
+  /// A gradient draw's gradient, in device space: such a run holds that
+  /// one op's instances (a glyph run's quads, or one shape), and draws
+  /// through its program's gradient variant (a fill or a shape) or with
+  /// the glyph program's gradient on.
+  pub gradient: Option<GradientDraw>,
   /// Set exactly when the run is a paint shader draw (`program` is
   /// `Paint`); `texture` is then None, the inputs bind their own units.
   pub paint: Option<PaintDraw>,
@@ -186,7 +218,7 @@ pub struct Walked {
   /// executor scissors its clear and its draws to it. None when nothing
   /// was emitted.
   pub scissor: Option<Box2D<i32>>,
-  /// The last batch takes no further instance: a gradient run or a paint
+  /// The last batch takes no further instance: a gradient draw or a paint
   /// shader draw ended it.
   sealed: bool,
 }
@@ -200,9 +232,25 @@ impl Walked {
   // opens a fill batch. Any other shape shares only an open shape batch
   // (the shader branches on the kind; a bound sampler it never reads costs
   // nothing), so a texture change, a sampling change, a fill run or a
-  // glyph run ends a run.
-  fn push(&mut self, instance: Instance, texture: Option<(glow::NativeTexture, TextureSampling)>, plain: bool) {
+  // glyph run ends a run. A gradient instance (`gradient` Some) always
+  // opens a batch of its own and seals it: a fill batch when it is plain
+  // (the fill program's gradient variant), else a shape batch; no fold
+  // rule applies, and no instance after it joins.
+  fn push(
+    &mut self,
+    instance: Instance,
+    texture: Option<(glow::NativeTexture, TextureSampling)>,
+    plain: bool,
+    gradient: Option<GradientDraw>,
+  ) {
     let start = self.instances.len();
+    if let Some(gradient) = gradient {
+      let program = if plain { BatchProgram::Fill } else { BatchProgram::Shape };
+      self.open(Batch { start, count: 1, program, texture, policy: None, gradient: Some(gradient), paint: None });
+      self.sealed = true;
+      self.instances.push(instance);
+      return;
+    }
     let sealed = self.sealed;
     let last = self.batches.last_mut().filter(|_| !sealed);
     if plain {
@@ -247,7 +295,7 @@ impl Walked {
     instances: Vec<Instance>,
     atlas: glow::NativeTexture,
     policy: CoveragePolicy,
-    gradient: Option<&Arc<GlyphGradient>>,
+    gradient: Option<GradientDraw>,
   ) {
     if instances.is_empty() {
       return;
@@ -263,6 +311,7 @@ impl Walked {
         && last.policy == Some(policy)
     };
     let sealed = self.sealed;
+    let graded = gradient.is_some();
     match self.batches.last_mut().filter(|last| !sealed && joins(last)) {
       Some(last) => last.count += count,
       None => self.open(Batch {
@@ -271,11 +320,11 @@ impl Walked {
         program: BatchProgram::Glyph,
         texture,
         policy: Some(policy),
-        gradient: gradient.cloned(),
+        gradient,
         paint: None,
       }),
     }
-    self.sealed = gradient.is_some();
+    self.sealed = graded;
     self.instances.extend(instances);
   }
 
@@ -386,14 +435,16 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, out: &mut Wal
         state.clip = state.clip.intersection_unchecked(&device);
       }
       Op::ClipRoundedRect { rect, radii } => clip_rounded(state, rect, radii),
-      Op::DrawRect { rect, radii, color, stroke, image } => {
+      Op::DrawRect { rect, radii, color, stroke, source } => {
         let kind = if radii.iter().all(|r| *r == 0.0) { KIND_RECT } else { KIND_ROUNDED_RECT };
-        push_shape(state, rect, kind, *radii, *color, *stroke, image.as_ref(), out)
+        push_shape(state, rect, kind, *radii, *color, *stroke, source.as_ref(), out)
       }
-      Op::DrawOval { bounds, color, stroke, image } => {
-        push_shape(state, bounds, KIND_OVAL, [0.0; 4], *color, *stroke, image.as_ref(), out)
+      Op::DrawOval { bounds, color, stroke, source } => {
+        push_shape(state, bounds, KIND_OVAL, [0.0; 4], *color, *stroke, source.as_ref(), out)
       }
-      Op::DrawLine { from, to, color, width, cap } => push_line(state, *from, *to, *color, *width, *cap, out),
+      Op::DrawLine { from, to, color, width, cap, gradient } => {
+        push_line(state, *from, *to, *color, *width, *cap, gradient.as_ref(), out)
+      }
       Op::DrawTexture { texture, src, dst, sampling, alpha } => {
         push_texture(state, texture, src, dst, *sampling, *alpha, out)
       }
@@ -471,6 +522,15 @@ fn state_map(state: &State) -> Transform2D<f32> {
   state.matrix.to_2d()
 }
 
+// `gradient` as a draw whose op space reaches device pixels through `m`:
+// its rows composed with the inverse of `m`. None when `m` is singular,
+// and the draw then takes its solid color.
+fn gradient_draw(gradient: &Arc<RampGradient>, m: &Transform2D<f32>) -> Option<GradientDraw> {
+  let from_device = affine::invert(affine::of_2d(m))?;
+  let rows = affine::compose([gradient.x_row, gradient.y_row], from_device);
+  Some(GradientDraw { gradient: gradient.clone(), rows })
+}
+
 // The 2D map and the device clip of a draw covering `rect` under the
 // current state; None when the clip rejects it.
 fn placed(state: &State, rect: &Rect) -> Option<(Transform2D<f32>, [f32; 4])> {
@@ -530,10 +590,13 @@ fn instance(state: &State, m: &Transform2D<f32>, clip: [f32; 4], quad: Quad) -> 
 // rejects it or it is fully transparent. A stroke's quad is the shape's box
 // grown by half the width on every side, so it covers the outer half of
 // the band; a rounded rect's grows by `ROUNDED_QUAD_PAD` more, so its
-// analytic edge never lies on the quad's. With `image` the instance
-// samples it: coverage times texel, faded by the color's alpha (the paint's
-// RGB is not used for an image, as Impeller did not use it), the uv the
-// quad's corners through the image's inverse map.
+// analytic edge never lies on the quad's. With an image `source` the
+// instance samples it: coverage times texel, faded by the color's alpha
+// (the paint's RGB is not used for an image, as Impeller did not use it),
+// the uv the quad's corners through the image's inverse map. With a
+// gradient `source` it keeps its kind and takes the gradient's color,
+// faded the same way, in a batch of its own (`Walked::push`); under a
+// singular map it draws its solid color.
 #[allow(clippy::too_many_arguments)]
 fn push_shape(
   state: &State,
@@ -542,7 +605,7 @@ fn push_shape(
   radii: Radii,
   color: Premultiplied,
   stroke: Option<f32>,
-  image: Option<&Image>,
+  source: Option<&Source>,
   out: &mut Walked,
 ) {
   let s = stroke.unwrap_or(0.0);
@@ -553,7 +616,18 @@ fn push_shape(
   if color[3] == 0.0 {
     return;
   }
+  let gradient = match source {
+    Some(Source::Gradient(g)) => gradient_draw(g, &m2),
+    _ => None,
+  };
+  let image = match source {
+    Some(Source::Image(image)) => Some(image),
+    _ => None,
+  };
   let (kind, color, tex, texture) = match image {
+    // The ramp sample is premultiplied in the program: the alpha in all
+    // four channels fades it, as for an image.
+    None if gradient.is_some() => (kind, [color[3]; 4], [0.0; 4], None),
     None => (kind, color, [0.0; 4], None),
     Some(image) => {
       // A texture's size is never zero (see `push_texture`).
@@ -573,7 +647,7 @@ fn push_shape(
   };
   let shape = instance(state, &m2, clip, Quad { rect: quad, kind, stroke: s, color, tex, radii });
   let plain = plain_fill(&shape);
-  out.push(shape, texture, plain);
+  out.push(shape, texture, plain, gradient);
 }
 
 // Whether `instance` is a plain rect fill, which the fill program draws:
@@ -596,7 +670,11 @@ fn device_area(instance: &Instance) -> f32 {
 // the segment's own frame: x from `from` along the segment, y across it,
 // extended by half the width at both ends for square and round caps. A
 // zero-length segment is a width-square dot for those caps and nothing
-// for butt caps, as Skia and Impeller draw it.
+// for butt caps, as Skia and Impeller draw it. A `gradient` is in the op's
+// space, not the segment's frame, so its rows compose with the inverse of
+// the state's map; the line then takes the gradient's color in a batch of
+// its own, its solid color under a singular map.
+#[allow(clippy::too_many_arguments)]
 fn push_line(
   state: &State,
   from: Point,
@@ -604,6 +682,7 @@ fn push_line(
   color: Premultiplied,
   width: f32,
   cap: StrokeCap,
+  gradient: Option<&Arc<RampGradient>>,
   out: &mut Walked,
 ) {
   if width <= 0.0 || color[3] == 0.0 {
@@ -619,13 +698,18 @@ fn push_line(
   // Row vectors: local (len, 0) rotates onto (dx, dy), then moves to `from`,
   // then takes the state's map.
   let line_map = Transform2D::rotation(Angle::radians(dy.atan2(dx))).then(&Transform2D::translation(from.x, from.y));
-  let m = line_map.then(&state_map(state));
+  let state_m = state_map(state);
+  let m = line_map.then(&state_m);
   let Some(clip) = placed_under(state, m, &local) else { return };
   let tex = [cap_value(cap), len, 0.0, 0.0];
+  let gradient = gradient.and_then(|g| gradient_draw(g, &state_m));
+  // The ramp sample is premultiplied in the program: the alpha fades it.
+  let color = if gradient.is_some() { [color[3]; 4] } else { color };
   out.push(
     instance(state, &m, clip, Quad { rect: local, kind: KIND_LINE, stroke: width, color, tex, radii: [0.0; 4] }),
     None,
     false,
+    gradient,
   );
 }
 
@@ -671,21 +755,23 @@ fn push_texture(
     tex: [src.min_x() / w, src.min_y() / h, src.max_x() / w, src.max_y() / h],
     radii: [0.0; 4],
   };
-  out.push(instance(state, &m2, clip, quad), Some((texture.name(), sampling)), false);
+  out.push(instance(state, &m2, clip, quad), Some((texture.name(), sampling)), false, None);
 }
 
 // One glyph run under the current state: rejected whole when its `bounds`
 // fall outside the clip, else one `KIND_GLYPH` instance per quad the clip
 // keeps and whose alpha is not zero. A quad's rect is its `dst`, its uv its
 // `src` over the atlas's size (v grows downward with the texel rows, as for
-// a texture quad), its color the quad's own, straight alpha.
+// a texture quad), its color the quad's own, straight alpha. A
+// `gradient`'s rows compose once per run with the inverse of the state's
+// map; under a singular map the run draws its solid colors.
 fn push_glyphs(
   state: &State,
   atlas: &Texture,
   quads: &[GlyphQuad],
   bounds: &Rect,
   policy: CoveragePolicy,
-  gradient: Option<&Arc<GlyphGradient>>,
+  gradient: Option<&Arc<RampGradient>>,
   out: &mut Walked,
 ) {
   if quads.is_empty() || placed(state, bounds).is_none() {
@@ -712,6 +798,7 @@ fn push_glyphs(
     };
     instances.push(instance(state, &m2, clip, quad));
   }
+  let gradient = gradient.and_then(|g| gradient_draw(g, &state_map(state)));
   out.push_glyphs(instances, atlas.name(), policy, gradient);
 }
 

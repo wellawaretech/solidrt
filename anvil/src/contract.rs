@@ -20,7 +20,7 @@ use super::vocab::{
   BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, ISize, Matrix, Point, Rect, RoundingRadii,
   ShaderParam, StrokeCap, StrokeJoin, TextureSampling, TileMode, UniformInfo,
 };
-use crate::{CoveragePolicy, GlyphGradient, GlyphQuad};
+use crate::{CoveragePolicy, GlyphQuad, RampGradient};
 use std::os::raw::c_void;
 use std::sync::Arc;
 
@@ -179,7 +179,7 @@ pub trait DisplayListBuilder: Sized {
     atlas: &super::Texture,
     quads: &Arc<[GlyphQuad]>,
     policy: CoveragePolicy,
-    gradient: Option<&Arc<GlyphGradient>>,
+    gradient: Option<&Arc<RampGradient>>,
   ) -> &mut Self;
   /// The paint shader `shader` drawn as one quad over `rect` in the current
   /// space, under the transform and the clips in effect. The fragment

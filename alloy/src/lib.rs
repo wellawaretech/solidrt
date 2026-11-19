@@ -57,7 +57,7 @@ pub use gpu::{
   TargetSpec, TextureBinding, Topology, UniformKind, UniformSlot, UniformTable, VertexAttr, WindowShader,
   CELL_BOX_FLOATS, INDEX_NONE, MAX_BUFFERS, RUN_RAMP_SAMPLES,
 };
-pub use gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, RAMP_WIDTH};
+pub use gpu::{CoverageMode, CoveragePolicy, GlyphQuad, GradientKind, RampGradient, RAMP_WIDTH};
 pub use gpu::{PxRect, DAMAGE_EDGE_PX, MAX_DAMAGE_SLOTS};
 pub use input::InputState;
 pub use logging::install_logger;

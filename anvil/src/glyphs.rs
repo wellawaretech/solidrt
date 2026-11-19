@@ -1,11 +1,9 @@
 //! The glyph vocabulary: the quads a `<text>` records through
-//! `draw_glyphs`, the gradient a run may take its color from, and the
-//! policy that turns a mask's coverage into color. Plain data shared by the
+//! `draw_glyphs` and the policy that turns a mask's coverage into color (a
+//! run's gradient is a `RampGradient`, `crate::gradient`). Plain data shared by the
 //! UI thread (which builds the quads from the text atlas's placements and
 //! records them) and the raster thread (where the glyph program draws
 //! them).
-
-use crate::TileMode;
 
 /// One glyph of a run: where its cell lands, which atlas texels it
 /// samples, and the run's color.
@@ -114,36 +112,4 @@ impl CoveragePolicy {
       (GAMMA_RATIO_NORM_LINEAR * r[3] as f64 / 4.0) as f32,
     ]
   }
-}
-
-/// Texels across a gradient ramp: the stop colors sampled at this many
-/// positions along 0..1, the steps 8-bit output can show.
-pub const RAMP_WIDTH: usize = 256;
-
-/// The shape of a text run's gradient; the discriminants are the glyph
-/// program's `uGradient` values (0 is no gradient).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GradientKind {
-  /// The parameter is the mapped x.
-  Linear = 1,
-  /// The parameter is the mapped point's distance from the origin.
-  Radial = 2,
-}
-
-/// A run's gradient paint resolved to the layer (rendertree/text/
-/// gradient.rs): how a layer pixel maps to the gradient's parameter, and
-/// the colors along it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct GlyphGradient {
-  pub kind: GradientKind,
-  /// Layer pixel (x, y) to gradient space as two affine rows over
-  /// (x, y, 1): x' from `x_row`, y' from `y_row`. A linear gradient reads
-  /// its parameter as x', a radial one as the length of (x', y').
-  pub x_row: [f32; 3],
-  pub y_row: [f32; 3],
-  /// What the gradient does past its ends.
-  pub tile: TileMode,
-  /// The stop colors sampled along the parameter: `RAMP_WIDTH` texels of
-  /// straight-alpha sRGB rgba8, the ramp texture the glyph program samples.
-  pub ramp: Vec<[u8; 4]>,
 }

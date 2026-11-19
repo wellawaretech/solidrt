@@ -364,19 +364,162 @@ context recovery relinks; the probe's numbers are in Findings.
 
 ## Stage 4: paths, lines and gradients
 
-- Fill and stroke tessellation through `lyon_tessellation` (a new pinned
-  dependency; same author and same path type as the `lyon_path` and
-  `lyon_algorithms` already in tree), over the `lyon_path::Path` each path
-  element already caches (`kinds/path.rs`). Caps, joins, miter limit and
-  fill rule come from lyon. Dashes are ours already (`kinds/dash.rs`).
-- The mesh is kept on the element, keyed on the geometry, the stroke
-  parameters and the tessellation tolerance for the scale, and is redrawn
-  without retessellating while those hold.
-- Meshes draw through a second program and batch like quads. The program
-  starts minimal, as the fill program taught.
-- Linear and radial gradients with transform and tile mode, through a
-  ramp texture as the glyph pass's (`RAMP_WIDTH`). Image color sources.
-- Lines (`kinds/line.rs`) draw as paths, as today.
+Started 2026-11-19, after stage 3 closed.
+
+Goal: every `draw_path` the rendertree records draws (fills under both
+fill rules, strokes with their caps, joins and miter limit, the dashed
+paths the walker makes), and a paint's linear or radial gradient paints
+every shape it is set on, as Impeller drew them. A path's mesh is
+tessellated once and redrawn from a cache while its geometry, its stroke
+and its scale hold. Lines keep their quad (`draw_line`); polylines and
+dashes go through `draw_path` as they do today. The recording API the
+rendertree calls does not change; the rendertree stops building a lyon
+path of its own beside the renderer's.
+
+**Gradients (step 1, anvil and the text resolver).**
+
+- One gradient type in anvil, `RampGradient`: stage 2's `GlyphGradient`
+  renamed, since it serves every draw now. It holds the kind, the tile
+  mode, the ramp (`RAMP_WIDTH` straight-alpha sRGB texels) and two affine
+  rows mapping the op's space to the gradient's parameter space. anvil
+  owns the ramp sampler (`RampGradient::ramp(colors, stops)`: the stops
+  interpolated in straight-alpha sRGB, the first color before the first
+  stop and the last after the last, as the text resolver does today) and
+  the small affine toolkit (compose, invert, the 2D part of a `Matrix`)
+  that `rendertree/text/gradient.rs` carries; the text resolver keeps its
+  box-units and layer-scale logic and calls anvil for both.
+- Record time: `set_color_source` with a gradient no longer warns.
+  `draw_rect`, `draw_rounded_rect`, `draw_oval` and `draw_line` resolve
+  the paint's gradient to a `RampGradient` (`gradient_of`, beside
+  `image_of`): the inverse of the source's transform composed with the
+  linear projection (`t = ((q - start) . d) / |d|^2`) or the radial
+  normalization (translate by minus the center, scale by one over the
+  radius), exactly the text resolver's arithmetic. A degenerate source (a
+  zero-length axis, a non-positive radius, a singular transform, no stops)
+  warns once and the shape draws the paint's color. The shape ops carry
+  `source: Option<Source>`, `Source::Image` or
+  `Source::Gradient(Arc<RampGradient>)`; a line takes a gradient and keeps
+  its image warning.
+- Evaluation is in device space. A batch carries
+  `GradientDraw { gradient: Arc<RampGradient>, rows: Affine }`, the rows
+  mapping a device pixel to the parameter space: the op's rows composed
+  with the inverse of the instance's device map, computed in the walk per
+  op (two 2x3 products; the ramp is shared by `Arc`, never copied). Every
+  program then reads a position it already has, `vDevice`, and none grows
+  a varying for it: the glyph program drops `vPos` and evaluates its
+  gradient the same way, a line's gradient is right although its quad
+  lives in the segment's frame, and a gradient under a rotation or a
+  nested transform is right everywhere. A singular device map draws the
+  op's solid color.
+- Programs: one GLSL snippet, `GRADIENT_COMMON` (the uniforms `uRamp`,
+  `uGradient`, `uGradientX`, `uGradientY`, `uTile`, and
+  `vec4 gradientAt(vec2 device)`: the straight-alpha ramp color, the decal
+  mode's outside as alpha 0), used by the glyph program and by a gradient
+  variant of the fill and of the shape program (`fill_gradient`,
+  `shape_gradient`: the same sources with `#define GRADIENT` ahead; the
+  color is then the premultiplied ramp sample times `vColor`, which the
+  walk sets to the paint's alpha in all four channels, as it does for an
+  image). Five programs link at `new`. A gradient draw is a batch of its
+  own, sealed, as a glyph gradient run is: it rewrites the one ramp
+  texture and sets the rows. `BatchProgram` keeps its classes; the
+  executor picks the variant from `Batch.gradient`.
+- A plain rect with a gradient (the common gradient: a background, a
+  sheen face) draws through `fill_gradient`: the fill program's rule, in
+  a sealed batch.
+
+**Paths (step 2, anvil).**
+
+- `anvil::Path` is an `Arc` over a `lyon_path::Path`, its fill rule, its
+  control-point bounds and a mesh cache. `PathBuilder` wraps lyon's
+  builder and tolerates the contract's walks (a segment before any
+  `move_to` begins at the current point; a `close` with nothing open is
+  nothing). `Path::geometry()` hands the lyon path out for the
+  rendertree's bounds, hit test and dash walk: an inherent method on the
+  concrete type, not a contract method. New pins in `anvil/Cargo.toml`:
+  `lyon_path = "=1.0.19"` (alloy's pin) and `lyon_tessellation =
+  "=1.0.23"` (the release that requires lyon_path 1.0.19). The fill rule,
+  the caps, the joins and the miter limit are lyon's.
+- Tessellation (`renderer/mesh.rs`, pure, tested without GL): a `Mesh` is
+  positions in the path's space, `u32` indices and the vertex bounds. A
+  fill tessellates with lyon's `FillTessellator` under the path's rule, a
+  stroke with the `StrokeTessellator` under the paint's width, cap, join
+  and miter limit, both at a tolerance of `MESH_TOLERANCE` device pixels
+  (0.25, the dash walker's figure; a tuning value) divided by the scale.
+  The scale is the larger axis stretch of the instance's device map,
+  rounded up to a power of two (the scale bucket), so a smooth zoom
+  retessellates only when it crosses a power of two and a mesh is never
+  coarser than the tolerance. A tessellation error logs once and draws
+  nothing for that op.
+- The cache is on the path: up to `MESH_CACHE_ENTRIES` (4) meshes, keyed
+  on the style (fill, or stroke with its width, cap, join and miter) and
+  the scale bucket, the oldest replaced. The element's `Path` and every
+  recording's clone share the one `Arc`, so a retained list redraws from
+  the cache and an element whose stroke animates retessellates only that
+  key. Tessellation runs in the walk, on the raster thread, where the
+  scale is known; its count is reported.
+- A `DrawPath` op carries the path, the style (fill, or stroke with its
+  metrics), the premultiplied color and the source (image or gradient),
+  one op per style: a stroke-and-fill records a fill op and a stroke op,
+  so the stroke covers the fill as Skia's does. Before tessellating, the
+  walk rejects an op whose control-point bounds, outset by the stroke's
+  reach (half the width times the larger of the miter limit and sqrt 2),
+  miss the clip; after, by the mesh's own bounds.
+- Meshes draw through a mesh program and batch like quads. The walk
+  transforms a mesh's vertices into device space on the CPU (cheap next
+  to the tessellation it skipped) and appends them to a mesh vertex
+  buffer, `MeshVertex { device: [f32; 2], color: [f32; 4] premultiplied,
+  clip: [f32; 4] }`, with the indices rebased; a mesh batch is a range of
+  indices, drawn by `glDrawElements` from a second VAO over the mesh
+  buffers, uploaded once per draw beside the instances. Consecutive path
+  ops share a batch while their texture, their gradient (none, or one
+  sealed batch) and their rounded clip agree. The rounded clip is a
+  per-batch uniform pair (`uRClip`, `uRClipRadii`), the one state that is
+  not per vertex, because a path under a rounded clip is rare and the
+  alternative is eight more floats a vertex. Per-vertex color and clip,
+  40 bytes a vertex, are the deliberate minimum that batches across paths
+  with different colors and clips; a slot table or retained GPU meshes
+  are the next step if the TV read says the upload is the cost.
+- The mesh program's fragment stage is the fill program's: the clip box
+  as a factor, no discard, no derivative, `roundedClip()` from the
+  uniforms with its early return. Variants as the quads': `mesh`,
+  `mesh_gradient` (`gradientAt(vDevice)`), `mesh_textured` (an image
+  source: the uv from `vDevice` through a per-batch device-to-texel map,
+  composed at walk time from the source's map and the instance's inverse,
+  so no vertex carries a uv). Eight programs in all; each stays minimal.
+- `DrawReport` gains `meshes` (path ops drawn) and `tessellated` (cache
+  misses this draw); alloy sums them into the raster stats beside
+  instances and draw calls, so `/stats` shows whether the cache holds.
+- Batches interleave in painter's order: the executor binds the instance
+  VAO or the mesh VAO per batch. The scissor is the union of the quad
+  clips and the mesh clips.
+
+**In alloy (step 3).** `kinds/path.rs` drops its own lyon builder and
+reads the geometry from the drawn path (`Path::geometry()`): bounds,
+stroke shape, dash pieces and the hit test over the one path. The raster
+stats carry the two new counts. `alloy/examples/path_mesh.rs` on the real
+GL path: a nonzero and an even-odd star, a stroke's miter tip against a
+bevel, round caps, a dashed curve, a gradient rect against CPU-evaluated
+expected colors, a gradient and an image-filled path, each under a rect
+clip, a rounded clip and a rotation; and a second draw of the same list
+reports no tessellation while a doubled scale reports one.
+
+**Measure.** The branch's own output before and after step 1 for the
+gradient text example (a refactor: zero, or the 1/255 class), and the
+path examples (`line-points`, `parse-svg`, `on-layout-connect`, the
+gallery's icons) against main's reference client, reported. A probe,
+`probes/path-bench.tsx`: a grid of stroked polylines (sparklines of N
+points; `route=live` rewrites the points every frame, `route=static`
+retains them) and gradient panels; the frame rate, the GPU time, the draw
+calls, the mesh and tessellation counts and the raster thread's CPU on
+the desktop and the TV. Into Findings.
+
+**Done.** Every `draw_path` the rendertree records draws: fills under
+both rules, strokes with caps, joins and the miter limit, dashes;
+gradients on rects, rounded rects, ovals, lines, paths and text through
+one ramp path; the example's checks hold; a retained list's redraw
+tessellates nothing; the walk tests cover the batch rules, the rows
+composition, the cache key and the scale bucket; the probe's numbers are
+in Findings.
 
 ## Stage 5: full transforms and clips
 

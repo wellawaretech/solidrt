@@ -15,7 +15,7 @@ use alloy::rendertree::text::glyphs::{
   AtlasPacker, CellKind, CellRequest, Fallback, FontSet, GlyphAtlas, Hint, Rasterizer, ShapeStyle, ShapedGlyphs,
 };
 use alloy::rendertree::FontPayload;
-use alloy::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, SamplerState, RAMP_WIDTH};
+use alloy::{CoverageMode, CoveragePolicy, GlyphQuad, GradientKind, RampGradient, SamplerState, RAMP_WIDTH};
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -148,7 +148,7 @@ fn draw_runs(ctx: &alloy::Context, atlas: &Texture, runs: &[Run], policy: Covera
 // `<text>` records per paint.
 struct Run {
   quads: Vec<GlyphQuad>,
-  gradient: Option<GlyphGradient>,
+  gradient: Option<RampGradient>,
 }
 
 fn solid(quads: Vec<GlyphQuad>) -> Run {
@@ -233,7 +233,7 @@ fn main() {
       })
       .collect();
     let advance = shaped.metrics.advance;
-    let gradient = GlyphGradient {
+    let gradient = RampGradient {
       kind: GradientKind::Linear,
       x_row: [1.0 / advance, 0.0, -PEN_X / advance],
       y_row: [0.0; 3],

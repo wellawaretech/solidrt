@@ -14,8 +14,9 @@
 use crate::contract::DrawReport;
 use crate::prelude::*;
 use crate::renderer::walk::{
-  walk, Batch, BatchProgram, Instance, PaintDraw, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, FILL_FOLD_AREA, KIND_GLYPH,
-  KIND_LINE, KIND_OVAL, KIND_PAINT, KIND_RECT, KIND_ROUNDED_RECT, KIND_TEXTURED, ROUNDED_QUAD_PAD,
+  walk, Batch, BatchProgram, GradientDraw, Instance, PaintDraw, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE,
+  FILL_FOLD_AREA, KIND_GLYPH, KIND_LINE, KIND_OVAL, KIND_PAINT, KIND_RECT, KIND_ROUNDED_RECT, KIND_TEXTURED,
+  ROUNDED_QUAD_PAD,
 };
 use crate::renderer::{
   paint_fragment_source, report, test_paint_shader, test_texture, DeletionQueue, Freed, PAINT_FRAGMENT_EPILOGUE,
@@ -26,7 +27,7 @@ use crate::{
   Point, Rect, RoundingRadii, ShaderInput, ShaderParam, Size, StrokeCap, Texture, TextureSampling, TextureWrap,
   TileMode,
 };
-use crate::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphQuad, GradientKind, RAMP_WIDTH};
+use crate::{CoverageMode, CoveragePolicy, GlyphQuad, GradientKind, RampGradient, RAMP_WIDTH};
 use euclid::default::{Box2D, Point2D};
 use std::sync::Arc;
 
@@ -743,8 +744,8 @@ fn word(x: f32) -> Arc<[GlyphQuad]> {
 }
 
 // A red-to-blue linear gradient across the first hundred pixels.
-fn gradient() -> GlyphGradient {
-  GlyphGradient {
+fn gradient() -> RampGradient {
+  RampGradient {
     kind: GradientKind::Linear,
     x_row: [1.0 / TARGET, 0.0, 0.0],
     y_row: [0.0; 3],
@@ -853,7 +854,9 @@ fn a_gradient_run_is_its_own_batch() {
     .draw_glyphs(&atlas, &word(60.0), policy, None);
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 9);
-  let graded = Batch { gradient: Some(g.clone()), ..glyphs(2, 2, &atlas, policy) };
+  // Under the identity the device rows are the op's own.
+  let draw = GradientDraw { gradient: g.clone(), rows: [g.x_row, g.y_row] };
+  let graded = Batch { gradient: Some(draw), ..glyphs(2, 2, &atlas, policy) };
   // Split before and after the gradient run; the rect is a fill batch of
   // its own between the solid runs.
   assert_eq!(
