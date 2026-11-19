@@ -49,7 +49,6 @@ The `sol` CLI, the dev server, MCP, debug commands, examples and probes.
 - Splat order gate: ORDER_DIRECTION_EPS_COS (~2 degrees, set by feel) was priced when a re-sort republished 28 MB at 1M; the indexed form republishes 4 MB, so measure a tighter gate (0.5-1 degree) on the Pixel 7 for the popping it removes against the re-sorts it adds (okf/done/splat-sort-spike.md: above SYNC_SORT_MAX_KEYS a re-sort now runs on the sort thread, so a tighter gate costs that thread's work and the order's lag, not frames).
 - `sol android --census` matches no SurfaceFlinger layer for `com.solidrt.player.dev` although it lists the layer (seen on the Android 8 TV).
 - Stale probes import `srt:dev` (`probes/layout-slide-*.tsx`, `probes/batch1-probe.tsx`): rename to `sol:dev` or delete the probes.
-- Rebuild main's reference client in `target/main-ref/` from a main checkout built whole (its own core): the 2026-11-18 copy predates stage 3's `flux:gpu` exports and refuses a bundle built from today's core, so the own-renderer pixel diff against main cannot run until it is (okf/plans/own-renderer.md, stage 4 findings).
 
 ## Runtime
 
@@ -75,7 +74,4 @@ alloy, forge, flux, lattice.
 - alloy/src/barcode.rs (QR decode over a pixel buffer, no SDL) belongs in forge under the alloy/forge placement rule (CLAUDE.md, Projects); move it with its tests/qr_decode.rs and point the camera scanner and the image scan API at forge.
 - camera open polling: the open task and `watch_scan` (flux/src/alloy_plugins/camera.rs) sleep `OPEN_POLL_MS` in a loop until `pump_camera` leaves Pending; have alloy's camera wake a waiter instead (the init thread finishing, SDL's camera approved/denied events on the main loop in place of the `camera_permission` poll, the tap's first frame) and block on that wait from `spawn_blocking` in the plugin, keeping tokio out of alloy.
 - `alloy/examples/pixel_snap.rs` asserts one snapshot re-make at rest at 1.5x and gets (1, 0) against (0, 1) on main and the branch alike: a stale expectation, not a regression; fix the assertion.
-- `alloy/examples/texture_paint.rs` panics at its half-alpha precheck under anvil (127 against 128, the unorm8 tie rounding) and never reaches its later cases; give the precheck a tolerance of one level, as okf/plans/own-renderer.md's stage 7 will decide for the renders.
-- `alloy/examples/glyph_run.rs` lost its per-mode comparison when the GL glyph pass went: the four non-naive coverage modes (linear light, the two polarity modes, DirectWrite) have no pixel check; add a CPU reference per mode to the example.
-- `alloy/examples/text_layer.rs` (untracked) exercised the retired glyph pass and no longer builds; delete it or rewrite it over `draw_glyphs`.
 

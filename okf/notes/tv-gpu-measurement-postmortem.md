@@ -6,7 +6,7 @@ created: 2026-09-02
 
 # Postmortem: a bad GPU counter steered a day of TV perf work
 
-The incident behind okf/backlog/display-list-op-cost.md (born as
+The incident behind okf/plans/display-list-op-cost.md (born as
 "partial-repaint-android"), 2026-09-02. The instrument at fault is the
 one okf/done/gpu-timer-attribution.md had already convicted on
 2026-08-27.

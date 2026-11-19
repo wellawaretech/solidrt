@@ -6,6 +6,8 @@ created: 2026-11-19
 
 # Keep a path's mesh on the GPU across frames
 
+Part of stage 5 of [own-renderer](own-renderer.md): that stage is not done until this item is.
+
 The stage 4 design (okf/plans/own-renderer.md) chose per-vertex device
 positions, color and clip in a stream buffer rebuilt every draw: 40 bytes
 a vertex, every cached mesh transformed on the CPU and uploaded again

@@ -6,6 +6,8 @@ created: 2026-09-22
 
 # A rounded clip on a box whose size is in flight costs a third of the frame on Android
 
+Part of stage 5 of [own-renderer](own-renderer.md): that stage is not done until this item is.
+
 ## Symptom
 
 The notes demo (demo/notes: ten frosted panes in a collage, every pane a

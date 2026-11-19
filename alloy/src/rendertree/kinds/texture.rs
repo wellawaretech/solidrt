@@ -233,7 +233,7 @@ impl Buildable for Texture {
       // destination rect. The same geometry path a rounded d-rect takes,
       // and nothing is clipped: a rounded clip around a texture costs a
       // tiled GPU a third of the frame per ten panes while the clip's box
-      // is in flight (okf/backlog/rounded-clip-cost-android.md); this
+      // is in flight (okf/plans/rounded-clip-cost-android.md); this
       // draw costs what the plain texture draw does.
       Some([tl, tr, br, bl]) if src_rect.size.width > 0.0 && src_rect.size.height > 0.0 => {
         let sx = dst_rect.size.width / src_rect.size.width;

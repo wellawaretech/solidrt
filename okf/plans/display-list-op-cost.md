@@ -6,6 +6,8 @@ created: 2026-09-02
 
 # Per-op display-list cost dominates animated frames on slow CPUs
 
+Part of stage 7 of [own-renderer](own-renderer.md): that stage is not done until this item is.
+
 Started life as "partial repaint on Android's multisampled fast path";
 renamed once measurement showed the cost has nothing to do with the
 window configuration or partial repaint.

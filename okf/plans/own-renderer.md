@@ -20,7 +20,7 @@ arithmetic. Two things have changed since it was written:
   Impeller as one `draw_texture_rect` of its layer.
 
 The performance case is
-[display-list-op-cost](../backlog/display-list-op-cost.md): about 30 us of
+[display-list-op-cost](../plans/display-list-op-cost.md): about 30 us of
 Impeller's CPU per op on the armv7 TV, paid even for ops the clip rejects,
 so 800 ops miss the 20 ms budget at 50 Hz. The quality case is the
 `upstream/impeller-*` defects nobody can fix for us.
@@ -523,13 +523,58 @@ in Findings.
 
 ## Stage 5: full transforms and clips
 
-- Clips under rotation and perspective, `clip_rounded_rect`, `clip_oval`,
-  and the difference op. An axis-aligned rounded clip stays per instance
-  (a distance test in the fragment stage). The general case uses the
-  stencil buffer.
-- Perspective for draws.
+Goal: every transform and clip the contract takes draws. The costs the
+stage 4 TV read found in the mesh upload, the ramp rewrite and the shape
+program are paid here too, because their fixes change the same instance
+layout, vertex format and program set that perspective and the clips
+change. They are items of their own beside this plan, and the stage is
+not done until each item's "Done looks like" holds.
+
+**Transforms (step 1).** The instance layout and the mesh format are
+designed once, for perspective, retained meshes and merged gradients
+together.
+
+- Perspective for draws: a quad's device map and a mesh's map are the
+  full 3x3, so the varyings interpolate perspective-correct.
+- [retained-mesh-buffers](retained-mesh-buffers.md): a mesh stays on the
+  GPU in the path's space and draws with its map as a uniform, in place
+  of the device positions the walk writes every frame. Perspective needs
+  a new vertex format anyway; this is that format. The item's cheap check
+  comes first: orphan the stream buffers and read the TV.
+- [gradient-ramp-atlas](gradient-ramp-atlas.md): one ramp row per
+  gradient in the frame, the row and the gradient's device map on the
+  instance, so gradient batches merge. Under perspective that map is 3x3,
+  which sets the instance layout's size.
 - The dash, stroke and gradient cases under these transforms that the
   parity tail lists in the note.
+
+**Clips (step 2).**
+
+- `clip_rounded_rect`, `clip_oval`, the difference op, and every clip
+  under rotation and perspective. An axis-aligned rounded clip stays per
+  instance (a distance test in the fragment stage). The general case uses
+  the stencil buffer.
+- [rounded-rect-fill-program](rounded-rect-fill-program.md): a lean
+  program for a rounded rect fill and for a plain fill under an
+  axis-aligned rounded clip, which is the same rounded-box distance. It
+  is written against step 1's instance layout, with its gradient variant.
+- [rounded-clip-cost-android](rounded-clip-cost-android.md) closes on the
+  tablet read after the lean program lands.
+
+**The text atlas (step 3).** [text-atlas-cap](text-atlas-cap.md): a
+fixed cap on the atlas side, set by lattice, with the existing eviction
+running at the cap. It is independent of steps 1 and 2.
+
+**Measure.** The path bench's routes on the TV (live and static, with
+`radius`, `gradient`, `points` and the veil) against stage 4's figures
+in Findings; the rounded clip item's tablet read (ten panes under
+rounded clips, sliding and resizing on a layout transition); the item's churn probe for the atlas, on the desktop and
+the TV. Into Findings.
+
+**Done.** The contract's transforms and clips draw, with no "not
+supported yet" warning left for them; the five items' "Done looks like"
+hold; the stage 4 examples' pixels are unchanged against the branch's
+output before the stage (zero diff), except where a draw is new.
 
 ## Stage 6: layers and effects
 
@@ -556,8 +601,24 @@ in Findings.
   fails on 2026-11-19. Whether anvil places the glyph quads differently
   from Impeller's text layers, or the bound was fitted to Impeller, is
   open.
-- Damage and partial repaint on the rig path and buffer age, re-verified
-  against the new renderer's output.
+- Before the diff runs: main's reference client in `target/main-ref/`
+  rebuilt from a main checkout built whole (its own core), since the
+  2026-11-18 copy predates stage 3's `flux:gpu` exports and refuses a
+  bundle built from today's core; and the alloy examples the branch broke
+  made whole. `texture_paint.rs` panics at its half-alpha precheck (127
+  against 128, the unorm8 tie rounding) and gets a tolerance of one
+  level, the same rule the renders get. `glyph_run.rs` lost its per-mode
+  pixel checks with the GL glyph pass and gets a CPU reference per
+  coverage mode. `text_layer.rs` (untracked) drew through the retired
+  glyph pass and is rewritten over `draw_glyphs` or deleted.
+- [repaint-patch-union](repaint-patch-union.md) first: the mover probes'
+  repaint patch is a third of the window under both renderers, so every
+  mover read so far measured that patch, not the mover. Then damage and
+  partial repaint on the rig path and buffer age, re-verified against the
+  new renderer's output.
+- The end state's TV read: the dense mover probe locked at 50 fps, with
+  the patch fixed. [display-list-op-cost](display-list-op-cost.md), the
+  performance case this plan started from, closes on it.
 - Android, Windows and macOS, and the TV again.
 - The branch merges. Impeller left at stage 1; what goes here is the
   interim machinery it left behind: the adoption bookkeeping
@@ -1122,7 +1183,7 @@ repaint and with the window patch off: the dense mover and the prose
 bench run locked at 50 fps on the TV, and a screen of prose draws in two
 or three batches. Open from the stage, into the backlog or later stages:
 the partial-repaint patch that is a third of the window on the mover
-probes under both renderers (`okf/backlog/repaint-patch-union.md`); the
+probes under both renderers (`okf/plans/repaint-patch-union.md`); the
 sampler-array TV read, not taken (its design is above); `FILL_FOLD_AREA`
 not yet re-read on the TV.
 
@@ -1340,7 +1401,7 @@ vertices, 600 KB a frame at 40 bytes each). The static route's 573 to
 batches over the background: a gradient draw is a batch of its own (the
 one ramp texture is rewritten per batch), so a grid of gradient panels
 with content between them cannot merge; a ramp atlas would let gradient
-batches join (`okf/backlog/gradient-ramp-atlas.md`).
+batches join (`okf/plans/gradient-ramp-atlas.md`).
 
 **TV** (Philips TPM171E, Mali-T860, 1920x1080 at 50 Hz, a 960x540 logical
 window at scale 2, armeabi-v7a; the branch client of 7b90528e, cadence
@@ -1373,7 +1434,7 @@ microseconds per vertex for the per-frame transform and upload of the
 cached meshes, 29 ms a frame for the 15,000 vertices of the 256-point
 case, which no longer holds the refresh. That is the case the design
 named: a slot table or retained GPU meshes
-(`okf/backlog/retained-mesh-buffers.md`). Tessellation itself is cheap
+(`okf/plans/retained-mesh-buffers.md`). Tessellation itself is cheap
 beside it: the live solid rows add 30 tessellations a frame for about 3
 ms of raster thread at 64 points, and the GPU time is the same.
 
@@ -1384,14 +1445,14 @@ plain gradient row presents 289 frames with 204 missed where the solid
 row presents 494 with 0 to 6, at the same GPU time and the same thread
 shares, and the static plain gradient row misses 29 to 30 presents where
 the solid one misses none. A ramp atlas uploaded once per draw removes
-the rewrite (`okf/backlog/gradient-ramp-atlas.md`, raised by this read);
+the rewrite (`okf/plans/gradient-ramp-atlas.md`, raised by this read);
 glyph gradient runs have rewritten the ramp the same way since stage 2.
 The rounded corners cost more than either: thirty rounded gradient
 panels of 320x180 device pixels (1.7 million fragments) through the
 shape program's gradient variant cost 33.5 ms of GPU against 21.3 as
 plain gradient rects, the shape program's per-fragment price stage 2
 measured, now on the most common UI shape
-(`okf/backlog/rounded-rect-fill-program.md`).
+(`okf/plans/rounded-rect-fill-program.md`).
 
 The live rows are bound on the UI thread before anything the renderer
 does: rewriting thirty polylines' points a frame costs 19 to 21 ms of UI
@@ -1445,7 +1506,11 @@ the desktop and TV numbers are above. Open, into the backlog: retained
 GPU meshes (the TV's per-frame upload), the ramp atlas (the per-batch
 stall and the merged gradient batches), a lean rounded rect fill program,
 the polyline points write cost on the UI thread, and the main reference
-client's rebuild for stage 7's diff (tiny).
+client's rebuild for stage 7's diff (tiny). On 2026-11-19 the renderer
+items were folded back into the plan: the meshes, the ramp atlas and the
+rounded program into stage 5, the reference client into stage 7. The
+polyline write cost is UI-thread work, not the renderer's, and stays in
+the backlog.
 
 ### Where anvil lives (2026-11-18)
 

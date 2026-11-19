@@ -273,7 +273,7 @@ impl DamageTracker {
     }
     // Probe before the multisampled escape so the log answers what the
     // APP's EGL context supports even where its window is not patched
-    // (okf/backlog/display-list-op-cost.md). Not for an age known without
+    // (okf/plans/display-list-op-cost.md). Not for an age known without
     // it.
     if known_age.is_none() && !self.buffer_age_tried {
       self.buffer_age_tried = true;

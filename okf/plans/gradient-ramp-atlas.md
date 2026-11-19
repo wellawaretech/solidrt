@@ -6,6 +6,8 @@ created: 2026-11-19
 
 # A ramp atlas so gradient batches merge
 
+Part of stage 5 of [own-renderer](own-renderer.md): that stage is not done until this item is.
+
 anvil evaluates a gradient per device pixel from a `RAMP_WIDTH` x 1 ramp
 texture that the executor rewrites for every gradient batch
 (`exec.rs` `gradient_state`), so the walk seals a batch per gradient op

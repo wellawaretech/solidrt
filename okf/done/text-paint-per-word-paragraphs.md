@@ -41,7 +41,7 @@ exiting pane scales its paragraph's bitmap.
   paragraph is ~36 words, so five paragraphs put ~180 paragraph draws into
   the display list per frame (wordHits 157 above is that lookup count).
 - Each of those is a display-list op carrying an Impeller paragraph: the
-  raster thread's per-op cost (okf/backlog/display-list-op-cost.md) and
+  raster thread's per-op cost (okf/plans/display-list-op-cost.md) and
   Impeller's per-paragraph text pipeline (glyph collection against the
   atlas, one text draw per paragraph, nothing batched across them) both
   scale with word count, not glyph count. The layout side re-runs

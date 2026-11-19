@@ -113,7 +113,7 @@ the offscreen rig:
    Findings; power/frameMs on fill-bound hardware (a TV) still to be
    measured.
 3. Follow-ups extracted at completion: the Android fast-path decision
-   is [display-list-op-cost](../backlog/display-list-op-cost.md)
+   is [display-list-op-cost](../plans/display-list-op-cost.md)
    (symptom measured on the TV); the compositor damage hint and
    multiple damage rects are ideas.md lines awaiting a measured victim;
    layer promotion (the Chrome-style layer tree) stays a deliberate

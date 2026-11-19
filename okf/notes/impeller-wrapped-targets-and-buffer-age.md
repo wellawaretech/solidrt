@@ -44,7 +44,7 @@ flip, no mirroring). Validated pixel-exact in the probe's phase C.
   enables the query). Ages come back valid every frame at steady
   state. `eglSetDamageRegionKHR` resolves and accepts per-frame
   sub-rects, but does not reduce timed GPU frame cost on the
-  multisampled fast path (see okf/backlog/display-list-op-cost.md).
+  multisampled fast path (see okf/plans/display-list-op-cost.md).
   The window backbuffer there is 4x multisampled (the in-tile fast
   path), where partial composition does not apply anyway.
 

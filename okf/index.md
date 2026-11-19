@@ -110,6 +110,20 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
   assets in the manifest, then signed OTA."
+- **[Per-op display-list cost dominates animated frames on slow CPUs](plans/display-list-op-cost.md)** [2026-09-02]
+  The MediaTek TV's ~40 ms animated-frame cost is NOT GPU fill - saturation
+  runs show it scales with static display-list op count at constant damage
+  (800 ops = 26 fps, 50 ops = 50 fps locked) and is identical on the fast path
+  and the rig partial path; the bottleneck is per-op display-list processing
+  on the armv7 CPU, so the real lever is not handing Impeller the full scene
+  DL every frame.
+- **[A ramp atlas so gradient batches merge](plans/gradient-ramp-atlas.md)** [2026-11-19]
+  Every gradient draw is a sealed batch of its own because the one ramp
+  texture is rewritten per batch, and on the Mali-T860 that rewrite stalls the
+  pipeline (thirty gradient rects a frame run at 29 fps where solid ones run
+  at 50 with the same GPU time); a row-per-gradient ramp atlas uploaded once
+  per draw would remove the stall and let gradient quads and meshes batch like
+  solid ones.
 - **[Make a lattice git dependency build at a release tag](plans/lattice-tag-dependency-bundles.md)** [2026-10-11]
   A custom runtime depends on lattice by git tag, but the library embedded two
   bundles the JavaScript toolchain generates (untracked since v0.0.71), so
@@ -126,6 +140,34 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   paths, full clips, layers and effects, and parity. The end state draws text
   and generator shaders straight into the frame and keeps offscreen passes
   only where a pass reads its own input.
+- **[The partial-repaint patch on the mover probes is a third of the window](plans/repaint-patch-union.md)** [2026-11-18]
+  On the dense and sparse mover probes the window's repaint patch reaches from
+  the mover's older left edge to the window's right edge and from the top of
+  the window to the mover's bottom, about 410,000 device pixels for a 20 px
+  mover, under Impeller and anvil alike; the route's union of this frame's
+  damage with the ring of the last age-1 frames' damage is the suspect, in
+  particular a fold of an empty rect with a non-zero origin.
+- **[Keep a path's mesh on the GPU across frames](plans/retained-mesh-buffers.md)** [2026-11-19]
+  anvil transforms and uploads every cached path mesh on every frame (about 10
+  ms of raster thread per frame for thirty 64-point strokes on the armv7 TV,
+  29 ms at 256 points, with no tessellation); a mesh kept in a GPU buffer
+  across frames, drawn with its transform as a uniform or a per-draw matrix,
+  would make a retained screen of paths cost its draw calls only.
+- **[A rounded clip on a box whose size is in flight costs a third of the frame on Android](plans/rounded-clip-cost-android.md)** [2026-09-22]
+  Ten panes with overflow hidden + clipRadius, sliding and resizing on a
+  layout transition, take the Galaxy Tab A7 (Adreno 610, Impeller GLES) from
+  60 fps to 20 fps - measured from SurfaceFlinger present timestamps, not from
+  get_stats; a static rounded clip is nearly free, one resizing rounded pane
+  costs ~8 ms, ten ~13 ms, and an image under the clip pays most. Cause not
+  yet located below the display list; needs an Impeller-level look.
+- **[A lean program for rounded rect fills](plans/rounded-rect-fill-program.md)** [2026-11-19]
+  A rounded rect fill goes through the shape program, whose per-fragment cost
+  on the Mali-T860 (the kind branches, the discard, the derivatives, the nine
+  varyings) makes thirty gradient panels of 320x180 device pixels cost about
+  20 ms of GPU a frame against about 2 ms as plain rects; a fill-only rounded
+  program (the rounded-box distance, no stroke, no oval or line arm, no
+  texture), also taking plain fills under a rounded clip, would bring panels,
+  cards and buttons near the fill program's cost.
 - **[Spatial audio - emitter and listener nodes on the spatial core](plans/spatial-audio-emitters.md)** [2026-08-30]
   A playback bound to a spatial node (or a fixed position) and heard by a
   listener (a node, or a target's view - the camera), the core writing its
@@ -149,6 +191,13 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   bytes per splat; a product-quantized encoding behind the SH block's
   `encoding` field would cut the dominant texture 12x, at the price of a
   bake-time k-means to engineer and a quality judgement of its own.
+- **[Cap the text atlas below the device's texture limit](plans/text-atlas-cap.md)** [2026-11-19]
+  The text atlas grows by doubling up to the GPU's maximum texture side before
+  it evicts anything, so a churning repertoire takes it to 16384x8192 on a
+  desktop GPU, 128 MiB of R8 texture held for the rest of the process;
+  browsers hold a few 2048 pages and evict at the page. Cap the side at a
+  fixed, modest size and let the existing two-second eviction run there; go
+  multi-page only if a real app overflows it.
 - **[Documentation website](plans/website.md)** [2026-07-16]
   "A monorepo website/ generated statically by a flux script: section nav, a
   Core-first Start page, and generate-what-we-can content (API reference from
@@ -483,13 +532,6 @@ Shaped, not started.
   get_stats/get_snapshot need a JS-thread slice, so they time out on a busy
   (healthy) app with a message that says "wedged"; serve inventory and stats
   off published state, and name the real timeout.
-- **[Per-op display-list cost dominates animated frames on slow CPUs](backlog/display-list-op-cost.md)** [2026-09-02]
-  The MediaTek TV's ~40 ms animated-frame cost is NOT GPU fill - saturation
-  runs show it scales with static display-list op count at constant damage
-  (800 ops = 26 fps, 50 ops = 50 fps locked) and is identical on the fast path
-  and the rig partial path; the bottleneck is per-op display-list processing
-  on the armv7 CPU, so the real lever is not handing Impeller the full scene
-  DL every frame.
 - **[A divider and the text caret land off the device grid at fractional scales](backlog/divider-caret-device-pixels.md)** [2026-11-10]
   A divider is a filled rect in a view one logical pixel high, so the box snap
   rounds its two edges apart and at 1.5x it is 2 device pixels on one row and
@@ -604,13 +646,6 @@ Shaped, not started.
   not animatable), so a lit fill snaps on a theme switch where a solid fill
   cross-fades; interpolate gradients that share a kind and stop count, stop
   colors in oklab and positions linearly, and keep snapping for the rest.
-- **[A ramp atlas so gradient batches merge](backlog/gradient-ramp-atlas.md)** [2026-11-19]
-  Every gradient draw is a sealed batch of its own because the one ramp
-  texture is rewritten per batch, and on the Mali-T860 that rewrite stalls the
-  pipeline (thirty gradient rects a frame run at 29 fps where solid ones run
-  at 50 with the same GPU time); a row-per-gradient ramp atlas uploaded once
-  per draw would remove the stall and let gradient quads and meshes batch like
-  solid ones.
 - **[Haptic waveforms - envelopes and navigator.vibrate](backlog/haptic-waveforms.md)** [2026-11-13]
   Feedback by intent covers a tap or a toggle, but an engine, an alarm or a
   pattern with a duration has no API. A waveform is an envelope of intensity
@@ -875,40 +910,12 @@ Shaped, not started.
   removeNode detaches and a microtask sweep frees, so control-flow reuse
   inside one tick survives but a node re-inserted in a later async tick is
   already gone, where the DOM would have kept it alive.
-- **[The partial-repaint patch on the mover probes is a third of the window](backlog/repaint-patch-union.md)** [2026-11-18]
-  On the dense and sparse mover probes the window's repaint patch reaches from
-  the mover's older left edge to the window's right edge and from the top of
-  the window to the mover's bottom, about 410,000 device pixels for a 20 px
-  mover, under Impeller and anvil alike; the route's union of this frame's
-  damage with the ring of the last age-1 frames' damage is the suspect, in
-  particular a fold of an empty rect with a non-zero origin.
-- **[Keep a path's mesh on the GPU across frames](backlog/retained-mesh-buffers.md)** [2026-11-19]
-  anvil transforms and uploads every cached path mesh on every frame (about 10
-  ms of raster thread per frame for thirty 64-point strokes on the armv7 TV,
-  29 ms at 256 points, with no tessellation); a mesh kept in a GPU buffer
-  across frames, drawn with its transform as a uniform or a per-draw matrix,
-  would make a retained screen of paths cost its draw calls only.
 - **[Rich text editor](backlog/rich-text-editor.md)** [2026-08-18]
   TextInput edits a string, so styled runs, links, inline atoms and block
   attributes could not be authored in-app; the editor exists since 2026-08-19
   (prepareText over styled runs, a document buffer, the shared EditorField
   shell, RichTextEditor with range selection since 2026-09-02). Open: inline
   atoms draw as U+FFFC only, and lists have no marker or indent.
-- **[A rounded clip on a box whose size is in flight costs a third of the frame on Android](backlog/rounded-clip-cost-android.md)** [2026-09-22]
-  Ten panes with overflow hidden + clipRadius, sliding and resizing on a
-  layout transition, take the Galaxy Tab A7 (Adreno 610, Impeller GLES) from
-  60 fps to 20 fps - measured from SurfaceFlinger present timestamps, not from
-  get_stats; a static rounded clip is nearly free, one resizing rounded pane
-  costs ~8 ms, ten ~13 ms, and an image under the clip pays most. Cause not
-  yet located below the display list; needs an Impeller-level look.
-- **[A lean program for rounded rect fills](backlog/rounded-rect-fill-program.md)** [2026-11-19]
-  A rounded rect fill goes through the shape program, whose per-fragment cost
-  on the Mali-T860 (the kind branches, the discard, the derivatives, the nine
-  varyings) makes thirty gradient panels of 320x180 device pixels cost about
-  20 ms of GPU a frame against about 2 ms as plain rects; a fill-only rounded
-  program (the rounded-box distance, no stroke, no oval or line arm, no
-  texture), also taking plain fills under a rounded clip, would bring panels,
-  cards and buttons near the fill program's cost.
 - **[Router link into a nested screen has nothing beneath it](backlog/router-link-parent-stack.md)** [2026-09-25]
   "A launch link into a screen outside the tabs lands as a stack of one, so
   back leaves the app instead of going to the list; a route option to
@@ -1033,13 +1040,6 @@ Shaped, not started.
   An app test with { size } sometimes mounts at the run's window (1280x720)
   instead of the size it set; seen twice in CI on "a size alone keeps scale
   1", while the same commit passes on rerun.
-- **[Cap the text atlas below the device's texture limit](backlog/text-atlas-cap.md)** [2026-11-19]
-  The text atlas grows by doubling up to the GPU's maximum texture side before
-  it evicts anything, so a churning repertoire takes it to 16384x8192 on a
-  desktop GPU, 128 MiB of R8 texture held for the rest of the process;
-  browsers hold a few 2048 pages and evict at the page. Cap the side at a
-  fixed, modest size and let the existing two-second eviction run there; go
-  multi-page only if a real app overflows it.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,

@@ -90,7 +90,7 @@ spawned a mis-attributed backlog item, an eglSetDamageRegionKHR probe
 implementation (later removed), and a window-config design debate, before
 saturation measurement showed the cost was CPU-side display-list walking
 (okf/notes/tv-gpu-measurement-postmortem.md,
-okf/backlog/display-list-op-cost.md).
+okf/plans/display-list-op-cost.md).
 
 ## Resolution (2026-09-02)
 

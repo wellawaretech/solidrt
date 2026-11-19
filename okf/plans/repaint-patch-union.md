@@ -6,6 +6,8 @@ created: 2026-11-18
 
 # The partial-repaint patch on the mover probes is a third of the window
 
+Part of stage 7 of [own-renderer](own-renderer.md): that stage is not done until this item is.
+
 ## Symptom
 
 `probes/damage-probe.tsx` and `probes/damage-probe-sparse.tsx` move a

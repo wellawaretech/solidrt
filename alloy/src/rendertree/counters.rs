@@ -49,7 +49,7 @@ pub struct LayoutCounters {
   pub cache_hits: u32,
   /// Display-list ops the paint walk recorded (the frame's cost on the
   /// raster thread and the GPU scales with these on a slow CPU or a tiled
-  /// GPU, okf/backlog/display-list-op-cost.md): draw ops of every kind
+  /// GPU, okf/plans/display-list-op-cost.md): draw ops of every kind
   /// (rects, paths, textures, glyph runs, replayed recordings); clip ops,
   /// of which `rounded_clips` are the rounded (and oval) ones, the kind
   /// that costs a third of a tiled GPU's frame on a resizing box; and

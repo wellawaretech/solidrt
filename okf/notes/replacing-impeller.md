@@ -16,7 +16,7 @@ down is that the pieces existed in five places and the synthesis in none:
 [graphics-backend-strategy](graphics-backend-strategy.md) has the interop
 analysis but assumes Impeller stays,
 [text-own-rasterizer](../done/text-own-rasterizer.md) covers the text
-half, [display-list-op-cost](../backlog/display-list-op-cost.md) has the
+half, [display-list-op-cost](../plans/display-list-op-cost.md) has the
 performance motivation without naming a replacement, and the three
 `upstream/impeller-*` files each record one unfixable defect without adding
 them up.
@@ -164,7 +164,7 @@ the word cache and the raster thread's GL ownership.
 1. **Per-op CPU cost on slow devices.** The measured TV ceiling is a
    display-list op-count problem: 800 static rects run at 26.7 fps, 50 run
    vsync-locked at 50, with damage constant at 660 px
-   ([display-list-op-cost](../backlog/display-list-op-cost.md)). An
+   ([display-list-op-cost](../plans/display-list-op-cost.md)). An
    immutable display list rebuilt per frame cannot escape that. A retained
    tree with per-element damage can keep tessellated meshes on the element
    and redraw with a uniform transform, which is the only item on this list

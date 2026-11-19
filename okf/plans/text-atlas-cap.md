@@ -6,6 +6,8 @@ created: 2026-11-19
 
 # Cap the text atlas below the device's texture limit
 
+Part of stage 5 of [own-renderer](own-renderer.md): that stage is not done until this item is.
+
 ## Symptom
 
 `TextAtlas` (alloy/src/rendertree/text/glyphs/text_atlas.rs) starts its

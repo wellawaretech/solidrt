@@ -73,7 +73,7 @@ first draft, and it is the wrong seam for two reasons.
 The builder already runs on the UI thread (`frame.rs` records the frame,
 `context/mod.rs` sends the finished list to the raster thread). The
 translation would have run on the raster thread, and
-[display-list-op-cost](../backlog/display-list-op-cost.md) measured that thread's
+[display-list-op-cost](../plans/display-list-op-cost.md) measured that thread's
 per-op walk as the TV's bottleneck: a second walk of every op lands on
 exactly the thread that cannot afford it.
 
@@ -132,7 +132,7 @@ and the path cache per element stays as it is.
   own vocabulary, and `pub use impellers` is gone.
 - No visible change: the snapshot suites pass with identical pixels.
 - No regression on the TV: the animated-frame cost in
-  [display-list-op-cost](../backlog/display-list-op-cost.md) is re-measured before
+  [display-list-op-cost](../plans/display-list-op-cost.md) is re-measured before
   and after, on a release client. By construction nothing per-op changes
   (an enum conversion and a newtype call), so this is a check, not a
   budget.
@@ -198,7 +198,7 @@ pixels.
 An own plain-data op list is also out of scope. It becomes worth having
 only if something consumes it, such as a culling pass that stops handing
 the renderer the full scene every frame
-([display-list-op-cost](../backlog/display-list-op-cost.md)); that pass would run on
+([display-list-op-cost](../plans/display-list-op-cost.md)); that pass would run on
 the UI thread, where the damage is already known, and is its own item.
 
 ## Steps
@@ -230,7 +230,7 @@ together (step 1 alone compiles on its own).
 Verification after each step: the flux gui tests, the alloy tests and the
 app snapshot suites through `sol test`, pixel-identical. Before step 1 and
 after step 5: the TV run from
-[display-list-op-cost](../backlog/display-list-op-cost.md) on a release
+[display-list-op-cost](../plans/display-list-op-cost.md) on a release
 client.
 
 ## Outcome 2026-10-20
@@ -251,7 +251,7 @@ binary and is unrelated), all pixel-identical by construction (no draw
 changed, only the types it goes through).
 
 TV re-measured 2026-10-20 (table in
-[display-list-op-cost](../backlog/display-list-op-cost.md)): 264 and 500
+[display-list-op-cost](../plans/display-list-op-cost.md)): 264 and 500
 frames per 10 s on the dense and sparse probes, before and after alike.
 
 Follow-ups landed the same day:

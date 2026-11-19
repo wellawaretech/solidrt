@@ -216,7 +216,7 @@ ours:
 - **A. A display-list op per glyph**: `draw_texture_rect` from the atlas
   texture adopted into Impeller (the `<texture>` bridge). A loop in
   `Text::build`, nothing else. But the TV ceiling is per-op CPU cost
-  ([display-list-op-cost](../backlog/display-list-op-cost.md): 800 ops
+  ([display-list-op-cost](../plans/display-list-op-cost.md): 800 ops
   run at 27 fps where 50 run locked), and a screen of prose is thousands
   of glyphs. Fine for labels, not for a document.
 - **B. Text as rasterized layers**: a GL glyph pass on the raster thread

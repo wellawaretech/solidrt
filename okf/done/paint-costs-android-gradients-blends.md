@@ -42,7 +42,7 @@ So on this GPU class:
   rounded), save layers, non-source-over blends and gradient paints, on
   the HUD as DRW/CLP/LYR and BLD/GRD, so an app author reads the cause
   instead of bisecting the scene.
-- Moved 2026-09-24 to ../backlog/rounded-clip-cost-android.md, whose next
+- Moved 2026-09-24 to ../plans/rounded-clip-cost-android.md, whose next
   step is the same profiler session: whether the gradient is regenerated (a
   gradient texture upload) per draw per frame on GLES, and why
   destination-out/over leave the fast blend path.

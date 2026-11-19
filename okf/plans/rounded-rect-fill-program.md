@@ -6,6 +6,8 @@ created: 2026-11-19
 
 # A lean program for rounded rect fills
 
+Part of stage 5 of [own-renderer](own-renderer.md): that stage is not done until this item is.
+
 Stage 2's fill program taught that the fragment program's shape, not the
 instance count, sets the Mali's cost, and gave plain rect fills a program
 of their own. Rounded rects, the most common shape in a UI after plain
