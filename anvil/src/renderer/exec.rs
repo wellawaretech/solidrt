@@ -13,17 +13,17 @@
 //! perspective-correct. A gradient's parameter is affine in the op's
 //! space, so the vertex stage evaluates it at the corner, through the rows
 //! on the quad's instance or the rows of the mesh draw
-//! (`walk::GradientInstance`), and the fragment reads it interpolated with
-//! its ramp row (`vGrad`); the kind and the tile are the batch's or the mesh
-//! draw's uniform (`uGradMeta`), and only the glyph program, whose runs
-//! join whatever their gradient, reads them per instance (`vGradMeta`). Its
-//! ramp is one row of the ramp atlas, whose rows the walk assigns
-//! (`super::ramps`) and the draw uploads before any batch samples them. A
-//! stencil clip (`walk::ClipDraw`) draws into the stencil with the color
-//! writes off, a rect's quad through the fill program
-//! and a rounded rect's or an oval's mesh through the solid mesh program,
-//! and every later batch tests the stencil at its depth. Raster thread
-//! only, with the context current.
+//! (`walk::GradientInstance`), with the v of its ramp row, and the
+//! fragment reads both interpolated (`vGrad`), no divide; the kind and
+//! the tile are the batch's or the mesh draw's uniform (`uGradMeta`), and
+//! only the glyph program, whose runs join whatever their gradient, reads
+//! them per instance (`vGradMeta`). Its ramp is one row of the ramp atlas,
+//! whose rows the walk assigns (`super::ramps`) and the draw uploads before
+//! any batch samples them. A stencil clip (`walk::ClipDraw`) draws into
+//! the stencil with the color writes off, a rect's quad through the fill
+//! program and a rounded rect's or an oval's mesh through the solid mesh
+//! program, and every later batch tests the stencil at its depth. Raster
+//! thread only, with the context current.
 
 use super::mesh::{gpu_slot, GpuMesh, GpuSlot, Mesh};
 use super::ramps::{RampTable, RAMP_ROWS};
@@ -136,13 +136,14 @@ const TEXTURED_DEFINE: &str = "#define TEXTURED\n";
 // A gradient's parameter is affine in the quad's local space: the corner
 // evaluates its rows into `vGrad`'s first two components, and the
 // interpolation of an affine function is exact, perspective-correct under
-// any map; the third is the ramp row, constant over the quad, so its
+// any map; the third is the ramp row's normalized v, computed here once per
+// vertex (no divide per fragment), constant over the quad, so its
 // interpolation is exact too. The fragment reads that one smooth vec3 where
 // it once read the rows and the local point; the kind and the tile are the
 // batch's uniform (GRADIENT_BATCH), except in the glyph program, which
 // reads them per instance from the flat `vGradMeta` (the linker drops it
-// from every other program). A solid instance carries zero rows: its vGrad
-// is zero and unread.
+// from every other program). A solid instance carries zero rows: its
+// vGrad.xy is zero and the whole is unread.
 const VERTEX_COMMON: &str = r"
 layout(location = 0) in vec4 aRect;      // x, y, w, h in local space
 layout(location = 1) in vec4 aLinear;    // m11, m12, m21, m22
@@ -156,8 +157,9 @@ layout(location = 9) in vec4 aPersp;     // the projective row: w' = x * p1 + y 
 layout(location = 10) in vec4 aGradX;    // a gradient's x row and ramp row; a texel u row
 layout(location = 11) in vec4 aGradY;    // its y row and kind (0: none); a texel v row
 uniform vec2 uSize;                      // the target in device pixels
+uniform float uRampRows;                 // the ramp atlas's height in rows
 out vec2 vUv;
-out vec3 vGrad;                          // the gradient's parameter-space point, its ramp row
+out vec3 vGrad;                          // the gradient's parameter-space point, its ramp row's v
 flat out vec4 vColor;
 flat out vec4 vClip;
 flat out vec4 vRClip;
@@ -187,7 +189,9 @@ vec2 place(vec2 c) {
   gl_Position = vec4(h.x / uSize.x * 2.0 - h.z, h.z - h.y / uSize.y * 2.0, 0.0, h.z);
   vUv = aTex.xy + c * (aTex.zw - aTex.xy);
   vec3 q = vec3(p, 1.0);
-  vGrad = vec3(dot(aGradX.xyz, q), dot(aGradY.xyz, q), aGradX.w);
+  // The ramp row's v at its texel centers, so the bilinear lookup reads
+  // that row alone.
+  vGrad = vec3(dot(aGradX.xyz, q), dot(aGradY.xyz, q), (aGradX.w + 0.5) / uRampRows);
   vColor = aColor;
   vClip = aClip;
   vRClip = aRClip;
@@ -362,22 +366,23 @@ float roundedClip() {
 // parts in the glyph program and the quad gradient variants (after
 // FRAGMENT_MATH in the mesh program's), before GRADIENT_COMMON: the
 // parameter-space point the vertex stage evaluated from the rows (walk.rs
-// GradientInstance) at the corner, interpolated, and the gradient's ramp
-// row, constant over the quad or the mesh. The kind and the tile are not
-// here: the batch programs read them from a uniform (GRADIENT_BATCH), the
-// glyph program from its own per-instance input (GLYPH_FRAGMENT).
+// GradientInstance) at the corner, interpolated, and the v of the
+// gradient's ramp row, constant over the quad or the mesh. The kind and
+// the tile are not here: the batch programs read them from a uniform
+// (GRADIENT_BATCH), the glyph program from its own per-instance input
+// (GLYPH_FRAGMENT).
 const GRADIENT_INPUTS: &str = r"
-in vec3 vGrad;            // the parameter-space point, the ramp row
+in vec3 vGrad;            // the parameter-space point, the ramp row's v
 ";
 
 // A gradient's evaluation, after GRADIENT_INPUTS: the color at this
-// fragment, from the ramp atlas's row, for the gradient `kind` tiled by
-// `tile`. The kinds are GradientKind's discriminants and the tile modes
-// walk.rs TILE_*: they must match. No integer division or modulo: the kind
+// fragment, from the ramp atlas's row at the v the vertex stage computed
+// (VERTEX_COMMON, MESH_VERTEX), for the gradient `kind` tiled by `tile`.
+// The kinds are GradientKind's discriminants and the tile modes walk.rs
+// TILE_*: they must match. No integer division or modulo: the kind
 // and the tile arrive apart.
 const GRADIENT_COMMON: &str = r"
 uniform sampler2D uRamp;
-uniform float uRampRows;  // the ramp atlas's height in rows
 const int GRADIENT_LINEAR = 1;
 const int TILE_REPEAT = 1;
 const int TILE_MIRROR = 2;
@@ -394,8 +399,7 @@ vec4 gradientAt(int kind, int tile) {
   } else if (tile == TILE_DECAL) {
     inside = (t < 0.0 || t > 1.0) ? 0.0 : 1.0;
   }
-  // The row's texel centers, so the bilinear lookup reads that row alone.
-  vec4 g = texture(uRamp, vec2(clamp(t, 0.0, 1.0), (vGrad.z + 0.5) / uRampRows));
+  vec4 g = texture(uRamp, vec2(clamp(t, 0.0, 1.0), vGrad.z));
   return vec4(g.rgb, g.a * inside);
 }
 ";
@@ -777,7 +781,7 @@ void main() {
 // column j is the coefficients of output j (`map_columns`). As for a quad,
 // the gradient variant evaluates the draw's gradient rows over the path's
 // space (walk.rs MeshDraw `gradient`) at the vertex into `vGrad`, with its
-// ramp row as the third component (constant over the mesh), and the
+// ramp row's v as the third component (constant over the mesh), and the
 // textured variant its texel rows into `vTexel`: both affine in the path's
 // space, so their interpolation is exact. The fragment reads the kind and
 // the tile from the same `uGradMeta` (GRADIENT_BATCH). The
@@ -790,7 +794,8 @@ uniform vec2 uSize;                   // the target in device pixels
 uniform vec3 uGradX;                  // the path's (x, y, 1) to the parameter's x
 uniform vec3 uGradY;                  // and y
 uniform vec4 uGradMeta;               // the ramp row, the kind, the tile, 0
-out vec3 vGrad;                       // the gradient's parameter-space point, its ramp row
+uniform float uRampRows;              // the ramp atlas's height in rows
+out vec3 vGrad;                       // the gradient's parameter-space point, its ramp row's v
 #elif defined(TEXTURED)
 uniform vec3 uTexelX;                 // the path's (x, y, 1) to the normalized texel's u
 uniform vec3 uTexelY;                 // and v
@@ -803,7 +808,8 @@ void main() {
   // to clip space, both sides times w'.
   gl_Position = vec4(h.x / uSize.x * 2.0 - h.z, h.z - h.y / uSize.y * 2.0, 0.0, h.z);
 #ifdef GRADIENT
-  vGrad = vec3(dot(uGradX, q), dot(uGradY, q), uGradMeta.x);
+  // The ramp row's v at its texel centers, as VERTEX_COMMON's `place`.
+  vGrad = vec3(dot(uGradX, q), dot(uGradY, q), (uGradMeta.x + 0.5) / uRampRows);
 #elif defined(TEXTURED)
   vTexel = vec2(dot(uTexelX, q), dot(uTexelY, q));
 #endif
@@ -983,7 +989,8 @@ pub(super) struct Executor {
 }
 
 /// A linked program, its `uSize` (the target in device pixels), on the
-/// programs that sample a gradient its `uRampRows`, and on the programs
+/// programs that sample a gradient its `uRampRows` (read by the vertex
+/// stage, which computes the ramp row's v), and on the programs
 /// that link GRADIENT_BATCH (the fill, rounded, shape and mesh gradient
 /// variants) its `uGradMeta`, the batch's gradient kind and tile.
 struct Program {

@@ -526,15 +526,18 @@ impl RasterState {
   }
 }
 
-// The renderer's own vertex-stage uniform in every paint shader (the
-// target's size), which the renderer sets on every draw: left out of the
-// table an app's params validate against, so no param can name it.
-const PAINT_VERTEX_UNIFORM: &str = "uSize";
+// The renderer's own vertex-stage uniforms in every paint shader (the
+// target's size, which it sets on every draw, and the ramp atlas's height,
+// which its shared vertex stage reads for the gradient programs and a
+// driver without cross-stage elimination reports active here too): left
+// out of the table an app's params validate against, so no param can name
+// them.
+const PAINT_VERTEX_UNIFORMS: [&str; 2] = ["uSize", "uRampRows"];
 
 /// A paint shader's uniforms as the UI side validates against them: the
 /// renderer's reflection mapped onto the GPU vocabulary (a type outside
 /// the renderer's own set through `UniformKind::from_gl`), less the
-/// renderer's vertex uniform (`iResolution`, which the renderer sets too,
+/// renderer's vertex uniforms (`iResolution`, which the renderer sets too,
 /// stays, as it does in a shader texture's table), plus an `Inactive` slot
 /// for each uniform `source` declares that the compiler optimized out, so a
 /// write to it warns where a never-declared name throws, as for a linked
@@ -543,7 +546,7 @@ pub(crate) fn paint_uniform_table(infos: &[UniformInfo], source: &str) -> Unifor
   use crate::renderer::UniformKind as Reflected;
   let mut table: UniformTable = infos
     .iter()
-    .filter(|info| info.name != PAINT_VERTEX_UNIFORM)
+    .filter(|info| !PAINT_VERTEX_UNIFORMS.contains(&info.name.as_str()))
     .map(|info| {
       let kind = match info.kind {
         Reflected::Float => UniformKind::Float,
