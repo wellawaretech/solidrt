@@ -671,13 +671,20 @@ fn a_rounded_clip_lands_in_device_space() {
     ClipOperation::Intersect,
   );
   b.draw_rect(&rect(-10.0, -10.0, TARGET, TARGET), &opaque());
+  // Large enough to split (`split_rounded`): the rim carries the rounded
+  // clip, the plain pieces none.
   let out = walked(b);
-  assert_eq!(out.len(), 1);
-  let i = &out[0];
-  assert!(approx(i.rclip, [10.0, 10.0, 50.0, 30.0]), "{:?}", i.rclip);
-  assert!(approx(i.rclip_radii, [6.0; 4]), "{:?}", i.rclip_radii);
-  // The box clips to the rect too.
-  assert!(approx(i.clip, [10.0, 10.0, 50.0, 30.0]), "{:?}", i.clip);
+  let rim: Vec<&Instance> = out.iter().filter(|i| i.rclip_radii != [0.0; 4]).collect();
+  assert!(!rim.is_empty());
+  assert!(out.iter().any(|i| i.rclip_radii == [0.0; 4]), "no plain piece");
+  for i in rim {
+    assert!(approx(i.rclip, [10.0, 10.0, 50.0, 30.0]), "{:?}", i.rclip);
+    assert!(approx(i.rclip_radii, [6.0; 4]), "{:?}", i.rclip_radii);
+  }
+  // The box clips to the rect too, on every piece.
+  for i in &out {
+    assert!(approx(i.clip, [10.0, 10.0, 50.0, 30.0]), "{:?}", i.clip);
+  }
 }
 
 #[test]
@@ -750,8 +757,8 @@ fn a_perspective_image_source_draws_the_color() {
   let i = &out.instances[0];
   assert_eq!(i.offset_kind_stroke[2], KIND_ROUNDED_RECT);
   assert!(approx(i.color, [0.5, 0.25, 0.0, 0.5]), "{:?}", i.color);
-  assert_eq!(i.tex, [0.0; 4]);
-  // Untextured and unstroked: a rounded fill.
+  // Untextured and unstroked: a rounded fill, its whole quad in `tex`.
+  assert_eq!(i.tex, i.rect);
   assert_eq!(out.batches, vec![roundeds(0, 1, None)]);
 }
 
@@ -1174,12 +1181,16 @@ fn a_small_rounded_rect_rides_along_in_a_shape_batch() {
   assert_eq!(walked_all(b).batches, vec![shapes(0, 2, None)]);
 
   // A large one opens a rounded batch: 400 x 400 is past FILL_FOLD_AREA.
+  // It splits (past ROUNDED_SPLIT_AREA too): its eight rim pieces, small
+  // as they are, never ride along (the shape program measures a rounded
+  // rect from its quad, not the whole one in `tex`), and its three plain
+  // pieces open a fill batch after them.
   let large = rect(0.0, 0.0, 400.0, 400.0);
   assert!(large.size.width * large.size.height >= FILL_FOLD_AREA);
   let mut b = DisplayListBuilder::new(None);
   b.draw_oval(&quad, &opaque());
   rounded(&mut b, large, [8.0; 4], &opaque());
-  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None), roundeds(1, 1, None)]);
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None), roundeds(1, 8, None), fills(9, 3)]);
 }
 
 #[test]

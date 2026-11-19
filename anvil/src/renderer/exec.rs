@@ -50,7 +50,7 @@ const FLOATS_PER_ATTRIBUTE: i32 = 4;
 const STENCIL_ALL_BITS: u32 = 0xFF;
 
 // The attribute locations. They must match the `layout(location = N)`
-// literals in VERTEX_COMMON and SHAPE_VERTEX.
+// literals in VERTEX_COMMON, SHAPE_VERTEX and ROUNDED_VERTEX.
 const ATTR_RECT: u32 = 0;
 const ATTR_LINEAR: u32 = 1;
 const ATTR_OFFSET: u32 = 2;
@@ -148,7 +148,7 @@ layout(location = 0) in vec4 aRect;      // x, y, w, h in local space
 layout(location = 1) in vec4 aLinear;    // m11, m12, m21, m22
 layout(location = 2) in vec4 aOffset;    // m41, m42 (the translation), kind, stroke width
 layout(location = 3) in vec4 aColor;     // premultiplied; straight alpha for a glyph
-layout(location = 4) in vec4 aTex;       // u0, v0, u1, v1 for a glyph; cap, length for a line
+layout(location = 4) in vec4 aTex;       // u0, v0, u1, v1 for a glyph; cap, length for a line; a rounded fill's shape quad
 layout(location = 5) in vec4 aClip;      // x0, y0, x1, y1 in device pixels
 layout(location = 7) in vec4 aRClip;     // the rounded clip in device pixels: x0, y0, x1, y1
 layout(location = 8) in vec4 aRClipRadii; // its corner radii in device pixels; all zero: none
@@ -197,8 +197,7 @@ vec2 place(vec2 c) {
 }
 ";
 
-// The shape program's vertex stage, after SOURCE_HEADER and VERTEX_COMMON;
-// the rounded program's too (ROUNDED_FRAGMENT says which outputs it reads).
+// The shape program's vertex stage, after SOURCE_HEADER and VERTEX_COMMON.
 const SHAPE_VERTEX: &str = r"
 layout(location = 6) in vec4 aRadii;     // corner radii in local pixels: tl, tr, br, bl
 out vec2 vLocal;                         // position within the shape, local pixels from its origin
@@ -223,6 +222,29 @@ void main() {
   vLocal = c * aRect.zw;
   vShape = vec4(aRect.zw, aOffset.zw);
   vParams = aTex;
+  vRadii = aRadii;
+}
+";
+
+// The rounded program's vertex stage, after SOURCE_HEADER and VERTEX_COMMON:
+// the quad placed, and the shape measured from the whole shape quad the
+// instance carries in `aTex` (walk.rs `Instance::tex`: x, y, w, h, local
+// space), not from the quad it draws. A piece of a split rounded fill
+// (walk.rs `split_rounded`) draws only its own rect, so its vLocal is the
+// local point relative to the shape quad's origin and vShape the shape
+// quad's size: the fragment's rounded-box distance is the same function
+// over the same points for a piece and for a whole quad alike. It writes
+// no vParams and no textured vUv; the linker drops what the fragment does
+// not read (vUv, vGradMeta).
+const ROUNDED_VERTEX: &str = r"
+layout(location = 6) in vec4 aRadii;     // corner radii in local pixels: tl, tr, br, bl
+out vec2 vLocal;                         // position within the shape quad, local pixels from its origin
+flat out vec4 vShape;                    // the shape quad's w, h; z, w unused
+flat out vec4 vRadii;
+void main() {
+  vec2 p = place(quadCorner());
+  vLocal = p - aTex.xy;
+  vShape = vec4(aTex.zw, 0.0, 0.0);
   vRadii = aRadii;
 }
 ";
@@ -616,23 +638,27 @@ void main() {
 // quad padded by ROUNDED_QUAD_PAD, stroke 0); a plain rect has no radii and
 // coverage 1, its edges MSAA's. The radii are flat, so every fragment of a
 // quad takes the same branch and the derivatives stay defined, as in
-// `roundedClip()`. Its vertex stage is SHAPE_VERTEX, so vLocal, vShape and
-// vRadii match the shape program's bit for bit; it leaves vParams, the
-// stroke width in vShape.w and vUv unread. The gradient variant (GRADIENT
-// defined) takes its color from the gradient at the fragment (`vGrad`),
-// premultiplied and faded by vColor, its kind and tile the batch's uniform,
-// as the shape program's does. It reads eight varyings: vLocal and vGrad
-// smooth, vColor, vClip, vRClip, vRClipRadii, vShape and vRadii flat (ten
-// before stage 5 step 2c: vLocal and vOp smooth, the rows vGradX and vGradY
-// flat in place of vGrad's ramp row, and the kind and the tile per
-// instance; nine in step 2c, the flat vGradMeta beside vGrad).
+// `roundedClip()`. Its vertex stage is ROUNDED_VERTEX, which measures the
+// shape from the whole shape quad, so a large rounded fill draws here only
+// as its rim (the corners and a thin band along each straight edge) and
+// its plain pieces, whose coverage is exactly 1, go through the fill
+// program (walk.rs `split_rounded`); every rim fragment computes the same
+// distance from the same shape as the unsplit quad's would. The gradient
+// variant (GRADIENT defined) takes its color from the gradient at the
+// fragment (`vGrad`), premultiplied and faded by vColor, its kind and tile
+// the batch's uniform, as the shape program's does. It reads eight
+// varyings: vLocal and vGrad smooth, vColor, vClip, vRClip, vRClipRadii,
+// vShape and vRadii flat (the solid one seven, no vGrad); vShape's z and w
+// are unused (ten before stage 5 step 2c: vLocal and vOp smooth, the rows
+// vGradX and vGradY flat in place of vGrad's ramp row, and the kind and the
+// tile per instance; nine in step 2c, the flat vGradMeta beside vGrad).
 //
 // After SOURCE_HEADER and the common fragment parts; the gradient variant
 // after SOURCE_HEADER, GRADIENT_DEFINE, the common fragment parts,
 // GRADIENT_INPUTS, GRADIENT_COMMON and GRADIENT_BATCH.
 const ROUNDED_FRAGMENT: &str = r"
 in vec2 vLocal;
-flat in vec4 vShape;      // quad w, quad h, kind, stroke width (0: a rounded fill)
+flat in vec4 vShape;      // the shape quad's w, h; z, w unused
 flat in vec4 vRadii;      // corner radii, local pixels: tl, tr, br, bl; all zero: a plain rect
 // Local pixels a rounded rect's quad extends past its edge (walk.rs
 // ROUNDED_QUAD_PAD must match).
@@ -1099,13 +1125,13 @@ impl Executor {
     let rounded = Program::link(
       &gl,
       "rounded",
-      &[SOURCE_HEADER, VERTEX_COMMON, SHAPE_VERTEX],
+      &[SOURCE_HEADER, VERTEX_COMMON, ROUNDED_VERTEX],
       &[SOURCE_HEADER, FRAGMENT_INPUTS, FRAGMENT_MATH, FRAGMENT_ROUNDED_CLIP, ROUNDED_FRAGMENT],
     )?;
     let rounded_gradient = Program::link(
       &gl,
       "rounded gradient",
-      &[SOURCE_HEADER, VERTEX_COMMON, SHAPE_VERTEX],
+      &[SOURCE_HEADER, VERTEX_COMMON, ROUNDED_VERTEX],
       &[
         SOURCE_HEADER,
         GRADIENT_DEFINE,

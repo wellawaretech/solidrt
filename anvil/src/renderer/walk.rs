@@ -3,11 +3,12 @@
 //! shaders) and the path meshes' draws (a retained mesh by handle with its
 //! map, color and clips), with the save stack, the transforms (perspective
 //! among them, as the projective row a quad carries and a mesh's 3x3 map)
-//! and the clip applied, the draws outside the clip rejected, a gradient's
-//! rows and ramp row put on its instances and mesh draws, and the clips the
-//! device box and the per-instance rounded clip cannot take turned into
-//! stencil clip draws (`ClipDraw`) with the stencil depth every batch tests
-//! against. No GL here, so the walk is unit-tested without a context
+//! and the clip applied, the draws outside the clip rejected, a large
+//! rounded fill split into plain pieces and a rounded rim (`split_rounded`),
+//! a gradient's rows and ramp row put on its instances and mesh draws, and
+//! the clips the device box and the per-instance rounded clip cannot take
+//! turned into stencil clip draws (`ClipDraw`) with the stencil depth every
+//! batch tests against. No GL here, so the walk is unit-tested without a context
 //! (`tests/anvil.rs`, `tests/gradient.rs`, `tests/mesh.rs`).
 
 use super::mesh::{scale_bucket, Mesh, MeshStyle};
@@ -48,7 +49,12 @@ pub struct Instance {
   /// quad keeps its corner texels here too, but only because the glyph
   /// program's layout and the tests read the field: the shape program
   /// never reads `tex` for it and samples through the texel rows in
-  /// `grad_x` and `grad_y`. Unused, zero, for untextured rects and ovals.
+  /// `grad_x` and `grad_y`. For a rounded fill (`rounded_fill`) the whole
+  /// shape quad in local space, x, y, w, h (for a rounded rect its padded
+  /// quad): the rounded program measures the shape from it, so a piece of a
+  /// split fill (`split_rounded`), whose `rect` is the piece, evaluates the
+  /// same distance as the whole quad. Unused, zero, for other untextured
+  /// rects and ovals.
   pub tex: [f32; 4],
   /// The clip in device pixels: x0, y0, x1, y1. Tested per fragment.
   pub clip: [f32; 4],
@@ -138,6 +144,20 @@ pub const CAP_ROUND: f32 = 2.0;
 /// on the TV's Mali meets the CPU cost of one more draw call. A tuning
 /// value, to be re-read on the TV.
 pub const FILL_FOLD_AREA: f32 = 65_536.0;
+
+/// The device area, in device pixels, from which a rounded fill splits into
+/// plain pieces and a rim (`split_rounded`) instead of drawing as one
+/// rounded instance (128 x 128): below it the extra instances cost more
+/// than the rounded-box fragments they save (a chip, a small button). A
+/// tuning value; the TV read sets it.
+pub const ROUNDED_SPLIT_AREA: f32 = 16_384.0;
+
+/// Device pixels a plain piece of a split rounded fill lies inside every
+/// rounded edge, beyond `ROUNDED_QUAD_PAD`: the width of `coverage()`'s
+/// ramp (exec.rs FRAGMENT_MATH), so a plain fragment, and the rim fragment
+/// beside it, is at least a full ramp inside the edge and its coverage is
+/// exactly 1.
+pub const ROUNDED_SPLIT_MARGIN: f32 = 1.0;
 
 /// The tile modes, as `Instance::persp`'s last float and a batch's or a
 /// mesh draw's `uGradMeta` carry them. The `const int TILE_*`
@@ -427,11 +447,13 @@ impl Walked {
   // or, when solid, rides along in an open solid shape batch below the same
   // FILL_FOLD_AREA (the shape program draws a rounded rect and a rounded
   // clip too, one draw call fewer where rounded rects and other shapes
-  // interleave); otherwise it opens a rounded batch. Any other shape shares
-  // only an open shape batch of its gradient class (the shader branches on the
-  // kind; a bound sampler it never reads costs nothing), so a texture
-  // change, a sampling change, a fill or rounded run or a glyph run ends a
-  // run. `stencil` is a key too: a batch takes only an instance of its own
+  // interleave), except a rim piece of a split rounded rect, which the shape
+  // program cannot draw (it measures a rounded rect from its quad, the piece,
+  // not from the whole quad in `tex`); otherwise it opens a rounded batch.
+  // Any other shape shares only an open shape batch of its gradient class
+  // (the shader branches on the kind; a bound sampler it never reads costs
+  // nothing), so a texture change, a sampling change, a fill or rounded run
+  // or a glyph run ends a run. `stencil` is a key too: a batch takes only an instance of its own
   // stencil depth.
   fn push(
     &mut self,
@@ -459,7 +481,8 @@ impl Walked {
           if gradient.is_none()
             && last.gradient.is_none()
             && last.program == BatchProgram::Shape
-            && device_area(&instance) < FILL_FOLD_AREA =>
+            && device_area(&instance) < FILL_FOLD_AREA
+            && !rounded_piece(&instance) =>
         {
           last.count += 1
         }
@@ -1132,7 +1155,14 @@ fn texel_rows(rows: Affine) -> Rows {
 // with the device clip `clip` (from `placed`), and the state's rounded
 // clip, zeros when none is in effect.
 fn instance(state: &State, p: &Projective, clip: [f32; 4], quad: Quad) -> Instance {
-  let (rclip, rclip_radii) = match state.rounded {
+  instance_under(state.rounded, p, clip, quad)
+}
+
+// `instance` under the rounded clip `rounded` in place of the state's: None
+// for a plain piece of a split rounded fill, whose coverage under the
+// state's clip is 1 by construction (`split_rounded`).
+fn instance_under(rounded: Option<RoundedClip>, p: &Projective, clip: [f32; 4], quad: Quad) -> Instance {
+  let (rclip, rclip_radii) = match rounded {
     Some(r) => ([r.rect.min.x, r.rect.min.y, r.rect.max.x, r.rect.max.y], r.radii),
     None => ([0.0; 4], [0.0; 4]),
   };
@@ -1165,7 +1195,14 @@ fn instance(state: &State, p: &Projective, clip: [f32; 4], quad: Quad) -> Instan
 // the uv through the image's inverse map from the quad's local space. With
 // a gradient `source` it keeps its kind and takes the gradient's color,
 // faded the same way, in a batch of its gradient's kind and tile
-// (`Walked::push`); past the ramp table's rows it draws its solid color.
+// (`Walked::push`); past the ramp table's rows it draws its solid color. A
+// rounded fill under a 2D axis-aligned map whose device area reaches
+// ROUNDED_SPLIT_AREA splits (`split_rounded`, against the shape's rounded
+// rect and the rounded clip in local space): its rim pieces keep the kind,
+// the radii, the rounded clip and the whole quad in `tex`, and draw through
+// the rounded program; its plain pieces are plain rect fills with no
+// rounded clip, the fill program's. Color, rows and the device clip are the
+// op's on every piece.
 #[allow(clippy::too_many_arguments)]
 fn push_shape(
   state: &State,
@@ -1218,8 +1255,182 @@ fn push_shape(
     }
   };
   let class = gradient.as_ref().map(GradientInstance::class);
+  // A rounded fill (`rounded_fill`): untextured (the kind has no
+  // KIND_TEXTURED added), unstroked, a rounded rect or a plain rect under
+  // the rounded clip. It carries its whole quad in `tex`, which the rounded
+  // program measures the shape from.
+  let fill = s == 0.0 && (kind == KIND_ROUNDED_RECT || (kind == KIND_RECT && state.rounded.is_some()));
+  let tex = if fill { rect_array(&quad) } else { tex };
   let shape = instance(state, &p, clip, Quad { rect: quad, kind, stroke: s, color, tex, radii, rows });
+  debug_assert_eq!(fill, rounded_fill(&shape));
+  if fill && p.is_axis_aligned() && device_area(&shape) >= ROUNDED_SPLIT_AREA {
+    let [m11, _, _, m22] = p.linear;
+    // Non-zero: the device area is.
+    let scale = m11.abs().min(m22.abs());
+    let margin = ROUNDED_QUAD_PAD + ROUNDED_SPLIT_MARGIN / scale;
+    let mut regions = Vec::with_capacity(2);
+    if kind == KIND_ROUNDED_RECT {
+      regions.push((*rect, radii));
+    }
+    if let Some(r) = state.rounded {
+      regions.push(local_rounded(&p, &r));
+    }
+    let pieces = split_rounded(&quad, &regions, margin);
+    // Without a plain piece (a pill, a near-circle: every cell is rim) the
+    // split saves no fragment and only adds instances: the fill stays one
+    // rounded instance, whose coverage on the dropped cells is 0 anyway.
+    if !pieces.iter().any(|(_, plain)| *plain) {
+      out.push(shape, texture, class, state.depth);
+      return;
+    }
+    // The rim first, then the plain pieces: a grid of panels alternates a
+    // rounded and a fill batch. The pieces do not overlap, so their order
+    // within the op changes no pixel.
+    for (piece, _) in pieces.iter().filter(|(_, plain)| !plain) {
+      let rim = Quad { rect: *piece, kind, stroke: 0.0, color, tex, radii, rows };
+      out.push(instance(state, &p, clip, rim), None, class, state.depth);
+    }
+    for (piece, _) in pieces.iter().filter(|(_, plain)| *plain) {
+      let plain = Quad { rect: *piece, kind: KIND_RECT, stroke: 0.0, color, tex: [0.0; 4], radii: [0.0; 4], rows };
+      out.push(instance_under(None, &p, clip, plain), None, class, state.depth);
+    }
+    return;
+  }
   out.push(shape, texture, class, state.depth);
+}
+
+// `r` as `Instance::tex` carries a quad: x, y, w, h.
+fn rect_array(r: &Rect) -> [f32; 4] {
+  [r.origin.x, r.origin.y, r.size.width, r.size.height]
+}
+
+// The device rounded clip `r` in the local space of the axis-aligned 2D map
+// `p`, whose axis scales are non-zero: its rect through the inverse map and
+// its radii over the smaller scale (the larger local radius under a
+// non-uniform scale, which only grows the rim), the corners swapped back
+// under a mirrored axis, the mirror of `clip_rounded`.
+fn local_rounded(p: &Projective, r: &RoundedClip) -> (Rect, Radii) {
+  let [m11, _, _, m22] = p.linear;
+  let [tx, ty] = p.offset;
+  let local = |d: Point2D<f32>| Point::new((d.x - tx) / m11, (d.y - ty) / m22);
+  let rect = Box2D::from_points([local(r.rect.min), local(r.rect.max)]).to_rect();
+  let scale = m11.abs().min(m22.abs());
+  let [tl, tr, br, bl] = r.radii.map(|radius| radius / scale);
+  // Each swap is its own inverse, and the two commute.
+  let [tl, tr, br, bl] = if m11 < 0.0 { [tr, tl, bl, br] } else { [tl, tr, br, bl] };
+  let radii = if m22 < 0.0 { [bl, br, tr, tl] } else { [tl, tr, br, bl] };
+  (rect, radii)
+}
+
+/// What a cell of a split rounded fill is, against one rounded region or
+/// all of them.
+#[derive(Clone, Copy, PartialEq)]
+enum Cell {
+  /// Coverage 0: dropped.
+  Outside,
+  /// Coverage exactly 1: a plain rect fill.
+  Plain,
+  /// Anything between: the rounded program.
+  Rim,
+}
+
+// What the point `c` is against the rounded region `q` with the corner
+// `radii` (CSS order) and the margin `m`: outside beyond `q` grown by `m` on
+// any side; plain inside the region's plain cross, `q` inset by `m` less the
+// four corner squares (the top-left one [q.left, q.left + tl + m] x [q.top,
+// q.top + tl + m], and so on); the rim otherwise.
+fn cell_of(c: Point, q: &Rect, radii: &Radii, m: f32) -> Cell {
+  let (l, t, r, b) = (q.min_x(), q.min_y(), q.max_x(), q.max_y());
+  if c.x < l - m || c.x > r + m || c.y < t - m || c.y > b + m {
+    return Cell::Outside;
+  }
+  let [tl, tr, br, bl] = *radii;
+  let inset = c.x > l + m && c.x < r - m && c.y > t + m && c.y < b - m;
+  let corner = (c.x < l + tl + m && c.y < t + tl + m)
+    || (c.x > r - tr - m && c.y < t + tr + m)
+    || (c.x > r - br - m && c.y > b - br - m)
+    || (c.x < l + bl + m && c.y > b - bl - m);
+  if inset && !corner {
+    Cell::Plain
+  } else {
+    Cell::Rim
+  }
+}
+
+// The cuts one region adds per axis: its two edges less and plus the
+// margin, and its two corners' extents at each end.
+const CUTS_PER_REGION: usize = 8;
+
+/// The rounded fill whose quad is `fill` (local space) split into pieces
+/// against the rounded `regions` (each a rect and its corner radii in CSS
+/// order, local space: the shape's own and the rounded clip's), with the
+/// margin `m` in local units: each piece a rect and whether it is plain.
+/// `fill` is cut at every region's x = left - m, left + m, left + tl + m,
+/// left + bl + m, right - tr - m, right - br - m, right - m and right + m
+/// that falls strictly inside it, and the same in y, into a grid whose
+/// every line is an edge of some region's classes (`cell_of`), so a cell's
+/// centre classifies all of it: plain when plain for every region, dropped
+/// when outside any, the rim otherwise. Runs of one class along a row merge
+/// into one piece; the dropped cells give none. The pieces tile `fill` less
+/// the dropped cells, without overlap, in row order.
+pub fn split_rounded(fill: &Rect, regions: &[(Rect, Radii)], m: f32) -> Vec<(Rect, bool)> {
+  let mut xs = Vec::with_capacity(2 + CUTS_PER_REGION * regions.len());
+  let mut ys = Vec::with_capacity(2 + CUTS_PER_REGION * regions.len());
+  for (q, [tl, tr, br, bl]) in regions {
+    let (l, t, r, b) = (q.min_x(), q.min_y(), q.max_x(), q.max_y());
+    xs.extend([l - m, l + m, l + tl + m, l + bl + m, r - tr - m, r - br - m, r - m, r + m]);
+    ys.extend([t - m, t + m, t + tl + m, t + tr + m, b - bl - m, b - br - m, b - m, b + m]);
+  }
+  let xs = grid_lines(xs, fill.min_x(), fill.max_x());
+  let ys = grid_lines(ys, fill.min_y(), fill.max_y());
+  let mut pieces = Vec::new();
+  for row in ys.windows(2) {
+    let (y0, y1) = (row[0], row[1]);
+    // The current run: its left edge and its class.
+    let mut run: Option<(f32, Cell)> = None;
+    for column in xs.windows(2) {
+      let (x0, x1) = (column[0], column[1]);
+      let centre = Point::new((x0 + x1) * 0.5, (y0 + y1) * 0.5);
+      let classes = regions.iter().map(|(q, radii)| cell_of(centre, q, radii, m));
+      let cell = classes.fold(Cell::Plain, |all, one| match (all, one) {
+        (Cell::Outside, _) | (_, Cell::Outside) => Cell::Outside,
+        (Cell::Rim, _) | (_, Cell::Rim) => Cell::Rim,
+        _ => Cell::Plain,
+      });
+      match run {
+        Some((_, class)) if class == cell => {}
+        _ => {
+          if let Some((start, class)) = run {
+            push_piece(&mut pieces, start, x0, y0, y1, class);
+          }
+          run = Some((x0, cell));
+        }
+      }
+    }
+    if let Some((start, class)) = run {
+      push_piece(&mut pieces, start, fill.max_x(), y0, y1, class);
+    }
+  }
+  pieces
+}
+
+// The sorted, distinct `cuts` strictly between `lo` and `hi`, with `lo` and
+// `hi` at the ends.
+fn grid_lines(mut cuts: Vec<f32>, lo: f32, hi: f32) -> Vec<f32> {
+  cuts.retain(|c| *c > lo && *c < hi);
+  cuts.push(lo);
+  cuts.push(hi);
+  cuts.sort_by(f32::total_cmp);
+  cuts.dedup();
+  cuts
+}
+
+// One merged run [x0, x1] x [y0, y1] of `class` into `pieces`, none for a
+// dropped one.
+fn push_piece(pieces: &mut Vec<(Rect, bool)>, x0: f32, x1: f32, y0: f32, y1: f32, class: Cell) {
+  if class != Cell::Outside {
+    pieces.push((Rect::new(Point::new(x0, y0), Size::new(x1 - x0, y1 - y0)), class == Cell::Plain));
+  }
 }
 
 // `image`'s map from the op's space to the normalized texel: its own map
@@ -1247,6 +1458,13 @@ fn rounded_fill(instance: &Instance) -> bool {
   let [_, _, kind, stroke] = instance.offset_kind_stroke;
   let rect_under_clip = kind == KIND_RECT && instance.rclip_radii != [0.0; 4];
   stroke == 0.0 && (kind == KIND_ROUNDED_RECT || rect_under_clip)
+}
+
+// Whether `instance` is a rim piece of a split rounded rect: a rounded fill
+// of the rounded rect kind whose quad is not its whole shape quad (`tex`).
+// Only the rounded program measures the shape from `tex`.
+fn rounded_piece(instance: &Instance) -> bool {
+  instance.offset_kind_stroke[2] == KIND_ROUNDED_RECT && rounded_fill(instance) && instance.rect != instance.tex
 }
 
 // The device pixels `instance`'s quad covers, unclipped: under a 2D map its
