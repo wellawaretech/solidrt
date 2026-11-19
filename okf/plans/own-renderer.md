@@ -548,7 +548,14 @@ in Findings.
 ## Stage 7: parity, platforms, merge
 
 - The pixel diff over every example and the `sol test` suite, with the
-  differences explained one by one.
+  differences explained one by one. One is known already:
+  `packages/core/tests/pixel-snap-motion.test.tsx`, "a letter ends its
+  motion with no step under pixelSnap={false}", fails on the branch: the
+  last frame of the motion steps 0.073 px against the test's 0.05 bound.
+  It failed before the text cleanup (1a90d625) and after it, and still
+  fails on 2026-11-19. Whether anvil places the glyph quads differently
+  from Impeller's text layers, or the bound was fitted to Impeller, is
+  open.
 - Damage and partial repaint on the rig path and buffer age, re-verified
   against the new renderer's output.
 - Android, Windows and macOS, and the TV again.
