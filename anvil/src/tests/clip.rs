@@ -116,7 +116,9 @@ fn a_rotated_rect_clip_raises_its_quad_and_restores_it() {
   let bounds = box_of(&p.bounds(&square()).expect("in front of the eye"));
   assert!(approx(out.instances[0].clip, bounds), "{:?}", out.instances[0].clip);
   let ClipDraw::Restore { to: 0, area } = &out.clip_draws[1] else { panic!("{:?}", out.clip_draws[1]) };
-  assert!(approx(device_rect(area), bounds), "{:?}", area.rect);
+  // The restore covers the bounds rounded outward to whole pixels.
+  let whole = [bounds[0].floor(), bounds[1].floor(), bounds[2].ceil(), bounds[3].ceil()];
+  assert_eq!(device_rect(area), whole, "{bounds:?}");
   // After the restore the box is the target again.
   assert_eq!(out.instances[1].clip, [0.0, 0.0, TARGET, TARGET]);
 }
@@ -253,8 +255,9 @@ fn a_restore_covers_a_raise_that_reached_past_the_box() {
   let out = walked(b);
   let ClipDraw::Restore { to: 1, area } = &out.clip_draws[2] else { panic!("{:?}", out.clip_draws[2]) };
   let bounds = box_of(&Projective::from_matrix(&rotated()).bounds(&square()).expect("in front of the eye"));
-  let union = [0.0, bounds[1].min(0.0), bounds[2].max(60.0), TARGET];
-  assert!(approx(device_rect(area), union), "{:?} {bounds:?}", area.rect);
+  // Rounded outward to whole pixels.
+  let union = [0.0, bounds[1].min(0.0), bounds[2].max(60.0).ceil(), TARGET];
+  assert_eq!(device_rect(area), union, "{bounds:?}");
   assert!(bounds[2] > 60.0, "the inner raise reaches past the outer box");
 }
 
@@ -276,7 +279,8 @@ fn an_axis_aligned_rounded_clip_rides_on_the_instance() {
     .draw_rect(&cover(), &opaque());
   let out = walked(b);
   assert!(out.clip_draws.is_empty());
-  assert_eq!(programs(&out), vec![(BatchProgram::Shape, 0)]);
+  // A plain rect under the rounded clip is a rounded fill.
+  assert_eq!(programs(&out), vec![(BatchProgram::Rounded, 0)]);
   assert_eq!(out.instances[0].rclip_radii, [5.0; 4]);
 }
 
@@ -287,7 +291,7 @@ fn a_rounded_clip_inside_another_goes_through_the_stencil() {
     .clip_rounded_rect(&rect(20.0, 20.0, 20.0, 20.0), &RoundingRadii::circular([2.0; 4]), ClipOperation::Intersect)
     .draw_rect(&cover(), &opaque());
   let out = walked(b);
-  assert_eq!(programs(&out), vec![(BatchProgram::Clip, 0), (BatchProgram::Shape, 1)]);
+  assert_eq!(programs(&out), vec![(BatchProgram::Clip, 0), (BatchProgram::Rounded, 1)]);
   assert!(matches!(out.clip_draws[0], ClipDraw::Raise { reference: 0, shape: ClipShape::Mesh(_) }));
   let i = &out.instances[0];
   // The box is the inner rect; the per-instance clip stays the outer one.

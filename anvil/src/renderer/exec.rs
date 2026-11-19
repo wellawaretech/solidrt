@@ -1,6 +1,7 @@
-//! The GL half of a draw: the fill, shape and glyph programs (the fill and
-//! the shape program each with a gradient variant) and the mesh program
-//! (with a gradient and a textured variant), eight programs in all; the
+//! The GL half of a draw: the fill, rounded, shape and glyph programs (the
+//! fill, the rounded and the shape program each with a gradient variant)
+//! and the mesh program (with a gradient and a textured variant), ten
+//! programs in all; the
 //! paint shaders' programs linked behind anvil's vertex stage; two VAOs the
 //! executor owns, one over the instance buffer and one the path meshes'
 //! own vertex and index buffers are bound into per draw; and the draw that
@@ -98,7 +99,7 @@ const MAX_PAINT_INPUTS: u32 = 16;
 pub(crate) const SOURCE_HEADER: &str = "#version 300 es\nprecision highp float;\n";
 
 // Right after SOURCE_HEADER in a fragment source, it selects the gradient
-// variant of the fill and the shape program: the same source, its color
+// variant of the fill, the rounded and the shape program: the same source, its color
 // from `gradientAt` (GRADIENT_COMMON).
 const GRADIENT_DEFINE: &str = "#define GRADIENT\n";
 
@@ -182,7 +183,8 @@ vec2 place(vec2 c) {
 }
 ";
 
-// The shape program's vertex stage, after SOURCE_HEADER and VERTEX_COMMON.
+// The shape program's vertex stage, after SOURCE_HEADER and VERTEX_COMMON;
+// the rounded program's too (ROUNDED_FRAGMENT says which outputs it reads).
 const SHAPE_VERTEX: &str = r"
 layout(location = 6) in vec4 aRadii;     // corner radii in local pixels: tl, tr, br, bl
 out vec2 vLocal;                         // position within the shape, local pixels from its origin
@@ -569,6 +571,57 @@ void main() {
 }
 ";
 
+// A rounded fill (walk.rs `rounded_fill`: an untextured, unstroked rounded
+// rect, or a plain rect under a rounded clip) has the rounded-box distance
+// and nothing else to decide. A program of its own, because rounded rects
+// are the most common UI shape after plain rects (every card, panel and
+// button) and on the Mali the shape program's per-fragment price, its kind
+// branches, its texture sample and its discard, made rounded panels cost
+// several times what plain ones did (okf/plans/rounded-rect-fill-program.md).
+// It keeps the derivatives (`coverage()` reads them through `footprint()`)
+// and drops the branches on the kind, the texture and the discard: the
+// clip box is a factor, the rounded clip is composed by the minimum as the
+// shape program composes it, and a fragment outside writes zero, which
+// premultiplied source-over leaves the target unchanged by. The shape's
+// coverage is exactly the shape program's fill arm for a rounded rect (its
+// quad padded by ROUNDED_QUAD_PAD, stroke 0); a plain rect has no radii and
+// coverage 1, its edges MSAA's. The radii are flat, so every fragment of a
+// quad takes the same branch and the derivatives stay defined, as in
+// `roundedClip()`. Its vertex stage is SHAPE_VERTEX, so vLocal, vShape and
+// vRadii match the shape program's bit for bit; it leaves vParams, the
+// stroke width in vShape.w and vUv unread. The gradient variant (GRADIENT
+// defined) takes its color from the gradient at the fragment's local
+// point, premultiplied and faded by vColor, as the shape program's does.
+//
+// After SOURCE_HEADER and the common fragment parts; the gradient variant
+// after SOURCE_HEADER, GRADIENT_DEFINE, the common fragment parts,
+// GRADIENT_INPUTS and GRADIENT_COMMON.
+const ROUNDED_FRAGMENT: &str = r"
+in vec2 vLocal;
+flat in vec4 vShape;      // quad w, quad h, kind, stroke width (0: a rounded fill)
+flat in vec4 vRadii;      // corner radii, local pixels: tl, tr, br, bl; all zero: a plain rect
+// Local pixels a rounded rect's quad extends past its edge (walk.rs
+// ROUNDED_QUAD_PAD must match).
+const float ROUNDED_QUAD_PAD = 1.0;
+void main() {
+  vec2 dp = device();
+  float inside = float(all(greaterThanEqual(dp, vClip.xy)) && all(lessThan(dp, vClip.zw)));
+  float c = 1.0;
+  if (any(greaterThan(vRadii, vec4(0.0)))) {
+    vec2 hs = vShape.xy * 0.5;
+    c = coverage(roundedBox(vLocal - hs, hs - ROUNDED_QUAD_PAD, vRadii));
+  }
+  c = min(c, roundedClip());
+#ifdef GRADIENT
+  vec4 g = gradientAt(vOp);
+  vec4 color = vec4(g.rgb * g.a, g.a) * vColor;
+#else
+  vec4 color = vColor;
+#endif
+  fragColor = color * c * inside;
+}
+";
+
 // A glyph has no analytic coverage: its quad is axis-aligned at whole
 // pixels and the atlas's red channel carries the coverage. Its color is
 // straight alpha, the quad's own or, when its instance carries a gradient
@@ -794,7 +847,7 @@ impl PaintProgram {
   }
 }
 
-/// The GL half: the eight programs, the two VAOs and the instance buffer, and the
+/// The GL half: the ten programs, the two VAOs and the instance buffer, and the
 /// draw. Lives
 /// as long as the renderer, which the raster thread drops before it releases
 /// the context (raster/recover.rs), so the GL names here die with it and
@@ -805,6 +858,11 @@ pub(super) struct Executor {
   fill: Program,
   /// A fill batch with a gradient: one plain rect fill.
   fill_gradient: Program,
+  /// Every rounded batch without a gradient: rounded rect fills and plain
+  /// rect fills under a rounded clip.
+  rounded: Program,
+  /// A rounded batch with a gradient.
+  rounded_gradient: Program,
   /// Every shape batch without a gradient: shapes, images, textures, and
   /// the small plain fills among them.
   shape: Program,
@@ -936,7 +994,7 @@ struct GlyphUniforms {
 }
 
 impl Executor {
-  /// Over the context current on the calling thread; compiles the eight
+  /// Over the context current on the calling thread; compiles the ten
   /// programs now (every frame draws shapes and most draw text, so the
   /// first frame must not pay them).
   ///
@@ -961,6 +1019,27 @@ impl Executor {
         GRADIENT_INPUTS,
         GRADIENT_COMMON,
         FILL_FRAGMENT,
+      ],
+    )?;
+    let rounded = Program::link(
+      &gl,
+      "rounded",
+      &[SOURCE_HEADER, VERTEX_COMMON, SHAPE_VERTEX],
+      &[SOURCE_HEADER, FRAGMENT_INPUTS, FRAGMENT_MATH, FRAGMENT_ROUNDED_CLIP, ROUNDED_FRAGMENT],
+    )?;
+    let rounded_gradient = Program::link(
+      &gl,
+      "rounded gradient",
+      &[SOURCE_HEADER, VERTEX_COMMON, SHAPE_VERTEX],
+      &[
+        SOURCE_HEADER,
+        GRADIENT_DEFINE,
+        FRAGMENT_INPUTS,
+        FRAGMENT_MATH,
+        FRAGMENT_ROUNDED_CLIP,
+        GRADIENT_INPUTS,
+        GRADIENT_COMMON,
+        ROUNDED_FRAGMENT,
       ],
     )?;
     let shape = Program::link(
@@ -1021,8 +1100,8 @@ impl Executor {
     // A sampler uniform names a unit, not a texture: set once, the unit
     // never changes. The shape and glyph programs sample `uTexture` (an
     // image, a texture, the atlas) on the one unit; the gradient programs
-    // and the glyph program sample the ramp on its own. The fill program
-    // samples nothing, and the shape program's gradient variant no
+    // and the glyph program sample the ramp on its own. The fill and the
+    // rounded program sample nothing, and the shape program's gradient variant no
     // `uTexture` (it draws no image, so the compiler drops the sampler);
     // of the mesh programs only the textured variant samples `uTexture`.
     for (program, label) in
@@ -1034,6 +1113,7 @@ impl Executor {
     }
     for (program, label) in [
       (fill_gradient.program, "fill gradient"),
+      (rounded_gradient.program, "rounded gradient"),
       (shape_gradient.program, "shape gradient"),
       (glyph.program, "glyph"),
       (mesh_gradient.program.program, "mesh gradient"),
@@ -1068,6 +1148,8 @@ impl Executor {
       gl,
       fill,
       fill_gradient,
+      rounded,
+      rounded_gradient,
       shape,
       shape_gradient,
       glyph,
@@ -1143,7 +1225,9 @@ impl Executor {
   /// the drawing renderer's. The stencil test is off on return, its write
   /// mask every bit. Reports the instances written, the draw calls issued,
   /// the path meshes drawn and tessellated and the stencil clip draws
-  /// (`super::report`), zeros for an empty list.
+  /// (`super::report`), zeros for an empty list; no draw call and no clip
+  /// draw for a list that emits only clips (every draw culled), whose
+  /// batches are never issued.
   pub(super) fn draw(
     &mut self,
     target: Target,
@@ -1203,14 +1287,18 @@ impl Executor {
       gl.disable(glow::RASTERIZER_DISCARD);
       gl.disable(glow::SAMPLE_COVERAGE);
       // Nothing emitted means no scissor: the test is already off here. The
-      // report still counts a mesh tessellated and then rejected.
+      // report still counts a mesh tessellated and then rejected, but no
+      // draw call and no clip draw: a list whose every draw was culled
+      // leaves its clip batches undrawn.
       if instances.is_empty() && walked.mesh_draws.is_empty() {
-        return Ok(super::report(&walked));
+        return Ok(DrawReport { draw_calls: 0, clips: 0, ..super::report(&walked) });
       }
       let programs = [
         &self.glyph,
         &self.fill,
         &self.fill_gradient,
+        &self.rounded,
+        &self.rounded_gradient,
         &self.shape_gradient,
         &self.mesh.program,
         &self.mesh_gradient.program,
@@ -1342,6 +1430,8 @@ impl Executor {
         let program = match (batch.program, batch.graded) {
           (BatchProgram::Fill, false) => &self.fill,
           (BatchProgram::Fill, true) => &self.fill_gradient,
+          (BatchProgram::Rounded, false) => &self.rounded,
+          (BatchProgram::Rounded, true) => &self.rounded_gradient,
           (BatchProgram::Shape, false) => &self.shape,
           (BatchProgram::Shape, true) => &self.shape_gradient,
           (BatchProgram::Glyph, _) => &self.glyph,

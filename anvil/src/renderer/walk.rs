@@ -1,15 +1,14 @@
 //! The pure half of a draw: a list's ops walked into the instances the
-//! programs draw (plain rect fills, shapes, glyphs, paint shaders) and the
-//! path meshes' draws (a retained mesh by handle with its map, color and
-//! clips), with the save stack, the transforms (perspective among them, as
-//! the projective row a quad carries and a mesh's 3x3 map) and the clip
-//! applied, the draws outside the clip rejected, a gradient's rows and ramp
-//! row put on its instances and mesh draws, and the clips the device box
-//! and the per-instance rounded clip cannot take turned into stencil clip
-//! draws (`ClipDraw`) with the stencil depth every batch tests against. No
-//! GL here, so the
-//! walk is unit-tested without a context (`tests/anvil.rs`,
-//! `tests/gradient.rs`, `tests/mesh.rs`).
+//! programs draw (plain rect fills, rounded fills, shapes, glyphs, paint
+//! shaders) and the path meshes' draws (a retained mesh by handle with its
+//! map, color and clips), with the save stack, the transforms (perspective
+//! among them, as the projective row a quad carries and a mesh's 3x3 map)
+//! and the clip applied, the draws outside the clip rejected, a gradient's
+//! rows and ramp row put on its instances and mesh draws, and the clips the
+//! device box and the per-instance rounded clip cannot take turned into
+//! stencil clip draws (`ClipDraw`) with the stencil depth every batch tests
+//! against. No GL here, so the walk is unit-tested without a context
+//! (`tests/anvil.rs`, `tests/gradient.rs`, `tests/mesh.rs`).
 
 use super::mesh::{scale_bucket, Mesh, MeshStyle};
 use super::ops::{Op, Premultiplied, Radii, Source};
@@ -157,8 +156,12 @@ pub enum BatchProgram {
   /// Plain rect fills only (see `plain_fill`): the fill program, no
   /// texture.
   Fill,
-  /// Every other shape and texture quad, and the small plain fills that
-  /// ride along with them: the shape program.
+  /// Rounded fills only (see `rounded_fill`): untextured, unstroked rounded
+  /// rects and plain rects under a rounded clip, through the rounded
+  /// program, no texture.
+  Rounded,
+  /// Every other shape and texture quad, and the small plain and rounded
+  /// fills that ride along with them: the shape program.
   Shape,
   /// Glyph runs: the glyph program.
   Glyph,
@@ -258,15 +261,17 @@ fn tile_value(tile: TileMode) -> f32 {
 }
 
 /// A run of consecutive instances one draw issues, of one class: plain
-/// rect fills (untextured, unstroked, under no rounded clip), shapes (the
-/// shape instances before any texture, or every shape that shares one
-/// texture and sampling, small solid plain fills among them) or glyphs (one
-/// atlas and one coverage policy, solid and gradient runs alike). The
-/// classes draw through different programs, so a run never mixes them,
-/// except that the shape program also draws the plain fills a solid shape
-/// run takes. A fill or a shape run is graded or solid throughout: a graded
-/// one draws through its class's gradient variant. A paint shader draw is
-/// a run of its own, one instance. A path mesh is a run of its own too, one
+/// rect fills (untextured, unstroked, under no rounded clip), rounded fills
+/// (untextured, unstroked rounded rects, and plain rects under a rounded
+/// clip), shapes (the shape instances before any texture, or every shape
+/// that shares one texture and sampling, small solid plain and rounded
+/// fills among them) or glyphs (one atlas and one coverage policy, solid
+/// and gradient runs alike). The classes draw through different programs,
+/// so a run never mixes them, except that the shape program also draws the
+/// plain and rounded fills a solid shape run takes. A fill, a rounded or a
+/// shape run is graded or solid throughout: a graded one draws through its
+/// class's gradient variant. A paint shader draw is a run of its own, one
+/// instance. A path mesh is a run of its own too, one
 /// draw call per path op: its map, color, clips and source are the mesh
 /// program's uniforms (`MeshDraw`).
 #[derive(Clone, Debug, PartialEq)]
@@ -276,7 +281,7 @@ pub struct Batch {
   pub start: usize,
   pub count: usize,
   /// The program the run draws through. `Glyph` exactly when `policy` is
-  /// set; a `Fill` run has no texture.
+  /// set; a `Fill` or a `Rounded` run has no texture.
   pub program: BatchProgram,
   /// The texture bound for the run, with its sampling; None for a run of
   /// fills, or of shapes that sample nothing. A mesh batch carries its
@@ -285,8 +290,9 @@ pub struct Batch {
   /// Set exactly when the run is glyphs (`program` is `Glyph`): the policy
   /// their coverage is turned into color with.
   pub policy: Option<CoveragePolicy>,
-  /// A fill or shape run of gradient instances, which draws through its
-  /// program's gradient variant; each instance carries its own gradient.
+  /// A fill, rounded or shape run of gradient instances, which draws
+  /// through its program's gradient variant; each instance carries its own
+  /// gradient.
   /// A mesh batch whose draw carries a gradient. False for every other run
   /// (a glyph run's instances carry their gradient whichever it is).
   pub graded: bool,
@@ -386,21 +392,26 @@ impl Walked {
   // Append the shape `instance` to the current batch when it can share its
   // draw, else open a new batch. `graded` is a class key like the program:
   // a gradient instance joins only a graded batch, a solid one only a solid
-  // batch, so the fill program stays lean for solids. A plain fill
-  // (`plain`, see `plain_fill`) joins an open fill batch of its gradedness,
-  // or, when solid, an open solid shape batch while its device area is
-  // below FILL_FOLD_AREA (the shape program draws a rect too, and one draw
-  // call fewer where rects and other shapes interleave); otherwise it opens
-  // a fill batch. Any other shape shares only an open shape batch of its
-  // gradedness (the shader branches on the kind; a bound sampler it never
-  // reads costs nothing), so a texture change, a sampling change, a fill
-  // run or a glyph run ends a run. `stencil` is a key too: a batch takes
-  // only an instance of its own stencil depth.
+  // batch, so the fill program stays lean for solids. A plain fill (see
+  // `plain_fill`) joins an open fill batch of its gradedness, or, when
+  // solid, an open solid shape batch while its device area is below
+  // FILL_FOLD_AREA (the shape program draws a rect too, and one draw call
+  // fewer where rects and other shapes interleave); otherwise it opens a
+  // fill batch. A rounded fill (see `rounded_fill`) follows the same rules
+  // with its own class: it joins an open rounded batch of its gradedness,
+  // or, when solid, rides along in an open solid shape batch below the same
+  // FILL_FOLD_AREA (the shape program draws a rounded rect and a rounded
+  // clip too, one draw call fewer where rounded rects and other shapes
+  // interleave); otherwise it opens a rounded batch. Any other shape shares
+  // only an open shape batch of its gradedness (the shader branches on the
+  // kind; a bound sampler it never reads costs nothing), so a texture
+  // change, a sampling change, a fill or rounded run or a glyph run ends a
+  // run. `stencil` is a key too: a batch takes only an instance of its own
+  // stencil depth.
   fn push(
     &mut self,
     instance: Instance,
     texture: Option<(glow::NativeTexture, TextureSampling)>,
-    plain: bool,
     graded: bool,
     stencil: u8,
   ) {
@@ -408,9 +419,17 @@ impl Walked {
     let sealed = self.sealed;
     let last = self.batches.last_mut().filter(|last| !sealed && last.stencil == stencil);
     let batch = |program| Batch { start, count: 1, program, texture, policy: None, graded, paint: None, stencil };
-    if plain {
+    // The two lean classes; an instance is at most one of them.
+    let lean = if plain_fill(&instance) {
+      Some(BatchProgram::Fill)
+    } else if rounded_fill(&instance) {
+      Some(BatchProgram::Rounded)
+    } else {
+      None
+    };
+    if let Some(own) = lean {
       match last {
-        Some(last) if last.program == BatchProgram::Fill && last.graded == graded => last.count += 1,
+        Some(last) if last.program == own && last.graded == graded => last.count += 1,
         Some(last)
           if !graded
             && !last.graded
@@ -419,7 +438,7 @@ impl Walked {
         {
           last.count += 1
         }
-        _ => self.open(Batch { texture: None, ..batch(BatchProgram::Fill) }),
+        _ => self.open(Batch { texture: None, ..batch(own) }),
       }
       self.instances.push(instance);
       return;
@@ -824,8 +843,9 @@ fn clip_rounded(state: &mut State, p: &Projective, rect: &Rect, radii: &Radii) -
 // depth then counts one more. A shape that covers nothing (a map that
 // collapses it, an empty rounded rect or oval) keeps nothing under an
 // intersect and cuts nothing under a difference. Nothing is raised once
-// the box is empty (every draw is rejected anyway) or past
-// MAX_STENCIL_DEPTH, where the clip degrades to its box, warned once.
+// the box is empty (every draw is rejected anyway), an intersect whose
+// bounds empty the box among it, or past MAX_STENCIL_DEPTH, where an
+// intersect degrades to its box and a difference is dropped, warned once.
 fn clip_stencil(
   state: &mut State,
   p: &Projective,
@@ -839,9 +859,16 @@ fn clip_stencil(
   }
   let bounds = p.bounds(rect);
   if state.depth == MAX_STENCIL_DEPTH {
-    unsupported!("stencil clips nested past 255 deep", "the deeper clip is its bounding box");
-    if let (ClipOperation::Intersect, Some(bounds)) = (op, bounds) {
-      state.clip = state.clip.intersection_unchecked(&bounds);
+    match op {
+      ClipOperation::Intersect => {
+        unsupported!("stencil clips nested past 255 deep", "an intersect is its bounding box");
+        if let Some(bounds) = bounds {
+          state.clip = state.clip.intersection_unchecked(&bounds);
+        }
+      }
+      ClipOperation::Difference => {
+        unsupported!("stencil clips nested past 255 deep", "a difference is ignored");
+      }
     }
     return;
   }
@@ -858,6 +885,15 @@ fn clip_stencil(
         state.clip = Box2D::zero();
         return;
       };
+      if let Some(b) = bounds {
+        state.clip = state.clip.intersection_unchecked(&b);
+      }
+      // A shape whose bounds miss the box keeps nothing: every later draw
+      // is rejected by the empty box, so the raise would cost a stencil
+      // draw for none.
+      if state.clip.is_empty() {
+        return;
+      }
       out.push_clip(ClipDraw::Raise { reference: depth, shape });
       // The raise is not held to the box (neither program discards), so its
       // area is the shape's bounds within the target, or the whole target.
@@ -865,9 +901,6 @@ fn clip_stencil(
         Some(b) => b.intersection(&state.target),
         None => Some(state.target),
       };
-      if let Some(b) = bounds {
-        state.clip = state.clip.intersection_unchecked(&b);
-      }
       raise(state, area);
     }
     ClipOperation::Difference => {
@@ -907,7 +940,13 @@ fn restore_stencil(popped: &State, saved: &State, out: &mut Walked) {
   if popped.depth <= saved.depth {
     return;
   }
-  let Some(raised) = popped.raised else { return };
+  // Rounded outward to whole pixels: a raise's rasterized edge covers the
+  // samples inside its shape, which may reach a sub-pixel past its float
+  // bounds' edge under MSAA, never past the whole pixel. LESS passes only
+  // where a raise left the stencil above `to`, so the larger area changes
+  // nothing more. Within the target still: `raised` is, and the target's
+  // edges are whole pixels.
+  let Some(raised) = popped.raised.map(|r| r.round_out()) else { return };
   let identity = Projective::from_matrix(&Matrix::identity());
   let area = clip_quad(&identity, &raised.to_rect(), box_array(&raised));
   out.push_clip(ClipDraw::Restore { to: saved.depth, area });
@@ -1141,8 +1180,7 @@ fn push_shape(
   };
   let graded = gradient.is_some();
   let shape = instance(state, &p, clip, Quad { rect: quad, kind, stroke: s, color, tex, radii, rows });
-  let plain = plain_fill(&shape);
-  out.push(shape, texture, plain, graded, state.depth);
+  out.push(shape, texture, graded, state.depth);
 }
 
 // `image`'s map from the op's space to the normalized texel: its own map
@@ -1160,6 +1198,16 @@ fn normalized_texel(image: &super::ops::Image) -> Affine {
 fn plain_fill(instance: &Instance) -> bool {
   let [_, _, kind, stroke] = instance.offset_kind_stroke;
   kind == KIND_RECT && stroke == 0.0 && instance.rclip_radii == [0.0; 4]
+}
+
+// Whether `instance` is a rounded fill, which the rounded program draws:
+// not textured, not stroked, and either a rounded rect or a plain rect
+// under a rounded clip (which `plain_fill` refuses). Its coverage is the
+// rounded-box distance's, of the shape, of the clip, or both.
+fn rounded_fill(instance: &Instance) -> bool {
+  let [_, _, kind, stroke] = instance.offset_kind_stroke;
+  let rect_under_clip = kind == KIND_RECT && instance.rclip_radii != [0.0; 4];
+  stroke == 0.0 && (kind == KIND_ROUNDED_RECT || rect_under_clip)
 }
 
 // The device pixels `instance`'s quad covers, unclipped: under a 2D map its
@@ -1223,7 +1271,7 @@ fn push_line(
   let color = if gradient.is_some() { [color[3]; 4] } else { color };
   let rows = gradient_rows(gradient.as_ref());
   let quad = Quad { rect: local, kind: KIND_LINE, stroke: width, color, tex, radii: [0.0; 4], rows };
-  out.push(instance(state, &p, clip, quad), None, false, gradient.is_some(), state.depth);
+  out.push(instance(state, &p, clip, quad), None, gradient.is_some(), state.depth);
 }
 
 // The cap as the instance carries it.
@@ -1273,7 +1321,7 @@ fn push_texture(
     radii: [0.0; 4],
     rows: texel_rows(rows),
   };
-  out.push(instance(state, &p, clip, quad), Some((texture.name(), sampling)), false, false, state.depth);
+  out.push(instance(state, &p, clip, quad), Some((texture.name(), sampling)), false, state.depth);
 }
 
 // One glyph run under the current state: rejected whole when its alpha is

@@ -6,8 +6,9 @@
 // decided here, before any GL work, as are the rounded rects' radii and
 // quads, the rounded clip in device space and the image-filled shapes'
 // uv, the glyph runs' instances and their batches, the plain rect fills'
-// batches, the paint shader draws' quads and batches, and the draw report
-// and the scissor the executor takes from a walk. The deferred deletion
+// batches, the rounded fills' batches, the paint shader draws' quads and
+// batches, and the draw report and the scissor the executor takes from a
+// walk. The deferred deletion
 // queue a texture or a paint shader handle drops onto is tested here too,
 // with no renderer, as is the paint shader's fragment source assembly.
 
@@ -127,6 +128,11 @@ fn fills(start: usize, count: usize) -> Batch {
     paint: None,
     stencil: 0,
   }
+}
+
+// A batch of rounded fills: no texture, no glyph policy, `graded` or solid.
+fn roundeds(start: usize, count: usize, graded: bool) -> Batch {
+  Batch { start, count, program: BatchProgram::Rounded, texture: None, policy: None, graded, paint: None, stencil: 0 }
 }
 
 fn line(from: (f32, f32), to: (f32, f32), paint: &Paint) -> Vec<Instance> {
@@ -744,7 +750,8 @@ fn a_perspective_image_source_draws_the_color() {
   assert_eq!(i.offset_kind_stroke[2], KIND_ROUNDED_RECT);
   assert!(approx(i.color, [0.5, 0.25, 0.0, 0.5]), "{:?}", i.color);
   assert_eq!(i.tex, [0.0; 4]);
-  assert_eq!(out.batches, vec![shapes(0, 1, None)]);
+  // Untextured and unstroked: a rounded fill.
+  assert_eq!(out.batches, vec![roundeds(0, 1, false)]);
 }
 
 // The view's card flip: rotate_y by `degrees` about the origin, then the
@@ -1076,11 +1083,8 @@ fn a_small_plain_rect_rides_along_in_a_shape_batch() {
 #[test]
 fn a_rect_the_fill_program_cannot_draw_is_a_shape() {
   let quad = rect(10.0, 10.0, 20.0, 20.0);
-  // Under a rounded clip.
-  let mut b = DisplayListBuilder::new(None);
-  b.clip_rounded_rect(&rect(0.0, 0.0, 50.0, 50.0), &RoundingRadii::circular([5.0; 4]), ClipOperation::Intersect)
-    .draw_rect(&quad, &opaque());
-  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None)]);
+  // Under a rounded clip it is a rounded fill, not a shape
+  // (`a_plain_rect_under_a_rounded_clip_is_a_rounded_fill`).
 
   // Stroked.
   let mut b = DisplayListBuilder::new(None);
@@ -1097,6 +1101,120 @@ fn a_rect_the_fill_program_cannot_draw_is_a_shape() {
   let mut b = DisplayListBuilder::new(None);
   b.draw_rect(&quad, &opaque()).draw_rect(&quad, &stroked(2.0));
   assert_eq!(walked_all(b).batches, vec![fills(0, 1), shapes(1, 1, None)]);
+}
+
+#[test]
+fn a_plain_rect_under_a_rounded_clip_is_a_rounded_fill() {
+  // The rounded program's coverage is the rounded clip's: the rect's own
+  // edges are MSAA's, so the fill program's lean path cannot take it, and
+  // the shape program's kind branches and discard are not needed for it.
+  let quad = rect(10.0, 10.0, 20.0, 20.0);
+  let mut b = DisplayListBuilder::new(None);
+  b.clip_rounded_rect(&rect(0.0, 0.0, 50.0, 50.0), &RoundingRadii::circular([5.0; 4]), ClipOperation::Intersect)
+    .draw_rect(&quad, &opaque())
+    .draw_rect(&quad, &opaque());
+  let out = walked_all(b);
+  assert_eq!(out.instances[0].offset_kind_stroke[2], KIND_RECT);
+  assert_eq!(out.batches, vec![roundeds(0, 2, false)]);
+
+  // A rounded rect under the same clip joins the run.
+  let mut b = DisplayListBuilder::new(None);
+  b.clip_rounded_rect(&rect(0.0, 0.0, 50.0, 50.0), &RoundingRadii::circular([5.0; 4]), ClipOperation::Intersect)
+    .draw_rect(&quad, &opaque());
+  rounded(&mut b, quad, [3.0; 4], &opaque());
+  assert_eq!(walked_all(b).batches, vec![roundeds(0, 2, false)]);
+}
+
+#[test]
+fn rounded_rect_fills_are_a_rounded_batch() {
+  let quad = rect(10.0, 10.0, 20.0, 20.0);
+  // Alone.
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, quad, [4.0; 4], &opaque());
+  assert_eq!(walked_all(b).batches, vec![roundeds(0, 1, false)]);
+
+  // Two in a row share the batch.
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, quad, [4.0; 4], &opaque());
+  rounded(&mut b, quad, [2.0, 0.0, 2.0, 0.0], &opaque());
+  assert_eq!(walked_all(b).batches, vec![roundeds(0, 2, false)]);
+
+  // A plain fill between them does not join: it opens a fill batch.
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, quad, [4.0; 4], &opaque());
+  b.draw_rect(&quad, &opaque());
+  rounded(&mut b, quad, [4.0; 4], &opaque());
+  assert_eq!(walked_all(b).batches, vec![roundeds(0, 1, false), fills(1, 1), roundeds(2, 1, false)]);
+
+  // A rounded stroke is a shape.
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, quad, [4.0; 4], &stroked(2.0));
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None)]);
+
+  // A textured rounded rect is a shape.
+  let t = test_texture(7, ISize::new(10, 10));
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, quad, [4.0; 4], &image_paint(&t, TextureSampling::Linear, None));
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, Some((name(&t), TextureSampling::Linear)))]);
+
+  // A stroke after a rounded fill opens a shape batch.
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, quad, [4.0; 4], &opaque());
+  rounded(&mut b, quad, [4.0; 4], &stroked(2.0));
+  assert_eq!(walked_all(b).batches, vec![roundeds(0, 1, false), shapes(1, 1, None)]);
+}
+
+#[test]
+fn a_small_rounded_rect_rides_along_in_a_shape_batch() {
+  let quad = rect(0.0, 0.0, 10.0, 10.0);
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_oval(&quad, &opaque());
+  rounded(&mut b, quad, [2.0; 4], &opaque());
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 2, None)]);
+
+  // A large one opens a rounded batch: 400 x 400 is past FILL_FOLD_AREA.
+  let large = rect(0.0, 0.0, 400.0, 400.0);
+  assert!(large.size.width * large.size.height >= FILL_FOLD_AREA);
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_oval(&quad, &opaque());
+  rounded(&mut b, large, [8.0; 4], &opaque());
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None), roundeds(1, 1, false)]);
+}
+
+#[test]
+fn a_gradient_rounded_rect_is_a_graded_rounded_batch() {
+  let quad = rect(10.0, 10.0, 20.0, 20.0);
+  let mut graded = opaque();
+  graded.set_color_source(&ColorSource::linear_gradient(
+    Point::zero(),
+    Point::new(TARGET, 0.0),
+    &[Color::new_srgba(1.0, 0.0, 0.0, 1.0), Color::new_srgba(0.0, 0.0, 1.0, 1.0)],
+    &[0.0, 1.0],
+    TileMode::Clamp,
+    None,
+  ));
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, quad, [4.0; 4], &graded);
+  rounded(&mut b, quad, [4.0; 4], &graded);
+  // A solid one does not join it.
+  rounded(&mut b, quad, [4.0; 4], &opaque());
+  assert_eq!(walked_all(b).batches, vec![roundeds(0, 2, true), roundeds(2, 1, false)]);
+}
+
+#[test]
+fn a_grid_of_rounded_panels_draws_in_one_call() {
+  const COLS: usize = 5;
+  const ROWS: usize = 4;
+  // Each panel's cell, in local pixels.
+  const CELL: f32 = 20.0;
+  let mut b = DisplayListBuilder::new(None);
+  for i in 0..COLS * ROWS {
+    let (x, y) = ((i % COLS) as f32 * CELL, (i / COLS) as f32 * CELL);
+    rounded(&mut b, rect(x + 1.0, y + 1.0, CELL - 2.0, CELL - 2.0), [3.0; 4], &opaque());
+  }
+  let out = walked_all(b);
+  assert_eq!(out.batches, vec![roundeds(0, COLS * ROWS, false)]);
+  assert_eq!(report(&out).draw_calls, 1);
 }
 
 // One param and one input, shared as a draw_shader takes them.

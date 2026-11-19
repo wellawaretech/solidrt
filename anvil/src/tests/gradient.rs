@@ -12,7 +12,7 @@ use crate::renderer::walk::{
   TILE_CLAMP,
 };
 use crate::{affine, Affine, Color, ColorSource, CoveragePolicy, GlyphQuad, GradientKind, RampGradient, RAMP_WIDTH};
-use crate::{DisplayListBuilder, ISize, Paint, Point, Rect, RoundingRadii, Size, TileMode};
+use crate::{DisplayListBuilder, DrawStyle, ISize, Paint, Point, Rect, RoundingRadii, Size, TileMode};
 use std::sync::Arc;
 
 // How far a mapped value may sit from the expected one: float noise.
@@ -232,8 +232,11 @@ fn the_rows_are_the_ops_own_under_any_map() {
 fn gradient_shapes_share_a_graded_shape_batch() {
   let quad = rect(0.0, 0.0, 40.0, 40.0);
   let graded = sourced(linear());
+  // Stroked: a gradient rounded rect fill is a rounded batch of its own.
+  let mut graded_stroke = sourced(linear());
+  graded_stroke.set_draw_style(DrawStyle::Stroke).set_stroke_width(2.0);
   let mut b = DisplayListBuilder::new(None);
-  b.draw_rounded_rect(&quad, &RoundingRadii::circular([4.0; 4]), &graded)
+  b.draw_rounded_rect(&quad, &RoundingRadii::circular([4.0; 4]), &graded_stroke)
     .draw_oval(&quad, &graded)
     .draw_oval(&quad, &Paint::default());
   let out = walked(b);
