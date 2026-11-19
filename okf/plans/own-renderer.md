@@ -1045,10 +1045,69 @@ shader and one texture; the paint route's process CPU is about two
 points lower. The desktop's GPU frame timer is bimodal here as the stage
 2 measurement found (one run's paint read sat in the low group at 4.8 to
 5.1 ms per frame, the next in the high group at 15.4 with the texture
-route), so it does not compare the routes. The TV read, where the pass
-cost is tile traffic, is pending: the 32-bit APK of 799a07c6 is built
-(`dist/android/armeabi-v7a/solidrt-go.apk`) and waits for the TV and
-the maintainer's install.
+route), so it does not compare the routes.
+
+**TV** (Philips TPM171E, Mali-T860, 1920x1080 at 50 Hz, a 960x540
+logical window at scale 2, armeabi-v7a; the branch client of 799a07c6,
+cadence hold off; 100 s idle then three reads of about 13 s, the second
+and third below as per-frame deltas; per-thread CPU from `/proc`, percent
+of one core). The probe's default seven columns are 1184 logical pixels,
+wider than the TV's window, so the TV read runs `columns=5 panels=30`:
+every panel on screen, both routes drawing the same 30 (the last row
+clipped by the window's bottom edge alike). With the default grid the
+paint route culls the five off-screen panels while the texture route
+still renders their 36 passes, so that read is kept only as a check.
+
+| route | frames / s | missed / read | draw calls / frame | passes / frame | frame GPU ms | pass GPU ms | pass issue ms | frame work ms | raster thread | UI thread | process CPU | textures, programs |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `<shader>`, 30 | 50.0, 50.0 | 0, 0 | 31 | 0 | 14.3 | 0 | 0 | 24.7 to 26.1 | 14.7 % | 38 % | 51 % | 1 texture (the glyph atlas), 1 paint shader |
+| shader texture + `<texture>`, 30 | 25.2, 25.2 | 345, 346 | 31 | 30 | 29.9 | 6.5 to 6.7 | 34.6 | 67.0 to 67.3 | 54.8 % | 20 % | 81 % | 31 textures, 30 pipelines |
+| `<shader>`, 36 default grid (31 drawn) | 50.0, 50.0 | 0, 0 | 32 | 0 | 14.8 | 0 | 0 | 24.2 | 15.2 % | 44 % | 56 % | 1, 1 |
+| texture, 36 default grid (31 drawn) | 22.8, 22.8 | 376, 380 | 32 | 36 | 31.4 | 9.3 | 38.7 | 72.0 to 72.3 | 56.8 % | 21 % | 86 % | 37, 36 |
+
+The TV separates the routes where the desktop could not. The paint route
+holds the refresh with 0 missed presents across the reads (4 in the first
+100 s, the start-up); the texture route presents every other refresh:
+its raster thread spends 34.6 ms per frame issuing the 30 offscreen
+passes (about 1.15 ms of driver time per pass on this Mali, with 6.6 ms
+of GPU behind them) and is the bottleneck, not the GPU. The paint route's
+14.3 ms of frame GPU is near the full-frame floor stage 2 estimated
+(about 6 ms) plus the plasma fragments themselves (the texture route
+renders the same 1.73 million fragments in 6.6 ms of pass time), with
+about 1.7 ms left for the 4x MSAA window target's own work on those
+pixels; no per-pass cost shows. The UI thread's share is the 30 `params`
+writes per frame on both routes (38 % at 50 frames per second against
+20 % at 25, about the same per frame). Both routes hold their numbers
+across the reads; memory sits at 102 MB against 126 MB. The 36-panel check reads the same way with the five culled
+panels discounted.
+
+### What stage 3 taught
+
+- A shader panel's cost was never the shader: on the TV, 30 offscreen
+  passes cost 34.6 ms of raster-thread issue time for 6.6 ms of GPU. The
+  per-pass driver work (target bind, clear, program and uniform setup,
+  the pass's own submission) is what the direct draw removes; the
+  fragments cost about the same on both routes (shaded into the 4x MSAA
+  window target on one, into rgba8 targets on the other).
+- Culling by the window changes what a probe compares. A grid wider
+  than the device's logical window drops panels on the direct route and
+  keeps their passes on the offscreen one; a probe for two routes has to
+  put the same work on screen for both (`columns=`), and the tree
+  (`/tree`) is the check that it did.
+- The GPU frame timer compares routes on the Mali where it does not on
+  the desktop: the paint frame reads as floor plus fragments, with no
+  bimodal split.
+
+**Stage 3 is done.** Its Done criteria hold: the example renders; the GL
+example diffs the direct draw against the shader texture with a largest
+channel difference of 0; the rect clip, the rounded clip and a rotation
+draw; params and inputs validate as `linkProgram`'s do; a retained
+recording keeps a destroyed handle's program alive until it is dropped
+and the program is deleted after; recovery relinks and culls a refused
+shader from the registry; the probe's numbers are above for the desktop
+and the TV. Open from the stage, into the backlog: a `<shader>` whose
+input texture changes every frame rebuilds its recordings
+(`okf/backlog/shader-input-content-change-rebuilds.md`).
 
 ### Where anvil lives (2026-11-18)
 
