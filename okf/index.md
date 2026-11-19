@@ -533,12 +533,11 @@ Shaped, not started.
   not felt. SDL3 has SDL_RumbleGamepad (low/high frequency motors, duration)
   and trigger rumble on pads that support it; one call to plumb, keyed by the
   pad's slot.
-- **[A full glyph atlas drops glyphs instead of evicting](backlog/glyph-atlas-eviction.md)** [2026-10-06]
-  The glyph engine's atlas grows by doubling up to the device's texture size
-  cap and then refuses further cells (a warning, the glyph stays missing); a
-  wide repertoire that keeps turning over - a terminal, a CJK document - needs
-  eviction of cells no live run references, which means knowing who references
-  what.
+- **[The sprite font's side of glyph atlas eviction](backlog/glyph-atlas-eviction.md)** [2026-10-06]
+  The glyph atlas evicts at its cap and the text atlas uses it, but flux:font
+  never turns it on, so a sprite font's full atlas still drops glyphs; turning
+  it on needs a release surface and a move signal from fontAtlas, since a
+  same-size eviction repack moves cells under the runs without a re-frame.
 - **[Go client crashes at launch on the x86_64 emulator](backlog/go-client-emulator-launch-crash.md)** [2026-09-01]
   The currently staged solidrt-go.apk aborts within a second of launch on the
   srt_pixel6 emulator (FORTIFY, destroyed mutex inside libhwui's CommonPool);
@@ -1033,12 +1032,6 @@ Shaped, not started.
   An app test with { size } sometimes mounts at the run's window (1280x720)
   instead of the size it set; seen twice in CI on "a size alone keeps scale
   1", while the same commit passes on rerun.
-- **[Drop what text kept from its layer era](backlog/text-after-direct-draw.md)** [2026-11-19]
-  Since text draws straight into the frame (own-renderer stage 2), several
-  parts of the text path still follow the layer model; a paint change reshapes
-  the paragraph and redoes the per-glyph work, the atlas holds every glyph
-  twice in CPU memory, and the layer machinery, its names and two backlog
-  notes are left over. Three items, no pixel changes, one step.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,
@@ -1056,12 +1049,6 @@ Shaped, not started.
   ascent and descent and the baseline snaps to whole pixels; a half-leading
   placement only moves the error around, so the candidate is cap-band
   centering, to be simulated before it is built.
-- **[Keep text layer rasters from stalling paint](backlog/text-layer-raster-stalls-paint.md)** [2026-10-14]
-  A frame that re-rasterizes a text layer while the GPU is busy with a heavy
-  scene paints in 16-19 ms instead of under 1 ms; the layer raster is a
-  blocking round trip to the raster thread, and its glyph pass likely syncs on
-  GPU work still in flight. Measure which, then take it off paint's critical
-  path.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves
@@ -3287,6 +3274,12 @@ Finished, kept for the reasoning.
   mounts at that window, built on a headless window that is a framebuffer the
   raster thread owns rather than the EGL surface, so the size is an allocation
   and not a platform question.
+- **[Drop what text kept from its layer era](done/text-after-direct-draw.md)** [2026-11-19]
+  Since text draws straight into the frame (own-renderer stage 2), several
+  parts of the text path still follow the layer model; a paint change reshapes
+  the paragraph and redoes the per-glyph work, the atlas holds every glyph
+  twice in CPU memory, and the layer machinery, its names and two backlog
+  notes are left over. Three items, no pixel changes, one step.
 - **[A frame never draws text without its glyphs](done/text-complete-frames.md)** [2026-10-09]
   A text layer whose cells are not in the atlas draws without them when the
   frame's 3 ms cell budget is spent, and the frame presents that way - a size
@@ -3334,6 +3327,12 @@ Finished, kept for the reasoning.
   all and stays stretched at rest. The raster scale should follow rest, as
   browsers do: composite the existing raster stretched while the scale moves,
   re-rasterize once it holds.
+- **[Keep text layer rasters from stalling paint](done/text-layer-raster-stalls-paint.md)** [2026-11-19]
+  A frame that re-rasterizes a text layer while the GPU is busy with a heavy
+  scene paints in 16-19 ms instead of under 1 ms; the layer raster is a
+  blocking round trip to the raster thread, and its glyph pass likely syncs on
+  GPU work still in flight. Measure which, then take it off paint's critical
+  path.
 - **[Own the text layout, demote drawParagraph to a shaper](done/text-layout-owned.md)** [2026-08-16]
   Impeller's paragraph is a black box for line breaking, so inline elements,
   exclusions, custom breaking and cheap re-layout are unreachable; experiment

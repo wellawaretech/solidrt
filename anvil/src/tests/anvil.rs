@@ -754,14 +754,17 @@ fn a_rotated_image_source_draws_the_color() {
 }
 
 // A glyph quad at (x, y), 4 x 6, sampling the atlas cell at (sx, 0).
-fn glyph(x: f32, y: f32, sx: f32, color: [f32; 4]) -> GlyphQuad {
-  GlyphQuad { dst: [x, y, 4.0, 6.0], src: [sx, 0.0, 4.0, 6.0], color }
+fn glyph(x: f32, y: f32, sx: f32) -> GlyphQuad {
+  GlyphQuad { dst: [x, y, 4.0, 6.0], src: [sx, 0.0, 4.0, 6.0] }
 }
 
-// Two white glyphs side by side at y = 10, from x.
+// Two glyphs side by side at y = 10, from x.
 fn word(x: f32) -> Arc<[GlyphQuad]> {
-  Arc::from([glyph(x, 10.0, 0.0, [1.0; 4]), glyph(x + 5.0, 10.0, 4.0, [1.0; 4])])
+  Arc::from([glyph(x, 10.0, 0.0), glyph(x + 5.0, 10.0, 4.0)])
 }
+
+// The color of a white glyph run.
+const WHITE: [f32; 4] = [1.0; 4];
 
 // A red-to-blue linear gradient across the first hundred pixels.
 fn gradient() -> RampGradient {
@@ -796,7 +799,7 @@ fn a_glyph_run_walks_into_glyph_instances() {
   let color = [1.0, 0.5, 0.0, 0.5];
   let policy = CoveragePolicy::default();
   let mut b = DisplayListBuilder::new(None);
-  b.translate(10.0, 20.0).draw_glyphs(&atlas, &Arc::from([glyph(2.0, 3.0, 16.0, color)]), policy, None);
+  b.translate(10.0, 20.0).draw_glyphs(&atlas, &Arc::from([glyph(2.0, 3.0, 16.0)]), color, policy, None);
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 1);
   let i = &out.instances[0];
@@ -817,7 +820,13 @@ fn glyph_runs_are_rejected_whole_and_per_quad() {
   let policy = CoveragePolicy::default();
   // A whole run outside the clip yields nothing, not even a batch.
   let mut b = DisplayListBuilder::new(None);
-  b.clip_rect(&rect(0.0, 0.0, 20.0, 20.0), ClipOperation::Intersect).draw_glyphs(&atlas, &word(40.0), policy, None);
+  b.clip_rect(&rect(0.0, 0.0, 20.0, 20.0), ClipOperation::Intersect).draw_glyphs(
+    &atlas,
+    &word(40.0),
+    WHITE,
+    policy,
+    None,
+  );
   let out = walked_all(b);
   assert!(out.instances.is_empty());
   assert!(out.batches.is_empty());
@@ -825,17 +834,24 @@ fn glyph_runs_are_rejected_whole_and_per_quad() {
   // A run half inside keeps the quads inside: the first glyph spans
   // 16..20, the second 21..25 past the clip's right edge at 20.
   let mut b = DisplayListBuilder::new(None);
-  b.clip_rect(&rect(0.0, 0.0, 20.0, 20.0), ClipOperation::Intersect).draw_glyphs(&atlas, &word(16.0), policy, None);
+  b.clip_rect(&rect(0.0, 0.0, 20.0, 20.0), ClipOperation::Intersect).draw_glyphs(
+    &atlas,
+    &word(16.0),
+    WHITE,
+    policy,
+    None,
+  );
   let out = walked(b);
   assert_eq!(out.len(), 1);
   assert!(approx(out[0].rect, [16.0, 10.0, 4.0, 6.0]), "{:?}", out[0].rect);
 
-  // A fully transparent quad is skipped; an empty run draws nothing.
+  // A fully transparent run is skipped whole; an empty run draws nothing.
   let mut b = DisplayListBuilder::new(None);
-  let clear = glyph(0.0, 0.0, 0.0, [1.0, 1.0, 1.0, 0.0]);
+  let clear = [1.0, 1.0, 1.0, 0.0];
   let empty: Arc<[GlyphQuad]> = Arc::from([]);
-  b.draw_glyphs(&atlas, &Arc::from([clear, glyph(5.0, 0.0, 4.0, [1.0; 4])]), policy, None)
-    .draw_glyphs(&atlas, &empty, policy, None);
+  b.draw_glyphs(&atlas, &Arc::from([glyph(0.0, 0.0, 0.0)]), clear, policy, None)
+    .draw_glyphs(&atlas, &Arc::from([glyph(5.0, 0.0, 4.0)]), WHITE, policy, None)
+    .draw_glyphs(&atlas, &empty, WHITE, policy, None);
   let out = walked(b);
   assert_eq!(out.len(), 1);
   assert_eq!(out[0].rect[0], 5.0);
@@ -850,7 +866,7 @@ fn glyph_runs_and_shapes_take_separate_batches() {
   // program, so it is a batch of its own over the atlas, between two
   // fill batches.
   let mut b = DisplayListBuilder::new(None);
-  b.draw_rect(&quad, &opaque()).draw_glyphs(&atlas, &word(0.0), policy, None).draw_rect(&quad, &opaque());
+  b.draw_rect(&quad, &opaque()).draw_glyphs(&atlas, &word(0.0), WHITE, policy, None).draw_rect(&quad, &opaque());
   let out = walked_all(b);
   assert_eq!(out.batches, vec![fills(0, 1), glyphs(1, 2, &atlas, policy), fills(3, 1)]);
   let (glyph_quads, shape_quads) = (2, 2);
@@ -858,14 +874,14 @@ fn glyph_runs_and_shapes_take_separate_batches() {
 
   // Two runs with the same policy and nothing between them: one batch.
   let mut b = DisplayListBuilder::new(None);
-  b.draw_glyphs(&atlas, &word(0.0), policy, None).draw_glyphs(&atlas, &word(20.0), policy, None);
+  b.draw_glyphs(&atlas, &word(0.0), WHITE, policy, None).draw_glyphs(&atlas, &word(20.0), WHITE, policy, None);
   let out = walked_all(b);
   assert_eq!(out.batches, vec![glyphs(0, 4, &atlas, policy)]);
 
   // A policy change splits the run.
   let naive = CoveragePolicy { mode: CoverageMode::Naive, ..policy };
   let mut b = DisplayListBuilder::new(None);
-  b.draw_glyphs(&atlas, &word(0.0), policy, None).draw_glyphs(&atlas, &word(20.0), naive, None);
+  b.draw_glyphs(&atlas, &word(0.0), WHITE, policy, None).draw_glyphs(&atlas, &word(20.0), WHITE, naive, None);
   let out = walked_all(b);
   assert_eq!(out.batches, vec![glyphs(0, 2, &atlas, policy), glyphs(2, 2, &atlas, naive)]);
 }
@@ -877,11 +893,11 @@ fn a_gradient_run_is_its_own_batch() {
   let quad = rect(0.0, 0.0, 10.0, 10.0);
   let g = Arc::new(gradient());
   let mut b = DisplayListBuilder::new(None);
-  b.draw_glyphs(&atlas, &word(0.0), policy, None)
-    .draw_glyphs(&atlas, &word(20.0), policy, Some(&g))
-    .draw_glyphs(&atlas, &word(40.0), policy, None)
+  b.draw_glyphs(&atlas, &word(0.0), WHITE, policy, None)
+    .draw_glyphs(&atlas, &word(20.0), WHITE, policy, Some(&g))
+    .draw_glyphs(&atlas, &word(40.0), WHITE, policy, None)
     .draw_rect(&quad, &opaque())
-    .draw_glyphs(&atlas, &word(60.0), policy, None);
+    .draw_glyphs(&atlas, &word(60.0), WHITE, policy, None);
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 9);
   // Under the identity the device rows are the op's own.
@@ -903,12 +919,9 @@ fn an_image_between_glyph_runs_splits_them() {
   let quad = rect(0.0, 0.0, 10.0, 10.0);
   let linear = TextureSampling::Linear;
   let mut b = DisplayListBuilder::new(None);
-  b.draw_glyphs(&atlas, &word(0.0), policy, None).draw_texture_rect(&image, &quad, &quad, linear, None).draw_glyphs(
-    &atlas,
-    &word(20.0),
-    policy,
-    None,
-  );
+  b.draw_glyphs(&atlas, &word(0.0), WHITE, policy, None)
+    .draw_texture_rect(&image, &quad, &quad, linear, None)
+    .draw_glyphs(&atlas, &word(20.0), WHITE, policy, None);
   let out = walked_all(b);
   assert_eq!(
     out.batches,

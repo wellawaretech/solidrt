@@ -436,6 +436,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     &mut self,
     atlas: &Texture,
     quads: &Arc<[GlyphQuad]>,
+    color: [f32; 4],
     policy: CoveragePolicy,
     gradient: Option<&Arc<RampGradient>>,
   ) -> &mut Self {
@@ -444,11 +445,12 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       atlas: atlas.clone(),
       quads: quads.clone(),
       bounds,
+      color,
       policy,
       gradient: gradient.cloned(),
     });
     #[cfg(any(test, feature = "oplog"))]
-    self.log.push(LogOp::DrawGlyphs { bounds, quads: quads.len(), policy, gradient: gradient.is_some() });
+    self.log.push(LogOp::DrawGlyphs { bounds, quads: quads.len(), color, policy, gradient: gradient.is_some() });
     self
   }
 

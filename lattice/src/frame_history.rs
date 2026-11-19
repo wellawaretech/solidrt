@@ -108,10 +108,11 @@ pub struct WindowSummary {
   /// Backdrop panels re-filtered under a fading group, summed over the
   /// window: nonzero means a glass fade ran, whichever frame was worst.
   pub backdrops_prepainted: u32,
-  /// Text layers the glyph pass rasterized, summed over the window: how
-  /// often the window's frames re-rasterized text, where the latest
-  /// rebuild's `paintOps` shows one frame.
-  pub text_layers: u32,
+  /// Texts whose glyph record the paint walk remade, summed over the
+  /// window: how often the window's frames remade text (a shaping change,
+  /// a new raster scale, an atlas move; a recolor is not one), where the
+  /// latest rebuild's `paintOps` shows one frame.
+  pub text_rasters: u32,
   /// The widest paint walk in the window.
   pub nodes_painted_max: u32,
   /// The UI-thread wall time of the snapshot rasters, summed over the
@@ -313,7 +314,7 @@ impl FrameHistory {
       capture_frames,
       worst,
       backdrops_prepainted: frames.iter().map(|r| r.backdrops_prepainted).sum(),
-      text_layers: frames.iter().map(|r| r.counters.text_layers).sum(),
+      text_rasters: frames.iter().map(|r| r.counters.text_rasters).sum(),
       nodes_painted_max: frames.iter().map(|r| r.nodes_painted).max().unwrap_or(0),
       snapshot_raster_ms: frames.iter().map(|r| r.snapshot_raster_ms as f64).sum(),
       damage_px: frames.iter().map(|r| r.damage_px as f64).sum(),

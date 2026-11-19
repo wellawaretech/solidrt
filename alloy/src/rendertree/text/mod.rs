@@ -155,10 +155,10 @@ pub struct Text {
   // What the last build drew (see TextRaster).
   raster: RefCell<Option<TextRaster>>,
   // The composite scale as the builds saw it (see ScaleSeen): a scale that
-  // held over the rest looks is at rest (build_layer).
+  // held over the rest looks is at rest (record_glyphs).
   scale_seen: Cell<Option<ScaleSeen>>,
   // The last build kept its raster under a scale that moved and asked for
-  // a look at the next frame (build_layer); the walk registers it.
+  // a look at the next frame (record_glyphs); the walk registers it.
   scale_wait: Cell<bool>,
   // The raster scale the last build chose, whether or not its pass ran.
   chosen_scale: Cell<Option<f32>>,
@@ -210,13 +210,19 @@ struct LineRun {
   y: f32,
 }
 
-/// One recorded paint run of a text: the quads as the frame draws them and
-/// the gradient they take their color from, shared with every recording
-/// that holds them.
+/// One recorded paint run of a text: the quads as the frame draws them,
+/// shared with every recording that holds them, the run's color (straight
+/// alpha) and the gradient it takes its color from, the paint the run was
+/// made with, and the run styles (indices into `Text::runs`, as
+/// `run_styles()` indexes them) whose line runs it holds: what a paint
+/// change is checked against (`Text::paints_current`).
 #[derive(Clone)]
 struct RecordedRun {
   quads: Arc<[GlyphQuad]>,
+  color: [f32; 4],
   gradient: Option<Arc<RampGradient>>,
+  paint: PaintState,
+  styles: Vec<usize>,
 }
 
 /// What the last build of a `<text>` drew (okf/plans/own-renderer.md,
@@ -224,18 +230,21 @@ struct RecordedRun {
 /// text atlas cells, laid out in the pixels of its painted box at a raster
 /// density. The pixels are the frame's; this records at what density and
 /// with which hinting the cells were chosen, which the scale policy reads
-/// (build_layer: a raster kept under a moving scale draws the cells it was
-/// made with, stretched), and the runs themselves. Validated by
+/// (record_glyphs: a raster kept under a moving scale draws the cells it
+/// was made with, stretched), and the runs themselves. Validated by
 /// fingerprint like the shaping cache beside it: the prepared cache's
-/// generation (which moves on a paint change too), the shaping width, the
-/// scale, the rendering generation and the text atlas generation. The
-/// runs change only when one of those does, so a build the record is
+/// generation (which does not move on a paint change), the shaping width,
+/// the scale, the rendering generation and the text atlas generation. The
+/// quads change only when one of those does, so a build the record is
 /// current for re-records them by reference, with no cell lookup, where a
-/// rebuild of the frame would otherwise remake every glyph's quad. The
-/// record owns no texture, so it is the text's for its life (dropped with
-/// the node, or with the paint caches on a context loss): an atlas move
-/// then damages every text that ever recorded, and every recording that
-/// holds one lets go of the texture it was made against.
+/// rebuild of the frame would otherwise remake every glyph's quad. A paint
+/// change recolors the kept runs (their quads by reference, a new color on
+/// the op); a gradient change, or runs that shared a paint and no longer
+/// do, remakes them. The record owns no texture, so it is the text's for
+/// its life (dropped with the node, or with the paint caches on a context
+/// loss): an atlas move then damages every text that ever recorded, and
+/// every recording that holds one lets go of the texture it was made
+/// against.
 #[derive(Clone)]
 struct TextRaster {
   /// The box the quads are laid out in, relative to the text's origin
@@ -248,7 +257,7 @@ struct TextRaster {
   rendering: u64,
   /// Whether the cells were hinted: a raster made for a scale the text
   /// rests at is, one made mid-motion at an in-between scale is not (see
-  /// build_layer), and is re-made hinted once the scale rests. Never set
+  /// record_glyphs), and is re-made hinted once the scale rests. Never set
   /// on a display that does not hint.
   hinted: bool,
   /// The text atlas generation the placements were read at
@@ -410,12 +419,19 @@ pub(crate) fn scale_held(a: f32, b: f32) -> bool {
   (a - b).abs() <= b.abs() * SCALE_HELD_EPSILON
 }
 
-// The layer's raster density: the device pixels per logical pixel of the
-// target the layer is drawn into, from the walk's grid map (the display
-// scale times the ancestors' scale; the display scale alone past a 3d
-// transform, where the map is gone).
-fn layer_scale(ctx: &BuildContext<'_>) -> f32 {
+// The composite scale a text is drawn under: the device pixels per logical
+// pixel of the target the text is drawn into, from the walk's grid map (the
+// display scale times the ancestors' scale; the display scale alone past a
+// 3d transform, where the map is gone).
+fn composite_scale(ctx: &BuildContext<'_>) -> f32 {
   grid::scale(&ctx.grid).unwrap_or_else(|| ctx.platform.display_scale())
+}
+
+// A paint's color as a glyph run's, straight alpha (`draw_glyphs`); under a
+// gradient only its alpha counts (the program reads the color off the ramp).
+fn run_color(paint: &PaintState) -> [f32; 4] {
+  let c = paint.color;
+  [c.red, c.green, c.blue, c.alpha]
 }
 
 impl Buildable for Text {
@@ -434,7 +450,7 @@ impl Buildable for Text {
     let owned = &*owned;
     let runs = owned.runs_for(index);
     let layout = &owned.layouts[index].layout;
-    self.build_layer(ctx, builder, origin, owned, index);
+    self.record_glyphs(ctx, builder, origin, owned, index);
     // CSS decorating boxes: the text's underline is one line in its own
     // style under everything (atoms excepted); a span's underline is its
     // own line in the span's style. Both may cover a run.
@@ -568,17 +584,18 @@ impl Text {
 
   // Draw the text straight into the frame: the runs' glyphs as quads from
   // the text atlas, laid out in the pixels of the text's painted box at the
-  // raster scale (as a layer of that box would hold them) and recorded as
-  // one glyph run per paint group under the box's origin and density. The
-  // raster scale follows the composite scale at rest and holds while it
+  // raster scale and recorded as one glyph run per paint under the box's
+  // origin and density. The raster scale follows the composite scale at rest and holds while it
   // moves (`raster_density`): a text under a scale animation draws its
   // cells for the kept scale stretched until the scale has held, then
   // re-makes them once, or makes them for a known end (a transition's) at
   // once and has nothing left to do at rest; a text that
   // decides to wait asks for a look at the next frame (`scale_wait`, which
   // the walk registers with the tree). What the build drew is kept (see
-  // TextRaster).
-  fn build_layer(
+  // TextRaster). A count of the records remade is kept
+  // (`counters::note_text_raster_made`): a paint change recolors and is not
+  // one.
+  fn record_glyphs(
     &self,
     ctx: &mut BuildContext<'_>,
     builder: &mut DisplayListBuilder,
@@ -586,7 +603,7 @@ impl Text {
     owned: &OwnedCache,
     index: usize,
   ) {
-    let composite = layer_scale(ctx);
+    let composite = composite_scale(ctx);
     // At rest when the scale held over the rest looks, or when an enclosing
     // recording decided so for its record walk.
     let last_look = self.scale_seen.get();
@@ -623,7 +640,7 @@ impl Text {
     let display_scale = ctx.platform.display_scale();
     let at_end = ctx.scale_target != 1.0 && scale_held(scale, composite * ctx.scale_target);
     let hinted = hints && (at_rest || steady || scale == display_scale || at_end);
-    let Some((rect, _, _)) = Self::layer_geometry(owned, index, scale) else {
+    let Some((rect, _, _)) = Self::raster_box(owned, index, scale) else {
       return;
     };
     ctx.scale_bound += 1;
@@ -631,13 +648,16 @@ impl Text {
     let content = Size::new(width, owned.layouts[index].layout.height);
     let rendering = ctx.platform.text_rendering_generation();
     let atlas_generation = ctx.platform.text_atlas_generation();
-    let current = raster.as_ref().is_some_and(|l| {
+    // The kept runs' paints are brought up to the text's own on the way
+    // (paints_current): a recolor keeps the record current.
+    let current = raster.as_mut().is_some_and(|l| {
       l.generation == owned.generation
         && l.rendering == rendering
         && l.width == width
         && l.scale == scale
         && (l.hinted == hinted || !at_rest)
         && l.atlas_generation == atlas_generation
+        && self.paints_current(&mut l.runs)
     });
     // A raster still current draws the cells it was made with: a kept
     // raster keeps its hinting while the scale moves.
@@ -676,6 +696,7 @@ impl Text {
       return;
     };
     if let Some((runs, atlas_generation)) = made {
+      crate::rendertree::counters::note_text_raster_made();
       *raster = Some(TextRaster {
         rect,
         scale,
@@ -725,9 +746,46 @@ impl Text {
     builder.scale(1.0 / raster.scale, 1.0 / raster.scale);
     for run in &raster.runs {
       crate::rendertree::counters::note_draw();
-      builder.draw_glyphs(&atlas, &run.quads, policy, run.gradient.as_ref());
+      builder.draw_glyphs(&atlas, &run.quads, run.color, policy, run.gradient.as_ref());
     }
     builder.restore();
+  }
+
+  // Bring the kept runs' paints up to the text's current ones, for a record
+  // that is otherwise current; false when the record must be remade. A
+  // run's styles are read as `RunOverrides::resolve` reads them (the span's
+  // paint, else the text's). All of them still the run's paint: nothing to
+  // do. All of them on one new paint with the run's gradient: a recolor,
+  // the run takes the new color and keeps its quads. Otherwise (a gradient
+  // changed, which the quads' ramp was resolved from, or styles that shared
+  // a paint no longer do) the record is remade. The indices are into the
+  // runs the record was made from: a change of the runs misses the shaping
+  // key and moves the generation, so a record reaching here was made from
+  // runs of the current length; the bound check only keeps a stale index
+  // from panicking.
+  fn paints_current(&self, runs: &mut [RecordedRun]) -> bool {
+    for run in runs.iter_mut() {
+      let mut current: Option<&PaintState> = None;
+      for &i in &run.styles {
+        let Some(text_run) = self.runs.get(i) else { return false };
+        let paint = text_run.overrides.paint.as_ref().unwrap_or(&self.paint);
+        match current {
+          None => current = Some(paint),
+          Some(other) if other == paint => {}
+          Some(_) => return false,
+        }
+      }
+      let Some(paint) = current else { return false };
+      if *paint == run.paint {
+        continue;
+      }
+      if paint.gradient != run.paint.gradient {
+        return false;
+      }
+      run.color = run_color(paint);
+      run.paint = paint.clone();
+    }
+    true
   }
 
   /// This text drawn on its own, outside a tree walk (the stats HUD): laid
@@ -747,29 +805,30 @@ impl Text {
     self.prepare_owned(platform, &mut owned);
     let index = self.owned_layout(platform, &mut owned, width);
     let owned = &*owned;
-    let (rect, tex_w, tex_h) = Self::layer_geometry(owned, index, scale)?;
+    let (rect, tex_w, tex_h) = Self::raster_box(owned, index, scale)?;
     let content = Size::new(width, owned.layouts[index].layout.height);
     let styles = self.run_styles();
     let line_runs = self.line_runs(owned, index);
     let into = previous.filter(|p| p.tex_w == tex_w && p.tex_h == tex_h).map(|p| &p.texture);
     let hinted = scale == platform.display_scale();
-    let texture =
-      match self.draw_layer(platform, alloy, &styles, &line_runs, content, rect, scale, hinted, tex_w, tex_h, into) {
-        Ok(drawn) => drawn?,
-        Err(e) => {
-          log::warn!("[text] rasterization failed: {e}");
-          return None;
-        }
-      };
+    let texture = match self
+      .rasterize_runs(platform, alloy, &styles, &line_runs, content, rect, scale, hinted, tex_w, tex_h, into)
+    {
+      Ok(drawn) => drawn?,
+      Err(e) => {
+        log::warn!("[text] rasterization failed: {e}");
+        return None;
+      }
+    };
     Some(TextImage { texture, tex_w, tex_h, rect, ink: Self::ink_box(owned, index) })
   }
 
-  // The box a layer of the layout at `index` covers, relative to the text
-  // origin (logical px): the lines plus a line height of slack on every
-  // side, since ink overhangs its line box (italics, descenders), as
-  // painted_extent reckons; and its size in texels at `scale`. None when
-  // there is nothing to draw into.
-  fn layer_geometry(owned: &OwnedCache, index: usize, scale: f32) -> Option<(Rect, u32, u32)> {
+  // The box the glyph quads of the layout at `index` are laid out in,
+  // relative to the text origin (logical px): the lines plus a line height
+  // of slack on every side, since ink overhangs its line box (italics,
+  // descenders), as painted_extent reckons; and its size in texels at
+  // `scale`. None when there is nothing to draw into.
+  fn raster_box(owned: &OwnedCache, index: usize, scale: f32) -> Option<(Rect, u32, u32)> {
     let layout = &owned.layouts[index].layout;
     let width = owned.layouts[index].width;
     let slack = layout.lines.iter().map(|l| l.height).fold(0.0, f32::max);
@@ -790,13 +849,13 @@ impl Text {
   // `hinted` as the platform's text hinting says or not at all, `content`
   // being the text's own box (what a box gradient resolves against). The
   // runs are recorded as `draw_glyphs` ops, as a tree walk records them,
-  // into a list whose space is the layer's texels (the quads are laid out
-  // in them already), and the list is rasterized like a snapshot's,
+  // into a list whose space is the texture's texels (the quads are laid
+  // out in them already), and the list is rasterized like a snapshot's,
   // single-sample: a glyph's coverage is its atlas texels. Ok(None) when
   // there is no atlas texture (the GPU refused it, logged there), Err when
   // the rasterization failed.
   #[allow(clippy::too_many_arguments)]
-  fn draw_layer(
+  fn rasterize_runs(
     &self,
     platform: &PlatformContext,
     alloy: &Context,
@@ -811,16 +870,16 @@ impl Text {
     into: Option<&Texture>,
   ) -> Result<Option<Texture>, String> {
     let (runs, atlas_id) = self.glyph_quads(platform, alloy, styles, line_runs, content, rect.origin, scale, hinted);
-    // The atlas handle the tree walk draws from (see build_layer).
+    // The atlas handle the tree walk draws from (see record_glyphs).
     let Some(atlas) = atlas_id.and_then(|id| alloy.textures.get(id)).and_then(|e| e.handle.clone()) else {
       return Ok(None);
     };
     let policy = platform.coverage_policy();
     let mut builder = DisplayListBuilder::new(None);
     for run in &runs {
-      builder.draw_glyphs(&atlas, &run.quads, policy, run.gradient.as_ref());
+      builder.draw_glyphs(&atlas, &run.quads, run.color, policy, run.gradient.as_ref());
     }
-    let dl = builder.build().ok_or_else(|| "the text layer's list did not build".to_string())?;
+    let dl = builder.build().ok_or_else(|| "the text's list did not build".to_string())?;
     match into {
       Some(texture) => {
         alloy.render_display_list_into_texture(&dl, texture, tex_w, tex_h, false)?;
@@ -846,13 +905,19 @@ impl Text {
     Rect::new(Point::new(left, 0.0), Size::new(width, layout.height))
   }
 
-  // The runs' glyphs as quads in layer pixels (the box at `box_origin`
+  // The runs' glyphs as quads in the box's pixels (the box at `box_origin`
   // relative to the text origin, scaled by `scale`), their cells ensured in
   // the text atlas, grouped by paint into the runs a recording draws: the
-  // solid-colored runs together, a gradient run's quads with its gradient
-  // resolved against `content` (the text's own box). Returns the runs and
-  // the atlas texture (None when
-  // the GPU refused it). Each run is shaped through the word cache; a
+  // line runs whose styles have equal paints together, in first-use order,
+  // each group's color its paint's and its gradient, if any, resolved once
+  // against `content` (the text's own box). Spans of different colors
+  // record one `draw_glyphs` each; the raster side batches their instances
+  // all the same, since a glyph batch keys on the atlas, the policy and the
+  // gradient, not the color. Groups draw in text order (first use), so
+  // where ink of two paints overlaps across a span boundary it composes in
+  // that order, where the solid runs once drew under every gradient run.
+  // Returns the runs and the atlas texture (None
+  // when the GPU refused it). Each run is shaped through the word cache; a
   // glyph's pen x splits into the pixel its cell snaps to and the subpixel
   // phase the cell is made at, its baseline y snaps to a pixel row. Glyphs
   // are asked of the atlas per style key and phase, since a run's glyphs
@@ -878,7 +943,7 @@ impl Text {
     let mut atlas = platform.text_atlas();
     let display_scale = platform.display_scale();
     let darken_em = platform.text_darken_em();
-    // Hinted as the caller decided (build_layer: a raster for a scale the
+    // Hinted as the caller decided (record_glyphs: a raster for a scale the
     // text rests at); a text at the display scale is one at rest on the
     // pixel grid, whose style every other text of its size shares.
     let native = scale == display_scale;
@@ -889,11 +954,6 @@ impl Text {
     // primary lacks (fallback) draws those clusters, not the warm-up's
     // ASCII.
     let warm = native;
-    // A style's gradient resolved once; None draws the style's solid color.
-    let gradients: Vec<Option<crate::gpu::RampGradient>> = styles
-      .iter()
-      .map(|s| s.paint.gradient.as_ref().and_then(|g| gradient::layer_gradient(g, content, box_origin, scale)))
-      .collect();
     // A glyph's quad before its placement is known: its cell key, where
     // the quad goes (its pixel x and baseline y) and which group it joins.
     struct Slot {
@@ -903,38 +963,39 @@ impl Text {
       px: i32,
       baseline: f32,
       group: usize,
-      color: [f32; 4],
     }
     let mut slots: Vec<Slot> = Vec::new();
     // Per (style key, phase): the glyph ids to ensure, and whether the
     // style is warmed on first sight.
     let mut buckets: Vec<(StyleKey, u8, Vec<u16>, bool)> = Vec::new();
-    // The solid group first, then one group per gradient style in
-    // first-use order (`graded` maps a style index to its group): each
-    // group's quads, and its gradient.
-    let mut groups: Vec<(Vec<GlyphQuad>, Option<RampGradient>)> = vec![(Vec::new(), None)];
-    let mut graded: Vec<(usize, usize)> = Vec::new();
+    // One group per paint in first-use order: its paint, its gradient
+    // resolved once (None draws the paint's solid color), its quads and the
+    // styles whose line runs it holds.
+    struct Group<'p> {
+      paint: &'p PaintState,
+      gradient: Option<RampGradient>,
+      quads: Vec<GlyphQuad>,
+      styles: Vec<usize>,
+    }
+    let mut groups: Vec<Group> = Vec::new();
     for run in line_runs {
       let style = &styles[run.style];
       let Some(word) = words.get_or_shape(&fonts, &run.text, style, Fallback::Registered) else { continue };
       let primary = fonts.resolve(&style.font_family);
       let weight = weight_value(style.font_weight);
       let italic = style.font_style == FontStyle::Italic;
-      // The run's color rides on the quad; under a gradient only its alpha
-      // counts (the pass reads the color off the ramp).
-      let c = style.paint.color;
-      let color = [c.red, c.green, c.blue, c.alpha];
-      let group = match &gradients[run.style] {
-        None => 0,
-        Some(gradient) => match graded.iter().find(|(s, _)| *s == run.style) {
-          Some((_, group)) => *group,
-          None => {
-            groups.push((Vec::new(), Some(gradient.clone())));
-            graded.push((run.style, groups.len() - 1));
-            groups.len() - 1
-          }
-        },
+      let group = match groups.iter().position(|g| *g.paint == style.paint) {
+        Some(group) => group,
+        None => {
+          let gradient =
+            style.paint.gradient.as_ref().and_then(|g| gradient::layer_gradient(g, content, box_origin, scale));
+          groups.push(Group { paint: &style.paint, gradient, quads: Vec::new(), styles: Vec::new() });
+          groups.len() - 1
+        }
       };
+      if !groups[group].styles.contains(&run.style) {
+        groups[group].styles.push(run.style);
+      }
       let x0 = (run.x - box_origin.x) * scale;
       let baseline = (run.y + word.metrics.ascent - box_origin.y) * scale;
       for g in &word.glyphs.glyphs {
@@ -951,7 +1012,7 @@ impl Text {
           }
           None => buckets.push((key, phase, vec![g.id], warm_face)),
         }
-        slots.push(Slot { style: key, phase, id: g.id, px, baseline: baseline + g.y * scale, group, color });
+        slots.push(Slot { style: key, phase, id: g.id, px, baseline: baseline + g.y * scale, group });
       }
     }
     for (key, phase, ids, warm_face) in &buckets {
@@ -963,7 +1024,7 @@ impl Text {
       if p.width == 0 {
         continue;
       }
-      groups[slot.group].0.push(GlyphQuad {
+      groups[slot.group].quads.push(GlyphQuad {
         dst: [
           (slot.px + p.left) as f32,
           (slot.baseline.round() as i32 - p.top) as f32,
@@ -971,15 +1032,20 @@ impl Text {
           p.height as f32,
         ],
         src: [p.x as f32, p.y as f32, p.width as f32, p.height as f32],
-        color: slot.color,
       });
     }
-    if groups[0].0.is_empty() {
-      groups.remove(0);
-    }
+    // A group with no quads (blank glyphs only) draws nothing and is not
+    // kept.
     let runs = groups
       .into_iter()
-      .map(|(quads, gradient)| RecordedRun { quads: Arc::from(quads), gradient: gradient.map(Arc::new) })
+      .filter(|g| !g.quads.is_empty())
+      .map(|g| RecordedRun {
+        quads: Arc::from(g.quads),
+        color: run_color(g.paint),
+        gradient: g.gradient.map(Arc::new),
+        paint: g.paint.clone(),
+        styles: g.styles,
+      })
       .collect();
     (runs, texture)
   }
@@ -1001,6 +1067,13 @@ impl Text {
   #[cfg(test)]
   pub(crate) fn chosen_scale(&self) -> Option<f32> {
     self.chosen_scale.get()
+  }
+
+  /// The shaping cache's generation (a test's read): it moves when the text
+  /// is shaped anew, not on a paint change.
+  #[cfg(test)]
+  pub(crate) fn shaping_generation(&self) -> u64 {
+    self.owned.borrow().generation
   }
 
   /// Drop the raster record now: its placements are into a texture of a

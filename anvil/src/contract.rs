@@ -174,17 +174,20 @@ pub trait DisplayListBuilder: Sized {
   ) -> &mut Self;
   /// A run of glyph quads from a mask atlas: each quad's `dst` in the
   /// current space, its `src` in atlas texels (row 0 the top), the atlas's
-  /// red channel as coverage, turned into color under `policy` from the
-  /// quad's straight-alpha color, or from `gradient` evaluated at the quad's
-  /// position in the current space (the quad's alpha still applies). Drawn
-  /// source-over, premultiplied; the sampling is linear. What a `<text>`
-  /// records per paint run. The run and its gradient are shared, not
-  /// copied: a retained recording and a text that keeps its runs hold the
-  /// one slice the text made.
+  /// red channel as coverage, turned into color under `policy` from
+  /// `color`, or from `gradient` evaluated at the quad's position in the
+  /// current space. `color` is the run's color, straight alpha in 0..1 (the
+  /// program premultiplies); under a gradient only its alpha counts, and a
+  /// run whose alpha is 0 draws nothing. Drawn source-over, premultiplied;
+  /// the sampling is linear. What a `<text>` records per paint run. The run
+  /// and its gradient are shared, not copied: a retained recording and a
+  /// text that keeps its runs hold the one slice the text made, and a
+  /// recolored run passes the same slice with a new `color`.
   fn draw_glyphs(
     &mut self,
     atlas: &super::Texture,
     quads: &Arc<[GlyphQuad]>,
+    color: [f32; 4],
     policy: CoveragePolicy,
     gradient: Option<&Arc<RampGradient>>,
   ) -> &mut Self;

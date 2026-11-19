@@ -22,7 +22,7 @@ thread_local! {
   static CACHE_GETS: Cell<u32> = const { Cell::new(0) };
   static CACHE_HITS: Cell<u32> = const { Cell::new(0) };
   static DRAWS: Cell<u32> = const { Cell::new(0) };
-  static TEXT_LAYERS: Cell<u32> = const { Cell::new(0) };
+  static TEXT_RASTERS: Cell<u32> = const { Cell::new(0) };
   static CLIPS: Cell<u32> = const { Cell::new(0) };
   static ROUNDED_CLIPS: Cell<u32> = const { Cell::new(0) };
   static SAVE_LAYERS: Cell<u32> = const { Cell::new(0) };
@@ -50,16 +50,19 @@ pub struct LayoutCounters {
   /// Display-list ops the paint walk recorded (the frame's cost on the
   /// raster thread and the GPU scales with these on a slow CPU or a tiled
   /// GPU, okf/backlog/display-list-op-cost.md): draw ops of every kind
-  /// (rects, paths, textures, text layers, replayed recordings); clip ops,
+  /// (rects, paths, textures, glyph runs, replayed recordings); clip ops,
   /// of which `rounded_clips` are the rounded (and oval) ones, the kind
   /// that costs a third of a tiled GPU's frame on a resizing box; and
   /// save layers (opacity and filter groups, backdrop filters). Ops inside
   /// a reused repaint-boundary recording are not re-recorded and so not
-  /// counted; its replay is one draw. `text_layers` counts nothing since
-  /// text draws straight into the frame (a run is a draw); it stays until
-  /// stage 7 of okf/plans/own-renderer.md retires it.
+  /// counted; its replay is one draw. `text_rasters` counts the texts whose
+  /// glyph record the walk remade (a shaping change, a new raster scale at
+  /// rest, an atlas move, a text rendering change); a text whose record is
+  /// current re-records its runs and is not counted, nor is a solid color
+  /// change, which recolors the kept runs (a gradient change remakes them
+  /// and is counted).
   pub draws: u32,
-  pub text_layers: u32,
+  pub text_rasters: u32,
   pub clips: u32,
   pub rounded_clips: u32,
   pub save_layers: u32,
@@ -98,10 +101,10 @@ pub fn note_draw() {
   DRAWS.with(|c| c.set(c.get() + 1));
 }
 
-/// One text layer rasterized by the glyph pass (Text::build_layer); its
-/// composite is the draw.
-pub fn note_text_layer_drawn() {
-  TEXT_LAYERS.with(|c| c.set(c.get() + 1));
+/// One text whose glyph record the paint walk remade (Text::record_glyphs);
+/// each of its runs is a draw.
+pub fn note_text_raster_made() {
+  TEXT_RASTERS.with(|c| c.set(c.get() + 1));
 }
 
 /// One clip op; `rounded` for a rounded-rect or oval clip.
@@ -140,7 +143,7 @@ pub fn take() -> LayoutCounters {
     cache_gets: CACHE_GETS.with(|c| c.replace(0)),
     cache_hits: CACHE_HITS.with(|c| c.replace(0)),
     draws: DRAWS.with(|c| c.replace(0)),
-    text_layers: TEXT_LAYERS.with(|c| c.replace(0)),
+    text_rasters: TEXT_RASTERS.with(|c| c.replace(0)),
     clips: CLIPS.with(|c| c.replace(0)),
     rounded_clips: ROUNDED_CLIPS.with(|c| c.replace(0)),
     save_layers: SAVE_LAYERS.with(|c| c.replace(0)),

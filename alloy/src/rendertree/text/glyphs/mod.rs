@@ -29,8 +29,8 @@
 //   msdfgen (ffi.rs binds the C shim build.rs compiles with its core).
 // - atlas.rs: cells packed into one growing texture (etagere's shelf
 //   allocator, the one behind WebRender's texture cache), keyed by the
-//   owner, with frame stamps for eviction, the CPU mirror growth repacks
-//   from and the dirty rects a flush uploads; R8 for a mask atlas the
+//   owner, with frame stamps for eviction, every cell's pixels (what a
+//   growth repacks from and a flush uploads; no copy of the texture); R8 for a mask atlas the
 //   glyph pass reads, rgba8 for a distance field or a mask atlas sampled
 //   as a plain texture.
 // - text_atlas.rs: the one mask atlas every `<text>` draws from: cells
@@ -53,7 +53,7 @@ mod shape;
 mod text_atlas;
 mod worker;
 
-pub use atlas::{AtlasPacker, CellKey as AtlasKey, CellPlacement, Dirty, DirtyRect, GlyphAtlas, InsertOutcome};
+pub use atlas::{AtlasPacker, CellKey as AtlasKey, CellPlacement, Dirty, GlyphAtlas, InsertOutcome};
 pub use cells::{Cell, CellKind, CellRequest, Hint, Rasterizer, MSDF_BYTES_PER_TEXEL};
 pub use fonts::{family_names, weight_value, Face, FaceId, FontBytes, FontSet};
 pub use shape::{Fallback, PlacedGlyph, ShapeStyle, ShapedGlyphs};

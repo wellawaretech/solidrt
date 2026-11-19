@@ -775,7 +775,7 @@ fn build_recursive<'a>(
       // The density the recording's content made for one scale (text
       // layers, floored strokes) is judged at: the grid scale inside the
       // boundary's own matrix, what its texts read as their composite scale
-      // (text::layer_scale). Observed at every composite, so a scale that
+      // (text::composite_scale). Observed at every composite, so a scale that
       // held over the rest looks is at rest.
       let inner_grid = match &own {
         Some(m) => grid::through(&ctx.grid, m),
@@ -1054,7 +1054,7 @@ pub(super) fn record_node<'a>(
   // parent's box covers. It is undone before the scroll, the fit and the
   // children, which round for themselves. A text takes none for its
   // content: its layer quad is its one rounding, against the grid of the
-  // frame the builder is in (text::build_layer). Zero for a boundary (its
+  // frame the builder is in (text::record_glyphs). Zero for a boundary (its
   // origin is whole), under a running track or `pixelSnap={false}`
   // (nothing rounds), and for the node a raster records (its content sits
   // at the texture's origin).

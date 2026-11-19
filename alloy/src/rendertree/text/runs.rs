@@ -63,6 +63,21 @@ pub struct TextRun {
   pub clear: Option<Clear>,
 }
 
+impl TextRun {
+  /// Whether `other` shapes and breaks as this run does: the same text,
+  /// node, atom box, float and clear, under overrides that shape alike
+  /// (`RunOverrides::shapes_like`). What the shaping cache key compares, so
+  /// a paint-only change keeps the shaped runs.
+  pub fn shapes_like(&self, other: &TextRun) -> bool {
+    self.text == other.text
+      && self.node == other.node
+      && self.atom == other.atom
+      && self.float == other.float
+      && self.clear == other.clear
+      && self.overrides.shapes_like(&other.overrides)
+  }
+}
+
 /// A run's fully resolved style. Also the style half of the word cache key,
 /// hence Hash and Eq (floats by bits, see `hash_f32`).
 #[derive(Clone, Debug, PartialEq)]
@@ -112,6 +127,20 @@ pub struct RunOverrides {
 }
 
 impl RunOverrides {
+  /// Whether `other` shapes and breaks as `self` does. The shaping inputs
+  /// are the font family, size, style, weight and stretch, the line height
+  /// and the letter spacing; the paint and the underline (on, offset,
+  /// thickness) are paint-only and are not compared.
+  pub fn shapes_like(&self, other: &RunOverrides) -> bool {
+    self.font_family == other.font_family
+      && self.font_size == other.font_size
+      && self.font_style == other.font_style
+      && self.font_weight == other.font_weight
+      && self.font_stretch == other.font_stretch
+      && self.line_height == other.line_height
+      && self.letter_spacing == other.letter_spacing
+  }
+
   /// `child` layered over `self`: a child's Some wins.
   pub fn layer(&self, child: &RunOverrides) -> RunOverrides {
     RunOverrides {

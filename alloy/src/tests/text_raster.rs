@@ -338,8 +338,31 @@ fn an_atlas_move_refreshes_the_runs() {
   assert_eq!(glyph_names(&after), vec![stage.atlas_name()]);
 }
 
+// The colors of the frame's glyph runs, in recording order, the holder's
+// recording flattened in place.
+fn run_colors(dl: &DisplayList) -> Vec<[f32; 4]> {
+  flat(dl.ops())
+    .into_iter()
+    .filter_map(|op| match op {
+      Op::DrawGlyphs { color, .. } => Some(*color),
+      _ => None,
+    })
+    .collect()
+}
+
+// Whether the frame's glyph runs carry a gradient, in recording order.
+fn run_gradients(dl: &DisplayList) -> Vec<bool> {
+  flat(dl.ops())
+    .into_iter()
+    .filter_map(|op| match op {
+      Op::DrawGlyphs { gradient, .. } => Some(*gradient),
+      _ => None,
+    })
+    .collect()
+}
+
 #[test]
-fn a_color_change_refreshes_the_runs() {
+fn a_color_change_recolors_the_kept_runs() {
   let mut stage = Stage::new();
   let before = runs(&stage.rest());
   let red = crate::renderer::Color::new_srgba(1.0, 0.0, 0.0, 1.0);
@@ -348,11 +371,53 @@ fn a_color_change_refreshes_the_runs() {
   assert_eq!(changed.boundaries_recorded, 1, "the paint damage re-records the holder");
   let after = runs(&dl);
   assert_eq!(after.len(), 2);
-  // The recolored text remade its run in the new color; the other one
-  // re-recorded its kept run by reference.
-  assert!(!Arc::ptr_eq(&before[0], &after[0]), "the recolored run was kept");
-  assert!(after[0].iter().all(|q| q.color == [1.0, 0.0, 0.0, 1.0]), "{:?}", after[0][0].color);
-  assert!(Arc::ptr_eq(&before[1], &after[1]), "the unchanged text remade its run");
+  // Both texts re-recorded their kept quads by reference; the recolored
+  // one carries its new color on the op.
+  assert!(Arc::ptr_eq(&before[0], &after[0]), "the recolored text remade its quads");
+  assert!(Arc::ptr_eq(&before[1], &after[1]), "the unchanged text remade its quads");
+  assert_eq!(run_colors(&dl)[0], [1.0, 0.0, 0.0, 1.0]);
+}
+
+#[test]
+fn a_color_change_does_not_reshape() {
+  let mut stage = Stage::new();
+  stage.rest();
+  let generation = stage.text(FIRST).shaping_generation();
+  let red = crate::renderer::Color::new_srgba(1.0, 0.0, 0.0, 1.0);
+  stage.tree.edit(FIRST, |el| el.kind.paint_mut().expect("a text paints").set_color(Some(red)));
+  stage.frame();
+  assert_eq!(stage.text(FIRST).shaping_generation(), generation, "a recolor reshaped the text");
+  // A text change does reshape.
+  stage.tree.edit(FIRST, |el| match &mut el.kind {
+    ElementKind::Text(text) => {
+      text.set_plain_text("Goodbye".to_string());
+      Damage::Layout
+    }
+    _ => panic!("node {FIRST} is a text"),
+  });
+  stage.frame();
+  assert!(stage.text(FIRST).shaping_generation() > generation, "a text change kept the shaping");
+}
+
+#[test]
+fn a_gradient_change_remakes_the_runs() {
+  let mut stage = Stage::new();
+  let before = runs(&stage.rest());
+  let stops = vec![
+    GradientStop { offset: 0.0, color: crate::renderer::Color::new_srgba(1.0, 0.0, 0.0, 1.0) },
+    GradientStop { offset: 1.0, color: crate::renderer::Color::new_srgba(0.0, 0.0, 1.0, 1.0) },
+  ];
+  let gradient =
+    Gradient::linear_box(crate::renderer::Point::new(0.0, 0.0), crate::renderer::Point::new(1.0, 0.0), stops);
+  stage.tree.edit(FIRST, |el| el.kind.paint_mut().expect("a text paints").set_gradient(gradient));
+  let (dl, _) = stage.frame();
+  let after = runs(&dl);
+  assert_eq!(after.len(), 2);
+  // The gradient's ramp is resolved into the run: its quads are remade,
+  // and the op carries the gradient. The other text keeps its run.
+  assert!(!Arc::ptr_eq(&before[0], &after[0]), "the graded text kept its quads");
+  assert!(Arc::ptr_eq(&before[1], &after[1]), "the unchanged text remade its quads");
+  assert_eq!(run_gradients(&dl), vec![true, false]);
 }
 
 #[test]

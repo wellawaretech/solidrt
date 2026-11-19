@@ -569,8 +569,8 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, out: &mut Wal
       Op::DrawTexture { texture, src, dst, sampling, alpha } => {
         push_texture(state, texture, src, dst, *sampling, *alpha, out)
       }
-      Op::DrawGlyphs { atlas, quads, bounds, policy, gradient } => {
-        push_glyphs(state, atlas, quads, bounds, *policy, gradient.as_ref(), out)
+      Op::DrawGlyphs { atlas, quads, bounds, color, policy, gradient } => {
+        push_glyphs(state, atlas, quads, bounds, *color, *policy, gradient.as_ref(), out)
       }
       Op::DrawShader { rect, shader, params, inputs } => push_paint(state, rect, shader, params, inputs, out),
       Op::DrawPath { path, style, color, source } => push_path(state, path, *style, *color, source.as_ref(), out),
@@ -880,23 +880,25 @@ fn push_texture(
   out.push(instance(state, &m2, clip, quad), Some((texture.name(), sampling)), false, None);
 }
 
-// One glyph run under the current state: rejected whole when its `bounds`
-// fall outside the clip, else one `KIND_GLYPH` instance per quad the clip
-// keeps and whose alpha is not zero. A quad's rect is its `dst`, its uv its
+// One glyph run under the current state: rejected whole when its alpha is
+// zero or its `bounds` fall outside the clip, else one `KIND_GLYPH`
+// instance per quad the clip keeps. A quad's rect is its `dst`, its uv its
 // `src` over the atlas's size (v grows downward with the texel rows, as for
-// a texture quad), its color the quad's own, straight alpha. A
+// a texture quad), its color the run's `color`, straight alpha. A
 // `gradient`'s rows compose once per run with the inverse of the state's
-// map; under a singular map the run draws its solid colors.
+// map; under a singular map the run draws its solid color.
+#[allow(clippy::too_many_arguments)]
 fn push_glyphs(
   state: &State,
   atlas: &Texture,
   quads: &[GlyphQuad],
   bounds: &Rect,
+  color: [f32; 4],
   policy: CoveragePolicy,
   gradient: Option<&Arc<RampGradient>>,
   out: &mut Walked,
 ) {
-  if quads.is_empty() || placed(state, bounds).is_none() {
+  if quads.is_empty() || color[3] == 0.0 || placed(state, bounds).is_none() {
     return;
   }
   // An atlas's size is never zero, as for any texture (see `push_texture`).
@@ -904,9 +906,6 @@ fn push_glyphs(
   let (w, h) = (size.width as f32, size.height as f32);
   let mut instances = Vec::with_capacity(quads.len());
   for q in quads {
-    if q.color[3] == 0.0 {
-      continue;
-    }
     let dst = Rect::new(Point::new(q.dst[0], q.dst[1]), Size::new(q.dst[2], q.dst[3]));
     let Some((m2, clip)) = placed(state, &dst) else { continue };
     let [sx, sy, sw, sh] = q.src;
@@ -914,7 +913,7 @@ fn push_glyphs(
       rect: dst,
       kind: KIND_GLYPH,
       stroke: 0.0,
-      color: q.color,
+      color,
       tex: [sx / w, sy / h, (sx + sw) / w, (sy + sh) / h],
       radii: [0.0; 4],
     };

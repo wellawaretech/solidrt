@@ -101,8 +101,8 @@ fn every_recording_op_builds_a_list() {
   let atlas = test_texture(1, ISize::new(64, 64));
   let white = [1.0; 4];
   let glyphs: Arc<[GlyphQuad]> = Arc::from(vec![
-    GlyphQuad { dst: [2.0, 3.0, 4.0, 5.0], src: [0.0, 0.0, 4.0, 5.0], color: white },
-    GlyphQuad { dst: [8.0, 1.0, 3.0, 6.0], src: [4.0, 0.0, 3.0, 6.0], color: white },
+    GlyphQuad { dst: [2.0, 3.0, 4.0, 5.0], src: [0.0, 0.0, 4.0, 5.0] },
+    GlyphQuad { dst: [8.0, 1.0, 3.0, 6.0], src: [4.0, 0.0, 3.0, 6.0] },
   ]);
 
   let paint = full_paint();
@@ -136,7 +136,7 @@ fn every_recording_op_builds_a_list() {
   b.restore();
   b.save_backdrop_layer(&rect(0.0, 0.0, 20.0, 20.0), None, None);
   b.restore();
-  b.draw_glyphs(&atlas, &glyphs, CoveragePolicy::default(), None);
+  b.draw_glyphs(&atlas, &glyphs, white, CoveragePolicy::default(), None);
   b.restore();
   let list = b.build().expect("the list builds");
 
@@ -180,8 +180,15 @@ fn every_recording_op_builds_a_list() {
     Op::Restore,
     Op::SaveBackdropLayer { bounds: layer, paint: None, filter: false },
     Op::Restore,
-    // The run's bounds are the union of its quads' `dst`.
-    Op::DrawGlyphs { bounds: rect(2.0, 1.0, 9.0, 7.0), quads: 2, policy: CoveragePolicy::default(), gradient: false },
+    // The run's bounds are the union of its quads' `dst`; its color is the
+    // op's.
+    Op::DrawGlyphs {
+      bounds: rect(2.0, 1.0, 9.0, 7.0),
+      quads: 2,
+      color: white,
+      policy: CoveragePolicy::default(),
+      gradient: false,
+    },
     Op::Restore,
   ];
   let ops = list.ops();

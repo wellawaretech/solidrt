@@ -91,7 +91,7 @@ pub struct BuildContext<'a> {
   /// construction, so it takes no box offset (composite::record_node).
   pub raster_root: bool,
   /// The text atlas frame this walk belongs to: what a text or a recording
-  /// stamps its scale observation with (text::build_layer).
+  /// stamps its scale observation with (text::record_glyphs).
   pub frame: u64,
   /// An enclosing recording re-recording at rest told this walk the
   /// composite scale is at rest: every text below rasters at it
@@ -103,12 +103,12 @@ pub struct BuildContext<'a> {
   /// not (okf/done/border-width-device-pixels.md). A recording reads the delta
   /// across its record walk to know whether it must be made again when its
   /// scale changes. Only the recording reads it: the paint counters' text
-  /// layers (counters.rs) are their own.
+  /// rasters (counters.rs) are their own.
   pub scale_bound: u32,
   /// Set while the walk records a snapshot boundary's raster
   /// (boundary::record_raster): the snapshot owns the look at rest of what
   /// its texture holds, so a text or a recording inside notes no scale wait
-  /// and asks for no frame of its own (text::build_layer, the Recording arm
+  /// and asks for no frame of its own (text::record_glyphs, the Recording arm
   /// of composite::build_recursive). A capture's walk is not one.
   pub in_snapshot_raster: bool,
   /// Content made mid-motion that must be made again when the scale rests,

@@ -5,8 +5,9 @@
 //! records them) and the raster thread (where the glyph program draws
 //! them).
 
-/// One glyph of a run: where its cell lands, which atlas texels it
-/// samples, and the run's color.
+/// One glyph of a run: where its cell lands and which atlas texels it
+/// samples. The run's color is on the op (`draw_glyphs`), not on each quad,
+/// so a recolored run draws the quads it already has.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlyphQuad {
   /// The quad in the op's space (a text's layer pixels): x, y from its
@@ -15,9 +16,6 @@ pub struct GlyphQuad {
   pub dst: [f32; 4],
   /// The cell in atlas texels: x, y, width, height.
   pub src: [f32; 4],
-  /// The run's color with straight alpha in 0..1; the glyph program
-  /// premultiplies. In a gradient run only the alpha counts.
-  pub color: [f32; 4],
 }
 
 /// How a mask's coverage becomes color: the swash spike's four modes and

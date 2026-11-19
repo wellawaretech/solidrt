@@ -57,6 +57,7 @@ mod text_layout;
 mod text_motion;
 mod text_prepare;
 mod text_raster;
+mod text_runs;
 mod texture;
 mod transitions;
 mod tree;

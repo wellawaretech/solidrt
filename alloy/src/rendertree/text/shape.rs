@@ -9,12 +9,15 @@ use crate::rendertree::text::layout::{self, Align, Layout, LineCursor, LineExten
 use crate::rendertree::text::CaretStop;
 use crate::rendertree::text::RunStyle;
 use crate::rendertree::text::{FontStyle, FontWeight, TextAlignment};
-use crate::rendertree::{PaintState, PlatformContext};
+use crate::rendertree::PlatformContext;
 use std::rc::Rc;
 
 // Snapshot of every input that feeds shaping; the cache is valid only while
-// the owning Text still matches it.
-#[derive(Clone, Debug, PartialEq)]
+// the owning Text still matches it. The paint and the underline are not in
+// it: they neither shape nor break (the glyph record recolors its kept runs,
+// and the underline is drawn from the layout each build), and the runs
+// compare by their shaping inputs alone (TextRun::shapes_like).
+#[derive(Clone, Debug)]
 pub(super) struct ParaKey {
   runs: Vec<TextRun>,
   font_family: String,
@@ -31,13 +34,12 @@ pub(super) struct ParaKey {
   text_indent: f32,
   text_wrap: Wrap,
   line_height: f32,
-  paint: PaintState,
-  underline: (bool, Option<f32>, Option<f32>),
 }
 
 impl ParaKey {
   pub(super) fn matches(&self, t: &Text) -> bool {
-    self.runs == t.runs
+    self.runs.len() == t.runs.len()
+      && self.runs.iter().zip(&t.runs).all(|(a, b)| a.shapes_like(b))
       && self.font_family == t.font_family
       && self.font_size == t.font_size
       && self.font_style == t.font_style
@@ -52,8 +54,6 @@ impl ParaKey {
       && self.text_indent == t.text_indent
       && self.text_wrap == t.text_wrap
       && self.line_height == t.line_height
-      && self.paint == t.paint
-      && self.underline == (t.underline, t.underline_offset, t.underline_thickness)
   }
 
   pub(super) fn of(t: &Text) -> Self {
@@ -73,8 +73,6 @@ impl ParaKey {
       text_indent: t.text_indent,
       text_wrap: t.text_wrap,
       line_height: t.line_height,
-      paint: t.paint.clone(),
-      underline: (t.underline, t.underline_offset, t.underline_thickness),
     }
   }
 }
@@ -111,8 +109,9 @@ pub(super) struct OwnedLayout {
 #[derive(Clone, Default)]
 pub(super) struct OwnedCache {
   pub(super) key: Option<ParaKey>,
-  // Bumped every time the cache is prepared anew: what a text layer built
-  // from it checks to know its pixels are current.
+  // Bumped every time the cache is prepared anew: what the glyph record
+  // (TextRaster) checks to know its quads are laid out from the current
+  // shaping. A paint change does not move it (the paint is not in the key).
   pub(super) generation: u64,
   pub(super) runs: Vec<ShapedRun>,
   // Ellipsis run in the text's default style, when text_overflow asks for

@@ -260,9 +260,15 @@ fn a_glyph_gradient_composes_through_the_state_map() {
     )
     .expect("a linear gradient"),
   );
-  let quads: Arc<[GlyphQuad]> = Arc::from([GlyphQuad { dst: [30.0, 10.0, 4.0, 6.0], src: [0.0; 4], color: [1.0; 4] }]);
+  let quads: Arc<[GlyphQuad]> = Arc::from([GlyphQuad { dst: [30.0, 10.0, 4.0, 6.0], src: [0.0; 4] }]);
   let mut b = DisplayListBuilder::new(None);
-  b.translate(10.0, 20.0).scale(2.0, 2.0).draw_glyphs(&atlas, &quads, CoveragePolicy::default(), Some(&gradient));
+  b.translate(10.0, 20.0).scale(2.0, 2.0).draw_glyphs(
+    &atlas,
+    &quads,
+    [1.0; 4],
+    CoveragePolicy::default(),
+    Some(&gradient),
+  );
   let out = walked(b);
   assert_eq!(out.batches.len(), 1);
   let draw: &GradientDraw = out.batches[0].gradient.as_ref().expect("the run's gradient");

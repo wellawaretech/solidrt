@@ -240,8 +240,8 @@ fn push_hud_lines(text: &mut String, s: &StatsSnapshot, rates: Option<&RasterRat
   if let Some(r) = rates.filter(|r| r.renderer_draw_calls_per_frame > 0.0) {
     text.push_str(&format!("\n{:.0} INST {:.1} DC", r.renderer_instances_per_frame, r.renderer_draw_calls_per_frame));
   }
-  if ops.text_layers > 0 {
-    text.push_str(&format!("\n{} TXT", ops.text_layers));
+  if ops.text_rasters > 0 {
+    text.push_str(&format!("\n{} TXT", ops.text_rasters));
   }
   if ops.blends + ops.gradients > 0 {
     text.push_str(&format!("\n{} BLD {} GRD", ops.blends, ops.gradients));

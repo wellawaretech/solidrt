@@ -147,10 +147,12 @@ pub enum Op {
   },
   /// A glyph run: no atlas handle and no quads, as for a texture draw;
   /// `bounds` is the union of the quads' `dst` (an empty rect for no
-  /// quads), `quads` their count, `gradient` whether one was passed.
+  /// quads), `quads` their count, `color` the run's straight-alpha color,
+  /// `gradient` whether one was passed.
   DrawGlyphs {
     bounds: Rect,
     quads: usize,
+    color: [f32; 4],
     policy: CoveragePolicy,
     gradient: bool,
   },

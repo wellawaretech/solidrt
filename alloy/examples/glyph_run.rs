@@ -42,13 +42,7 @@ const INK_MIN: u8 = 200;
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const HALF_RED: [f32; 4] = [1.0, 0.0, 0.0, 0.5];
 
-fn word_quads(
-  shaped: &ShapedGlyphs,
-  atlas: &GlyphAtlas<u16>,
-  pen_x: f32,
-  baseline: f32,
-  color: [f32; 4],
-) -> Vec<GlyphQuad> {
+fn word_quads(shaped: &ShapedGlyphs, atlas: &GlyphAtlas<u16>, pen_x: f32, baseline: f32) -> Vec<GlyphQuad> {
   let mut quads = Vec::new();
   for g in &shaped.glyphs {
     let Some(p) = atlas.packer().placement(g.id) else { continue };
@@ -60,18 +54,18 @@ fn word_quads(
     quads.push(GlyphQuad {
       dst: [x, y, p.width as f32, p.height as f32],
       src: [p.x as f32, p.y as f32, p.width as f32, p.height as f32],
-      color,
     });
   }
   quads
 }
 
-// The quads composited on the CPU: premultiplied source-over in floats.
-fn composite(quads: &[GlyphQuad], packer: &AtlasPacker<u16>) -> Vec<f32> {
+// The runs' quads composited on the CPU in their runs' colors:
+// premultiplied source-over in floats.
+fn composite(runs: &[Run], packer: &AtlasPacker<u16>) -> Vec<f32> {
   let (atlas_w, _) = packer.size();
-  let mirror = packer.mirror();
+  let texels = packer.texels();
   let mut out = vec![0f32; (FRAME_W * FRAME_H) as usize * 4];
-  for q in quads {
+  for (q, color) in runs.iter().flat_map(|run| run.quads.iter().map(move |q| (q, run.color))) {
     let (dx, dy, w, h) = (q.dst[0] as i32, q.dst[1] as i32, q.dst[2] as u32, q.dst[3] as u32);
     let (sx, sy) = (q.src[0] as u32, q.src[1] as u32);
     for j in 0..h {
@@ -82,9 +76,9 @@ fn composite(quads: &[GlyphQuad], packer: &AtlasPacker<u16>) -> Vec<f32> {
         }
         // A mask atlas holds one coverage byte per texel.
         let texel = ((sy + j) * atlas_w + sx + i) as usize;
-        let coverage = mirror[texel] as f32 / 255.0;
-        let a = coverage * q.color[3];
-        let src = [q.color[0] * a, q.color[1] * a, q.color[2] * a, a];
+        let coverage = texels[texel] as f32 / 255.0;
+        let a = coverage * color[3];
+        let src = [color[0] * a, color[1] * a, color[2] * a, a];
         let px = (y as u32 * FRAME_W + x as u32) as usize * 4;
         for k in 0..4 {
           out[px + k] = src[k] + out[px + k] * (1.0 - a);
@@ -137,22 +131,23 @@ fn draw_runs(ctx: &alloy::Context, atlas: &Texture, runs: &[Run], policy: Covera
     // The contract takes the run shared, as a text keeps it.
     let quads: Arc<[GlyphQuad]> = Arc::from(run.quads.as_slice());
     let gradient = run.gradient.clone().map(Arc::new);
-    b.draw_glyphs(atlas, &quads, policy, gradient.as_ref());
+    b.draw_glyphs(atlas, &quads, run.color, policy, gradient.as_ref());
   }
   let dl = b.build().expect("a builder always builds a list");
   let frame = ctx.render_display_list_to_texture(&dl, FRAME_W, FRAME_H, AA).expect("frame rasterization");
   ctx.read_texture(&frame, FRAME_W, FRAME_H).expect("frame readback")
 }
 
-// One run's quads and the gradient they take their color from: what a
-// `<text>` records per paint.
+// One run's quads, its color and the gradient it takes its color from:
+// what a `<text>` records per paint.
 struct Run {
   quads: Vec<GlyphQuad>,
+  color: [f32; 4],
   gradient: Option<RampGradient>,
 }
 
-fn solid(quads: Vec<GlyphQuad>) -> Run {
-  Run { quads, gradient: None }
+fn solid(quads: Vec<GlyphQuad>, color: [f32; 4]) -> Run {
+  Run { quads, color, gradient: None }
 }
 
 fn main() {
@@ -200,12 +195,12 @@ fn main() {
 
     // A white word under naive coverage: every pixel against the CPU
     // composite.
-    let white = word_quads(&shaped, &atlas, PEN_X, BASELINE_Y, WHITE);
+    let white = word_quads(&shaped, &atlas, PEN_X, BASELINE_Y);
     assert!(!white.is_empty(), "the word has glyph quads");
     let naive = CoveragePolicy { mode: CoverageMode::Naive, gamma: REMAP_GAMMA, ..CoveragePolicy::default() };
-    let white_pixels = draw_runs(&ctx, &handle, &[solid(white.clone())], naive);
+    let white_pixels = draw_runs(&ctx, &handle, &[solid(white.clone(), WHITE)], naive);
     report.check("the white word has ink", (alpha_sum(&white_pixels) == 0).then(|| "no ink".to_string()));
-    let expected = composite(&white, atlas.packer());
+    let expected = composite(&[solid(white.clone(), WHITE)], atlas.packer());
     report.check(
       "white word, naive, matches the CPU composite",
       mismatch(&white_pixels, expected.iter().map(|v| (v * 255.0).round() as i32)),
@@ -213,10 +208,9 @@ fn main() {
 
     // A half-transparent red run over its tail, as a second op: the two
     // blend source-over.
-    let red = word_quads(&shaped, &atlas, RED_PEN_X, BASELINE_Y, HALF_RED);
-    let both_pixels = draw_runs(&ctx, &handle, &[solid(white.clone()), solid(red.clone())], naive);
-    let mut both = white.clone();
-    both.extend(red);
+    let red = word_quads(&shaped, &atlas, RED_PEN_X, BASELINE_Y);
+    let both = [solid(white.clone(), WHITE), solid(red, HALF_RED)];
+    let both_pixels = draw_runs(&ctx, &handle, &both, naive);
     let expected = composite(&both, atlas.packer());
     report.check(
       "white and half red, naive, matches the CPU composite",
@@ -240,7 +234,7 @@ fn main() {
       tile: TileMode::Clamp,
       ramp,
     };
-    let graded = Run { quads: white.clone(), gradient: Some(gradient) };
+    let graded = Run { quads: white.clone(), color: WHITE, gradient: Some(gradient) };
     let graded_pixels = draw_runs(&ctx, &handle, std::slice::from_ref(&graded), naive);
     let alphas = |pixels: &[u8]| pixels.chunks(4).map(|p| p[3]).collect::<Vec<u8>>();
     report.check(

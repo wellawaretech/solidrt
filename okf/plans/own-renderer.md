@@ -553,8 +553,7 @@ in Findings.
   against the new renderer's output.
 - Android, Windows and macOS, and the TV again.
 - The branch merges. Impeller left at stage 1; what goes here is the
-  interim machinery it left behind: the text layers (`TextLayer` and its
-  retention in `rendertree/text/mod.rs`) and the adoption bookkeeping
+  interim machinery it left behind: the adoption bookkeeping
   (`TextureEntry::handle`'s `Option`, `unadopted` in `raster/targets.rs`).
   The glyph vocabulary and the old GL glyph pass were dealt with early,
   after stage 2 (the vocabulary lives in the `anvil` crate, the pass is
@@ -893,7 +892,9 @@ Pixel output did not change with the cache (hello-world 0, text-flow
 587, drag 7411, spin 3060 differing pixels against main).
 `paintOps.draws` reads 38 for the bench under all three; `textLayers`
 reads 0 under both renderers and tells nothing now (stage 7 retires or
-renames it); `/gpu` lists resources, not per-frame draw calls, which is
+renames it; re-aimed as `textRasters`, the texts whose runs were
+remade, on 2026-11-19, okf/done/text-after-direct-draw.md); `/gpu` lists
+resources, not per-frame draw calls, which is
 why the measurement added its own counters.
 
 **The glyph fill cost.** On the TV (Mali-T860, 1920x1080, scale 2) with

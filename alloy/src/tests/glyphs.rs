@@ -144,7 +144,7 @@ fn solid(glyph: u16, side: u32) -> Cell {
 }
 
 #[test]
-fn packer_places_and_pads_and_reports_dirty_rects() {
+fn packer_places_and_pads_and_reports_dirty_cells() {
   let mut packer = AtlasPacker::new(CellKind::Mask { ppem: 16.0 }, 2048);
   assert_eq!(packer.insert(solid(1, 8)), InsertOutcome::Placed);
   let placed = packer.placement(1).expect("placed");
@@ -154,13 +154,17 @@ fn packer_places_and_pads_and_reports_dirty_rects() {
   assert_eq!(packer.format(), TextureFormat::R8);
   let (w, _) = packer.size();
   let stride = w as usize;
+  let texels = packer.texels();
   let left_of = (placed.y as usize) * stride + (placed.x as usize - 1);
-  assert_eq!(packer.mirror()[left_of], 0);
+  assert_eq!(texels[left_of], 0);
   let inside = (placed.y as usize) * stride + (placed.x as usize);
-  assert_eq!(packer.mirror()[inside], 255);
-  let Some(Dirty::Rects(dirty)) = packer.take_dirty() else { panic!("rects, not a growth") };
-  assert_eq!(dirty.len(), 1);
-  assert_eq!(dirty[0], (placed.x - 1, placed.y - 1, 10, 10));
+  assert_eq!(texels[inside], 255);
+  // The dirty state names the cell; its upload is the placement without
+  // the padding, whose texels are zero on the GPU already.
+  assert_eq!(packer.take_dirty(), Some(Dirty::Cells(vec![1])), "cells, not a growth");
+  let (at, pixels) = packer.cell_texels(1).expect("placed");
+  assert_eq!(at, placed);
+  assert_eq!(pixels, vec![255; 8 * 8]);
   assert!(packer.take_dirty().is_none(), "nothing changed since");
   // A second insert of the same glyph changes nothing.
   assert_eq!(packer.insert(solid(1, 8)), InsertOutcome::Placed);
@@ -170,7 +174,7 @@ fn packer_places_and_pads_and_reports_dirty_rects() {
 #[test]
 fn an_rgba8_mask_atlas_expands_cells_to_premultiplied_white() {
   let mut packer = AtlasPacker::new(CellKind::Mask { ppem: 16.0 }, 2048).with_format(TextureFormat::Rgba8);
-  assert_eq!(packer.mirror().len(), 4 * AtlasPacker::<u16>::new(CellKind::Mask { ppem: 16.0 }, 2048).mirror().len());
+  assert_eq!(packer.texels().len(), 4 * AtlasPacker::<u16>::new(CellKind::Mask { ppem: 16.0 }, 2048).texels().len());
   let mut cell = solid(1, 4);
   // A gradient down the cell's first column, to see each byte land in its
   // own texel.
@@ -180,19 +184,32 @@ fn an_rgba8_mask_atlas_expands_cells_to_premultiplied_white() {
   assert_eq!(packer.insert(cell), InsertOutcome::Placed);
   let placed = packer.placement(1).expect("placed");
   let (w, _) = packer.size();
+  let texels = packer.texels();
   for row in 0..4usize {
     let at = ((placed.y as usize + row) * w as usize + placed.x as usize) * 4;
     let value = row as u8 * 60;
-    assert_eq!(&packer.mirror()[at..at + 4], &[value; 4], "row {row}: the byte in every channel");
-    assert_eq!(&packer.mirror()[at + 4..at + 8], &[255; 4], "the next texel is solid");
+    assert_eq!(&texels[at..at + 4], &[value; 4], "row {row}: the byte in every channel");
+    assert_eq!(&texels[at + 4..at + 8], &[255; 4], "the next texel is solid");
   }
-  // A repack (growth) keeps the expansion.
-  let before = packer.copy_out(placed.x, placed.y, 4, 4);
+  // The cell's own upload is expanded the same way.
+  let (_, before) = packer.cell_texels(1).expect("placed");
+  for row in 0..4usize {
+    assert_eq!(&before[row * 16..row * 16 + 4], &[row as u8 * 60; 4], "row {row} of the cell's upload");
+  }
+  // A repack (growth) keeps the expansion: the whole atlas holds the cell's
+  // texels at its new placement.
   for glyph in 2..200u16 {
     packer.insert(solid(glyph, 100));
   }
   let moved = packer.placement(1).expect("kept");
-  assert_eq!(packer.copy_out(moved.x, moved.y, 4, 4), before, "the cell's texels moved with it");
+  let (w, _) = packer.size();
+  let texels = packer.texels();
+  let mut after = Vec::new();
+  for row in 0..4usize {
+    let at = ((moved.y as usize + row) * w as usize + moved.x as usize) * 4;
+    after.extend_from_slice(&texels[at..at + 16]);
+  }
+  assert_eq!(after, before, "the cell's texels moved with it");
 }
 
 #[test]
@@ -212,13 +229,14 @@ fn packer_grows_by_repacking_and_then_fills() {
   assert!(grew);
   assert_ne!(packer.size(), (w0, h0));
   assert_eq!(packer.len(), 60);
-  assert_eq!(packer.take_dirty(), Some(Dirty::Whole { resized: true }), "a growth is the whole mirror");
+  assert_eq!(packer.take_dirty(), Some(Dirty::Whole { resized: true }), "a growth is the whole atlas");
   // Every cell survived the repack with its pixels.
+  let (w, _) = packer.size();
+  let texels = packer.texels();
   for glyph in 0..60u16 {
     let p = packer.placement(glyph).expect("kept");
-    let (w, _) = packer.size();
     let at = (p.y as usize) * w as usize + (p.x as usize);
-    assert_eq!(packer.mirror()[at], 255, "glyph {glyph} pixels moved with it");
+    assert_eq!(texels[at], 255, "glyph {glyph} pixels moved with it");
   }
   // Past the cap the packer says Full and keeps what it has.
   let mut big = 1000u16;
@@ -251,7 +269,7 @@ fn packer_insert_in_place_hands_back_what_does_not_fit_and_moves_nothing() {
   assert!(packer.placement(glyph).is_none());
   assert_eq!(packer.size(), side);
   let before: Vec<_> = (0..glyph).map(|g| packer.placement(g).expect("placed")).collect();
-  assert!(matches!(packer.take_dirty(), Some(Dirty::Rects(_))), "placing in place is rects, not a repack");
+  assert!(matches!(packer.take_dirty(), Some(Dirty::Cells(_))), "placing in place is cells, not a repack");
   // A key already present is a no-op in place too.
   assert_eq!(packer.insert_in_place(solid(0, 100)), Ok(()));
   assert!(packer.take_dirty().is_none());
@@ -362,6 +380,7 @@ fn blank_glyphs_are_empty_cells_that_take_no_atlas_space() {
     assert_eq!(packer.insert(cells[0].clone()), InsertOutcome::Placed);
     assert_eq!(packer.placement(space).map(|p| (p.width, p.height)), Some((0, 0)));
     assert!(packer.take_dirty().is_none(), "{kind:?}: nothing to upload for a blank cell");
+    assert!(packer.texels().iter().all(|&t| t == 0), "{kind:?}: a blank cell writes no texel");
   }
 }
 
@@ -388,7 +407,7 @@ fn packer_evicts_what_a_full_atlas_stopped_using() {
     }
   }
   // The unused cells are older than two frames: they go, the ones in use
-  // stay, and the repack leaves the whole mirror new at the same size.
+  // stay, and the repack leaves the whole atlas new at the same size.
   assert_eq!(packer.insert(solid(held, 100)), InsertOutcome::Moved);
   for glyph in 0..kept {
     assert!(packer.placement(glyph).is_some(), "glyph {glyph} in use stays");

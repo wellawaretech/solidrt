@@ -121,13 +121,15 @@ pub(super) enum Op {
     alpha: f32,
   },
   /// A glyph run: `quads` over `atlas`, whose red channel is coverage,
-  /// under `policy`, colored per quad or along `gradient`. `bounds` is the
+  /// under `policy`, colored by `color` or along `gradient`. `bounds` is the
   /// quads' union in the op's space, so the walk rejects a whole run that
   /// falls outside the clip before it looks at a glyph.
   DrawGlyphs {
     atlas: Texture,
     quads: Arc<[GlyphQuad]>,
     bounds: Rect,
+    /// The run's color, straight alpha (see `draw_glyphs`).
+    color: [f32; 4],
     policy: CoveragePolicy,
     gradient: Option<Arc<RampGradient>>,
   },

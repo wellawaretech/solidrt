@@ -400,7 +400,8 @@ impl TextAtlas {
 
   /// The texture's content is void (the GL context was lost; the id came
   /// back with undefined content): the next `flush` uploads the whole
-  /// mirror again. The cells, their placements and the id all stand.
+  /// atlas again, built from the cells. The cells, their placements and the
+  /// id all stand.
   pub fn forget_gpu(&mut self) {
     self.packer.mark_whole();
   }

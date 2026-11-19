@@ -63,9 +63,9 @@ function partial(pixels: Pixels, from: number, to: number): boolean {
   return false
 }
 
-/** The text layers the last frame rasterized. */
-function textLayers(app: TestApp): number {
-  return (app.stats({ windowFrames: 1 }) as { paintOps: { textLayers: number } }).paintOps.textLayers
+/** The texts whose glyph runs the last frame remade. */
+function textRasters(app: TestApp): number {
+  return (app.stats({ windowFrames: 1 }) as { paintOps: { textRasters: number } }).paintOps.textRasters
 }
 
 // A rounding moves a box by at most half a device pixel per axis.
@@ -199,7 +199,7 @@ test(
     let late = 0
     for (let f = 0; f < RELEASE_FRAMES; f++) {
       await app.frame()
-      if (f >= TURN_FRAMES) late += textLayers(app)
+      if (f >= TURN_FRAMES) late += textRasters(app)
     }
     expect(late).toBe(0)
   },
@@ -223,8 +223,10 @@ const POP_SPLIT_PX = 135 * POP_SCALE
 // Frames read: the pop's 180 ms and a few at rest.
 const POP_FRAMES = 16
 // The reads the mount's own rasters show in: the frame that mounts the
-// numbers and the one after, where its count is read.
-const MOUNT_READS = 2
+// numbers, the one after, where its count is read, and the one after that,
+// where the frame that landed the style's warm-up and grew the atlas (which
+// re-records every text) is read.
+const MOUNT_READS = 3
 // Along the pop the ink moves one way; a frame may read this far back, the
 // noise of resampling, never the half pixel a rounding moves.
 const WOBBLE_PX = 0.02
@@ -263,7 +265,7 @@ test(
       let frame = await app.painted(stage)
       text.push(ink(frame, 0, POP_SPLIT_PX))
       snapshot.push(ink(frame, POP_SPLIT_PX, frame.width))
-      rasters.push(textLayers(app))
+      rasters.push(textRasters(app))
     }
     for (let reads of [text, snapshot]) {
       // The frame the track settles on is the last one that moves the ink.
@@ -279,10 +281,12 @@ test(
       expect(moved(reads[settle - 1]!, reads[settle]!)).toBeLessThanOrEqual(settleBound(reads, settle, 1))
     }
     // Both texts raster once, for the scale the pop ends at, in the frame
-    // that mounts them (the count reads a frame late): nothing is left to
-    // do while the scale comes down or when it rests.
+    // that mounts them, and once more in the frame after it, when the
+    // style's warm-up lands and grows the atlas (the count reads a frame
+    // late): nothing is left to do while the scale comes down or when it
+    // rests.
     let count = (from: number) => rasters.slice(from).reduce((sum, n) => sum + n, 0)
-    expect(count(0)).toBe(2)
+    expect(count(0)).toBe(4)
     expect(count(MOUNT_READS)).toBe(0)
   },
   { size: POP_WINDOW, scale: POP_SCALE },

@@ -237,7 +237,7 @@ fn window_json(
   put("captureFrames", w.capture_frames.into());
   put("periodMs", round2(worst.period_ms).into());
   put("backdropsPrepainted", w.backdrops_prepainted.into());
-  put("textLayers", w.text_layers.into());
+  put("textRasters", w.text_rasters.into());
   put("nodesPaintedMax", w.nodes_painted_max.into());
   put("snapshotRasterMs", round2_64(w.snapshot_raster_ms).into());
   put("damagePx", (w.damage_px.round() as i64).into());
@@ -314,7 +314,7 @@ fn window_json(
 fn paint_ops_json(c: &alloy::rendertree::counters::LayoutCounters) -> serde_json::Value {
   serde_json::json!({
     "draws": c.draws,
-    "textLayers": c.text_layers,
+    "textRasters": c.text_rasters,
     "clips": c.clips,
     "roundedClips": c.rounded_clips,
     "saveLayers": c.save_layers,
