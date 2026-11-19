@@ -1,6 +1,7 @@
 //! The renderer and its texture handle, over the recording (`record`, its
-//! ops in `ops`), the pure walk (`walk`) and the executor (`exec`); the
-//! crate doc says what draws.
+//! ops in `ops`, its paths in `path`), the pure walk (`walk`), the path
+//! meshes (`mesh`, pure too) and the executor (`exec`); the crate doc says
+//! what draws.
 //!
 //! An adopted GL name belongs to the renderer that adopted it. The handle
 //! is `Arc`-shared and crosses threads (a list is recorded on the UI thread
@@ -50,7 +51,9 @@ macro_rules! warn_once {
 }
 
 mod exec;
+pub(crate) mod mesh;
 mod ops;
+mod path;
 mod record;
 pub mod walk;
 
@@ -126,11 +129,18 @@ impl contract::Renderer for Renderer {
   }
 }
 
-/// What drawing `walked` issues: every instance it wrote, and one
-/// instanced draw call per batch (`exec` draws each batch once). The walk
-/// decides both, so the tests read the report off a walk with no GL.
+/// What drawing `walked` issues: every instance it wrote, one draw call per
+/// batch (`exec` draws each batch once, instanced quads or a mesh's
+/// elements), the path meshes it drew and how many of them it tessellated.
+/// The walk decides all four, so the tests read the report off a walk with
+/// no GL.
 pub(crate) fn report(walked: &walk::Walked) -> contract::DrawReport {
-  contract::DrawReport { instances: walked.instances.len() as u32, draw_calls: walked.batches.len() as u32 }
+  contract::DrawReport {
+    instances: walked.instances.len() as u32,
+    draw_calls: walked.batches.len() as u32,
+    meshes: walked.meshes,
+    tessellated: walked.tessellated,
+  }
 }
 
 /// A GL texture the lists draw: the name and its size, shared by handle.

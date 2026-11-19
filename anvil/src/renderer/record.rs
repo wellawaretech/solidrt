@@ -2,21 +2,25 @@
 //! vocabulary. A builder records anvil's executable ops (`super::ops`),
 //! resolved for the executor: colors premultiplied, a paint reduced to what
 //! anvil draws (a gradient source resolved to its rows and ramp when it is
-//! set), the ops anvil cannot draw yet warned once and recorded as their
-//! nearest supported op or not at all. With the op log on (the
+//! set), a path drawn as one op per style it paints (its geometry and mesh
+//! cache in `super::path`), the ops anvil cannot draw yet warned once and
+//! recorded as their nearest supported op or not at all. With the op log
+//! on (the
 //! `oplog` feature, or this crate's tests) it also keeps the plain-data log
 //! (`crate::oplog`), one cfg'd statement per forwarder beside the
 //! executable push.
 
+use super::mesh::{MeshStyle, MINIMUM_MITER};
 use super::ops::{premultiply, Image, Op, Premultiplied, Radii, Source};
+pub use super::path::{Path, PathBuilder};
 use super::{PaintShader, ShaderInput, Texture};
 use crate::contract;
 #[cfg(any(test, feature = "oplog"))]
-use crate::oplog::{Op as LogOp, PaintLog, PathLog, PathSegment};
+use crate::oplog::{Op as LogOp, PaintLog};
 use crate::{affine, CoveragePolicy, GlyphQuad, RampGradient};
 use crate::{
-  BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, FillType, Matrix, Point, Rect, RoundingRadii, ShaderParam,
-  Size, StrokeCap, StrokeJoin, TextureSampling, TileMode,
+  BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, Matrix, Point, Rect, RoundingRadii, ShaderParam, Size,
+  StrokeCap, StrokeJoin, TextureSampling, TileMode,
 };
 use std::sync::Arc;
 
@@ -182,7 +186,7 @@ fn glyph_bounds(quads: &[GlyphQuad]) -> Rect {
 /// for both rect methods, so the warning is one line whichever sent it.
 /// The miter limit never matters for a rect: a right angle's miter is
 /// sqrt(2) times the stroke width, under the default limit
-/// (`contract::DEFAULT_STROKE_MITER`), so `stroke_miter` stays unread.
+/// (`contract::DEFAULT_STROKE_MITER`); a path's stroke reads it.
 fn warn_non_miter_join(paint: &Paint) {
   let strokes = paint.stroke_width > 0.0 && matches!(paint.draw_style, DrawStyle::Stroke | DrawStyle::StrokeAndFill);
   if strokes && paint.stroke_join != StrokeJoin::Miter {
@@ -191,7 +195,7 @@ fn warn_non_miter_join(paint: &Paint) {
 }
 
 // The arguments of the ops anvil does not draw yet (the layers, the oval
-// clip, the path) are read only by the test log.
+// clip) are read only by the test log.
 #[cfg_attr(not(any(test, feature = "oplog")), allow(unused_variables))]
 impl contract::DisplayListBuilder for DisplayListBuilder {
   fn new(_cull: Option<&Rect>) -> Self {
@@ -378,9 +382,33 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   }
 
   fn draw_path(&mut self, path: &Path, paint: &Paint) -> &mut Self {
-    unsupported!("draw_path", "the path is not drawn");
+    // One op per style the paint draws: a fill, a stroke when it has a
+    // width, or both, the fill first so the stroke covers it. The walk
+    // tessellates each (mesh.rs) and caches the mesh on the path.
+    let color = premultiply(paint.color);
+    let source = source_of(paint);
+    let stroke = MeshStyle::Stroke {
+      width: paint.stroke_width,
+      cap: paint.stroke_cap,
+      join: paint.stroke_join,
+      // Clamped once here, so the cache key, the walk's reach and the
+      // tessellator see one value (lyon refuses a limit below the minimum;
+      // `max` also turns a NaN limit into the minimum).
+      miter: paint.stroke_miter.max(MINIMUM_MITER),
+    };
+    let strokes = paint.stroke_width > 0.0;
+    let styles: &[MeshStyle] = match paint.draw_style {
+      DrawStyle::Fill => &[MeshStyle::Fill],
+      DrawStyle::Stroke if strokes => &[stroke],
+      DrawStyle::Stroke => &[],
+      DrawStyle::StrokeAndFill if strokes => &[MeshStyle::Fill, stroke],
+      DrawStyle::StrokeAndFill => &[MeshStyle::Fill],
+    };
+    for style in styles {
+      self.ops.push(Op::DrawPath { path: path.clone(), style: *style, color, source: source.clone() });
+    }
     #[cfg(any(test, feature = "oplog"))]
-    self.log.push(LogOp::DrawPath { path: path.log.clone(), paint: paint.log });
+    self.log.push(LogOp::DrawPath { path: path.log().clone(), paint: paint.log });
     self
   }
 
@@ -466,7 +494,6 @@ pub struct Paint {
   pub(super) stroke_width: f32,
   pub(super) stroke_cap: StrokeCap,
   pub(super) stroke_join: StrokeJoin,
-  #[allow(dead_code)] // read by the executor once it draws path joins
   pub(super) stroke_miter: f32,
   #[allow(dead_code)] // read by the executor from stage 6 (filters)
   pub(super) color_filter: Option<ColorFilter>,
@@ -755,69 +782,5 @@ pub struct MaskFilter {
 impl contract::MaskFilter for MaskFilter {
   fn blur(sigma: f32) -> Self {
     MaskFilter { sigma }
-  }
-}
-
-/// A finished path. Carries its fill rule and, in a test build, its
-/// segments; stage 3 decides the executable geometry (lyon).
-#[derive(Clone)]
-pub struct Path {
-  #[allow(dead_code)] // read by the executor from stage 3
-  pub(super) fill: FillType,
-  // A path is cloned and kept across frames: the log is shared.
-  #[cfg(any(test, feature = "oplog"))]
-  log: Arc<PathLog>,
-}
-
-impl contract::Path for Path {}
-
-#[derive(Default)]
-pub struct PathBuilder {
-  #[cfg(any(test, feature = "oplog"))]
-  segments: Vec<PathSegment>,
-}
-
-// The points are read only by the test log until stage 3 keeps the
-// geometry.
-#[cfg_attr(not(any(test, feature = "oplog")), allow(unused_variables))]
-impl contract::Pen for PathBuilder {
-  fn move_to(&mut self, p: Point) -> &mut Self {
-    #[cfg(any(test, feature = "oplog"))]
-    self.segments.push(PathSegment::MoveTo(p));
-    self
-  }
-
-  fn line_to(&mut self, p: Point) -> &mut Self {
-    #[cfg(any(test, feature = "oplog"))]
-    self.segments.push(PathSegment::LineTo(p));
-    self
-  }
-
-  fn quadratic_to(&mut self, ctrl: Point, p: Point) -> &mut Self {
-    #[cfg(any(test, feature = "oplog"))]
-    self.segments.push(PathSegment::QuadraticTo { ctrl, to: p });
-    self
-  }
-
-  fn cubic_to(&mut self, ctrl1: Point, ctrl2: Point, p: Point) -> &mut Self {
-    #[cfg(any(test, feature = "oplog"))]
-    self.segments.push(PathSegment::CubicTo { ctrl1, ctrl2, to: p });
-    self
-  }
-}
-
-impl contract::PathBuilder for PathBuilder {
-  fn close(&mut self) -> &mut Self {
-    #[cfg(any(test, feature = "oplog"))]
-    self.segments.push(PathSegment::Close);
-    self
-  }
-
-  fn build(self, fill: FillType) -> Path {
-    Path {
-      fill,
-      #[cfg(any(test, feature = "oplog"))]
-      log: Arc::new(PathLog { segments: self.segments, fill }),
-    }
   }
 }

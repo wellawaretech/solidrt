@@ -19,3 +19,8 @@ glow = "=0.17.0"
 # The vocabulary's Point/Size/Rect/Matrix are euclid aliases (vocab.rs);
 # alloy's pin.
 euclid = "=0.22.14"
+# The path geometry a `Path` holds (alloy's pin, the same crate the
+# rendertree parses SVG into) and its tessellation into the meshes the mesh
+# program draws (1.0.23 is the release that requires lyon_path 1.0.19).
+lyon_path = "=1.0.19"
+lyon_tessellation = "=1.0.23"

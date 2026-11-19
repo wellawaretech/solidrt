@@ -14,7 +14,9 @@
 //! (`exec`): plain rect fills through a fill program with no discard and no
 //! derivatives, every other shape through the shape program, glyph runs
 //! through a glyph program of their own; the fill and the shape program
-//! each have a gradient variant, five programs in all. A paint shader (an app's fragment
+//! each have a gradient variant. A path draws as a mesh lyon tessellated
+//! (`mesh`, cached on the path) through the mesh program, which has a
+//! gradient and a textured variant: eight programs in all. A paint shader (an app's fragment
 //! program, linked by `Renderer::create_paint_shader` behind anvil's own
 //! vertex stage) draws as one quad through its own program, a batch of its
 //! own per draw. Stage 1 draws the state ops, rect
@@ -29,9 +31,12 @@
 //! between them in batches of their own. Stage 4, step 1 draws a paint's
 //! linear or radial gradient on rects, rounded rects, ovals and lines
 //! through the same ramp as text (`gradient`), evaluated per device pixel,
-//! a sealed batch per gradient draw. What does not draw yet (paths,
-//! layers, the other clips, group opacity, filters, blend modes) warns once
-//! per process, naming itself and what happens instead.
+//! a sealed batch per gradient draw. Stage 4, step 2 draws every path: a
+//! fill under its rule, a stroke with the paint's width, cap, join and
+//! miter limit, from a mesh tessellated once per style and scale bucket
+//! and batched like the quads. What does not draw yet (layers, the other
+//! clips, group opacity, filters, blend modes) warns once per process,
+//! naming itself and what happens instead.
 //!
 //! With the `oplog` feature (alloy enables it for its tests only), and in
 //! this crate's own tests, the recording types also keep a plain-data log

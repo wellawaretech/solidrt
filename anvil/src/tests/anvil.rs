@@ -111,12 +111,32 @@ fn image_paint(t: &Texture, sampling: TextureSampling, transform: Option<&Matrix
 
 // A batch of shapes and texture quads: no glyph policy, no gradient.
 fn shapes(start: usize, count: usize, texture: Option<(glow::NativeTexture, TextureSampling)>) -> Batch {
-  Batch { start, count, program: BatchProgram::Shape, texture, policy: None, gradient: None, paint: None }
+  Batch {
+    start,
+    count,
+    program: BatchProgram::Shape,
+    texture,
+    policy: None,
+    gradient: None,
+    paint: None,
+    rounded: None,
+    texel: None,
+  }
 }
 
 // A batch of plain rect fills: no texture, no glyph policy, no gradient.
 fn fills(start: usize, count: usize) -> Batch {
-  Batch { start, count, program: BatchProgram::Fill, texture: None, policy: None, gradient: None, paint: None }
+  Batch {
+    start,
+    count,
+    program: BatchProgram::Fill,
+    texture: None,
+    policy: None,
+    gradient: None,
+    paint: None,
+    rounded: None,
+    texel: None,
+  }
 }
 
 fn line(from: (f32, f32), to: (f32, f32), paint: &Paint) -> Vec<Instance> {
@@ -407,13 +427,13 @@ fn a_draw_report_counts_instances_and_batches() {
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 4);
   assert_eq!(out.batches.len(), 2);
-  assert_eq!(report(&out), DrawReport { instances: 4, draw_calls: 2 });
+  assert_eq!(report(&out), DrawReport { instances: 4, draw_calls: 2, ..DrawReport::default() });
 
   // Ovals before a texture take it into their run: one call.
   let mut b = DisplayListBuilder::new(None);
   b.draw_oval(&quad, &opaque()).draw_oval(&quad, &opaque()).draw_texture_rect(&a, &quad, &quad, linear, None);
   let out = walked_all(b);
-  assert_eq!(report(&out), DrawReport { instances: 3, draw_calls: 1 });
+  assert_eq!(report(&out), DrawReport { instances: 3, draw_calls: 1, ..DrawReport::default() });
 
   // A second texture is a second call.
   let mut b = DisplayListBuilder::new(None);
@@ -422,7 +442,7 @@ fn a_draw_report_counts_instances_and_batches() {
     .draw_texture_rect(&c, &quad, &quad, linear, None);
   let out = walked_all(b);
   assert_eq!(out.batches.len(), 2);
-  assert_eq!(report(&out), DrawReport { instances: 3, draw_calls: 2 });
+  assert_eq!(report(&out), DrawReport { instances: 3, draw_calls: 2, ..DrawReport::default() });
 
   // An empty list reports zeros.
   let out = walked_all(DisplayListBuilder::new(None));
@@ -757,7 +777,17 @@ fn gradient() -> RampGradient {
 // A glyph batch over `atlas`, sampled linearly, under `policy`.
 fn glyphs(start: usize, count: usize, atlas: &Texture, policy: CoveragePolicy) -> Batch {
   let texture = Some((name(atlas), TextureSampling::Linear));
-  Batch { start, count, program: BatchProgram::Glyph, texture, policy: Some(policy), gradient: None, paint: None }
+  Batch {
+    start,
+    count,
+    program: BatchProgram::Glyph,
+    texture,
+    policy: Some(policy),
+    gradient: None,
+    paint: None,
+    rounded: None,
+    texel: None,
+  }
 }
 
 #[test]
@@ -824,7 +854,7 @@ fn glyph_runs_and_shapes_take_separate_batches() {
   let out = walked_all(b);
   assert_eq!(out.batches, vec![fills(0, 1), glyphs(1, 2, &atlas, policy), fills(3, 1)]);
   let (glyph_quads, shape_quads) = (2, 2);
-  assert_eq!(report(&out), DrawReport { instances: glyph_quads + shape_quads, draw_calls: 3 });
+  assert_eq!(report(&out), DrawReport { instances: glyph_quads + shape_quads, draw_calls: 3, ..DrawReport::default() });
 
   // Two runs with the same policy and nothing between them: one batch.
   let mut b = DisplayListBuilder::new(None);
@@ -1015,6 +1045,8 @@ fn paint_batch(
     policy: None,
     gradient: None,
     paint: Some(paint),
+    rounded: None,
+    texel: None,
   }
 }
 
@@ -1043,7 +1075,7 @@ fn a_paint_shader_draws_one_quad_in_a_batch_of_its_own() {
   assert!(approx(i.clip, [0.0, 0.0, 60.0, 50.0]), "{:?}", i.clip);
   // The resolution is the quad in device pixels: 12 x 8 under a 2 x 3 scale.
   assert_eq!(out.batches, vec![paint_batch(0, &shader, &params, &inputs, [24.0, 24.0])]);
-  assert_eq!(report(&out), DrawReport { instances: 1, draw_calls: 1 });
+  assert_eq!(report(&out), DrawReport { instances: 1, draw_calls: 1, ..DrawReport::default() });
 }
 
 #[test]

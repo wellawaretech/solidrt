@@ -1,17 +1,21 @@
 //! The pure half of a draw: a list's ops walked into the instances the
-//! programs draw (plain rect fills, shapes, glyphs, paint shaders), with the
-//! save stack, the transforms and the clip applied, the draws outside the
-//! clip rejected and a gradient's rows composed into device space. No GL
-//! here, so the walk is unit-tested without a context (`tests/anvil.rs`,
-//! `tests/gradient.rs`).
+//! programs draw (plain rect fills, shapes, glyphs, paint shaders) and the
+//! path meshes' device-space vertices and indices, with the save stack,
+//! the transforms and the clip applied, the draws outside the clip rejected
+//! and a gradient's rows composed into device space. No GL here, so the
+//! walk is unit-tested without a context (`tests/anvil.rs`,
+//! `tests/gradient.rs`, `tests/mesh.rs`).
 
+use super::mesh::{scale_bucket, MeshStyle};
 use super::ops::{Op, Premultiplied, Radii, Source};
+use super::path::Path;
 use super::record::DisplayList;
 use super::{PaintShader, ShaderInput, Texture};
 use crate::{affine, Affine, CoveragePolicy, GlyphQuad, RampGradient};
 use crate::{ISize, Matrix, Point, Rect, ShaderParam, Size, StrokeCap, TextureSampling};
 use euclid::default::{Box2D, Point2D, Transform2D};
 use euclid::Angle;
+use std::f32::consts::SQRT_2;
 use std::sync::Arc;
 
 /// One quad for any program, as the instance buffer carries it. All
@@ -55,6 +59,27 @@ pub const INSTANCE_FLOATS: usize = 36;
 // The upload sends a slice of instances as its bytes: no padding, every
 // field an f32.
 const _: () = assert!(std::mem::size_of::<Instance>() == INSTANCE_FLOATS * std::mem::size_of::<f32>());
+
+/// One vertex of a path mesh, as the mesh vertex buffer carries it: all
+/// f32 and `repr(C)`, so a slice of them is uploaded as its bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeshVertex {
+  /// The position in device pixels.
+  pub device: [f32; 2],
+  /// Premultiplied color; for a mesh filled from a source, the paint's
+  /// alpha in all four channels.
+  pub color: [f32; 4],
+  /// The clip in device pixels: x0, y0, x1, y1. Tested per fragment.
+  pub clip: [f32; 4],
+}
+
+/// The floats of one mesh vertex: a vec2 and two vec4 attributes.
+pub const MESH_VERTEX_FLOATS: usize = 10;
+
+// The upload sends a slice of mesh vertices as its bytes: no padding,
+// every field an f32.
+const _: () = assert!(std::mem::size_of::<MeshVertex>() == MESH_VERTEX_FLOATS * std::mem::size_of::<f32>());
 
 /// The shape kinds the shape program's fragment stage switches on. The
 /// `const int KIND_*` declarations in exec.rs's SHAPE_FRAGMENT must match
@@ -114,6 +139,10 @@ pub enum BatchProgram {
   Glyph,
   /// One paint shader draw: the program of the batch's `paint` shader.
   Paint,
+  /// Path meshes: a range of `Walked::mesh_indices`, drawn through the
+  /// mesh program (its gradient or textured variant by the batch's
+  /// `gradient` and `texture`).
+  Mesh,
 }
 
 /// What the executor needs for a paint batch beside its one instance: the
@@ -183,9 +212,14 @@ impl std::fmt::Debug for GradientDraw {
 /// through different programs, so a run never mixes them, except that the
 /// shape program also draws the plain fills a shape run takes. A paint
 /// shader draw is a run of its own, one instance; so is a gradient shape,
-/// a fill or a shape whose program is that class's gradient variant.
+/// a fill or a shape whose program is that class's gradient variant. A
+/// mesh run is consecutive path meshes that share a texture and its map,
+/// a rounded clip and no gradient; a gradient mesh is a run of its own.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Batch {
+  /// The run's first instance and its instance count for the quad
+  /// programs; for `Mesh`, its first index into `Walked::mesh_indices` and
+  /// its index count.
   pub start: usize,
   pub count: usize,
   /// The program the run draws through. `Glyph` exactly when `policy` is
@@ -205,19 +239,38 @@ pub struct Batch {
   /// Set exactly when the run is a paint shader draw (`program` is
   /// `Paint`); `texture` is then None, the inputs bind their own units.
   pub paint: Option<PaintDraw>,
+  /// A mesh run's rounded clip, a uniform pair for the whole run. None
+  /// for every quad run: a quad carries its rounded clip per instance.
+  pub rounded: Option<RoundedClip>,
+  /// A textured mesh run's map from a device pixel to the normalized texel
+  /// (the image's own map composed with the inverse of the meshes' device
+  /// map), so no vertex carries a uv. None for every other run.
+  pub texel: Option<Affine>,
 }
 
-/// What a walk produces: the instances in painter's order and the batches
-/// over them, back to back and covering every instance.
+/// What a walk produces: the instances and the path meshes in painter's
+/// order and the batches over them, back to back and covering every
+/// instance and every mesh index.
 #[derive(Default)]
 pub struct Walked {
   pub instances: Vec<Instance>,
+  /// The path meshes' vertices in device space, and their triangles'
+  /// indices into them, mesh after mesh.
+  pub mesh_vertices: Vec<MeshVertex>,
+  pub mesh_indices: Vec<u32>,
   pub batches: Vec<Batch>,
-  /// The union of the emitted instances' device clip boxes, rounded
-  /// outward to whole pixels: no instance draws outside it, so the
+  /// The path ops drawn: one mesh each.
+  pub meshes: u32,
+  /// The meshes tessellated by this walk: the path caches' misses.
+  pub tessellated: u32,
+  /// The union of the emitted instances' and meshes' device clip boxes,
+  /// rounded outward to whole pixels: nothing draws outside it, so the
   /// executor scissors its clear and its draws to it. None when nothing
   /// was emitted.
   pub scissor: Option<Box2D<i32>>,
+  /// The device clip box of every mesh drawn, so `scissor` takes the
+  /// meshes' clips without walking their vertices.
+  mesh_clips: Vec<[f32; 4]>,
   /// The last batch takes no further instance: a gradient draw or a paint
   /// shader draw ended it.
   sealed: bool,
@@ -246,7 +299,17 @@ impl Walked {
     let start = self.instances.len();
     if let Some(gradient) = gradient {
       let program = if plain { BatchProgram::Fill } else { BatchProgram::Shape };
-      self.open(Batch { start, count: 1, program, texture, policy: None, gradient: Some(gradient), paint: None });
+      self.open(Batch {
+        start,
+        count: 1,
+        program,
+        texture,
+        policy: None,
+        gradient: Some(gradient),
+        paint: None,
+        rounded: None,
+        texel: None,
+      });
       self.sealed = true;
       self.instances.push(instance);
       return;
@@ -265,13 +328,24 @@ impl Walked {
           policy: None,
           gradient: None,
           paint: None,
+          rounded: None,
+          texel: None,
         }),
       }
       self.instances.push(instance);
       return;
     }
-    let shape =
-      Batch { start, count: 1, program: BatchProgram::Shape, texture, policy: None, gradient: None, paint: None };
+    let shape = Batch {
+      start,
+      count: 1,
+      program: BatchProgram::Shape,
+      texture,
+      policy: None,
+      gradient: None,
+      paint: None,
+      rounded: None,
+      texel: None,
+    };
     match last.filter(|last| last.program == BatchProgram::Shape) {
       None => self.open(shape),
       Some(last) if texture.is_none() || last.texture == texture => last.count += 1,
@@ -322,6 +396,8 @@ impl Walked {
         policy: Some(policy),
         gradient,
         paint: None,
+        rounded: None,
+        texel: None,
       }),
     }
     self.sealed = graded;
@@ -341,9 +417,53 @@ impl Walked {
       policy: None,
       gradient: None,
       paint: Some(paint),
+      rounded: None,
+      texel: None,
     });
     self.sealed = true;
     self.instances.push(instance);
+  }
+
+  // Add a mesh op's `count` indices, appended at `start` of
+  // `mesh_indices`, to the current batch when that batch is an open mesh
+  // run with the same `texture`, `rounded` clip and `texel` map and
+  // neither carries a gradient, else open a mesh batch. A gradient mesh is
+  // its own batch, sealed after it, as a gradient quad is. A mesh run's
+  // indices are contiguous: every index after its start is its own.
+  fn push_mesh(
+    &mut self,
+    start: usize,
+    count: usize,
+    texture: Option<(glow::NativeTexture, TextureSampling)>,
+    rounded: Option<RoundedClip>,
+    texel: Option<Affine>,
+    gradient: Option<GradientDraw>,
+  ) {
+    let joins = |last: &Batch| {
+      last.program == BatchProgram::Mesh
+        && gradient.is_none()
+        && last.gradient.is_none()
+        && last.texture == texture
+        && last.rounded == rounded
+        && last.texel == texel
+    };
+    let sealed = self.sealed;
+    let graded = gradient.is_some();
+    match self.batches.last_mut().filter(|last| !sealed && joins(last)) {
+      Some(last) => last.count += count,
+      None => self.open(Batch {
+        start,
+        count,
+        program: BatchProgram::Mesh,
+        texture,
+        policy: None,
+        gradient,
+        paint: None,
+        rounded,
+        texel,
+      }),
+    }
+    self.sealed = graded;
   }
 
   // Open `batch` as the current one, which takes instances again.
@@ -368,10 +488,10 @@ struct State {
 
 /// An axis-aligned rounded clip, in device pixels: its rect and its corner
 /// radii in CSS order, at least one of them non-zero.
-#[derive(Clone, Copy)]
-struct RoundedClip {
-  rect: Box2D<f32>,
-  radii: Radii,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoundedClip {
+  pub rect: Box2D<f32>,
+  pub radii: Radii,
 }
 
 /// The instances a list draws into a target of `size` device pixels, in
@@ -379,8 +499,9 @@ struct RoundedClip {
 /// the device-space clip, and the rejection of draws that fall outside it.
 /// Every stage 1 shape draws: rect and oval fills and strokes, lines with
 /// their caps, and texture quads; stage 2 adds rounded rects, one rounded
-/// clip in device space, shapes filled with an image, and glyph runs. A
-/// stroke expands
+/// clip in device space, shapes filled with an image, and glyph runs;
+/// stage 4 adds gradients and paths, a path as its mesh's device-space
+/// triangles (`push_path`). A stroke expands
 /// its quad by half the
 /// width on every side so it covers the band, which the fragment stage
 /// keeps from the quad's local coordinates. There is no hairline rule: a
@@ -395,16 +516,16 @@ pub fn walk(list: &DisplayList, size: ISize) -> Walked {
   let mut stack = Vec::new();
   let mut out = Walked::default();
   walk_ops(list.executable(), &mut state, &mut stack, &mut out);
-  out.scissor = scissor(&out.instances);
+  out.scissor = scissor(&out.instances, &out.mesh_clips);
   out
 }
 
-// The union of `instances`' device clips, rounded outward to whole pixels;
-// None for no instances. Every clip is already intersected with the target
-// and finite (see `walk`), so the union lies inside the target.
-fn scissor(instances: &[Instance]) -> Option<Box2D<i32>> {
-  let union =
-    instances.iter().map(|i| Box2D::new(Point2D::new(i.clip[0], i.clip[1]), Point2D::new(i.clip[2], i.clip[3])));
+// The union of `instances`' and the meshes' device clips, rounded outward
+// to whole pixels; None for neither. Every clip is already intersected with
+// the target and finite (see `walk`), so the union lies inside the target.
+fn scissor(instances: &[Instance], mesh_clips: &[[f32; 4]]) -> Option<Box2D<i32>> {
+  let clips = instances.iter().map(|i| &i.clip).chain(mesh_clips);
+  let union = clips.map(|c| Box2D::new(Point2D::new(c[0], c[1]), Point2D::new(c[2], c[3])));
   union.reduce(|a, b| a.union(&b)).map(|b| b.round_out().to_i32())
 }
 
@@ -452,6 +573,7 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, out: &mut Wal
         push_glyphs(state, atlas, quads, bounds, *policy, gradient.as_ref(), out)
       }
       Op::DrawShader { rect, shader, params, inputs } => push_paint(state, rect, shader, params, inputs, out),
+      Op::DrawPath { path, style, color, source } => push_path(state, path, *style, *color, source.as_ref(), out),
       Op::DrawList { list, opacity } => {
         if *opacity < 1.0 {
           unsupported!("draw_display_list below opacity 1", "the nested list draws at full opacity");
@@ -828,4 +950,88 @@ fn push_paint(
   };
   let paint = PaintDraw { shader: shader.clone(), params: params.clone(), inputs: inputs.clone(), resolution };
   out.push_paint(instance(state, &m2, clip, quad), paint);
+}
+
+// A path's mesh under `style` and the current state, unless the map
+// collapses it, the clip rejects it or it is fully transparent. Rejected
+// twice: before the mesh exists by the path's control-point box outset by
+// the stroke's reach (half the width times the larger of the miter limit
+// and sqrt 2: a miter's tip, or a square cap's corner), after by the
+// mesh's own box. The mesh comes from the path's cache at the map's scale
+// bucket (mesh.rs), tessellated on a miss; its vertices are mapped into
+// device space here and appended with the state's clip box and the color,
+// its indices rebased onto them. An image `source` binds its texture and
+// the batch's device-to-texel map, a gradient `source` its device-space
+// rows; either fades by the color's alpha (in all four channels) and draws
+// the solid color under a singular map.
+fn push_path(
+  state: &State,
+  path: &Path,
+  style: MeshStyle,
+  color: Premultiplied,
+  source: Option<&Source>,
+  out: &mut Walked,
+) {
+  let m2 = state_map(state);
+  let Some(bucket) = scale_bucket(&m2) else { return };
+  let Some(bounds) = path.bounds() else { return };
+  let reach = match style {
+    MeshStyle::Fill => 0.0,
+    MeshStyle::Stroke { width, miter, .. } => width * 0.5 * miter.max(SQRT_2),
+  };
+  if placed_under(state, m2, &bounds.inflate(reach, reach).to_rect()).is_none() {
+    return;
+  }
+  if color[3] == 0.0 {
+    return;
+  }
+  let (mesh, missed) = path.mesh(style, bucket);
+  out.tessellated += missed as u32;
+  let Some(mesh) = mesh else { return };
+  let Some(clip) = placed_under(state, m2, &mesh.bounds.to_rect()) else { return };
+  let mut texture = None;
+  let mut texel = None;
+  let mut gradient = None;
+  let color = match source {
+    Some(Source::Image(image)) => match image_texel(image, &m2) {
+      Some(map) => {
+        texture = Some((image.texture.name(), image.sampling));
+        texel = Some(map);
+        // The texel is premultiplied: the alpha in all four channels fades it.
+        [color[3]; 4]
+      }
+      None => color,
+    },
+    Some(Source::Gradient(g)) => match gradient_draw(g, &m2) {
+      Some(draw) => {
+        gradient = Some(draw);
+        // The ramp sample is premultiplied in the program: the alpha fades it.
+        [color[3]; 4]
+      }
+      None => color,
+    },
+    None => color,
+  };
+  let base = out.mesh_vertices.len() as u32;
+  out.mesh_vertices.extend(mesh.vertices.iter().map(|v| {
+    let p = m2.transform_point(Point2D::new(v[0], v[1]));
+    MeshVertex { device: [p.x, p.y], color, clip }
+  }));
+  let start = out.mesh_indices.len();
+  out.mesh_indices.extend(mesh.indices.iter().map(|i| i + base));
+  out.push_mesh(start, mesh.indices.len(), texture, state.rounded, texel, gradient);
+  out.meshes += 1;
+  out.mesh_clips.push(clip);
+}
+
+// The map from a device pixel to `image`'s normalized texel for a draw
+// whose op space reaches device pixels through `m`: device to the op's
+// space (the inverse of `m`), then to texels (the image's own map), then
+// over the texture's size. None when `m` is singular.
+fn image_texel(image: &super::ops::Image, m: &Transform2D<f32>) -> Option<Affine> {
+  let from_device = affine::invert(affine::of_2d(m))?;
+  // A texture's size is never zero (see `push_texture`).
+  let size = image.texture.size();
+  let normalize = [[1.0 / size.width as f32, 0.0, 0.0], [0.0, 1.0 / size.height as f32, 0.0]];
+  Some(affine::compose(normalize, affine::compose(affine::of_2d(&image.to_texel), from_device)))
 }

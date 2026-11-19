@@ -33,14 +33,21 @@ pub struct Target {
   pub size: ISize,
 }
 
-/// What one `Renderer::draw` issued: the quads it wrote to the GPU and the
-/// draw calls it made (a batch each). Cumulative counters on the raster
-/// thread sum them, so `/stats` reports instances and draw calls per
-/// frame: the number behind "a screen draws in a few batches".
+/// What one `Renderer::draw` issued: the quads it wrote to the GPU, the
+/// draw calls it made (a batch each) and the path meshes it drew.
+/// Cumulative counters on the raster thread sum them, so `/stats` reports
+/// instances and draw calls per frame: the number behind "a screen draws in
+/// a few batches".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DrawReport {
   pub instances: u32,
   pub draw_calls: u32,
+  /// The path meshes drawn: one per path op (a fill or a stroke) that the
+  /// clip kept.
+  pub meshes: u32,
+  /// The meshes this draw tessellated: the mesh cache's misses. Zero when
+  /// every path was redrawn from its cache.
+  pub tessellated: u32,
 }
 
 /// The drawing half, owned by the raster thread beside the GL context.

@@ -3,6 +3,8 @@
 //! resolved to its rows and ramp), shared behind an Arc so a retained list
 //! is recorded once and replayed by reference.
 
+use super::mesh::MeshStyle;
+use super::path::Path;
 use super::record::DisplayList;
 use super::{PaintShader, ShaderInput, Texture};
 use crate::{Color, Matrix, Point, Rect, ShaderParam, StrokeCap, TextureSampling};
@@ -98,6 +100,16 @@ pub(super) enum Op {
     width: f32,
     cap: StrokeCap,
     gradient: Option<Arc<RampGradient>>,
+  },
+  /// A path's mesh under `style`, filled with `color`, or with `source`
+  /// faded by `color`'s alpha. One op per style: a stroke-and-fill records
+  /// a fill op and then a stroke op, so the stroke covers the fill as
+  /// Skia's does.
+  DrawPath {
+    path: Path,
+    style: MeshStyle,
+    color: Premultiplied,
+    source: Option<Source>,
   },
   /// `alpha` is the paint's alpha (1 without a paint): a texture's opacity
   /// is per op, not a group.
