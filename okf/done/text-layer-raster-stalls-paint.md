@@ -2,6 +2,7 @@
 title: Keep text layer rasters from stalling paint
 description: A frame that re-rasterizes a text layer while the GPU is busy with a heavy scene paints in 16-19 ms instead of under 1 ms; the layer raster is a blocking round trip to the raster thread, and its glyph pass likely syncs on GPU work still in flight. Measure which, then take it off paint's critical path.
 created: 2026-10-14
+completed: 2026-11-19
 ---
 
 # Keep text layer rasters from stalling paint
@@ -102,3 +103,20 @@ Over a GPU-bound scene, a frame that re-rasterizes one to three text layers
 paints within a millisecond of one that does not, at full screen on the
 iGPU above and on a tiled mobile GPU. The rasterizer notes record which of
 the three causes it was.
+
+## Outcome
+
+Closed 2026-11-19 without a fix of its own: the cause was the blocking
+`RasterCmd::RasterizeGlyphs` round trip, and stage 2 of
+okf/plans/own-renderer.md removed it (a text records its glyph quads
+straight into the frame; the atlas uploads are fire-and-forget).
+
+Checked once with a probe: a full-window paint shader costing 15.4 ms of
+GPU per frame (`gpuFrameExecMsPerFrame`, RTX 3070 at 60 Hz) under three
+mono readouts changing ten times a second, three 10 s windows each.
+With the readouts changing, `paintMs` read 0.02, the UI critical path
+p95 0.24-0.32 ms and max 0.44-0.75 ms, 0 slow frames, 0 missed presents;
+with the readouts held, p95 0.10-0.14 and max 0.18-0.25 ms. A frame that
+remakes one to three texts paints within a millisecond of one that does
+not. The iGPU the symptom was seen on was not re-read; the mechanism that
+caused it is gone on every GPU.

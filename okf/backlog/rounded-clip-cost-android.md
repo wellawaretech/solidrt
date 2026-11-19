@@ -68,6 +68,24 @@ session should answer the two questions left over from
 regenerates a gradient (a gradient texture upload) per draw per frame on
 GLES, and why destination-out/over leave the fast blend path.
 
+## Under the own renderer
+
+The candidates above are Impeller's. In anvil (okf/plans/own-renderer.md)
+a rounded clip is no path and no stencil: it is the rounded-box distance
+in device space, carried on every instance under it (`clip_rounded` in
+anvil/src/renderer/walk.rs, `roundedClip()` in exec.rs). A box whose size
+changes every frame changes instance data only, so the per-frame path
+change and the stencil cover are gone by construction.
+
+What anvil keeps is a per-fragment cost: `plain_fill` sends every rect
+under a rounded clip to the shape program, so the pane's fill, its frost
+slice and every plain rect inside the pane pay the shape program's
+fragment cost that rounded-rect-fill-program.md prices on the Mali (about
+18 ms a frame for thirty TV panels). The first step under anvil is the
+measurement above, repeated: the notes demo's add/remove on the tablet. At
+60 fps this item closes on that read. Otherwise the remaining cost is
+most likely that fragment cost, and it goes to rounded-rect-fill-program.md.
+
 ## What done looks like
 
 - The cause named, and either fixed in alloy or documented in

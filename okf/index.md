@@ -907,7 +907,8 @@ Shaped, not started.
   varyings) makes thirty gradient panels of 320x180 device pixels cost about
   20 ms of GPU a frame against about 2 ms as plain rects; a fill-only rounded
   program (the rounded-box distance, no stroke, no oval or line arm, no
-  texture) would bring panels, cards and buttons near the fill program's cost.
+  texture), also taking plain fills under a rounded clip, would bring panels,
+  cards and buttons near the fill program's cost.
 - **[Router link into a nested screen has nothing beneath it](backlog/router-link-parent-stack.md)** [2026-09-25]
   "A launch link into a screen outside the tabs lands as a stack of one, so
   back leaves the app instead of going to the list; a route option to
