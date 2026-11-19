@@ -8,7 +8,8 @@ created: 2026-09-22
 
 ## Symptom
 
-2026-09-21/22, demo/notes on the Galaxy Tab A7, release client. Flow:
+2026-09-21/22, an app with an add/remove layout animation on the Galaxy
+Tab A7, release client. Flow:
 `send_input` a tap plus a trailing 2.3 s delay (so the call returns after
 the animation), then `get_stats` with `window_ms` 3500, 6000 or 8000. The
 answer was `window: { frames: 0, windowMs: N }` in roughly two calls of

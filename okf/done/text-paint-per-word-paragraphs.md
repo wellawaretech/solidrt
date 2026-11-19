@@ -9,7 +9,7 @@ completed: 2026-09-24
 
 ## Symptom
 
-demo/notes on the Galaxy Tab A7 (SM-T500, Adreno 610, release client built
+An app on the Galaxy Tab A7 (SM-T500, Adreno 610, release client built
 2026-09-22 with the texture radius and the cadence idle reset). Ten panes
 sliding and resizing on a layout transition, five of them holding a
 `d-text` paragraph of ~230 characters in a fixed-size box (the box does not

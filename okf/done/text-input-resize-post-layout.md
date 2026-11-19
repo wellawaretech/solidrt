@@ -9,7 +9,7 @@ completed: 2026-09-24
 
 ## Symptom
 
-demo/notes, Galaxy Tab A7, release client 0.0.60-10-gb1eec1bf (which
+An app on the Galaxy Tab A7, release client 0.0.60-10-gb1eec1bf (which
 includes the "equal placements keep the previous value" change in
 core/src/text-input.ts). Nine empty `<TextInput multiline>` fields, one per
 pane, panes sliding and resizing on `transition={{ layout }}`. Per frame

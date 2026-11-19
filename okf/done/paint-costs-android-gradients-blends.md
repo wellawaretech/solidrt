@@ -7,7 +7,7 @@ completed: 2026-09-24
 
 # Gradient fills, non-source-over blends and many small draws each cost a frame's worth on Android
 
-## Measured (2026-09-21/22, demo/notes on the SM-T500, release client 0.0.60-10-gb1eec1bf)
+## Measured (2026-09-21/22, on the SM-T500, release client 0.0.60-10-gb1eec1bf)
 
 Same method as rounded-clip-cost-android.md: reload, clear the
 SurfaceFlinger latency history, one remove and one add at real speed,

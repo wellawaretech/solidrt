@@ -9,7 +9,7 @@ completed: 2026-09-24
 
 ## Symptom
 
-After a day of reload-on-save on demo/notes (one `repaintBoundary="snapshot"`
+After a day of reload-on-save on an app (one `repaintBoundary="snapshot"`
 d-view under the window, exposed through `snapshotTexture`), the tablet's
 `get_gpu_resources` lists textures with ids 1, 4, 7, ... 152, every one
 `label: "snapshot"`, 2000x1092 rgba8: 51 of them, ~440 MB of GPU memory

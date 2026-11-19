@@ -9,7 +9,7 @@ completed: 2026-09-23
 
 ## Symptom
 
-demo/notes on the Galaxy Tab A7: once an add/remove animation has pushed
+On the Galaxy Tab A7: once an add/remove animation has pushed
 the hold to 3, `cadenceHold` stays 3 - through seconds of idle, and into
 the next animation - and get_stats' `gpuFrameExecMsPerFrame` reads 43-51
 ms for every animated window. After a reload (which resets the

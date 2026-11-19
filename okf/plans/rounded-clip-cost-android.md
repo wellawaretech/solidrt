@@ -10,11 +10,11 @@ Part of stage 5 of [own-renderer](own-renderer.md): that stage is not done until
 
 ## Symptom
 
-The notes demo (demo/notes: ten frosted panes in a collage, every pane a
-`<view overflow="hidden" clipRadius={16}>` sliding and resizing on a `layout`
-transition when a note is added or removed) animates at 20 fps on the Galaxy
-Tab A7 (SM-T500, Android 12, Adreno 610, release client 0.0.60-10-gb1eec1bf)
-with the JS critical path at 5 ms. Removing `clipRadius` from the ten panes,
+An app of ten frosted panes, every pane a `<view overflow="hidden"
+clipRadius>` sliding and resizing on a `layout` transition when a pane is
+added or removed, animates at 20 fps on the Galaxy Tab A7 (SM-T500,
+Android 12, Adreno 610, release client 0.0.60-10-gb1eec1bf) with the JS
+critical path at 5 ms. Removing `clipRadius` from the ten panes,
 nothing else, gives 60 fps.
 
 ## Measured (2026-09-22)
@@ -24,8 +24,8 @@ Method: reload (resets the cadence hold), `dumpsys SurfaceFlinger
 speed (motion slowed 5x, so ~2 s of frames each), then read the layer's
 `--latency` history. Interval = present-to-present; GPU span = frameReady
 minus queue time (the runtime sets no desired present time, so column 1 is
-the queue time). Per-thread CPU from `top -H`. Every row is empty notes,
-ten panes, flat tint (no gradient), per-pane frost slice under the clip.
+the queue time). Per-thread CPU from `top -H`. Every row is ten empty
+panes, flat tint (no gradient), per-pane frost slice under the clip.
 
 | rounded clips | scene | interval p50 / p90 | GPU span p50 | raster thread CPU |
 |---|---|---|---|---|
@@ -84,7 +84,9 @@ under a rounded clip to the shape program, so the pane's fill, its frost
 slice and every plain rect inside the pane pay the shape program's
 fragment cost that rounded-rect-fill-program.md prices on the Mali (about
 18 ms a frame for thirty TV panels). The first step under anvil is the
-measurement above, repeated: the notes demo's add/remove on the tablet. At
+measurement above, repeated on the tablet over a probe built here with
+the same shape (ten panes under a rounded clip, one added and one
+removed). At
 60 fps this item closes on that read. Otherwise the remaining cost is
 most likely that fragment cost, and it goes to rounded-rect-fill-program.md.
 
