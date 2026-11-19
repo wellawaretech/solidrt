@@ -7,8 +7,7 @@ completed: 2026-07-29
 
 # captureSnapshot on detached (d-*) nodes
 
-Raised by the shadertoy field report (projects/shadertoy/SOLIDRT-FEEDBACK.md
-#6): `get_render_tree` reported the `d-texture` node as 1692x1128, capturing
+Raised by an app's field report: `get_render_tree` reported the `d-texture` node as 1692x1128, capturing
 that exact node failed with "capture node has no layout box (zero size)", and
 the MCP `get_snapshot` doc had explicitly advised capturing the smallest node
 (the `<texture>` leaf itself). Two tools disagreeing about the same node reads
@@ -52,7 +51,7 @@ real to capture.
 
 - **Own `w`/`h` set** (`<d-rect x={10} y={20} w={40} h={40}>`): the box is
   fully determined by the node's own props. No ancestor geometry is involved.
-- **No `w`/`h`** (a full-bleed `<d-texture>`, the shadertoy case): the size
+- **No `w`/`h`** (a full-bleed `<d-texture>`): the size
   comes from the nearest laid-out ancestor - parent, grandparent, any depth
   (`RenderTree::content_fallback` walks up). At paint time the same thing
   happens via `ctx.size`: `Texture::build` does `w = self.w.unwrap_or(ctx.size.w)`.

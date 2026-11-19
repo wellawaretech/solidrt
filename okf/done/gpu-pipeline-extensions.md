@@ -139,7 +139,7 @@ as their top ask, which is worth recording because both were written by people
 building real apps rather than reviewing the API.
 
 - **Typed uniforms** is named the highest-leverage change by BOTH
-  projects/shadertoy (#2) and projects/second-reality (#5). Every vec2 centre,
+  field reports. Every vec2 centre,
   vec3 camera or palette phase becomes N scalar uniforms plus a reassembly
   macro:
 
@@ -154,9 +154,9 @@ building real apps rather than reviewing the API.
   `collect_params` in flux/src/plugins/gui/gpu.rs, hard-wired to
   `Vec<(String, f32)>` end to end.
 
-- **Blending toggle** now has three independent requesters: projects/organism
-  (point splats, noted above), projects/second-reality (glenz vectors), and
-  projects/shadertoy implicitly. Second-reality shipped a convex-only
+- **Blending toggle** now has three independent requesters: point splats (noted
+  above), glenz vectors, and full-screen shaders implicitly. One app
+  shipped a convex-only
   workaround - front/back faces split into two targets composited with
   `<texture blendMode="plus">` - which works only because a convex object has
   exactly one front and one back face per pixel. Non-convex transparent meshes

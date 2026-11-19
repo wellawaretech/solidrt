@@ -108,7 +108,7 @@ keeping the record of why each workaround fails:
 
 - **Tree compositing** (one target per mesh, stacked `<texture>`
   elements): separate depth buffers, so no cross-mesh occlusion. Only
-  correct for convex silhouettes, the trick the second-reality field
+  correct for convex silhouettes, the trick an app's field
   report already exhausted.
 - **Instancing**: one geometry and one material per target, and without
   per-instance attributes or mat4 uniform arrays, per-object transforms

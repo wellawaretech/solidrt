@@ -7,8 +7,7 @@ completed: 2026-09-23
 
 # GPU example gaps
 
-Both surfaced while acting on the 0.0.39 field reports
-(projects/shadertoy and projects/second-reality). Three examples came out of
+Both surfaced while acting on two apps' 0.0.39 field reports. Three examples came out of
 that round and shipped on 2026-07-29 - `text-import.tsx`,
 `gpu-texture-blend.tsx`, and the complete-source dialect added to
 `gpu-shader.tsx`. These two did not, for reasons that are about the runtime
@@ -17,7 +16,7 @@ rather than the examples.
 ## Multi-pass shader chain
 
 A worked example of one target sampling another: a plasma pass feeding a cube
-pipeline, the shape second-reality actually built.
+pipeline, the shape one of those apps built.
 
 Was blocked on [[gpu-target-dependency-propagation]]; that landed 2026-07-29
 in the consumers-get-marked-dirty direction (pull-based flush, chains render

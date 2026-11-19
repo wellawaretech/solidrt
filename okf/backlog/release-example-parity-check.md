@@ -6,8 +6,7 @@ created: 2026-07-29
 
 # Guard that every referenced example ships
 
-Raised by the shadertoy field report
-(projects/shadertoy/SOLIDRT-FEEDBACK.md #5). `packages/core/examples/README.md`
+Raised by an app's field report. `packages/core/examples/README.md`
 in the installed 0.0.39 package listed:
 
 > `gpu-raw-program.tsx` - the raw shading layer: compileShader/linkProgram/

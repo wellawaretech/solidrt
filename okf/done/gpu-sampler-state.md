@@ -7,8 +7,7 @@ completed: 2026-07-31
 
 # Sampler filter and wrap state
 
-Raised by the second-reality field report
-(projects/second-reality/SOLIDRT-FEEDBACK.md #4), measured against 0.0.39.
+Raised by an app's field report, measured against 0.0.39.
 
 Sampler state is fixed at creation and not exposed anywhere:
 

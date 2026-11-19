@@ -7,8 +7,7 @@ completed: 2026-07-31
 
 # Dependency propagation between GPU targets
 
-Raised by the second-reality field report
-(projects/second-reality/SOLIDRT-FEEDBACK.md #3), measured against 0.0.39.
+Raised by an app's field report, measured against 0.0.39.
 
 Shader A renders an animated gradient with `uT` written every frame. Pipeline B
 samples A via `textures` and has static params of its own. A visibly animates;
@@ -20,8 +19,8 @@ Writing ANY of B's own params makes B re-render, against A's current pixels.
 Rendering is demand-driven: a shader re-renders when its params change. A
 sampler binding is not treated as a dependency, so a multi-pass chain (plasma
 target -> cube pipeline) silently freezes unless every consumer happens to
-write a uniform per frame. Second-reality's consumers all drive rotation, so it
-cost that project nothing - which is precisely the problem. The API accepts the
+write a uniform per frame. That app's consumers all drive rotation, so it
+cost the app nothing - which is precisely the problem. The API accepts the
 binding, produces a correct first frame, and then quietly stops propagating.
 Nothing fails loudly; the output is just stale.
 

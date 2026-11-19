@@ -802,8 +802,7 @@ here suggests revisiting it.
 
 The maturity assessment's framing, statuses refreshed 2026-07-30. Games in
 the Doom/PS1/stylized-retro class are feasible now, and have been since
-07-15; the field-report demand signals since (shadertoy, second-reality,
-organism) were all served by items that have landed. The next tiers each
+07-15; the field-report demand signals since were all served by items that have landed. The next tiers each
 name their blockers:
 
 - **Modern-style 3D** (translucency, large meshes, post-processing,
