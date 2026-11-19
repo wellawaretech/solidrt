@@ -48,6 +48,10 @@ pub struct DrawReport {
   /// The meshes this draw tessellated: the mesh cache's misses. Zero when
   /// every path was redrawn from its cache.
   pub tessellated: u32,
+  /// The stencil clip draws: a clip's raise and a difference clip's lower
+  /// into the stencil, and the reset of a restore out of one. Each is a
+  /// draw call too, counted in `draw_calls`.
+  pub clips: u32,
 }
 
 /// The drawing half, owned by the raster thread beside the GL context.

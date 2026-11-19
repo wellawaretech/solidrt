@@ -14,13 +14,18 @@
 //! path's space, from `vPath` through the rows of its mesh draw
 //! (`walk::GradientInstance`), its ramp one row of the ramp atlas, whose
 //! rows the walk assigns (`super::ramps`) and the draw uploads before any
-//! batch samples them. Raster thread only, with the context current.
+//! batch samples them. A stencil clip (`walk::ClipDraw`) draws into the
+//! stencil with the color writes off, a rect's quad through the fill program
+//! and a rounded rect's or an oval's mesh through the solid mesh program,
+//! and every later batch tests the stencil at its depth. Raster thread
+//! only, with the context current.
 
 use super::mesh::{gpu_slot, GpuMesh, GpuSlot, Mesh};
 use super::ramps::{RampTable, RAMP_ROWS};
 use super::record::DisplayList;
 use super::walk::MESH_VERTEX_FLOATS;
 use super::walk::{self, Batch, BatchProgram, Instance, MeshDraw, MeshVertex, PaintDraw, Projective, Walked};
+use super::walk::{ClipDraw, ClipShape};
 use super::{DeletionQueue, Freed};
 use crate::contract::{DrawReport, Target};
 use crate::{CoveragePolicy, RAMP_WIDTH};
@@ -35,6 +40,9 @@ use std::sync::Arc;
 const VERTICES_PER_QUAD: i32 = 6;
 /// Floats per instance attribute: each is a vec4.
 const FLOATS_PER_ATTRIBUTE: i32 = 4;
+/// Every bit of the 8-bit stencil (DEPTH24_STENCIL8): the write mask and
+/// the test mask of every stencil draw and test.
+const STENCIL_ALL_BITS: u32 = 0xFF;
 
 // The attribute locations. They must match the `layout(location = N)`
 // literals in VERTEX_COMMON and SHAPE_VERTEX.
@@ -1132,9 +1140,10 @@ impl Executor {
   /// and the contract lets a draw leave state changed. The texture units and the
   /// sampler bindings are set per batch and cleared after. A path mesh
   /// uploads at its first draw, its buffers' names to go back to `queue`,
-  /// the drawing renderer's. Reports the instances written, the draw calls
-  /// issued and the path meshes drawn and tessellated (`super::report`),
-  /// zeros for an empty list.
+  /// the drawing renderer's. The stencil test is off on return, its write
+  /// mask every bit. Reports the instances written, the draw calls issued,
+  /// the path meshes drawn and tessellated and the stencil clip draws
+  /// (`super::report`), zeros for an empty list.
   pub(super) fn draw(
     &mut self,
     target: Target,
@@ -1173,8 +1182,14 @@ impl Executor {
       }
       gl.color_mask(true, true, true, true);
       gl.clear_color(0.0, 0.0, 0.0, 0.0);
+      // The stencil clear honours the write mask, and the clips count up
+      // from 0. A list that ends with stencil clips in effect leaves them in
+      // the stencil; this clear of the next draw takes them.
+      gl.stencil_mask(STENCIL_ALL_BITS);
+      gl.clear_stencil(0);
       // Clearing the depth and stencil of a target that has none is a
-      // no-op; the rig's depth-stencil attachment stays for stage 5.
+      // no-op; every target alloy draws into has DEPTH24_STENCIL8 (gl/rig.rs,
+      // the window's stencil size 8), which the stencil clips need.
       gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
       // Premultiplied source-over in sRGB, no linear step.
       gl.enable(glow::BLEND);
@@ -1214,15 +1229,31 @@ impl Executor {
       let mut in_use = Some(self.shape.program);
       gl.bind_vertex_array(Some(self.vao));
       gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
-      if !instances.is_empty() {
-        // Sound: Instance is repr(C) with every field an f32, so it has no
-        // padding (walk.rs asserts its size) and any byte view of it is
-        // initialized; the slice borrows `instances` for the upload only.
-        let bytes = std::slice::from_raw_parts(
-          instances.as_ptr() as *const u8,
-          instances.len() * std::mem::size_of::<Instance>(),
-        );
-        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
+      // The stencil clips' quads ride in the one instance buffer after the
+      // walk's instances: `clip_slots` holds each clip draw's quad index,
+      // None for a mesh.
+      let mut clip_quads = Vec::new();
+      let clip_slots: Vec<Option<usize>> = walked
+        .clip_draws
+        .iter()
+        .map(|clip| {
+          let (_, Cover::Quad(quad)) = clip_test(clip) else { return None };
+          clip_quads.push(*quad);
+          Some(instances.len() + clip_quads.len() - 1)
+        })
+        .collect();
+      if clip_quads.is_empty() {
+        if !instances.is_empty() {
+          gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, instance_bytes(instances), glow::STREAM_DRAW);
+        }
+      } else {
+        let stride = std::mem::size_of::<Instance>();
+        let total = (instances.len() + clip_quads.len()) * stride;
+        gl.buffer_data_size(glow::ARRAY_BUFFER, total as i32, glow::STREAM_DRAW);
+        if !instances.is_empty() {
+          gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, instance_bytes(instances));
+        }
+        gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, (instances.len() * stride) as i32, instance_bytes(&clip_quads));
       }
       // Whether the mesh VAO is bound; the instance VAO is, with its
       // buffer on ARRAY_BUFFER, when it is not.
@@ -1241,7 +1272,49 @@ impl Executor {
         self.bind_ramp();
       }
       gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
+      // A stencil clip batch writes the stencil only, through its own test
+      // and op; every other batch tests at its depth (off at 0) and keeps
+      // the stencil.
       for batch in &walked.batches {
+        if batch.program == BatchProgram::Clip {
+          let ((func, reference, op), cover) = clip_test(&walked.clip_draws[batch.start]);
+          gl.enable(glow::STENCIL_TEST);
+          gl.stencil_func(func, reference as i32, STENCIL_ALL_BITS);
+          gl.stencil_op(glow::KEEP, glow::KEEP, op);
+          gl.color_mask(false, false, false, false);
+          match cover {
+            Cover::Mesh(draw) => {
+              if !mesh_bound {
+                gl.bind_vertex_array(Some(self.mesh_vao));
+                mesh_bound = true;
+              }
+              self.draw_mesh(draw, queue, &mut in_use);
+            }
+            Cover::Quad(_) => {
+              if mesh_bound {
+                gl.bind_vertex_array(Some(self.vao));
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
+                mesh_bound = false;
+              }
+              let slot = clip_slots[batch.start].expect("a clip quad has its slot in the instance buffer");
+              point_attributes(gl, slot);
+              if in_use != Some(self.fill.program) {
+                gl.use_program(Some(self.fill.program));
+                in_use = Some(self.fill.program);
+              }
+              gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, 1);
+            }
+          }
+          gl.color_mask(true, true, true, true);
+          continue;
+        }
+        if batch.stencil == 0 {
+          gl.disable(glow::STENCIL_TEST);
+        } else {
+          gl.enable(glow::STENCIL_TEST);
+          gl.stencil_func(glow::EQUAL, batch.stencil as i32, STENCIL_ALL_BITS);
+          gl.stencil_op(glow::KEEP, glow::KEEP, glow::KEEP);
+        }
         if batch.program == BatchProgram::Mesh {
           if !mesh_bound {
             gl.bind_vertex_array(Some(self.mesh_vao));
@@ -1274,6 +1347,7 @@ impl Executor {
           (BatchProgram::Glyph, _) => &self.glyph,
           (BatchProgram::Paint, _) => unreachable!("a paint batch carries its draw (walk.rs Batch)"),
           (BatchProgram::Mesh, _) => unreachable!("a mesh batch draws above"),
+          (BatchProgram::Clip, _) => unreachable!("a clip batch draws above"),
         };
         if in_use != Some(program.program) {
           gl.use_program(Some(program.program));
@@ -1304,6 +1378,8 @@ impl Executor {
       }
       gl.bind_sampler(TEXTURE_UNIT, None);
       gl.bind_texture(glow::TEXTURE_2D, None);
+      // The stencil test off and every bit writable, as the clear found it.
+      gl.disable(glow::STENCIL_TEST);
       if mesh_bound {
         gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
@@ -1568,6 +1644,40 @@ impl Executor {
     let [r0, r1, r2, r3] = policy.gamma_ratios();
     gl.uniform_4_f32(Some(&u.gamma_ratios), r0, r1, r2, r3);
   }
+}
+
+/// What a stencil clip draw covers: its quad, uploaded after the walk's
+/// instances, or its mesh.
+enum Cover<'a> {
+  Quad(&'a Instance),
+  Mesh(&'a MeshDraw),
+}
+
+// A stencil clip draw's test and op, (func, reference, the op on pass), and
+// what it covers. A raise passes where the stencil equals its reference
+// and increments it, a lower decrements it there; a restore passes where
+// its depth is below the stencil (GL's LESS compares the reference to the
+// stored value) and replaces the stencil with it.
+fn clip_test(clip: &ClipDraw) -> ((u32, u8, u32), Cover<'_>) {
+  fn cover(shape: &ClipShape) -> Cover<'_> {
+    match shape {
+      ClipShape::Quad(quad) => Cover::Quad(quad),
+      ClipShape::Mesh(draw) => Cover::Mesh(draw),
+    }
+  }
+  match clip {
+    ClipDraw::Raise { reference, shape } => ((glow::EQUAL, *reference, glow::INCR), cover(shape)),
+    ClipDraw::Lower { reference, shape } => ((glow::EQUAL, *reference, glow::DECR), cover(shape)),
+    ClipDraw::Restore { to, area } => ((glow::LESS, *to, glow::REPLACE), Cover::Quad(area)),
+  }
+}
+
+// `instances` as the bytes the instance buffer takes.
+fn instance_bytes(instances: &[Instance]) -> &[u8] {
+  // Sound: Instance is repr(C) with every field an f32, so it has no
+  // padding (walk.rs asserts its size) and any byte view of it is
+  // initialized; the slice borrows `instances`.
+  unsafe { std::slice::from_raw_parts(instances.as_ptr() as *const u8, std::mem::size_of_val(instances)) }
 }
 
 // Whether `batch` samples the gradient ramp: a glyph batch (the glyph

@@ -22,7 +22,7 @@ use crate::{
   BlendMode, ClipOperation, Color, ColorMatrix, DrawStyle, Matrix, Point, Rect, RoundingRadii, ShaderParam, Size,
   StrokeCap, StrokeJoin, TextureSampling, TileMode,
 };
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// A finished recording: the executable ops and, in a test build, the
 /// log. A list is cloned and crosses threads, so both are shared.
@@ -69,14 +69,6 @@ pub struct DisplayListBuilder {
   ops: Vec<Op>,
   #[cfg(any(test, feature = "oplog"))]
   log: Vec<LogOp>,
-}
-
-impl DisplayListBuilder {
-  /// The ops of a clip that cuts its shape out: none, warned once. One
-  /// call site, so the warning is one line whichever clip method sent it.
-  fn clip_difference_unsupported() {
-    unsupported!("clip_rect with the difference op", "the clip is ignored");
-  }
 }
 
 /// What anvil draws of a paint: its color, premultiplied, and the stroke
@@ -195,8 +187,8 @@ fn warn_non_miter_join(paint: &Paint) {
   }
 }
 
-// The arguments of the ops anvil does not draw yet (the layers, the oval
-// clip) are read only by the test log.
+// The arguments of the ops anvil does not draw yet (the layers) are read
+// only by the test log.
 #[cfg_attr(not(any(test, feature = "oplog")), allow(unused_variables))]
 impl contract::DisplayListBuilder for DisplayListBuilder {
   fn new(_cull: Option<&Rect>) -> Self {
@@ -270,29 +262,21 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   }
 
   fn clip_rect(&mut self, rect: &Rect, op: ClipOperation) -> &mut Self {
-    match op {
-      ClipOperation::Intersect => self.ops.push(Op::ClipRect(*rect)),
-      ClipOperation::Difference => Self::clip_difference_unsupported(),
-    }
+    self.ops.push(Op::ClipRect { rect: *rect, op });
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::ClipRect { rect: *rect, op });
     self
   }
 
   fn clip_oval(&mut self, bounds: &Rect, op: ClipOperation) -> &mut Self {
-    unsupported!("clip_oval", "the clip is ignored");
+    self.ops.push(Op::ClipOval { bounds: *bounds, op, path: OnceLock::new() });
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::ClipOval { bounds: *bounds, op });
     self
   }
 
   fn clip_rounded_rect(&mut self, rect: &Rect, radii: &RoundingRadii, op: ClipOperation) -> &mut Self {
-    match op {
-      ClipOperation::Intersect => {
-        self.ops.push(Op::ClipRoundedRect { rect: *rect, radii: clamp_radii(rect, radii) });
-      }
-      ClipOperation::Difference => Self::clip_difference_unsupported(),
-    }
+    self.ops.push(Op::ClipRoundedRect { rect: *rect, radii: clamp_radii(rect, radii), op, path: OnceLock::new() });
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::ClipRoundedRect { rect: *rect, radii: *radii, op });
     self

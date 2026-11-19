@@ -52,6 +52,21 @@ impl Path {
     self.0.bounds
   }
 
+  /// A path over `geometry` built by anvil itself, not through the pen
+  /// walk (a clip's rounded rect or oval, `walk.rs`): its op log has no
+  /// segments.
+  pub(super) fn from_geometry(geometry: lyon_path::Path, fill: FillType) -> Path {
+    let bounds = control_bounds(&geometry);
+    Path(Arc::new(PathInner {
+      geometry,
+      fill,
+      bounds,
+      meshes: Mutex::new(Vec::new()),
+      #[cfg(any(test, feature = "oplog"))]
+      log: Arc::new(PathLog { segments: Vec::new(), fill }),
+    }))
+  }
+
   /// The mesh cache, for `mesh.rs`.
   pub(super) fn meshes(&self) -> &Mutex<Vec<(MeshKey, Arc<Mesh>)>> {
     &self.0.meshes

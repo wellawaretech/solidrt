@@ -134,16 +134,17 @@ impl contract::Renderer for Renderer {
 }
 
 /// What drawing `walked` issues: every instance it wrote, one draw call per
-/// batch (`exec` draws each batch once, instanced quads or a mesh's
-/// elements), the path meshes it drew and how many of them it tessellated.
-/// The walk decides all four, so the tests read the report off a walk with
-/// no GL.
+/// batch (`exec` draws each batch once, instanced quads, a mesh's elements
+/// or a stencil clip draw), the path meshes it drew, how many meshes it
+/// tessellated and the stencil clip draws it made. The walk decides all
+/// five, so the tests read the report off a walk with no GL.
 pub(crate) fn report(walked: &walk::Walked) -> contract::DrawReport {
   contract::DrawReport {
     instances: walked.instances.len() as u32,
     draw_calls: walked.batches.len() as u32,
     meshes: walked.meshes,
     tessellated: walked.tessellated,
+    clips: walked.clip_draws.len() as u32,
   }
 }
 

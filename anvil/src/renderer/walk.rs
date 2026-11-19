@@ -3,8 +3,11 @@
 //! path meshes' draws (a retained mesh by handle with its map, color and
 //! clips), with the save stack, the transforms (perspective among them, as
 //! the projective row a quad carries and a mesh's 3x3 map) and the clip
-//! applied, the draws outside the clip rejected, and a gradient's rows and
-//! ramp row put on its instances and mesh draws. No GL here, so the
+//! applied, the draws outside the clip rejected, a gradient's rows and ramp
+//! row put on its instances and mesh draws, and the clips the device box
+//! and the per-instance rounded clip cannot take turned into stencil clip
+//! draws (`ClipDraw`) with the stencil depth every batch tests against. No
+//! GL here, so the
 //! walk is unit-tested without a context (`tests/anvil.rs`,
 //! `tests/gradient.rs`, `tests/mesh.rs`).
 
@@ -14,12 +17,14 @@ use super::path::Path;
 use super::ramps::{RampTable, RAMP_ROWS};
 use super::record::DisplayList;
 use super::{PaintShader, ShaderInput, Texture};
-use crate::{affine, Affine, CoveragePolicy, GlyphQuad, RampGradient, TileMode};
+use crate::{affine, Affine, ClipOperation, CoveragePolicy, FillType, GlyphQuad, RampGradient, TileMode};
 use crate::{ISize, Matrix, Point, Rect, ShaderParam, Size, StrokeCap, TextureSampling};
 use euclid::default::{Box2D, Point2D, Transform2D};
 use euclid::Angle;
+use lyon_path::builder::BorderRadii;
+use lyon_path::Winding;
 use std::f32::consts::SQRT_2;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// One quad for any program, as the instance buffer carries it. All
 /// f32 and `repr(C)`, so a slice of instances is uploaded as its bytes.
@@ -163,6 +168,10 @@ pub enum BatchProgram {
   /// drawn through the mesh program (its gradient or textured variant by
   /// the draw's `gradient` and `texture`).
   Mesh,
+  /// One stencil clip draw: the `Walked::clip_draws` entry at the batch's
+  /// start, its quad through the fill program or its mesh through the
+  /// solid mesh program, the color writes off.
+  Clip,
 }
 
 /// What the executor needs for a paint batch beside its one instance: the
@@ -284,6 +293,12 @@ pub struct Batch {
   /// Set exactly when the run is a paint shader draw (`program` is
   /// `Paint`); `texture` is then None, the inputs bind their own units.
   pub paint: Option<PaintDraw>,
+  /// The stencil depth the run's draws test against: they draw only where
+  /// the stencil equals it, inside every stencil clip in effect. 0 turns
+  /// the test off (no stencil clip is in effect). A run takes a draw only
+  /// at its own depth. 0 and unread on a `Clip` batch, whose draw carries
+  /// its own test.
+  pub stencil: u8,
 }
 
 /// One path op's mesh draw: the retained mesh by handle and what the mesh
@@ -311,18 +326,51 @@ pub struct MeshDraw {
   pub texel: Option<Affine>,
 }
 
-/// What a walk produces: the instances and the path mesh draws in
-/// painter's order and the batches over them, back to back and covering
-/// every instance and every mesh draw.
+/// What a stencil clip draw covers: a rect under its map as one
+/// `KIND_RECT` fill instance (its edges are MSAA's), or a rounded rect or an
+/// oval as its tessellated mesh in the clip's own space under the map (a
+/// mesh draw of the solid mesh program; its color and clips are unread, the
+/// color writes being off). Under MSAA the stencil is per sample, so either
+/// edge is antialiased.
+#[derive(Clone, Debug)]
+pub enum ClipShape {
+  Quad(Instance),
+  Mesh(MeshDraw),
+}
+
+/// One draw into the stencil, with the color writes off. Depth-counting, as
+/// Impeller and Skia clip: inside every stencil clip in effect the stencil
+/// holds the depth, the count of those clips, and a draw tests for it.
+#[derive(Clone, Debug)]
+pub enum ClipDraw {
+  /// Where the stencil equals `reference`, increment it: an intersect
+  /// clip's shape, or a difference clip's box before its `Lower`.
+  Raise { reference: u8, shape: ClipShape },
+  /// Where the stencil equals `reference`, decrement it: a difference
+  /// clip's shape, cut back out of the box its `Raise` raised.
+  Lower { reference: u8, shape: ClipShape },
+  /// Where the stencil is above `to`, set it to `to`: a restore that drops
+  /// the depth, over `area`, a device rect quad under the identity map
+  /// covering every raise since the depth was `to` (`State::raised`).
+  Restore { to: u8, area: Instance },
+}
+
+/// What a walk produces: the instances, the path mesh draws and the
+/// stencil clip draws in painter's order and the batches over them, back
+/// to back and covering every instance, every mesh draw and every clip
+/// draw.
 #[derive(Default)]
 pub struct Walked {
   pub instances: Vec<Instance>,
   /// The path mesh draws, one per path op drawn, each its own batch.
   pub mesh_draws: Vec<MeshDraw>,
+  /// The stencil clip draws, each its own `Clip` batch.
+  pub clip_draws: Vec<ClipDraw>,
   pub batches: Vec<Batch>,
   /// The path ops drawn: one mesh each.
   pub meshes: u32,
-  /// The meshes tessellated by this walk: the path caches' misses.
+  /// The meshes tessellated by this walk: the path caches' misses, a clip
+  /// shape's among them.
   pub tessellated: u32,
   /// The union of the emitted instances' and meshes' device clip boxes,
   /// rounded outward to whole pixels: nothing draws outside it, so the
@@ -346,18 +394,20 @@ impl Walked {
   // a fill batch. Any other shape shares only an open shape batch of its
   // gradedness (the shader branches on the kind; a bound sampler it never
   // reads costs nothing), so a texture change, a sampling change, a fill
-  // run or a glyph run ends a run.
+  // run or a glyph run ends a run. `stencil` is a key too: a batch takes
+  // only an instance of its own stencil depth.
   fn push(
     &mut self,
     instance: Instance,
     texture: Option<(glow::NativeTexture, TextureSampling)>,
     plain: bool,
     graded: bool,
+    stencil: u8,
   ) {
     let start = self.instances.len();
     let sealed = self.sealed;
-    let last = self.batches.last_mut().filter(|_| !sealed);
-    let batch = |program| Batch { start, count: 1, program, texture, policy: None, graded, paint: None };
+    let last = self.batches.last_mut().filter(|last| !sealed && last.stencil == stencil);
+    let batch = |program| Batch { start, count: 1, program, texture, policy: None, graded, paint: None, stencil };
     if plain {
       match last {
         Some(last) if last.program == BatchProgram::Fill && last.graded == graded => last.count += 1,
@@ -390,17 +440,21 @@ impl Walked {
   // Append one glyph op's surviving `instances` over the atlas `atlas`
   // (sampled linearly) under `policy`. The run joins the current batch
   // when that batch is a glyph run over the same atlas under the same
-  // policy, whatever either's gradient: the glyph program reads the
-  // gradient per instance.
-  fn push_glyphs(&mut self, instances: Vec<Instance>, atlas: glow::NativeTexture, policy: CoveragePolicy) {
+  // policy at the same stencil depth, whatever either's gradient: the glyph
+  // program reads the gradient per instance.
+  fn push_glyphs(&mut self, instances: Vec<Instance>, atlas: glow::NativeTexture, policy: CoveragePolicy, stencil: u8) {
     if instances.is_empty() {
       return;
     }
     let start = self.instances.len();
     let count = instances.len();
     let texture = Some((atlas, TextureSampling::Linear));
-    let joins =
-      |last: &Batch| last.program == BatchProgram::Glyph && last.texture == texture && last.policy == Some(policy);
+    let joins = |last: &Batch| {
+      last.program == BatchProgram::Glyph
+        && last.texture == texture
+        && last.policy == Some(policy)
+        && last.stencil == stencil
+    };
     let sealed = self.sealed;
     match self.batches.last_mut().filter(|last| !sealed && joins(last)) {
       Some(last) => last.count += count,
@@ -412,6 +466,7 @@ impl Walked {
         policy: Some(policy),
         graded: false,
         paint: None,
+        stencil,
       }),
     }
     self.instances.extend(instances);
@@ -420,7 +475,7 @@ impl Walked {
   // Append a paint shader's one `instance` as a batch of its own, sealed
   // after it: the program is the shader's, so nothing before or after it
   // shares its draw.
-  fn push_paint(&mut self, instance: Instance, paint: PaintDraw) {
+  fn push_paint(&mut self, instance: Instance, paint: PaintDraw, stencil: u8) {
     let start = self.instances.len();
     self.open(Batch {
       start,
@@ -430,6 +485,7 @@ impl Walked {
       policy: None,
       graded: false,
       paint: Some(paint),
+      stencil,
     });
     self.sealed = true;
     self.instances.push(instance);
@@ -437,8 +493,8 @@ impl Walked {
 
   // Append one path op's mesh `draw` as a batch of its own: its map,
   // color, clips and source are the mesh program's uniforms, so no other
-  // path or quad shares its draw call.
-  fn push_mesh(&mut self, draw: MeshDraw) {
+  // path or quad shares its draw call; it tests the stencil at `stencil`.
+  fn push_mesh(&mut self, draw: MeshDraw, stencil: u8) {
     let start = self.mesh_draws.len();
     self.open(Batch {
       start,
@@ -448,8 +504,27 @@ impl Walked {
       policy: None,
       graded: draw.gradient.is_some(),
       paint: None,
+      stencil,
     });
     self.mesh_draws.push(draw);
+  }
+
+  // Append one stencil clip `draw` as a batch of its own. No quad batch
+  // takes an instance after it (`push` and `push_glyphs` join only their
+  // own programs), so it needs no seal.
+  fn push_clip(&mut self, draw: ClipDraw) {
+    let start = self.clip_draws.len();
+    self.open(Batch {
+      start,
+      count: 1,
+      program: BatchProgram::Clip,
+      texture: None,
+      policy: None,
+      graded: false,
+      paint: None,
+      stencil: 0,
+    });
+    self.clip_draws.push(draw);
   }
 
   // Open `batch` as the current one, which takes instances again.
@@ -465,11 +540,22 @@ struct State {
   matrix: Matrix,
   /// Device pixels. Empty (max below min) once two clips are disjoint,
   /// which rejects every draw until the enclosing restore. A rounded clip
-  /// narrows it to its rect too, so rejection and the box test hold.
+  /// and an intersect stencil clip narrow it to their bounds too, so
+  /// rejection and the box test hold.
   clip: Box2D<f32>,
-  /// The one rounded clip in effect, if any; a further one only narrows
-  /// `clip`.
+  /// The one per-instance rounded clip in effect, if any; a further one
+  /// clips through the stencil.
   rounded: Option<RoundedClip>,
+  /// The stencil clips in effect: the stencil depth every draw tests
+  /// against, 0 for none.
+  depth: u8,
+  /// The device area every stencil raise of the clips in effect may have
+  /// touched, within the target; None while none was made. A restore that
+  /// drops the depth resets the stencil over it.
+  raised: Option<Box2D<f32>>,
+  /// The target, device pixels: the area of a raise whose bounds are
+  /// unknown (a corner behind the eye).
+  target: Box2D<f32>,
 }
 
 /// An axis-aligned rounded clip, in device pixels: its rect and its corner
@@ -488,7 +574,10 @@ pub struct RoundedClip {
 /// clip in device space, shapes filled with an image, and glyph runs;
 /// stage 4 adds gradients and paths, a path as its mesh's device-space
 /// triangles (`push_path`); stage 5 draws every quad under a perspective
-/// map, its projective row on the instance. A stroke expands its quad by
+/// map, its projective row on the instance, and every clip (rect, rounded
+/// rect and oval, intersect and difference, under any map, nested to any
+/// depth), those the box and the per-instance rounded clip cannot take
+/// through the stencil (`clip`). A stroke expands its quad by
 /// half the width on every side so it covers the band, which the fragment
 /// stage keeps from the quad's local coordinates. There is no hairline
 /// rule: a width of zero or below draws nothing, and a width under one
@@ -500,7 +589,8 @@ pub fn walk(list: &DisplayList, size: ISize, ramps: &mut RampTable) -> Walked {
   // finite (a highp float holds 1e7 but not INFINITY reliably), the
   // rejection culls offscreen content, and the rendertree's "infinite"
   // overflow extents (composite.rs, CLIP_INF) intersect down to the target.
-  let mut state = State { matrix: Matrix::identity(), clip: Box2D::from_size(size.to_f32()), rounded: None };
+  let target = Box2D::from_size(size.to_f32());
+  let mut state = State { matrix: Matrix::identity(), clip: target, rounded: None, depth: 0, raised: None, target };
   let mut stack = Vec::new();
   let mut out = Walked::default();
   walk_ops(list.executable(), &mut state, &mut stack, ramps, &mut out);
@@ -529,6 +619,7 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, ramps: &mut R
       Op::Restore => {
         if stack.len() > base {
           if let Some(saved) = stack.pop() {
+            restore_stencil(state, &saved, out);
             *state = saved;
           }
         }
@@ -536,18 +627,13 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, ramps: &mut R
       Op::Translate { x, y } => state.matrix = Matrix::translation(*x, *y, 0.0).then(&state.matrix),
       Op::Scale { x, y } => state.matrix = Matrix::scale(*x, *y, 1.0).then(&state.matrix),
       Op::Transform(m) => state.matrix = m.then(&state.matrix),
-      Op::ClipRect(rect) => {
-        let p = Projective::from_matrix(&state.matrix);
-        let Some(device) = clip_bounds(&p, rect) else { continue };
-        if !p.is_axis_aligned() {
-          unsupported!(
-            "a clip under a rotated or perspective transform",
-            "the clip is the transformed rect's bounding box"
-          );
-        }
-        state.clip = state.clip.intersection_unchecked(&device);
+      Op::ClipRect { rect, op } => clip(state, rect, ClipGeometry::Rect, *op, out),
+      Op::ClipRoundedRect { rect, radii, op, path } => {
+        let geometry =
+          if radii.iter().all(|r| *r == 0.0) { ClipGeometry::Rect } else { ClipGeometry::Rounded(radii, path) };
+        clip(state, rect, geometry, *op, out)
       }
-      Op::ClipRoundedRect { rect, radii } => clip_rounded(state, rect, radii),
+      Op::ClipOval { bounds, op, path } => clip(state, bounds, ClipGeometry::Oval(path), *op, out),
       Op::DrawRect { rect, radii, color, stroke, source } => {
         let kind = if radii.iter().all(|r| *r == 0.0) { KIND_RECT } else { KIND_ROUNDED_RECT };
         push_shape(state, rect, kind, *radii, *color, *stroke, source.as_ref(), ramps, out)
@@ -573,11 +659,12 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, ramps: &mut R
           unsupported!("draw_display_list below opacity 1", "the nested list draws at full opacity");
         }
         // Whatever the nested list leaves on the stack or in the state
-        // ends with it.
+        // ends with it, the stencil clips it left in effect among it.
         let depth = stack.len();
         let saved = *state;
         walk_ops(list.executable(), state, stack, ramps, out);
         stack.truncate(depth);
+        restore_stencil(state, &saved, out);
         *state = saved;
       }
     }
@@ -657,49 +744,63 @@ impl Projective {
   }
 }
 
-// The device box a clip to `rect` under `p` narrows the clip box to; None,
-// warned once, when a corner lies behind the eye: such a rect has no device
-// box, and the clip is left as it was. The one call site of the warning
-// for both clip ops.
-fn clip_bounds(p: &Projective, rect: &Rect) -> Option<Box2D<f32>> {
-  let bounds = p.bounds(rect);
-  if bounds.is_none() {
-    unsupported!("a clip with a corner behind the eye plane", "the clip is left as it was");
+/// The deepest the stencil counts: an 8-bit stencil buffer, every target's
+/// (DEPTH24_STENCIL8).
+const MAX_STENCIL_DEPTH: u8 = u8::MAX;
+
+/// A clip op's shape: a plain rect, a rounded rect with its (clamped,
+/// local) radii, or an oval in its bounds; the rounded rect and the oval
+/// with the op's path slot, which their geometry is built into once, so a
+/// retained list keeps the path, its mesh cache and its GPU buffers.
+#[derive(Clone, Copy)]
+enum ClipGeometry<'a> {
+  Rect,
+  Rounded(&'a Radii, &'a OnceLock<Path>),
+  Oval(&'a OnceLock<Path>),
+}
+
+// A clip to `rect` (`geometry` in it) combined by `op` with the clips in
+// effect, the first of these that takes it:
+//   1. an intersect of a plain rect under an axis-aligned map: the device
+//      box;
+//   2. an intersect of a rounded rect under an axis-aligned uniform-scale
+//      map with no rounded clip in effect: the box and the per-instance
+//      rounded clip (`clip_rounded`);
+//   3. anything else: a stencil clip (`clip_stencil`).
+fn clip(state: &mut State, rect: &Rect, geometry: ClipGeometry, op: ClipOperation, out: &mut Walked) {
+  let p = Projective::from_matrix(&state.matrix);
+  if op == ClipOperation::Intersect && p.is_axis_aligned() {
+    match geometry {
+      ClipGeometry::Rect => {
+        // A 2D map: every corner is in front of the eye.
+        if let Some(device) = p.bounds(rect) {
+          state.clip = state.clip.intersection_unchecked(&device);
+        }
+        return;
+      }
+      // False when the scale is not uniform: the stencil takes it.
+      ClipGeometry::Rounded(radii, _) if state.rounded.is_none() && clip_rounded(state, &p, rect, radii) => return,
+      _ => {}
+    }
   }
-  bounds
+  clip_stencil(state, &p, rect, geometry, op, out);
 }
 
 // An intersect clip to `rect` with the corner `radii` (local, CSS order,
-// clamped). The device box of the rect narrows the clip box in every case
-// (a rect with a corner behind the eye leaves it as it was); the rounded
-// corners ride on the instances as the one rounded clip, in device space,
-// when the transform keeps the rect axis-aligned and no rounded clip is in
-// effect yet. Otherwise the clip degrades to its box, warned once per
-// cause.
-fn clip_rounded(state: &mut State, rect: &Rect, radii: &Radii) {
-  let p = Projective::from_matrix(&state.matrix);
-  let Some(device) = clip_bounds(&p, rect) else { return };
-  state.clip = state.clip.intersection_unchecked(&device);
-  if radii.iter().all(|r| *r == 0.0) {
-    // A plain rect: the box did it.
-    return;
-  }
-  if !p.is_axis_aligned() {
-    unsupported!(
-      "a rounded clip under a rotated or perspective transform",
-      "the clip is the transformed rect's bounding box"
-    );
-    return;
-  }
-  if state.rounded.is_some() {
-    unsupported!("nested rounded clips", "the inner one clips as a plain rect");
-    return;
-  }
+// clamped) under the axis-aligned map `p`, as the per-instance rounded clip
+// in device space: the device box narrows the clip box, the device radii
+// ride on the instances. False, changing nothing, when the map's two axis
+// scales differ: the corners would be elliptical in device space, which the
+// stencil takes.
+fn clip_rounded(state: &mut State, p: &Projective, rect: &Rect, radii: &Radii) -> bool {
   let [m11, _, _, m22] = p.linear;
   let (sx, sy) = (m11.abs(), m22.abs());
   if (sx - sy).abs() > UNIFORM_SCALE_EPSILON {
-    unsupported!("a rounded clip under a non-uniform scale", "the corners use the smaller scale");
+    return false;
   }
+  // A 2D map: every corner is in front of the eye.
+  let Some(device) = p.bounds(rect) else { return false };
+  state.clip = state.clip.intersection_unchecked(&device);
   let scale = sx.min(sy);
   let [tl, tr, br, bl] = radii.map(|r| r * scale);
   // A mirrored axis swaps the corners: local top-left lands on device
@@ -709,6 +810,171 @@ fn clip_rounded(state: &mut State, rect: &Rect, radii: &Radii) {
   if device_radii.iter().any(|r| *r > 0.0) {
     state.rounded = Some(RoundedClip { rect: device, radii: device_radii });
   }
+  true
+}
+
+// A clip to `rect` (`geometry` in it) under `p` through the stencil. An
+// intersect raises its shape where the stencil holds the depth, and an
+// intersect also narrows the box to the shape's projected bounds when
+// they exist (a corner behind the eye leaves the box as it was: the
+// shape still draws, homogeneously, and the GPU clips it). A difference
+// raises the box, then lowers its shape back where the box raised: outside
+// the shape the stencil reads the new depth, inside it the old one, which
+// a draw at the new depth rejects; it never narrows the box. Either way the
+// depth then counts one more. A shape that covers nothing (a map that
+// collapses it, an empty rounded rect or oval) keeps nothing under an
+// intersect and cuts nothing under a difference. Nothing is raised once
+// the box is empty (every draw is rejected anyway) or past
+// MAX_STENCIL_DEPTH, where the clip degrades to its box, warned once.
+fn clip_stencil(
+  state: &mut State,
+  p: &Projective,
+  rect: &Rect,
+  geometry: ClipGeometry,
+  op: ClipOperation,
+  out: &mut Walked,
+) {
+  if state.clip.is_empty() {
+    return;
+  }
+  let bounds = p.bounds(rect);
+  if state.depth == MAX_STENCIL_DEPTH {
+    unsupported!("stencil clips nested past 255 deep", "the deeper clip is its bounding box");
+    if let (ClipOperation::Intersect, Some(bounds)) = (op, bounds) {
+      state.clip = state.clip.intersection_unchecked(&bounds);
+    }
+    return;
+  }
+  let clip = box_array(&state.clip);
+  let shape = match geometry {
+    ClipGeometry::Rect => Some(ClipShape::Quad(clip_quad(p, rect, clip))),
+    ClipGeometry::Rounded(radii, path) => clip_mesh(p, path.get_or_init(|| rounded_path(rect, radii)), clip, out),
+    ClipGeometry::Oval(path) => clip_mesh(p, path.get_or_init(|| oval_path(rect)), clip, out),
+  };
+  let depth = state.depth;
+  match op {
+    ClipOperation::Intersect => {
+      let Some(shape) = shape else {
+        state.clip = Box2D::zero();
+        return;
+      };
+      out.push_clip(ClipDraw::Raise { reference: depth, shape });
+      // The raise is not held to the box (neither program discards), so its
+      // area is the shape's bounds within the target, or the whole target.
+      let area = match bounds {
+        Some(b) => b.intersection(&state.target),
+        None => Some(state.target),
+      };
+      if let Some(b) = bounds {
+        state.clip = state.clip.intersection_unchecked(&b);
+      }
+      raise(state, area);
+    }
+    ClipOperation::Difference => {
+      let Some(shape) = shape else { return };
+      let identity = Projective::from_matrix(&Matrix::identity());
+      let area = clip_quad(&identity, &state.clip.to_rect(), clip);
+      out.push_clip(ClipDraw::Raise { reference: depth, shape: ClipShape::Quad(area) });
+      out.push_clip(ClipDraw::Lower { reference: depth + 1, shape });
+      // The box raise covers the box exactly; the lower only takes back
+      // what it raised.
+      let area = Some(state.clip);
+      raise(state, area);
+    }
+  }
+}
+
+// Count one stencil clip more in `state`, whose raise touched `area`.
+fn raise(state: &mut State, area: Option<Box2D<f32>>) {
+  state.raised = match (state.raised, area) {
+    (Some(a), Some(b)) => Some(a.union(&b)),
+    (a, b) => a.or(b),
+  };
+  state.depth += 1;
+}
+
+// The stencil reset of a restore from `popped` to `saved`: when the depth
+// drops, one `Restore` to the saved depth over every area `popped` raised
+// (`State::raised`). Its test passes only where the stencil is above the
+// saved depth, and only a raise since the depth was there left it so, so
+// an area larger than those raises (`raised` holds the saved state's own
+// too) changes nothing more. The raised area, not the popping state's clip
+// box: an intersect raise is not held to the box it was made in (neither
+// program discards), so a raise of a shape reaching past an outer clip's
+// box would outlive a restore over the box and reject the parent's later
+// draws there.
+fn restore_stencil(popped: &State, saved: &State, out: &mut Walked) {
+  if popped.depth <= saved.depth {
+    return;
+  }
+  let Some(raised) = popped.raised else { return };
+  let identity = Projective::from_matrix(&Matrix::identity());
+  let area = clip_quad(&identity, &raised.to_rect(), box_array(&raised));
+  out.push_clip(ClipDraw::Restore { to: saved.depth, area });
+}
+
+// `b` as an instance's clip carries it: x0, y0, x1, y1.
+fn box_array(b: &Box2D<f32>) -> [f32; 4] {
+  [b.min.x, b.min.y, b.max.x, b.max.y]
+}
+
+// A clip quad: `rect` under `p` as a plain `KIND_RECT` fill instance with
+// the device clip `clip`, no color (the stencil draws write none) and no
+// rounded clip.
+fn clip_quad(p: &Projective, rect: &Rect, clip: [f32; 4]) -> Instance {
+  let [p1, p2, p3] = p.persp;
+  Instance {
+    rect: [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height],
+    linear: p.linear,
+    offset_kind_stroke: [p.offset[0], p.offset[1], KIND_RECT, 0.0],
+    color: [0.0; 4],
+    tex: [0.0; 4],
+    clip,
+    radii: [0.0; 4],
+    rclip: [0.0; 4],
+    rclip_radii: [0.0; 4],
+    persp: [p1, p2, p3, 0.0],
+    grad_x: [0.0; 4],
+    grad_y: [0.0; 4],
+  }
+}
+
+// A clip shape's mesh: `path`'s fill at the scale bucket of `p`'s 2D part
+// (under perspective an approximation, as for a path op), tessellated on a
+// cache miss, drawn by handle in the clip's own space under `p`. None when
+// the map collapses it or the path covers nothing.
+fn clip_mesh(p: &Projective, path: &Path, clip: [f32; 4], out: &mut Walked) -> Option<ClipShape> {
+  let bucket = scale_bucket(&p.affine_part())?;
+  let (mesh, missed) = path.mesh(MeshStyle::Fill, bucket);
+  out.tessellated += missed as u32;
+  let mesh = mesh?;
+  Some(ClipShape::Mesh(MeshDraw {
+    mesh,
+    map: *p,
+    color: [0.0; 4],
+    clip,
+    rounded: None,
+    gradient: None,
+    texture: None,
+    texel: None,
+  }))
+}
+
+// The rounded rect `rect` with the corner `radii` (CSS order) as a path.
+fn rounded_path(rect: &Rect, radii: &Radii) -> Path {
+  let [top_left, top_right, bottom_right, bottom_left] = *radii;
+  let radii = BorderRadii { top_left, top_right, bottom_left, bottom_right };
+  let mut builder = lyon_path::Path::builder();
+  builder.add_rounded_rectangle(&rect.to_box2d(), &radii, Winding::Positive);
+  Path::from_geometry(builder.build(), FillType::NonZero)
+}
+
+// The oval in `bounds` as a path.
+fn oval_path(bounds: &Rect) -> Path {
+  let radii = euclid::default::Vector2D::new(bounds.size.width * 0.5, bounds.size.height * 0.5);
+  let mut builder = lyon_path::Path::builder();
+  builder.add_ellipse(bounds.center(), radii, Angle::zero(), Winding::Positive);
+  Path::from_geometry(builder.build(), FillType::NonZero)
 }
 
 // `gradient` drawn with `rows` from the quad's local space, at the ramp row
@@ -876,7 +1142,7 @@ fn push_shape(
   let graded = gradient.is_some();
   let shape = instance(state, &p, clip, Quad { rect: quad, kind, stroke: s, color, tex, radii, rows });
   let plain = plain_fill(&shape);
-  out.push(shape, texture, plain, graded);
+  out.push(shape, texture, plain, graded, state.depth);
 }
 
 // `image`'s map from the op's space to the normalized texel: its own map
@@ -957,7 +1223,7 @@ fn push_line(
   let color = if gradient.is_some() { [color[3]; 4] } else { color };
   let rows = gradient_rows(gradient.as_ref());
   let quad = Quad { rect: local, kind: KIND_LINE, stroke: width, color, tex, radii: [0.0; 4], rows };
-  out.push(instance(state, &p, clip, quad), None, false, gradient.is_some());
+  out.push(instance(state, &p, clip, quad), None, false, gradient.is_some(), state.depth);
 }
 
 // The cap as the instance carries it.
@@ -1007,7 +1273,7 @@ fn push_texture(
     radii: [0.0; 4],
     rows: texel_rows(rows),
   };
-  out.push(instance(state, &p, clip, quad), Some((texture.name(), sampling)), false, false);
+  out.push(instance(state, &p, clip, quad), Some((texture.name(), sampling)), false, false, state.depth);
 }
 
 // One glyph run under the current state: rejected whole when its alpha is
@@ -1054,7 +1320,7 @@ fn push_glyphs(
     };
     instances.push(instance(state, &p, clip, quad));
   }
-  out.push_glyphs(instances, atlas.name(), policy);
+  out.push_glyphs(instances, atlas.name(), policy, state.depth);
 }
 
 // A paint shader's quad over `rect` under the current state, unless the
@@ -1085,7 +1351,7 @@ fn push_paint(
     rows: [[0.0; 4]; 2],
   };
   let paint = PaintDraw { shader: shader.clone(), params: params.clone(), inputs: inputs.clone(), resolution };
-  out.push_paint(instance(state, &p, clip, quad), paint);
+  out.push_paint(instance(state, &p, clip, quad), paint, state.depth);
 }
 
 // A path's mesh under `style` and the current state, unless the map
@@ -1149,6 +1415,6 @@ fn push_path(
     },
     None => color,
   };
-  out.push_mesh(MeshDraw { mesh, map: p, color, clip, rounded: state.rounded, gradient, texture, texel });
+  out.push_mesh(MeshDraw { mesh, map: p, color, clip, rounded: state.rounded, gradient, texture, texel }, state.depth);
   out.meshes += 1;
 }

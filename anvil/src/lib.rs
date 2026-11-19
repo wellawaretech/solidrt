@@ -36,8 +36,11 @@
 //! draws every quad under a perspective map. Stage 4, step 2 draws every path: a
 //! fill under its rule, a stroke with the paint's width, cap, join and
 //! miter limit, from a mesh tessellated once per style and scale bucket
-//! and batched like the quads. What does not draw yet (layers, the other
-//! clips, group opacity, filters, blend modes) warns once per process,
+//! and batched like the quads. Stage 5, step 2 draws every clip (rect,
+//! rounded rect and oval, intersect and difference, under any transform,
+//! nested), those the device box and the per-instance rounded clip cannot
+//! take through the stencil. What does not draw yet (layers, group
+//! opacity, filters, blend modes) warns once per process,
 //! naming itself and what happens instead.
 //!
 //! With the `oplog` feature (alloy enables it for its tests only), and in

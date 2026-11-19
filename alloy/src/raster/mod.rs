@@ -158,6 +158,10 @@ pub struct RasterStats {
   /// screen that rewrites its paths every frame reads one per path per
   /// frame.
   pub(crate) renderer_tessellated: AtomicU64,
+  /// Stencil clip draws the renderer issued across the same draws: a
+  /// clip's raise, a difference clip's lower and a restore's reset, each
+  /// also one of `renderer_draw_calls`.
+  pub(crate) renderer_clips: AtomicU64,
   /// Submissions issued beyond one per draw by the submission budget
   /// (gl::slicing): a heavy draw cut into slices so no single submission
   /// runs past the kernel's hang timeout. 0 on a healthy desktop; climbing
@@ -274,6 +278,9 @@ pub struct RasterCounters {
   /// `RasterStats::renderer_meshes`, `RasterStats::renderer_tessellated`).
   pub renderer_meshes: u64,
   pub renderer_tessellated: u64,
+  /// Stencil clip draws the renderer issued over the same draws (see
+  /// `RasterStats::renderer_clips`).
+  pub renderer_clips: u64,
   /// Submissions issued beyond one per draw by the submission budget, and
   /// the raster-thread time spent waiting on their fences (see
   /// `RasterStats`).
@@ -321,6 +328,7 @@ impl RasterStats {
       renderer_draw_calls: self.renderer_draw_calls.load(Ordering::Relaxed),
       renderer_meshes: self.renderer_meshes.load(Ordering::Relaxed),
       renderer_tessellated: self.renderer_tessellated.load(Ordering::Relaxed),
+      renderer_clips: self.renderer_clips.load(Ordering::Relaxed),
       draw_slices: self.draw_slices.load(Ordering::Relaxed),
       slice_wait_micros: self.slice_wait_micros.load(Ordering::Relaxed),
       cmd_micros: self.cmd_micros.load(Ordering::Relaxed),
@@ -352,6 +360,7 @@ impl RasterStats {
       renderer_draw_calls: AtomicU64::new(0),
       renderer_meshes: AtomicU64::new(0),
       renderer_tessellated: AtomicU64::new(0),
+      renderer_clips: AtomicU64::new(0),
       draw_slices: AtomicU64::new(0),
       slice_wait_micros: AtomicU64::new(0),
       timer_queries: AtomicBool::new(false),
@@ -367,12 +376,14 @@ impl RasterStats {
   }
 
   /// Sum a renderer draw's report into the cumulative counters (see
-  /// `renderer_instances`, `renderer_meshes`, `renderer_tessellated`).
+  /// `renderer_instances`, `renderer_meshes`, `renderer_tessellated`,
+  /// `renderer_clips`).
   pub(crate) fn note_draw(&self, report: DrawReport) {
     self.renderer_instances.fetch_add(report.instances as u64, Ordering::Relaxed);
     self.renderer_draw_calls.fetch_add(report.draw_calls as u64, Ordering::Relaxed);
     self.renderer_meshes.fetch_add(report.meshes as u64, Ordering::Relaxed);
     self.renderer_tessellated.fetch_add(report.tessellated as u64, Ordering::Relaxed);
+    self.renderer_clips.fetch_add(report.clips as u64, Ordering::Relaxed);
   }
 
   /// The per-target counters as last published (see `targets`).

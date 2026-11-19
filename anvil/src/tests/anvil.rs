@@ -112,12 +112,21 @@ fn image_paint(t: &Texture, sampling: TextureSampling, transform: Option<&Matrix
 
 // A batch of shapes and texture quads: no glyph policy, no gradient.
 fn shapes(start: usize, count: usize, texture: Option<(glow::NativeTexture, TextureSampling)>) -> Batch {
-  Batch { start, count, program: BatchProgram::Shape, texture, policy: None, graded: false, paint: None }
+  Batch { start, count, program: BatchProgram::Shape, texture, policy: None, graded: false, paint: None, stencil: 0 }
 }
 
 // A batch of plain rect fills: no texture, no glyph policy, no gradient.
 fn fills(start: usize, count: usize) -> Batch {
-  Batch { start, count, program: BatchProgram::Fill, texture: None, policy: None, graded: false, paint: None }
+  Batch {
+    start,
+    count,
+    program: BatchProgram::Fill,
+    texture: None,
+    policy: None,
+    graded: false,
+    paint: None,
+    stencil: 0,
+  }
 }
 
 fn line(from: (f32, f32), to: (f32, f32), paint: &Paint) -> Vec<Instance> {
@@ -665,38 +674,6 @@ fn a_rounded_clip_lands_in_device_space() {
 }
 
 #[test]
-fn a_nested_rounded_clip_degrades_to_a_box() {
-  let mut b = DisplayListBuilder::new(None);
-  b.clip_rounded_rect(&rect(10.0, 10.0, 60.0, 60.0), &RoundingRadii::circular([5.0; 4]), ClipOperation::Intersect)
-    .clip_rounded_rect(&rect(20.0, 20.0, 20.0, 20.0), &RoundingRadii::circular([2.0; 4]), ClipOperation::Intersect)
-    .draw_rect(&rect(0.0, 0.0, TARGET, TARGET), &opaque());
-  let out = walked(b);
-  assert_eq!(out.len(), 1);
-  let i = &out[0];
-  assert!(approx(i.clip, [20.0, 20.0, 40.0, 40.0]), "{:?}", i.clip);
-  assert!(approx(i.rclip, [10.0, 10.0, 70.0, 70.0]), "{:?}", i.rclip);
-  assert!(approx(i.rclip_radii, [5.0; 4]), "{:?}", i.rclip_radii);
-}
-
-#[test]
-fn a_rounded_clip_under_rotation_is_a_box() {
-  let rotation = Matrix::rotation(0.0, 0.0, 1.0, euclid::Angle::degrees(45.0));
-  let mut b = DisplayListBuilder::new(None);
-  b.translate(50.0, 50.0)
-    .transform(&rotation)
-    .clip_rounded_rect(&rect(-10.0, -10.0, 20.0, 20.0), &RoundingRadii::circular([4.0; 4]), ClipOperation::Intersect)
-    .draw_rect(&rect(-50.0, -50.0, TARGET, TARGET), &opaque());
-  let out = walked(b);
-  assert_eq!(out.len(), 1);
-  let i = &out[0];
-  assert_eq!(i.rclip_radii, [0.0; 4]);
-  // The rotated square's bounding box: half its diagonal from the center.
-  let reach = 10.0 * std::f32::consts::SQRT_2;
-  let want = [50.0 - reach, 50.0 - reach, 50.0 + reach, 50.0 + reach];
-  assert!(i.clip.iter().zip(want.iter()).all(|(a, b)| (a - b).abs() < MAPPED_EPS), "{:?}", i.clip);
-}
-
-#[test]
 fn an_image_source_textures_the_shape() {
   // Texel (0, 0) at local (10, 10), two local pixels per texel.
   let t = test_texture(7, ISize::new(200, 100));
@@ -867,7 +844,16 @@ fn gradient() -> RampGradient {
 // A glyph batch over `atlas`, sampled linearly, under `policy`.
 fn glyphs(start: usize, count: usize, atlas: &Texture, policy: CoveragePolicy) -> Batch {
   let texture = Some((name(atlas), TextureSampling::Linear));
-  Batch { start, count, program: BatchProgram::Glyph, texture, policy: Some(policy), graded: false, paint: None }
+  Batch {
+    start,
+    count,
+    program: BatchProgram::Glyph,
+    texture,
+    policy: Some(policy),
+    graded: false,
+    paint: None,
+    stencil: 0,
+  }
 }
 
 #[test]
@@ -1142,6 +1128,7 @@ fn paint_batch(
     policy: None,
     graded: false,
     paint: Some(paint),
+    stencil: 0,
   }
 }
 

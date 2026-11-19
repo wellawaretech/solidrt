@@ -7,10 +7,10 @@ use super::mesh::MeshStyle;
 use super::path::Path;
 use super::record::DisplayList;
 use super::{PaintShader, ShaderInput, Texture};
-use crate::{Color, Matrix, Point, Rect, ShaderParam, StrokeCap, TextureSampling};
+use crate::{ClipOperation, Color, Matrix, Point, Rect, ShaderParam, StrokeCap, TextureSampling};
 use crate::{CoveragePolicy, GlyphQuad, RampGradient};
 use euclid::default::Transform2D;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// A premultiplied sRGB color: (r*a, g*a, b*a, a). Blending is
 /// ONE, ONE_MINUS_SRC_ALPHA in sRGB with no linear step, the convention
@@ -61,14 +61,27 @@ pub(super) enum Op {
     y: f32,
   },
   Transform(Matrix),
-  /// Intersect only: the difference op is stage 5 and is dropped at
-  /// record time with a warning.
-  ClipRect(Rect),
-  /// Intersect only, as `ClipRect`; `radii` in the rect's own space,
-  /// clamped. The walk applies it in device space, one deep.
+  /// A clip to `rect` combined by `op` with the clips in effect.
+  ClipRect {
+    rect: Rect,
+    op: ClipOperation,
+  },
+  /// As `ClipRect`, with the corner `radii` in the rect's own space,
+  /// clamped. `path` is the rounded rect as a path, built by the walk at
+  /// the op's first stencil clip and kept with the op, so a retained list
+  /// keeps the path, its mesh cache and the mesh's GPU buffers.
   ClipRoundedRect {
     rect: Rect,
     radii: Radii,
+    op: ClipOperation,
+    path: OnceLock<Path>,
+  },
+  /// A clip to the oval in `bounds`, combined by `op`; `path` as for
+  /// `ClipRoundedRect` (an oval always clips through the stencil).
+  ClipOval {
+    bounds: Rect,
+    op: ClipOperation,
+    path: OnceLock<Path>,
   },
   /// `stroke` None fills; Some(width) strokes centered on the edge, with
   /// miter joins (sharp corners) where a radius is zero. `radii` all zero
