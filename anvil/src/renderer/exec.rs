@@ -442,11 +442,17 @@ const float OVAL_CENTER_EPS = 1e-4;
 // never -INFINITY.
 const float INSIDE = -1e6;
 void main() {
-  // The clip, per fragment, so a clip change never ends a batch. Under
-  // MSAA the test runs per fragment, not per sample: a clip edge is hard
-  // where a shape edge is antialiased. Acceptable for stage 1.
+  // The clip box, per fragment, so a clip change never ends a batch, as a
+  // factor on the color and never a discard before a derivative: a discard
+  // ends its lane of the 2x2 derivative quad, so where a clip edge lies at
+  // an odd device coordinate the fragments on the edge row inside the box
+  // lose their neighbour, `footprint()` falls to its floor and the
+  // coverage of a rounded corner on that row collapses to a step (seen as
+  // a hard corner on a rounded rect under a same-box rounded clip, stage 5
+  // step 2b). Under MSAA the test is per fragment, not per sample: a clip
+  // edge is hard where a shape edge is antialiased.
   vec2 dp = device();
-  if (any(lessThan(dp, vClip.xy)) || any(greaterThanEqual(dp, vClip.zw))) discard;
+  float inside = float(all(greaterThanEqual(dp, vClip.xy)) && all(lessThan(dp, vClip.zw)));
   // The kind arrives as a flat float; rounding reads it robustly. The
   // textured flag is added on top of the shape kind.
   int kind = int(vShape.z + 0.5);
@@ -515,7 +521,9 @@ void main() {
   // otherwise ramp twice and show a light rim; the minimum is what a
   // per-sample stencil clip gives there, and errs toward opaque by at
   // most one pixel where two independent edges cross.
-  c = min(c, roundedClip());
+  c = min(c, roundedClip()) * inside;
+  // After every derivative: a fragment the box or the coverage rejects
+  // drops here, which keeps the MSAA resolve of the quad's own edges.
   if (c <= 0.0) discard;
 #ifdef GRADIENT
   // The ramp's straight-alpha color, premultiplied; vColor is the op's
