@@ -315,3 +315,70 @@ fn x_y_offset_endpoints_and_points_alike() {
   assert!(hits(&poly, 70.0, 60.0));
   assert!(!hits(&poly, 50.0, 25.0));
 }
+
+// The frame a gradient line is drawn into, logical px at 1x.
+const FRAME_W: f32 = 200.0;
+const FRAME_H: f32 = 100.0;
+
+fn headless() -> crate::Context {
+  let stats = std::sync::Arc::new(crate::raster::RasterStats::new());
+  let (tx, _rx) = std::sync::mpsc::channel();
+  crate::Context::new(crate::raster::RasterSender::new(tx, stats.clone()), stats, None)
+}
+
+// A two-point line's box-relative gradient resolves against the segment's
+// own box, as a polyline's does against its points' extent. A horizontal
+// segment has a zero-height extent, so it takes the extent grown by half
+// the stroke: the source is set and the renderer keeps a gradient for it,
+// not the stops' average color.
+#[test]
+fn a_horizontal_line_paints_its_box_gradient() {
+  use crate::renderer::anvil::walk::walk;
+  use crate::renderer::oplog::{placed, Op};
+  use crate::renderer::prelude::*;
+  use crate::renderer::{Color, DisplayListBuilder, ISize};
+  use crate::rendertree::composite::{apply_content_changes, paint_phase};
+  use crate::rendertree::{Gradient, GradientStop, RenderTree, View};
+
+  let mut tree = RenderTree::new();
+  tree.create_node(1, View::default().with_layout());
+  let mut line = Line::default();
+  line.paint.stroke_width = 8.0;
+  line.paint.set_gradient(Gradient::linear_box(
+    Point::new(0.0, 0.0),
+    Point::new(1.0, 0.0),
+    vec![
+      GradientStop { offset: 0.0, color: Color::new_srgba(1.0, 0.0, 0.0, 1.0) },
+      GradientStop { offset: 1.0, color: Color::new_srgba(0.0, 0.0, 1.0, 1.0) },
+    ],
+  ));
+  line.set_x1(Some(20.0));
+  line.set_y1(Some(50.0));
+  line.set_x2(Some(180.0));
+  line.set_y2(Some(50.0));
+  tree.create_node(2, line.no_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.root = Some(1);
+  let style = tree.node_mut(1).style_mut().expect("laid-out root");
+  style.size = taffy::Size { width: taffy::prelude::length(FRAME_W), height: taffy::prelude::length(FRAME_H) };
+
+  let platform = crate::rendertree::PlatformContext::new(Vec::new());
+  platform.set_window_size(FRAME_W, FRAME_H);
+  let alloy = headless();
+  apply_content_changes(&mut tree, &platform, &alloy);
+  let mut builder = DisplayListBuilder::new(None);
+  paint_phase(&mut builder, &mut tree, &platform, &alloy);
+  let list = builder.build().expect("the frame builds");
+
+  let ops = list.ops();
+  let line_paint = placed(ops)
+    .into_iter()
+    .find_map(|p| match p.op {
+      Op::DrawLine { paint, .. } => Some(*paint),
+      _ => None,
+    })
+    .expect("the segment records a draw_line");
+  assert!(line_paint.color_source, "the box gradient resolves against the segment's box");
+  let walked = walk(&list, ISize::new(FRAME_W as i64, FRAME_H as i64));
+  assert!(walked.batches.iter().any(|b| b.gradient.is_some()), "the gradient survives the zero-height extent");
+}

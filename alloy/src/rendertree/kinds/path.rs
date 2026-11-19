@@ -51,6 +51,10 @@ pub struct Path {
   pub off_length: Option<f32>,
   pub dash_offset: Option<f32>,
   pub path_length: Option<f32>,
+  // The drawn path, built once from `d` and kept until a shape prop
+  // changes. It is also the one geometry the element measures, hit-tests
+  // and dashes (`DrawPath::geometry`): the bounds, the stroke shape, the
+  // dash pieces and the hit test all read it.
   path: RefCell<Option<DrawPath>>,
   // The geometry's tight extent (curve extrema, not control points), in the
   // path's own space before the x/y translate; None while nothing is drawn.
@@ -59,7 +63,6 @@ pub struct Path {
   // The walked (flattened) length, for a declared `pathLength`; computed on
   // demand and kept with the geometry.
   length: Cell<Option<f32>>,
-  lyon_path: RefCell<Option<lyon_path::Path>>,
 }
 
 impl Default for Path {
@@ -79,7 +82,6 @@ impl Default for Path {
       bounds: RefCell::new(None),
       shape: Cell::new(StrokeShape::default()),
       length: Cell::new(None),
-      lyon_path: RefCell::new(None),
     }
   }
 }
@@ -101,7 +103,6 @@ impl Clone for Path {
       bounds: RefCell::new(None),
       shape: Cell::new(StrokeShape::default()),
       length: Cell::new(None),
-      lyon_path: RefCell::new(None),
     }
   }
 }
@@ -122,7 +123,6 @@ impl Path {
     }
 
     let mut path_builder = PathBuilder::default();
-    let mut lyon_builder = lyon_path::Path::builder();
     let mut cursor = (0.0f32, 0.0f32);
     let mut subpath_start = cursor;
 
@@ -131,14 +131,6 @@ impl Path {
         Point::new(x as f32, y as f32)
       } else {
         Point::new(cursor.0 + x as f32, cursor.1 + y as f32)
-      }
-    };
-
-    let mut lyon_open = false;
-    let ensure_lyon_begun = |lb: &mut lyon_path::path::Builder, cx: f32, cy: f32, open: &mut bool| {
-      if !*open {
-        lb.begin(point(cx, cy));
-        *open = true;
       }
     };
 
@@ -151,60 +143,46 @@ impl Path {
       let Ok(seg) = segment else { continue };
       match seg {
         PathSegment::MoveTo { abs, x, y } => {
-          if lyon_open {
-            lyon_builder.end(false);
-          }
           let pt = resolve(abs, x, y, &cursor);
           path_builder.move_to(pt);
-          lyon_builder.begin(point(pt.x, pt.y));
-          lyon_open = true;
           cursor = (pt.x, pt.y);
           subpath_start = cursor;
           last_cubic_cp2 = None;
           last_quad_cp = None;
         }
         PathSegment::LineTo { abs, x, y } => {
-          ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let pt = resolve(abs, x, y, &cursor);
           path_builder.line_to(pt);
-          lyon_builder.line_to(point(pt.x, pt.y));
           cursor = (pt.x, pt.y);
           last_cubic_cp2 = None;
           last_quad_cp = None;
         }
         PathSegment::HorizontalLineTo { abs, x } => {
-          ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let pt = resolve(abs, x, 0.0, &cursor);
           let pt = Point::new(pt.x, cursor.1);
           path_builder.line_to(pt);
-          lyon_builder.line_to(point(pt.x, pt.y));
           cursor = (pt.x, pt.y);
           last_cubic_cp2 = None;
           last_quad_cp = None;
         }
         PathSegment::VerticalLineTo { abs, y } => {
-          ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let pt = resolve(abs, 0.0, y, &cursor);
           let pt = Point::new(cursor.0, pt.y);
           path_builder.line_to(pt);
-          lyon_builder.line_to(point(pt.x, pt.y));
           cursor = (pt.x, pt.y);
           last_cubic_cp2 = None;
           last_quad_cp = None;
         }
         PathSegment::CurveTo { abs, x1, y1, x2, y2, x, y } => {
-          ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let cp1 = resolve(abs, x1, y1, &cursor);
           let cp2 = resolve(abs, x2, y2, &cursor);
           let end = resolve(abs, x, y, &cursor);
           path_builder.cubic_to(cp1, cp2, end);
-          lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_cubic_cp2 = Some(cp2);
           last_quad_cp = None;
         }
         PathSegment::SmoothCurveTo { abs, x2, y2, x, y } => {
-          ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           // Reflected first control point.
           let cp1 = match last_cubic_cp2 {
             Some(prev) => Point::new(2.0 * cursor.0 - prev.x, 2.0 * cursor.1 - prev.y),
@@ -213,23 +191,19 @@ impl Path {
           let cp2 = resolve(abs, x2, y2, &cursor);
           let end = resolve(abs, x, y, &cursor);
           path_builder.cubic_to(cp1, cp2, end);
-          lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_cubic_cp2 = Some(cp2);
           last_quad_cp = None;
         }
         PathSegment::Quadratic { abs, x1, y1, x, y } => {
-          ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let cp = resolve(abs, x1, y1, &cursor);
           let end = resolve(abs, x, y, &cursor);
           path_builder.quadratic_to(cp, end);
-          lyon_builder.quadratic_bezier_to(point(cp.x, cp.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_quad_cp = Some(cp);
           last_cubic_cp2 = None;
         }
         PathSegment::SmoothQuadratic { abs, x, y } => {
-          ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           // Reflected control point.
           let cp = match last_quad_cp {
             Some(prev) => Point::new(2.0 * cursor.0 - prev.x, 2.0 * cursor.1 - prev.y),
@@ -237,13 +211,11 @@ impl Path {
           };
           let end = resolve(abs, x, y, &cursor);
           path_builder.quadratic_to(cp, end);
-          lyon_builder.quadratic_bezier_to(point(cp.x, cp.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_quad_cp = Some(cp);
           last_cubic_cp2 = None;
         }
         PathSegment::EllipticalArc { abs, rx, ry, x_axis_rotation, large_arc, sweep, x, y } => {
-          ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let end = resolve(abs, x, y, &cursor);
           let svg_arc = SvgArc {
             from: point(cursor.0, cursor.1),
@@ -261,7 +233,6 @@ impl Path {
             let cp2 = Point::new(cb.ctrl2.x, cb.ctrl2.y);
             let end_pt = Point::new(cb.to.x, cb.to.y);
             path_builder.cubic_to(cp1, cp2, end_pt);
-            lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end_pt.x, end_pt.y));
           }
           cursor = (end.x, end.y);
           last_cubic_cp2 = None;
@@ -269,10 +240,6 @@ impl Path {
         }
         PathSegment::ClosePath { .. } => {
           path_builder.close();
-          if lyon_open {
-            lyon_builder.close();
-            lyon_open = false;
-          }
           cursor = subpath_start;
           last_cubic_cp2 = None;
           last_quad_cp = None;
@@ -280,19 +247,17 @@ impl Path {
       }
     }
 
-    if lyon_open {
-      lyon_builder.end(false);
-    }
-
-    let lyon = lyon_builder.build();
-    if lyon.iter().next().is_some() {
-      let bb = bounding_box(lyon.iter());
+    // The builder ends a subpath left open; its geometry is the one the
+    // bounds, the stroke shape, the dashes and the hit test read.
+    let built = path_builder.build(self.fill_rule);
+    let geometry = built.geometry();
+    if geometry.iter().next().is_some() {
+      let bb = bounding_box(geometry.iter());
       let size = Size::new(bb.max.x - bb.min.x, bb.max.y - bb.min.y);
       *self.bounds.borrow_mut() = Some(Rect::new(Point::new(bb.min.x, bb.min.y), size));
     }
-    self.shape.set(stroke_shape(&lyon));
-    *self.path.borrow_mut() = Some(path_builder.build(self.fill_rule));
-    *self.lyon_path.borrow_mut() = Some(lyon);
+    self.shape.set(stroke_shape(geometry));
+    *self.path.borrow_mut() = Some(built);
   }
 
   pub fn invalidate(&self) {
@@ -300,7 +265,6 @@ impl Path {
     *self.bounds.borrow_mut() = None;
     self.shape.set(StrokeShape::default());
     self.length.set(None);
-    *self.lyon_path.borrow_mut() = None;
   }
 
   // The path's geometry is cached, so shape changes invalidate that cache; `d`
@@ -364,12 +328,12 @@ impl Path {
   // the two agree exactly.
   fn pieces(&self) -> Vec<Vec<Piece>> {
     self.ensure_built();
-    let lyon = self.lyon_path.borrow();
-    let Some(lyon) = lyon.as_ref() else { return Vec::new() };
+    let path = self.path.borrow();
+    let Some(path) = path.as_ref() else { return Vec::new() };
     let pt = |p: lyon_path::geom::Point<f32>| Point::new(p.x, p.y);
     let mut subpaths = Vec::new();
     let mut pieces = Vec::new();
-    for evt in lyon.iter() {
+    for evt in path.geometry().iter() {
       match evt {
         lyon_path::Event::Begin { .. } => pieces.clear(),
         lyon_path::Event::Line { from, to } => pieces.push(Piece::line(pt(from), pt(to))),
@@ -582,10 +546,11 @@ impl Hittable for Path {
       return false;
     }
 
-    let lyon_path = self.lyon_path.borrow();
-    let Some(ref path) = *lyon_path else {
+    let drawn = self.path.borrow();
+    let Some(drawn) = drawn.as_ref() else {
       return false;
     };
+    let path = drawn.geometry();
     let test_pt = point(pt.x, pt.y);
 
     let lyon_fill_rule = match self.fill_rule {

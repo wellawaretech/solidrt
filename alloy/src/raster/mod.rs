@@ -149,6 +149,15 @@ pub struct RasterStats {
   /// per batch: a batch ends at a texture change (anvil's walk.rs), so a
   /// screen of prose is one batch over the atlas.
   pub(crate) renderer_draw_calls: AtomicU64,
+  /// Path meshes the renderer drew across the same draws: a path op (a
+  /// fill or a stroke) drawn from its tessellated mesh, one per op the
+  /// clip kept.
+  pub(crate) renderer_meshes: AtomicU64,
+  /// Meshes the renderer tessellated across the same draws: the path mesh
+  /// cache's misses. A retained screen of paths reads 0 per frame; a
+  /// screen that rewrites its paths every frame reads one per path per
+  /// frame.
+  pub(crate) renderer_tessellated: AtomicU64,
   /// Submissions issued beyond one per draw by the submission budget
   /// (gl::slicing): a heavy draw cut into slices so no single submission
   /// runs past the kernel's hang timeout. 0 on a healthy desktop; climbing
@@ -260,6 +269,11 @@ pub struct RasterCounters {
   /// every draw on the raster thread (see `RasterStats::renderer_instances`).
   pub renderer_instances: u64,
   pub renderer_draw_calls: u64,
+  /// Path meshes the renderer drew and meshes it tessellated (its mesh
+  /// cache's misses), over the same draws (see
+  /// `RasterStats::renderer_meshes`, `RasterStats::renderer_tessellated`).
+  pub renderer_meshes: u64,
+  pub renderer_tessellated: u64,
   /// Submissions issued beyond one per draw by the submission budget, and
   /// the raster-thread time spent waiting on their fences (see
   /// `RasterStats`).
@@ -305,6 +319,8 @@ impl RasterStats {
         .then(|| self.frame_exec_micros.load(Ordering::Relaxed)),
       renderer_instances: self.renderer_instances.load(Ordering::Relaxed),
       renderer_draw_calls: self.renderer_draw_calls.load(Ordering::Relaxed),
+      renderer_meshes: self.renderer_meshes.load(Ordering::Relaxed),
+      renderer_tessellated: self.renderer_tessellated.load(Ordering::Relaxed),
       draw_slices: self.draw_slices.load(Ordering::Relaxed),
       slice_wait_micros: self.slice_wait_micros.load(Ordering::Relaxed),
       cmd_micros: self.cmd_micros.load(Ordering::Relaxed),
@@ -334,6 +350,8 @@ impl RasterStats {
       frame_exec_micros: AtomicU64::new(0),
       renderer_instances: AtomicU64::new(0),
       renderer_draw_calls: AtomicU64::new(0),
+      renderer_meshes: AtomicU64::new(0),
+      renderer_tessellated: AtomicU64::new(0),
       draw_slices: AtomicU64::new(0),
       slice_wait_micros: AtomicU64::new(0),
       timer_queries: AtomicBool::new(false),
@@ -349,10 +367,12 @@ impl RasterStats {
   }
 
   /// Sum a renderer draw's report into the cumulative counters (see
-  /// `renderer_instances`).
+  /// `renderer_instances`, `renderer_meshes`, `renderer_tessellated`).
   pub(crate) fn note_draw(&self, report: DrawReport) {
     self.renderer_instances.fetch_add(report.instances as u64, Ordering::Relaxed);
     self.renderer_draw_calls.fetch_add(report.draw_calls as u64, Ordering::Relaxed);
+    self.renderer_meshes.fetch_add(report.meshes as u64, Ordering::Relaxed);
+    self.renderer_tessellated.fetch_add(report.tessellated as u64, Ordering::Relaxed);
   }
 
   /// The per-target counters as last published (see `targets`).

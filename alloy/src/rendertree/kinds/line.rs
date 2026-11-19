@@ -7,6 +7,7 @@ use crate::rendertree::Damage;
 use crate::rendertree::{
   base_style, Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
 };
+use std::cell::RefCell;
 
 // Endpoints default to spanning the box: (0,0) to (box.w, box.h), matching how
 // a rect with unset w/h fills its box. Explicit endpoints are detached-only.
@@ -22,6 +23,38 @@ use crate::rendertree::{
 // The paint defaults to stroke (DEFAULT_DRAW_STYLE), unlike the box kinds: a
 // segment has no interior. A polyline honours the draw style, so "fill" or
 // "stroke-and-fill" makes it a polygon (nonzero, implicitly closed).
+// A drawn path kept across builds, so the renderer's mesh cache on it holds
+// while the geometry does: a polyline whose points stand still redraws from
+// its mesh instead of tessellating on every rebuild of its list (the way a
+// `<path>` keeps its `d`'s path). Cleared when the points or `closed`
+// change; a clone starts empty, as a path's does. Dashed paths are not kept:
+// a dash pattern that moves is new geometry every build.
+#[derive(Default)]
+struct PathCache(RefCell<Option<Path>>);
+
+impl Clone for PathCache {
+  fn clone(&self) -> Self {
+    PathCache::default()
+  }
+}
+
+impl std::fmt::Debug for PathCache {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str(if self.0.borrow().is_some() { "PathCache(built)" } else { "PathCache(empty)" })
+  }
+}
+
+impl PathCache {
+  // The path, built by `build` on the first use after a clear.
+  fn get(&self, build: impl FnOnce() -> Path) -> Path {
+    self.0.borrow_mut().get_or_insert_with(build).clone()
+  }
+
+  fn clear(&self) {
+    *self.0.borrow_mut() = None;
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct Line {
   pub x: Option<f32>,
@@ -37,6 +70,10 @@ pub struct Line {
   pub dash_offset: Option<f32>,
   pub path_length: Option<f32>,
   pub paint: PaintState,
+  // The polyline as the fill draws it (always closed) and as the stroke
+  // draws it (closed by `closed`).
+  fill_path: PathCache,
+  stroke_path: PathCache,
 }
 
 impl Default for Line {
@@ -55,6 +92,8 @@ impl Default for Line {
       dash_offset: None,
       path_length: None,
       paint: PaintState { draw_style: Self::DEFAULT_DRAW_STYLE, ..PaintState::default() },
+      fill_path: PathCache::default(),
+      stroke_path: PathCache::default(),
     }
   }
 }
@@ -206,18 +245,34 @@ impl Line {
       let mut paint = self.paint.to_paint_in(&bounds);
       paint.set_draw_style(DrawStyle::Fill);
       crate::rendertree::counters::note_draw();
-      builder.draw_path(&polyline_path(points, true), &paint);
+      builder.draw_path(&self.fill_path.get(|| polyline_path(points, true)), &paint);
     }
     if self.paint.strokes() {
       let mut paint = self.paint.to_paint_in(&bounds);
       paint.set_draw_style(DrawStyle::Stroke);
       let path = match self.dash(points, self.closed) {
         Some(dash) => dashed_path(points, self.closed, dash),
-        None => polyline_path(points, self.closed),
+        None => self.stroke_path.get(|| polyline_path(points, self.closed)),
       };
       crate::rendertree::counters::note_draw();
       builder.draw_path(&path, &paint);
     }
+  }
+}
+
+impl Line {
+  // The box a two-point line's box-relative gradient resolves against: the
+  // endpoints' extent, as a polyline's is its points'. An axis-aligned
+  // segment has a zero side there, which maps the unit square singularly and
+  // drops the gradient, so a zero side is grown by half the stroke width on
+  // each end (the stroke's reach across the segment); the other side keeps
+  // the endpoints, so the gradient runs along the segment exactly as a
+  // polyline's does.
+  fn segment_box(&self, points: &[f32; 4]) -> Rect {
+    let bounds = extent(points).expect("a segment has two endpoints");
+    let half = self.paint.stroke_width / 2.0;
+    let grow = |side: f32| if side > 0.0 { 0.0 } else { half };
+    bounds.inflate(grow(bounds.size.width), grow(bounds.size.height))
   }
 }
 
@@ -249,8 +304,8 @@ impl Line {
     if !self.paint.strokes() {
       return;
     }
-    let mut paint = self.paint.to_paint();
     let points = [from.x, from.y, to.x, to.y];
+    let mut paint = self.paint.to_paint_in(&self.segment_box(&points));
     match self.dash(&points, false) {
       // Through the same walker as a polyline (dashOffset, phase); stroked
       // regardless of the style, like draw_line.
@@ -327,10 +382,13 @@ impl Line {
   // same way `Path::set_d` does.
   pub fn set_points(&mut self, v: Option<Vec<f32>>) -> Damage {
     self.points = v;
+    self.fill_path.clear();
+    self.stroke_path.clear();
     Damage::Layout
   }
   pub fn set_closed(&mut self, v: bool) -> Damage {
     self.closed = v;
+    self.stroke_path.clear();
     Damage::Paint
   }
   pub fn set_on_length(&mut self, v: Option<f32>) -> Damage {

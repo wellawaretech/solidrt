@@ -197,3 +197,18 @@ fn renderer_rates_are_instances_and_draw_calls_per_present() {
   assert!((rates.renderer_instances_per_frame - 300.0).abs() < 1e-3);
   assert!((rates.renderer_draw_calls_per_frame - 2.0).abs() < 1e-6);
 }
+
+#[test]
+fn renderer_rates_are_meshes_and_tessellations_per_present() {
+  use alloy::RasterCounters;
+  let at = |at_ms: f64, frame: u64, renderer_meshes: u64, renderer_tessellated: u64| FrameRecord {
+    frame,
+    raster: RasterCounters { renderer_meshes, renderer_tessellated, ..RasterCounters::default() },
+    ..record(at_ms, 1.0, 10, 0)
+  };
+  // Ten presents: 50 meshes drawn and 5 tessellated, 5 and 0.5 a frame.
+  let h = history(&[at(0.0, 0, 0, 0), at(1000.0, 10, 50, 5)]);
+  let rates = h.summarize(Window::Ms(1000.0), 1000.0).expect("frames").raster_rates.expect("two records");
+  assert!((rates.renderer_meshes_per_frame - 5.0).abs() < 1e-6);
+  assert!((rates.renderer_tessellated_per_frame - 0.5).abs() < 1e-6);
+}

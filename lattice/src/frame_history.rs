@@ -167,6 +167,11 @@ pub struct RasterRates {
   /// (the frame, patches, offscreen rasters).
   pub renderer_instances_per_frame: f32,
   pub renderer_draw_calls_per_frame: f32,
+  /// The path meshes the renderer drew and the meshes it tessellated (its
+  /// mesh cache's misses) per presented frame, over the same draws: a
+  /// retained screen of paths tessellates 0 per frame.
+  pub renderer_meshes_per_frame: f32,
+  pub renderer_tessellated_per_frame: f32,
   pub cmd_ms_per_sec: f32,
   /// The window's wall time per presented frame (ms): the span between its
   /// first and last record over the presents between them. The denominator
@@ -289,6 +294,8 @@ impl FrameHistory {
           frame_exec_ms_per_frame: exec_per_frame(first.raster.frame_exec_micros, last.raster.frame_exec_micros),
           renderer_instances_per_frame: d(first.raster.renderer_instances, last.raster.renderer_instances) / n,
           renderer_draw_calls_per_frame: d(first.raster.renderer_draw_calls, last.raster.renderer_draw_calls) / n,
+          renderer_meshes_per_frame: d(first.raster.renderer_meshes, last.raster.renderer_meshes) / n,
+          renderer_tessellated_per_frame: d(first.raster.renderer_tessellated, last.raster.renderer_tessellated) / n,
           cmd_ms_per_sec: d(first.raster.cmd_micros, last.raster.cmd_micros) / 1000.0 / span_s,
           present_ms: span_s * 1000.0 / n,
         })

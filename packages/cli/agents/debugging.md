@@ -429,7 +429,13 @@ when exactly one client is connected.
   whole tree). A screen that draws in a few batches reads a
   small `rendererDrawCallsPerFrame` beside a large
   `rendererInstancesPerFrame`; a count that grows with the images on
-  screen says the batches split at texture changes. `snapshotsReused`,
+  screen says the batches split at texture changes. `rendererMeshes` and
+  `rendererTessellated` (cumulative, beside `rendererDrawCalls`), and
+  `window.rendererMeshesPerFrame` and `window.rendererTessellatedPerFrame`
+  per presented frame, count the path ops the renderer drew from their
+  meshes and the meshes it tessellated (its mesh cache's misses): a
+  retained screen of paths reads 0 tessellated per frame, a screen that
+  rewrites its paths reads one per path per frame. `snapshotsReused`,
   `snapshotsRerendered` and `snapshotsRasterized` count the latest walk's
   snapshot boundaries drawn from their retained texture, re-rendered into
   it, and rasterized into a new one; `snapshotsDeferred` counts the reused
