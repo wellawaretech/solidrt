@@ -607,9 +607,11 @@ Shaped, not started.
   colors in oklab and positions linearly, and keep snapping for the rest.
 - **[A ramp atlas so gradient batches merge](backlog/gradient-ramp-atlas.md)** [2026-11-19]
   Every gradient draw is a sealed batch of its own because the one ramp
-  texture is rewritten per batch; a row-per-gradient ramp atlas with the row
-  index on the instance would let gradient quads and meshes batch like solid
-  ones, turning the path bench's 61 draw calls a frame into a few.
+  texture is rewritten per batch, and on the Mali-T860 that rewrite stalls the
+  pipeline (thirty gradient rects a frame run at 29 fps where solid ones run
+  at 50 with the same GPU time); a row-per-gradient ramp atlas uploaded once
+  per draw would remove the stall and let gradient quads and meshes batch like
+  solid ones.
 - **[Haptic waveforms - envelopes and navigator.vibrate](backlog/haptic-waveforms.md)** [2026-11-13]
   Feedback by intent covers a tap or a toggle, but an engine, an alarm or a
   pattern with a duration has no API. A waveform is an envelope of intensity
@@ -818,6 +820,12 @@ Shaped, not started.
   frame-batched input; whether same-age batches make it unnecessary, and where
   filtering should live if a noisier device needs it, was never settled on
   device.
+- **[The cost of writing a polyline's points every frame](backlog/polyline-points-write-cost.md)** [2026-11-19]
+  Rewriting thirty polylines of 64 points a frame costs 19 to 21 ms of UI
+  thread on the armv7 TV (54 ms at 256 points), 7 to 10 microseconds per point
+  against 1.4 ms on the desktop; find where the points write path spends it
+  (the marshal of the Float32Array, the extent and path build, the list
+  rebuild) and bring a live chart back under the frame.
 - **[position is the one layout prop handled outside the layout adapter](backlog/position-property-special-case.md)** [2026-08-14]
   Supporting positioning-context-relative bounding boxes forced position out
   of the style adapter into a special case at the top of apply_jsx, splitting
@@ -875,6 +883,12 @@ Shaped, not started.
   mover, under Impeller and anvil alike; the route's union of this frame's
   damage with the ring of the last age-1 frames' damage is the suspect, in
   particular a fold of an empty rect with a non-zero origin.
+- **[Keep a path's mesh on the GPU across frames](backlog/retained-mesh-buffers.md)** [2026-11-19]
+  anvil transforms and uploads every cached path mesh on every frame (about 10
+  ms of raster thread per frame for thirty 64-point strokes on the armv7 TV,
+  29 ms at 256 points, with no tessellation); a mesh kept in a GPU buffer
+  across frames, drawn with its transform as a uniform or a per-draw matrix,
+  would make a retained screen of paths cost its draw calls only.
 - **[Rich text editor](backlog/rich-text-editor.md)** [2026-08-18]
   TextInput edits a string, so styled runs, links, inline atoms and block
   attributes could not be authored in-app; the editor exists since 2026-08-19
@@ -888,6 +902,13 @@ Shaped, not started.
   get_stats; a static rounded clip is nearly free, one resizing rounded pane
   costs ~8 ms, ten ~13 ms, and an image under the clip pays most. Cause not
   yet located below the display list; needs an Impeller-level look.
+- **[A lean program for rounded rect fills](backlog/rounded-rect-fill-program.md)** [2026-11-19]
+  A rounded rect fill goes through the shape program, whose per-fragment cost
+  on the Mali-T860 (the kind branches, the discard, the derivatives, the nine
+  varyings) makes thirty gradient panels of 320x180 device pixels cost about
+  20 ms of GPU a frame against about 2 ms as plain rects; a fill-only rounded
+  program (the rounded-box distance, no stroke, no oval or line arm, no
+  texture) would bring panels, cards and buttons near the fill program's cost.
 - **[Router link into a nested screen has nothing beneath it](backlog/router-link-parent-stack.md)** [2026-09-25]
   "A launch link into a screen outside the tabs lands as a stack of one, so
   back leaves the app instead of going to the list; a route option to

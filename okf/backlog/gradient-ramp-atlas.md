@@ -1,6 +1,6 @@
 ---
 title: A ramp atlas so gradient batches merge
-description: Every gradient draw is a sealed batch of its own because the one ramp texture is rewritten per batch; a row-per-gradient ramp atlas with the row index on the instance would let gradient quads and meshes batch like solid ones, turning the path bench's 61 draw calls a frame into a few.
+description: Every gradient draw is a sealed batch of its own because the one ramp texture is rewritten per batch, and on the Mali-T860 that rewrite stalls the pipeline (thirty gradient rects a frame run at 29 fps where solid ones run at 50 with the same GPU time); a row-per-gradient ramp atlas uploaded once per draw would remove the stall and let gradient quads and meshes batch like solid ones.
 created: 2026-11-19
 ---
 
@@ -12,6 +12,14 @@ texture that the executor rewrites for every gradient batch
 (`walk.rs`): a screen of thirty gradient panels with a path in each draws
 in 61 calls where solid panels would draw in three (the stage 4 desktop
 read in okf/plans/own-renderer.md). Glyph gradient runs seal the same way.
+
+The stage 4 TV read made it more than a draw-call count: `glTexSubImage2D`
+into the ramp the previous batch's draw still samples makes the Mali
+driver wait or copy per batch. The path bench's live route with plain
+gradient rects reads 29 fps with 204 to 211 missed presents per 10 s and
+15.6 ms of GPU a frame; the same route with solid rects reads 50 fps with
+0 to 6 missed and 14.1 ms. Glyph gradient runs rewrite the ramp the same
+way since stage 2, so gradient text pays it too.
 
 ## Done looks like
 

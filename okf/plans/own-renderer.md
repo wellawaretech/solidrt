@@ -1334,16 +1334,66 @@ one ramp texture is rewritten per batch), so a grid of gradient panels
 with content between them cannot merge; a ramp atlas would let gradient
 batches join (`okf/backlog/gradient-ramp-atlas.md`).
 
-**TV.** Not read in this session: the TV is reachable (`adb connect
-192.168.2.11:5555`) but installing a client on it is the maintainer's
-call per session. The bench takes `panels=30 columns=5` as the paint
-shader bench did; the figures to read are the frame rate and missed
-presents on the live route at 64 and 256 points (the armv7 tessellation
-cost), the raster thread's CPU on the static route (the per-frame vertex
-transform and upload, the case for a slot table or retained GPU meshes),
-the mesh program's GPU frame time against the fill program's, and the
-vertex counts `MESH_TOLERANCE` produces (0.25 device pixels, to re-read
-there).
+**TV** (Philips TPM171E, Mali-T860, 1920x1080 at 50 Hz, a 960x540 logical
+window at scale 2, armeabi-v7a; the branch client of 7b90528e, cadence
+hold off; `panels=30 columns=5`, every panel on screen; 100 s idle then
+three reads of 10 s; per-thread CPU from `/proc`, percent of one core;
+`probes/path-bench-tv.sh` is the runner). The static route repaints
+through the veil, whose 16 ms flicker coalesces with the 50 Hz refresh,
+so its frame counts read against 375, not 500, and missed presents are
+its rate signal:
+
+| route | panel | points | frames / 10 s | missed / 10 s | draw calls | tessellated / frame | frame GPU ms | UI frame p50 ms | UI thread | raster thread |
+|---|---|---|---|---|---|---|---|---|---|---|
+| live | rounded, gradient | 64 | 259 | 240 | 61 | 30 | 38.6 | 21.0 | 65 % | 40 % |
+| live | plain, gradient | 64 | 289 to 294 | 204 to 211 | 61 | 30 | 15.6 | 20.3 | 72 % | 40 % |
+| live | plain, solid | 64 | 494 to 500 | 0 to 6 | 60 | 30 | 14.1 | 19.3 | 115 to 118 % | 63 to 69 % |
+| live | plain, solid | 256 | 181 | 316 to 318 | 60 | 30 | 15.9 | 54.4 | 117 % | 60 % |
+| static | rounded, gradient | 64 | 124 | 253 | 54 | 0 | 33.5 | 3.2 | 6 % | 24 % |
+| static | plain, gradient | 64 | 345 to 352 | 29 to 30 | 62 | 0 | 21.3 | 3.2 | 16 % | 51 % |
+| static | plain, solid | 64 | 375 | 0 | 61 | 0 | 19.9 | 1.4 | 9 % | 40 % |
+| static | plain, solid | 16 | 375 | 0 | 61 | 0 | 19.6 | 1.3 | 8 % | 26 % |
+| static | plain, solid | 256 | 233 to 297 | 84 to 136 | 61 | 0 | 22.3 | 1.7 | 8 % | 85 to 91 % |
+
+The static solid rows are the renderer's own cost with the cache holding
+(0 tessellations): the veil's full-window fill (about 2 million device
+fragments through the fill program) sets the GPU floor near 20 ms, and
+the raster thread's share grows with the vertex count, from 26 percent at
+16 points per stroke to 40 at 64 and 85 to 91 at 256: about 7 ms a frame
+of base work (the walk, 61 draw calls, the present) plus about 1.5
+microseconds per vertex for the per-frame transform and upload of the
+cached meshes, 29 ms a frame for the 15,000 vertices of the 256-point
+case, which no longer holds the refresh. That is the case the design
+named: a slot table or retained GPU meshes
+(`okf/backlog/retained-mesh-buffers.md`). Tessellation itself is cheap
+beside it: the live solid rows add 30 tessellations a frame for about 3
+ms of raster thread at 64 points, and the GPU time is the same.
+
+Gradients cost twice over on this Mali. The gradient itself is 1.5 ms
+of GPU (plain gradient against plain solid, 15.6 against 14.1), but the
+per-batch rewrite of the one ramp texture stalls the pipeline: the live
+plain gradient row presents 289 frames with 204 missed where the solid
+row presents 494 with 0 to 6, at the same GPU time and the same thread
+shares, and the static plain gradient row misses 29 to 30 presents where
+the solid one misses none. A ramp atlas uploaded once per draw removes
+the rewrite (`okf/backlog/gradient-ramp-atlas.md`, raised by this read);
+glyph gradient runs have rewritten the ramp the same way since stage 2.
+The rounded corners cost more than either: thirty rounded gradient
+panels of 320x180 device pixels (1.7 million fragments) through the
+shape program's gradient variant cost 33.5 ms of GPU against 21.3 as
+plain gradient rects, the shape program's per-fragment price stage 2
+measured, now on the most common UI shape
+(`okf/backlog/rounded-rect-fill-program.md`).
+
+The live rows are bound on the UI thread before anything the renderer
+does: rewriting thirty polylines' points a frame costs 19 to 21 ms of UI
+time at 64 points and 54 ms at 256 (115 to 118 percent of a core counts
+a second thread of the same name), about 7 to 10 microseconds per point
+on this armv7, where the desktop spends 1.4 and 3.2 ms. That is the
+rendertree's points write path (the marshal, the polyline's path build,
+the list rebuild), not anvil's; the live solid row still holds 50 fps at
+64 points because the raster thread and the GPU keep up with it
+(`okf/backlog/polyline-points-write-cost.md`).
 
 ### What stage 4 taught
 
@@ -1361,20 +1411,33 @@ there).
 - Clamp a value once where it enters (the miter at record time), not in
   each consumer: a key that holds the unclamped value misses the cache on
   every animated frame and never matches a NaN.
+- The TV reads a cost the desktop hides three times over: the per-frame
+  upload of cached meshes (invisible at 9 percent of a desktop core, 29
+  ms a frame on the Mali), the per-batch ramp rewrite (a stall the
+  desktop's driver absorbs), and the shape program on rounded rects. A
+  mesh cache is the first half of a retained path; the second half is
+  the GPU buffer.
+- A bench must isolate the renderer from the app: the live route is
+  UI-bound on the TV, and only the static route with plain solid panels
+  reads the mesh program alone. Every variant the probe takes
+  (`radius`, `gradient`, `points`, the veil) exists because one read
+  could not say which thread or which program paid.
 - A reference binary ages: main's client could not load today's bundle
   two stages later. The reference for a refactor is the branch's own
   previous output (zero diffs at every step here); the reference for
   parity needs a main checkout built whole.
 
-**Stage 4 is done on the desktop.** Its Done criteria hold there: every
+**Stage 4 is done.** Its Done criteria hold: every
 `draw_path` the rendertree records draws (both fill rules, caps, joins,
 the miter limit, dashes); gradients draw on rects, rounded rects, ovals,
 lines, paths and text through one ramp path; both examples' checks hold;
 a retained list's redraw tessellates nothing; the walk tests cover the
 batch rules, the rows composition, the cache key and the scale bucket;
-the desktop numbers are above. Open: the TV read (above), the ramp atlas
-for merged gradient batches (backlog), and the main reference client's
-rebuild for stage 7's diff.
+the desktop and TV numbers are above. Open, into the backlog: retained
+GPU meshes (the TV's per-frame upload), the ramp atlas (the per-batch
+stall and the merged gradient batches), a lean rounded rect fill program,
+the polyline points write cost on the UI thread, and the main reference
+client's rebuild for stage 7's diff (tiny).
 
 ### Where anvil lives (2026-11-18)
 
