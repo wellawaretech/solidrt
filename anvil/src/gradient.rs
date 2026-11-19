@@ -2,9 +2,10 @@
 //! to two affine rows over the op's space and a ramp of its stop colors,
 //! with the small affine toolkit the resolution is written in. A shape's
 //! paint resolves here at record time (`renderer::record`), a text run's in
-//! alloy's text resolver; the walk composes the rows with the inverse of a
-//! draw's device map, so every program evaluates a gradient at the device
-//! pixel it shades.
+//! alloy's text resolver; the walk puts the rows on a draw's instances over
+//! the quad's local space, so every program evaluates a gradient at the
+//! local point it shades (a path mesh's, over device pixels, through the
+//! inverse of its map).
 
 use crate::{Color, Point, TileMode};
 
@@ -12,8 +13,8 @@ use crate::{Color, Point, TileMode};
 /// positions along 0..1, the steps 8-bit output can show.
 pub const RAMP_WIDTH: usize = 256;
 
-/// The shape of a gradient; the discriminants are the programs' `uGradient`
-/// values (0 is no gradient).
+/// The shape of a gradient; the discriminants are the kinds the programs
+/// read from an instance's packed kind and tile (0 is no gradient).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GradientKind {
   /// The parameter is the mapped x.

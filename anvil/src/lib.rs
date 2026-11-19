@@ -30,8 +30,10 @@
 //! is a few batches over one texture: the glyph runs, and the shapes
 //! between them in batches of their own. Stage 4, step 1 draws a paint's
 //! linear or radial gradient on rects, rounded rects, ovals and lines
-//! through the same ramp as text (`gradient`), evaluated per device pixel,
-//! a sealed batch per gradient draw. Stage 4, step 2 draws every path: a
+//! through the same ramp as text (`gradient`); since stage 5 a gradient is
+//! evaluated in its quad's local space from rows on its instance, its ramp
+//! a row of one ramp atlas, so gradient quads batch together. Stage 5 also
+//! draws every quad under a perspective map. Stage 4, step 2 draws every path: a
 //! fill under its rule, a stroke with the paint's width, cap, join and
 //! miter limit, from a mesh tessellated once per style and scale bucket
 //! and batched like the quads. What does not draw yet (layers, the other
@@ -76,10 +78,10 @@ pub use renderer::test_texture;
 // A paint shader handle with no program behind it, for the same tests.
 #[cfg(any(test, feature = "oplog"))]
 pub use renderer::test_paint_shader;
-// The pure walk, for tests that read which instances and batches a list
-// draws.
+// The pure walk and the ramp table it assigns rows from, for tests that
+// read which instances and batches a list draws.
 #[cfg(feature = "oplog")]
-pub use renderer::walk;
+pub use renderer::{ramps, walk};
 
 /// The contract traits, anonymously: glob-import this to call the
 /// methods on the concrete types without naming the traits beside them.

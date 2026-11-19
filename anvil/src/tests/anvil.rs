@@ -13,9 +13,10 @@
 
 use crate::contract::DrawReport;
 use crate::prelude::*;
+use crate::renderer::ramps::RampTable;
 use crate::renderer::walk::{
-  walk, Batch, BatchProgram, GradientDraw, Instance, PaintDraw, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE,
-  FILL_FOLD_AREA, KIND_GLYPH, KIND_LINE, KIND_OVAL, KIND_PAINT, KIND_RECT, KIND_ROUNDED_RECT, KIND_TEXTURED,
+  walk, Batch, BatchProgram, Instance, PaintDraw, Projective, Walked, CAP_BUTT, CAP_ROUND, CAP_SQUARE, FILL_FOLD_AREA,
+  GRADIENT_KIND_STRIDE, KIND_GLYPH, KIND_LINE, KIND_OVAL, KIND_PAINT, KIND_RECT, KIND_ROUNDED_RECT, KIND_TEXTURED,
   ROUNDED_QUAD_PAD,
 };
 use crate::renderer::{
@@ -74,7 +75,7 @@ fn build(b: DisplayListBuilder) -> DisplayList {
 }
 
 fn walked_all(b: DisplayListBuilder) -> Walked {
-  walk(&build(b), ISize::new(TARGET as i64, TARGET as i64))
+  walk(&build(b), ISize::new(TARGET as i64, TARGET as i64), &mut RampTable::new())
 }
 
 fn walked(b: DisplayListBuilder) -> Vec<Instance> {
@@ -117,10 +118,12 @@ fn shapes(start: usize, count: usize, texture: Option<(glow::NativeTexture, Text
     program: BatchProgram::Shape,
     texture,
     policy: None,
+    graded: false,
     gradient: None,
     paint: None,
     rounded: None,
     texel: None,
+    projective: None,
   }
 }
 
@@ -132,10 +135,12 @@ fn fills(start: usize, count: usize) -> Batch {
     program: BatchProgram::Fill,
     texture: None,
     policy: None,
+    graded: false,
     gradient: None,
     paint: None,
     rounded: None,
     texel: None,
+    projective: None,
   }
 }
 
@@ -323,6 +328,14 @@ fn a_texture_quad_maps_src_onto_dst() {
   let i = &out.instances[0];
   assert!(approx(i.rect, [10.0, 10.0, 40.0, 20.0]), "{:?}", i.rect);
   assert!(approx(i.tex, [0.25, 0.25, 0.75, 0.75]), "{:?}", i.tex);
+  // The texel rows the shape program samples by give the same corners as
+  // `tex`: a 2D map draws as it did.
+  let uv = |x: f32, y: f32| {
+    let at = |row: [f32; 4]| row[0] * x + row[1] * y + row[2];
+    (at(i.grad_x), at(i.grad_y))
+  };
+  let (near, far) = (uv(10.0, 10.0), uv(50.0, 30.0));
+  assert!(approx([near.0, near.1, far.0, far.1], i.tex), "{near:?} {far:?}");
   assert!(approx(i.color, [1.0; 4]), "{:?}", i.color);
   assert_eq!(i.offset_kind_stroke[2], KIND_RECT + KIND_TEXTURED);
   assert_eq!(i.offset_kind_stroke[3], 0.0);
@@ -736,7 +749,7 @@ fn an_image_source_textures_the_shape() {
 }
 
 #[test]
-fn a_rotated_image_source_draws_the_color() {
+fn a_rotated_image_source_textures_the_shape() {
   let t = test_texture(7, ISize::new(200, 100));
   let rotated =
     Matrix::rotation(0.0, 0.0, 1.0, euclid::Angle::degrees(30.0)).then_translate(euclid::vec3(10.0, 10.0, 0.0));
@@ -747,10 +760,108 @@ fn a_rotated_image_source_draws_the_color() {
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 1);
   let i = &out.instances[0];
+  assert_eq!(i.offset_kind_stroke[2], KIND_ROUNDED_RECT + KIND_TEXTURED);
+  // The texel is premultiplied: the alpha in all four channels.
+  assert!(approx(i.color, [0.5; 4]), "{:?}", i.color);
+  // The texel rows on the instance send a local point through the inverse
+  // of the rotated map, over the size: the map's own image of a texel
+  // lands back on it.
+  let texel = Point::new(30.0, 12.0);
+  let local = rotated.to_2d().transform_point(texel);
+  let uv = |row: [f32; 4]| row[0] * local.x + row[1] * local.y + row[2];
+  let (u, v) = (uv(i.grad_x), uv(i.grad_y));
+  assert!((u - texel.x / 200.0).abs() < EPS && (v - texel.y / 100.0).abs() < EPS, "{u} {v}");
+  // No gradient: the packed kind is 0.
+  assert_eq!((i.grad_x[3], i.grad_y[3]), (0.0, 0.0));
+  assert_eq!(out.batches, vec![shapes(0, 1, Some((name(&t), TextureSampling::Linear)))]);
+}
+
+#[test]
+fn a_perspective_image_source_draws_the_color() {
+  let t = test_texture(7, ISize::new(200, 100));
+  let perspective = Matrix::perspective(100.0).then(&Matrix::rotation(0.0, 1.0, 0.0, euclid::Angle::degrees(30.0)));
+  assert!(!perspective.is_2d());
+  let mut paint = image_paint(&t, TextureSampling::Linear, Some(&perspective));
+  paint.set_color(Color::new_srgba(1.0, 0.5, 0.0, 0.5));
+  let mut b = DisplayListBuilder::new(None);
+  rounded(&mut b, rect(10.0, 10.0, 40.0, 20.0), [4.0; 4], &paint);
+  let out = walked_all(b);
+  assert_eq!(out.instances.len(), 1);
+  let i = &out.instances[0];
   assert_eq!(i.offset_kind_stroke[2], KIND_ROUNDED_RECT);
   assert!(approx(i.color, [0.5, 0.25, 0.0, 0.5]), "{:?}", i.color);
   assert_eq!(i.tex, [0.0; 4]);
   assert_eq!(out.batches, vec![shapes(0, 1, None)]);
+}
+
+// The view's card flip: rotate_y by `degrees` about the origin, then the
+// perspective foreshorten at `distance`, as View::compose_user composes
+// them (alloy's kinds/view.rs).
+fn card_flip(degrees: f32, distance: f32) -> Matrix {
+  let (s, co) = degrees.to_radians().sin_cos();
+  #[rustfmt::skip]
+  let ry = Matrix::new(
+    co,  0.0, -s,  0.0,
+    0.0, 1.0, 0.0, 0.0,
+    s,   0.0, co,  0.0,
+    0.0, 0.0, 0.0, 1.0,
+  );
+  ry.then(&Matrix::perspective(distance))
+}
+
+#[test]
+fn a_perspective_map_rides_on_the_instance() {
+  let (degrees, distance) = (60.0f32, 800.0);
+  let mut b = DisplayListBuilder::new(None);
+  b.transform(&card_flip(degrees, distance)).draw_rect(&rect(0.0, 0.0, 60.0, 40.0), &opaque());
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  let i = &out[0];
+  // By hand: (x, y, 0, 1) through the flip is (x cos, y, -x sin, 1); the
+  // foreshorten makes w' = 1 + x sin / d.
+  let (s, co) = degrees.to_radians().sin_cos();
+  assert!(approx(i.persp, [s / distance, 0.0, 1.0, 0.0]), "{:?}", i.persp);
+  assert!(approx(i.linear, [co, 0.0, 0.0, 1.0]), "{:?}", i.linear);
+  let p = Projective::from_matrix(&card_flip(degrees, distance));
+  assert!(!p.is_affine());
+  let project = |x: f32, y: f32| {
+    let w = 1.0 + x * s / distance;
+    (x * co / w, y / w)
+  };
+  let corners = [project(0.0, 0.0), project(60.0, 0.0), project(0.0, 40.0), project(60.0, 40.0)];
+  let min = corners.iter().fold((f32::MAX, f32::MAX), |m, c| (m.0.min(c.0), m.1.min(c.1)));
+  let max = corners.iter().fold((f32::MIN, f32::MIN), |m, c| (m.0.max(c.0), m.1.max(c.1)));
+  let bounds = p.bounds(&rect(0.0, 0.0, 60.0, 40.0)).expect("every corner is in front of the eye");
+  let got = [bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y];
+  assert!(approx(got, [min.0, min.1, max.0, max.1]), "{got:?}");
+  let far = p.project(Point::new(60.0, 40.0)).expect("in front of the eye");
+  assert!((far.x - corners[3].0).abs() < EPS && (far.y - corners[3].1).abs() < EPS, "{far:?}");
+}
+
+#[test]
+fn a_draw_with_a_corner_behind_the_eye_is_not_culled() {
+  // A quarter turn under a close eye: w' = 1 + x / 10, behind the eye for
+  // x below -10.
+  let flip = card_flip(90.0, 10.0);
+  let quad = rect(-300.0, 0.0, 250.0, 40.0);
+  let p = Projective::from_matrix(&flip);
+  assert!(p.bounds(&quad).is_none());
+  assert!(p.project(Point::new(-300.0, 0.0)).is_none());
+  let mut b = DisplayListBuilder::new(None);
+  b.transform(&flip).draw_rect(&quad, &opaque());
+  let out = walked(b);
+  assert_eq!(out.len(), 1);
+  // Its clip is the state's box: the target.
+  assert_eq!(out[0].clip, [0.0, 0.0, TARGET, TARGET]);
+}
+
+#[test]
+fn a_2d_map_carries_the_unit_projective_row() {
+  let mut b = DisplayListBuilder::new(None);
+  b.translate(5.0, 5.0).draw_rect(&rect(0.0, 0.0, 10.0, 10.0), &opaque());
+  let out = walked(b);
+  assert_eq!(out[0].persp, [0.0, 0.0, 1.0, 0.0]);
+  assert_eq!((out[0].grad_x, out[0].grad_y), ([0.0; 4], [0.0; 4]));
 }
 
 // A glyph quad at (x, y), 4 x 6, sampling the atlas cell at (sx, 0).
@@ -786,10 +897,12 @@ fn glyphs(start: usize, count: usize, atlas: &Texture, policy: CoveragePolicy) -
     program: BatchProgram::Glyph,
     texture,
     policy: Some(policy),
+    graded: false,
     gradient: None,
     paint: None,
     rounded: None,
     texel: None,
+    projective: None,
   }
 }
 
@@ -887,7 +1000,7 @@ fn glyph_runs_and_shapes_take_separate_batches() {
 }
 
 #[test]
-fn a_gradient_run_is_its_own_batch() {
+fn glyph_runs_join_whatever_their_gradient() {
   let atlas = test_texture(3, ISize::new(64, 32));
   let policy = CoveragePolicy::default();
   let quad = rect(0.0, 0.0, 10.0, 10.0);
@@ -900,15 +1013,22 @@ fn a_gradient_run_is_its_own_batch() {
     .draw_glyphs(&atlas, &word(60.0), WHITE, policy, None);
   let out = walked_all(b);
   assert_eq!(out.instances.len(), 9);
-  // Under the identity the device rows are the op's own.
-  let draw = GradientDraw { gradient: g.clone(), rows: [g.x_row, g.y_row] };
-  let graded = Batch { gradient: Some(draw), ..glyphs(2, 2, &atlas, policy) };
-  // Split before and after the gradient run; the rect is a fill batch of
-  // its own between the solid runs.
-  assert_eq!(
-    out.batches,
-    vec![glyphs(0, 2, &atlas, policy), graded, glyphs(4, 2, &atlas, policy), fills(6, 1), glyphs(7, 2, &atlas, policy),]
-  );
+  // The glyph program reads the gradient per instance: the solid and the
+  // gradient runs share one batch; the rect is a fill batch of its own
+  // between the glyph runs.
+  assert_eq!(out.batches, vec![glyphs(0, 6, &atlas, policy), fills(6, 1), glyphs(7, 2, &atlas, policy)]);
+  // The gradient run's quads carry its own rows (the quads are in the
+  // op's space), its ramp row and its packed kind; the solid ones zeros.
+  for i in &out.instances[2..4] {
+    assert_eq!(i.grad_x, [g.x_row[0], g.x_row[1], g.x_row[2], 0.0]);
+    assert_eq!(
+      i.grad_y,
+      [g.y_row[0], g.y_row[1], g.y_row[2], GradientKind::Linear as i32 as f32 * GRADIENT_KIND_STRIDE]
+    );
+  }
+  for i in out.instances[0..2].iter().chain(&out.instances[4..6]) {
+    assert_eq!((i.grad_x, i.grad_y), ([0.0; 4], [0.0; 4]));
+  }
 }
 
 #[test]
@@ -957,7 +1077,7 @@ fn a_patch_clip_rejects_the_grid_outside_it() {
   let mut patch = DisplayListBuilder::new(None);
   patch.clip_rect(&rect(112.0, 280.0, 28.0, 20.0), ClipOperation::Intersect);
   patch.draw_display_list(&frame, 1.0);
-  let out = walk(&build(patch), ISize::new(1280, 720));
+  let out = walk(&build(patch), ISize::new(1280, 720), &mut RampTable::new());
   // The mover alone: the grid ends at y = 199.
   assert_eq!(out.instances.len(), 1, "{} instances survived the patch", out.instances.len());
 }
@@ -1056,10 +1176,12 @@ fn paint_batch(
     program: BatchProgram::Paint,
     texture: None,
     policy: None,
+    graded: false,
     gradient: None,
     paint: Some(paint),
     rounded: None,
     texel: None,
+    projective: None,
   }
 }
 
@@ -1077,7 +1199,7 @@ fn a_paint_shader_draws_one_quad_in_a_batch_of_its_own() {
   );
   let list = build(b);
   assert_eq!(list.ops().last(), Some(&crate::oplog::Op::DrawShader { rect: rect(1.0, 2.0, 12.0, 8.0) }));
-  let out = walk(&list, ISize::new(TARGET as i64, TARGET as i64));
+  let out = walk(&list, ISize::new(TARGET as i64, TARGET as i64), &mut RampTable::new());
   assert_eq!(out.instances.len(), 1);
   let i = &out.instances[0];
   // Placed as a texture quad is: the rect, the map, the unit square.

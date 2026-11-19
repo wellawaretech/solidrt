@@ -7,6 +7,7 @@
 
 use crate::prelude::*;
 use crate::renderer::mesh::{bucket_tolerance, scale_bucket, tessellate, Mesh, MeshStyle, MESH_CACHE_ENTRIES};
+use crate::renderer::ramps::RampTable;
 use crate::renderer::walk::{walk, BatchProgram, Walked};
 use crate::renderer::{report, test_texture};
 use crate::{Affine, ClipOperation, Color, ColorSource, DisplayListBuilder, DrawStyle, FillType, ISize};
@@ -41,7 +42,11 @@ fn near(got: f32, want: f32) -> bool {
 }
 
 fn walked(b: DisplayListBuilder) -> Walked {
-  walk(&b.build().expect("a builder always builds a list"), ISize::new(TARGET as i64, TARGET as i64))
+  walk(
+    &b.build().expect("a builder always builds a list"),
+    ISize::new(TARGET as i64, TARGET as i64),
+    &mut RampTable::new(),
+  )
 }
 
 // A solid opaque fill.
@@ -252,7 +257,7 @@ fn a_path_walks_into_device_space_and_redraws_from_its_cache() {
   b.translate(10.0, 20.0).draw_path(&path, &solid());
   let list = b.build().expect("a builder always builds a list");
   let size = ISize::new(TARGET as i64, TARGET as i64);
-  let out = walk(&list, size);
+  let out = walk(&list, size, &mut RampTable::new());
   let mesh = mesh_hit(&path, MeshStyle::Fill, 0).0;
   assert_eq!(out.mesh_vertices.len(), mesh.vertices.len());
   for (v, local) in out.mesh_vertices.iter().zip(mesh.vertices.iter()) {
@@ -272,7 +277,7 @@ fn a_path_walks_into_device_space_and_redraws_from_its_cache() {
   assert_eq!(out.scissor, Some(Box2D::new(Point2D::new(0, 0), Point2D::new(TARGET as i32, TARGET as i32))));
 
   // The same list again: the path's cache answers.
-  let again = walk(&list, size);
+  let again = walk(&list, size, &mut RampTable::new());
   assert_eq!((again.meshes, again.tessellated), (1, 0));
   assert_eq!((report(&again).meshes, report(&again).tessellated), (1, 0));
 }
@@ -430,7 +435,64 @@ fn a_stroke_without_width_records_nothing() {
   let list = b.build().expect("a builder always builds a list");
   // The log still has the op; nothing draws.
   assert_eq!(list.ops().len(), 1);
-  let out = walk(&list, ISize::new(TARGET as i64, TARGET as i64));
+  let out = walk(&list, ISize::new(TARGET as i64, TARGET as i64), &mut RampTable::new());
   assert!(out.batches.is_empty() && out.mesh_indices.is_empty());
+  assert_eq!(out.meshes, 0);
+}
+
+// The view's card flip about (`c`, `c`): rotate_y by `degrees`, then the
+// perspective foreshorten at `distance`, as View::compose_user composes it.
+fn card_flip(c: f32, degrees: f32, distance: f32) -> Matrix {
+  let (s, co) = degrees.to_radians().sin_cos();
+  #[rustfmt::skip]
+  let ry = Matrix::new(
+    co,  0.0, -s,  0.0,
+    0.0, 1.0, 0.0, 0.0,
+    s,   0.0, co,  0.0,
+    0.0, 0.0, 0.0, 1.0,
+  );
+  Matrix::translation(-c, -c, 0.0).then(&ry).then(&Matrix::perspective(distance)).then(&Matrix::translation(c, c, 0.0))
+}
+
+#[test]
+fn a_gradient_mesh_under_perspective_divides_by_the_inverse_row() {
+  let flip = card_flip(TARGET / 2.0, 60.0, 200.0);
+  let source = ColorSource::linear_gradient(
+    Point::new(20.0, 0.0),
+    Point::new(80.0, 0.0),
+    &[Color::new_srgba(1.0, 0.0, 0.0, 1.0), Color::new_srgba(0.0, 0.0, 1.0, 1.0)],
+    &[0.0, 1.0],
+    TileMode::Clamp,
+    None,
+  );
+  let mut paint = solid();
+  paint.set_color_source(&source);
+  let mut b = DisplayListBuilder::new(None);
+  b.transform(&flip).draw_path(&square(20.0, 20.0, 60.0), &paint);
+  let out = walked(b);
+  assert_eq!(out.batches.len(), 1);
+  let batch = &out.batches[0];
+  let w = batch.projective.expect("a gradient mesh carries its projective row");
+  assert_ne!(w, [0.0, 0.0, 1.0], "a perspective map's inverse divides");
+  let rows = batch.gradient.as_ref().expect("the batch carries the gradient").rows;
+  // A local point projected on the CPU reads the gradient's t there once
+  // the rows' values are divided by the projective row's.
+  for (x, t) in [(50.0, 0.5), (35.0, 0.25)] {
+    let d = flip.transform_point3d(euclid::default::Point3D::new(x, 40.0, 0.0)).expect("in front of the eye");
+    let denominator = w[0] * d.x + w[1] * d.y + w[2];
+    let got = eval(&rows, d.x, d.y).0 / denominator;
+    assert!(near(got, t), "local x {x}: t {got}, want {t}");
+  }
+}
+
+#[test]
+fn a_mesh_with_a_corner_behind_the_eye_draws_nothing() {
+  // A quarter turn under a close eye: w' = 1 + x / 10, behind the eye for
+  // x below -10.
+  let flip = card_flip(0.0, 90.0, 10.0);
+  let mut b = DisplayListBuilder::new(None);
+  b.transform(&flip).draw_path(&square(-300.0, 0.0, 250.0), &solid());
+  let out = walked(b);
+  assert!(out.batches.is_empty(), "{:?}", out.batches);
   assert_eq!(out.meshes, 0);
 }

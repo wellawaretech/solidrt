@@ -11,6 +11,7 @@
 // alloy/examples/glyph_run.rs.
 use crate::gpu::GlyphQuad;
 use crate::raster::RasterCmd;
+use crate::renderer::anvil::ramps::RampTable;
 use crate::renderer::anvil::walk::{walk, KIND_GLYPH};
 use crate::renderer::oplog::{placed, Op};
 use crate::renderer::prelude::*;
@@ -185,7 +186,7 @@ pub(super) fn same_runs(a: &[Arc<[GlyphQuad]>], b: &[Arc<[GlyphQuad]>]) -> bool 
 
 // The GL names the frame's glyph runs sample, in batch order.
 fn glyph_names(dl: &DisplayList) -> Vec<glow::NativeTexture> {
-  let walked = walk(dl, ISize::new((WINDOW_W * HIDPI) as i64, (WINDOW_H * HIDPI) as i64));
+  let walked = walk(dl, ISize::new((WINDOW_W * HIDPI) as i64, (WINDOW_H * HIDPI) as i64), &mut RampTable::new());
   walked
     .batches
     .iter()

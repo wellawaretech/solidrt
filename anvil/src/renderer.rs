@@ -1,7 +1,7 @@
 //! The renderer and its texture handle, over the recording (`record`, its
 //! ops in `ops`, its paths in `path`), the pure walk (`walk`), the path
-//! meshes (`mesh`, pure too) and the executor (`exec`); the crate doc says
-//! what draws.
+//! meshes (`mesh`, pure too), the ramp atlas's rows (`ramps`, pure too) and
+//! the executor (`exec`); the crate doc says what draws.
 //!
 //! An adopted GL name belongs to the renderer that adopted it. The handle
 //! is `Arc`-shared and crosses threads (a list is recorded on the UI thread
@@ -54,6 +54,7 @@ mod exec;
 pub(crate) mod mesh;
 mod ops;
 mod path;
+pub mod ramps;
 mod record;
 pub mod walk;
 

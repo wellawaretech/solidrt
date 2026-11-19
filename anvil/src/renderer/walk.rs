@@ -1,17 +1,19 @@
 //! The pure half of a draw: a list's ops walked into the instances the
 //! programs draw (plain rect fills, shapes, glyphs, paint shaders) and the
 //! path meshes' device-space vertices and indices, with the save stack,
-//! the transforms and the clip applied, the draws outside the clip rejected
-//! and a gradient's rows composed into device space. No GL here, so the
+//! the transforms (perspective among them, as the projective row a quad
+//! carries) and the clip applied, the draws outside the clip rejected, and
+//! a gradient's rows and ramp row put on its instances. No GL here, so the
 //! walk is unit-tested without a context (`tests/anvil.rs`,
 //! `tests/gradient.rs`, `tests/mesh.rs`).
 
 use super::mesh::{scale_bucket, MeshStyle};
 use super::ops::{Op, Premultiplied, Radii, Source};
 use super::path::Path;
+use super::ramps::{RampTable, RAMP_ROWS};
 use super::record::DisplayList;
 use super::{PaintShader, ShaderInput, Texture};
-use crate::{affine, Affine, CoveragePolicy, GlyphQuad, RampGradient};
+use crate::{affine, Affine, CoveragePolicy, GlyphQuad, RampGradient, TileMode};
 use crate::{ISize, Matrix, Point, Rect, ShaderParam, Size, StrokeCap, TextureSampling};
 use euclid::default::{Box2D, Point2D, Transform2D};
 use euclid::Angle;
@@ -25,10 +27,10 @@ use std::sync::Arc;
 pub struct Instance {
   /// The quad in local space: x, y, width, height.
   pub rect: [f32; 4],
-  /// The 2x3 affine, local to device: m11, m12, m21, m22 (euclid's
-  /// row-vector convention: device = local * m).
+  /// The linear part of the map, local to device: m11, m12, m21, m22
+  /// (euclid's row-vector convention: device = local * m).
   pub linear: [f32; 4],
-  /// m31, m32 (the 2D map's translation), the shape kind, the stroke width
+  /// m41, m42 (the map's translation), the shape kind, the stroke width
   /// (0 = fill).
   pub offset_kind_stroke: [f32; 4],
   /// Premultiplied color. The glyph kind alone carries straight alpha: its
@@ -36,8 +38,12 @@ pub struct Instance {
   /// fragment stage premultiplies after it.
   pub color: [f32; 4],
   /// The texture rect in normalized texels at the quad's corners: u0, v0,
-  /// u1, v1 (a textured instance and a glyph), or the line's cap and length
-  /// in x and y (line kind). Unused, zero, for untextured rects and ovals.
+  /// u1, v1 for a glyph, which the glyph program samples by; or the line's
+  /// cap and length in x and y (line kind). A textured shape or texture
+  /// quad keeps its corner texels here too, but only because the glyph
+  /// program's layout and the tests read the field: the shape program
+  /// never reads `tex` for it and samples through the texel rows in
+  /// `grad_x` and `grad_y`. Unused, zero, for untextured rects and ovals.
   pub tex: [f32; 4],
   /// The clip in device pixels: x0, y0, x1, y1. Tested per fragment.
   pub clip: [f32; 4],
@@ -50,11 +56,21 @@ pub struct Instance {
   /// The rounded clip's corner radii in device pixels, CSS order; all zero
   /// when no rounded clip is in effect.
   pub rclip_radii: [f32; 4],
+  /// The map's projective row: p1, p2, p3, 0, so w' = x * p1 + y * p2 + p3
+  /// (m14, m24, m44). A 2D map carries [0, 0, 1, 0].
+  pub persp: [f32; 4],
+  /// A gradient's x row over the quad's local space (3 floats) and its
+  /// ramp row; a textured instance's u row over the same space and 0.
+  pub grad_x: [f32; 4],
+  /// A gradient's y row (3 floats) and its kind and tile packed in one
+  /// float, `kind * GRADIENT_KIND_STRIDE + tile`; a textured instance's v
+  /// row and 0. A packed 0 means no gradient.
+  pub grad_y: [f32; 4],
 }
 
-/// The floats of one instance: nine vec4 attributes (GLES 3.0 guarantees
+/// The floats of one instance: twelve vec4 attributes (GLES 3.0 guarantees
 /// sixteen).
-pub const INSTANCE_FLOATS: usize = 36;
+pub const INSTANCE_FLOATS: usize = 48;
 
 // The upload sends a slice of instances as its bytes: no padding, every
 // field an f32.
@@ -126,6 +142,19 @@ pub const CAP_ROUND: f32 = 2.0;
 /// value, to be re-read on the TV.
 pub const FILL_FOLD_AREA: f32 = 65_536.0;
 
+/// The stride a gradient's kind is packed at in `Instance::grad_y`'s last
+/// float: `kind * GRADIENT_KIND_STRIDE + tile`, one more than the largest
+/// tile value, so the tile is the remainder. exec.rs's GLSL const of the
+/// same name must match.
+pub const GRADIENT_KIND_STRIDE: f32 = 4.0;
+
+/// The tile modes, as the packed float carries them. The `const int TILE_*`
+/// declarations in exec.rs's GRADIENT_COMMON must match them.
+pub const TILE_CLAMP: f32 = 0.0;
+pub const TILE_REPEAT: f32 = 1.0;
+pub const TILE_MIRROR: f32 = 2.0;
+pub const TILE_DECAL: f32 = 3.0;
+
 /// The program a batch draws through, by the class of its instances.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BatchProgram {
@@ -177,44 +206,69 @@ impl std::fmt::Debug for PaintDraw {
   }
 }
 
-/// A gradient as one batch draws it: the gradient, shared with the op that
-/// carries it, and `rows`, which map a device pixel to the gradient's
-/// parameter space (the gradient's own rows composed with the inverse of
-/// the instance's device map), so a program evaluates it from `vDevice`
-/// alone. Equal when it holds the same gradient and the same rows.
+/// A gradient as its instances draw it: the gradient, shared with the op
+/// that carries it, `rows`, which map the quad's local space to the
+/// gradient's parameter space, and `row`, the ramp atlas row its ramp sits
+/// in (`RampTable`). For a shape, a glyph run and a path op the local space
+/// is the op's space and the rows are the gradient's own; a line's quad
+/// lives in its segment's frame, so its rows compose with the frame map. A
+/// mesh batch's rows are over homogeneous device pixels instead (`Batch`'s
+/// `projective`), as its vertices are in device space. Equal when it holds
+/// the same gradient, the same rows and the same row.
 #[derive(Clone)]
-pub struct GradientDraw {
+pub struct GradientInstance {
   pub gradient: Arc<RampGradient>,
   pub rows: Affine,
+  pub row: u16,
 }
 
-impl PartialEq for GradientDraw {
-  fn eq(&self, other: &GradientDraw) -> bool {
-    Arc::ptr_eq(&self.gradient, &other.gradient) && self.rows == other.rows
+impl PartialEq for GradientInstance {
+  fn eq(&self, other: &GradientInstance) -> bool {
+    Arc::ptr_eq(&self.gradient, &other.gradient) && self.rows == other.rows && self.row == other.row
   }
 }
 
-impl std::fmt::Debug for GradientDraw {
+impl std::fmt::Debug for GradientInstance {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("GradientDraw")
+    f.debug_struct("GradientInstance")
       .field("kind", &self.gradient.kind)
       .field("tile", &self.gradient.tile)
       .field("rows", &self.rows)
+      .field("row", &self.row)
       .finish()
+  }
+}
+
+impl GradientInstance {
+  /// The kind and the tile mode packed as `Instance::grad_y`'s last float
+  /// carries them: `kind * GRADIENT_KIND_STRIDE + tile`, never 0.
+  pub fn kind_tile(&self) -> f32 {
+    self.gradient.kind as i32 as f32 * GRADIENT_KIND_STRIDE + tile_value(self.gradient.tile)
+  }
+}
+
+// The tile mode as the packed float carries it.
+fn tile_value(tile: TileMode) -> f32 {
+  match tile {
+    TileMode::Clamp => TILE_CLAMP,
+    TileMode::Repeat => TILE_REPEAT,
+    TileMode::Mirror => TILE_MIRROR,
+    TileMode::Decal => TILE_DECAL,
   }
 }
 
 /// A run of consecutive instances one draw issues, of one class: plain
 /// rect fills (untextured, unstroked, under no rounded clip), shapes (the
 /// shape instances before any texture, or every shape that shares one
-/// texture and sampling, small plain fills among them) or glyphs (one
-/// atlas, one coverage policy and at most one gradient). The classes draw
-/// through different programs, so a run never mixes them, except that the
-/// shape program also draws the plain fills a shape run takes. A paint
-/// shader draw is a run of its own, one instance; so is a gradient shape,
-/// a fill or a shape whose program is that class's gradient variant. A
-/// mesh run is consecutive path meshes that share a texture and its map,
-/// a rounded clip and no gradient; a gradient mesh is a run of its own.
+/// texture and sampling, small solid plain fills among them) or glyphs (one
+/// atlas and one coverage policy, solid and gradient runs alike). The
+/// classes draw through different programs, so a run never mixes them,
+/// except that the shape program also draws the plain fills a solid shape
+/// run takes. A fill or a shape run is graded or solid throughout: a graded
+/// one draws through its class's gradient variant. A paint shader draw is
+/// a run of its own, one instance. A mesh run is consecutive path meshes
+/// that share a texture and its map, a rounded clip and no gradient; a
+/// gradient mesh is a run of its own.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Batch {
   /// The run's first instance and its instance count for the quad
@@ -231,21 +285,31 @@ pub struct Batch {
   /// Set exactly when the run is glyphs (`program` is `Glyph`): the policy
   /// their coverage is turned into color with.
   pub policy: Option<CoveragePolicy>,
-  /// A gradient draw's gradient, in device space: such a run holds that
-  /// one op's instances (a glyph run's quads, or one shape), and draws
-  /// through its program's gradient variant (a fill or a shape) or with
-  /// the glyph program's gradient on.
-  pub gradient: Option<GradientDraw>,
+  /// A fill or shape run of gradient instances, which draws through its
+  /// program's gradient variant; each instance carries its own gradient.
+  /// False for every other run (a glyph run's instances carry their
+  /// gradient whichever it is).
+  pub graded: bool,
+  /// A gradient mesh run's gradient, its rows over homogeneous device
+  /// pixels: such a run holds that one path's mesh. None for every quad
+  /// run: a quad carries its gradient per instance.
+  pub gradient: Option<GradientInstance>,
   /// Set exactly when the run is a paint shader draw (`program` is
   /// `Paint`); `texture` is then None, the inputs bind their own units.
   pub paint: Option<PaintDraw>,
   /// A mesh run's rounded clip, a uniform pair for the whole run. None
   /// for every quad run: a quad carries its rounded clip per instance.
   pub rounded: Option<RoundedClip>,
-  /// A textured mesh run's map from a device pixel to the normalized texel
-  /// (the image's own map composed with the inverse of the meshes' device
-  /// map), so no vertex carries a uv. None for every other run.
+  /// A textured mesh run's map from a homogeneous device pixel to the
+  /// normalized texel (the image's own map composed with the inverse of
+  /// the meshes' device map), so no vertex carries a uv. None for every
+  /// other run.
   pub texel: Option<Affine>,
+  /// A gradient or textured mesh run's projective row over device pixels
+  /// (x, y, 1): the run's gradient rows and texel rows are over (x, y, 1)
+  /// and divided by this row's value, the inverse of a perspective map;
+  /// [0, 0, 1] under a 2D map. None for every other run.
+  pub projective: Option<[f32; 3]>,
 }
 
 /// What a walk produces: the instances and the path meshes in painter's
@@ -271,121 +335,91 @@ pub struct Walked {
   /// The device clip box of every mesh drawn, so `scissor` takes the
   /// meshes' clips without walking their vertices.
   mesh_clips: Vec<[f32; 4]>,
-  /// The last batch takes no further instance: a gradient draw or a paint
+  /// The last batch takes no further instance: a gradient mesh or a paint
   /// shader draw ended it.
   sealed: bool,
 }
 
 impl Walked {
   // Append the shape `instance` to the current batch when it can share its
-  // draw, else open a new batch. A plain fill (`plain`, see `plain_fill`)
-  // joins an open fill batch, or an open shape batch while its device area
-  // is below FILL_FOLD_AREA (the shape program draws a rect too, and one
-  // draw call fewer where rects and other shapes interleave); otherwise it
-  // opens a fill batch. Any other shape shares only an open shape batch
-  // (the shader branches on the kind; a bound sampler it never reads costs
-  // nothing), so a texture change, a sampling change, a fill run or a
-  // glyph run ends a run. A gradient instance (`gradient` Some) always
-  // opens a batch of its own and seals it: a fill batch when it is plain
-  // (the fill program's gradient variant), else a shape batch; no fold
-  // rule applies, and no instance after it joins.
+  // draw, else open a new batch. `graded` is a class key like the program:
+  // a gradient instance joins only a graded batch, a solid one only a solid
+  // batch, so the fill program stays lean for solids. A plain fill
+  // (`plain`, see `plain_fill`) joins an open fill batch of its gradedness,
+  // or, when solid, an open solid shape batch while its device area is
+  // below FILL_FOLD_AREA (the shape program draws a rect too, and one draw
+  // call fewer where rects and other shapes interleave); otherwise it opens
+  // a fill batch. Any other shape shares only an open shape batch of its
+  // gradedness (the shader branches on the kind; a bound sampler it never
+  // reads costs nothing), so a texture change, a sampling change, a fill
+  // run or a glyph run ends a run.
   fn push(
     &mut self,
     instance: Instance,
     texture: Option<(glow::NativeTexture, TextureSampling)>,
     plain: bool,
-    gradient: Option<GradientDraw>,
+    graded: bool,
   ) {
     let start = self.instances.len();
-    if let Some(gradient) = gradient {
-      let program = if plain { BatchProgram::Fill } else { BatchProgram::Shape };
-      self.open(Batch {
-        start,
-        count: 1,
-        program,
-        texture,
-        policy: None,
-        gradient: Some(gradient),
-        paint: None,
-        rounded: None,
-        texel: None,
-      });
-      self.sealed = true;
-      self.instances.push(instance);
-      return;
-    }
     let sealed = self.sealed;
     let last = self.batches.last_mut().filter(|_| !sealed);
-    if plain {
-      match last {
-        Some(last) if last.program == BatchProgram::Fill => last.count += 1,
-        Some(last) if last.program == BatchProgram::Shape && device_area(&instance) < FILL_FOLD_AREA => last.count += 1,
-        _ => self.open(Batch {
-          start,
-          count: 1,
-          program: BatchProgram::Fill,
-          texture: None,
-          policy: None,
-          gradient: None,
-          paint: None,
-          rounded: None,
-          texel: None,
-        }),
-      }
-      self.instances.push(instance);
-      return;
-    }
-    let shape = Batch {
+    let batch = |program| Batch {
       start,
       count: 1,
-      program: BatchProgram::Shape,
+      program,
       texture,
       policy: None,
+      graded,
       gradient: None,
       paint: None,
       rounded: None,
       texel: None,
+      projective: None,
     };
-    match last.filter(|last| last.program == BatchProgram::Shape) {
-      None => self.open(shape),
+    if plain {
+      match last {
+        Some(last) if last.program == BatchProgram::Fill && last.graded == graded => last.count += 1,
+        Some(last)
+          if !graded
+            && !last.graded
+            && last.program == BatchProgram::Shape
+            && device_area(&instance) < FILL_FOLD_AREA =>
+        {
+          last.count += 1
+        }
+        _ => self.open(Batch { texture: None, ..batch(BatchProgram::Fill) }),
+      }
+      self.instances.push(instance);
+      return;
+    }
+    match last.filter(|last| last.program == BatchProgram::Shape && last.graded == graded) {
+      None => self.open(batch(BatchProgram::Shape)),
       Some(last) if texture.is_none() || last.texture == texture => last.count += 1,
       // The shapes before it do not care which sampler is bound.
       Some(last) if last.texture.is_none() => {
         last.texture = texture;
         last.count += 1;
       }
-      Some(_) => self.open(shape),
+      Some(_) => self.open(batch(BatchProgram::Shape)),
     }
     self.instances.push(instance);
   }
 
   // Append one glyph op's surviving `instances` over the atlas `atlas`
-  // (sampled linearly) under `policy`. A solid run joins the current batch
-  // when that batch is a solid glyph run over the same atlas under the
-  // same policy; a gradient run is its own batch, sealed after it, so the
-  // next instance opens a new one.
-  fn push_glyphs(
-    &mut self,
-    instances: Vec<Instance>,
-    atlas: glow::NativeTexture,
-    policy: CoveragePolicy,
-    gradient: Option<GradientDraw>,
-  ) {
+  // (sampled linearly) under `policy`. The run joins the current batch
+  // when that batch is a glyph run over the same atlas under the same
+  // policy, whatever either's gradient: the glyph program reads the
+  // gradient per instance.
+  fn push_glyphs(&mut self, instances: Vec<Instance>, atlas: glow::NativeTexture, policy: CoveragePolicy) {
     if instances.is_empty() {
       return;
     }
     let start = self.instances.len();
     let count = instances.len();
     let texture = Some((atlas, TextureSampling::Linear));
-    let joins = |last: &Batch| {
-      last.program == BatchProgram::Glyph
-        && gradient.is_none()
-        && last.gradient.is_none()
-        && last.texture == texture
-        && last.policy == Some(policy)
-    };
+    let joins =
+      |last: &Batch| last.program == BatchProgram::Glyph && last.texture == texture && last.policy == Some(policy);
     let sealed = self.sealed;
-    let graded = gradient.is_some();
     match self.batches.last_mut().filter(|last| !sealed && joins(last)) {
       Some(last) => last.count += count,
       None => self.open(Batch {
@@ -394,13 +428,14 @@ impl Walked {
         program: BatchProgram::Glyph,
         texture,
         policy: Some(policy),
-        gradient,
+        graded: false,
+        gradient: None,
         paint: None,
         rounded: None,
         texel: None,
+        projective: None,
       }),
     }
-    self.sealed = graded;
     self.instances.extend(instances);
   }
 
@@ -415,10 +450,12 @@ impl Walked {
       program: BatchProgram::Paint,
       texture: None,
       policy: None,
+      graded: false,
       gradient: None,
       paint: Some(paint),
       rounded: None,
       texel: None,
+      projective: None,
     });
     self.sealed = true;
     self.instances.push(instance);
@@ -426,10 +463,12 @@ impl Walked {
 
   // Add a mesh op's `count` indices, appended at `start` of
   // `mesh_indices`, to the current batch when that batch is an open mesh
-  // run with the same `texture`, `rounded` clip and `texel` map and
-  // neither carries a gradient, else open a mesh batch. A gradient mesh is
-  // its own batch, sealed after it, as a gradient quad is. A mesh run's
-  // indices are contiguous: every index after its start is its own.
+  // run with the same `texture`, `rounded` clip, `texel` map and
+  // `projective` row and neither carries a gradient, else open a mesh
+  // batch. A gradient mesh is its own batch, sealed after it: its gradient
+  // is the program's uniforms. A mesh run's indices are contiguous: every
+  // index after its start is its own.
+  #[allow(clippy::too_many_arguments)]
   fn push_mesh(
     &mut self,
     start: usize,
@@ -437,7 +476,8 @@ impl Walked {
     texture: Option<(glow::NativeTexture, TextureSampling)>,
     rounded: Option<RoundedClip>,
     texel: Option<Affine>,
-    gradient: Option<GradientDraw>,
+    gradient: Option<GradientInstance>,
+    projective: Option<[f32; 3]>,
   ) {
     let joins = |last: &Batch| {
       last.program == BatchProgram::Mesh
@@ -446,6 +486,7 @@ impl Walked {
         && last.texture == texture
         && last.rounded == rounded
         && last.texel == texel
+        && last.projective == projective
     };
     let sealed = self.sealed;
     let graded = gradient.is_some();
@@ -457,10 +498,12 @@ impl Walked {
         program: BatchProgram::Mesh,
         texture,
         policy: None,
+        graded: false,
         gradient,
         paint: None,
         rounded,
         texel,
+        projective,
       }),
     }
     self.sealed = graded;
@@ -501,13 +544,15 @@ pub struct RoundedClip {
 /// their caps, and texture quads; stage 2 adds rounded rects, one rounded
 /// clip in device space, shapes filled with an image, and glyph runs;
 /// stage 4 adds gradients and paths, a path as its mesh's device-space
-/// triangles (`push_path`). A stroke expands
-/// its quad by half the
-/// width on every side so it covers the band, which the fragment stage
-/// keeps from the quad's local coordinates. There is no hairline rule: a
-/// width of zero or below draws nothing, and a width under one device pixel
-/// draws thin, covering only some of the MSAA samples it crosses.
-pub fn walk(list: &DisplayList, size: ISize) -> Walked {
+/// triangles (`push_path`); stage 5 draws every quad under a perspective
+/// map, its projective row on the instance. A stroke expands its quad by
+/// half the width on every side so it covers the band, which the fragment
+/// stage keeps from the quad's local coordinates. There is no hairline
+/// rule: a width of zero or below draws nothing, and a width under one
+/// device pixel draws thin, covering only some of the MSAA samples it
+/// crosses. Every gradient op takes a row of `ramps` for its ramp; past the
+/// table's rows it draws its paint's color.
+pub fn walk(list: &DisplayList, size: ISize, ramps: &mut RampTable) -> Walked {
   // The target rect, not an infinite one: every instance's clip stays
   // finite (a highp float holds 1e7 but not INFINITY reliably), the
   // rejection culls offscreen content, and the rendertree's "infinite"
@@ -515,7 +560,7 @@ pub fn walk(list: &DisplayList, size: ISize) -> Walked {
   let mut state = State { matrix: Matrix::identity(), clip: Box2D::from_size(size.to_f32()), rounded: None };
   let mut stack = Vec::new();
   let mut out = Walked::default();
-  walk_ops(list.executable(), &mut state, &mut stack, &mut out);
+  walk_ops(list.executable(), &mut state, &mut stack, ramps, &mut out);
   out.scissor = scissor(&out.instances, &out.mesh_clips);
   out
 }
@@ -532,7 +577,7 @@ fn scissor(instances: &[Instance], mesh_clips: &[[f32; 4]]) -> Option<Box2D<i32>
 // One list's ops. A restore pops only what this list saved (a restore with
 // nothing saved does nothing, as `oplog::walk` treats it), so a nested
 // list with an extra restore cannot pop its parent's save.
-fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, out: &mut Walked) {
+fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, ramps: &mut RampTable, out: &mut Walked) {
   let base = stack.len();
   for op in ops {
     match op {
@@ -548,32 +593,37 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, out: &mut Wal
       Op::Scale { x, y } => state.matrix = Matrix::scale(*x, *y, 1.0).then(&state.matrix),
       Op::Transform(m) => state.matrix = m.then(&state.matrix),
       Op::ClipRect(rect) => {
-        let m2 = clip_map(state);
-        if m2.m12 != 0.0 || m2.m21 != 0.0 {
-          unsupported!("a clip under a rotated transform", "the clip is the rotated rect's bounding box");
+        let p = Projective::from_matrix(&state.matrix);
+        let Some(device) = clip_bounds(&p, rect) else { continue };
+        if !p.is_axis_aligned() {
+          unsupported!(
+            "a clip under a rotated or perspective transform",
+            "the clip is the transformed rect's bounding box"
+          );
         }
-        let device = m2.outer_transformed_rect(rect).to_box2d();
         state.clip = state.clip.intersection_unchecked(&device);
       }
       Op::ClipRoundedRect { rect, radii } => clip_rounded(state, rect, radii),
       Op::DrawRect { rect, radii, color, stroke, source } => {
         let kind = if radii.iter().all(|r| *r == 0.0) { KIND_RECT } else { KIND_ROUNDED_RECT };
-        push_shape(state, rect, kind, *radii, *color, *stroke, source.as_ref(), out)
+        push_shape(state, rect, kind, *radii, *color, *stroke, source.as_ref(), ramps, out)
       }
       Op::DrawOval { bounds, color, stroke, source } => {
-        push_shape(state, bounds, KIND_OVAL, [0.0; 4], *color, *stroke, source.as_ref(), out)
+        push_shape(state, bounds, KIND_OVAL, [0.0; 4], *color, *stroke, source.as_ref(), ramps, out)
       }
       Op::DrawLine { from, to, color, width, cap, gradient } => {
-        push_line(state, *from, *to, *color, *width, *cap, gradient.as_ref(), out)
+        push_line(state, *from, *to, *color, *width, *cap, gradient.as_ref(), ramps, out)
       }
       Op::DrawTexture { texture, src, dst, sampling, alpha } => {
         push_texture(state, texture, src, dst, *sampling, *alpha, out)
       }
       Op::DrawGlyphs { atlas, quads, bounds, color, policy, gradient } => {
-        push_glyphs(state, atlas, quads, bounds, *color, *policy, gradient.as_ref(), out)
+        push_glyphs(state, atlas, quads, bounds, *color, *policy, gradient.as_ref(), ramps, out)
       }
       Op::DrawShader { rect, shader, params, inputs } => push_paint(state, rect, shader, params, inputs, out),
-      Op::DrawPath { path, style, color, source } => push_path(state, path, *style, *color, source.as_ref(), out),
+      Op::DrawPath { path, style, color, source } => {
+        push_path(state, path, *style, *color, source.as_ref(), ramps, out)
+      }
       Op::DrawList { list, opacity } => {
         if *opacity < 1.0 {
           unsupported!("draw_display_list below opacity 1", "the nested list draws at full opacity");
@@ -582,7 +632,7 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, out: &mut Wal
         // ends with it.
         let depth = stack.len();
         let saved = *state;
-        walk_ops(list.executable(), state, stack, out);
+        walk_ops(list.executable(), state, stack, ramps, out);
         stack.truncate(depth);
         *state = saved;
       }
@@ -590,38 +640,162 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, out: &mut Wal
   }
 }
 
-// The current state's transform as the 2D map a clip uses. One call site
-// for both clip ops, so the perspective warning is one line.
-fn clip_map(state: &State) -> Transform2D<f32> {
-  if !state.matrix.is_2d() {
-    unsupported!("a clip under a perspective transform", "the clip uses the affine part");
+/// A map from a draw's local space to device pixels as the instance
+/// carries it: the 3x3 of a `Matrix` with z = 0, in euclid's row-vector
+/// convention, x' = x * m11 + y * m21 + m41, y' = x * m12 + y * m22 + m42,
+/// w' = x * m14 + y * m24 + m44, and the device point (x' / w', y' / w').
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Projective {
+  /// m11, m12, m21, m22.
+  pub linear: [f32; 4],
+  /// m41, m42.
+  pub offset: [f32; 2],
+  /// m14, m24, m44: [0, 0, 1] for a 2D map.
+  pub persp: [f32; 3],
+}
+
+impl Projective {
+  /// The map `m` takes the z = 0 plane through.
+  pub fn from_matrix(m: &Matrix) -> Projective {
+    Projective { linear: [m.m11, m.m12, m.m21, m.m22], offset: [m.m41, m.m42], persp: [m.m14, m.m24, m.m44] }
   }
-  state.matrix.to_2d()
+
+  /// Whether the map is 2D: w' is 1 everywhere.
+  pub fn is_affine(&self) -> bool {
+    self.persp == [0.0, 0.0, 1.0]
+  }
+
+  // Whether the map keeps a rect axis-aligned: 2D, no rotation or skew.
+  fn is_axis_aligned(&self) -> bool {
+    self.is_affine() && self.linear[1] == 0.0 && self.linear[2] == 0.0
+  }
+
+  /// The device point `p` maps to; None when it lies at or behind the
+  /// eye (w' <= 0).
+  pub fn project(&self, p: Point) -> Option<Point> {
+    let [m11, m12, m21, m22] = self.linear;
+    let x = p.x * m11 + p.y * m21 + self.offset[0];
+    let y = p.x * m12 + p.y * m22 + self.offset[1];
+    if self.is_affine() {
+      return Some(Point::new(x, y));
+    }
+    let [p1, p2, p3] = self.persp;
+    let w = p.x * p1 + p.y * p2 + p3;
+    // A NaN w' has no device point either.
+    if w <= 0.0 || w.is_nan() {
+      return None;
+    }
+    Some(Point::new(x / w, y / w))
+  }
+
+  /// The device box of `rect`'s four projected corners; None when any
+  /// corner lies at or behind the eye. w' is affine in (x, y), so all of
+  /// the rect is in front of the eye exactly when its corners are.
+  pub fn bounds(&self, rect: &Rect) -> Option<Box2D<f32>> {
+    let corners = [
+      rect.origin,
+      Point::new(rect.max_x(), rect.min_y()),
+      Point::new(rect.min_x(), rect.max_y()),
+      Point::new(rect.max_x(), rect.max_y()),
+    ];
+    let mut projected = [Point::zero(); 4];
+    for (out, corner) in projected.iter_mut().zip(corners) {
+      *out = self.project(corner)?;
+    }
+    Some(Box2D::from_points(projected))
+  }
+
+  // The 2D part of the map: exact for a 2D map, and under perspective the
+  // linear part a mesh's scale bucket reads.
+  fn affine_part(&self) -> Transform2D<f32> {
+    let [m11, m12, m21, m22] = self.linear;
+    Transform2D::new(m11, m12, m21, m22, self.offset[0], self.offset[1])
+  }
+
+  // The inverse, device pixels to the local space, as two numerator rows
+  // and the denominator row over (x, y, 1): local = (n0 . d, n1 . d) /
+  // (w . d). For a 2D map the affine inverse and [0, 0, 1], so the rows are
+  // the ones `affine::invert` gives. None for a singular map.
+  fn inverse(&self) -> Option<(Affine, [f32; 3])> {
+    let [m11, m12, m21, m22] = self.linear;
+    let [m41, m42] = self.offset;
+    if self.is_affine() {
+      return affine::invert([[m11, m21, m41], [m12, m22, m42]]).map(|rows| (rows, [0.0, 0.0, 1.0]));
+    }
+    // The column-vector matrix [x' y' w'] = H [x y 1] and its adjugate.
+    let [m14, m24, m44] = self.persp;
+    let h = [[m11, m21, m41], [m12, m22, m42], [m14, m24, m44]];
+    let cofactor = |r0: usize, r1: usize, c0: usize, c1: usize| h[r0][c0] * h[r1][c1] - h[r0][c1] * h[r1][c0];
+    let adj = [
+      [cofactor(1, 2, 1, 2), -cofactor(0, 2, 1, 2), cofactor(0, 1, 1, 2)],
+      [-cofactor(1, 2, 0, 2), cofactor(0, 2, 0, 2), -cofactor(0, 1, 0, 2)],
+      [cofactor(1, 2, 0, 1), -cofactor(0, 2, 0, 1), cofactor(0, 1, 0, 1)],
+    ];
+    let det = h[0][0] * adj[0][0] + h[0][1] * adj[1][0] + h[0][2] * adj[2][0];
+    if det == 0.0 || !det.is_finite() {
+      return None;
+    }
+    let row = |r: [f32; 3]| r.map(|v| v / det);
+    Some(([row(adj[0]), row(adj[1])], row(adj[2])))
+  }
+}
+
+// `rows` (over a local space, with an implied [0, 0, 1] third row) after
+// the projective map whose numerator rows are `num` and denominator row
+// `w`: rows over (x, y, 1) of the map's source whose values divided by
+// `w`'s are what `rows` gives at the mapped point. With `w` = [0, 0, 1] it
+// is `affine::compose(rows, num)`, bit for bit.
+fn compose_projective(rows: Affine, num: Affine, w: [f32; 3]) -> Affine {
+  let row = |r: [f32; 3]| {
+    [
+      r[0] * num[0][0] + r[1] * num[1][0] + r[2] * w[0],
+      r[0] * num[0][1] + r[1] * num[1][1] + r[2] * w[1],
+      r[0] * num[0][2] + r[1] * num[1][2] + r[2] * w[2],
+    ]
+  };
+  [row(rows[0]), row(rows[1])]
+}
+
+// The device box a clip to `rect` under `p` narrows the clip box to; None,
+// warned once, when a corner lies behind the eye: such a rect has no device
+// box, and the clip is left as it was. The one call site of the warning
+// for both clip ops.
+fn clip_bounds(p: &Projective, rect: &Rect) -> Option<Box2D<f32>> {
+  let bounds = p.bounds(rect);
+  if bounds.is_none() {
+    unsupported!("a clip with a corner behind the eye plane", "the clip is left as it was");
+  }
+  bounds
 }
 
 // An intersect clip to `rect` with the corner `radii` (local, CSS order,
-// clamped). The device box of the rect narrows the clip box in every case;
-// the rounded corners ride on the instances as the one rounded clip, in
-// device space, when the transform keeps the rect axis-aligned and no
-// rounded clip is in effect yet. Otherwise the clip degrades to its box,
-// warned once per cause.
+// clamped). The device box of the rect narrows the clip box in every case
+// (a rect with a corner behind the eye leaves it as it was); the rounded
+// corners ride on the instances as the one rounded clip, in device space,
+// when the transform keeps the rect axis-aligned and no rounded clip is in
+// effect yet. Otherwise the clip degrades to its box, warned once per
+// cause.
 fn clip_rounded(state: &mut State, rect: &Rect, radii: &Radii) {
-  let m2 = clip_map(state);
-  let device = m2.outer_transformed_rect(rect).to_box2d();
+  let p = Projective::from_matrix(&state.matrix);
+  let Some(device) = clip_bounds(&p, rect) else { return };
   state.clip = state.clip.intersection_unchecked(&device);
   if radii.iter().all(|r| *r == 0.0) {
     // A plain rect: the box did it.
     return;
   }
-  if m2.m12 != 0.0 || m2.m21 != 0.0 {
-    unsupported!("a rounded clip under a rotated transform", "the clip is the rotated rect's bounding box");
+  if !p.is_axis_aligned() {
+    unsupported!(
+      "a rounded clip under a rotated or perspective transform",
+      "the clip is the transformed rect's bounding box"
+    );
     return;
   }
   if state.rounded.is_some() {
     unsupported!("nested rounded clips", "the inner one clips as a plain rect");
     return;
   }
-  let (sx, sy) = (m2.m11.abs(), m2.m22.abs());
+  let [m11, _, _, m22] = p.linear;
+  let (sx, sy) = (m11.abs(), m22.abs());
   if (sx - sy).abs() > UNIFORM_SCALE_EPSILON {
     unsupported!("a rounded clip under a non-uniform scale", "the corners use the smaller scale");
   }
@@ -629,43 +803,45 @@ fn clip_rounded(state: &mut State, rect: &Rect, radii: &Radii) {
   let [tl, tr, br, bl] = radii.map(|r| r * scale);
   // A mirrored axis swaps the corners: local top-left lands on device
   // top-right under a negative x scale, on bottom-left under a negative y.
-  let [tl, tr, br, bl] = if m2.m11 < 0.0 { [tr, tl, bl, br] } else { [tl, tr, br, bl] };
-  let device_radii = if m2.m22 < 0.0 { [bl, br, tr, tl] } else { [tl, tr, br, bl] };
+  let [tl, tr, br, bl] = if m11 < 0.0 { [tr, tl, bl, br] } else { [tl, tr, br, bl] };
+  let device_radii = if m22 < 0.0 { [bl, br, tr, tl] } else { [tl, tr, br, bl] };
   if device_radii.iter().any(|r| *r > 0.0) {
     state.rounded = Some(RoundedClip { rect: device, radii: device_radii });
   }
 }
 
-// The current state's transform as the 2D map a draw uses.
-fn state_map(state: &State) -> Transform2D<f32> {
-  if !state.matrix.is_2d() {
-    unsupported!("a perspective transform", "the draw uses the affine part");
-  }
-  state.matrix.to_2d()
-}
-
-// `gradient` as a draw whose op space reaches device pixels through `m`:
-// its rows composed with the inverse of `m`. None when `m` is singular,
+// `gradient` drawn with `rows` from the quad's local space, at the ramp row
+// `ramps` gives it; None, warned once, when every row is taken this frame,
 // and the draw then takes its solid color.
-fn gradient_draw(gradient: &Arc<RampGradient>, m: &Transform2D<f32>) -> Option<GradientDraw> {
-  let from_device = affine::invert(affine::of_2d(m))?;
-  let rows = affine::compose([gradient.x_row, gradient.y_row], from_device);
-  Some(GradientDraw { gradient: gradient.clone(), rows })
-}
-
-// The 2D map and the device clip of a draw covering `rect` under the
-// current state; None when the clip rejects it.
-fn placed(state: &State, rect: &Rect) -> Option<(Transform2D<f32>, [f32; 4])> {
-  let m2 = state_map(state);
-  placed_under(state, m2, rect).map(|clip| (m2, clip))
-}
-
-// The device clip of a draw covering `rect` under the 2D map `m2` (the
-// state's, or a line's own composed onto it); None when the clip rejects it.
-fn placed_under(state: &State, m2: Transform2D<f32>, rect: &Rect) -> Option<[f32; 4]> {
-  let bounds = m2.outer_transformed_rect(rect).to_box2d();
-  if state.clip.is_empty() || !bounds.intersects(&state.clip) {
+fn gradient_instance(ramps: &mut RampTable, gradient: &Arc<RampGradient>, rows: Affine) -> Option<GradientInstance> {
+  let Some(row) = ramps.row(gradient) else {
+    warn_once!(
+      "[anvil] Renderer: more than {RAMP_ROWS} distinct gradients in one frame; the rest draw their paint's color"
+    );
     return None;
+  };
+  Some(GradientInstance { gradient: gradient.clone(), rows, row })
+}
+
+// The map and the device clip of a draw covering `rect` under the current
+// state; None when the clip rejects it.
+fn placed(state: &State, rect: &Rect) -> Option<(Projective, [f32; 4])> {
+  let p = Projective::from_matrix(&state.matrix);
+  placed_under(state, &p, rect).map(|clip| (p, clip))
+}
+
+// The device clip of a draw covering `rect` under the map `p` (the
+// state's, or a line's own composed onto it); None when the clip rejects
+// it. A rect with a corner behind the eye has no device bounds and is not
+// culled.
+fn placed_under(state: &State, p: &Projective, rect: &Rect) -> Option<[f32; 4]> {
+  if state.clip.is_empty() {
+    return None;
+  }
+  if let Some(bounds) = p.bounds(rect) {
+    if !bounds.intersects(&state.clip) {
+      return None;
+    }
   }
   let clip = state.clip;
   Some([clip.min.x, clip.min.y, clip.max.x, clip.max.y])
@@ -683,27 +859,53 @@ struct Quad {
   tex: [f32; 4],
   /// The shape's corner radii; zero for the kinds without corners.
   radii: Radii,
+  /// `grad_x` and `grad_y`: a gradient's (`gradient_rows`), a textured
+  /// instance's texel rows (`texel_rows`), zeros otherwise.
+  rows: [[f32; 4]; 2],
 }
 
-// The one place an instance's fields are set: `quad` under the 2D map `m`
+// A gradient's rows, ramp row and packed kind, as `grad_x` and `grad_y`
+// carry them; zeros for none.
+fn gradient_rows(gradient: Option<&GradientInstance>) -> [[f32; 4]; 2] {
+  match gradient {
+    Some(g) => {
+      let [[x0, x1, x2], [y0, y1, y2]] = g.rows;
+      [[x0, x1, x2, g.row as f32], [y0, y1, y2, g.kind_tile()]]
+    }
+    None => [[0.0; 4]; 2],
+  }
+}
+
+// A textured instance's map from its local space to the normalized texel,
+// as `grad_x` and `grad_y` carry it: the packed kind 0, no gradient.
+fn texel_rows(rows: Affine) -> [[f32; 4]; 2] {
+  let [[u0, u1, u2], [v0, v1, v2]] = rows;
+  [[u0, u1, u2, 0.0], [v0, v1, v2, 0.0]]
+}
+
+// The one place an instance's fields are set: `quad` under the map `p`
 // with the device clip `clip` (from `placed`), and the state's rounded
 // clip, zeros when none is in effect.
-fn instance(state: &State, m: &Transform2D<f32>, clip: [f32; 4], quad: Quad) -> Instance {
+fn instance(state: &State, p: &Projective, clip: [f32; 4], quad: Quad) -> Instance {
   let (rclip, rclip_radii) = match state.rounded {
     Some(r) => ([r.rect.min.x, r.rect.min.y, r.rect.max.x, r.rect.max.y], r.radii),
     None => ([0.0; 4], [0.0; 4]),
   };
   let rect = quad.rect;
+  let [p1, p2, p3] = p.persp;
   Instance {
     rect: [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height],
-    linear: [m.m11, m.m12, m.m21, m.m22],
-    offset_kind_stroke: [m.m31, m.m32, quad.kind, quad.stroke],
+    linear: p.linear,
+    offset_kind_stroke: [p.offset[0], p.offset[1], quad.kind, quad.stroke],
     color: quad.color,
     tex: quad.tex,
     clip,
     radii: quad.radii,
     rclip,
     rclip_radii,
+    persp: [p1, p2, p3, 0.0],
+    grad_x: quad.rows[0],
+    grad_y: quad.rows[1],
   }
 }
 
@@ -715,10 +917,10 @@ fn instance(state: &State, m: &Transform2D<f32>, clip: [f32; 4], quad: Quad) -> 
 // analytic edge never lies on the quad's. With an image `source` the
 // instance samples it: coverage times texel, faded by the color's alpha
 // (the paint's RGB is not used for an image, as Impeller did not use it),
-// the uv the quad's corners through the image's inverse map. With a
-// gradient `source` it keeps its kind and takes the gradient's color,
-// faded the same way, in a batch of its own (`Walked::push`); under a
-// singular map it draws its solid color.
+// the uv through the image's inverse map from the quad's local space. With
+// a gradient `source` it keeps its kind and takes the gradient's color,
+// faded the same way, in a graded batch (`Walked::push`); past the ramp
+// table's rows it draws its solid color.
 #[allow(clippy::too_many_arguments)]
 fn push_shape(
   state: &State,
@@ -728,29 +930,31 @@ fn push_shape(
   color: Premultiplied,
   stroke: Option<f32>,
   source: Option<&Source>,
+  ramps: &mut RampTable,
   out: &mut Walked,
 ) {
   let s = stroke.unwrap_or(0.0);
   let pad = if kind == KIND_ROUNDED_RECT { ROUNDED_QUAD_PAD } else { 0.0 };
   let grow = s * 0.5 + pad;
   let quad = rect.inflate(grow, grow);
-  let Some((m2, clip)) = placed(state, &quad) else { return };
+  let Some((p, clip)) = placed(state, &quad) else { return };
   if color[3] == 0.0 {
     return;
   }
+  // The local space is the op's: the gradient's own rows.
   let gradient = match source {
-    Some(Source::Gradient(g)) => gradient_draw(g, &m2),
+    Some(Source::Gradient(g)) => gradient_instance(ramps, g, [g.x_row, g.y_row]),
     _ => None,
   };
   let image = match source {
     Some(Source::Image(image)) => Some(image),
     _ => None,
   };
-  let (kind, color, tex, texture) = match image {
+  let (kind, color, tex, texture, rows) = match image {
     // The ramp sample is premultiplied in the program: the alpha in all
     // four channels fades it, as for an image.
-    None if gradient.is_some() => (kind, [color[3]; 4], [0.0; 4], None),
-    None => (kind, color, [0.0; 4], None),
+    None if gradient.is_some() => (kind, [color[3]; 4], [0.0; 4], None, gradient_rows(gradient.as_ref())),
+    None => (kind, color, [0.0; 4], None, [[0.0; 4]; 2]),
     Some(image) => {
       // A texture's size is never zero (see `push_texture`).
       let size = image.texture.size();
@@ -764,12 +968,23 @@ fn push_shape(
         faded,
         [t0.x / w, t0.y / h, t1.x / w, t1.y / h],
         Some((image.texture.name(), image.sampling)),
+        texel_rows(normalized_texel(image)),
       )
     }
   };
-  let shape = instance(state, &m2, clip, Quad { rect: quad, kind, stroke: s, color, tex, radii });
+  let graded = gradient.is_some();
+  let shape = instance(state, &p, clip, Quad { rect: quad, kind, stroke: s, color, tex, radii, rows });
   let plain = plain_fill(&shape);
-  out.push(shape, texture, plain, gradient);
+  out.push(shape, texture, plain, graded);
+}
+
+// `image`'s map from the op's space to the normalized texel: its own map
+// over the texture's size.
+fn normalized_texel(image: &super::ops::Image) -> Affine {
+  // A texture's size is never zero (see `push_texture`).
+  let size = image.texture.size();
+  let normalize = [[1.0 / size.width as f32, 0.0, 0.0], [0.0, 1.0 / size.height as f32, 0.0]];
+  affine::compose(normalize, affine::of_2d(&image.to_texel))
 }
 
 // Whether `instance` is a plain rect fill, which the fill program draws:
@@ -780,11 +995,22 @@ fn plain_fill(instance: &Instance) -> bool {
   kind == KIND_RECT && stroke == 0.0 && instance.rclip_radii == [0.0; 4]
 }
 
-// The device pixels `instance`'s quad covers, unclipped: its local area
-// times the absolute determinant of its 2D map.
+// The device pixels `instance`'s quad covers, unclipped: under a 2D map its
+// local area times the absolute determinant of the map, under perspective
+// the area of its projected bounds, 0 when a corner is behind the eye.
 fn device_area(instance: &Instance) -> f32 {
+  let [x, y, w, h] = instance.rect;
   let [m11, m12, m21, m22] = instance.linear;
-  (m11 * m22 - m12 * m21).abs() * instance.rect[2] * instance.rect[3]
+  let [p1, p2, p3, _] = instance.persp;
+  let p = Projective {
+    linear: instance.linear,
+    offset: [instance.offset_kind_stroke[0], instance.offset_kind_stroke[1]],
+    persp: [p1, p2, p3],
+  };
+  if p.is_affine() {
+    return (m11 * m22 - m12 * m21).abs() * w * h;
+  }
+  p.bounds(&Rect::new(Point::new(x, y), Size::new(w, h))).map_or(0.0, |b| b.area())
 }
 
 // A segment stroked `width` wide under the current state, unless it has no
@@ -793,9 +1019,9 @@ fn device_area(instance: &Instance) -> f32 {
 // extended by half the width at both ends for square and round caps. A
 // zero-length segment is a width-square dot for those caps and nothing
 // for butt caps, as Skia and Impeller draw it. A `gradient` is in the op's
-// space, not the segment's frame, so its rows compose with the inverse of
-// the state's map; the line then takes the gradient's color in a batch of
-// its own, its solid color under a singular map.
+// space, not the segment's frame, so its rows compose with the frame map
+// (quad frame to op space); the line then takes the gradient's color in a
+// graded batch, its solid color past the ramp table's rows.
 #[allow(clippy::too_many_arguments)]
 fn push_line(
   state: &State,
@@ -805,6 +1031,7 @@ fn push_line(
   width: f32,
   cap: StrokeCap,
   gradient: Option<&Arc<RampGradient>>,
+  ramps: &mut RampTable,
   out: &mut Walked,
 ) {
   if width <= 0.0 || color[3] == 0.0 {
@@ -820,19 +1047,16 @@ fn push_line(
   // Row vectors: local (len, 0) rotates onto (dx, dy), then moves to `from`,
   // then takes the state's map.
   let line_map = Transform2D::rotation(Angle::radians(dy.atan2(dx))).then(&Transform2D::translation(from.x, from.y));
-  let state_m = state_map(state);
-  let m = line_map.then(&state_m);
-  let Some(clip) = placed_under(state, m, &local) else { return };
+  let p = Projective::from_matrix(&line_map.to_3d().then(&state.matrix));
+  let Some(clip) = placed_under(state, &p, &local) else { return };
   let tex = [cap_value(cap), len, 0.0, 0.0];
-  let gradient = gradient.and_then(|g| gradient_draw(g, &state_m));
+  let gradient =
+    gradient.and_then(|g| gradient_instance(ramps, g, affine::compose([g.x_row, g.y_row], affine::of_2d(&line_map))));
   // The ramp sample is premultiplied in the program: the alpha fades it.
   let color = if gradient.is_some() { [color[3]; 4] } else { color };
-  out.push(
-    instance(state, &m, clip, Quad { rect: local, kind: KIND_LINE, stroke: width, color, tex, radii: [0.0; 4] }),
-    None,
-    false,
-    gradient,
-  );
+  let rows = gradient_rows(gradient.as_ref());
+  let quad = Quad { rect: local, kind: KIND_LINE, stroke: width, color, tex, radii: [0.0; 4], rows };
+  out.push(instance(state, &p, clip, quad), None, false, gradient.is_some());
 }
 
 // The cap as the instance carries it.
@@ -858,7 +1082,7 @@ fn push_texture(
   alpha: f32,
   out: &mut Walked,
 ) {
-  let Some((m2, clip)) = placed(state, dst) else { return };
+  let Some((p, clip)) = placed(state, dst) else { return };
   if alpha <= 0.0 {
     return;
   }
@@ -866,6 +1090,10 @@ fn push_texture(
   // is at least one texel.
   let size = texture.size();
   let (w, h) = (size.width as f32, size.height as f32);
+  let tex = [src.min_x() / w, src.min_y() / h, src.max_x() / w, src.max_y() / h];
+  // dst onto src, over the size: u = u0 + (x - dst.x) * (u1 - u0) / dst.w.
+  let (su, sv) = ((tex[2] - tex[0]) / dst.size.width, (tex[3] - tex[1]) / dst.size.height);
+  let rows = [[su, 0.0, tex[0] - dst.min_x() * su], [0.0, sv, tex[1] - dst.min_y() * sv]];
   let quad = Quad {
     rect: *dst,
     // A rect fill's coverage is 1 inside the quad: the texel as it is.
@@ -874,10 +1102,11 @@ fn push_texture(
     // The texel is premultiplied, so scaling all four channels by the
     // alpha fades it as a whole (the fragment stage multiplies).
     color: [alpha; 4],
-    tex: [src.min_x() / w, src.min_y() / h, src.max_x() / w, src.max_y() / h],
+    tex,
     radii: [0.0; 4],
+    rows: texel_rows(rows),
   };
-  out.push(instance(state, &m2, clip, quad), Some((texture.name(), sampling)), false, None);
+  out.push(instance(state, &p, clip, quad), Some((texture.name(), sampling)), false, false);
 }
 
 // One glyph run under the current state: rejected whole when its alpha is
@@ -885,8 +1114,9 @@ fn push_texture(
 // instance per quad the clip keeps. A quad's rect is its `dst`, its uv its
 // `src` over the atlas's size (v grows downward with the texel rows, as for
 // a texture quad), its color the run's `color`, straight alpha. A
-// `gradient`'s rows compose once per run with the inverse of the state's
-// map; under a singular map the run draws its solid color.
+// `gradient` takes one ramp row per run and its own rows on every quad
+// (the quads are in the op's space); past the ramp table's rows the run
+// draws its solid color.
 #[allow(clippy::too_many_arguments)]
 fn push_glyphs(
   state: &State,
@@ -896,18 +1126,21 @@ fn push_glyphs(
   color: [f32; 4],
   policy: CoveragePolicy,
   gradient: Option<&Arc<RampGradient>>,
+  ramps: &mut RampTable,
   out: &mut Walked,
 ) {
   if quads.is_empty() || color[3] == 0.0 || placed(state, bounds).is_none() {
     return;
   }
+  let gradient = gradient.and_then(|g| gradient_instance(ramps, g, [g.x_row, g.y_row]));
+  let rows = gradient_rows(gradient.as_ref());
   // An atlas's size is never zero, as for any texture (see `push_texture`).
   let size = atlas.size();
   let (w, h) = (size.width as f32, size.height as f32);
   let mut instances = Vec::with_capacity(quads.len());
   for q in quads {
     let dst = Rect::new(Point::new(q.dst[0], q.dst[1]), Size::new(q.dst[2], q.dst[3]));
-    let Some((m2, clip)) = placed(state, &dst) else { continue };
+    let Some((p, clip)) = placed(state, &dst) else { continue };
     let [sx, sy, sw, sh] = q.src;
     let quad = Quad {
       rect: dst,
@@ -916,18 +1149,19 @@ fn push_glyphs(
       color,
       tex: [sx / w, sy / h, (sx + sw) / w, (sy + sh) / h],
       radii: [0.0; 4],
+      rows,
     };
-    instances.push(instance(state, &m2, clip, quad));
+    instances.push(instance(state, &p, clip, quad));
   }
-  let gradient = gradient.and_then(|g| gradient_draw(g, &state_map(state)));
-  out.push_glyphs(instances, atlas.name(), policy, gradient);
+  out.push_glyphs(instances, atlas.name(), policy);
 }
 
 // A paint shader's quad over `rect` under the current state, unless the
 // clip rejects it: one `KIND_PAINT` instance whose `tex` is the unit square
 // (the program's `vUV` is the quad's corner, not read from it), in a batch
 // of its own that carries the shader, its params and inputs, and the quad's
-// device size: the device lengths of the rect's x and y edges under the map.
+// device size: the device lengths of the rect's x and y edges under the
+// map's linear part (under perspective an approximation).
 fn push_paint(
   state: &State,
   rect: &Rect,
@@ -936,8 +1170,9 @@ fn push_paint(
   inputs: &Arc<[ShaderInput]>,
   out: &mut Walked,
 ) {
-  let Some((m2, clip)) = placed(state, rect) else { return };
-  let resolution = [rect.size.width * m2.m11.hypot(m2.m12), rect.size.height * m2.m21.hypot(m2.m22)];
+  let Some((p, clip)) = placed(state, rect) else { return };
+  let [m11, m12, m21, m22] = p.linear;
+  let resolution = [rect.size.width * m11.hypot(m12), rect.size.height * m21.hypot(m22)];
   let quad = Quad {
     rect: *rect,
     kind: KIND_PAINT,
@@ -946,9 +1181,10 @@ fn push_paint(
     color: [1.0; 4],
     tex: [0.0, 0.0, 1.0, 1.0],
     radii: [0.0; 4],
+    rows: [[0.0; 4]; 2],
   };
   let paint = PaintDraw { shader: shader.clone(), params: params.clone(), inputs: inputs.clone(), resolution };
-  out.push_paint(instance(state, &m2, clip, quad), paint);
+  out.push_paint(instance(state, &p, clip, quad), paint);
 }
 
 // A path's mesh under `style` and the current state, unless the map
@@ -956,29 +1192,34 @@ fn push_paint(
 // twice: before the mesh exists by the path's control-point box outset by
 // the stroke's reach (half the width times the larger of the miter limit
 // and sqrt 2: a miter's tip, or a square cap's corner), after by the
-// mesh's own box. The mesh comes from the path's cache at the map's scale
-// bucket (mesh.rs), tessellated on a miss; its vertices are mapped into
-// device space here and appended with the state's clip box and the color,
-// its indices rebased onto them. An image `source` binds its texture and
-// the batch's device-to-texel map, a gradient `source` its device-space
-// rows; either fades by the color's alpha (in all four channels) and draws
-// the solid color under a singular map.
+// mesh's own box. The mesh comes from the path's cache at the scale bucket
+// of the map's 2D part (mesh.rs; under perspective an approximation),
+// tessellated on a miss; its vertices are projected into device space here
+// and appended with the state's clip box and the color, its indices
+// rebased onto them. A mesh
+// with a corner of its box behind the eye does not draw. An image `source`
+// binds its texture and the batch's device-to-texel rows, a gradient
+// `source` its device rows, both over homogeneous device pixels with the
+// map inverse's projective row; either fades by the color's alpha (in all
+// four channels) and draws the solid color under a singular map, a
+// gradient also past the ramp table's rows.
 fn push_path(
   state: &State,
   path: &Path,
   style: MeshStyle,
   color: Premultiplied,
   source: Option<&Source>,
+  ramps: &mut RampTable,
   out: &mut Walked,
 ) {
-  let m2 = state_map(state);
-  let Some(bucket) = scale_bucket(&m2) else { return };
+  let p = Projective::from_matrix(&state.matrix);
+  let Some(bucket) = scale_bucket(&p.affine_part()) else { return };
   let Some(bounds) = path.bounds() else { return };
   let reach = match style {
     MeshStyle::Fill => 0.0,
     MeshStyle::Stroke { width, miter, .. } => width * 0.5 * miter.max(SQRT_2),
   };
-  if placed_under(state, m2, &bounds.inflate(reach, reach).to_rect()).is_none() {
+  if placed_under(state, &p, &bounds.inflate(reach, reach).to_rect()).is_none() {
     return;
   }
   if color[3] == 0.0 {
@@ -987,50 +1228,61 @@ fn push_path(
   let (mesh, missed) = path.mesh(style, bucket);
   out.tessellated += missed as u32;
   let Some(mesh) = mesh else { return };
-  let Some(clip) = placed_under(state, m2, &mesh.bounds.to_rect()) else { return };
+  let mesh_rect = mesh.bounds.to_rect();
+  if p.bounds(&mesh_rect).is_none() {
+    unsupported!("a path crossing the eye plane under a perspective transform", "the path does not draw");
+    return;
+  }
+  let Some(clip) = placed_under(state, &p, &mesh_rect) else { return };
+  let inverse = p.inverse();
   let mut texture = None;
   let mut texel = None;
   let mut gradient = None;
-  let color = match source {
-    Some(Source::Image(image)) => match image_texel(image, &m2) {
-      Some(map) => {
-        texture = Some((image.texture.name(), image.sampling));
-        texel = Some(map);
-        // The texel is premultiplied: the alpha in all four channels fades it.
-        [color[3]; 4]
+  let mut projective = None;
+  let color = match (source, inverse) {
+    (Some(Source::Image(image)), Some((num, w))) => {
+      texture = Some((image.texture.name(), image.sampling));
+      texel = Some(image_texel(image, num, w));
+      projective = Some(w);
+      // The texel is premultiplied: the alpha in all four channels fades it.
+      [color[3]; 4]
+    }
+    (Some(Source::Gradient(g)), Some((num, w))) => {
+      match gradient_instance(ramps, g, compose_projective([g.x_row, g.y_row], num, w)) {
+        Some(draw) => {
+          gradient = Some(draw);
+          projective = Some(w);
+          // The ramp sample is premultiplied in the program: the alpha fades it.
+          [color[3]; 4]
+        }
+        None => color,
       }
-      None => color,
-    },
-    Some(Source::Gradient(g)) => match gradient_draw(g, &m2) {
-      Some(draw) => {
-        gradient = Some(draw);
-        // The ramp sample is premultiplied in the program: the alpha fades it.
-        [color[3]; 4]
-      }
-      None => color,
-    },
-    None => color,
+    }
+    _ => color,
   };
   let base = out.mesh_vertices.len() as u32;
   out.mesh_vertices.extend(mesh.vertices.iter().map(|v| {
-    let p = m2.transform_point(Point2D::new(v[0], v[1]));
-    MeshVertex { device: [p.x, p.y], color, clip }
+    // Every vertex lies in the mesh's box, whose corners project, and w'
+    // is affine in (x, y): it is positive at every vertex too.
+    let d = p.project(Point::new(v[0], v[1])).unwrap_or(Point::zero());
+    MeshVertex { device: [d.x, d.y], color, clip }
   }));
   let start = out.mesh_indices.len();
   out.mesh_indices.extend(mesh.indices.iter().map(|i| i + base));
-  out.push_mesh(start, mesh.indices.len(), texture, state.rounded, texel, gradient);
+  out.push_mesh(start, mesh.indices.len(), texture, state.rounded, texel, gradient, projective);
   out.meshes += 1;
   out.mesh_clips.push(clip);
 }
 
-// The map from a device pixel to `image`'s normalized texel for a draw
-// whose op space reaches device pixels through `m`: device to the op's
-// space (the inverse of `m`), then to texels (the image's own map), then
-// over the texture's size. None when `m` is singular.
-fn image_texel(image: &super::ops::Image, m: &Transform2D<f32>) -> Option<Affine> {
-  let from_device = affine::invert(affine::of_2d(m))?;
+// The rows from a homogeneous device pixel to `image`'s normalized texel
+// for a draw whose op space reaches device pixels through the map with the
+// inverse rows `num` and `w`: device to the op's space, then to texels
+// (the image's own map), then over the texture's size.
+fn image_texel(image: &super::ops::Image, num: Affine, w: [f32; 3]) -> Affine {
   // A texture's size is never zero (see `push_texture`).
   let size = image.texture.size();
   let normalize = [[1.0 / size.width as f32, 0.0, 0.0], [0.0, 1.0 / size.height as f32, 0.0]];
-  Some(affine::compose(normalize, affine::compose(affine::of_2d(&image.to_texel), from_device)))
+  // The normalization has no offset, so it composes after the projective
+  // rows as an affine map.
+  affine::compose(normalize, compose_projective(affine::of_2d(&image.to_texel), num, w))
 }

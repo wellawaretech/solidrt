@@ -5,17 +5,21 @@
 //! executor owns, one over the instance buffer and one over the mesh
 //! vertex and index buffers; and the draw that uploads a list's instances
 //! and meshes (`super::walk`) and issues them, a batch through the program
-//! its kind needs. A gradient evaluates per fragment in device space, from
-//! `vDevice` through the rows the walk composed (`walk::GradientDraw`),
-//! with one ramp texture rewritten per gradient batch. Raster thread only,
-//! with the context current.
+//! its kind needs. A quad is placed in homogeneous coordinates under its
+//! instance's projective row, so every smooth varying interpolates
+//! perspective-correct. A gradient evaluates per fragment in the quad's
+//! local space, from `vOp` through the rows on its instance
+//! (`walk::GradientInstance`), its ramp one row of the ramp atlas, whose
+//! rows the walk assigns (`super::ramps`) and the draw uploads before any
+//! batch samples them. Raster thread only, with the context current.
 
+use super::ramps::{RampTable, RAMP_ROWS};
 use super::record::DisplayList;
-use super::walk::{self, Batch, BatchProgram, GradientDraw, Instance, MeshVertex, PaintDraw, Walked};
+use super::walk::{self, Batch, BatchProgram, Instance, MeshVertex, PaintDraw, Walked};
 use super::Freed;
 use crate::contract::{DrawReport, Target};
 use crate::{CoveragePolicy, RAMP_WIDTH};
-use crate::{TextureSampling, TextureWrap, TileMode, UniformInfo, UniformKind};
+use crate::{TextureSampling, TextureWrap, UniformInfo, UniformKind};
 use euclid::default::{Box2D, Point2D};
 use glow::HasContext;
 use std::collections::HashMap;
@@ -37,10 +41,13 @@ const ATTR_CLIP: u32 = 5;
 const ATTR_RADII: u32 = 6;
 const ATTR_RCLIP: u32 = 7;
 const ATTR_RCLIP_RADII: u32 = 8;
+const ATTR_PERSP: u32 = 9;
+const ATTR_GRAD_X: u32 = 10;
+const ATTR_GRAD_Y: u32 = 11;
 
-// The nine instanced attributes: location and byte offset in `Instance`.
+// The twelve instanced attributes: location and byte offset in `Instance`.
 // Enabled with divisor 1 once in `new`; re-pointed per batch in `draw`.
-const ATTRIBUTES: [(u32, usize); 9] = [
+const ATTRIBUTES: [(u32, usize); 12] = [
   (ATTR_RECT, std::mem::offset_of!(Instance, rect)),
   (ATTR_LINEAR, std::mem::offset_of!(Instance, linear)),
   (ATTR_OFFSET, std::mem::offset_of!(Instance, offset_kind_stroke)),
@@ -50,6 +57,9 @@ const ATTRIBUTES: [(u32, usize); 9] = [
   (ATTR_RADII, std::mem::offset_of!(Instance, radii)),
   (ATTR_RCLIP, std::mem::offset_of!(Instance, rclip)),
   (ATTR_RCLIP_RADII, std::mem::offset_of!(Instance, rclip_radii)),
+  (ATTR_PERSP, std::mem::offset_of!(Instance, persp)),
+  (ATTR_GRAD_X, std::mem::offset_of!(Instance, grad_x)),
+  (ATTR_GRAD_Y, std::mem::offset_of!(Instance, grad_y)),
 ];
 
 // The mesh vertex attributes: location, byte offset in `MeshVertex` and
@@ -64,7 +74,7 @@ const MESH_ATTRIBUTES: [(u32, usize, i32); 3] = [
 /// The texture unit `uTexture` samples: a batch's texture, an image or a
 /// glyph run's atlas.
 const TEXTURE_UNIT: u32 = 0;
-/// The texture unit `uRamp` samples: a gradient draw's ramp.
+/// The texture unit `uRamp` samples: the ramp atlas.
 const RAMP_UNIT: u32 = 1;
 /// Bytes per rgba8 ramp texel.
 const BYTES_PER_RAMP_TEXEL: usize = 4;
@@ -72,17 +82,6 @@ const BYTES_PER_RAMP_TEXEL: usize = 4;
 /// 3.0's guaranteed minimum of fragment texture units. An input past it is
 /// skipped.
 const MAX_PAINT_INPUTS: u32 = 16;
-
-/// `uGradient` for a glyph run without a gradient; a gradient's is its
-/// `GradientKind` discriminant. GRADIENT_COMMON's `const int NO_GRADIENT`
-/// must match it.
-const NO_GRADIENT: i32 = 0;
-// `uTile` per tile mode. The `const int TILE_*` declarations in
-// GRADIENT_COMMON must match them.
-const TILE_CLAMP: i32 = 0;
-const TILE_REPEAT: i32 = 1;
-const TILE_MIRROR: i32 = 2;
-const TILE_DECAL: i32 = 3;
 
 // The first lines of every shader source here.
 pub(crate) const SOURCE_HEADER: &str = "#version 300 es\nprecision highp float;\n";
@@ -111,22 +110,33 @@ const TEXTURED_DEFINE: &str = "#define TEXTURED\n";
 // adds `aRadii` and all draw from the one VAO; the linker drops the outputs
 // a fragment stage never declares. The layout(location = N) literals must
 // match the ATTR_* constants.
+//
+// The quad is placed in homogeneous coordinates, its corner's (x', y', w')
+// under the instance's map with no divide: the rasterizer divides, and
+// every smooth varying (vUv, vOp, the shape program's vLocal) then
+// interpolates perspective-correct. A 2D map's w' is 1, which is the
+// placement of before.
 const VERTEX_COMMON: &str = r"
 layout(location = 0) in vec4 aRect;      // x, y, w, h in local space
 layout(location = 1) in vec4 aLinear;    // m11, m12, m21, m22
-layout(location = 2) in vec4 aOffset;    // m31, m32 (the translation), kind, stroke width
+layout(location = 2) in vec4 aOffset;    // m41, m42 (the translation), kind, stroke width
 layout(location = 3) in vec4 aColor;     // premultiplied; straight alpha for a glyph
-layout(location = 4) in vec4 aTex;       // u0, v0, u1, v1 for a textured instance; cap, length for a line
+layout(location = 4) in vec4 aTex;       // u0, v0, u1, v1 for a glyph; cap, length for a line
 layout(location = 5) in vec4 aClip;      // x0, y0, x1, y1 in device pixels
 layout(location = 7) in vec4 aRClip;     // the rounded clip in device pixels: x0, y0, x1, y1
 layout(location = 8) in vec4 aRClipRadii; // its corner radii in device pixels; all zero: none
+layout(location = 9) in vec4 aPersp;     // the projective row: w' = x * p1 + y * p2 + p3
+layout(location = 10) in vec4 aGradX;    // a gradient's x row and ramp row; a texel u row
+layout(location = 11) in vec4 aGradY;    // its y row and packed kind and tile; a texel v row
 uniform vec2 uSize;                      // the target in device pixels
-out vec2 vDevice;                        // device pixels, y down
 out vec2 vUv;
+out vec2 vOp;                            // the point in the quad's local space
 flat out vec4 vColor;
 flat out vec4 vClip;
 flat out vec4 vRClip;
 flat out vec4 vRClipRadii;
+flat out vec4 vGradX;
+flat out vec4 vGradY;
 // The vertex's corner of the quad, 0 or 1 per axis.
 vec2 quadCorner() {
   // One quad per instance, so this is gl_VertexID; the modulo keeps the
@@ -141,18 +151,22 @@ vec2 quadCorner() {
 // both fragment stages read. Returns the point in the op's space.
 vec2 place(vec2 c) {
   vec2 p = aRect.xy + c * aRect.zw;
-  // euclid's row-vector convention: device = p * M, M = [m11 m12; m21 m22] + t.
-  vec2 device = vec2(
+  // euclid's row-vector convention: (x', y', w') = (p, 1) * M.
+  vec3 h = vec3(
     p.x * aLinear.x + p.y * aLinear.z + aOffset.x,
-    p.x * aLinear.y + p.y * aLinear.w + aOffset.y);
-  // Logical (0, 0) is the top of the target: clip y = +1.
-  gl_Position = vec4(device.x / uSize.x * 2.0 - 1.0, 1.0 - device.y / uSize.y * 2.0, 0.0, 1.0);
-  vDevice = device;
+    p.x * aLinear.y + p.y * aLinear.w + aOffset.y,
+    p.x * aPersp.x + p.y * aPersp.y + aPersp.z);
+  // Logical (0, 0) is the top of the target: clip y = +1. Device (x, y)
+  // to clip space, both sides times w'.
+  gl_Position = vec4(h.x / uSize.x * 2.0 - h.z, h.z - h.y / uSize.y * 2.0, 0.0, h.z);
   vUv = aTex.xy + c * (aTex.zw - aTex.xy);
+  vOp = p;
   vColor = aColor;
   vClip = aClip;
   vRClip = aRClip;
   vRClipRadii = aRClipRadii;
+  vGradX = aGradX;
+  vGradY = aGradY;
   return p;
 }
 ";
@@ -164,9 +178,19 @@ out vec2 vLocal;                         // position within the shape, local pix
 flat out vec4 vShape;                    // w, h, kind, stroke width
 flat out vec4 vParams;                   // the line kind's cap and length
 flat out vec4 vRadii;
+// The textured flag, as the instance adds it to the kind (walk.rs
+// KIND_TEXTURED): it must match.
+const float KIND_TEXTURED = 8.0;
 void main() {
   vec2 c = quadCorner();
-  place(c);
+  vec2 p = place(c);
+  // A textured instance's uv is its texel rows evaluated at the corner: an
+  // affine function of the local point, so its interpolation over the quad
+  // is exact under any image map, a rotated one among them.
+  if (aOffset.z >= KIND_TEXTURED) {
+    vec3 p3 = vec3(p, 1.0);
+    vUv = vec2(dot(aGradX.xyz, p3), dot(aGradY.xyz, p3));
+  }
   vLocal = c * aRect.zw;
   vShape = vec4(aRect.zw, aOffset.zw);
   vParams = aTex;
@@ -176,7 +200,7 @@ void main() {
 
 // The vertex stage of the fill programs and of the glyph program, after
 // SOURCE_HEADER and VERTEX_COMMON: the quad placed, nothing more (a
-// gradient reads `vDevice`).
+// gradient reads `vOp`).
 const FILL_VERTEX: &str = r"
 void main() {
   place(quadCorner());
@@ -208,7 +232,8 @@ const PAINT_MAIN: &str = "solidrt_paint_main";
 pub(crate) const PAINT_FRAGMENT_EPILOGUE: &str = r"
 void main() {
   solidrt_paint_main();
-  float inside = float(all(greaterThanEqual(vDevice, vClip.xy)) && all(lessThan(vDevice, vClip.zw)));
+  vec2 d = device();
+  float inside = float(all(greaterThanEqual(d, vClip.xy)) && all(lessThan(d, vClip.zw)));
   fragColor *= inside * roundedClip();
 }
 ";
@@ -216,14 +241,20 @@ void main() {
 // The fragment stage the shape and glyph programs (and the fill program's
 // gradient variant) share, "the common fragment parts" below, three
 // sources concatenated in this order: FRAGMENT_INPUTS, the inputs
-// VERTEX_COMMON writes; FRAGMENT_MATH, the analytic coverage of a distance
-// and the rounded-box distance, pure functions the mesh program uses on
-// its own inputs; and FRAGMENT_ROUNDED_CLIP, the rounded clip over the
+// VERTEX_COMMON writes and the fragment's device position; FRAGMENT_MATH,
+// the analytic coverage of a distance and the rounded-box distance, pure
+// functions the mesh program uses on its own inputs; and FRAGMENT_ROUNDED_CLIP, the rounded clip over the
 // inputs. One text, so a glyph under a rounded clip fades exactly as a
 // shape does. The parts split at line ends: concatenated they are the one
 // text they were.
 const FRAGMENT_INPUTS: &str = r"
-in vec2 vDevice;
+uniform vec2 uSize;       // the target in device pixels, the vertex stage's
+// The fragment's device position, y down. At a pixel center it equals the
+// device position the vertex stage once interpolated, exactly: gl_FragCoord
+// is that center. It is right under perspective too, where a linearly
+// interpolated device position would not be (GLSL ES 3.00 has no
+// noperspective qualifier).
+vec2 device() { return vec2(gl_FragCoord.x, uSize.y - gl_FragCoord.y); }
 in vec2 vUv;
 flat in vec4 vColor;
 flat in vec4 vClip;
@@ -272,43 +303,64 @@ float roundedClip() {
   if (!any(greaterThan(vRClipRadii, vec4(0.0)))) return 1.0;
   vec2 center = (vRClip.xy + vRClip.zw) * 0.5;
   vec2 half_size = (vRClip.zw - vRClip.xy) * 0.5;
-  return coverage(roundedBox(vDevice - center, half_size, vRClipRadii));
+  return coverage(roundedBox(device() - center, half_size, vRClipRadii));
 }
 ";
 
-// A gradient's evaluation, after the common fragment parts in the glyph program and
-// the gradient variants: the batch's ramp and rows (walk.rs GradientDraw,
-// set by `gradient_state`) and the color at a device pixel. The gradient
-// kinds are GradientKind's discriminants (exec.rs NO_GRADIENT for none),
-// the tile modes exec.rs TILE_*: they must match.
+// The gradient inputs of a quad program, after the common fragment parts
+// in the glyph program and the gradient variants, before GRADIENT_COMMON:
+// the quad's local point and its instance's gradient (walk.rs
+// GradientInstance, the rows over the quad's local space).
+const GRADIENT_INPUTS: &str = r"
+in vec2 vOp;
+flat in vec4 vGradX;      // the x row over (x, y, 1) of the local space, and the ramp row
+flat in vec4 vGradY;      // the y row, and kind * GRADIENT_KIND_STRIDE + tile; 0: none
+";
+
+// A gradient's evaluation, after GRADIENT_INPUTS (or the mesh program's
+// MESH_GRADIENT_UNIFORMS, which name the same two vectors): the color at a
+// point, from the ramp atlas's row. The kinds are GradientKind's
+// discriminants, the stride walk.rs GRADIENT_KIND_STRIDE and the tile
+// modes walk.rs TILE_*: they must match.
 const GRADIENT_COMMON: &str = r"
 uniform sampler2D uRamp;
-uniform int uGradient;   // GradientKind's discriminant; NO_GRADIENT for a solid glyph run
-uniform vec3 uGradientX; // device pixel (x, y, 1) to the parameter space's x'
-uniform vec3 uGradientY; // and y'
-uniform int uTile;
-const int NO_GRADIENT = 0;
+uniform float uRampRows;  // the ramp atlas's height in rows
+const int GRADIENT_KIND_STRIDE = 4;
 const int GRADIENT_LINEAR = 1;
 const int TILE_REPEAT = 1;
 const int TILE_MIRROR = 2;
 const int TILE_DECAL = 3;
-// The gradient's straight-alpha color at the device pixel `device`: the
-// rows map it to the parameter space, the tile mode folds the parameter,
-// the decal mode's outside is alpha 0.
-vec4 gradientAt(vec2 device) {
-  vec3 p3 = vec3(device, 1.0);
-  vec2 q = vec2(dot(uGradientX, p3), dot(uGradientY, p3));
-  float t = uGradient == GRADIENT_LINEAR ? q.x : length(q);
+// The packed kind and tile; 0 for no gradient. It arrives as a flat
+// float; rounding reads it robustly.
+int gradientPacked() {
+  return int(vGradY.w + 0.5);
+}
+// The gradient's kind: 0 for none.
+int gradientKind() {
+  return gradientPacked() / GRADIENT_KIND_STRIDE;
+}
+// The gradient's straight-alpha color at the parameter-space point q: the
+// tile mode folds the parameter, the decal mode's outside is alpha 0.
+vec4 gradientParam(vec2 q) {
+  int kind = gradientKind();
+  int tile = gradientPacked() - kind * GRADIENT_KIND_STRIDE;
+  float t = kind == GRADIENT_LINEAR ? q.x : length(q);
   float inside = 1.0;
-  if (uTile == TILE_REPEAT) {
+  if (tile == TILE_REPEAT) {
     t = fract(t);
-  } else if (uTile == TILE_MIRROR) {
+  } else if (tile == TILE_MIRROR) {
     t = 1.0 - abs(1.0 - mod(t, 2.0));
-  } else if (uTile == TILE_DECAL) {
+  } else if (tile == TILE_DECAL) {
     inside = (t < 0.0 || t > 1.0) ? 0.0 : 1.0;
   }
-  vec4 g = texture(uRamp, vec2(clamp(t, 0.0, 1.0), 0.5));
+  // The row's texel centers, so the bilinear lookup reads that row alone.
+  vec4 g = texture(uRamp, vec2(clamp(t, 0.0, 1.0), (vGradX.w + 0.5) / uRampRows));
   return vec4(g.rgb, g.a * inside);
+}
+// The gradient's straight-alpha color at the point p the rows map.
+vec4 gradientAt(vec2 p) {
+  vec3 p3 = vec3(p, 1.0);
+  return gradientParam(vec2(dot(vGradX.xyz, p3), dot(vGradY.xyz, p3)));
 }
 ";
 
@@ -339,10 +391,11 @@ vec4 gradientAt(vec2 device) {
 // coverage into the premultiplied texel. Glyphs never reach this program
 // (GLYPH_FRAGMENT draws them). The gradient variant (GRADIENT defined)
 // multiplies its coverage into the gradient's color at the fragment's
-// device pixel, premultiplied; it draws no textured instance.
+// local point, premultiplied; it draws no textured instance.
 //
 // After SOURCE_HEADER and the common fragment parts; the gradient variant after
-// SOURCE_HEADER, GRADIENT_DEFINE, the common fragment parts and GRADIENT_COMMON.
+// SOURCE_HEADER, GRADIENT_DEFINE, the common fragment parts, GRADIENT_INPUTS
+// and GRADIENT_COMMON.
 const SHAPE_FRAGMENT: &str = r"
 uniform sampler2D uTexture;
 in vec2 vLocal;
@@ -375,7 +428,8 @@ void main() {
   // The clip, per fragment, so a clip change never ends a batch. Under
   // MSAA the test runs per fragment, not per sample: a clip edge is hard
   // where a shape edge is antialiased. Acceptable for stage 1.
-  if (any(lessThan(vDevice, vClip.xy)) || any(greaterThanEqual(vDevice, vClip.zw))) discard;
+  vec2 dp = device();
+  if (any(lessThan(dp, vClip.xy)) || any(greaterThanEqual(dp, vClip.zw))) discard;
   // The kind arrives as a flat float; rounding reads it robustly. The
   // textured flag is added on top of the shape kind.
   int kind = int(vShape.z + 0.5);
@@ -449,7 +503,7 @@ void main() {
 #ifdef GRADIENT
   // The ramp's straight-alpha color, premultiplied; vColor is the op's
   // alpha in every channel, so the multiply fades it as a whole.
-  vec4 g = gradientAt(vDevice);
+  vec4 g = gradientAt(vOp);
   vec4 color = vec4(g.rgb * g.a, g.a) * vColor;
 #else
   // Premultiplied texels; vColor is then the op's alpha in every channel,
@@ -468,16 +522,19 @@ void main() {
 // discard and the derivatives in `footprint`, and a full-window background
 // pays all of that for none of it. It clips by multiplying, never discards,
 // and reads no derivative. The gradient variant (GRADIENT defined) takes
-// its color from the gradient at the fragment's device pixel,
+// its color from the gradient at the fragment's local point,
 // premultiplied and faded by vColor, the op's alpha in all four channels;
 // the common fragment parts then declare the inputs, and their derivative
-// functions are never called.
+// functions are never called. The solid one declares its own few inputs
+// and the same `device()` (FRAGMENT_INPUTS says why it is right).
 //
 // After SOURCE_HEADER only; the gradient variant after SOURCE_HEADER,
-// GRADIENT_DEFINE, the common fragment parts and GRADIENT_COMMON.
+// GRADIENT_DEFINE, the common fragment parts, GRADIENT_INPUTS and
+// GRADIENT_COMMON.
 const FILL_FRAGMENT: &str = r"
 #ifndef GRADIENT
-in vec2 vDevice;
+uniform vec2 uSize;
+vec2 device() { return vec2(gl_FragCoord.x, uSize.y - gl_FragCoord.y); }
 flat in vec4 vColor;
 flat in vec4 vClip;
 out vec4 fragColor;
@@ -486,9 +543,10 @@ void main() {
   // The clip box as a factor, not a discard, as in GLYPH_FRAGMENT: a
   // fragment outside writes zero, which premultiplied source-over leaves
   // the target unchanged by.
-  float inside = float(all(greaterThanEqual(vDevice, vClip.xy)) && all(lessThan(vDevice, vClip.zw)));
+  vec2 d = device();
+  float inside = float(all(greaterThanEqual(d, vClip.xy)) && all(lessThan(d, vClip.zw)));
 #ifdef GRADIENT
-  vec4 g = gradientAt(vDevice);
+  vec4 g = gradientAt(vOp);
   fragColor = vec4(g.rgb * g.a, g.a) * vColor * inside;
 #else
   fragColor = vColor * inside;
@@ -498,17 +556,17 @@ void main() {
 
 // A glyph has no analytic coverage: its quad is axis-aligned at whole
 // pixels and the atlas's red channel carries the coverage. Its color is
-// straight alpha, the quad's own or the gradient's at the fragment's
-// device pixel (`gradientAt`, through the rows the walk composed into
-// device space), and the batch's coverage policy
-// turns the coverage into color before the fragment premultiplies, as
-// `draw_glyphs` asks (contract.rs) and `CoverageMode` defines each mode
-// (glyphs.rs). A program of its own, so a
-// glyph fragment carries none of the shape program's varyings or kind
-// branches: it clips by multiplying, never discards, and reads the
-// derivatives only under a rounded clip.
+// straight alpha, the quad's own or, when its instance carries a gradient
+// (a non-zero kind), the gradient's at the fragment's local point
+// (`gradientAt`), and the batch's coverage policy turns the coverage into
+// color before the fragment premultiplies, as `draw_glyphs` asks
+// (contract.rs) and `CoverageMode` defines each mode (glyphs.rs). A
+// program of its own, so a glyph fragment carries none of the shape
+// program's varyings or kind branches: it clips by multiplying, never
+// discards, and reads the derivatives only under a rounded clip.
 //
-// After SOURCE_HEADER, the common fragment parts and GRADIENT_COMMON.
+// After SOURCE_HEADER, the common fragment parts, GRADIENT_INPUTS and
+// GRADIENT_COMMON.
 const GLYPH_FRAGMENT: &str = r"
 uniform sampler2D uTexture; // the atlas
 uniform int uMode;
@@ -538,8 +596,8 @@ const vec3 DWRITE_INTENSITY = vec3(0.25, 0.5, 0.25);
 // multiplied in, as the clip fades a text layer's texels.
 vec4 glyph(float clip) {
   vec4 color = vColor;
-  if (uGradient != NO_GRADIENT) {
-    vec4 g = gradientAt(vDevice);
+  if (gradientKind() != 0) {
+    vec4 g = gradientAt(vOp);
     color = vec4(g.rgb, g.a * vColor.a);
   }
   float c = texture(uTexture, vUv).r;
@@ -565,7 +623,8 @@ void main() {
   // The clip box as a factor, not a discard: a discard anywhere in a
   // program costs every fragment its early kill. A fragment outside
   // writes zero, which source-over leaves the target unchanged by.
-  float inside = float(all(greaterThanEqual(vDevice, vClip.xy)) && all(lessThan(vDevice, vClip.zw)));
+  vec2 d = device();
+  float inside = float(all(greaterThanEqual(d, vClip.xy)) && all(lessThan(d, vClip.zw)));
   fragColor = glyph(inside * roundedClip());
 }
 ";
@@ -580,16 +639,26 @@ layout(location = 0) in vec2 aPos;    // device pixels, y down
 layout(location = 1) in vec4 aColor;  // premultiplied
 layout(location = 2) in vec4 aClip;   // x0, y0, x1, y1 in device pixels
 uniform vec2 uSize;                   // the target in device pixels
-out vec2 vDevice;
 flat out vec4 vColor;
 flat out vec4 vClip;
 void main() {
   // Logical (0, 0) is the top of the target: clip y = +1.
   gl_Position = vec4(aPos.x / uSize.x * 2.0 - 1.0, 1.0 - aPos.y / uSize.y * 2.0, 0.0, 1.0);
-  vDevice = aPos;
   vColor = aColor;
   vClip = aClip;
 }
+";
+
+// The mesh program's gradient, after FRAGMENT_MATH in its gradient variant
+// and before GRADIENT_COMMON: the batch's gradient as uniforms under the
+// names GRADIENT_COMMON reads, its rows over homogeneous device pixels
+// (walk.rs Batch `gradient` and `projective`).
+const MESH_GRADIENT_UNIFORMS: &str = r"
+uniform vec4 uGradX;      // the x row over device (x, y, 1), and the ramp row
+uniform vec4 uGradY;      // the y row, and the packed kind and tile
+uniform vec3 uGradW;      // the projective row the rows' values divide by
+#define vGradX uGradX
+#define vGradY uGradY
 ";
 
 // A path mesh's fragment stage: the fill program's, a triangle's edges are
@@ -599,14 +668,18 @@ void main() {
 // derivative. The gradient variant (GRADIENT defined) takes the color from
 // the gradient at the fragment's device pixel, the textured variant
 // (TEXTURED defined) from the batch's texture at the texel the device
-// pixel maps to; both premultiplied and faded by vColor, the op's alpha in
-// all four channels.
+// pixel maps to, both through rows over (x, y, 1) divided by the batch's
+// projective row (exact under perspective, [0, 0, 1] under a 2D map);
+// both premultiplied and faded by vColor, the op's alpha in all four
+// channels. The device position is `device()`, as in FRAGMENT_INPUTS.
 //
 // After SOURCE_HEADER and FRAGMENT_MATH; the gradient variant after
-// SOURCE_HEADER, GRADIENT_DEFINE, FRAGMENT_MATH and GRADIENT_COMMON; the
-// textured variant after SOURCE_HEADER, TEXTURED_DEFINE and FRAGMENT_MATH.
+// SOURCE_HEADER, GRADIENT_DEFINE, FRAGMENT_MATH, MESH_GRADIENT_UNIFORMS and
+// GRADIENT_COMMON; the textured variant after SOURCE_HEADER,
+// TEXTURED_DEFINE and FRAGMENT_MATH.
 const MESH_FRAGMENT: &str = r"
-in vec2 vDevice;
+uniform vec2 uSize;       // the target in device pixels, the vertex stage's
+vec2 device() { return vec2(gl_FragCoord.x, uSize.y - gl_FragCoord.y); }
 flat in vec4 vColor;
 flat in vec4 vClip;
 uniform vec4 uRClip;      // the batch's rounded clip in device pixels: x0, y0, x1, y1
@@ -616,6 +689,7 @@ out vec4 fragColor;
 uniform sampler2D uTexture;
 uniform vec3 uTexelX;     // device pixel (x, y, 1) to the normalized texel's u
 uniform vec3 uTexelY;     // and v
+uniform vec3 uTexelW;     // the projective row both divide by
 #endif
 // The rounded clip's coverage at this fragment, as the quads' roundedClip()
 // computes it, over the batch's uniforms. The radii are uniform, so every
@@ -624,16 +698,19 @@ float roundedClip() {
   if (!any(greaterThan(uRClipRadii, vec4(0.0)))) return 1.0;
   vec2 center = (uRClip.xy + uRClip.zw) * 0.5;
   vec2 half_size = (uRClip.zw - uRClip.xy) * 0.5;
-  return coverage(roundedBox(vDevice - center, half_size, uRClipRadii));
+  return coverage(roundedBox(device() - center, half_size, uRClipRadii));
 }
 void main() {
-  float inside = float(all(greaterThanEqual(vDevice, vClip.xy)) && all(lessThan(vDevice, vClip.zw)));
+  vec2 d = device();
+  float inside = float(all(greaterThanEqual(d, vClip.xy)) && all(lessThan(d, vClip.zw)));
+  vec3 p3 = vec3(d, 1.0);
 #ifdef GRADIENT
-  vec4 g = gradientAt(vDevice);
+  vec2 q = vec2(dot(uGradX.xyz, p3), dot(uGradY.xyz, p3)) / dot(uGradW, p3);
+  vec4 g = gradientParam(q);
   vec4 color = vec4(g.rgb * g.a, g.a) * vColor;
 #elif defined(TEXTURED)
-  vec3 p3 = vec3(vDevice, 1.0);
-  vec4 color = texture(uTexture, vec2(dot(uTexelX, p3), dot(uTexelY, p3))) * vColor;
+  vec2 uv = vec2(dot(uTexelX, p3), dot(uTexelY, p3)) / dot(uTexelW, p3);
+  vec4 color = texture(uTexture, uv) * vColor;
 #else
   vec4 color = vColor;
 #endif
@@ -743,22 +820,22 @@ pub(super) struct Executor {
   samplers: HashMap<(TextureSampling, TextureWrap), glow::Sampler>,
   /// The glyph runs' policy uniforms, set per glyph batch.
   glyph_uniforms: GlyphUniforms,
-  /// The gradient uniforms of the three programs that draw a gradient,
-  /// set per gradient batch (and `uGradient` per solid glyph batch).
-  fill_gradient_uniforms: GradientUniforms,
-  shape_gradient_uniforms: GradientUniforms,
-  glyph_gradient_uniforms: GradientUniforms,
-  mesh_gradient_uniforms: GradientUniforms,
-  /// The gradient ramp (`RAMP_WIDTH` x 1 rgba8, straight-alpha sRGB),
-  /// rewritten per gradient batch and bound on `RAMP_UNIT` for every draw
-  /// with a glyph or a gradient batch; a solid batch never samples it.
+  /// The ramp atlas (`RAMP_WIDTH` x `RAMP_ROWS` rgba8, straight-alpha
+  /// sRGB, a gradient's ramp per row), its rows uploaded as `ramps`
+  /// assigns them, before the batches of the draw that assigned them, and
+  /// bound on `RAMP_UNIT` for every draw with a glyph or a gradient batch;
+  /// a solid batch never samples it.
   ramp: glow::Texture,
+  /// Which gradient holds which row of `ramp`, kept across draws.
+  ramps: RampTable,
 }
 
-/// A linked program and its `uSize`, the target in device pixels.
+/// A linked program, its `uSize` (the target in device pixels) and, on
+/// the programs that sample a gradient, its `uRampRows`.
 struct Program {
   program: glow::Program,
   size: glow::UniformLocation,
+  ramp_rows: Option<glow::UniformLocation>,
 }
 
 /// A mesh program and the uniforms a mesh batch sets on it.
@@ -767,28 +844,68 @@ struct MeshProgram {
   uniforms: MeshUniforms,
 }
 
-/// The per-batch uniforms of a mesh program: the rounded clip pair, and
-/// the device-to-texel rows on the textured variant.
+/// The per-batch uniforms of a mesh program: the rounded clip pair, the
+/// device-to-texel rows on the textured variant and the gradient on the
+/// gradient variant.
 struct MeshUniforms {
   rclip: glow::UniformLocation,
   rclip_radii: glow::UniformLocation,
-  /// `uTexelX` and `uTexelY`; None on the variants that sample nothing.
-  texel: Option<(glow::UniformLocation, glow::UniformLocation)>,
+  /// `uTexelX`, `uTexelY` and `uTexelW`; None on the variants that sample
+  /// nothing.
+  texel: Option<RowUniforms>,
+  /// `uGradX`, `uGradY` and `uGradW`; None on the variants without a
+  /// gradient.
+  gradient: Option<RowUniforms>,
+}
+
+/// Two rows over homogeneous device pixels and the projective row they
+/// divide by, as a mesh batch sets them (MESH_FRAGMENT,
+/// MESH_GRADIENT_UNIFORMS).
+struct RowUniforms {
+  x: glow::UniformLocation,
+  y: glow::UniformLocation,
+  w: glow::UniformLocation,
+}
+
+impl RowUniforms {
+  // The uniforms `{prefix}X`, `{prefix}Y` and `{prefix}W` of `program`
+  // (`label` names it).
+  unsafe fn of(gl: &glow::Context, p: glow::Program, label: &str, prefix: &str) -> Result<RowUniforms, String> {
+    Ok(RowUniforms {
+      x: uniform(gl, p, label, &format!("{prefix}X"))?,
+      y: uniform(gl, p, label, &format!("{prefix}Y"))?,
+      w: uniform(gl, p, label, &format!("{prefix}W"))?,
+    })
+  }
+}
+
+/// What a mesh program variant reads beside the solid one's uniforms.
+#[derive(Clone, Copy, PartialEq)]
+enum MeshVariant {
+  Solid,
+  Gradient,
+  Textured,
 }
 
 impl MeshProgram {
   // The mesh program `label` from the fragment parts `fragment` (the
-  // vertex stage is MESH_VERTEX), linked, with its uniforms; `textured`
-  // when it reads the texel rows.
-  unsafe fn link(gl: &glow::Context, label: &str, fragment: &[&str], textured: bool) -> Result<MeshProgram, String> {
+  // vertex stage is MESH_VERTEX), linked, with the uniforms its `variant`
+  // reads.
+  unsafe fn link(
+    gl: &glow::Context,
+    label: &str,
+    fragment: &[&str],
+    variant: MeshVariant,
+  ) -> Result<MeshProgram, String> {
     let program = Program::link(gl, label, &[SOURCE_HEADER, MESH_VERTEX], fragment)?;
     let p = program.program;
-    let texel =
-      if textured { Some((uniform(gl, p, label, "uTexelX")?, uniform(gl, p, label, "uTexelY")?)) } else { None };
+    let texel = if variant == MeshVariant::Textured { Some(RowUniforms::of(gl, p, label, "uTexel")?) } else { None };
+    let gradient = if variant == MeshVariant::Gradient { Some(RowUniforms::of(gl, p, label, "uGrad")?) } else { None };
     let uniforms = MeshUniforms {
       rclip: uniform(gl, p, label, "uRClip")?,
       rclip_radii: uniform(gl, p, label, "uRClipRadii")?,
       texel,
+      gradient,
     };
     Ok(MeshProgram { program, uniforms })
   }
@@ -801,28 +918,6 @@ struct GlyphUniforms {
   gamma: glow::UniformLocation,
   contrast: glow::UniformLocation,
   gamma_ratios: glow::UniformLocation,
-}
-
-/// The uniforms a gradient batch sets on its program (GRADIENT_COMMON):
-/// the kind (or NO_GRADIENT), the rows and the tile mode.
-struct GradientUniforms {
-  gradient: glow::UniformLocation,
-  gradient_x: glow::UniformLocation,
-  gradient_y: glow::UniformLocation,
-  tile: glow::UniformLocation,
-}
-
-impl GradientUniforms {
-  // The gradient uniforms of `program` (`label` names it).
-  unsafe fn of(gl: &glow::Context, program: &Program, label: &str) -> Result<GradientUniforms, String> {
-    let p = program.program;
-    Ok(GradientUniforms {
-      gradient: uniform(gl, p, label, "uGradient")?,
-      gradient_x: uniform(gl, p, label, "uGradientX")?,
-      gradient_y: uniform(gl, p, label, "uGradientY")?,
-      tile: uniform(gl, p, label, "uTile")?,
-    })
-  }
 }
 
 impl Executor {
@@ -848,6 +943,7 @@ impl Executor {
         FRAGMENT_INPUTS,
         FRAGMENT_MATH,
         FRAGMENT_ROUNDED_CLIP,
+        GRADIENT_INPUTS,
         GRADIENT_COMMON,
         FILL_FRAGMENT,
       ],
@@ -868,6 +964,7 @@ impl Executor {
         FRAGMENT_INPUTS,
         FRAGMENT_MATH,
         FRAGMENT_ROUNDED_CLIP,
+        GRADIENT_INPUTS,
         GRADIENT_COMMON,
         SHAPE_FRAGMENT,
       ],
@@ -876,17 +973,29 @@ impl Executor {
       &gl,
       "glyph",
       &[SOURCE_HEADER, VERTEX_COMMON, FILL_VERTEX],
-      &[SOURCE_HEADER, FRAGMENT_INPUTS, FRAGMENT_MATH, FRAGMENT_ROUNDED_CLIP, GRADIENT_COMMON, GLYPH_FRAGMENT],
+      &[
+        SOURCE_HEADER,
+        FRAGMENT_INPUTS,
+        FRAGMENT_MATH,
+        FRAGMENT_ROUNDED_CLIP,
+        GRADIENT_INPUTS,
+        GRADIENT_COMMON,
+        GLYPH_FRAGMENT,
+      ],
     )?;
-    let mesh = MeshProgram::link(&gl, "mesh", &[SOURCE_HEADER, FRAGMENT_MATH, MESH_FRAGMENT], false)?;
+    let mesh = MeshProgram::link(&gl, "mesh", &[SOURCE_HEADER, FRAGMENT_MATH, MESH_FRAGMENT], MeshVariant::Solid)?;
     let mesh_gradient = MeshProgram::link(
       &gl,
       "mesh gradient",
-      &[SOURCE_HEADER, GRADIENT_DEFINE, FRAGMENT_MATH, GRADIENT_COMMON, MESH_FRAGMENT],
-      false,
+      &[SOURCE_HEADER, GRADIENT_DEFINE, FRAGMENT_MATH, MESH_GRADIENT_UNIFORMS, GRADIENT_COMMON, MESH_FRAGMENT],
+      MeshVariant::Gradient,
     )?;
-    let mesh_textured =
-      MeshProgram::link(&gl, "mesh textured", &[SOURCE_HEADER, TEXTURED_DEFINE, FRAGMENT_MATH, MESH_FRAGMENT], true)?;
+    let mesh_textured = MeshProgram::link(
+      &gl,
+      "mesh textured",
+      &[SOURCE_HEADER, TEXTURED_DEFINE, FRAGMENT_MATH, MESH_FRAGMENT],
+      MeshVariant::Textured,
+    )?;
     let (gp, label) = (glyph.program, "glyph");
     let glyph_uniforms = GlyphUniforms {
       mode: uniform(&gl, gp, label, "uMode")?,
@@ -894,10 +1003,6 @@ impl Executor {
       contrast: uniform(&gl, gp, label, "uContrast")?,
       gamma_ratios: uniform(&gl, gp, label, "uGammaRatios")?,
     };
-    let fill_gradient_uniforms = GradientUniforms::of(&gl, &fill_gradient, "fill gradient")?;
-    let shape_gradient_uniforms = GradientUniforms::of(&gl, &shape_gradient, "shape gradient")?;
-    let glyph_gradient_uniforms = GradientUniforms::of(&gl, &glyph, "glyph")?;
-    let mesh_gradient_uniforms = GradientUniforms::of(&gl, &mesh_gradient.program, "mesh gradient")?;
     // A sampler uniform names a unit, not a texture: set once, the unit
     // never changes. The shape and glyph programs sample `uTexture` (an
     // image, a texture, the atlas) on the one unit; the gradient programs
@@ -972,11 +1077,8 @@ impl Executor {
       mesh_vertices,
       samplers,
       glyph_uniforms,
-      fill_gradient_uniforms,
-      shape_gradient_uniforms,
-      glyph_gradient_uniforms,
-      mesh_gradient_uniforms,
       ramp,
+      ramps: RampTable::new(),
     })
   }
 
@@ -1034,8 +1136,15 @@ impl Executor {
   /// instances written, the draw calls issued and the path meshes drawn
   /// and tessellated (`super::report`), zeros for an empty list.
   pub(super) fn draw(&mut self, target: Target, list: &DisplayList) -> Result<DrawReport, String> {
-    let walked = walk::walk(list, target.size);
+    self.ramps.begin_frame();
+    let walked = walk::walk(list, target.size, &mut self.ramps);
     unsafe { self.create_samplers(&walked) }?;
+    // The rows the walk assigned, before any batch samples them. A row a
+    // gradient keeps across draws is not uploaded again; a row is
+    // re-assigned only when a draw holds more distinct gradients than the
+    // atlas has free rows, and its upload may then wait on the draw before,
+    // which sampled it.
+    unsafe { self.upload_ramps() };
     let instances = &walked.instances;
     let (width, height) = (target.size.width as i32, target.size.height as i32);
     let gl = &self.gl;
@@ -1092,6 +1201,9 @@ impl Executor {
       for program in programs {
         gl.use_program(Some(program.program));
         gl.uniform_2_f32(Some(&program.size), width as f32, height as f32);
+        if let Some(rows) = &program.ramp_rows {
+          gl.uniform_1_f32(Some(rows), RAMP_ROWS as f32);
+        }
       }
       // The shape program is in use, as the loop left it. None after a
       // paint batch: its program is the shader's, so the next batch binds.
@@ -1131,7 +1243,8 @@ impl Executor {
       // One draw per batch, in painter's order: a batch ends where the
       // texture or its sampling changes, where fills, shapes, text and path
       // meshes meet, at a glyph run's policy, at a mesh run's rounded clip,
-      // or around a gradient draw (walk.rs). A batch draws through its
+      // around a gradient mesh, or where gradient and solid quads meet
+      // (walk.rs). A batch draws through its
       // program, the variant its gradient or texture asks for, switched
       // only where the program changes, from the VAO of its kind: a mesh
       // batch is a range of the mesh indices, drawn as elements; a quad
@@ -1167,7 +1280,7 @@ impl Executor {
           in_use = None;
           continue;
         }
-        let program = match (batch.program, batch.gradient.is_some()) {
+        let program = match (batch.program, batch.graded) {
           (BatchProgram::Fill, false) => &self.fill,
           (BatchProgram::Fill, true) => &self.fill_gradient,
           (BatchProgram::Shape, false) => &self.shape,
@@ -1180,14 +1293,9 @@ impl Executor {
           gl.use_program(Some(program.program));
           in_use = Some(program.program);
         }
-        match (batch.program, &batch.gradient) {
-          (BatchProgram::Glyph, gradient) => {
-            let policy = batch.policy.expect("a glyph batch carries its coverage policy (walk.rs Batch)");
-            self.glyph_state(policy, gradient.as_ref());
-          }
-          (BatchProgram::Fill, Some(gradient)) => self.gradient_state(&self.fill_gradient_uniforms, gradient),
-          (BatchProgram::Shape, Some(gradient)) => self.gradient_state(&self.shape_gradient_uniforms, gradient),
-          _ => {}
+        if batch.program == BatchProgram::Glyph {
+          let policy = batch.policy.expect("a glyph batch carries its coverage policy (walk.rs Batch)");
+          self.glyph_state(policy);
         }
         match batch.texture {
           Some((name, sampling)) => {
@@ -1256,6 +1364,40 @@ impl Executor {
     *self.samplers.get(&(sampling, wrap)).expect("create_samplers made every sampler a draw binds")
   }
 
+  // Upload the ramp atlas rows `ramps` assigned since the last upload, one
+  // row each, from the gradient each now holds; TEXTURE_UNIT is the
+  // active unit again after, with nothing bound on RAMP_UNIT.
+  unsafe fn upload_ramps(&mut self) {
+    let dirty = self.ramps.take_dirty();
+    if dirty.is_empty() {
+      return;
+    }
+    let gl = &self.gl;
+    gl.active_texture(glow::TEXTURE0 + RAMP_UNIT);
+    gl.bind_texture(glow::TEXTURE_2D, Some(self.ramp));
+    let mut bytes = Vec::with_capacity(RAMP_WIDTH * BYTES_PER_RAMP_TEXEL);
+    for row in dirty {
+      bytes.clear();
+      for texel in self.ramps.ramp(row).iter().take(RAMP_WIDTH) {
+        bytes.extend_from_slice(texel);
+      }
+      bytes.resize(RAMP_WIDTH * BYTES_PER_RAMP_TEXEL, 0);
+      gl.tex_sub_image_2d(
+        glow::TEXTURE_2D,
+        0,
+        0,
+        row as i32,
+        RAMP_WIDTH as i32,
+        1,
+        glow::RGBA,
+        glow::UNSIGNED_BYTE,
+        glow::PixelUnpackData::Slice(Some(&bytes)),
+      );
+    }
+    gl.bind_texture(glow::TEXTURE_2D, None);
+    gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
+  }
+
   // Bind the gradient ramp on RAMP_UNIT through the linear clamped
   // sampler, then make TEXTURE_UNIT the active unit, as `draw` expects.
   unsafe fn bind_ramp(&self) {
@@ -1318,8 +1460,8 @@ impl Executor {
 
   // A mesh batch: its program (the gradient variant for a gradient, the
   // textured one for a texture, else the solid one) in use unless
-  // `in_use` already is, its rounded clip (zeros: none), its gradient or
-  // its texture with the texel rows, and one element draw over its range
+  // `in_use` already is, its rounded clip (zeros: none), its gradient's or
+  // its texture's rows with the projective row, and one element draw over its range
   // of the mesh indices. The mesh VAO is bound and TEXTURE_UNIT is the
   // active unit, as `draw` left them; the active unit is TEXTURE_UNIT again
   // after.
@@ -1341,18 +1483,23 @@ impl Executor {
     };
     gl.uniform_4_f32(Some(&u.rclip), rclip[0], rclip[1], rclip[2], rclip[3]);
     gl.uniform_4_f32(Some(&u.rclip_radii), radii[0], radii[1], radii[2], radii[3]);
-    if let Some(gradient) = &batch.gradient {
-      self.gradient_state(&self.mesh_gradient_uniforms, gradient);
+    let projective = batch.projective.unwrap_or([0.0, 0.0, 1.0]);
+    if let (Some(gradient), Some(rows)) = (&batch.gradient, &u.gradient) {
+      let [[x0, x1, x2], [y0, y1, y2]] = gradient.rows;
+      gl.uniform_4_f32(Some(&rows.x), x0, x1, x2, gradient.row as f32);
+      gl.uniform_4_f32(Some(&rows.y), y0, y1, y2, gradient.kind_tile());
+      gl.uniform_3_f32(Some(&rows.w), projective[0], projective[1], projective[2]);
     }
     match (batch.texture, &u.texel) {
-      (Some((name, sampling)), Some((texel_x, texel_y))) if batch.gradient.is_none() => {
+      (Some((name, sampling)), Some(rows)) if batch.gradient.is_none() => {
         let sampler = self.sampler(sampling, TextureWrap::Clamp);
         gl.bind_texture(glow::TEXTURE_2D, Some(name));
         gl.bind_sampler(TEXTURE_UNIT, Some(sampler));
         let [[x0, x1, x2], [y0, y1, y2]] =
           batch.texel.expect("a textured mesh batch carries its texel map (walk.rs Batch)");
-        gl.uniform_3_f32(Some(texel_x), x0, x1, x2);
-        gl.uniform_3_f32(Some(texel_y), y0, y1, y2);
+        gl.uniform_3_f32(Some(&rows.x), x0, x1, x2);
+        gl.uniform_3_f32(Some(&rows.y), y0, y1, y2);
+        gl.uniform_3_f32(Some(&rows.w), projective[0], projective[1], projective[2]);
       }
       _ => {
         gl.bind_texture(glow::TEXTURE_2D, None);
@@ -1363,71 +1510,23 @@ impl Executor {
     gl.draw_elements(glow::TRIANGLES, batch.count as i32, glow::UNSIGNED_INT, offset as i32);
   }
 
-  // A glyph batch's uniforms: `policy`, and `gradient` (`gradient_state`)
-  // or no gradient. The glyph program is in use and TEXTURE_UNIT is the
-  // active unit, as `draw` left them; the active unit is TEXTURE_UNIT again
-  // after.
-  unsafe fn glyph_state(&self, policy: CoveragePolicy, gradient: Option<&GradientDraw>) {
+  // A glyph batch's uniforms: `policy`. The glyph program is in use, as
+  // `draw` left it; each instance carries its own gradient.
+  unsafe fn glyph_state(&self, policy: CoveragePolicy) {
     let (gl, u) = (&self.gl, &self.glyph_uniforms);
     gl.uniform_1_i32(Some(&u.mode), policy.mode as i32);
     gl.uniform_1_f32(Some(&u.gamma), policy.gamma);
     gl.uniform_1_f32(Some(&u.contrast), policy.contrast);
     let [r0, r1, r2, r3] = policy.gamma_ratios();
     gl.uniform_4_f32(Some(&u.gamma_ratios), r0, r1, r2, r3);
-    match gradient {
-      Some(draw) => self.gradient_state(&self.glyph_gradient_uniforms, draw),
-      None => gl.uniform_1_i32(Some(&self.glyph_gradient_uniforms.gradient), NO_GRADIENT),
-    }
-  }
-
-  // A gradient batch's uniforms `u` on its program: the ramp uploaded into
-  // the ramp texture (bound on RAMP_UNIT by `draw`), the kind, the rows
-  // from device pixels and the tile mode. The batch's program is in use
-  // and TEXTURE_UNIT is the active unit, as `draw` left them; the active
-  // unit is TEXTURE_UNIT again after.
-  unsafe fn gradient_state(&self, u: &GradientUniforms, draw: &GradientDraw) {
-    let (gl, g) = (&self.gl, &*draw.gradient);
-    let mut bytes = Vec::with_capacity(RAMP_WIDTH * BYTES_PER_RAMP_TEXEL);
-    for texel in g.ramp.iter().take(RAMP_WIDTH) {
-      bytes.extend_from_slice(texel);
-    }
-    bytes.resize(RAMP_WIDTH * BYTES_PER_RAMP_TEXEL, 0);
-    gl.active_texture(glow::TEXTURE0 + RAMP_UNIT);
-    gl.tex_sub_image_2d(
-      glow::TEXTURE_2D,
-      0,
-      0,
-      0,
-      RAMP_WIDTH as i32,
-      1,
-      glow::RGBA,
-      glow::UNSIGNED_BYTE,
-      glow::PixelUnpackData::Slice(Some(&bytes)),
-    );
-    gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
-    gl.uniform_1_i32(Some(&u.gradient), g.kind as i32);
-    let [[x0, x1, x2], [y0, y1, y2]] = draw.rows;
-    gl.uniform_3_f32(Some(&u.gradient_x), x0, x1, x2);
-    gl.uniform_3_f32(Some(&u.gradient_y), y0, y1, y2);
-    gl.uniform_1_i32(Some(&u.tile), tile_uniform(g.tile));
   }
 }
 
 // Whether `batch` samples the gradient ramp: a glyph batch (the glyph
-// program declares it, gradient or not) or any batch with a gradient, a
-// mesh batch's among them.
+// program declares it, gradient or not), a graded quad batch or a gradient
+// mesh batch.
 fn needs_ramp(batch: &Batch) -> bool {
-  batch.program == BatchProgram::Glyph || batch.gradient.is_some()
-}
-
-// The fragment stage's `uTile` value for a tile mode.
-fn tile_uniform(tile: TileMode) -> i32 {
-  match tile {
-    TileMode::Clamp => TILE_CLAMP,
-    TileMode::Repeat => TILE_REPEAT,
-    TileMode::Mirror => TILE_MIRROR,
-    TileMode::Decal => TILE_DECAL,
-  }
+  batch.program == BatchProgram::Glyph || batch.graded || batch.gradient.is_some()
 }
 
 // The location of the uniform `name` in `program` (`label` names it); an
@@ -1441,8 +1540,8 @@ unsafe fn uniform(
   gl.get_uniform_location(program, name).ok_or_else(|| format!("{label} program has no {name} uniform"))
 }
 
-// The gradient ramp texture: `RAMP_WIDTH` x 1 rgba8, a blank row until a
-// gradient batch writes it. Its own parameters are linear and clamped, but
+// The ramp atlas: `RAMP_WIDTH` x `RAMP_ROWS` rgba8, blank rows until a draw
+// uploads a gradient's into one. Its own parameters are linear and clamped, but
 // `draw` samples it through the linear sampler object, as every texture
 // here is sampled.
 unsafe fn create_ramp(gl: &glow::Context) -> Result<glow::Texture, String> {
@@ -1452,13 +1551,13 @@ unsafe fn create_ramp(gl: &glow::Context) -> Result<glow::Texture, String> {
   gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
   gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
   gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
-  let blank = vec![0u8; RAMP_WIDTH * BYTES_PER_RAMP_TEXEL];
+  let blank = vec![0u8; RAMP_WIDTH * RAMP_ROWS as usize * BYTES_PER_RAMP_TEXEL];
   gl.tex_image_2d(
     glow::TEXTURE_2D,
     0,
     glow::RGBA8 as i32,
     RAMP_WIDTH as i32,
-    1,
+    RAMP_ROWS as i32,
     0,
     glow::RGBA,
     glow::UNSIGNED_BYTE,
@@ -1565,11 +1664,13 @@ unsafe fn apply_param(
 
 impl Program {
   // The program `label` from the concatenated `vertex` and `fragment`
-  // source parts, linked, with its `uSize`.
+  // source parts, linked, with its `uSize` and, when it samples a
+  // gradient, its `uRampRows`.
   unsafe fn link(gl: &glow::Context, label: &str, vertex: &[&str], fragment: &[&str]) -> Result<Program, String> {
     let program = link_program(gl, label, &vertex.concat(), &fragment.concat())?;
     let size = uniform(gl, program, label, "uSize")?;
-    Ok(Program { program, size })
+    let ramp_rows = gl.get_uniform_location(program, "uRampRows");
+    Ok(Program { program, size, ramp_rows })
   }
 }
 

@@ -29,9 +29,9 @@ pub(super) fn premultiply(c: Color) -> Premultiplied {
 pub(super) type Radii = [f32; 4];
 
 /// An image a shape is filled with: the texel rect of `texture` mapped onto
-/// the draw's space by scale and translate (`to_texel` is that map's
-/// inverse, local to texel, resolved at record time), sampled `sampling`,
-/// clamped at the edges.
+/// the draw's space by an invertible 2D affine map (`to_texel` is that
+/// map's inverse, local to texel, resolved at record time), sampled
+/// `sampling`, clamped at the edges.
 #[derive(Clone)]
 pub(super) struct Image {
   pub texture: Texture,

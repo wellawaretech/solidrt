@@ -143,8 +143,10 @@ fn clamp_radii(rect: &Rect, radii: &RoundingRadii) -> Radii {
 }
 
 /// The image a paint's color source fills a shape with: Some for an image
-/// source whose transform (identity when none) is scale plus translate,
-/// which is what the rounded `<texture>` builds; any other transform is
+/// source whose transform (identity when none) is an invertible 2D affine
+/// map, rotated or skewed ones among them: the walk evaluates the inverse
+/// map at the quad's corners, and the bilinear interpolation of an affine
+/// function over the rect is exact. A perspective or singular transform is
 /// warned once and the shape draws its color. A tile mode other than clamp
 /// is warned once and clamps. A gradient source is None here: the paint
 /// resolved it when it was set (`Paint::gradient`).
@@ -153,11 +155,10 @@ fn image_of(paint: &Paint) -> Option<Image> {
     return None;
   };
   let to_draw = transform.unwrap_or_else(Matrix::identity);
-  let to_texel =
-    if to_draw.is_2d() && to_draw.m12 == 0.0 && to_draw.m21 == 0.0 { to_draw.to_2d().inverse() } else { None };
-  // A rotated, skewed, perspective or singular map: one warning for all.
+  let to_texel = if to_draw.is_2d() { to_draw.to_2d().inverse() } else { None };
+  // A perspective or singular map: one warning for both.
   let Some(to_texel) = to_texel else {
-    unsupported!("an image source under a rotated transform", "the paint's color is used instead");
+    unsupported!("an image source under a perspective or singular transform", "the paint's color is used instead");
     return None;
   };
   if *tile_x != TileMode::Clamp || *tile_y != TileMode::Clamp {
