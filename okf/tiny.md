@@ -49,6 +49,7 @@ The `sol` CLI, the dev server, MCP, debug commands, examples and probes.
 - Splat order gate: ORDER_DIRECTION_EPS_COS (~2 degrees, set by feel) was priced when a re-sort republished 28 MB at 1M; the indexed form republishes 4 MB, so measure a tighter gate (0.5-1 degree) on the Pixel 7 for the popping it removes against the re-sorts it adds (okf/done/splat-sort-spike.md: above SYNC_SORT_MAX_KEYS a re-sort now runs on the sort thread, so a tighter gate costs that thread's work and the order's lag, not frames).
 - `sol android --census` matches no SurfaceFlinger layer for `com.solidrt.player.dev` although it lists the layer (seen on the Android 8 TV).
 - Stale probes import `srt:dev` (`probes/layout-slide-*.tsx`, `probes/batch1-probe.tsx`): rename to `sol:dev` or delete the probes.
+- Rebuild main's reference client in `target/main-ref/` from a main checkout built whole (its own core): the 2026-11-18 copy predates stage 3's `flux:gpu` exports and refuses a bundle built from today's core, so the own-renderer pixel diff against main cannot run until it is (okf/plans/own-renderer.md, stage 4 findings).
 
 ## Runtime
 

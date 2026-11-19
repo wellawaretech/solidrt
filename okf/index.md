@@ -605,6 +605,11 @@ Shaped, not started.
   not animatable), so a lit fill snaps on a theme switch where a solid fill
   cross-fades; interpolate gradients that share a kind and stop count, stop
   colors in oklab and positions linearly, and keep snapping for the rest.
+- **[A ramp atlas so gradient batches merge](backlog/gradient-ramp-atlas.md)** [2026-11-19]
+  Every gradient draw is a sealed batch of its own because the one ramp
+  texture is rewritten per batch; a row-per-gradient ramp atlas with the row
+  index on the instance would let gradient quads and meshes batch like solid
+  ones, turning the path bench's 61 draw calls a frame into a few.
 - **[Haptic waveforms - envelopes and navigator.vibrate](backlog/haptic-waveforms.md)** [2026-11-13]
   Feedback by intent covers a tap or a toggle, but an engine, an alarm or a
   pattern with a duration has no API. A waveform is an envelope of intensity

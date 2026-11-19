@@ -1252,6 +1252,130 @@ and the TV. Open from the stage, into the backlog: a `<shader>` whose
 input texture changes every frame rebuilds its recordings
 (`okf/backlog/shader-input-content-change-rebuilds.md`).
 
+### Stage 4: paths and gradients, and the desktop measurement (2026-11-19)
+
+Steps 1 to 3 landed on 2026-11-19 (69d2a662 gradients, c20a7903 the
+anvil half of paths, 7b90528e the alloy half), each reviewed before its
+commit. What the implementation settled beyond the design above:
+
+- A gradient's device rows compose with the inverse of the state's map
+  for every op, a line's included: the gradient lives in the op's space,
+  and the line's quad reaches device space through its own frame map and
+  then the state's, so the state's inverse alone sends a device pixel
+  back to where the gradient is defined. The brief had said the line's
+  composed map; the review and the walk test (a line starting at x = 20
+  reads t = 0.5 at device x = 50) settled it.
+- A degenerate gradient source (a zero-length axis, a non-positive
+  radius, a singular transform, no stops) warns once through a
+  `warn_once!` beside `unsupported!`, since it is not a missing feature,
+  and the shape draws its color. The miter limit is clamped to lyon's
+  minimum of 1 once at record time, so the cache key, the walk's reach
+  and the tessellator see one value (a NaN limit lands on 1 too).
+- A tessellation error, and a path that yields no triangle, are cached
+  as an empty mesh: the tessellator is deterministic, so the costly case
+  is not repeated every frame; the miss flag still counts the run.
+- The GL examples are two: `alloy/examples/gradient_fill.rs` (eight
+  gradient cases against CPU-evaluated colors, the line case starting
+  inside the target so a frame-space evaluation would fail it) and
+  `alloy/examples/path_mesh.rs` (both fill rules, the miter tip against a
+  bevel and a round join, the three caps, a dashed curve, gradient and
+  image fills under a rect clip, a rounded clip and a rotation, a
+  stroke-and-fill star, and the cache's 1/0/1 tessellations across a
+  redraw and a doubled scale).
+- The first desktop read of the static route tessellated 28.75 meshes
+  per frame against the expected 0: a polyline (`kinds/line.rs`) built a
+  fresh path on every rebuild of its list, and any repaint in the list
+  rebuilt every polyline in it, so the mesh cache on the path never saw a
+  second frame. The line kind now keeps its drawn paths (the fill's and
+  the stroke's) across builds, cleared when the points or `closed`
+  change, as the path kind keeps its `d`'s; the dashed path is still
+  built per build, as a moving pattern is new geometry. After it the
+  static route reads 0.
+- A two-point line resolved its box gradient against no box and drew the
+  stops' average: it now resolves against its endpoints' extent, a zero
+  side grown by half the stroke width on each end.
+- The pixel diff against main's reference client could not run: the
+  reference binary in `target/main-ref/` predates stage 3's `flux:gpu`
+  exports and refuses a bundle built from today's core. The reference
+  needs rebuilding from a main checkout with its own core before stage
+  7's diff; the path examples were checked by eye (`parse-svg`,
+  `on-layout-connect`, `line-points`: every icon, curve, trace, dash and
+  cap draws, no `[anvil]` warning), and every refactor step diffed at
+  zero against the branch's own previous output.
+
+**Desktop** (`probes/path-bench.tsx`, 30 panels in 5 columns, each a
+stroked polyline of N points over a gradient rounded rect; `route=live`
+rewrites every polyline each frame, `route=static` keeps them and
+flickers a full-window veil so every frame repaints the whole window;
+release client of 7b90528e at 60 Hz, 1280x720, scale 1; three reads of
+10 s each after 15 s; `probes/path-bench.sh` is the runner):
+
+| route | points | frames / 10 s | missed | draw calls / frame | meshes / frame | tessellated / frame | UI frame p50 ms | process CPU % |
+|---|---|---|---|---|---|---|---|---|
+| live | 64 | 600 | 0 | 61 | 30 | 30 | 1.42 | 15.5 to 16.4 |
+| live, stroke-and-fill | 64 | 599 to 600 | 0 | 61 | 60 | 60 | 1.4 | 18.7 to 20.1 |
+| live | 256 | 599 to 600 | 0 | 61 | 30 | 30 | 3.18 | 32.4 to 33.2 |
+| static | 64 | 573 to 575 | 0 | 62 | 30 | 0 (28.75 before the line cache) | 0.23 | 7.4 to 8.3 (9.0 to 10.0 before) |
+| static | 256 | 574 | 0 | 62 | 30 | 0 | 0.23 | 11.2 to 12.6 (15.3 to 16.3 before) |
+
+Every route holds 60 with 0 missed presents. The desktop's GPU frame
+timer sat in its high group (15.6 ms, the wait for a window buffer) on
+every read and compares nothing. The process CPU is the figure that
+moves: tessellating 30 strokes of 256 points per frame at 60 Hz costs
+about 22 points of a core over the static route, about 0.12 ms per
+stroke on this desktop, paid on the raster thread where the scale is
+known; the static route's remaining cost is the per-frame transform and
+upload of the cached meshes (30 strokes of 256 points are about 15,000
+vertices, 600 KB a frame at 40 bytes each). The static route's 573 to
+575 frames are the veil's 16 ms flicker coalescing with the refresh. The
+61 draw calls are 30 sealed gradient batches alternating with 30 mesh
+batches over the background: a gradient draw is a batch of its own (the
+one ramp texture is rewritten per batch), so a grid of gradient panels
+with content between them cannot merge; a ramp atlas would let gradient
+batches join (`okf/backlog/gradient-ramp-atlas.md`).
+
+**TV.** Not read in this session: the TV is reachable (`adb connect
+192.168.2.11:5555`) but installing a client on it is the maintainer's
+call per session. The bench takes `panels=30 columns=5` as the paint
+shader bench did; the figures to read are the frame rate and missed
+presents on the live route at 64 and 256 points (the armv7 tessellation
+cost), the raster thread's CPU on the static route (the per-frame vertex
+transform and upload, the case for a slot table or retained GPU meshes),
+the mesh program's GPU frame time against the fill program's, and the
+vertex counts `MESH_TOLERANCE` produces (0.25 device pixels, to re-read
+there).
+
+### What stage 4 taught
+
+- A cache on the geometry only helps when the element keeps the geometry:
+  the renderer's mesh cache was correct from the first commit and useless
+  for polylines until the line kind kept its path across rebuilds. The
+  count the stats carry (`rendererTessellatedPerFrame`) is what made it
+  visible; a bench that repaints without rebuilding (the veil) is what
+  reads the retained case at all, since a static screen demands no frame.
+- Evaluating a gradient in device space, through rows composed in the
+  walk, removed a varying from every program and made lines, rotations
+  and nested transforms right for free; the composition is two 2x3
+  products per op. The op's space, not the quad's frame, is where a
+  gradient is defined, and the map to invert is the state's.
+- Clamp a value once where it enters (the miter at record time), not in
+  each consumer: a key that holds the unclamped value misses the cache on
+  every animated frame and never matches a NaN.
+- A reference binary ages: main's client could not load today's bundle
+  two stages later. The reference for a refactor is the branch's own
+  previous output (zero diffs at every step here); the reference for
+  parity needs a main checkout built whole.
+
+**Stage 4 is done on the desktop.** Its Done criteria hold there: every
+`draw_path` the rendertree records draws (both fill rules, caps, joins,
+the miter limit, dashes); gradients draw on rects, rounded rects, ovals,
+lines, paths and text through one ramp path; both examples' checks hold;
+a retained list's redraw tessellates nothing; the walk tests cover the
+batch rules, the rows composition, the cache key and the scale bucket;
+the desktop numbers are above. Open: the TV read (above), the ramp atlas
+for merged gradient batches (backlog), and the main reference client's
+rebuild for stage 7's diff.
+
 ### Where anvil lives (2026-11-18)
 
 anvil is a module behind the seam, `alloy/src/renderer/anvil/` (the plan
