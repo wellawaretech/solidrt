@@ -17,7 +17,8 @@
 //! the queue it created, so a stale name (possibly the same number as a
 //! fresh one on the new context) is never deleted on the new context.
 //! Impeller's reactor did this quietly; anvil does it here. A paint
-//! shader's program is held the same way, on the same queue.
+//! shader's program is held the same way, on the same queue, and so are a
+//! path mesh's vertex and index buffers (`mesh::GpuMesh`).
 
 use crate::contract;
 use crate::{ISize, TextureSampling, TextureWrap, UniformInfo};
@@ -67,17 +68,19 @@ pub use record::{
 #[cfg(test)]
 pub(crate) use exec::{paint_fragment_source, PAINT_FRAGMENT_EPILOGUE, SOURCE_HEADER};
 
-/// A GL name whose last handle dropped: a texture's or a paint shader's
-/// program.
+/// A GL name whose last handle dropped: a texture's, a paint shader's
+/// program, or a path mesh's vertex and index buffers.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Freed {
   Texture(glow::NativeTexture),
   Program(glow::NativeProgram),
+  Buffers(glow::NativeBuffer, glow::NativeBuffer),
 }
 
 /// Names whose last handle dropped, waiting for the raster thread to
 /// delete them at the next draw (see the module doc: a handle may drop on
 /// any thread, deletion needs the context).
+#[derive(Debug)]
 pub(crate) struct DeletionQueue(Mutex<Vec<Freed>>);
 
 impl DeletionQueue {
@@ -126,7 +129,7 @@ impl contract::Renderer for Renderer {
     // The drain comes first, so a name freed on the UI thread is reclaimed
     // on the first draw after it, before the draw's own GL work.
     self.exec.reclaim(self.queue.drain());
-    self.exec.draw(target, dl)
+    self.exec.draw(target, dl, &self.queue)
   }
 }
 

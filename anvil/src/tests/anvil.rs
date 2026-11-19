@@ -112,36 +112,12 @@ fn image_paint(t: &Texture, sampling: TextureSampling, transform: Option<&Matrix
 
 // A batch of shapes and texture quads: no glyph policy, no gradient.
 fn shapes(start: usize, count: usize, texture: Option<(glow::NativeTexture, TextureSampling)>) -> Batch {
-  Batch {
-    start,
-    count,
-    program: BatchProgram::Shape,
-    texture,
-    policy: None,
-    graded: false,
-    gradient: None,
-    paint: None,
-    rounded: None,
-    texel: None,
-    projective: None,
-  }
+  Batch { start, count, program: BatchProgram::Shape, texture, policy: None, graded: false, paint: None }
 }
 
 // A batch of plain rect fills: no texture, no glyph policy, no gradient.
 fn fills(start: usize, count: usize) -> Batch {
-  Batch {
-    start,
-    count,
-    program: BatchProgram::Fill,
-    texture: None,
-    policy: None,
-    graded: false,
-    gradient: None,
-    paint: None,
-    rounded: None,
-    texel: None,
-    projective: None,
-  }
+  Batch { start, count, program: BatchProgram::Fill, texture: None, policy: None, graded: false, paint: None }
 }
 
 fn line(from: (f32, f32), to: (f32, f32), paint: &Paint) -> Vec<Instance> {
@@ -891,19 +867,7 @@ fn gradient() -> RampGradient {
 // A glyph batch over `atlas`, sampled linearly, under `policy`.
 fn glyphs(start: usize, count: usize, atlas: &Texture, policy: CoveragePolicy) -> Batch {
   let texture = Some((name(atlas), TextureSampling::Linear));
-  Batch {
-    start,
-    count,
-    program: BatchProgram::Glyph,
-    texture,
-    policy: Some(policy),
-    graded: false,
-    gradient: None,
-    paint: None,
-    rounded: None,
-    texel: None,
-    projective: None,
-  }
+  Batch { start, count, program: BatchProgram::Glyph, texture, policy: Some(policy), graded: false, paint: None }
 }
 
 #[test]
@@ -1177,11 +1141,7 @@ fn paint_batch(
     texture: None,
     policy: None,
     graded: false,
-    gradient: None,
     paint: Some(paint),
-    rounded: None,
-    texel: None,
-    projective: None,
   }
 }
 

@@ -2,8 +2,8 @@
 //! okf/plans/own-renderer.md), on the real GL path: every quad program
 //! placed in homogeneous coordinates under its instance's projective row,
 //! gradients evaluated on the instance in the quad's local space, and the
-//! path meshes projected per vertex with their gradient through the
-//! inverse map.
+//! path meshes placed in homogeneous coordinates under their map as a
+//! uniform, with their gradient evaluated in the path's space.
 //!
 //! Every case but the last draws under the view's card flip about the
 //! target's center, as View::compose_user composes it: rotate_y by

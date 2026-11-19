@@ -1,15 +1,16 @@
 // Paths and their meshes (renderer/path.rs, renderer/mesh.rs,
 // renderer/walk.rs): the builder's tolerance of the contract's walks, the
 // tessellation under the fill rules and the stroke metrics, the scale
-// bucket, the mesh cache on the path, and the walk's device-space mesh
-// vertices, its mesh batches and the draw report's mesh counts, with no GL
-// context.
+// bucket, the mesh cache on the path, the walk's mesh draws (a retained
+// mesh by handle with its map, one batch each), the GPU slot rule and the
+// draw report's mesh counts, with no GL context.
 
 use crate::prelude::*;
-use crate::renderer::mesh::{bucket_tolerance, scale_bucket, tessellate, Mesh, MeshStyle, MESH_CACHE_ENTRIES};
+use crate::renderer::mesh::MESH_CACHE_ENTRIES;
+use crate::renderer::mesh::{bucket_tolerance, gpu_slot, scale_bucket, tessellate, GpuMesh, GpuSlot, Mesh, MeshStyle};
 use crate::renderer::ramps::RampTable;
-use crate::renderer::walk::{walk, BatchProgram, Walked};
-use crate::renderer::{report, test_texture};
+use crate::renderer::walk::{walk, BatchProgram, Projective, Walked};
+use crate::renderer::{report, test_texture, DeletionQueue, Freed};
 use crate::{Affine, ClipOperation, Color, ColorSource, DisplayListBuilder, DrawStyle, FillType, ISize};
 use crate::{Matrix, Paint, Path, PathBuilder, Point, Rect, RoundingRadii, Size, StrokeCap, StrokeJoin};
 use crate::{TextureSampling, TileMode};
@@ -114,10 +115,19 @@ fn mesh_covers(mesh: &Mesh, p: [f32; 2]) -> bool {
   triangles_cover(&mesh.vertices, &mesh.indices, p)
 }
 
-// Whether any triangle the walk emitted, in device space, covers p.
+// Whether any mesh the walk draws, its vertices projected to device space
+// under its draw's map, covers p.
 fn covers(walked: &Walked, p: [f32; 2]) -> bool {
-  let vertices: Vec<[f32; 2]> = walked.mesh_vertices.iter().map(|v| v.device).collect();
-  triangles_cover(&vertices, &walked.mesh_indices, p)
+  walked.mesh_draws.iter().any(|draw| {
+    let device: Vec<[f32; 2]> = draw
+      .mesh
+      .vertices
+      .iter()
+      .map(|v| draw.map.project(Point::new(v[0], v[1])).expect("the test meshes lie in front of the eye"))
+      .map(|d| [d.x, d.y])
+      .collect();
+    triangles_cover(&device, &draw.mesh.indices, p)
+  })
 }
 
 // `Path::mesh` for a path that has a mesh: the mesh and the miss flag.
@@ -251,7 +261,7 @@ fn the_cache_hits_on_its_key_and_drops_the_oldest() {
 }
 
 #[test]
-fn a_path_walks_into_device_space_and_redraws_from_its_cache() {
+fn a_path_walks_into_one_mesh_draw_and_redraws_from_its_cache() {
   let path = square(0.0, 0.0, 10.0);
   let mut b = DisplayListBuilder::new(None);
   b.translate(10.0, 20.0).draw_path(&path, &solid());
@@ -259,16 +269,17 @@ fn a_path_walks_into_device_space_and_redraws_from_its_cache() {
   let size = ISize::new(TARGET as i64, TARGET as i64);
   let out = walk(&list, size, &mut RampTable::new());
   let mesh = mesh_hit(&path, MeshStyle::Fill, 0).0;
-  assert_eq!(out.mesh_vertices.len(), mesh.vertices.len());
-  for (v, local) in out.mesh_vertices.iter().zip(mesh.vertices.iter()) {
-    assert!(near(v.device[0], local[0] + 10.0) && near(v.device[1], local[1] + 20.0), "{v:?}");
-    assert_eq!(v.color, [1.0, 0.0, 0.0, 1.0]);
-    assert_eq!(v.clip, [0.0, 0.0, TARGET, TARGET]);
-  }
+  assert_eq!(out.mesh_draws.len(), 1);
+  let draw = &out.mesh_draws[0];
+  assert!(Arc::ptr_eq(&draw.mesh, &mesh), "the draw holds the path's cached mesh, in the path's space");
+  assert_eq!(draw.map, Projective::from_matrix(&Matrix::translation(10.0, 20.0, 0.0)));
+  assert_eq!(draw.color, [1.0, 0.0, 0.0, 1.0]);
+  assert_eq!(draw.clip, [0.0, 0.0, TARGET, TARGET]);
+  assert!(draw.rounded.is_none() && draw.gradient.is_none() && draw.texture.is_none() && draw.texel.is_none());
   assert_eq!(out.batches.len(), 1);
   let batch = &out.batches[0];
-  assert_eq!((batch.program, batch.start, batch.count), (BatchProgram::Mesh, 0, 6));
-  assert!(batch.texture.is_none() && batch.gradient.is_none() && batch.rounded.is_none() && batch.texel.is_none());
+  assert_eq!((batch.program, batch.start, batch.count), (BatchProgram::Mesh, 0, 1));
+  assert!(batch.texture.is_none() && !batch.graded);
   assert_eq!((out.meshes, out.tessellated), (1, 1));
   assert!(covers(&out, [15.0, 25.0]), "the square's center, offset");
   assert!(!covers(&out, [5.0, 5.0]), "the square's untranslated place");
@@ -276,9 +287,10 @@ fn a_path_walks_into_device_space_and_redraws_from_its_cache() {
   assert_eq!((r.meshes, r.tessellated, r.instances, r.draw_calls), (1, 1, 0, 1));
   assert_eq!(out.scissor, Some(Box2D::new(Point2D::new(0, 0), Point2D::new(TARGET as i32, TARGET as i32))));
 
-  // The same list again: the path's cache answers.
+  // The same list again: the path's cache answers with the same mesh.
   let again = walk(&list, size, &mut RampTable::new());
   assert_eq!((again.meshes, again.tessellated), (1, 0));
+  assert!(Arc::ptr_eq(&again.mesh_draws[0].mesh, &out.mesh_draws[0].mesh), "the retained mesh is handed out again");
   assert_eq!((report(&again).meshes, report(&again).tessellated), (1, 0));
 }
 
@@ -289,7 +301,7 @@ fn a_path_outside_the_clip_tessellates_nothing() {
   b.clip_rect(&rect(50.0, 50.0, 10.0, 10.0), ClipOperation::Intersect).draw_path(&path, &solid());
   let out = walked(b);
   assert_eq!((out.meshes, out.tessellated), (0, 0));
-  assert!(out.mesh_vertices.is_empty() && out.mesh_indices.is_empty() && out.batches.is_empty());
+  assert!(out.mesh_draws.is_empty() && out.batches.is_empty());
   assert_eq!(out.scissor, None);
   assert!(mesh_hit(&path, MeshStyle::Fill, 0).1, "the walk left the cache empty");
 }
@@ -307,20 +319,18 @@ fn a_stroke_outset_by_its_reach_is_kept() {
 }
 
 #[test]
-fn solid_paths_share_a_batch() {
+fn two_paths_never_share_a_batch() {
   let mut b = DisplayListBuilder::new(None);
   b.draw_path(&square(0.0, 0.0, 10.0), &solid()).draw_path(&square(20.0, 0.0, 10.0), &solid());
   let out = walked(b);
-  assert_eq!(out.batches.len(), 1);
-  assert_eq!((out.batches[0].start, out.batches[0].count), (0, 12));
-  assert_eq!(out.meshes, 2);
-  // The second mesh's indices are rebased onto its own vertices.
-  assert!(out.mesh_indices[6..].iter().all(|i| *i >= 4), "{:?}", out.mesh_indices);
+  let ranges: Vec<(BatchProgram, usize, usize)> = out.batches.iter().map(|b| (b.program, b.start, b.count)).collect();
+  assert_eq!(ranges, vec![(BatchProgram::Mesh, 0, 1), (BatchProgram::Mesh, 1, 1)], "one draw call per path");
+  assert_eq!((out.meshes, out.mesh_draws.len()), (2, 2));
   assert!(covers(&out, [25.0, 5.0]));
 }
 
 #[test]
-fn a_gradient_path_is_a_sealed_batch() {
+fn a_gradient_path_carries_the_gradients_own_rows() {
   let mut gradient = solid();
   let source = ColorSource::linear_gradient(
     Point::zero(),
@@ -335,17 +345,18 @@ fn a_gradient_path_is_a_sealed_batch() {
   b.translate(10.0, 0.0).draw_path(&square(0.0, 0.0, 10.0), &gradient).draw_path(&square(20.0, 0.0, 10.0), &solid());
   let out = walked(b);
   assert_eq!(out.batches.len(), 2, "{:?}", out.batches);
-  let draw = out.batches[0].gradient.as_ref().expect("the first batch carries the gradient");
-  assert_eq!(out.batches[0].program, BatchProgram::Mesh);
-  // Device x 10 is the path's x 0: the gradient's start.
-  assert!(near(eval(&draw.rows, 10.0, 0.0).0, 0.0), "{:?}", draw.rows);
+  assert!(out.batches[0].graded && !out.batches[1].graded);
+  let draw = out.mesh_draws[0].gradient.as_ref().expect("the first draw carries the gradient");
+  assert_eq!(draw.rows, [draw.gradient.x_row, draw.gradient.y_row], "rows over the path's space");
+  // The path's x 0 is the gradient's start, whatever the translation.
+  assert!(near(eval(&draw.rows, 0.0, 0.0).0, 0.0), "{:?}", draw.rows);
   // The paint's alpha in all four channels.
-  assert_eq!(out.mesh_vertices[0].color, [0.5; 4]);
-  assert!(out.batches[1].gradient.is_none());
+  assert_eq!(out.mesh_draws[0].color, [0.5; 4]);
+  assert!(out.mesh_draws[1].gradient.is_none());
 }
 
 #[test]
-fn an_image_path_maps_its_device_corner_to_the_first_texel() {
+fn an_image_path_maps_its_path_corner_to_the_first_texel() {
   let texture = test_texture(1, ISize::new(20, 20));
   let mut paint = solid();
   let to_draw = Matrix::translation(5.0, 5.0, 0.0);
@@ -355,31 +366,22 @@ fn an_image_path_maps_its_device_corner_to_the_first_texel() {
   b.translate(10.0, 20.0).draw_path(&square(5.0, 5.0, 20.0), &paint);
   let out = walked(b);
   assert_eq!(out.batches.len(), 1);
-  let batch = &out.batches[0];
   let name = texture.gl_name().expect("an anvil texture always has a GL name");
-  assert_eq!(batch.texture, Some((name, TextureSampling::Linear)));
-  let texel = batch.texel.expect("a textured mesh batch carries its texel map");
-  let corner = eval(&texel, 15.0, 25.0);
+  assert_eq!(out.batches[0].texture, Some((name, TextureSampling::Linear)));
+  let draw = &out.mesh_draws[0];
+  assert_eq!(draw.texture, Some((name, TextureSampling::Linear)));
+  let texel = draw.texel.expect("a textured mesh draw carries its texel map");
+  // The image's own map over the texture's size, in the path's space: the
+  // translation of the draw is not in it.
+  let corner = eval(&texel, 5.0, 5.0);
   assert!(near(corner.0, 0.0) && near(corner.1, 0.0), "{corner:?}");
-  let far = eval(&texel, 35.0, 45.0);
+  let far = eval(&texel, 25.0, 25.0);
   assert!(near(far.0, 1.0) && near(far.1, 1.0), "{far:?}");
-  assert_eq!(out.mesh_vertices[0].color, [1.0; 4]);
-  // An identity map onto the same corner is another batch's.
-  let mut b = DisplayListBuilder::new(None);
-  let mut plain = solid();
-  plain.set_color_source(&ColorSource::image(
-    &texture,
-    TileMode::Clamp,
-    TileMode::Clamp,
-    TextureSampling::Linear,
-    None,
-  ));
-  b.draw_path(&square(5.0, 5.0, 20.0), &paint).draw_path(&square(5.0, 5.0, 20.0), &plain);
-  assert_eq!(walked(b).batches.len(), 2);
+  assert_eq!(draw.color, [1.0; 4]);
 }
 
 #[test]
-fn a_rounded_clip_rides_on_the_mesh_batch() {
+fn a_rounded_clip_rides_on_the_mesh_draw() {
   let mut b = DisplayListBuilder::new(None);
   b.save().clip_rounded_rect(&rect(0.0, 0.0, 50.0, 50.0), &RoundingRadii::circular([5.0; 4]), ClipOperation::Intersect);
   b.draw_path(&square(0.0, 0.0, 10.0), &solid());
@@ -387,21 +389,21 @@ fn a_rounded_clip_rides_on_the_mesh_batch() {
   b.draw_path(&square(20.0, 0.0, 10.0), &solid());
   let out = walked(b);
   assert_eq!(out.batches.len(), 2);
-  let rounded = out.batches[0].rounded.expect("the clipped path carries the rounded clip");
+  let rounded = out.mesh_draws[0].rounded.expect("the clipped path carries the rounded clip");
   assert_eq!(rounded.rect, Box2D::new(Point2D::new(0.0, 0.0), Point2D::new(50.0, 50.0)));
   assert_eq!(rounded.radii, [5.0; 4]);
-  assert_eq!(out.mesh_vertices[0].clip, [0.0, 0.0, 50.0, 50.0]);
-  assert!(out.batches[1].rounded.is_none());
+  assert_eq!(out.mesh_draws[0].clip, [0.0, 0.0, 50.0, 50.0]);
+  assert!(out.mesh_draws[1].rounded.is_none());
 }
 
 #[test]
-fn stroke_and_fill_is_two_meshes_in_one_batch() {
+fn stroke_and_fill_is_two_meshes_in_two_batches() {
   let mut paint = solid();
   paint.set_draw_style(DrawStyle::StrokeAndFill).set_stroke_width(2.0);
   let mut b = DisplayListBuilder::new(None);
   b.draw_path(&square(10.0, 10.0, 10.0), &paint);
   let out = walked(b);
-  assert_eq!((out.meshes, out.tessellated, out.batches.len()), (2, 2, 1));
+  assert_eq!((out.meshes, out.tessellated, out.batches.len()), (2, 2, 2));
   // The stroke's outer half reaches past the fill.
   assert!(covers(&out, [9.5, 15.0]));
 }
@@ -420,7 +422,7 @@ fn quads_and_meshes_interleave_in_painters_order() {
   let programs: Vec<BatchProgram> = out.batches.iter().map(|b| b.program).collect();
   assert_eq!(programs, vec![BatchProgram::Mesh, BatchProgram::Fill, BatchProgram::Mesh]);
   assert_eq!((out.batches[1].start, out.batches[1].count), (0, 1), "the rect is instance 0");
-  assert_eq!((out.batches[2].start, out.batches[2].count), (6, 6), "the second mesh's indices follow the first's");
+  assert_eq!((out.batches[2].start, out.batches[2].count), (1, 1), "the second mesh draw follows the first");
   assert_eq!(out.scissor, Some(Box2D::new(Point2D::new(0, 0), Point2D::new(80, 50))));
   let r = report(&out);
   assert_eq!((r.instances, r.draw_calls, r.meshes), (1, 3, 2));
@@ -436,7 +438,7 @@ fn a_stroke_without_width_records_nothing() {
   // The log still has the op; nothing draws.
   assert_eq!(list.ops().len(), 1);
   let out = walk(&list, ISize::new(TARGET as i64, TARGET as i64), &mut RampTable::new());
-  assert!(out.batches.is_empty() && out.mesh_indices.is_empty());
+  assert!(out.batches.is_empty() && out.mesh_draws.is_empty());
   assert_eq!(out.meshes, 0);
 }
 
@@ -455,7 +457,7 @@ fn card_flip(c: f32, degrees: f32, distance: f32) -> Matrix {
 }
 
 #[test]
-fn a_gradient_mesh_under_perspective_divides_by_the_inverse_row() {
+fn a_gradient_mesh_under_perspective_keeps_its_rows_over_the_path() {
   let flip = card_flip(TARGET / 2.0, 60.0, 200.0);
   let source = ColorSource::linear_gradient(
     Point::new(20.0, 0.0),
@@ -471,28 +473,51 @@ fn a_gradient_mesh_under_perspective_divides_by_the_inverse_row() {
   b.transform(&flip).draw_path(&square(20.0, 20.0, 60.0), &paint);
   let out = walked(b);
   assert_eq!(out.batches.len(), 1);
-  let batch = &out.batches[0];
-  let w = batch.projective.expect("a gradient mesh carries its projective row");
-  assert_ne!(w, [0.0, 0.0, 1.0], "a perspective map's inverse divides");
-  let rows = batch.gradient.as_ref().expect("the batch carries the gradient").rows;
-  // A local point projected on the CPU reads the gradient's t there once
-  // the rows' values are divided by the projective row's.
+  let draw = &out.mesh_draws[0];
+  assert_eq!(draw.map, Projective::from_matrix(&flip));
+  assert!(!draw.map.is_affine(), "the map carries the perspective row");
+  let gradient = draw.gradient.as_ref().expect("the draw carries the gradient");
+  assert_eq!(gradient.rows, [gradient.gradient.x_row, gradient.gradient.y_row]);
+  // A path point reads the gradient's t there with no divide: the GPU
+  // interpolates the path-space point perspective-correct.
   for (x, t) in [(50.0, 0.5), (35.0, 0.25)] {
-    let d = flip.transform_point3d(euclid::default::Point3D::new(x, 40.0, 0.0)).expect("in front of the eye");
-    let denominator = w[0] * d.x + w[1] * d.y + w[2];
-    let got = eval(&rows, d.x, d.y).0 / denominator;
-    assert!(near(got, t), "local x {x}: t {got}, want {t}");
+    let got = eval(&gradient.rows, x, 40.0).0;
+    assert!(near(got, t), "path x {x}: t {got}, want {t}");
   }
 }
 
 #[test]
-fn a_mesh_with_a_corner_behind_the_eye_draws_nothing() {
+fn a_mesh_with_a_corner_behind_the_eye_is_drawn() {
   // A quarter turn under a close eye: w' = 1 + x / 10, behind the eye for
-  // x below -10.
+  // x below -10. The GPU clips the homogeneous vertices.
   let flip = card_flip(0.0, 90.0, 10.0);
   let mut b = DisplayListBuilder::new(None);
   b.transform(&flip).draw_path(&square(-300.0, 0.0, 250.0), &solid());
   let out = walked(b);
-  assert!(out.batches.is_empty(), "{:?}", out.batches);
-  assert_eq!(out.meshes, 0);
+  assert_eq!((out.batches.len(), out.meshes), (1, 1), "{:?}", out.batches);
+  assert_eq!(out.mesh_draws[0].clip, [0.0, 0.0, TARGET, TARGET], "not culled: the state's clip box");
+}
+
+#[test]
+fn a_gpu_slot_is_kept_only_by_the_renderer_that_filled_it() {
+  let mine = Arc::new(DeletionQueue::new());
+  let dead = Arc::new(DeletionQueue::new());
+  assert_eq!(gpu_slot(None, &mine), GpuSlot::Upload, "an empty slot uploads");
+  assert_eq!(gpu_slot(Some(&mine.clone()), &mine), GpuSlot::Keep, "the same queue keeps its buffers");
+  assert_eq!(gpu_slot(Some(&dead), &mine), GpuSlot::Replace, "another renderer's slot is replaced");
+}
+
+#[test]
+fn a_dropped_mesh_returns_its_buffer_names_to_the_queue_that_made_them() {
+  let queue = Arc::new(DeletionQueue::new());
+  let name = |n: u32| glow::NativeBuffer(std::num::NonZeroU32::new(n).expect("a GL name is never zero"));
+  let path = square(0.0, 0.0, 10.0);
+  let mesh = tessellate(path.geometry(), FillType::NonZero, MeshStyle::Fill, 1.0).expect("a square tessellates");
+  *mesh.gpu.lock().expect("fresh lock") = Some(GpuMesh { vertices: name(7), indices: name(8), queue: queue.clone() });
+  drop(mesh);
+  assert_eq!(queue.drain(), vec![Freed::Buffers(name(7), name(8))], "the drop pushed both names, deleting none");
+  // A mesh never uploaded pushes nothing.
+  let mesh = tessellate(path.geometry(), FillType::NonZero, MeshStyle::Fill, 1.0).expect("a square tessellates");
+  drop(mesh);
+  assert!(queue.drain().is_empty());
 }

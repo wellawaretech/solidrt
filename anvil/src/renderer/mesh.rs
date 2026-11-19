@@ -1,18 +1,22 @@
 //! A path's meshes: its geometry tessellated by lyon into triangles, a fill
 //! under the path's rule or a stroke under the paint's metrics, at a
 //! tolerance set by the scale it draws at, and cached on the path (up to
-//! `MESH_CACHE_ENTRIES`), so a retained list redraws from the cache. Pure,
-//! no GL: the walk reads the meshes (`walk::push_path`), the tests read
-//! them with no context (`tests/mesh.rs`).
+//! `MESH_CACHE_ENTRIES`), so a retained list redraws from the cache. A mesh
+//! also holds the slot of its GPU buffers, which the executor fills at the
+//! mesh's first draw and the mesh's drop frees through the deletion queue
+//! (the renderer module doc); no GL here: the walk reads the meshes
+//! (`walk::push_path`), the tests read them with no context
+//! (`tests/mesh.rs`).
 
 use super::path::Path;
+use super::{DeletionQueue, Freed};
 use crate::{FillType, StrokeCap, StrokeJoin};
 use euclid::default::{Box2D, Point2D, Transform2D};
 use lyon_tessellation::{
   BuffersBuilder, FillOptions, FillRule, FillTessellator, FillVertex, LineCap, LineJoin, StrokeOptions,
   StrokeTessellator, StrokeVertex, TessellationError, VertexBuffers,
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// The flattening tolerance of a path mesh in device pixels: how far the
 /// flattened curve may stray from the true one. The dash walker's figure;
@@ -47,6 +51,60 @@ pub struct Mesh {
   /// The vertices' box: the exact extent the mesh covers. A zero box for a
   /// mesh with no triangle.
   pub bounds: Box2D<f32>,
+  /// The mesh's GPU buffers, once the executor uploaded them (exec.rs
+  /// `mesh_buffers`); None before its first draw.
+  pub(crate) gpu: Mutex<Option<GpuMesh>>,
+}
+
+impl Mesh {
+  fn new(vertices: Vec<[f32; 2]>, indices: Vec<u32>, bounds: Box2D<f32>) -> Mesh {
+    Mesh { vertices, indices, bounds, gpu: Mutex::new(None) }
+  }
+}
+
+/// A mesh's vertex and index buffers on the GPU, and the deletion queue of
+/// the renderer that created them, which their names go back to.
+#[derive(Debug)]
+pub(crate) struct GpuMesh {
+  pub vertices: glow::Buffer,
+  pub indices: glow::Buffer,
+  pub queue: Arc<DeletionQueue>,
+}
+
+impl Drop for Mesh {
+  fn drop(&mut self) {
+    // A poisoned lock only means a panic elsewhere while it was held; the
+    // slot is still whole, so its names still go back.
+    let slot = self.gpu.get_mut().unwrap_or_else(|e| e.into_inner());
+    if let Some(gpu) = slot.take() {
+      gpu.queue.push(Freed::Buffers(gpu.vertices, gpu.indices));
+    }
+  }
+}
+
+/// What the executor does with a mesh's GPU slot at a draw.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum GpuSlot {
+  /// The slot holds buffers of the drawing renderer: draw from them.
+  Keep,
+  /// The slot is empty: upload the mesh.
+  Upload,
+  /// The slot holds buffers of another renderer, one that died with its
+  /// context: upload the mesh again, and its old names go onto that
+  /// renderer's queue.
+  Replace,
+}
+
+/// The rule for a slot whose buffers were created by the renderer with
+/// the queue `held` (None for an empty slot), drawn by the renderer with
+/// the queue `queue`: the queue is the renderer's identity, so the
+/// buffers are this renderer's exactly when the two are one queue.
+pub(crate) fn gpu_slot(held: Option<&Arc<DeletionQueue>>, queue: &Arc<DeletionQueue>) -> GpuSlot {
+  match held {
+    None => GpuSlot::Upload,
+    Some(held) if Arc::ptr_eq(held, queue) => GpuSlot::Keep,
+    Some(_) => GpuSlot::Replace,
+  }
 }
 
 /// The cache key: the style and the scale bucket. The style's floats
@@ -121,7 +179,7 @@ pub(crate) fn tessellate(
   } else {
     Box2D::from_points(buffers.vertices.iter().map(|v| Point2D::new(v[0], v[1])))
   };
-  Ok(Mesh { vertices: buffers.vertices, indices: buffers.indices, bounds })
+  Ok(Mesh::new(buffers.vertices, buffers.indices, bounds))
 }
 
 fn line_cap(cap: StrokeCap) -> LineCap {
@@ -162,7 +220,7 @@ impl Path {
       Ok(mesh) => mesh,
       Err(err) => {
         warn_once!("[anvil] Renderer: a path lyon's tessellator rejected is not drawn ({err:?})");
-        Mesh { vertices: Vec::new(), indices: Vec::new(), bounds: Box2D::zero() }
+        Mesh::new(Vec::new(), Vec::new(), Box2D::zero())
       }
     };
     let mesh = Arc::new(mesh);
