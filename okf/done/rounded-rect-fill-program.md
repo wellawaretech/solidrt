@@ -6,7 +6,7 @@ created: 2026-11-19
 
 # A lean program for rounded rect fills
 
-Part of stage 5 of [own-renderer](own-renderer.md): that stage is not done until this item is.
+Part of stage 5 of [own-renderer](../plans/own-renderer.md). Closed 2026-11-19 (2f6fc29f the program, 2937bcb6 the rim split, the TV reads in the stage's Findings): thirty solid rounded panels cost 3.2 ms of GPU over the plain solid floor (10.6 with the program alone, about 18 under the shape program), rounded gradient panels with sparklines 24.5 ms against the plain route's 22.8; what remains is the alternating rim and plain batches, 61 calls for the grid, a follow-up noted in the plan.
 
 Stage 2's fill program taught that the fragment program's shape, not the
 instance count, sets the Mali's cost, and gave plain rect fills a program

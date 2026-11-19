@@ -536,12 +536,12 @@ together.
 
 - Perspective for draws: a quad's device map and a mesh's map are the
   full 3x3, so the varyings interpolate perspective-correct.
-- [retained-mesh-buffers](retained-mesh-buffers.md): a mesh stays on the
+- [retained-mesh-buffers](../done/retained-mesh-buffers.md): a mesh stays on the
   GPU in the path's space and draws with its map as a uniform, in place
   of the device positions the walk writes every frame. Perspective needs
   a new vertex format anyway; this is that format. The item's cheap check
   comes first: orphan the stream buffers and read the TV.
-- [gradient-ramp-atlas](gradient-ramp-atlas.md): one ramp row per
+- [gradient-ramp-atlas](../done/gradient-ramp-atlas.md): one ramp row per
   gradient in the frame, the row and the gradient's device map on the
   instance, so gradient batches merge. Under perspective that map is 3x3,
   which sets the instance layout's size.
@@ -554,14 +554,14 @@ together.
   under rotation and perspective. An axis-aligned rounded clip stays per
   instance (a distance test in the fragment stage). The general case uses
   the stencil buffer.
-- [rounded-rect-fill-program](rounded-rect-fill-program.md): a lean
+- [rounded-rect-fill-program](../done/rounded-rect-fill-program.md): a lean
   program for a rounded rect fill and for a plain fill under an
   axis-aligned rounded clip, which is the same rounded-box distance. It
   is written against step 1's instance layout, with its gradient variant.
-- [rounded-clip-cost-android](rounded-clip-cost-android.md) closes on the
+- [rounded-clip-cost-android](../done/rounded-clip-cost-android.md) closes on the
   tablet read after the lean program lands.
 
-**The text atlas (step 3).** [text-atlas-cap](text-atlas-cap.md): a
+**The text atlas (step 3).** [text-atlas-cap](../done/text-atlas-cap.md): a
 fixed cap on the atlas side, set by lattice, with the existing eviction
 running at the cap. It is independent of steps 1 and 2.
 
@@ -1793,6 +1793,111 @@ grid) and carry the ramp row as a third smooth component of `vGrad`
 program then reads vColor, vClip and vGrad, the three the stage 4
 program read, with uniform branches. A small step, 2c-bis, if the
 maintainer wants the item's criterion met before 2d.
+
+Step 2c-bis landed as e9b2d2c3: the kind and the tile are batch keys
+again (`GradientClass`, beside the program and the stencil depth), set
+per batch as the `uGradMeta` uniform the mesh program already took, and
+the ramp row rides as the third component of the smooth `vGrad`; only the
+glyph program, whose runs join whatever their gradient, still reads the
+kind and the tile per instance (`vGradMeta`, a vec2). The fill gradient
+program reads vColor, vClip and vGrad, as stage 4's did, and branches on
+uniforms. Step 2d landed as 2937bcb6: the walk splits a rounded fill (a
+rounded rect, a plain rect under the per-instance rounded clip, or both)
+under an axis-aligned 2D map at or above `ROUNDED_SPLIT_AREA` (16,384
+device pixels, 128 x 128) into a grid cut at every corner's extent plus a
+margin of the quad pad and one device pixel; cells whose coverage is 1
+merge row-wise into plain rect fills through the fill program, the cells
+along the edges and in the corners into rim pieces through the rounded
+program, cells beyond the clip's margin are dropped, and a split with no
+plain piece (a pill) stays one instance. A rim piece carries the whole
+shape quad in `tex` and the rounded program's own vertex stage places
+vLocal and vShape from it, so a piece evaluates the distance the unsplit
+quad evaluated, over the same points; a rim piece never folds into a
+shape batch, whose program measures the shape from the drawn quad. For
+the bench's 160 x 90 panel at radius 6 a split is 8 rim and 3 plain
+pieces, and a plain rect well inside a rounded clip is one plain fill, so
+a clipped card's contents leave the rounded program. The cuts are per
+corner, not per side: with unequal radii a cell can straddle a corner's
+square while its centre lies outside it. Step 2c-ter landed as f7619a58:
+the ramp row's texel-centre v is computed in the vertex stage (exact, 256
+rows), so a gradient fragment does no divide; the atlas height is then a
+vertex-stage uniform in every program over the shared vertex stage, the
+paint shaders among them, and alloy's paint uniform table leaves it out
+beside the target size. The seventeen reference renders diff at zero
+pixels after each of the three steps, but six on `view-layout`'s
+right-edge corner arcs after 2d, one level in one channel at equal alpha:
+a rim piece interpolates vLocal over its own quad, and the noise crosses
+a rounding boundary where the unsplit quad did not.
+
+**TV after the three steps** (the same machine and method as the tables
+above; three windows of 10 s; frames and missed presents per 10 s are
+here the deltas of the stats counters over each window, which reads the
+frames column higher than the earlier tables did for the static route;
+missed presents, draw calls and GPU ms are comparable throughout):
+
+| client | route | panel | variant | frames / 10 s | missed / 10 s | draw calls | frame GPU ms | before | stage 4 |
+|---|---|---|---|---|---|---|---|---|---|
+| 2c-bis e9b2d2c3 | static | plain, gradient | lines=0 radius=0 | 447 to 448 | 53 | 3 | 22.4 | 2c 23.0 | |
+| 2c-bis | static | plain, gradient | radius=0 | 426 to 429 | 71 to 74 | 62 | 23.3 | 2c 24.2 | 21.3 |
+| 2c-bis | static | rounded, gradient | lines=0 | 279 to 280 | 220 to 221 | 3 | 33.5 | 2c 33.6 | |
+| 2c-bis | live | rounded, gradient | | 306 to 307 | 193 to 194 | 61 | 32.6 | 2c 32.1 | 38.6 |
+| 2d 2937bcb6 | static | plain, solid | lines=0 gradient=0 radius=0 | 500 | 0 | 1 | 18.6 | 2b 18.6 | |
+| 2d | static | rounded, solid | lines=0 gradient=0 | 459 to 460 | 40 | 61 | 21.8 | 2b 29.2 | |
+| 2d | static | rounded, gradient | lines=0 | 375 | 125 | 62 | 26.6 | 2c-bis 33.5 | |
+| 2d | static | plain, gradient | lines=0 radius=0 | 439 to 447 | 52 to 61 | 3 | 22.4 | 2c-bis 22.4 | |
+| 2d | static | rounded, gradient | | 374 to 375 | 125 to 126 | 87 | 24.5 | 2b 37.4 | 33.5 |
+| 2d | live | rounded, gradient | | 424 to 425 | 75 to 76 | 91 | 21.7 | 2c-bis 32.6 | 38.6 |
+| 2c-ter f7619a58 | static | plain, gradient | lines=0 radius=0 | 455 to 459 | 41 to 45 | 3 | 21.8 | 2d 22.4 | |
+| 2c-ter | static | plain, gradient | radius=0 | 439 to 440 | 60 to 61 | 62 | 22.8 | 2c-bis 23.3 | 21.3 |
+| 2c-ter | static | rounded, gradient | lines=0 | 384 to 386 | 115 to 116 | 62 | 25.9 | 2d 26.6 | |
+| 2c-ter | live | rounded, gradient | | 429 to 434 | 66 to 72 | 91 | 21.0 | 2d 21.7 | 38.6 |
+
+The raster thread reads 11 percent on the floor row, 17 to 24 on the
+plain gradient grid, 21 to 25 on the rounded rows and 77 to 79 on the
+live route (2c-bis: 49 to 50). What the read says:
+
+- The rounded program's item holds. Thirty solid rounded panels cost 3.2
+  ms of GPU over the plain solid floor (10.6 before the split), rounded
+  gradient panels 4.1 ms over the plain gradient grid (11.1 before), and
+  with the sparklines the rounded gradient route reads 24.5 ms against
+  the plain gradient route's 22.8, 1.7 apart, where stage 4 read 33.5
+  against 21.3. The live route misses 66 to 76 presents where stage 4
+  missed 240 and 2c-bis 193. Only about 7 percent of a panel's
+  fragments go through the rounded program now (the corners of radius 6
+  plus a 1.5 local pixel band), so most of what remains over the floor
+  is the draw calls: the grid draws in 61 calls, not 3, because a
+  panel's rim batch and plain batch alternate, and the raster thread
+  doubles against the floor row for it.
+- The ramp atlas's item holds on its criteria (one atlas upload per
+  draw, merged batches, zero diff): the plain gradient grid draws in 3
+  calls at 21.8 ms where stage 4 sealed a batch per gradient and read
+  21.3 with the sparklines (now 22.8). The 1.5 ms left against stage 4
+  is not the varying count (three, as then) nor a branch or a divide
+  (none per fragment); what differs is the atlas sample (a 256-row
+  texture, one row read, where stage 4 sampled a one-row ramp) and two
+  more vec4 attributes per vertex. It is recorded, not chased.
+- The one follow-up worth its own step: a plain piece could join the
+  fill batch that precedes the open rounded batch when its device box
+  meets none of that batch's instances (a bounded overlap test against
+  the last batch alone, which is what Skia's op chaining does), so a
+  grid of cards draws its plain and rim pieces in two batches, not two
+  per card. The `ROUNDED_SPLIT_AREA` threshold was not swept on the TV;
+  16,384 is the brief's starting value and the bench's panels (57,600
+  device pixels) are well above it. The tablet re-read of the rounded
+  clip panes under the split did not happen: the tablet dropped off adb
+  when the machine restarted mid-session. The 2b tablet read already
+  held 60 fps and the split only moves a clipped card's fills to the
+  fill program.
+
+**Stage 5 is done.** Every transform and clip the contract takes draws
+with no "not supported yet" warning left for them; the five items'
+"Done looks like" hold (retained-mesh-buffers, rounded-clip-cost-android
+and text-atlas-cap closed at 4b62a341, gradient-ramp-atlas and
+rounded-rect-fill-program at this commit, each with its TV residue
+recorded above); the stage 4 examples' pixels are unchanged against the
+branch's output before the stage except where a draw is new (the shadow
+cutouts of step 2a) or where the analytic coverage is now right (32
+pixels of `layout-slide` at step 2b, six of `view-layout` at 2d).
 
 ### Where anvil lives (2026-11-18)
 

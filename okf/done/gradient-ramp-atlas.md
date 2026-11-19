@@ -6,7 +6,7 @@ created: 2026-11-19
 
 # A ramp atlas so gradient batches merge
 
-Part of stage 5 of [own-renderer](own-renderer.md): that stage is not done until this item is.
+Part of stage 5 of [own-renderer](../plans/own-renderer.md). Closed 2026-11-19 (59baf506 the atlas, c4481ee3, e9b2d2c3 and f7619a58 the gradient program, the TV reads in the stage's Findings): one upload per draw, thirty plain gradient panels draw in three calls at 21.8 ms of GPU where stage 4 sealed a batch per gradient at 21.3; the 1.5 ms residue against stage 4 is the atlas sample and is recorded, not chased.
 
 anvil evaluates a gradient per device pixel from a `RAMP_WIDTH` x 1 ramp
 texture that the executor rewrites for every gradient batch

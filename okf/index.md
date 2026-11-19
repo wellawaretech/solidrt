@@ -117,13 +117,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   and the rig partial path; the bottleneck is per-op display-list processing
   on the armv7 CPU, so the real lever is not handing Impeller the full scene
   DL every frame.
-- **[A ramp atlas so gradient batches merge](plans/gradient-ramp-atlas.md)** [2026-11-19]
-  Every gradient draw is a sealed batch of its own because the one ramp
-  texture is rewritten per batch, and on the Mali-T860 that rewrite stalls the
-  pipeline (thirty gradient rects a frame run at 29 fps where solid ones run
-  at 50 with the same GPU time); a row-per-gradient ramp atlas uploaded once
-  per draw would remove the stall and let gradient quads and meshes batch like
-  solid ones.
 - **[Make a lattice git dependency build at a release tag](plans/lattice-tag-dependency-bundles.md)** [2026-10-11]
   A custom runtime depends on lattice by git tag, but the library embedded two
   bundles the JavaScript toolchain generates (untracked since v0.0.71), so
@@ -147,14 +140,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   mover, under Impeller and anvil alike; the route's union of this frame's
   damage with the ring of the last age-1 frames' damage is the suspect, in
   particular a fold of an empty rect with a non-zero origin.
-- **[A lean program for rounded rect fills](plans/rounded-rect-fill-program.md)** [2026-11-19]
-  A rounded rect fill goes through the shape program, whose per-fragment cost
-  on the Mali-T860 (the kind branches, the discard, the derivatives, the nine
-  varyings) makes thirty gradient panels of 320x180 device pixels cost about
-  20 ms of GPU a frame against about 2 ms as plain rects; a fill-only rounded
-  program (the rounded-box distance, no stroke, no oval or line arm, no
-  texture), also taking plain fills under a rounded clip, would bring panels,
-  cards and buttons near the fill program's cost.
 - **[Spatial audio - emitter and listener nodes on the spatial core](plans/spatial-audio-emitters.md)** [2026-08-30]
   A playback bound to a spatial node (or a fixed position) and heard by a
   listener (a node, or a target's view - the camera), the core writing its
@@ -2452,6 +2437,13 @@ Finished, kept for the reasoning.
   issue, per target, and reported per presented frame in get_stats'
   window.targets and cumulatively in /gpu; fragments shaded stay a documented
   gap on the GLES 3.0 baseline, so fill still needs subtraction.
+- **[A ramp atlas so gradient batches merge](done/gradient-ramp-atlas.md)** [2026-11-19]
+  Every gradient draw is a sealed batch of its own because the one ramp
+  texture is rewritten per batch, and on the Mali-T860 that rewrite stalls the
+  pipeline (thirty gradient rects a frame run at 29 fps where solid ones run
+  at 50 with the same GPU time); a row-per-gradient ramp atlas uploaded once
+  per draw would remove the stall and let gradient quads and meshes batch like
+  solid ones.
 - **[Device haptics - feedback by intent](done/haptics.md)** [2026-11-13]
   An app cannot make the device's actuator respond, so a tap, a toggle, an
   error or a hit can be seen and heard but not felt. Feedback named by intent
@@ -2972,6 +2964,14 @@ Finished, kept for the reasoning.
   get_stats; a static rounded clip is nearly free, one resizing rounded pane
   costs ~8 ms, ten ~13 ms, and an image under the clip pays most. Cause not
   yet located below the display list; needs an Impeller-level look.
+- **[A lean program for rounded rect fills](done/rounded-rect-fill-program.md)** [2026-11-19]
+  A rounded rect fill goes through the shape program, whose per-fragment cost
+  on the Mali-T860 (the kind branches, the discard, the derivatives, the nine
+  varyings) makes thirty gradient panels of 320x180 device pixels cost about
+  20 ms of GPU a frame against about 2 ms as plain rects; a fill-only rounded
+  program (the rounded-box distance, no stroke, no oval or line arm, no
+  texture), also taking plain fills under a rounded clip, would bring panels,
+  cards and buttons near the fill program's cost.
 - **[Router tabs](done/router-tabs.md)** [2026-09-25]
   "A `tabs` route in @solidrt/router: each child is a tab with its own stack,
   kept mounted and hidden while inactive, under a parent stack that holds the
