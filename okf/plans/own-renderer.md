@@ -2405,12 +2405,34 @@ match the inline ones: fade 25.0 fps (11.7 layers per frame, all drawn
 ahead), glass 2.1 to 2.2, shadow 29.5 to 29.9. A client with every layer
 single-sample read the fade route the same (23 to 25 fps). So on the
 Mali-T860 neither the window's pass breaks nor the layers' MSAA is the
-fade route's cost: the shadow route, with no layer, holds only 30 fps on
-the bar's strip and 28 with every frame redrawn whole, so twelve layers
-cost the TV about 5 fps over a ceiling that comes from elsewhere in the
-bench's content (stage 5's path bench held 50 fps at about 60 draw
-calls). The TV's `gpuFrameExecMs` reads whole vsync periods here (20.0,
-40.0), frame pacing rather than GPU work, as the desktop's did.
+fade route's cost. The TV's `gpuFrameExecMs` reads whole vsync periods
+here (20.0, 40.0), frame pacing rather than GPU work, as the desktop's
+did.
+
+The bench cut down on the TV (switches stripes=0, cards=0, text=0,
+bar=0, shadow=0, chip=0 in `probes/stage6-effects-bench.tsx`; frames per
+second over a timed 10 s, the frames-plus-missed check passing) shows
+two separate costs, not one ceiling:
+
+| variant | fps |
+|---|---|
+| stripes and bar, no cards | 50 |
+| cards without shadow (background, text, chip) | 50 |
+| card backgrounds only | 50 |
+| no stripes, cards without shadow | 50 |
+| fade route: the same cards, each in an opacity layer | 25 |
+| shadow route, blur 0 / 4 / 16 / 32 | 34 / 33 / 28 to 30 / 25 |
+| shadow route, no stripes | 12 |
+
+The twelve layers cost the fade route 50 to 25 fps: with the pass
+breaks and MSAA ruled out, most likely the fixed cost of twelve small
+render passes on this Mali, for which packing the layers into one
+storage drawn in one pass is the usual answer. The analytic shadow
+program costs the shadow route 50 to about 30 even unblurred, and
+forcing every frame to redraw whole changed it little (30 to 28), which
+points at a fixed cost per shadow draw rather than per pixel; not yet
+explained, nor is the drop to 12 without the stripes. SurfaceFlinger
+sends the window straight to the hardware composer in every variant.
 
 ### Where anvil lives (2026-11-18)
 
