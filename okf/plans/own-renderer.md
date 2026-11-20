@@ -2434,6 +2434,18 @@ points at a fixed cost per shadow draw rather than per pixel; not yet
 explained, nor is the drop to 12 without the stripes. SurfaceFlinger
 sends the window straight to the hardware composer in every variant.
 
+The shadow program's cost, cut further on the TV: a client whose shadow
+fragment skips the mask (a flat 0.5) reads the shadow route at 42 fps
+(no stripes: 34), so the y integral is most of the cost and filling and
+blending the inflated quads the rest. Most of a card's shadow quad lies
+under the card, where the cutout zeroes the mask after the integral is
+computed; the shader now takes the cutout first and skips the integral
+where it covers the fragment whole, pixel-identical on the desktop (the
+shadow, glass and shadow-cutout probes, lit, theme-toggle) and seen
+correct on the TV by the maintainer. The shadow route at blur 16 goes
+from 28 to 30 fps to 34.5, at blur 0 from 34 to 41, without the stripes
+from 12 to 19.
+
 ### Where anvil lives (2026-11-18)
 
 anvil is a module behind the seam, `alloy/src/renderer/anvil/` (the plan

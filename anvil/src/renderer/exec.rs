@@ -851,10 +851,18 @@ void main() {
   vec2 dp = device();
   float inside = float(all(greaterThanEqual(dp, vClip.xy)) && all(lessThan(dp, vClip.zw)));
   vec2 hs = vShape.xy * 0.5;
-  float mask = clamp(shadowMask(vLocal - hs, hs, vRadii, vSigma), 0.0, 1.0);
+  // The cutout first: where it covers the fragment whole, the mask is 0
+  // and the y integral is skipped (most of a card's shadow quad lies under
+  // the card). Its coverage takes derivatives, so it is read before the
+  // branch, under the flat cutout test every fragment of a quad shares.
+  float outside = 1.0;
   if (vCutout.z > 0.0 && vCutout.w > 0.0) {
     vec2 cutHalf = vCutout.zw * 0.5;
-    mask *= 1.0 - coverage(roundedBox(vLocal - (vCutout.xy + cutHalf), cutHalf, vCutoutRadii));
+    outside = 1.0 - coverage(roundedBox(vLocal - (vCutout.xy + cutHalf), cutHalf, vCutoutRadii));
+  }
+  float mask = 0.0;
+  if (outside > 0.0) {
+    mask = clamp(shadowMask(vLocal - hs, hs, vRadii, vSigma), 0.0, 1.0) * outside;
   }
   fragColor = vColor * (mask * inside * roundedClip());
 }
