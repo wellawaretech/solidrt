@@ -106,5 +106,5 @@ The register is written: [gpu-driver-faults](../notes/gpu-driver-faults.md),
 with the path inventory, our 20 finds with their code sites, 338 upstream
 entries sorted by path, and its "Open checks": the upstream entries that
 touch a path we use on a GPU we run on, each waiting for a look at our
-code or a device. Open here: the checks, the CLAUDE.md line, and the
-detection.
+code or a device. The root CLAUDE.md points GPU work at it. Open here:
+the checks and the detection.
