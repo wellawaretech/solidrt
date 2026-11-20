@@ -2380,6 +2380,24 @@ noise; it is recorded in
 [gpu-driver-faults](../backlog/gpu-driver-faults.md). `sol test`: the
 two failures known before the stage, 1173 passed.
 
+**Step 6b on the tablet** (client of 76b9151b): the maintainer saw the
+fade, glass and shadow routes draw with no flicker, and a screen capture
+of the fade probe matches the expected arithmetic at every cell checked
+(the overlaps blue only at half strength, the nested group at a quarter,
+the rounded group). The Adreno 610 shows none of the reordering fault
+Skia records for the 620 and 640. Timed reads (frames plus missed
+presents equal 60 Hz times the window):
+
+| route | fps before (99e1f2a1) | fps | missed / 10 s | layers / frame, ahead | raster thread |
+|---|---|---|---|---|---|
+| fade | 13 | 50 to 58 | 21 to 104 | 11.8, 11.8 | 60 % |
+| glass | 26 to 27 | 26 to 28 | 325 to 345 | 4.2 to 5.3, 0 | 63 % |
+| shadow | 52 to 54 | 53 to 54 | 58 to 72 | 0 | 43 % |
+
+The fade route went from 13 to 50 to 58 fps; the raster thread's share
+stayed, at four times the frames. Glass and shadow draw nothing ahead
+and read as before.
+
 ### Where anvil lives (2026-11-18)
 
 anvil is a module behind the seam, `alloy/src/renderer/anvil/` (the plan
