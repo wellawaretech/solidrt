@@ -173,8 +173,8 @@ layout(location = 5) in vec4 aClip;      // x0, y0, x1, y1 in device pixels
 layout(location = 7) in vec4 aRClip;     // the rounded clip in device pixels: x0, y0, x1, y1
 layout(location = 8) in vec4 aRClipRadii; // its corner radii in device pixels; all zero: none
 layout(location = 9) in vec4 aPersp;     // the projective row: w' = x * p1 + y * p2 + p3; the tile
-layout(location = 10) in vec4 aGradX;    // a gradient's x row and ramp row; a texel u row
-layout(location = 11) in vec4 aGradY;    // its y row and kind (0: none); a texel v row
+layout(location = 10) in vec4 aGradX;    // a gradient's x row and ramp row; a texel u row; a shadow's cutout
+layout(location = 11) in vec4 aGradY;    // its y row and kind (0: none); a texel v row; the cutout's radii
 uniform vec2 uSize;                      // the target in device pixels
 uniform float uRampRows;                 // the ramp atlas's height in rows
 out vec2 vUv;
@@ -283,12 +283,19 @@ void main() {
 // The shadow program's vertex stage, after SOURCE_HEADER, VERTEX_COMMON and
 // ROUNDED_PLACE: the rounded program's, the shape measured from the
 // shape's own rect in `aTex` (walk.rs `push_shadow`: the quad lies the
-// blur's reach outside it), and the sigma from the stroke slot.
+// blur's reach outside it), the sigma from the stroke slot, and the cutout
+// from the gradient slots (walk.rs `Instance::grad_x`, `grad_y`), which a
+// shadow never uses for a gradient. `place` still writes `vGrad`; the
+// shadow fragment never declares it, so the linker drops it.
 const SHADOW_VERTEX: &str = r"
 flat out float vSigma;                   // the blur's sigma, local pixels
+flat out vec4 vCutout;                   // the cutout: x, y, w, h from the shape's origin; w or h 0: none
+flat out vec4 vCutoutRadii;              // its corner radii, local pixels: tl, tr, br, bl
 void main() {
   placeRounded();
   vSigma = aOffset.w;
+  vCutout = aGradX;
+  vCutoutRadii = aGradY;
 }
 ";
 
@@ -757,8 +764,14 @@ void main() {
 //
 // The quad's edges lie SHADOW_REACH sigma out, where the mask is under
 // half a percent of a channel step: the clip box is a factor, the rounded
-// clip a product (the clip cuts the blurred shadow), no discard and no
-// derivative of its own (`roundedClip()` takes its own).
+// clip a product (the clip cuts the blurred shadow), no discard.
+//
+// A cutout (walk.rs `cutout_shadow`: the casting box the shadow is not
+// drawn under) multiplies the mask by its outside coverage, the rounded-box
+// distance in local space through `coverage()`: the one-pixel analytic ramp
+// the rounded program's edges get, in device pixels under any scale. Its
+// derivatives, and `roundedClip()`'s, are the only ones the program takes;
+// the cutout is flat, so every fragment of a quad takes the same branch.
 //
 // After SOURCE_HEADER and the common fragment parts.
 pub(crate) const SHADOW_FRAGMENT: &str = r"
@@ -766,6 +779,8 @@ in vec2 vLocal;
 flat in vec4 vShape;      // the shape's w, h; z, w unused
 flat in vec4 vRadii;      // corner radii, local pixels: tl, tr, br, bl
 flat in float vSigma;     // the blur's sigma, local pixels
+flat in vec4 vCutout;     // the cutout from the shape's origin: x, y, w, h; w or h 0: none
+flat in vec4 vCutoutRadii; // its corner radii, local pixels: tl, tr, br, bl
 // How many sigmas the quad reaches past the shape, and the y integral's
 // half range (walk.rs SHADOW_REACH_SIGMAS must match).
 const float SHADOW_REACH = 3.0;
@@ -830,6 +845,10 @@ void main() {
   float inside = float(all(greaterThanEqual(dp, vClip.xy)) && all(lessThan(dp, vClip.zw)));
   vec2 hs = vShape.xy * 0.5;
   float mask = clamp(shadowMask(vLocal - hs, hs, vRadii, vSigma), 0.0, 1.0);
+  if (vCutout.z > 0.0 && vCutout.w > 0.0) {
+    vec2 cutHalf = vCutout.zw * 0.5;
+    mask *= 1.0 - coverage(roundedBox(vLocal - (vCutout.xy + cutHalf), cutHalf, vCutoutRadii));
+  }
   fragColor = vColor * (mask * inside * roundedClip());
 }
 ";

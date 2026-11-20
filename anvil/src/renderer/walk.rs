@@ -90,11 +90,16 @@ pub struct Instance {
   /// carries [0, 0, 1, 0].
   pub persp: [f32; 4],
   /// A gradient's x row over the quad's local space (3 floats) and its
-  /// ramp row; a textured instance's u row over the same space and 0.
+  /// ramp row; a textured instance's u row over the same space and 0. A
+  /// shadow (`KIND_SHADOW`), which has neither, carries its cutout here
+  /// (`push_shadow`): the rect the shadow is not drawn in, x, y, w, h in
+  /// local space relative to the shape rect's origin (`tex`'s x, y); all
+  /// zero for none.
   pub grad_x: [f32; 4],
   /// A gradient's y row (3 floats) and its kind (`GradientKind`'s
   /// discriminant); a textured instance's v row and 0. A kind of 0 means
-  /// no gradient.
+  /// no gradient. A shadow's cutout's corner radii in local pixels, CSS
+  /// order, zero for a plain rect cutout or none.
   pub grad_y: [f32; 4],
 }
 
@@ -197,6 +202,18 @@ pub const FOLD_SCAN_LIMIT: usize = 64;
 /// reach by (blur.rs BLUR_REACH_SIGMAS). Not rounded to whole pixels: the
 /// quad is in local space. exec.rs's GLSL const SHADOW_REACH must match.
 pub const SHADOW_REACH_SIGMAS: f32 = 3.0;
+
+/// The sigma, device pixels, a hard fill drawn as a shadow takes (a plain
+/// fill under its own difference clip, `cutout_shadow`, which divides it by
+/// the map's scale into local units): a quarter-pixel blur, an edge ramp no
+/// wider than MSAA's, so the shadow program's division by the sigma stays
+/// finite.
+pub const HARD_SHADOW_SIGMA: f32 = 0.25;
+
+/// The smallest map scale `cutout_shadow` divides HARD_SHADOW_SIGMA by, so
+/// a map that collapses an axis cannot divide by zero (its draw covers
+/// nothing anyway).
+const HARD_SHADOW_SCALE_MIN: f32 = 1e-6;
 
 /// The tile modes, as `Instance::persp`'s last float and a batch's or a
 /// mesh draw's `uGradMeta` carry them. The `const int TILE_*`
@@ -1021,7 +1038,14 @@ fn scissor(instances: &[Instance], mesh_draws: &[MeshDraw], layers: &[Layer]) ->
 // list with an extra restore cannot pop its parent's save.
 fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut RampTable, out: &mut Walked) {
   let base = stack.len();
-  for op in ops {
+  let mut rest = ops.iter();
+  while let Some(op) = rest.next() {
+    // A difference clip over exactly one plain rect fill and its restore
+    // is a shadow's casting-box cutout: one shadow instance, no stencil.
+    if stack.len() > base && cutout_shadow(op, rest.as_slice(), state, out) {
+      rest.next();
+      continue;
+    }
     match op {
       Op::Save => stack.push(Saved { state: *state, layer: None }),
       Op::SaveLayer { alpha, matrix, blur } => {
@@ -1061,7 +1085,7 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
         // masked rect through a layer blur (`masked`).
         let plain = stroke.is_none() && source.is_none() && *blend == BlendMode::SourceOver && matrix.is_none();
         if plain && *mask_blur > 0.0 {
-          push_shadow(state, rect, *radii, *color, *mask_blur, out);
+          push_shadow(state, rect, *radii, *color, *mask_blur, None, out);
           continue;
         }
         let kind = if radii.iter().all(|r| *r == 0.0) { KIND_RECT } else { KIND_ROUNDED_RECT };
@@ -1123,6 +1147,47 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
       }
     }
   }
+}
+
+// The cutout peephole: true when `op` is a `ClipRect` or `ClipRoundedRect`
+// with `ClipOperation::Difference` whose `next` two ops are exactly a plain
+// `DrawRect` fill (no stroke, no source, source-over, no color matrix, any
+// mask blur, none included) and a `Restore`. The draw is then pushed as one
+// analytic shadow carrying the clip's rect and radii as its cutout
+// (`push_shadow`; a hard fill at HARD_SHADOW_SIGMA), with no clip draw and
+// no change to the state, and the caller consumes the draw op; the
+// `Restore` is walked as usual. No op lies between the clip and the draw,
+// so both are in the same local space and the cutout is exact under any
+// affine map. A hard fill's sigma is HARD_SHADOW_SIGMA over the map's
+// larger axis scale (as `device_blur` measures them), a quarter device
+// pixel at any scale. False, changing nothing, for anything else: the clip
+// then takes its usual path (`clip`). The caller asks only when this list
+// has a save to pop: a `Restore` that pops nothing (a nested list's restore
+// without its save) does not end the clip's scope, so the stencil takes it.
+fn cutout_shadow(op: &Op, next: &[Op], state: &State, out: &mut Walked) -> bool {
+  let (cut, cut_radii) = match op {
+    Op::ClipRect { rect, op: ClipOperation::Difference } => (rect, [0.0; 4]),
+    Op::ClipRoundedRect { rect, radii, op: ClipOperation::Difference, .. } => (rect, *radii),
+    _ => return false,
+  };
+  let [Op::DrawRect { rect, radii, color, stroke: None, source: None, blend, matrix: None, mask_blur }, Op::Restore, ..] =
+    next
+  else {
+    return false;
+  };
+  if *blend != BlendMode::SourceOver {
+    return false;
+  }
+  let sigma = if *mask_blur > 0.0 {
+    *mask_blur
+  } else {
+    let m = &state.matrix;
+    let scale = m.m11.hypot(m.m12).max(m.m21.hypot(m.m22));
+    let scale = if scale.is_finite() { scale.max(HARD_SHADOW_SCALE_MIN) } else { 1.0 };
+    HARD_SHADOW_SIGMA / scale
+  };
+  push_shadow(state, rect, *radii, *color, sigma, Some((cut, cut_radii)), out);
+  true
 }
 
 // One op that takes a paint, drawn by `draw` (given the state, the output
@@ -1853,7 +1918,8 @@ struct Quad {
   radii: Radii,
   /// `grad_x`, `grad_y` and the tile in `persp`'s last float: a
   /// gradient's (`gradient_rows`), a textured instance's texel rows
-  /// (`texel_rows`), zeros otherwise.
+  /// (`texel_rows`), a shadow's cutout rect and radii with no tile
+  /// (`push_shadow`), zeros otherwise.
   rows: Rows,
 }
 
@@ -2261,21 +2327,40 @@ fn device_box(instance: &Instance) -> Option<Box2D<f32>> {
 // SHADOW_REACH_SIGMAS * sigma on every side, the shape's own rect in `tex`
 // and the sigma in the stroke slot, its color premultiplied, the clip and
 // the rounded clip as any instance's, in a shadow batch (`Walked::push_shadow`).
+// A `cutout` (a rect in the shape's local space and its clamped corner
+// radii, `cutout_shadow`) is the region the shadow is not drawn in: its
+// rect relative to the shape rect's origin in `grad_x`, its radii in
+// `grad_y`, all zero for none; the program multiplies the mask by the
+// cutout's outside coverage, a one-pixel analytic ramp at its edge.
 // The shadow program evaluates the gaussian-blurred rounded box at the
 // fragment's local point (exec.rs SHADOW_FRAGMENT): the shape blurred in its
 // own space and then mapped, which is exact under any affine map (what a
 // transformed element's CSS shadow is: the blur turns and scales with it);
 // under perspective it is the approximation every per-instance quad makes,
 // the blur's sigma fixed in local units across the quad.
-fn push_shadow(state: &State, rect: &Rect, radii: Radii, color: Premultiplied, sigma: f32, out: &mut Walked) {
+fn push_shadow(
+  state: &State,
+  rect: &Rect,
+  radii: Radii,
+  color: Premultiplied,
+  sigma: f32,
+  cutout: Option<(&Rect, Radii)>,
+  out: &mut Walked,
+) {
   if color[3] == 0.0 || rect.is_empty() {
     return;
   }
   let reach = SHADOW_REACH_SIGMAS * sigma;
   let quad = rect.inflate(reach, reach);
   let Some((p, clip)) = placed(state, &quad) else { return };
-  let shadow =
-    Quad { rect: quad, kind: KIND_SHADOW, stroke: sigma, color, tex: rect_array(rect), radii, rows: NO_ROWS };
+  let rows = match cutout {
+    Some((cut, cut_radii)) => {
+      let x = [cut.origin.x - rect.origin.x, cut.origin.y - rect.origin.y, cut.size.width, cut.size.height];
+      Rows { x, y: cut_radii, tile: 0.0 }
+    }
+    None => NO_ROWS,
+  };
+  let shadow = Quad { rect: quad, kind: KIND_SHADOW, stroke: sigma, color, tex: rect_array(rect), radii, rows };
   out.push_shadow(instance(state, &p, clip, shadow), state.depth);
 }
 

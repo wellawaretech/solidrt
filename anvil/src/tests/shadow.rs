@@ -1,17 +1,25 @@
 // A paint's mask blur (renderer/walk.rs `push_shadow`, `masked`): a plain
 // rect or rounded rect fill as one analytic shadow instance in a shadow
-// batch, every other masked op as an implicit layer with a `Decal` blur of
-// the sigma, a masked shadow folding into a group's alpha, a sigma below
-// the recording's floor drawing hard, the op log keeping the mask filter,
-// and the shadow program's reach pinned to the walk's (renderer/exec.rs
-// SHADOW_FRAGMENT). No GL context.
+// batch, a plain fill under its own difference clip as a shadow carrying
+// the clip as its cutout (`cutout_shadow`) and anything else at a
+// difference clip through the stencil, every other masked op as an
+// implicit layer with a `Decal` blur of the sigma, a masked shadow folding
+// into a group's alpha, a sigma below the recording's floor drawing hard,
+// the op log keeping the mask filter, and the shadow program's reach
+// pinned to the walk's (renderer/exec.rs SHADOW_FRAGMENT). No GL context.
 
+use crate::oplog::Op as LogOp;
 use crate::prelude::*;
 use crate::renderer::blur::{blur_reach, DeviceBlur};
 use crate::renderer::ramps::RampTable;
-use crate::renderer::walk::{walk, BatchProgram, Instance, Walked, KIND_SHADOW, SHADOW_REACH_SIGMAS};
-use crate::renderer::{MASK_SIGMA_MIN, SHADOW_FRAGMENT};
-use crate::{BlendMode, ClipOperation, Color, ColorSource, DisplayListBuilder, DrawStyle, FillType, ISize};
+use crate::renderer::walk::{
+  walk, BatchProgram, Instance, Walked, HARD_SHADOW_SIGMA, KIND_SHADOW, SHADOW_REACH_SIGMAS,
+};
+use crate::renderer::{report, MASK_SIGMA_MIN, SHADOW_FRAGMENT};
+use crate::{
+  BlendMode, ClipOperation, Color, ColorFilter, ColorMatrix, ColorSource, DisplayListBuilder, DrawStyle, FillType,
+  ISize,
+};
 use crate::{MaskFilter, Paint, PathBuilder, Point, Rect, RoundingRadii, Size, TileMode};
 use euclid::default::{Box2D, Point2D};
 
@@ -43,6 +51,10 @@ const CLIP_RADIUS: f32 = 10.0;
 
 // The uniform scale of the local-units cases.
 const SCALE: f32 = 2.0;
+
+// The translation of the mapped cutout case.
+const OFFSET_X: f32 = 5.0;
+const OFFSET_Y: f32 = 7.0;
 
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
   Rect::new(Point::new(x, y), Size::new(w, h))
@@ -297,27 +309,261 @@ fn the_shadow_program_reaches_as_far_as_the_walk() {
 }
 
 #[test]
-fn a_shadow_under_a_difference_clip_tests_the_stencil() {
+fn a_shadow_under_its_rounded_cutout_is_one_instance_with_no_stencil() {
+  let cut = rect(20.0, 20.0, 40.0, 30.0);
+  let radii = RoundingRadii::circular(RADII);
+  let mut b = DisplayListBuilder::new(None);
+  b.save();
+  b.clip_rounded_rect(&cut, &radii, ClipOperation::Difference);
+  b.draw_rounded_rect(&rect(24.0, 26.0, 40.0, 30.0), &radii, &masked(SIGMA));
+  b.restore();
+  let out = walked(b);
+  assert_eq!(programs(&out), vec![BatchProgram::Shadow]);
+  assert_eq!(out.batches[0].stencil, 0);
+  assert!(out.clip_draws.is_empty());
+  assert_eq!(report(&out).clips, 0);
+  let i = &out.instances[0];
+  assert_eq!(i.offset_kind_stroke[3], SIGMA);
+  // The cutout relative to the shape rect's origin, and its radii.
+  assert!(approx(i.grad_x, [-4.0, -6.0, 40.0, 30.0]), "{:?}", i.grad_x);
+  assert!(approx(i.grad_y, RADII), "{:?}", i.grad_y);
+  assert_eq!(i.persp[3], 0.0);
+}
+
+#[test]
+fn a_shadow_under_its_rect_cutout_has_zero_cutout_radii() {
   let mut b = DisplayListBuilder::new(None);
   b.save();
   b.clip_rect(&rect(30.0, 30.0, 20.0, 20.0), ClipOperation::Difference);
   b.draw_rect(&rect(34.0, 36.0, 20.0, 20.0), &masked(SIGMA));
   b.restore();
+  // A depth-0 shadow after the restore joins the same batch.
   b.draw_rect(&rect(60.0, 60.0, 20.0, 20.0), &masked(SIGMA));
   let out = walked(b);
-  let batches: Vec<(BatchProgram, u8)> = out.batches.iter().map(|b| (b.program, b.stencil)).collect();
-  // The difference clip's box raise and shape lower, the shadow at depth 1,
-  // the restore's reset, and the depth-0 shadow in a batch of its own.
-  assert_eq!(
-    batches,
-    vec![
-      (BatchProgram::Clip, 0),
-      (BatchProgram::Clip, 0),
-      (BatchProgram::Shadow, 1),
-      (BatchProgram::Clip, 0),
-      (BatchProgram::Shadow, 0),
-    ]
-  );
+  assert_eq!(programs(&out), vec![BatchProgram::Shadow]);
+  assert_eq!((out.batches[0].count, out.batches[0].stencil), (2, 0));
+  assert!(out.clip_draws.is_empty());
+  let i = &out.instances[0];
+  assert!(approx(i.grad_x, [-4.0, -6.0, 20.0, 20.0]), "{:?}", i.grad_x);
+  assert_eq!(i.grad_y, [0.0; 4]);
+  // The shadow without a cutout carries none.
+  assert_eq!((out.instances[1].grad_x, out.instances[1].grad_y), ([0.0; 4], [0.0; 4]));
+}
+
+#[test]
+fn a_hard_fill_under_a_cutout_is_a_shadow_of_the_hard_sigma() {
+  let mut b = DisplayListBuilder::new(None);
+  b.save();
+  b.clip_rect(&rect(30.0, 30.0, 20.0, 20.0), ClipOperation::Difference);
+  b.draw_rect(&rect(34.0, 36.0, 20.0, 20.0), &opaque());
+  b.restore();
+  let out = walked(b);
+  assert_eq!(programs(&out), vec![BatchProgram::Shadow]);
+  let i = &out.instances[0];
+  assert_eq!(i.offset_kind_stroke[2], KIND_SHADOW);
+  assert_eq!(i.offset_kind_stroke[3], HARD_SHADOW_SIGMA);
+  assert!(out.clip_draws.is_empty());
+
+  // Without the cutout a hard fill stays a plain fill.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&rect(34.0, 36.0, 20.0, 20.0), &opaque());
+  let out = walked(b);
+  assert_eq!(programs(&out), vec![BatchProgram::Fill]);
+  assert!(shadows(&out).is_empty());
+}
+
+// The difference clip took the stencil: its box raise and shape lower, and
+// every draw batch before the restore at depth 1.
+fn assert_stencil_clip(out: &Walked) {
+  let clips = out.batches.iter().filter(|b| b.program == BatchProgram::Clip).count();
+  // The raise, the lower and the restore's reset.
+  assert_eq!(clips, 3, "{:?}", programs(out));
+  assert_eq!(out.clip_draws.len(), 3);
+  let draws: Vec<u8> = out.batches.iter().filter(|b| b.program != BatchProgram::Clip).map(|b| b.stencil).collect();
+  assert!(!draws.is_empty() && draws.iter().all(|d| *d == 1), "{draws:?}");
+  assert!(shadows(out).iter().all(|i| i.grad_x == [0.0; 4] && i.grad_y == [0.0; 4]));
+}
+
+#[test]
+fn a_difference_clip_over_anything_else_takes_the_stencil() {
+  let cut = rect(30.0, 30.0, 20.0, 20.0);
+  let shape = rect(34.0, 36.0, 20.0, 20.0);
+  let mut stroked = opaque();
+  stroked.set_draw_style(DrawStyle::Stroke).set_stroke_width(STROKE);
+
+  // Two draws before the restore.
+  let mut b = DisplayListBuilder::new(None);
+  b.save();
+  b.clip_rect(&cut, ClipOperation::Difference);
+  b.draw_rect(&shape, &masked(SIGMA));
+  b.draw_rect(&shape, &masked(SIGMA));
+  b.restore();
+  assert_stencil_clip(&walked(b));
+
+  // An oval.
+  let mut b = DisplayListBuilder::new(None);
+  b.save();
+  b.clip_rect(&cut, ClipOperation::Difference);
+  b.draw_oval(&shape, &opaque());
+  b.restore();
+  assert_stencil_clip(&walked(b));
+
+  // A stroked rect.
+  let mut b = DisplayListBuilder::new(None);
+  b.save();
+  b.clip_rect(&cut, ClipOperation::Difference);
+  b.draw_rect(&shape, &stroked);
+  b.restore();
+  assert_stencil_clip(&walked(b));
+
+  // A transform between the clip and the draw.
+  let mut b = DisplayListBuilder::new(None);
+  b.save();
+  b.clip_rect(&cut, ClipOperation::Difference);
+  b.translate(1.0, 1.0);
+  b.draw_rect(&shape, &masked(SIGMA));
+  b.restore();
+  assert_stencil_clip(&walked(b));
+}
+
+#[test]
+fn a_cutout_under_a_translate_and_a_scale_stays_in_the_shapes_space() {
+  let mut b = DisplayListBuilder::new(None);
+  b.translate(OFFSET_X, OFFSET_Y);
+  b.scale(SCALE, SCALE);
+  b.save();
+  b.clip_rect(&rect(10.0, 10.0, 10.0, 10.0), ClipOperation::Difference);
+  b.draw_rect(&rect(12.0, 13.0, 10.0, 10.0), &opaque());
+  b.restore();
+  let out = walked(b);
+  assert_eq!(programs(&out), vec![BatchProgram::Shadow]);
+  assert!(out.clip_draws.is_empty());
+  let i = &out.instances[0];
+  // The cutout relative to the shape's origin, the map on the instance.
+  assert!(approx(i.grad_x, [-2.0, -3.0, 10.0, 10.0]), "{:?}", i.grad_x);
+  assert!(approx(i.linear, [SCALE, 0.0, 0.0, SCALE]), "{:?}", i.linear);
+  assert!((i.offset_kind_stroke[0] - OFFSET_X).abs() < EPS && (i.offset_kind_stroke[1] - OFFSET_Y).abs() < EPS);
+  // The hard sigma is a quarter device pixel: in local units, over the scale.
+  assert!((i.offset_kind_stroke[3] - HARD_SHADOW_SIGMA / SCALE).abs() < EPS, "{:?}", i.offset_kind_stroke);
+}
+
+// The difference clip took the stencil (its raise, its lower and the
+// restore's reset) and no shadow carries a cutout; for the arms that may
+// draw through a layer, whose content draws at depth 0.
+fn assert_stencil_clip_draws(out: &Walked) {
+  assert_eq!(out.clip_draws.len(), 3, "{:?}", programs(out));
+  assert!(shadows(out).iter().all(|i| i.grad_x == [0.0; 4] && i.grad_y == [0.0; 4]));
+}
+
+#[test]
+fn a_blend_a_source_or_a_color_filter_at_a_difference_clip_takes_the_stencil() {
+  let cut = rect(30.0, 30.0, 20.0, 20.0);
+  let shape = rect(34.0, 36.0, 20.0, 20.0);
+  let mut multiply = opaque();
+  multiply.set_blend_mode(BlendMode::Multiply);
+  let stops = [Color::new_srgba(1.0, 0.0, 0.0, 1.0), Color::new_srgba(0.0, 0.0, 1.0, 1.0)];
+  let source =
+    ColorSource::linear_gradient(Point::zero(), Point::new(TARGET, 0.0), &stops, &[0.0, 1.0], TileMode::Clamp, None);
+  let mut sourced = opaque();
+  sourced.set_color_source(&source);
+  let mut filtered = opaque();
+  // Any matrix: its presence alone decides.
+  filtered.set_color_filter(&ColorFilter::matrix(&ColorMatrix { m: [1.0; 20] }));
+  for paint in [multiply, sourced, filtered] {
+    let mut b = DisplayListBuilder::new(None);
+    b.save();
+    b.clip_rect(&cut, ClipOperation::Difference);
+    b.draw_rect(&shape, &paint);
+    b.restore();
+    assert_stencil_clip_draws(&walked(b));
+  }
+}
+
+#[test]
+fn a_culled_cutout_shadow_pushes_nothing_and_the_restore_returns_to_depth_0() {
+  let mut b = DisplayListBuilder::new(None);
+  b.save();
+  b.clip_rect(&rect(200.0, 200.0, 20.0, 20.0), ClipOperation::Difference);
+  b.draw_rect(&rect(204.0, 206.0, 20.0, 20.0), &masked(SIGMA));
+  b.restore();
+  b.draw_rect(&rect(10.0, 10.0, 10.0, 10.0), &opaque());
+  let out = walked(b);
+  assert!(out.clip_draws.is_empty());
+  assert!(shadows(&out).is_empty());
+  assert_eq!(out.instances.len(), 1);
+  assert_eq!((out.batches.len(), out.batches[0].program, out.batches[0].stencil), (1, BatchProgram::Fill, 0));
+}
+
+#[test]
+fn a_nested_lists_restore_without_its_save_leaves_the_clip_to_the_stencil() {
+  let mut inner = DisplayListBuilder::new(None);
+  inner.clip_rect(&rect(30.0, 30.0, 20.0, 20.0), ClipOperation::Difference);
+  inner.draw_rect(&rect(34.0, 36.0, 20.0, 20.0), &masked(SIGMA));
+  inner.restore();
+  inner.draw_rect(&rect(60.0, 60.0, 20.0, 20.0), &masked(SIGMA));
+  let inner = inner.build().expect("a builder always builds a list");
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_display_list(&inner, 1.0);
+  let out = walked(b);
+  // The restore pops nothing: the clip stays in effect to the list's end,
+  // so both shadows draw at depth 1, with no cutout.
+  assert_stencil_clip_draws(&out);
+  let shadow_depths: Vec<u8> =
+    out.batches.iter().filter(|b| b.program == BatchProgram::Shadow).map(|b| b.stencil).collect();
+  assert_eq!(shadow_depths, vec![1]);
+  assert_eq!(shadows(&out).len(), 2);
+}
+
+#[test]
+fn a_cutout_shadow_folds_into_a_faded_group_unless_a_fill_overlaps_it() {
+  let mut group = Paint::default();
+  group.set_color(Color::new_srgba(0.0, 0.0, 0.0, HALF));
+  let card = rect(30.0, 30.0, 20.0, 20.0);
+  let radii = RoundingRadii::circular(RADII);
+
+  // A shadowed card: the cutout shadow and the card's opaque fill over it.
+  let mut b = DisplayListBuilder::new(None);
+  b.save_layer(&Rect::zero(), Some(&group));
+  b.save();
+  b.clip_rounded_rect(&card, &radii, ClipOperation::Difference);
+  b.draw_rounded_rect(&rect(32.0, 34.0, 20.0, 20.0), &radii, &masked(SIGMA));
+  b.restore();
+  b.draw_rounded_rect(&card, &radii, &opaque());
+  b.restore();
+  let out = walked(b);
+  assert_eq!(out.layers.len(), 1);
+  assert!(!out.layers[0].folded);
+  assert!(out.clip_draws.is_empty());
+
+  // The cutout shadow alone folds: no clip batch blocks it.
+  let mut b = DisplayListBuilder::new(None);
+  b.save_layer(&Rect::zero(), Some(&group));
+  b.save();
+  b.clip_rounded_rect(&card, &radii, ClipOperation::Difference);
+  b.draw_rounded_rect(&rect(32.0, 34.0, 20.0, 20.0), &radii, &masked(SIGMA));
+  b.restore();
+  b.restore();
+  let out = walked(b);
+  assert_eq!(programs(&out), vec![BatchProgram::Shadow]);
+  assert!(out.layers[0].folded);
+  let want = [RED * ALPHA * HALF, GREEN * ALPHA * HALF, 0.0, ALPHA * HALF];
+  assert!(approx(out.instances[0].color, want), "{:?}", out.instances[0].color);
+}
+
+#[test]
+fn the_op_log_keeps_the_cutout_clip_and_its_draw() {
+  let cut = rect(30.0, 30.0, 20.0, 20.0);
+  let mut b = DisplayListBuilder::new(None);
+  b.save();
+  b.clip_rect(&cut, ClipOperation::Difference);
+  b.draw_rect(&rect(34.0, 36.0, 20.0, 20.0), &masked(SIGMA));
+  b.restore();
+  let list = b.build().expect("a builder always builds a list");
+  let ops = list.ops();
+  assert_eq!(ops.len(), 4);
+  assert_eq!(ops[1], LogOp::ClipRect { rect: cut, op: ClipOperation::Difference });
+  assert!(matches!(ops[2], LogOp::DrawRect { .. }));
+  assert!(ops[2].paint().expect("a draw has a paint").mask_filter);
 }
 
 #[test]

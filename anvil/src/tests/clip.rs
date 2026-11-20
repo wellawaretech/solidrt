@@ -175,6 +175,9 @@ fn a_difference_clip_raises_the_box_and_lowers_its_shape() {
     .save()
     .clip_rect(&rect(30.0, 30.0, 20.0, 20.0), ClipOperation::Difference)
     .draw_rect(&cover(), &opaque())
+    // A second draw: one plain fill alone before the restore would take the
+    // cutout instead (tests/shadow.rs).
+    .draw_rect(&cover(), &opaque())
     .restore();
   let out = walked(b);
   assert_eq!(
