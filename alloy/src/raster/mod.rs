@@ -166,6 +166,11 @@ pub struct RasterStats {
   /// draws (a group's opacity); a layer whose alpha folded into its content
   /// is not one. Each composite is also one of `renderer_draw_calls`.
   pub(crate) renderer_layers: AtomicU64,
+  /// Blur passes the renderer drew for its layers across the same draws:
+  /// a backdrop layer's fill copy, each halving of a large blur's content
+  /// and each horizontal and vertical gaussian pass, not among
+  /// `renderer_draw_calls`.
+  pub(crate) renderer_blur_passes: AtomicU64,
   /// Submissions issued beyond one per draw by the submission budget
   /// (gl::slicing): a heavy draw cut into slices so no single submission
   /// runs past the kernel's hang timeout. 0 on a healthy desktop; climbing
@@ -288,6 +293,9 @@ pub struct RasterCounters {
   /// Layers the renderer drew offscreen over the same draws (see
   /// `RasterStats::renderer_layers`).
   pub renderer_layers: u64,
+  /// Blur passes the renderer drew over the same draws (see
+  /// `RasterStats::renderer_blur_passes`).
+  pub renderer_blur_passes: u64,
   /// Submissions issued beyond one per draw by the submission budget, and
   /// the raster-thread time spent waiting on their fences (see
   /// `RasterStats`).
@@ -337,6 +345,7 @@ impl RasterStats {
       renderer_tessellated: self.renderer_tessellated.load(Ordering::Relaxed),
       renderer_clips: self.renderer_clips.load(Ordering::Relaxed),
       renderer_layers: self.renderer_layers.load(Ordering::Relaxed),
+      renderer_blur_passes: self.renderer_blur_passes.load(Ordering::Relaxed),
       draw_slices: self.draw_slices.load(Ordering::Relaxed),
       slice_wait_micros: self.slice_wait_micros.load(Ordering::Relaxed),
       cmd_micros: self.cmd_micros.load(Ordering::Relaxed),
@@ -370,6 +379,7 @@ impl RasterStats {
       renderer_tessellated: AtomicU64::new(0),
       renderer_clips: AtomicU64::new(0),
       renderer_layers: AtomicU64::new(0),
+      renderer_blur_passes: AtomicU64::new(0),
       draw_slices: AtomicU64::new(0),
       slice_wait_micros: AtomicU64::new(0),
       timer_queries: AtomicBool::new(false),
@@ -386,7 +396,7 @@ impl RasterStats {
 
   /// Sum a renderer draw's report into the cumulative counters (see
   /// `renderer_instances`, `renderer_meshes`, `renderer_tessellated`,
-  /// `renderer_clips`, `renderer_layers`).
+  /// `renderer_clips`, `renderer_layers`, `renderer_blur_passes`).
   pub(crate) fn note_draw(&self, report: DrawReport) {
     self.renderer_instances.fetch_add(report.instances as u64, Ordering::Relaxed);
     self.renderer_draw_calls.fetch_add(report.draw_calls as u64, Ordering::Relaxed);
@@ -394,6 +404,7 @@ impl RasterStats {
     self.renderer_tessellated.fetch_add(report.tessellated as u64, Ordering::Relaxed);
     self.renderer_clips.fetch_add(report.clips as u64, Ordering::Relaxed);
     self.renderer_layers.fetch_add(report.layers as u64, Ordering::Relaxed);
+    self.renderer_blur_passes.fetch_add(report.blur_passes as u64, Ordering::Relaxed);
   }
 
   /// The per-target counters as last published (see `targets`).

@@ -42,8 +42,12 @@
 //! take through the stencil. Stage 6, step 2 draws a group's opacity (a
 //! `save_layer` paint's alpha, a nested list below opacity 1) as a layer
 //! drawn offscreen and composited, or folded into its content's colors where
-//! that is exact. What does not draw yet (backdrop layers, filters, blend
-//! modes) warns once per process, naming itself and what happens instead.
+//! that is exact. Stage 6, step 3 draws every blend mode; step 4 a layer's
+//! gaussian blur (a `save_layer` paint's image filter), a color matrix (a
+//! layer's or a draw's color filter) and a backdrop layer, which starts
+//! from the target's pixels under its bounds. What does not draw yet (the
+//! mask filter among it) warns once per process, naming itself and what
+//! happens instead.
 //!
 //! With the `oplog` feature (alloy enables it for its tests only), and in
 //! this crate's own tests, the recording types also keep a plain-data log

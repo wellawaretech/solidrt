@@ -704,7 +704,11 @@ draw is new (a fade, a blend, a shadow); the TV reads are in Findings.
   It failed before the text cleanup (1a90d625) and after it, and still
   fails on 2026-11-19. Whether anvil places the glyph quads differently
   from Impeller's text layers, or the bound was fitted to Impeller, is
-  open.
+  open. A second one, `packages/test/tests/readers.test.tsx`, "gpu is
+  the inventory the control API reports": the inventory has carried a
+  `paintShaders` key since stage 3 and the test's key list does not;
+  the list is updated. Both are the suite's only failures on
+  2026-11-20 after stage 6's step 4 (1173 passed).
 - Before the diff runs: main's reference client in `target/main-ref/`
   rebuilt from a main checkout built whole (its own core), since the
   2026-11-18 copy predates stage 3's `flux:gpu` exports and refuses a
@@ -2107,6 +2111,75 @@ rounded panes with their contents draw in 5 calls at rest (the
 background, the panes' rims, their plain pieces and the slices).
 
 Still open from the stage: the `ROUNDED_SPLIT_AREA` sweep on the TV.
+
+### Stage 6: layers, blends, blur and the backdrop (2026-11-20)
+
+Step 1 landed as 82f8af23: the subtree `filter` prop went (the view field
+and its decode, the composite and boundary paint sites, the cull's
+filtered root, the tree's blur reach, five alloy test files and the 2d
+damage test's blur case); `backdropFilter` keeps `FilterState` and its
+machinery unchanged. Nothing in core, the components or the examples
+used it.
+
+Step 2 landed as e4883d0b. What the implementation settled beyond the
+design above:
+
+- The viewport trick holds exactly: a layer at device origin (ox, oy) of
+  content size (Wl, Hl) is drawn with `glViewport(-ox, Hl + oy - H, W, H)`
+  under the target's `uSize`, so its content lands in the bottom-left
+  corner of its allocation and `device()` adds `uFrag = (ox, oy + Hl)`;
+  the composite's texel rows flip v (GL's row 0 is the bottom) and are
+  rescaled to the 64 px bucket the storage was allocated in. Nearest
+  sampling is then exact at every pixel centre.
+- The clips in effect at `save_layer` apply at the composite alone; the
+  layer's stencil starts at zero. A stencil clip left raised inside a
+  layer needs no reset: the layer's stencil is thrown away.
+- The alpha fold (`FOLD_SCAN_LIMIT` 64 instances, pairwise disjoint
+  device boxes, quad batches only, no rounded clip at the opening) is
+  exact under premultiplied over; the review added the merge of the
+  batch before a folded layer with its first inner batch, an alpha-0
+  layer that culls its content without a layer, and the pool's cap as a
+  retention policy (a full pool grows and trims free entries by LRU at
+  the next draw) after the first build's fallback drew a layer's content
+  in place without the parent's clips.
+- The eight cases of a group-opacity probe (overlapping rects, one rect,
+  glyphs, a nested group, a rounded clip, a repaint boundary, two
+  disjoint rects, a rotated clip) match the expected arithmetic exactly
+  and main's Impeller client to the pixel except on the rounded and
+  rotated clip edges (anti-aliasing); the 20 reference renders diff at
+  zero against the renders of 0e6ab617.
+
+Step 3 landed as c445f5a2. The implementer found the rule that shaped
+the destination copy: under GLES 3.0 a blit that reads a multisampled
+framebuffer must use identical source and destination bounds, and the
+rig's targets are multisampled on every path. So the executor keeps one
+single-sample scratch at the target's size, `resolve_region` blits the
+layer's rect into it at the parent's window coordinates, and the
+composite reads the backdrop with `texelFetch` at `gl_FragCoord`, which
+is that coordinate. A fully transparent op is skipped only under the
+modes that keep the destination (`blend::keeps_destination`); the
+analytic coverage multiplied into the source under the seven modes that
+clear on a zero source differs from a coverage lerp on rim pixels, exact
+for every other mode (the result is affine in the premultiplied source).
+A probe of all 29 modes against main's Impeller client differs at most
+one channel level, on the shader-evaluated modes' cells; the
+gpu-texture-blend example (Plus) matches it exactly.
+
+Step 4 landed as the commit after c445f5a2 (see the log): a second GLES rule, a blit whose draw framebuffer is
+multisampled is refused, so no blit touches a layer storage: the
+backdrop fill, the halving downsamples and the two gaussian passes are
+all draws of one blur program (one tap under LINEAR sampling halves a
+2x2 block). Both tile modes inflate the layer by the reach; a Clamp
+blur's first pass clamps its reads to the content's own rect, so the
+edge color fills the margin as Skia's clamp does, while a Decal blur
+falls off into the transparent margin; a backdrop is never inflated.
+The alpha applies after the matrix, which for every matrix the
+rendertree builds equals Skia's order. Against main's
+Impeller client a glass probe (frosted panes, a grayscale backdrop, a
+large downsampled blur, a pane at opacity, a shadow through the layer
+blur, a pane in a fading group, a rotated pane) matches the color-only
+pane exactly and the blurred ones to within a few levels away from the
+stripe transitions, where the two kernels differ.
 
 ### Where anvil lives (2026-11-18)
 

@@ -11,7 +11,7 @@
 //! executable push.
 
 use super::mesh::{MeshStyle, MINIMUM_MITER};
-use super::ops::{premultiply, Image, Op, Premultiplied, Radii, Source};
+use super::ops::{premultiply, Blur, Image, Op, Premultiplied, Radii, Source};
 pub use super::path::{Path, PathBuilder};
 use super::{PaintShader, ShaderInput, Texture};
 use crate::contract;
@@ -73,9 +73,9 @@ pub struct DisplayListBuilder {
 
 /// What anvil draws of a paint: its color, premultiplied, and the stroke
 /// width when the style strokes (an image or gradient source rides beside
-/// it, see `source_of`; the blend mode rides on every op the closures
-/// make). A degenerate gradient source and the filters were warned about
-/// when they were set.
+/// it, see `source_of`; the blend mode and the color filter's matrix ride
+/// on every op the closures make). A degenerate gradient source and a mask
+/// filter were warned about when they were set.
 /// A stroke-and-fill covers the union of the fill and the stroke once: for
 /// the convex shapes here that is the fill outset by half the stroke width,
 /// its non-zero corner radii grown by the same (`fill` takes the outset and
@@ -166,6 +166,31 @@ fn source_of(paint: &Paint) -> Option<Source> {
   image_of(paint).map(Source::Image).or_else(|| paint.gradient.clone().map(Source::Gradient))
 }
 
+/// The blur `filter` asks for, as the walk draws it: its sigmas, and its
+/// tile mode, `Clamp` or `Decal`; `Mirror` and `Repeat` are warned once and
+/// clamp.
+fn blur_of(filter: &ImageFilter) -> Blur {
+  let tile = match filter.tile {
+    TileMode::Decal => TileMode::Decal,
+    TileMode::Clamp => TileMode::Clamp,
+    TileMode::Mirror | TileMode::Repeat => {
+      unsupported!("a blur tile mode other than clamp or decal", "the blur clamps");
+      TileMode::Clamp
+    }
+  };
+  Blur { sigma_x: filter.sigma_x, sigma_y: filter.sigma_y, tile }
+}
+
+/// The color matrix a draw's `paint` filters its color through: its color
+/// filter's. An image filter on a draw's paint (not a layer's) is warned
+/// once and the draw is unfiltered.
+fn draw_matrix(paint: &Paint) -> Option<ColorMatrix> {
+  if paint.image_filter.is_some() {
+    unsupported!("an image filter on a draw's paint", "the draw is not filtered");
+  }
+  paint.color_filter.as_ref().map(|f| f.matrix)
+}
+
 /// The union of the quads' `dst` rects; an empty rect at the origin for
 /// no quads.
 fn glyph_bounds(quads: &[GlyphQuad]) -> Rect {
@@ -188,8 +213,8 @@ fn warn_non_miter_join(paint: &Paint) {
   }
 }
 
-// The arguments anvil does not draw (a layer's bounds, a backdrop layer's
-// paint and filter) are read only by the test log.
+// The argument anvil does not draw (a layer's bounds) is read only by the
+// test log.
 #[cfg_attr(not(any(test, feature = "oplog")), allow(unused_variables))]
 impl contract::DisplayListBuilder for DisplayListBuilder {
   fn new(_cull: Option<&Rect>) -> Self {
@@ -219,13 +244,17 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
 
   fn save_layer(&mut self, bounds: &Rect, paint: Option<&Paint>) -> &mut Self {
     // The bounds are not read: the rendertree passes an infinite rect, and
-    // the walk bounds a layer by its content. A paint's filters were warned
-    // about when they were set; the layer draws unfiltered, at its alpha. A
-    // group with no effect (no paint, or alpha 1 and no filter) is no group:
-    // a plain save, so the matching restore still pops.
+    // the walk bounds a layer by its content. The layer takes the paint's
+    // alpha, its color filter's matrix and its image filter's blur. A group
+    // with no effect (no paint, or alpha 1 and no filter) is no group: a
+    // plain save, so the matching restore still pops.
     let layer = paint.filter(|p| p.color.alpha < 1.0 || p.color_filter.is_some() || p.image_filter.is_some());
     match layer {
-      Some(p) => self.ops.push(Op::SaveLayer { alpha: p.color.alpha.clamp(0.0, 1.0) }),
+      Some(p) => self.ops.push(Op::SaveLayer {
+        alpha: p.color.alpha.clamp(0.0, 1.0),
+        matrix: p.color_filter.as_ref().map(|f| f.matrix),
+        blur: p.image_filter.as_ref().map(blur_of),
+      }),
       None => self.ops.push(Op::Save),
     }
     #[cfg(any(test, feature = "oplog"))]
@@ -234,8 +263,18 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   }
 
   fn save_backdrop_layer(&mut self, bounds: &Rect, paint: Option<&Paint>, filter: Option<&ImageFilter>) -> &mut Self {
-    unsupported!("save_backdrop_layer", "the backdrop is not captured and the content draws in place");
-    self.ops.push(Op::Save);
+    // The paint's alpha (1 without one) and color filter, the filter's
+    // blur. With none of them the layer would composite the target's own
+    // pixels back unchanged: a plain save, so the matching restore still
+    // pops.
+    let alpha = paint.map_or(1.0, |p| p.color.alpha.clamp(0.0, 1.0));
+    let matrix = paint.and_then(|p| p.color_filter.as_ref()).map(|f| f.matrix);
+    let blur = filter.map(blur_of);
+    if alpha < 1.0 || matrix.is_some() || blur.is_some() {
+      self.ops.push(Op::SaveBackdropLayer { bounds: *bounds, alpha, matrix, blur });
+    } else {
+      self.ops.push(Op::Save);
+    }
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::SaveBackdropLayer { bounds: *bounds, paint: paint.map(|p| p.log), filter: filter.is_some() });
     self
@@ -303,6 +342,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       cap: paint.stroke_cap,
       gradient: paint.gradient.clone(),
       blend: paint.blend_mode,
+      matrix: draw_matrix(paint),
     });
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawLine { from, to, paint: paint.log });
@@ -314,6 +354,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     let rect = *rect;
     let source = source_of(paint);
     let blend = paint.blend_mode;
+    let matrix = draw_matrix(paint);
     shape_ops(
       paint,
       [0.0; 4],
@@ -324,8 +365,17 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         stroke: None,
         source: source.clone(),
         blend,
+        matrix,
       },
-      |color, width| Op::DrawRect { rect, radii: [0.0; 4], color, stroke: Some(width), source: source.clone(), blend },
+      |color, width| Op::DrawRect {
+        rect,
+        radii: [0.0; 4],
+        color,
+        stroke: Some(width),
+        source: source.clone(),
+        blend,
+        matrix,
+      },
       &mut self.ops,
     );
     #[cfg(any(test, feature = "oplog"))]
@@ -337,6 +387,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     let bounds = *bounds;
     let source = source_of(paint);
     let blend = paint.blend_mode;
+    let matrix = draw_matrix(paint);
     shape_ops(
       paint,
       [0.0; 4],
@@ -346,8 +397,9 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         stroke: None,
         source: source.clone(),
         blend,
+        matrix,
       },
-      |color, width| Op::DrawOval { bounds, color, stroke: Some(width), source: source.clone(), blend },
+      |color, width| Op::DrawOval { bounds, color, stroke: Some(width), source: source.clone(), blend, matrix },
       &mut self.ops,
     );
     #[cfg(any(test, feature = "oplog"))]
@@ -362,6 +414,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     let clamped = clamp_radii(&rect, radii);
     let source = source_of(paint);
     let blend = paint.blend_mode;
+    let matrix = draw_matrix(paint);
     shape_ops(
       paint,
       clamped,
@@ -372,8 +425,17 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         stroke: None,
         source: source.clone(),
         blend,
+        matrix,
       },
-      |color, width| Op::DrawRect { rect, radii: clamped, color, stroke: Some(width), source: source.clone(), blend },
+      |color, width| Op::DrawRect {
+        rect,
+        radii: clamped,
+        color,
+        stroke: Some(width),
+        source: source.clone(),
+        blend,
+        matrix,
+      },
       &mut self.ops,
     );
     #[cfg(any(test, feature = "oplog"))]
@@ -387,6 +449,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     // tessellates each (mesh.rs) and caches the mesh on the path.
     let color = premultiply(paint.color);
     let source = source_of(paint);
+    let matrix = draw_matrix(paint);
     let stroke = MeshStyle::Stroke {
       width: paint.stroke_width,
       cap: paint.stroke_cap,
@@ -411,6 +474,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         color,
         source: source.clone(),
         blend: paint.blend_mode,
+        matrix,
       });
     }
     #[cfg(any(test, feature = "oplog"))]
@@ -433,6 +497,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       sampling,
       alpha: paint.map_or(1.0, |p| p.color.alpha),
       blend: paint.map_or(BlendMode::SourceOver, |p| p.blend_mode),
+      matrix: paint.and_then(draw_matrix),
     });
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawTextureRect { src: *src, dst: *dst, sampling, paint: paint.map(|p| p.log) });
@@ -489,7 +554,8 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
 
 /// How a draw paints, as plain data; the recording reads what anvil draws
 /// of it (the color, an image or gradient source, the draw style, the
-/// stroke width and cap, and the join, to warn when it is not miter).
+/// stroke width and cap, the blend mode, the color filter, a layer's image
+/// filter, and the join, to warn when it is not miter).
 pub struct Paint {
   pub(super) color: Color,
   pub(super) color_source: Option<ColorSource>,
@@ -503,9 +569,7 @@ pub struct Paint {
   pub(super) stroke_cap: StrokeCap,
   pub(super) stroke_join: StrokeJoin,
   pub(super) stroke_miter: f32,
-  #[allow(dead_code)] // read by the executor from stage 6 (filters)
   pub(super) color_filter: Option<ColorFilter>,
-  #[allow(dead_code)] // read by the executor from stage 6 (filters)
   pub(super) image_filter: Option<ImageFilter>,
   #[allow(dead_code)] // read by the executor from stage 6 (filters)
   pub(super) mask_filter: Option<MaskFilter>,
@@ -613,7 +677,6 @@ impl contract::Paint for Paint {
   }
 
   fn set_color_filter(&mut self, filter: &ColorFilter) -> &mut Self {
-    unsupported!("a paint color filter", "the filter is ignored");
     self.color_filter = Some(filter.clone());
     #[cfg(any(test, feature = "oplog"))]
     {
@@ -623,7 +686,6 @@ impl contract::Paint for Paint {
   }
 
   fn set_image_filter(&mut self, filter: &ImageFilter) -> &mut Self {
-    unsupported!("a paint image filter", "the filter is ignored");
     self.image_filter = Some(filter.clone());
     #[cfg(any(test, feature = "oplog"))]
     {
@@ -645,7 +707,8 @@ impl contract::Paint for Paint {
 
 // The sources and filters below hold their constructor arguments; an image
 // source is read at record time (`image_of`), a gradient when a paint takes
-// it (`gradient_of`), and the filters from stage 6, by nothing before.
+// it (`gradient_of`), a color filter and an image filter by the layer and
+// draw ops that take the paint, a mask filter by nothing yet.
 
 /// What a paint draws with in place of its color.
 #[allow(dead_code)]
@@ -750,7 +813,6 @@ fn gradient_of(source: &ColorSource) -> Option<RampGradient> {
 }
 
 /// A per-pixel color transform.
-#[allow(dead_code)]
 #[derive(Clone)]
 pub struct ColorFilter {
   pub(super) matrix: ColorMatrix,
@@ -762,8 +824,7 @@ impl contract::ColorFilter for ColorFilter {
   }
 }
 
-/// A gaussian blur over a draw's or a layer's pixels.
-#[allow(dead_code)]
+/// A gaussian blur over a layer's pixels.
 #[derive(Clone)]
 pub struct ImageFilter {
   pub(super) sigma_x: f32,

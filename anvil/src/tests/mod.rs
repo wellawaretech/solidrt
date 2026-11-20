@@ -1,6 +1,7 @@
 mod anvil;
 mod blend;
 mod clip;
+mod effects;
 mod gradient;
 mod layers;
 mod mesh;

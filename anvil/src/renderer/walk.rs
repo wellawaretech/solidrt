@@ -12,19 +12,24 @@
 //! below opacity 1) as a layer between two marker batches, or folded into
 //! its content's colors where that is exact (`close_layer`), and a paint's
 //! blend mode, a batch key for the fixed-function modes and an implicit
-//! layer around the op for the shader modes (`blended`). No GL here, so
-//! the walk is unit-tested without a context (`tests/anvil.rs`,
-//! `tests/gradient.rs`, `tests/mesh.rs`, `tests/layers.rs`, `tests/blend.rs`).
+//! layer around the op for the shader modes (`blended`), and a layer's
+//! effects: a blur (sized by its reach, `close_layer`), a color matrix (on
+//! a layer, or on an implicit layer around a draw whose paint has one) and
+//! the backdrop a `save_backdrop_layer` starts from (`open_layer`). No GL
+//! here, so the walk is unit-tested without a context (`tests/anvil.rs`,
+//! `tests/gradient.rs`, `tests/mesh.rs`, `tests/layers.rs`, `tests/blend.rs`,
+//! `tests/effects.rs`).
 
 use super::blend::{gl_factors, keeps_destination};
+use super::blur::{blur_reach, DeviceBlur, BLUR_SIGMA_MIN};
 use super::mesh::{scale_bucket, Mesh, MeshStyle};
-use super::ops::{Op, Premultiplied, Radii, Source};
+use super::ops::{Blur, Op, Premultiplied, Radii, Source};
 use super::path::Path;
 use super::ramps::{RampTable, RAMP_ROWS};
 use super::record::DisplayList;
 use super::{PaintShader, ShaderInput, Texture};
 use crate::{affine, Affine, BlendMode, ClipOperation, CoveragePolicy, FillType, GlyphQuad, RampGradient, TileMode};
-use crate::{ISize, Matrix, Point, Rect, ShaderParam, Size, StrokeCap, TextureSampling};
+use crate::{ColorMatrix, ISize, Matrix, Point, Rect, ShaderParam, Size, StrokeCap, TextureSampling};
 use euclid::default::{Box2D, Point2D, Transform2D};
 use euclid::Angle;
 use lyon_path::builder::BorderRadii;
@@ -445,7 +450,8 @@ pub enum ClipDraw {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Layer {
   /// The layer's device rect, whole pixels, within the target. Empty when
-  /// the content drew nothing visible: the executor then skips to the end
+  /// the content drew nothing visible (and, for a backdrop layer, its
+  /// bounds lie outside the clip): the executor then skips to the end
   /// marker.
   pub rect: Box2D<i32>,
   /// The composite: one textured `KIND_RECT` instance over `rect` (identity
@@ -461,12 +467,29 @@ pub struct Layer {
   /// no marker batch refers to this entry.
   pub folded: bool,
   /// How the composite blends with the destination: source-over for a
-  /// group's opacity (through the shape program), else a shader mode
-  /// (blend.rs `shader_mode`) for the implicit layer around one op drawn
-  /// under it (`blended`), alpha 1, composited by the composite program
-  /// against a copy of the destination under `rect`. Such a layer never
-  /// folds.
+  /// group's opacity, a backdrop and a blur; for the implicit layer around
+  /// one op (`blended`, alpha 1), the op's mode: a shader mode (blend.rs
+  /// `shader_mode`), composited by the composite program against a copy of
+  /// the destination under `rect`, or, around an op whose paint has a color
+  /// filter, any fixed-function mode, which the composite blends by. A layer
+  /// of any mode but source-over never folds.
   pub blend: BlendMode,
+  /// The layer starts from the target's pixels under `rect` (a
+  /// `save_backdrop_layer`) instead of transparent. Never folds.
+  pub backdrop: bool,
+  /// The blur its pixels run through before the composite, in device
+  /// pixels. Never folds.
+  pub blur: Option<DeviceBlur>,
+  /// The color matrix the composite applies to its pixels (straight alpha,
+  /// before the alpha fades them). For a matrix whose alpha row is the
+  /// identity with no alpha offset (every one the rendertree builds) that
+  /// equals Skia's order, alpha before the filter. Never folds.
+  pub matrix: Option<ColorMatrix>,
+  /// Under a `Clamp` blur, the content's own device rect within `rect`
+  /// (the union before the reach inflated it, whole pixels): the first
+  /// blur pass clamps its reads to it, so the content's edge color fills
+  /// the margin. None for no blur, a `Decal` blur and a backdrop layer.
+  pub clamp: Option<Box2D<i32>>,
 }
 
 /// What a walk produces: the instances, the path mesh draws and the
@@ -833,14 +856,54 @@ struct Saved {
   layer: Option<Open>,
 }
 
-/// An open layer: its `Walked::layers` index, alpha and blend mode
-/// (`Layer::blend`), its `LayerBegin` batch, and where its content starts in
-/// the instances, the mesh draws and the batches (a clip draw inside is a
-/// batch too, which blocks the fold, and bounds nothing).
-struct Open {
-  index: usize,
+/// What a layer does to its content: the alpha, the blend mode
+/// (`Layer::blend`), the color matrix, the blur in device pixels, and for a
+/// backdrop layer the bounds it starts from, in the space of the op that
+/// opened it.
+#[derive(Clone, Copy)]
+struct Effect {
   alpha: f32,
   blend: BlendMode,
+  matrix: Option<ColorMatrix>,
+  blur: Option<DeviceBlur>,
+  backdrop: Option<Rect>,
+}
+
+impl Effect {
+  // A group's opacity alone.
+  fn opacity(alpha: f32) -> Effect {
+    Effect { alpha, blend: BlendMode::SourceOver, matrix: None, blur: None, backdrop: None }
+  }
+
+  // Whether the layer would composite its content back unchanged: alpha 1,
+  // source-over, no matrix, no blur. A backdrop layer then composites the
+  // target's own pixels back, which changes nothing either.
+  fn is_identity(&self) -> bool {
+    self.alpha >= 1.0 && self.blend == BlendMode::SourceOver && self.matrix.is_none() && self.blur.is_none()
+  }
+}
+
+/// `blur`, local units under the map `m`, in device pixels: each sigma
+/// times the length of its axis's vector under the map (the 2D part's,
+/// so under perspective an approximation, as it is under a rotation, whose
+/// device blur stays axis-aligned). None when neither sigma reaches
+/// BLUR_SIGMA_MIN: no pass would draw. A sigma that is not finite is zero.
+fn device_blur(m: &Matrix, blur: &Blur) -> Option<DeviceBlur> {
+  let clean = |s: f32| if s.is_finite() { s.max(0.0) } else { 0.0 };
+  let sigma_x = clean(blur.sigma_x * m.m11.hypot(m.m12));
+  let sigma_y = clean(blur.sigma_y * m.m21.hypot(m.m22));
+  (sigma_x >= BLUR_SIGMA_MIN || sigma_y >= BLUR_SIGMA_MIN).then_some(DeviceBlur { sigma_x, sigma_y, tile: blur.tile })
+}
+
+/// An open layer: its `Walked::layers` index, its effect, a backdrop
+/// layer's device rect (its bounds under the opening map, cut to the
+/// opening clip box), its `LayerBegin` batch, and where its content starts
+/// in the instances, the mesh draws and the batches (a clip draw inside is
+/// a batch too, which blocks the fold, and bounds nothing).
+struct Open {
+  index: usize,
+  effect: Effect,
+  backdrop: Option<Box2D<f32>>,
   begin_batch: usize,
   instances_from: usize,
   meshes_from: usize,
@@ -911,7 +974,16 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
   for op in ops {
     match op {
       Op::Save => stack.push(Saved { state: *state, layer: None }),
-      Op::SaveLayer { alpha } => open_layer(*alpha, BlendMode::SourceOver, state, stack, out),
+      Op::SaveLayer { alpha, matrix, blur } => {
+        let blur = blur.as_ref().and_then(|b| device_blur(&state.matrix, b));
+        let effect = Effect { matrix: *matrix, blur, ..Effect::opacity(*alpha) };
+        open_layer(effect, state, stack, out)
+      }
+      Op::SaveBackdropLayer { bounds, alpha, matrix, blur } => {
+        let blur = blur.as_ref().and_then(|b| device_blur(&state.matrix, b));
+        let effect = Effect { matrix: *matrix, blur, backdrop: Some(*bounds), ..Effect::opacity(*alpha) };
+        open_layer(effect, state, stack, out)
+      }
       Op::Restore => {
         if stack.len() > base {
           let saved = stack.pop().expect("the stack holds more than this list's base");
@@ -934,24 +1006,24 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
         clip(state, rect, geometry, *op, out)
       }
       Op::ClipOval { bounds, op, path } => clip(state, bounds, ClipGeometry::Oval(path), *op, out),
-      Op::DrawRect { rect, radii, color, stroke, source, blend } => {
+      Op::DrawRect { rect, radii, color, stroke, source, blend, matrix } => {
         let kind = if radii.iter().all(|r| *r == 0.0) { KIND_RECT } else { KIND_ROUNDED_RECT };
-        blended(*blend, state, stack, out, |state, out, blend| {
+        blended(*blend, *matrix, state, stack, out, |state, out, blend| {
           push_shape(state, rect, kind, *radii, *color, *stroke, source.as_ref(), blend, ramps, out)
         })
       }
-      Op::DrawOval { bounds, color, stroke, source, blend } => {
-        blended(*blend, state, stack, out, |state, out, blend| {
+      Op::DrawOval { bounds, color, stroke, source, blend, matrix } => {
+        blended(*blend, *matrix, state, stack, out, |state, out, blend| {
           push_shape(state, bounds, KIND_OVAL, [0.0; 4], *color, *stroke, source.as_ref(), blend, ramps, out)
         })
       }
-      Op::DrawLine { from, to, color, width, cap, gradient, blend } => {
-        blended(*blend, state, stack, out, |state, out, blend| {
+      Op::DrawLine { from, to, color, width, cap, gradient, blend, matrix } => {
+        blended(*blend, *matrix, state, stack, out, |state, out, blend| {
           push_line(state, *from, *to, *color, *width, *cap, gradient.as_ref(), blend, ramps, out)
         })
       }
-      Op::DrawTexture { texture, src, dst, sampling, alpha, blend } => {
-        blended(*blend, state, stack, out, |state, out, blend| {
+      Op::DrawTexture { texture, src, dst, sampling, alpha, blend, matrix } => {
+        blended(*blend, *matrix, state, stack, out, |state, out, blend| {
           push_texture(state, texture, src, dst, *sampling, *alpha, blend, out)
         })
       }
@@ -959,9 +1031,11 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
         push_glyphs(state, atlas, quads, bounds, *color, *policy, gradient.as_ref(), ramps, out)
       }
       Op::DrawShader { rect, shader, params, inputs } => push_paint(state, rect, shader, params, inputs, out),
-      Op::DrawPath { path, style, color, source, blend } => blended(*blend, state, stack, out, |state, out, blend| {
-        push_path(state, path, *style, *color, source.as_ref(), blend, ramps, out)
-      }),
+      Op::DrawPath { path, style, color, source, blend, matrix } => {
+        blended(*blend, *matrix, state, stack, out, |state, out, blend| {
+          push_path(state, path, *style, *color, source.as_ref(), blend, ramps, out)
+        })
+      }
       Op::DrawList { list, opacity } => {
         // A group faded to nothing draws nothing; NaN draws in full. (A
         // `save_layer` at alpha 0 has no list to skip: `open_layer` culls
@@ -973,7 +1047,7 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
         let layered = *opacity < 1.0;
         let saved = *state;
         if layered {
-          open_layer(*opacity, BlendMode::SourceOver, state, stack, out);
+          open_layer(Effect::opacity(*opacity), state, stack, out);
         }
         // Whatever the nested list leaves on the stack or in the state
         // ends with it, the stencil clips it left in effect and the layers
@@ -995,19 +1069,22 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
 }
 
 // One op that takes a paint, drawn by `draw` (given the state, the output
-// and the blend mode it pushes at) under the paint's `blend`: nothing for
-// Destination, which leaves the target as it is; the op at its mode for a
-// fixed-function mode (blend.rs `gl_factors`), which its batch sets; for a
-// shader mode, the op drawn source-over inside an implicit layer of its own
-// at alpha 1 whose composite blends by the mode (`Layer::blend`). The
-// layer's rect is the op's device box (`close_layer`). An op that pushes
-// nothing (culled by the clip, transparent, of zero width) opens no layer:
-// its markers and its table entry are taken back and the batch it found
-// open takes instances again, so it neither emits markers nor splits the
-// lean run around it. The walk's placement is each push function's own, so
+// and the blend mode it pushes at) under the paint's `blend` and color
+// filter `matrix`: nothing for Destination, which leaves the target as it
+// is; with no matrix, the op at its mode for a fixed-function mode
+// (blend.rs `gl_factors`), which its batch sets; for a shader mode, or
+// under a matrix whatever the mode, the op drawn source-over inside an
+// implicit layer of its own at alpha 1 whose composite applies the matrix
+// to the op's color and then blends by the mode (`Layer::blend`), as Skia
+// applies a paint's color filter before its blend. The layer's rect is the
+// op's device box (`close_layer`). An op that pushes nothing (culled by the
+// clip, transparent, of zero width) opens no layer: its markers and its
+// table entry are taken back and the batch it found open takes instances
+// again, so it neither emits markers nor splits the lean run around it. The walk's placement is each push function's own, so
 // the check is on what the op pushed, not a second copy of the clip test.
 fn blended(
   blend: BlendMode,
+  matrix: Option<ColorMatrix>,
   state: &mut State,
   stack: &mut Vec<Saved>,
   out: &mut Walked,
@@ -1016,12 +1093,12 @@ fn blended(
   if blend == BlendMode::Destination {
     return;
   }
-  if gl_factors(blend).is_some() {
+  if matrix.is_none() && gl_factors(blend).is_some() {
     draw(state, out, blend);
     return;
   }
   let sealed = out.sealed;
-  open_layer(1.0, blend, state, stack, out);
+  open_layer(Effect { blend, matrix, ..Effect::opacity(1.0) }, state, stack, out);
   draw(state, out, BlendMode::SourceOver);
   let own = stack.pop().expect("the implicit blend layer is on the stack");
   let open = own.layer.expect("the implicit blend layer's entry opens a layer");
@@ -1049,22 +1126,35 @@ fn unwind(stack: &mut Vec<Saved>, base: usize, state: &mut State, out: &mut Walk
   }
 }
 
-// Open a layer at `alpha` composited by `blend` (`Layer::blend`) over
-// `state`: the state saved with the layer's
-// bookkeeping, a `LayerBegin` batch, a placeholder table entry (filled at
-// the close), and the inner state. The clip box stays: it cuts the content
-// and bounds the layer. The rounded clip and the stencil clips apply at the
-// composite, not inside (a group is clipped after its effect, as CSS
-// clips), so the layer's own stencil starts at zero. At alpha 0 (a group
-// faded to nothing, as a nested list at opacity 0 is skipped in `walk_ops`)
-// no layer opens: a plain save whose inner clip box is empty, so every draw
-// inside is culled, and the matching restore pops it as a plain save.
-fn open_layer(alpha: f32, blend: BlendMode, state: &mut State, stack: &mut Vec<Saved>, out: &mut Walked) {
-  if alpha <= 0.0 {
+// Open a layer with `effect` over `state`: the state saved with the
+// layer's bookkeeping, a `LayerBegin` batch, a placeholder table entry
+// (filled at the close), and the inner state. The clip box stays: it cuts
+// the content and bounds the layer. The rounded clip and the stencil clips
+// apply at the composite, not inside (a group is clipped after its effect,
+// as CSS clips), so the layer's own stencil starts at zero. A backdrop
+// layer's device rect is known here: its bounds under the map
+// (`Projective::bounds`), the clip box for a corner behind the eye, cut to
+// the clip box (which lies within the target). At alpha 0 (a group faded
+// to nothing, as a nested list at opacity 0 is skipped in `walk_ops`) no
+// layer opens: a plain save whose inner clip box is empty, so every draw
+// inside is culled, and the matching restore pops it as a plain save. An
+// effect that changes nothing (`Effect::is_identity`, a backdrop with no
+// blur, no matrix and alpha 1 among it) opens no layer either: a plain
+// save.
+fn open_layer(effect: Effect, state: &mut State, stack: &mut Vec<Saved>, out: &mut Walked) {
+  if effect.alpha <= 0.0 {
     stack.push(Saved { state: *state, layer: None });
     state.clip = Box2D::zero();
     return;
   }
+  if effect.is_identity() {
+    stack.push(Saved { state: *state, layer: None });
+    return;
+  }
+  let backdrop = effect.backdrop.map(|bounds| {
+    let device = Projective::from_matrix(&state.matrix).bounds(&bounds).unwrap_or(state.clip);
+    device.intersection_unchecked(&state.clip)
+  });
   let index = out.layers.len();
   out.open(Batch {
     start: index,
@@ -1079,12 +1169,22 @@ fn open_layer(alpha: f32, blend: BlendMode, state: &mut State, stack: &mut Vec<S
   });
   let begin_batch = out.batches.len() - 1;
   let zeroed = clip_quad(&Projective::from_matrix(&Matrix::identity()), &Rect::zero(), [0.0; 4]);
-  out.layers.push(Layer { rect: Box2D::zero(), composite: zeroed, stencil: 0, folded: false, blend });
+  out.layers.push(Layer {
+    rect: Box2D::zero(),
+    composite: zeroed,
+    stencil: 0,
+    folded: false,
+    blend: effect.blend,
+    backdrop: backdrop.is_some(),
+    blur: effect.blur,
+    matrix: effect.matrix,
+    clamp: None,
+  });
   // `open` flushed the pending fills: the content's instances start here.
   let open = Open {
     index,
-    alpha,
-    blend,
+    effect,
+    backdrop,
     begin_batch,
     instances_from: out.instances.len(),
     meshes_from: out.mesh_draws.len(),
@@ -1102,10 +1202,16 @@ fn open_layer(alpha: f32, blend: BlendMode, state: &mut State, stack: &mut Vec<S
 // touched by the content. The layer's rect is its content's device boxes
 // (an instance's `device_box`, the clip box for one behind the eye; a mesh
 // draw's bounds under its map within its clip; a drawn inner layer's rect)
-// cut to the opening clip box, rounded out to whole pixels within the
-// target. Then either the alpha folds into the content (`fold_layer`) and no
-// layer draws, or the entry takes its rect and composite and a `LayerEnd`
-// batch closes it.
+// and a backdrop layer's own rect, inflated under a blur by its reach per
+// axis (`blur_reach`), as Skia outsets a blur's output bounds, cut to the
+// opening clip box, rounded out to whole pixels within the target. Under
+// `Decal` the content draws nothing in the margin, so the blur falls off to
+// transparent there; under `Clamp` the first pass clamps its reads to the
+// content's own rect (`Layer::clamp`), so the edge color extends into the
+// margin. A backdrop layer is never inflated: it blurs the pixels under its
+// rect and clamps at its edge, whichever the tile mode. Then either the alpha folds into the content (`fold_layer`)
+// and no layer draws, or the entry takes its rect and composite and a
+// `LayerEnd` batch closes it.
 fn close_layer(popped: State, open: Open, state: &mut State, out: &mut Walked) {
   out.flush();
   let clip = popped.clip;
@@ -1116,11 +1222,24 @@ fn close_layer(popped: State, open: Open, state: &mut State, out: &mut Walked) {
     bounds.intersection_unchecked(&Box2D::new(Point2D::new(x0, y0), Point2D::new(x1, y1)))
   });
   let inner = out.layers[open.index + 1..].iter().filter(|l| !l.folded && !l.rect.is_empty()).map(|l| l.rect.to_f32());
-  let union = instance_boxes.chain(mesh_boxes).chain(inner).filter(|b| !b.is_empty()).reduce(|a, b| a.union(&b));
-  let rect = union
-    .map(|u| u.intersection_unchecked(&clip).round_out().intersection_unchecked(&popped.target))
-    .filter(|r| !r.is_empty())
-    .map_or(Box2D::zero(), |r| r.to_i32());
+  let union = instance_boxes
+    .chain(mesh_boxes)
+    .chain(inner)
+    .chain(open.backdrop)
+    .filter(|b| !b.is_empty())
+    .reduce(|a, b| a.union(&b));
+  // The content's rect, whole pixels within the clip box and the target.
+  let whole = |u: Box2D<f32>| {
+    let r = u.intersection_unchecked(&clip).round_out().intersection_unchecked(&popped.target);
+    (!r.is_empty()).then(|| r.to_i32())
+  };
+  let inflated = open.effect.blur.filter(|_| open.backdrop.is_none());
+  let clamp = inflated.filter(|b| b.tile == TileMode::Clamp).and_then(|_| union.and_then(whole));
+  let union = match inflated {
+    Some(b) => union.map(|u| u.inflate(blur_reach(b.sigma_x), blur_reach(b.sigma_y))),
+    None => union,
+  };
+  let rect = union.and_then(whole).unwrap_or(Box2D::zero());
   if fold_layer(&popped, &open, out) {
     *state = popped;
     return;
@@ -1140,7 +1259,7 @@ fn close_layer(popped: State, open: Open, state: &mut State, out: &mut Walked) {
     kind: KIND_RECT + KIND_TEXTURED,
     stroke: 0.0,
     // The texel is premultiplied: the alpha in all four channels fades it.
-    color: [open.alpha; 4],
+    color: [open.effect.alpha; 4],
     // The corner texels, (u, v) at the top-left and the bottom-right.
     tex: [0.0, 1.0, 1.0, 0.0],
     radii: [0.0; 4],
@@ -1148,7 +1267,7 @@ fn close_layer(popped: State, open: Open, state: &mut State, out: &mut Walked) {
   };
   let identity = Projective::from_matrix(&Matrix::identity());
   let composite = instance_under(popped.rounded, &identity, box_array(&clip), quad);
-  out.layers[open.index] = Layer { rect, composite, stencil: popped.depth, folded: false, blend: open.blend };
+  out.layers[open.index] = Layer { rect, composite, stencil: popped.depth, clamp, ..out.layers[open.index] };
   out.open(Batch {
     start: open.index,
     count: 0,
@@ -1165,8 +1284,9 @@ fn close_layer(popped: State, open: Open, state: &mut State, out: &mut Walked) {
 
 // The alpha fold: when the layer `open` (opened over `popped`) is a
 // source-over one (a shader-mode layer composites against the destination,
-// which no color can fold) and holds only source-over quad batches (no
-// mesh, paint or clip draw, no inner layer that did not fold itself, no
+// which no color can fold) with no blur, color matrix or backdrop (each
+// reads the layer's pixels as a whole) and holds only source-over quad
+// batches (no mesh, paint or clip draw, no inner layer that did not fold itself, no
 // fixed-function mode other than source-over, which would blend with the
 // target where it blended with the layer's transparent pixels), at most
 // FOLD_SCAN_LIMIT instances whose device boxes are
@@ -1181,7 +1301,9 @@ fn close_layer(popped: State, open: Open, state: &mut State, out: &mut Walked) {
 // meets everything, so it folds only alone. False, changing nothing,
 // otherwise.
 fn fold_layer(popped: &State, open: &Open, out: &mut Walked) -> bool {
-  if open.blend != BlendMode::SourceOver || popped.rounded.is_some() {
+  let effect = &open.effect;
+  let effects = effect.blur.is_some() || effect.matrix.is_some() || open.backdrop.is_some();
+  if effect.blend != BlendMode::SourceOver || effects || popped.rounded.is_some() {
     return false;
   }
   let quads = out.batches[open.batches_from..].iter().all(|b| {
@@ -1203,7 +1325,7 @@ fn fold_layer(popped: &State, open: &Open, out: &mut Walked) -> bool {
       return false;
     }
   }
-  let alpha = open.alpha;
+  let alpha = effect.alpha;
   for instance in &mut out.instances[open.instances_from..] {
     if instance.offset_kind_stroke[2] == KIND_GLYPH {
       instance.color[3] *= alpha;

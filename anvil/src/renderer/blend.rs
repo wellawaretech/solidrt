@@ -11,6 +11,12 @@ use crate::BlendMode;
 // The shader modes, as the composite program's `uBlend` takes them:
 // `BlendMode`'s discriminants. The `const int BLEND_*` declarations in
 // exec.rs's COMPOSITE_BLEND must match them.
+/// The composite program's identity mode: it returns the layer's color
+/// unblended, which the fixed-function blend then composites (a layer with
+/// a color matrix or a blur under source-over or another fixed-function
+/// mode). SourceOver's discriminant; the GLSL const of the same name in
+/// exec.rs's COMPOSITE_BLEND must match.
+pub const BLEND_SOURCE_OVER: i32 = 3;
 pub const BLEND_OVERLAY: i32 = 15;
 pub const BLEND_DARKEN: i32 = 16;
 pub const BLEND_LIGHTEN: i32 = 17;

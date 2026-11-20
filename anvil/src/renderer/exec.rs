@@ -1,7 +1,8 @@
 //! The GL half of a draw: the fill, rounded, shape and glyph programs (the
 //! fill, the rounded and the shape program each with a gradient variant),
-//! the mesh program (with a gradient and a textured variant) and the
-//! composite program of a shader blend mode, eleven programs in all; the
+//! the mesh program (with a gradient and a textured variant), the
+//! composite program of a layer's effects (a shader blend mode, a color
+//! matrix, a blurred image) and the blur program, twelve programs in all; the
 //! paint shaders' programs linked behind anvil's vertex stage; two VAOs the
 //! executor owns, one over the instance buffer and one the path meshes'
 //! own vertex and index buffers are bound into per draw; and the draw that
@@ -27,11 +28,16 @@
 //! (`super::layers`) under a shifted viewport (`Frame`), and its composite,
 //! a textured quad through the shape program, into the frame it opened on;
 //! a shader-mode layer's composite goes through the composite program
-//! instead, against a blitted copy of the destination under its rect. Every
-//! other batch blends by its fixed-function mode (`super::blend`), set where
-//! it changes. Raster thread only, with the context current.
+//! instead, against a blitted copy of the destination under its rect, and
+//! so does a layer with a color matrix or a blur, whose pixels first run
+//! through the blur program's passes into the pool's single-sample storages
+//! (`run_blur`). A backdrop layer starts from the target's pixels under its
+//! rect, resolved into the scratch and drawn into its storage by the blur
+//! program as a one-tap copy. Every other batch blends by its
+//! fixed-function mode (`super::blend`), set where it changes. Raster thread only, with the context current.
 
-use super::blend::{gl_factors, shader_mode};
+use super::blend::{gl_factors, shader_mode, BLEND_SOURCE_OVER};
+use super::blur::{blur_levels, gaussian_weights, halved, level_sigmas, DeviceBlur, BLUR_SIGMA_MIN, BLUR_TAPS_MAX};
 use super::layers::{bucket, rescale_composite, LayerPool, LayerTarget};
 use super::mesh::{gpu_slot, GpuMesh, GpuSlot, Mesh};
 use super::ramps::{RampTable, RAMP_ROWS};
@@ -41,7 +47,7 @@ use super::walk::{self, Batch, BatchProgram, Instance, MeshDraw, MeshVertex, Pai
 use super::walk::{ClipDraw, ClipShape};
 use super::{DeletionQueue, Freed};
 use crate::contract::{DrawReport, Target};
-use crate::{BlendMode, CoveragePolicy, RAMP_WIDTH};
+use crate::{BlendMode, ColorMatrix, CoveragePolicy, RAMP_WIDTH};
 use crate::{TextureSampling, TextureWrap, UniformInfo, UniformKind};
 use euclid::default::{Box2D, Point2D};
 use glow::HasContext;
@@ -901,6 +907,7 @@ void main() {
 // match.
 pub(crate) const COMPOSITE_BLEND: &str = r"
 uniform int uBlend;       // a BLEND_* below
+const int BLEND_SOURCE_OVER = 3;
 const int BLEND_OVERLAY = 15;
 const int BLEND_DARKEN = 16;
 const int BLEND_LIGHTEN = 17;
@@ -1012,19 +1019,27 @@ vec4 blend(vec4 src, vec4 dst) {
 }
 ";
 
-// The composite of a shader-mode layer (walk.rs `Layer::blend`), drawn with
-// blending off over the layer's rect: the layer's texel, the destination's
-// under it from the resolve scratch, and the mode's result written, mixed
-// back to the destination by the clip box and the rounded clip of the state
-// the layer opened in (the stencil test still gates it). Outside the op's
-// coverage the layer is transparent and `blend` returns the destination
-// exactly, so the quad changes no pixel the op did not touch. `vUv`
-// (SHAPE_VERTEX's, from the composite's texel rows) addresses the layer;
-// the backdrop is read at the fragment's own window position: the
-// composite draws in the parent frame, and the executor resolved the region
-// into the scratch at the parent's window coordinates (`resolve_region`).
-// Its vertex stage is SHAPE_VERTEX; the linker drops what this stage does
-// not read.
+// The composite of a layer with an effect the shape program does not draw:
+// a shader blend mode (walk.rs `Layer::blend`), a color matrix, a blurred
+// image. The layer's texel, read within `uExtent` (its content's texels,
+// half a texel in, so a bilinear read of a downsampled blur never reaches
+// the storage past the content), through the color matrix when it has one
+// (straight alpha: unpremultiplied, `uMatrix * c + uOffset`, clamped,
+// premultiplied again), then faded by the alpha (`vColor`). Under
+// `BLEND_SOURCE_OVER` the result is written times the clip coverage, with
+// the fixed-function blend on (source-over, or a draw's own fixed-function
+// mode), and the backdrop is never read. Under a shader mode it is drawn
+// with blending off: the destination's color under it from the resolve
+// scratch, and the mode's result written, mixed back to the destination by
+// the clip box and the rounded clip of the state the layer opened in (the
+// stencil test still gates it). Outside the op's coverage the layer is
+// transparent and `blend` returns the destination exactly, so the quad
+// changes no pixel the op did not touch. `vUv` (SHAPE_VERTEX's, from the
+// composite's texel rows) addresses the layer; the backdrop is read at the
+// fragment's own window position: the composite draws in the parent frame,
+// and the executor resolved the region into the scratch at the parent's
+// window coordinates (`resolve_region`). Its vertex stage is SHAPE_VERTEX;
+// the linker drops what this stage does not read.
 //
 // A known approximation of the fixed-function modes, not of this program:
 // a batch's analytic coverage (an oval's rim, a rounded edge, a stroke's
@@ -1043,15 +1058,87 @@ vec4 blend(vec4 src, vec4 dst) {
 const COMPOSITE_FRAGMENT: &str = r"
 uniform sampler2D uTexture;   // the layer, premultiplied
 uniform sampler2D uBackdrop;  // the destination under the layer's rect, premultiplied
+uniform bool uHasMatrix;      // whether the color matrix applies
+uniform mat4 uMatrix;         // the 4x4 block of the 4x5 color matrix
+uniform vec4 uOffset;         // its fifth column
+uniform vec4 uExtent;         // the content's texels, normalized, half a texel in
 void main() {
   vec2 d = device();
   float inside = float(all(greaterThanEqual(d, vClip.xy)) && all(lessThan(d, vClip.zw)));
   float f = inside * roundedClip();
-  vec4 src = texture(uTexture, vUv) * vColor;
+  vec4 texel = texture(uTexture, clamp(vUv, uExtent.xy, uExtent.zw));
+  if (uHasMatrix) {
+    vec4 c = clamp(uMatrix * vec4(unpremultiply(texel), texel.a) + uOffset, 0.0, 1.0);
+    texel = vec4(c.rgb * c.a, c.a);
+  }
+  vec4 src = texel * vColor;
+  if (uBlend == BLEND_SOURCE_OVER) {
+    fragColor = src * f;
+    return;
+  }
   vec4 dst = texelFetch(uBackdrop, ivec2(gl_FragCoord.xy), 0);
   fragColor = mix(dst, blend(src, dst), f);
 }
 ";
+
+// The blur program's vertex stage, after SOURCE_HEADER: no attributes, the
+// quad over `uRect` (the destination's pixels, window coordinates, y up)
+// in a storage of `uAlloc` pixels, drawn with the viewport over the whole
+// storage, and `vUv` the source's normalized texels from `uSourceRect` at
+// its corners: a translation for a same-size pass, a halving for a
+// downsample. Every rect keeps GL's orientation, so a layer's content
+// stays in its storage's bottom-left corner the right way up through every
+// pass.
+const BLUR_VERTEX: &str = r"
+uniform vec4 uRect;        // the destination quad: x0, y0, x1, y1, storage pixels
+uniform vec2 uAlloc;       // the destination storage's size in pixels
+uniform vec4 uSourceRect;  // the source texels at the quad's corners, normalized: u0, v0, u1, v1
+out vec2 vUv;
+void main() {
+  int corner = gl_VertexID - (gl_VertexID / 6) * 6;
+  // Two triangles: (0,0) (1,0) (0,1) and (0,1) (1,0) (1,1).
+  vec2 c = vec2(
+    (corner == 1 || corner == 4 || corner == 5) ? 1.0 : 0.0,
+    (corner == 2 || corner == 3 || corner == 5) ? 1.0 : 0.0);
+  gl_Position = vec4(mix(uRect.xy, uRect.zw, c) / uAlloc * 2.0 - 1.0, 0.0, 1.0);
+  vUv = mix(uSourceRect.xy, uSourceRect.zw, c);
+}
+";
+
+// The blur program's fragment stage, after SOURCE_HEADER and the
+// `BLUR_TAPS_MAX` const (`blur_taps_define`, from blur.rs's): the sum of
+// `uTaps` taps of `uSource` centered on `vUv`, `uStep` apart (one source
+// texel along the pass's axis, normalized), weighted by `uWeights` (the
+// normalized gaussian, blur.rs `gaussian_weights`), each tap's position
+// clamped to `uExtent`, the content's texels half a texel in. For a `Clamp`
+// blur the content's edge continues; a `Decal` one's content was inflated
+// by the reach and is transparent past its drawing, so the clamp changes
+// nothing inside the reach: one code path. One tap of weight 1 and no step
+// copies, or under linear filtering halves a 2x2 block (a downsample).
+const BLUR_FRAGMENT: &str = r"
+uniform sampler2D uSource;            // premultiplied
+uniform vec2 uStep;                   // one tap's step, normalized source texels
+uniform vec4 uExtent;                 // the content's texels, normalized, half a texel in
+uniform int uTaps;                    // the kernel's width, odd, at most BLUR_TAPS_MAX
+uniform float uWeights[BLUR_TAPS_MAX];
+in vec2 vUv;
+out vec4 fragColor;
+void main() {
+  float radius = float(uTaps - 1) * 0.5;
+  vec4 sum = vec4(0.0);
+  for (int i = 0; i < BLUR_TAPS_MAX; i++) {
+    if (i >= uTaps) break;
+    vec2 at = clamp(vUv + (float(i) - radius) * uStep, uExtent.xy, uExtent.zw);
+    sum += uWeights[i] * texture(uSource, at);
+  }
+  fragColor = sum;
+}
+";
+
+// The GLSL const the blur fragment sizes its weights by, from blur.rs's.
+fn blur_taps_define() -> String {
+  format!("const int BLUR_TAPS_MAX = {BLUR_TAPS_MAX};\n")
+}
 
 /// The fragment source a paint shader compiles from the app's `src`:
 /// anvil's header, the common fragment inputs and the paint preamble, the
@@ -1116,7 +1203,7 @@ impl PaintProgram {
   }
 }
 
-/// The GL half: the eleven programs, the two VAOs and the instance buffer, and
+/// The GL half: the twelve programs, the two VAOs and the instance buffer, and
 /// the draw. Lives
 /// as long as the renderer, which the raster thread drops before it releases
 /// the context (raster/recover.rs), so the GL names here die with it and
@@ -1146,10 +1233,13 @@ pub(super) struct Executor {
   mesh_gradient: MeshProgram,
   /// A path mesh draw with a texture: a path filled with an image.
   mesh_textured: MeshProgram,
-  /// The composite of a shader-mode layer (COMPOSITE_FRAGMENT), and its
-  /// `uBlend`.
+  /// The composite of a layer with a shader blend mode, a color matrix or a
+  /// blur (COMPOSITE_FRAGMENT), and its uniforms.
   composite: Program,
-  composite_blend: glow::UniformLocation,
+  composite_uniforms: CompositeUniforms,
+  /// The blur passes, the downsamples and the backdrop fill
+  /// (BLUR_FRAGMENT).
+  blur: BlurProgram,
   /// The instance VAO: the instanced quad attributes over `instances`.
   vao: glow::VertexArray,
   instances: glow::Buffer,
@@ -1260,7 +1350,9 @@ impl ResolveScratch {
     };
     let made = create_scratch(gl, size);
     if made.is_none() {
-      warn_once!("[anvil] Renderer: the resolve scratch could not be created; shader blend modes do not draw");
+      warn_once!(
+        "[anvil] Renderer: the resolve scratch could not be created; shader blend modes do not draw and backdrop layers start empty"
+      );
     }
     self.current = made;
     made
@@ -1324,6 +1416,154 @@ unsafe fn resolve_region(gl: &glow::Context, parent: &Frame, rect: Box2D<i32>, s
   if scissored {
     gl.enable(glow::SCISSOR_TEST);
   }
+}
+
+/// The backdrop fill's rects, x0, y0, x1, y1 in window pixels, y up: the
+/// source, the layer's device `rect` in the resolve scratch, where
+/// `resolve_region` put it at `parent`'s window coordinates (`blit_rect`),
+/// and the destination, the layer storage's bottom-left corner of the
+/// rect's size (`Frame`). Both frames turn device y down into window y up
+/// alike, so the copy is a translation.
+pub(crate) fn fill_rects(parent: &Frame, rect: Box2D<i32>) -> ([i32; 4], [i32; 4]) {
+  let (x, y, w, h) = blit_rect(parent, rect);
+  ([x, y, x + w, y + h], [0, 0, w, h])
+}
+
+/// A `Clamp` blur's content rect `clamp` (device pixels, within the layer's
+/// device `rect`) in the layer storage's window pixels, x0, y0, x1, y1, y
+/// up: the layer frame draws device (x, y) at window (x - ox, Hl + oy - y)
+/// (`Frame`, its origin (ox, oy) and height Hl).
+pub(crate) fn clamp_rect(rect: Box2D<i32>, clamp: Box2D<i32>) -> [i32; 4] {
+  let (ox, oy, h) = (rect.min.x, rect.min.y, rect.height());
+  [clamp.min.x - ox, h + oy - clamp.max.y, clamp.max.x - ox, h + oy - clamp.min.y]
+}
+
+/// The texels of `rect` (x0, y0, x1, y1) in a storage of `size` pixels,
+/// normalized and inset half a texel: the positions a bilinear read keeps
+/// inside the rect.
+fn texel_extent(rect: [i32; 4], size: (i32, i32)) -> [f32; 4] {
+  let (w, h) = (size.0 as f32, size.1 as f32);
+  let [x0, y0, x1, y1] = rect.map(|v| v as f32);
+  [(x0 + 0.5) / w, (y0 + 0.5) / h, (x1 - 0.5) / w, (y1 - 0.5) / h]
+}
+
+/// `m`, a 4x5 row-major matrix over (R, G, B, A, 1) in straight alpha, as
+/// the composite program takes it: `uMatrix`, its 4x4 block in the
+/// column-major order glow's `uniform_matrix_4_f32_slice` takes
+/// untransposed (column j holds input channel j's coefficients of the four
+/// outputs, so GLSL's `uMatrix * c` is output i = row i of the block dot c),
+/// and `uOffset`, its fifth column.
+pub(crate) fn matrix_uniforms(m: &ColorMatrix) -> ([f32; 16], [f32; 4]) {
+  let m = &m.m;
+  // Five entries a row: four channel coefficients and the offset.
+  let row = |i: usize| &m[i * 5..i * 5 + 5];
+  let mut columns = [0.0; 16];
+  for j in 0..4 {
+    for i in 0..4 {
+      columns[j * 4 + i] = row(i)[j];
+    }
+  }
+  (columns, [row(0)[4], row(1)[4], row(2)[4], row(3)[4]])
+}
+
+// Draw one blur `pass` (`BlurPass`) through `program`, its source sampled on
+// TEXTURE_UNIT by the nearest sampler of `samplers` (nearest, linear) when
+// the target rect is the source rect's size (a copy, a gaussian pass: every
+// tap at a texel center) and by the linear one for a halving (the 2x2
+// average): the destination bound with the viewport
+// over its whole storage, blending, the stencil test and the scissor off.
+// Blending is on again after; the framebuffer, the viewport and the
+// program are left for the caller's next frame (`set_frame`), the source
+// bound on TEXTURE_UNIT until the caller's next bind.
+unsafe fn blur_pass(
+  gl: &glow::Context,
+  program: &BlurProgram,
+  samplers: (glow::Sampler, glow::Sampler),
+  pass: &BlurPass,
+) {
+  gl.bind_framebuffer(glow::FRAMEBUFFER, Some(pass.target));
+  gl.viewport(0, 0, pass.target_size.0, pass.target_size.1);
+  gl.disable(glow::BLEND);
+  gl.disable(glow::STENCIL_TEST);
+  gl.disable(glow::SCISSOR_TEST);
+  gl.use_program(Some(program.program));
+  let [x0, y0, x1, y1] = pass.target_rect.map(|v| v as f32);
+  gl.uniform_4_f32(Some(&program.rect), x0, y0, x1, y1);
+  gl.uniform_2_f32(Some(&program.alloc), pass.target_size.0 as f32, pass.target_size.1 as f32);
+  let (sw, sh) = (pass.source_size.0 as f32, pass.source_size.1 as f32);
+  let [u0, v0, u1, v1] = pass.source_rect.map(|v| v as f32);
+  gl.uniform_4_f32(Some(&program.source_rect), u0 / sw, v0 / sh, u1 / sw, v1 / sh);
+  let [e0, e1, e2, e3] = texel_extent(pass.clamp.unwrap_or(pass.source_rect), pass.source_size);
+  gl.uniform_4_f32(Some(&program.extent), e0, e1, e2, e3);
+  gl.uniform_2_f32(Some(&program.step), pass.direction[0] / sw, pass.direction[1] / sh);
+  gl.uniform_1_i32(Some(&program.taps), pass.weights.len() as i32);
+  gl.uniform_1_f32_slice(Some(&program.weights), pass.weights);
+  let size = |r: [i32; 4]| (r[2] - r[0], r[3] - r[1]);
+  let (nearest, linear) = samplers;
+  let sampler = if size(pass.target_rect) == size(pass.source_rect) { nearest } else { linear };
+  gl.bind_texture(glow::TEXTURE_2D, Some(pass.source));
+  gl.bind_sampler(TEXTURE_UNIT, Some(sampler));
+  gl.draw_arrays(glow::TRIANGLES, 0, VERTICES_PER_QUAD);
+  gl.enable(glow::BLEND);
+}
+
+// Blur the layer `layer`, its `content` pixels complete in its texture,
+// by `blur` (blur.rs, in the order `blur_passes` counts): halve the content
+// `blur_levels` times by a one-tap linear pass each, then a horizontal and
+// a vertical gaussian pass at the halved sigmas (`level_sigmas`), each where
+// its sigma reaches BLUR_SIGMA_MIN. The first pass clamps its taps to
+// `clamp` when given (a `Clamp` blur's content rect in the layer's storage,
+// `clamp_rect`), so the content's edge color fills the reach's margin; the
+// later ones read that result over the whole content. Every pass draws into a single-sample
+// storage of the pool and releases its source as soon as it has drawn, the
+// layer's own storage first. The last storage and its content size; None,
+// every storage released, when GL could make none for a pass (the pool
+// warned).
+unsafe fn run_blur(
+  gl: &glow::Context,
+  pool: &mut LayerPool,
+  program: &BlurProgram,
+  samplers: (glow::Sampler, glow::Sampler),
+  layer: (LayerTarget, (i32, i32)),
+  mut clamp: Option<[i32; 4]>,
+  blur: DeviceBlur,
+) -> Option<(LayerTarget, (i32, i32))> {
+  let levels = blur_levels(blur.sigma_x, blur.sigma_y);
+  let (sigma_x, sigma_y) = level_sigmas(blur.sigma_x, blur.sigma_y, levels);
+  let mut current = layer;
+  // One pass from `current` into a new storage of `size`.
+  let mut step = |current: (LayerTarget, (i32, i32)), size: (i32, i32), direction: [f32; 2], weights: &[f32]| {
+    let (source, from) = current;
+    let Some(next) = pool.acquire(gl, bucket(size), 1) else {
+      pool.release(&source);
+      return None;
+    };
+    let pass = BlurPass {
+      source: source.color,
+      source_size: source.size,
+      source_rect: [0, 0, from.0, from.1],
+      target: next.fbo,
+      target_size: next.size,
+      target_rect: [0, 0, size.0, size.1],
+      clamp: clamp.take(),
+      direction,
+      weights,
+    };
+    blur_pass(gl, program, samplers, &pass);
+    pool.release(&source);
+    Some((next, size))
+  };
+  for _ in 0..levels {
+    let size = halved(current.1, 1);
+    current = step(current, size, [0.0, 0.0], &[1.0])?;
+  }
+  for (sigma, direction) in [(sigma_x, [1.0, 0.0]), (sigma_y, [0.0, 1.0])] {
+    if sigma >= BLUR_SIGMA_MIN {
+      let size = current.1;
+      current = step(current, size, direction, &gaussian_weights(sigma))?;
+    }
+  }
+  Some(current)
 }
 
 /// Blend by `mode`, a fixed-function one (`super::blend::gl_factors`),
@@ -1442,6 +1682,73 @@ impl MeshProgram {
   }
 }
 
+/// The uniforms a layer's composite sets on the composite program: the
+/// blend mode, the color matrix (`uHasMatrix`, `uMatrix`, `uOffset`) and
+/// the content's extent.
+struct CompositeUniforms {
+  blend: glow::UniformLocation,
+  has_matrix: glow::UniformLocation,
+  matrix: glow::UniformLocation,
+  offset: glow::UniformLocation,
+  extent: glow::UniformLocation,
+}
+
+/// The blur program (BLUR_VERTEX, BLUR_FRAGMENT) and the uniforms a pass
+/// sets. It reads no `uSize` or `uFrag`: a pass places its quad in its
+/// destination storage's own pixels.
+struct BlurProgram {
+  program: glow::Program,
+  rect: glow::UniformLocation,
+  alloc: glow::UniformLocation,
+  source_rect: glow::UniformLocation,
+  step: glow::UniformLocation,
+  extent: glow::UniformLocation,
+  taps: glow::UniformLocation,
+  weights: glow::UniformLocation,
+}
+
+impl BlurProgram {
+  // Compiled, linked, with its uniforms; `uSource` names TEXTURE_UNIT.
+  unsafe fn link(gl: &glow::Context) -> Result<BlurProgram, String> {
+    let label = "blur";
+    let fragment = [SOURCE_HEADER, &blur_taps_define(), BLUR_FRAGMENT].concat();
+    let p = link_program(gl, label, &[SOURCE_HEADER, BLUR_VERTEX].concat(), &fragment)?;
+    let source = uniform(gl, p, label, "uSource")?;
+    gl.use_program(Some(p));
+    gl.uniform_1_i32(Some(&source), TEXTURE_UNIT as i32);
+    Ok(BlurProgram {
+      program: p,
+      rect: uniform(gl, p, label, "uRect")?,
+      alloc: uniform(gl, p, label, "uAlloc")?,
+      source_rect: uniform(gl, p, label, "uSourceRect")?,
+      step: uniform(gl, p, label, "uStep")?,
+      extent: uniform(gl, p, label, "uExtent")?,
+      taps: uniform(gl, p, label, "uTaps")?,
+      weights: uniform(gl, p, label, "uWeights")?,
+    })
+  }
+}
+
+/// One draw of the blur program: `weights` taps (blur.rs
+/// `gaussian_weights`; one of weight 1 for a copy or a downsample) of the
+/// texture `source`, a storage of `source_size` pixels, over its pixels
+/// `source_rect`, along `direction` (in source texels; zero for one tap),
+/// into the pixels `target_rect` of the framebuffer `target`, a storage of
+/// `target_size` pixels, every tap clamped to `clamp` (a `Clamp` blur's
+/// content rect, `Layer::clamp`, on its first pass) or else to
+/// `source_rect`. Rects are x0, y0, x1, y1 in window pixels, y up.
+struct BlurPass<'a> {
+  source: glow::Texture,
+  source_size: (i32, i32),
+  source_rect: [i32; 4],
+  target: glow::Framebuffer,
+  target_size: (i32, i32),
+  target_rect: [i32; 4],
+  clamp: Option<[i32; 4]>,
+  direction: [f32; 2],
+  weights: &'a [f32],
+}
+
 /// The uniforms a glyph batch sets on the glyph program for its coverage
 /// policy.
 struct GlyphUniforms {
@@ -1452,7 +1759,7 @@ struct GlyphUniforms {
 }
 
 impl Executor {
-  /// Over the context current on the calling thread; compiles the eleven
+  /// Over the context current on the calling thread; compiles the twelve
   /// programs now (every frame draws shapes and most draw text, so the
   /// first frame must not pay them).
   ///
@@ -1557,7 +1864,15 @@ impl Executor {
       &[SOURCE_HEADER, VERTEX_COMMON, SHAPE_VERTEX],
       &[SOURCE_HEADER, FRAGMENT_INPUTS, FRAGMENT_MATH, FRAGMENT_ROUNDED_CLIP, COMPOSITE_BLEND, COMPOSITE_FRAGMENT],
     )?;
-    let composite_blend = uniform(&gl, composite.program, "composite", "uBlend")?;
+    let (cp, label) = (composite.program, "composite");
+    let composite_uniforms = CompositeUniforms {
+      blend: uniform(&gl, cp, label, "uBlend")?,
+      has_matrix: uniform(&gl, cp, label, "uHasMatrix")?,
+      matrix: uniform(&gl, cp, label, "uMatrix")?,
+      offset: uniform(&gl, cp, label, "uOffset")?,
+      extent: uniform(&gl, cp, label, "uExtent")?,
+    };
+    let blur = BlurProgram::link(&gl)?;
     let (gp, label) = (glyph.program, "glyph");
     let glyph_uniforms = GlyphUniforms {
       mode: uniform(&gl, gp, label, "uMode")?,
@@ -1634,7 +1949,8 @@ impl Executor {
       mesh_gradient,
       mesh_textured,
       composite,
-      composite_blend,
+      composite_uniforms,
+      blur,
       vao,
       instances,
       mesh_vao,
@@ -1705,13 +2021,13 @@ impl Executor {
   /// uploads at its first draw, its buffers' names to go back to `queue`,
   /// the drawing renderer's. The stencil test is off on return, its write
   /// mask every bit. Reports the instances written, the draw calls issued,
-  /// the path meshes drawn and tessellated, the stencil clip draws and the
-  /// layers (`super::report`), zeros for an empty list; no draw call and no
+  /// the path meshes drawn and tessellated, the stencil clip draws, the
+  /// layers and their blur passes (`super::report`), zeros for an empty list; no draw call and no
   /// clip draw for a list that emits only clips (every draw culled), whose
   /// batches are never issued. A layer's content draws into a target of the
   /// layer pool (`super::layers`) between its two marker batches, its
-  /// composite into the frame it opened on; the target is bound again on
-  /// return.
+  /// composite into the frame it opened on (a blurred layer's after its
+  /// passes, `run_blur`); the target is bound again on return.
   pub(super) fn draw(
     &mut self,
     target: Target,
@@ -1769,8 +2085,11 @@ impl Executor {
       // Nothing emitted means no scissor: the test is already off here. The
       // report still counts a mesh tessellated and then rejected, but no
       // draw call and no clip draw: a list whose every draw was culled
-      // leaves its clip batches undrawn.
-      if instances.is_empty() && walked.mesh_draws.is_empty() {
+      // leaves its clip batches undrawn. A drawn layer always has content
+      // among the instances or the mesh draws, except a backdrop layer,
+      // which draws with none.
+      let drawn = |l: &walk::Layer| !l.folded && !l.rect.is_empty();
+      if instances.is_empty() && walked.mesh_draws.is_empty() && !walked.layers.iter().any(drawn) {
         gl.use_program(None);
         return Ok(DrawReport { draw_calls: 0, clips: 0, ..super::report(&walked) });
       }
@@ -1796,7 +2115,9 @@ impl Executor {
       // `clip_slots` holds each clip draw's quad index, None for a mesh, and
       // `layer_slots` each layer's composite index, None for a folded or
       // empty one. A composite's texel rows are rescaled here to the storage
-      // its layer draws into, a bucket's (`super::layers`).
+      // it samples, a bucket's (`super::layers`): the layer's own, or for a
+      // blurred layer the last pass's, at the content halved by the blur's
+      // levels (`run_blur`).
       let mut tail = Vec::new();
       let clip_slots: Vec<Option<usize>> = walked
         .clip_draws
@@ -1815,7 +2136,8 @@ impl Executor {
             return None;
           }
           let content = (layer.rect.width(), layer.rect.height());
-          tail.push(rescale_composite(&layer.composite, content, bucket(content)));
+          let shown = layer.blur.map_or(content, |b| halved(content, blur_levels(b.sigma_x, b.sigma_y)));
+          tail.push(rescale_composite(&layer.composite, shown, bucket(shown)));
           Some(instances.len() + tail.len() - 1)
         })
         .collect();
@@ -1885,19 +2207,54 @@ impl Executor {
             continue;
           };
           open.push(storage);
-          // The composite's rows were rescaled to this size before the upload.
           debug_assert_eq!(storage.size, bucket(content));
+          let parent = *frames.last().expect("the target's frame is at the bottom of the stack");
           let frame =
             Frame { fbo: Some(storage.fbo), origin: (layer.rect.min.x, layer.rect.min.y), size: content, root: false };
           frames.push(frame);
+          // A backdrop layer starts from the parent's pixels under its rect:
+          // resolved into the scratch at the parent's window coordinates, then
+          // drawn into the storage's bottom-left corner by the blur program as
+          // a one-tap copy (a blit cannot write a multisampled storage under
+          // GLES 3.0). Without a scratch (warned once) it starts transparent.
+          let mut filled = false;
+          if layer.backdrop {
+            if mesh_bound {
+              gl.bind_vertex_array(Some(self.vao));
+              gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
+              mesh_bound = false;
+            }
+            let samplers = self.pass_samplers();
+            if let Some(scratch) = self.scratch.ensure(gl, (width, height)) {
+              resolve_region(gl, &parent, layer.rect, &scratch, scissor.is_some());
+              let (source_rect, target_rect) = fill_rects(&parent, layer.rect);
+              let pass = BlurPass {
+                source: scratch.color,
+                source_size: scratch.size,
+                source_rect,
+                target: storage.fbo,
+                target_size: storage.size,
+                target_rect,
+                clamp: None,
+                direction: [0.0, 0.0],
+                weights: &[1.0],
+              };
+              blur_pass(gl, &self.blur, samplers, &pass);
+              gl.bind_sampler(TEXTURE_UNIT, None);
+              gl.bind_texture(glow::TEXTURE_2D, None);
+              filled = true;
+            }
+          }
           in_use = Some(self.set_frame(&frame, (width, height), scissor));
           // Unscissored (`set_frame`), the color writes on and every stencil
           // bit writable, as the clear of the target found them; the layer's
-          // stencil clips count up from 0 again.
+          // stencil clips count up from 0 again. A filled backdrop keeps its
+          // color.
           gl.clear_color(0.0, 0.0, 0.0, 0.0);
           gl.stencil_mask(STENCIL_ALL_BITS);
           gl.clear_stencil(0);
-          gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+          let color = if filled { 0 } else { glow::COLOR_BUFFER_BIT };
+          gl.clear(color | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
           continue;
         }
         if batch.program == BatchProgram::LayerEnd {
@@ -1906,18 +2263,42 @@ impl Executor {
           let content = (layer.rect.width(), layer.rect.height());
           frames.pop();
           self.layers.finish(gl, &storage, content);
+          // The blur passes and the composite draw from the instance VAO.
+          if mesh_bound {
+            gl.bind_vertex_array(Some(self.vao));
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
+            mesh_bound = false;
+          }
+          let linear = self.sampler(TextureSampling::Linear, TextureWrap::Clamp);
+          let nearest = self.sampler(TextureSampling::Nearest, TextureWrap::Clamp);
+          // The image the composite samples: the layer's storage, or the last
+          // blur pass's (every other storage released already). None when GL
+          // could make no storage for a pass (the pool warned): the layer does
+          // not draw.
+          let image = match layer.blur {
+            Some(blur) => {
+              let samplers = self.pass_samplers();
+              let clamp = layer.clamp.map(|c| clamp_rect(layer.rect, c));
+              run_blur(gl, &mut self.layers, &self.blur, samplers, (storage, content), clamp, blur)
+            }
+            None => Some((storage, content)),
+          };
           let mode = shader_mode(layer.blend);
           // A shader mode's destination: the resolve scratch, made or grown
           // before the parent frame is bound again (it leaves the
           // framebuffer binding dirty).
-          let backdrop = if mode.is_some() { self.scratch.ensure(gl, (width, height)) } else { None };
+          let backdrop =
+            if mode.is_some() && image.is_some() { self.scratch.ensure(gl, (width, height)) } else { None };
           let parent = *frames.last().expect("the target's frame is at the bottom of the stack");
           in_use = Some(self.set_frame(&parent, (width, height), scissor));
+          let Some((image, shown)) = image else { continue };
           // GL could make no scratch (warned once): the layer does not draw.
           if mode.is_some() && backdrop.is_none() {
-            self.layers.release(&storage);
+            self.layers.release(&image);
             continue;
           }
+          // The composite's rows were rescaled to this size before the upload.
+          debug_assert_eq!(image.size, bucket(shown));
           if let Some(scratch) = &backdrop {
             resolve_region(gl, &parent, layer.rect, scratch, scissor.is_some());
           }
@@ -1928,22 +2309,36 @@ impl Executor {
             gl.stencil_func(glow::EQUAL, batch.stencil as i32, STENCIL_ALL_BITS);
             gl.stencil_op(glow::KEEP, glow::KEEP, glow::KEEP);
           }
-          if mesh_bound {
-            gl.bind_vertex_array(Some(self.vao));
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
-            mesh_bound = false;
-          }
           point_attributes(gl, layer_slots[batch.start].expect("a drawn layer has its composite's slot"));
-          set_blend(gl, &mut blending, BlendMode::SourceOver);
-          // The texel rows sample the storage 1:1, so nearest is exact.
-          let nearest = self.sampler(TextureSampling::Nearest, TextureWrap::Clamp);
-          gl.bind_texture(glow::TEXTURE_2D, Some(storage.color));
-          gl.bind_sampler(TEXTURE_UNIT, Some(nearest));
-          match (mode, &backdrop) {
-            (Some(mode), Some(scratch)) => {
-              gl.use_program(Some(self.composite.program));
-              in_use = Some(self.composite.program);
-              gl.uniform_1_i32(Some(&self.composite_blend), mode);
+          // A shader mode draws with blending off; every other composite
+          // blends by the layer's fixed-function mode (source-over but for
+          // the implicit layer around a draw with a color matrix).
+          set_blend(gl, &mut blending, if mode.is_some() { BlendMode::SourceOver } else { layer.blend });
+          // The texel rows sample the storage 1:1, where nearest is exact,
+          // unless the blur halved the content: then bilinear, the upsample.
+          let downsampled = layer.blur.is_some_and(|b| blur_levels(b.sigma_x, b.sigma_y) > 0);
+          gl.bind_texture(glow::TEXTURE_2D, Some(image.color));
+          gl.bind_sampler(TEXTURE_UNIT, Some(if downsampled { linear } else { nearest }));
+          let composite = mode.is_some() || layer.matrix.is_some() || layer.blur.is_some();
+          if composite {
+            let u = &self.composite_uniforms;
+            gl.use_program(Some(self.composite.program));
+            in_use = Some(self.composite.program);
+            gl.uniform_1_i32(Some(&u.blend), mode.unwrap_or(BLEND_SOURCE_OVER));
+            match &layer.matrix {
+              Some(m) => {
+                let (columns, offset) = matrix_uniforms(m);
+                gl.uniform_1_i32(Some(&u.has_matrix), 1);
+                gl.uniform_matrix_4_f32_slice(Some(&u.matrix), false, &columns);
+                gl.uniform_4_f32_slice(Some(&u.offset), &offset);
+              }
+              None => gl.uniform_1_i32(Some(&u.has_matrix), 0),
+            }
+            let [x0, y0, x1, y1] = texel_extent([0, 0, shown.0, shown.1], image.size);
+            gl.uniform_4_f32(Some(&u.extent), x0, y0, x1, y1);
+          }
+          match (composite, &backdrop) {
+            (true, Some(scratch)) => {
               gl.active_texture(glow::TEXTURE0 + BACKDROP_UNIT);
               gl.bind_texture(glow::TEXTURE_2D, Some(scratch.color));
               // texelFetch ignores the filter; bound for a defined state.
@@ -1957,14 +2352,15 @@ impl Executor {
               gl.bind_texture(glow::TEXTURE_2D, None);
               gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
             }
-            // `set_frame` left the shape program in use.
+            // The composite program blending by the layer's mode, or the
+            // shape program `set_frame` left in use.
             _ => gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, 1),
           }
           // Unbound again: the next layer that takes the storage draws into
           // it.
           gl.bind_sampler(TEXTURE_UNIT, None);
           gl.bind_texture(glow::TEXTURE_2D, None);
-          self.layers.release(&storage);
+          self.layers.release(&image);
           continue;
         }
         if batch.program == BatchProgram::Clip {
@@ -2130,8 +2526,9 @@ impl Executor {
     self.shape.program
   }
 
-  // The eleven programs, the shape program last, so a loop over them leaves
-  // it in use.
+  // The eleven programs that read `uFrag` (the blur program places its quad
+  // from its own uniforms), the shape program last, so a loop over them
+  // leaves it in use.
   fn programs(&self) -> [&Program; 11] {
     [
       &self.composite,
@@ -2154,14 +2551,20 @@ impl Executor {
   // executor does not have yet: (sampling, clamp) for a texture batch (a
   // textured mesh batch among them) and for the ramp a glyph or gradient
   // batch samples, each input's own for a paint batch, and (nearest, clamp)
-  // for a layer's composite.
+  // and (linear, clamp) for a layer's composite, blur passes and backdrop
+  // fill.
   unsafe fn create_samplers(&mut self, walked: &Walked) -> Result<(), String> {
     for batch in &walked.batches {
       let ramp = needs_ramp(batch).then_some((TextureSampling::Linear, TextureWrap::Clamp));
       let texture = batch.texture.map(|(_, sampling)| (sampling, TextureWrap::Clamp));
       let inputs = batch.paint.iter().flat_map(|p| p.inputs.iter()).map(|i| (i.sampling, i.wrap));
-      let composite =
-        (batch.program == BatchProgram::LayerEnd).then_some((TextureSampling::Nearest, TextureWrap::Clamp));
+      // A composite samples nearest, or linear after a downsampling blur; a
+      // blur pass and the backdrop fill nearest, a halving linear.
+      let layer = matches!(batch.program, BatchProgram::LayerBegin | BatchProgram::LayerEnd);
+      let composite = layer
+        .then_some([(TextureSampling::Nearest, TextureWrap::Clamp), (TextureSampling::Linear, TextureWrap::Clamp)])
+        .into_iter()
+        .flatten();
       for key in ramp.into_iter().chain(texture).chain(inputs).chain(composite) {
         if !self.samplers.contains_key(&key) {
           let sampler = create_sampler(&self.gl, key.0, key.1)?;
@@ -2170,6 +2573,13 @@ impl Executor {
       }
     }
     Ok(())
+  }
+
+  // The (nearest, linear) clamped samplers a blur pass picks from
+  // (`blur_pass`), which `create_samplers` made for every layer.
+  fn pass_samplers(&self) -> (glow::Sampler, glow::Sampler) {
+    let nearest = self.sampler(TextureSampling::Nearest, TextureWrap::Clamp);
+    (nearest, self.sampler(TextureSampling::Linear, TextureWrap::Clamp))
   }
 
   // The sampler object for (`sampling`, `wrap`), which `create_samplers`

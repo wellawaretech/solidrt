@@ -56,6 +56,10 @@ pub struct DrawReport {
   /// layer whose alpha folded into its content is not one. Each composite
   /// is a draw call too, counted in `draw_calls`.
   pub layers: u32,
+  /// The blur passes the drawn layers ran: a backdrop layer's fill copy,
+  /// each halving of a large blur's content and each horizontal and
+  /// vertical gaussian pass, one draw each, not counted in `draw_calls`.
+  pub blur_passes: u32,
 }
 
 /// The drawing half, owned by the raster thread beside the GL context.

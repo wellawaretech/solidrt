@@ -7,7 +7,10 @@ use super::mesh::MeshStyle;
 use super::path::Path;
 use super::record::DisplayList;
 use super::{PaintShader, ShaderInput, Texture};
-use crate::{BlendMode, ClipOperation, Color, Matrix, Point, Rect, ShaderParam, StrokeCap, TextureSampling};
+use crate::TileMode;
+use crate::{
+  BlendMode, ClipOperation, Color, ColorMatrix, Matrix, Point, Rect, ShaderParam, StrokeCap, TextureSampling,
+};
 use crate::{CoveragePolicy, GlyphQuad, RampGradient};
 use euclid::default::Transform2D;
 use std::sync::{Arc, OnceLock};
@@ -48,14 +51,41 @@ pub(super) enum Source {
   Gradient(Arc<RampGradient>),
 }
 
+/// A gaussian blur over a layer's pixels, as a paint's image filter or a
+/// backdrop layer's filter gives it: the standard deviations along the
+/// layer's local x and y axes, in local units, and how the blur reads past
+/// the content's edge: `Clamp` extends the content's edge color outward,
+/// `Decal` reads transparent there; either way a layer's output grows by the
+/// blur's reach (walk.rs `close_layer`). The recording maps `Mirror` and
+/// `Repeat` to `Clamp`, warned once.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Blur {
+  pub sigma_x: f32,
+  pub sigma_y: f32,
+  pub tile: TileMode,
+}
+
 /// One executable op of a list, in recording order.
 pub(super) enum Op {
   Save,
   /// A save whose content draws offscreen and composites as one, faded by
-  /// `alpha` (straight, 0..1): group opacity. The matching `Restore` closes
-  /// it (the walk knows what it pops).
+  /// `alpha` (straight, 0..1): group opacity; its pixels run through `blur`
+  /// before the composite and through the color `matrix` in it. The
+  /// matching `Restore` closes it (the walk knows what it pops).
   SaveLayer {
     alpha: f32,
+    matrix: Option<ColorMatrix>,
+    blur: Option<Blur>,
+  },
+  /// A save whose layer starts from the target's pixels under `bounds`
+  /// (local, within the clip in effect), run through `blur`; the content
+  /// draws on top, and the restore composites the layer back faded by
+  /// `alpha` through the color `matrix`, source-over.
+  SaveBackdropLayer {
+    bounds: Rect,
+    alpha: f32,
+    matrix: Option<ColorMatrix>,
+    blur: Option<Blur>,
   },
   Restore,
   Translate {
@@ -93,7 +123,8 @@ pub(super) enum Op {
   /// miter joins (sharp corners) where a radius is zero. `radii` all zero
   /// is a plain rect. `source` Some fills the coverage with the image's
   /// texels or the gradient's color, faded by `color`'s alpha. `blend` is
-  /// the paint's, as on every op that takes a paint.
+  /// the paint's, as on every op that takes a paint, and so is `matrix`,
+  /// the paint's color filter.
   DrawRect {
     rect: Rect,
     radii: Radii,
@@ -101,6 +132,7 @@ pub(super) enum Op {
     stroke: Option<f32>,
     source: Option<Source>,
     blend: BlendMode,
+    matrix: Option<ColorMatrix>,
   },
   /// `stroke` None fills; Some(width) strokes centered on the ellipse.
   /// `source` as for `DrawRect`.
@@ -110,6 +142,7 @@ pub(super) enum Op {
     stroke: Option<f32>,
     source: Option<Source>,
     blend: BlendMode,
+    matrix: Option<ColorMatrix>,
   },
   /// A segment stroked `width` wide, centered on it, ended by `cap` at
   /// both ends. A width of zero or below draws nothing (the walk skips it).
@@ -123,6 +156,7 @@ pub(super) enum Op {
     cap: StrokeCap,
     gradient: Option<Arc<RampGradient>>,
     blend: BlendMode,
+    matrix: Option<ColorMatrix>,
   },
   /// A path's mesh under `style`, filled with `color`, or with `source`
   /// faded by `color`'s alpha. One op per style: a stroke-and-fill records
@@ -134,10 +168,11 @@ pub(super) enum Op {
     color: Premultiplied,
     source: Option<Source>,
     blend: BlendMode,
+    matrix: Option<ColorMatrix>,
   },
   /// `alpha` is the paint's alpha (1 without a paint): a texture's opacity
   /// is per op, not a group. `blend` is the paint's, source-over without
-  /// one.
+  /// one; `matrix` its color filter, none without one.
   DrawTexture {
     texture: Texture,
     src: Rect,
@@ -145,6 +180,7 @@ pub(super) enum Op {
     sampling: TextureSampling,
     alpha: f32,
     blend: BlendMode,
+    matrix: Option<ColorMatrix>,
   },
   /// A glyph run: `quads` over `atlas`, whose red channel is coverage,
   /// under `policy`, colored by `color` or along `gradient`. `bounds` is the

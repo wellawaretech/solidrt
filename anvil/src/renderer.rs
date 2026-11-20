@@ -52,6 +52,7 @@ macro_rules! warn_once {
 }
 
 pub(crate) mod blend;
+pub(crate) mod blur;
 mod exec;
 mod layers;
 pub(crate) mod mesh;
@@ -79,6 +80,11 @@ pub(crate) use layers::rescale_composite;
 // functions, for the tests.
 #[cfg(test)]
 pub(crate) use exec::{blit_rect, Frame, COMPOSITE_BLEND};
+
+// The backdrop fill's rects and the color matrix's uniforms, pure
+// functions, for the tests.
+#[cfg(test)]
+pub(crate) use exec::{clamp_rect, fill_rects, matrix_uniforms};
 
 /// A GL name whose last handle dropped: a texture's, a paint shader's
 /// program, or a path mesh's vertex and index buffers.
@@ -150,8 +156,9 @@ impl contract::Renderer for Renderer {
 /// or a stencil clip draw; a layer's two markers are one call, its
 /// composite, and an empty layer's markers and what lies between them none),
 /// the path meshes it drew, how many meshes it tessellated, the stencil clip
-/// draws it made and the layers it drew offscreen. The walk decides all
-/// six, so the tests read the report off a walk with no GL.
+/// draws it made, the layers it drew offscreen and their blur passes, a
+/// backdrop's fill copy among them (`blur::blur_passes`). The walk decides all seven, so the tests read the
+/// report off a walk with no GL.
 pub(crate) fn report(walked: &walk::Walked) -> contract::DrawReport {
   contract::DrawReport {
     instances: walked.instances.len() as u32,
@@ -160,6 +167,15 @@ pub(crate) fn report(walked: &walk::Walked) -> contract::DrawReport {
     tessellated: walked.tessellated,
     clips: walked.clip_draws.len() as u32,
     layers: walked.layers.iter().filter(|l| !l.folded && !l.rect.is_empty()).count() as u32,
+    blur_passes: walked
+      .layers
+      .iter()
+      .filter(|l| !l.folded && !l.rect.is_empty())
+      .map(|l| {
+        let (sx, sy) = l.blur.map_or((0.0, 0.0), |b| (b.sigma_x, b.sigma_y));
+        blur::blur_passes(sx, sy, l.backdrop)
+      })
+      .sum(),
   }
 }
 
