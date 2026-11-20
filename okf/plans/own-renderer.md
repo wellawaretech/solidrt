@@ -2086,7 +2086,12 @@ the outside pieces, and the TV grid's shape (four batches).
 **TV** (the same machine, probe and method as the stage 5 tables; the
 client of this commit against a client of 579886a9 built and read the
 same morning, so the two rows of a pair share the TV's state; frames and
-missed presents per 10 s as counter deltas):
+missed presents per 10 s as counter deltas). Corrected after the fact:
+the samples of this table sat about 16.3 s apart, not 10 (frames plus
+missed presents summed to about 815, where 10 s at 50 Hz is 500), so its
+missed presents read about 1.6 times high and its thread shares about
+1.2 times high. Each pair was read the same way, so the comparisons
+hold; the absolute figures do not.
 
 | client | route | panel | variant | missed / 10 s | draw calls | instances | frame GPU ms | raster thread |
 |---|---|---|---|---|---|---|---|---|
@@ -2243,37 +2248,57 @@ can fold.
 
 **The `ROUNDED_SPLIT_AREA` sweep** (the thread stage 5 left open; the
 TV, `probes/path-bench.tsx` static route, 30 rounded gradient panels in
-5 columns, lines=0, the same method as the stage 5 tables, clients of
-33947beb built with the constant at each value, three windows of 10 s):
+5 columns, lines=0, clients of 33947beb built with the constant at each
+value; the 16,384 row is the read of 0e6ab617 in the stage 5
+follow-up). Corrected after the fact: these reads came from a script
+that snapshots the threads between its stats reads, so the samples sat
+about 16.3 s apart, not 10 (frames plus missed presents summed to about
+815, where 10 s at 50 Hz is 500). The figures below are scaled to the
+time that passed; the thread shares are divided by it.
 
 | threshold | what splits | draw calls | instances | missed / 10 s | frame GPU ms | raster thread |
 |---|---|---|---|---|---|---|
-| 65,536 | nothing (a TV panel is 57,600 device px) | 3 | 31 | 368 to 386 | 36.2 to 37.4 | 10 % |
-| 16,384 (kept) | every panel | 4 | 307 to 312 | 184 to 213 | 25.5 to 28.2 | 18 to 20 % |
-| 4,096 | every panel | 4 | 312 | 179 | 25.6 | 20 % |
+| 65,536 | nothing (a TV panel is 57,600 device px) | 3 | 31 | about 230 to 240 | 36.2 to 37.4 | about 8 % |
+| 16,384 (kept) | every panel | 4 | 307 to 312 | about 113 to 131 | 25.5 to 28.2 | about 15 to 16 % |
+| 4,096 | every panel | 4 | 312 | about 110 | 25.6 | about 16 % |
 
 The split halves the missed presents and takes a third off the GPU
 time for twice the raster thread's share, which is the trade the
-stage 5 design made; below 16,384 nothing more splits on this grid,
-and the desktop's 14,400 px panels would start to, for no measured
-reason. 16,384 stays.
+stage 5 design made; below 16,384 nothing more splits on this grid
+(the 4,096 and 16,384 rows agree), and the desktop's 14,400 px panels
+would start to, for no measured reason. 16,384 stays.
 
-**Device reads** (2026-11-20, clients of 33947beb, the effects bench
-with 12 cards, counters as deltas over 10 s windows, three windows each;
-the TV at 50 Hz through the rig with `EXT_multisampled_render_to_texture`,
-the tablet at 60 Hz on its multisampled window with partial repaint):
+**Device reads** (2026-11-20, the effects bench with 12 cards, counters
+as deltas between samples, two windows each; the TV at 50 Hz through the
+rig with `EXT_multisampled_render_to_texture`, clients of 33947beb; the
+tablet at 60 Hz on its multisampled window, the client of 99e1f2a1 with
+the flush, every route seen drawing correctly by the maintainer first).
+Corrected after the fact: the bench scripts snapshot the threads between
+the stats reads, so the samples sat 16 to 17 s apart where the first
+summary divided by 10 s; the first version of this table read every
+count about 1.6 times high (the TV's fade at "411 frames per 10 s", 41
+fps, where it drew 25) and the thread shares about 1.2 times high. The
+figures below are scaled to the time that passed, and the scripts now
+write each sample's time beside it. The TV rows are from the client
+before the flush and nobody had looked at its pictures yet; the
+tablet's first rows, read on the flickering client, are dropped.
 
-| device | route | frames / 10 s | missed / 10 s | draw calls | instances | layers / frame | blur passes / frame | frame GPU ms | raster thread |
+| device | route | fps | missed / 10 s | draw calls | instances | layers / frame | blur passes / frame | frame GPU ms | raster thread |
 |---|---|---|---|---|---|---|---|---|---|
-| TV | fade | 411 | 410 | 60 | 463 | 11.7 | 0 | 40.0 | 26 % |
-| TV | glass | 45 | 735 | 63 | 329 | 8.9 | 44 | 138 (frames of 673 ms) | 9 % |
-| TV | glass, 1 pane | 759 | 51 | 2.4 | 19 | 0.2 | 1.0 | 6.5 | 17 % |
-| TV | glass, 4 panes | 315 | 501 | 18 | | 2.7 | 13 | 32 (frames of 211 ms) | 22 % |
-| TV | glass, 12 panes, no blur (the matrix alone) | 214 | 603 | 22 | 73 | 3.4 | 3.4 | 53 | |
-| TV | shadow | 500 | 326 | 14 | 61 | 0 | 0 | 19.6 | 12 % |
-| tablet | fade | 196 | 785 | 61 | 579 | 11.8 | 0 | | 77 % |
-| tablet | glass | 437 | 533 | 31 | 188 | 4.5 | 22 | 12 | |
-| tablet | shadow | 889 | 105 | 27 | 232 | 0 | 0 | 12.7 | |
+| TV | fade | 25 | 250 | 60 | 463 | 11.7 | 0 | 40.0 | 22 to 23 % |
+| TV | glass | 2.0 to 2.8 | 460 to 490 | 63 to 83 | 329 | 8.9 to 11.7 | 44 to 58 | 138 (frames of 673 ms) | 8 to 9 % |
+| TV | glass, 1 pane | 46 to 47 | 31 to 41 | 2.4 | 19 | 0.2 | 1.0 | 6.5 | 14 to 15 % |
+| TV | glass, 4 panes | 19 | 300 to 310 | 18 | | 2.7 | 13 | 32 (frames of 211 ms) | 19 to 25 % |
+| TV | glass, 12 panes, no blur (the matrix alone) | 10 to 13 | 380 to 390 | 22 to 26 | 73 | 3.4 to 3.9 | 3.4 to 3.9 | 53 | 12 % |
+| TV | shadow | 29 to 30 | 200 to 210 | 14 to 15 | 61 | 0 | 0 | 19.6 | 10 % |
+| tablet | fade | 13 | 465 to 475 | 60 to 61 | 576 to 581 | 11.8 to 11.9 | 0 | | 63 % |
+| tablet | glass | 26 to 27 | 330 to 340 | 30 to 36 | 184 to 224 | 4.4 to 5.2 | 22 to 26 | | 62 to 65 % |
+| tablet | shadow | 52 to 54 | 58 to 75 | 24 to 30 | 205 to 260 | 0 | 0 | | 42 % |
+
+A check that would have caught the timing: frames plus missed presents
+over a window is the refresh rate times the window (500 per 10 s at 50
+Hz); the first table's TV fade row summed to 821, its one-pane glass
+row read 759 frames per 10 s on a 50 Hz panel.
 
 What the reads say, against the figures before this stage
 ([backdrop-filter-cost](../notes/backdrop-filter-cost.md): under Impeller
@@ -2282,10 +2307,11 @@ the TV held one frosted pane at 13 ms of GPU and dropped to 22 fps with
 
 - A layer is a render pass of its own, and on a tiler every pass break
   stores and reloads the parent's tiles. The fade route pays it twelve
-  times per frame: 40 ms of GPU on the TV (41 fps) and, on the tablet,
-  the raster thread at 77 percent (13 fps), the driver's share of the
+  times per frame: 40 ms of GPU on the TV (25 fps) and, on the tablet,
+  the raster thread at 63 percent (13 fps), the driver's share of the
   same breaks. The shadow route, which draws no layer since step 5b,
-  holds 42 fps on the TV and 49 on the tablet on the bar's strip alone.
+  holds 29 to 30 fps on the TV and 52 to 54 on the tablet on the bar's
+  strip alone.
 - A backdrop capture is a resolve of the whole multisampled frame: about
   15 ms of GPU each on the TV, linear in the captures (3.4 per frame at
   53 ms, one pane at 6.5), which is Impeller's price too. Twelve panes
@@ -2306,9 +2332,9 @@ the TV held one frosted pane at 13 ms of GPU and dropped to 22 fps with
   passes stops both faults (checked by eye on the tablet; the layer pool
   as committed, its storage reused within a draw). GL does not require
   the flush: it is anvil's first driver workaround, of the kind Impeller
-  absorbed for us. The tablet rows of the table above were
-  read on the flickering client: the fade route held the same 13 fps
-  with the fix, and the rows are retaken before the stage closes. The
+  absorbed for us. The tablet rows of the table above are
+  the reads of the client with the flush (the flickering client's reads
+  matched them within noise: the flush costs nothing measurable). The
   device frame counters count presents, not correct pictures; the
   bench reads now need a look at the device.
 

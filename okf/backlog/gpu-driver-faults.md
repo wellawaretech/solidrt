@@ -59,6 +59,12 @@ The stage's device step was close to closing on those numbers.
     reporting numbers. Where the device can record its screen, they keep
     the recording and check every frame for foreign frames (a brightness
     outlier check found the tablet's period of three after the fact).
+  - The bench summaries check their own arithmetic: frames plus missed
+    presents over a window must equal the refresh rate times the window.
+    The stage 6 device tables failed it for a day unseen (samples 16 s
+    apart, divided by 10 s, the TV's 25 fps reported as 41), and one row
+    read 759 frames per 10 s on a 50 Hz panel. A summary that fails the
+    check prints no numbers.
   - A renderer step that changes GPU state does not close on device
     counters alone: its device run includes a look by the maintainer,
     asked for explicitly, with what to look for.
