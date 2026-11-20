@@ -681,6 +681,14 @@ Step 5b, added after step 5's desktop read: the shadow's casting-box
 cutout as a per-instance field of the shadow program, in place of the
 three stencil draws the rendertree's difference clip costs per card.
 
+The layer cost the device reads found (a render-pass break per layer on
+a tiler, see Findings) has a candidate fix: draw every layer that does
+not read its parent in passes before the main pass. If this plan takes
+it on, it is tried on the tablet before anything builds on it: Skia
+stops exactly that reordering on Adreno 620 and 640 GL drivers below
+571, and the tablet's Adreno 610 runs driver 502
+([gpu-driver-faults](../backlog/gpu-driver-faults.md)).
+
 Steps 2 and 3's fixed-function half are independent; 4 needs 2; 5's
 layer half needs 4.
 
@@ -691,7 +699,13 @@ the components' glass idiom), and a shadow grid (rounded cards with a
 blurred shadow, with and without the cutout peephole); the tablet's
 glass read. The stage 5 thread still open, the `ROUNDED_SPLIT_AREA`
 sweep, rides the TV session. Into Findings, with draw calls, layers per
-frame, GPU ms and the raster thread.
+frame, GPU ms and the raster thread. A device read counts only after
+the maintainer has looked at the device running each route, told what
+to look for (flicker, black or foreign frames, a layer missing or
+black): the frame counters count presents, not correct pictures, and
+the tablet's first reads were taken on a client that presented the
+drawn frame once in three ([gpu-driver-faults](../backlog/gpu-driver-faults.md)).
+The tablet rows read before 99e1f2a1 are retaken.
 
 **Done.** The contract's layers, blend modes and filters draw, with no
 "not supported yet" warning left for them; the seventeen reference
@@ -731,7 +745,11 @@ draw is new (a fade, a blend, a shadow); the TV reads are in Findings.
 - The end state's TV read: the dense mover probe locked at 50 fps, with
   the patch fixed. [display-list-op-cost](display-list-op-cost.md), the
   performance case this plan started from, closes on it.
-- Android, Windows and macOS, and the TV again.
+- Android, Windows and macOS, and the TV again. Before each platform's
+  read, its GPUs are checked against the driver faults
+  ([gpu-driver-faults](../backlog/gpu-driver-faults.md)), and the read
+  includes the maintainer's look at the device (with the presented-frame
+  check from that item where it exists by then).
 - The branch merges. Impeller left at stage 1; what goes here is the
   interim machinery it left behind: the adoption bookkeeping
   (`TextureEntry::handle`'s `Option`, `unadopted` in `raster/targets.rs`).
