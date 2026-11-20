@@ -677,6 +677,10 @@ first step.
    `kinds/shadow.rs` removed.
 6. Measure and close.
 
+Step 5b, added after step 5's desktop read: the shadow's casting-box
+cutout as a per-instance field of the shadow program, in place of the
+three stencil draws the rendertree's difference clip costs per card.
+
 Steps 2 and 3's fixed-function half are independent; 4 needs 2; 5's
 layer half needs 4.
 
@@ -2165,7 +2169,7 @@ A probe of all 29 modes against main's Impeller client differs at most
 one channel level, on the shader-evaluated modes' cells; the
 gpu-texture-blend example (Plus) matches it exactly.
 
-Step 4 landed as the commit after c445f5a2 (see the log): a second GLES rule, a blit whose draw framebuffer is
+Step 4 landed as ee56040a: a second GLES rule, a blit whose draw framebuffer is
 multisampled is refused, so no blit touches a layer storage: the
 backdrop fill, the halving downsamples and the two gaussian passes are
 all draws of one blur program (one tap under LINEAR sampling halves a
@@ -2180,6 +2184,113 @@ large downsampled blur, a pane at opacity, a shadow through the layer
 blur, a pane in a fading group, a rotated pane) matches the color-only
 pane exactly and the blurred ones to within a few levels away from the
 stripe transitions, where the two kernels differ.
+
+Step 5 landed as 473ea417. The shadow program evaluates the gaussian of
+a rounded box in the shape's local space (Wallace's method: the x
+integral in erf per row, four samples over y within three sigma), with
+the row's corner chosen by the arc that holds the row rather than the
+row's half of the box: a radius above half a side is legal after the
+CSS clamp, and the half rule errs by 0.26 there where the arc rule errs
+by 0.04 (the implementer's and the reviewer's brute-force convolutions
+agree: about 0.01 on rounded corners, 0.03 to 0.04 near a circle, 8
+samples halving that; `SHADOW_SAMPLES` is the knob). The shadow probe
+(a rounded card, a hard shadow, a large spread blur, a transparent-filled
+card, an oval, a path, a card in a fading group, a rotated card) matches
+main's Impeller client to the pixel away from the falloffs and within
+the two blurs' difference inside them; the components' lit example is
+the one reference entry that changes (its cards' shadows blur now).
+`needs_own_layer`, `to_layer_paint` and `to_hard_paint` are gone.
+
+The desktop read of the effects bench (12 cards at 60 Hz, 1280x720, a
+bar sweeping under them every frame; `probes/stage6-effects-bench.tsx`
+and `stage6-bench.sh`): the fade route repaints the whole window every
+frame and draws 12 layers per frame (a card's background and text
+overlap, so none folds) in 61 calls at 580 instances; the glass route
+8.5 layers and 34 blur passes per frame (the bar damages a column of
+panes at a time, each a capture copy, a halving and two gaussian passes);
+the shadow route 0 layers in 62 calls with 36 stencil clip draws per
+frame, the three of each card's cutout. Every route holds 60 fps with
+no missed present. A false lead, recorded so nobody follows it again:
+`gpuFrameExecMs` read 16 ms per frame on the shadow routes and 5.6 on
+the fade route, but one fading card alone reads the same 15.4 ms, so on
+the desktop's vsync-paced client that timer spans about the frame period
+for a light frame and less for a heavy one; it is not a per-frame GPU
+cost there (the TV's missed presents and raster thread are the measure,
+as in every stage before). Step 5b, the cutout per instance, was built
+on that lead and kept on its own merits: the shadow route draws in 26
+calls instead of 62 with no stencil draw, and a faded card with a shadow
+can fold.
+
+**The `ROUNDED_SPLIT_AREA` sweep** (the thread stage 5 left open; the
+TV, `probes/path-bench.tsx` static route, 30 rounded gradient panels in
+5 columns, lines=0, the same method as the stage 5 tables, clients of
+33947beb built with the constant at each value, three windows of 10 s):
+
+| threshold | what splits | draw calls | instances | missed / 10 s | frame GPU ms | raster thread |
+|---|---|---|---|---|---|---|
+| 65,536 | nothing (a TV panel is 57,600 device px) | 3 | 31 | 368 to 386 | 36.2 to 37.4 | 10 % |
+| 16,384 (kept) | every panel | 4 | 307 to 312 | 184 to 213 | 25.5 to 28.2 | 18 to 20 % |
+| 4,096 | every panel | 4 | 312 | 179 | 25.6 | 20 % |
+
+The split halves the missed presents and takes a third off the GPU
+time for twice the raster thread's share, which is the trade the
+stage 5 design made; below 16,384 nothing more splits on this grid,
+and the desktop's 14,400 px panels would start to, for no measured
+reason. 16,384 stays.
+
+**Device reads** (2026-11-20, clients of 33947beb, the effects bench
+with 12 cards, counters as deltas over 10 s windows, three windows each;
+the TV at 50 Hz through the rig with `EXT_multisampled_render_to_texture`,
+the tablet at 60 Hz on its multisampled window with partial repaint):
+
+| device | route | frames / 10 s | missed / 10 s | draw calls | instances | layers / frame | blur passes / frame | frame GPU ms | raster thread |
+|---|---|---|---|---|---|---|---|---|---|
+| TV | fade | 411 | 410 | 60 | 463 | 11.7 | 0 | 40.0 | 26 % |
+| TV | glass | 45 | 735 | 63 | 329 | 8.9 | 44 | 138 (frames of 673 ms) | 9 % |
+| TV | glass, 1 pane | 759 | 51 | 2.4 | 19 | 0.2 | 1.0 | 6.5 | 17 % |
+| TV | glass, 4 panes | 315 | 501 | 18 | | 2.7 | 13 | 32 (frames of 211 ms) | 22 % |
+| TV | glass, 12 panes, no blur (the matrix alone) | 214 | 603 | 22 | 73 | 3.4 | 3.4 | 53 | |
+| TV | shadow | 500 | 326 | 14 | 61 | 0 | 0 | 19.6 | 12 % |
+| tablet | fade | 196 | 785 | 61 | 579 | 11.8 | 0 | | 77 % |
+| tablet | glass | 437 | 533 | 31 | 188 | 4.5 | 22 | 12 | |
+| tablet | shadow | 889 | 105 | 27 | 232 | 0 | 0 | 12.7 | |
+
+What the reads say, against the figures before this stage
+([backdrop-filter-cost](../notes/backdrop-filter-cost.md): under Impeller
+the TV held one frosted pane at 13 ms of GPU and dropped to 22 fps with
+280 missed presents at four, the tablet the same at four):
+
+- A layer is a render pass of its own, and on a tiler every pass break
+  stores and reloads the parent's tiles. The fade route pays it twelve
+  times per frame: 40 ms of GPU on the TV (41 fps) and, on the tablet,
+  the raster thread at 77 percent (13 fps), the driver's share of the
+  same breaks. The shadow route, which draws no layer since step 5b,
+  holds 42 fps on the TV and 49 on the tablet on the bar's strip alone.
+- A backdrop capture is a resolve of the whole multisampled frame: about
+  15 ms of GPU each on the TV, linear in the captures (3.4 per frame at
+  53 ms, one pane at 6.5), which is Impeller's price too. Twelve panes
+  re-filtering every frame (the blur's reach makes every pane's region
+  damaged by its neighbour's) are beyond the TV under either renderer,
+  but the frames of 670 ms with 140 to 200 ms of GPU and a raster thread
+  near idle are a wait this read did not explain: not the layer pool's
+  churn (a build that never deleted storage within a draw changed
+  nothing here and was dropped), and not present without the blur
+  passes.
+- The tablet's fade route flickered: its presented frames cycled the
+  drawn frame, a black buffer and the player's start screen (a period of
+  three, the window's buffer count), and a card's layer could composite
+  black. Forced full renders flickered the same, so partial repaint is
+  not the cause. The Adreno 610 draws straight into its multisampled
+  window, and a frame that leaves the window's framebuffer for a layer
+  and comes back loses its work there; a `glFlush` after each layer's
+  passes stops both faults (checked by eye on the tablet; the layer pool
+  as committed, its storage reused within a draw). GL does not require
+  the flush: it is anvil's first driver workaround, of the kind Impeller
+  absorbed for us. The tablet rows of the table above were
+  read on the flickering client: the fade route held the same 13 fps
+  with the fix, and the rows are retaken before the stage closes. The
+  device frame counters count presents, not correct pictures; the
+  bench reads now need a look at the device.
 
 ### Where anvil lives (2026-11-18)
 

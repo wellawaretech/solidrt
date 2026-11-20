@@ -2421,6 +2421,13 @@ impl Executor {
           let content = (layer.rect.width(), layer.rect.height());
           frames.pop();
           self.layers.finish(gl, &storage, content);
+          // A driver workaround, not a GL rule: on the Adreno 610, drawing
+          // straight into its multisampled window, a frame that left the
+          // window's framebuffer for a layer and came back presented a
+          // stale buffer two frames in three, and a layer could composite
+          // black. Flushing the layer's passes before the parent's pass
+          // resumes stops both.
+          gl.flush();
           // The blur passes and the composite draw from the instance VAO.
           if mesh_bound {
             gl.bind_vertex_array(Some(self.vao));
