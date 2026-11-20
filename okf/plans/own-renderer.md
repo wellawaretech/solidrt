@@ -2295,6 +2295,15 @@ tablet's first rows, read on the flickering client, are dropped.
 | tablet | glass | 26 to 27 | 330 to 340 | 30 to 36 | 184 to 224 | 4.4 to 5.2 | 22 to 26 | | 62 to 65 % |
 | tablet | shadow | 52 to 54 | 58 to 75 | 24 to 30 | 205 to 260 | 0 | 0 | | 42 % |
 
+The maintainer then saw every route draw correctly on the TV too, on the
+client of 74ca2b12 (with the flush), and the TV's three routes were read
+again on it with the timed scripts: fade 23 to 25 fps at 40 to 44 ms of
+GPU per frame, glass 2.1 to 3.0 fps at 139 to 191 ms, shadow 28.5 to 31
+fps at 19 to 22 ms, the rows above within noise. The flush costs nothing
+measurable on the Mali either. The pane-count rows stay those of
+33947beb. On the TV the bench's grid (1212 px) is wider than the 960 px
+window, so its fourth column is cut off; every TV read has that layout.
+
 A check that would have caught the timing: frames plus missed presents
 over a window is the refresh rate times the window (500 per 10 s at 50
 Hz); the first table's TV fade row summed to 821, its one-pane glass
