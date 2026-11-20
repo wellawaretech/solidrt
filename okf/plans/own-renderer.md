@@ -710,7 +710,9 @@ The tablet rows read before 99e1f2a1 are retaken.
 **Done.** The contract's layers, blend modes and filters draw, with no
 "not supported yet" warning left for them; the seventeen reference
 renders diff at zero against the renders of 0e6ab617 except where a
-draw is new (a fade, a blend, a shadow); the TV reads are in Findings.
+draw is new (a fade, a blend, a shadow); the TV reads are in Findings;
+the maintainer has seen every route draw correctly on the TV and the
+tablet.
 
 ## Stage 7: parity, platforms, merge
 
