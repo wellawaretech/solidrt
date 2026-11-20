@@ -7,7 +7,7 @@ use super::mesh::MeshStyle;
 use super::path::Path;
 use super::record::DisplayList;
 use super::{PaintShader, ShaderInput, Texture};
-use crate::{ClipOperation, Color, Matrix, Point, Rect, ShaderParam, StrokeCap, TextureSampling};
+use crate::{BlendMode, ClipOperation, Color, Matrix, Point, Rect, ShaderParam, StrokeCap, TextureSampling};
 use crate::{CoveragePolicy, GlyphQuad, RampGradient};
 use euclid::default::Transform2D;
 use std::sync::{Arc, OnceLock};
@@ -92,13 +92,15 @@ pub(super) enum Op {
   /// `stroke` None fills; Some(width) strokes centered on the edge, with
   /// miter joins (sharp corners) where a radius is zero. `radii` all zero
   /// is a plain rect. `source` Some fills the coverage with the image's
-  /// texels or the gradient's color, faded by `color`'s alpha.
+  /// texels or the gradient's color, faded by `color`'s alpha. `blend` is
+  /// the paint's, as on every op that takes a paint.
   DrawRect {
     rect: Rect,
     radii: Radii,
     color: Premultiplied,
     stroke: Option<f32>,
     source: Option<Source>,
+    blend: BlendMode,
   },
   /// `stroke` None fills; Some(width) strokes centered on the ellipse.
   /// `source` as for `DrawRect`.
@@ -107,6 +109,7 @@ pub(super) enum Op {
     color: Premultiplied,
     stroke: Option<f32>,
     source: Option<Source>,
+    blend: BlendMode,
   },
   /// A segment stroked `width` wide, centered on it, ended by `cap` at
   /// both ends. A width of zero or below draws nothing (the walk skips it).
@@ -119,6 +122,7 @@ pub(super) enum Op {
     width: f32,
     cap: StrokeCap,
     gradient: Option<Arc<RampGradient>>,
+    blend: BlendMode,
   },
   /// A path's mesh under `style`, filled with `color`, or with `source`
   /// faded by `color`'s alpha. One op per style: a stroke-and-fill records
@@ -129,15 +133,18 @@ pub(super) enum Op {
     style: MeshStyle,
     color: Premultiplied,
     source: Option<Source>,
+    blend: BlendMode,
   },
   /// `alpha` is the paint's alpha (1 without a paint): a texture's opacity
-  /// is per op, not a group.
+  /// is per op, not a group. `blend` is the paint's, source-over without
+  /// one.
   DrawTexture {
     texture: Texture,
     src: Rect,
     dst: Rect,
     sampling: TextureSampling,
     alpha: f32,
+    blend: BlendMode,
   },
   /// A glyph run: `quads` over `atlas`, whose red channel is coverage,
   /// under `policy`, colored by `color` or along `gradient`. `bounds` is the

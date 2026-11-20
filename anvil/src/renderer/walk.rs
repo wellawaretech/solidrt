@@ -10,17 +10,20 @@
 //! turned into stencil clip draws (`ClipDraw`) with the stencil depth every
 //! batch tests against, and a group's opacity (`save_layer`, a nested list
 //! below opacity 1) as a layer between two marker batches, or folded into
-//! its content's colors where that is exact (`close_layer`). No GL here, so
+//! its content's colors where that is exact (`close_layer`), and a paint's
+//! blend mode, a batch key for the fixed-function modes and an implicit
+//! layer around the op for the shader modes (`blended`). No GL here, so
 //! the walk is unit-tested without a context (`tests/anvil.rs`,
-//! `tests/gradient.rs`, `tests/mesh.rs`, `tests/layers.rs`).
+//! `tests/gradient.rs`, `tests/mesh.rs`, `tests/layers.rs`, `tests/blend.rs`).
 
+use super::blend::{gl_factors, keeps_destination};
 use super::mesh::{scale_bucket, Mesh, MeshStyle};
 use super::ops::{Op, Premultiplied, Radii, Source};
 use super::path::Path;
 use super::ramps::{RampTable, RAMP_ROWS};
 use super::record::DisplayList;
 use super::{PaintShader, ShaderInput, Texture};
-use crate::{affine, Affine, ClipOperation, CoveragePolicy, FillType, GlyphQuad, RampGradient, TileMode};
+use crate::{affine, Affine, BlendMode, ClipOperation, CoveragePolicy, FillType, GlyphQuad, RampGradient, TileMode};
 use crate::{ISize, Matrix, Point, Rect, ShaderParam, Size, StrokeCap, TextureSampling};
 use euclid::default::{Box2D, Point2D, Transform2D};
 use euclid::Angle;
@@ -372,6 +375,13 @@ pub struct Batch {
   /// at its own depth. 0 and unread on a `Clip` batch, whose draw carries
   /// its own test.
   pub stencil: u8,
+  /// The fixed-function blend mode the run draws by (blend.rs
+  /// `gl_factors`), a key like `stencil`: a run takes a draw only of its
+  /// own mode. A quad run's is its ops' paint's, a mesh run's its draw's;
+  /// source-over for every glyph, paint shader, clip and marker batch. Never
+  /// a shader mode: an op under one draws source-over inside a layer of its
+  /// own (`Layer::blend`).
+  pub blend: BlendMode,
 }
 
 /// One path op's mesh draw: the retained mesh by handle and what the mesh
@@ -397,6 +407,9 @@ pub struct MeshDraw {
   /// An image source's map from the path's space to the normalized texel
   /// (`normalized_texel`).
   pub texel: Option<Affine>,
+  /// The fixed-function blend mode the draw blends by, its batch's;
+  /// source-over for a clip shape's mesh, whose color writes are off.
+  pub blend: BlendMode,
 }
 
 /// What a stencil clip draw covers: a rect under its map as one
@@ -447,6 +460,13 @@ pub struct Layer {
   /// The alpha was folded into the content's colors and no layer is drawn:
   /// no marker batch refers to this entry.
   pub folded: bool,
+  /// How the composite blends with the destination: source-over for a
+  /// group's opacity (through the shape program), else a shader mode
+  /// (blend.rs `shader_mode`) for the implicit layer around one op drawn
+  /// under it (`blended`), alpha 1, composited by the composite program
+  /// against a copy of the destination under `rect`. Such a layer never
+  /// folds.
+  pub blend: BlendMode,
 }
 
 /// What a walk produces: the instances, the path mesh draws and the
@@ -517,12 +537,18 @@ impl Walked {
   // (the shader branches on the kind; a bound sampler it never reads costs
   // nothing), so a texture change, a sampling change, a fill or rounded run
   // or a glyph run ends a run. `stencil` is a key too: a batch takes only an instance of its own
-  // stencil depth. A plain or rounded fill that joins neither way tries the
-  // batch before the last one (`join_before_last`) before it opens a batch:
-  // when that batch is of its program, gradient class and stencil depth, the
-  // last batch is a quad batch of at most JOIN_SCAN_LIMIT instances, and the
-  // fill's device box meets none of theirs, it is drawn before them (held in
-  // `pending` until the last batch ends). Painter's
+  // stencil depth. So is `blend`, the op's fixed-function blend mode: a batch
+  // takes only an instance of its own mode, and an instance under any mode
+  // but source-over takes no lean class (it draws through the shape program,
+  // which discards where the clip, the coverage or the rounded clip reject a
+  // fragment; the lean programs write a zero fragment there, which only
+  // source-over and the modes like it leave the target unchanged by). A
+  // plain or rounded fill that joins neither way tries the batch before the
+  // last one (`join_before_last`) before it opens a batch: when that batch is
+  // of its program, gradient class, stencil depth and blend mode, the last
+  // batch is a quad batch of its blend mode with at most JOIN_SCAN_LIMIT
+  // instances, and the fill's device box meets none of theirs, it is drawn
+  // before them (held in `pending` until the last batch ends). Painter's
   // order between two draws whose device footprints are disjoint changes no
   // pixel, and no stencil write lies between the two batches (the last one is
   // not a `Clip` batch), so the fill tests the same stencil there.
@@ -532,13 +558,18 @@ impl Walked {
     texture: Option<(glow::NativeTexture, TextureSampling)>,
     gradient: Option<GradientClass>,
     stencil: u8,
+    blend: BlendMode,
   ) {
     let start = self.len();
     let sealed = self.sealed;
-    let last = self.batches.last_mut().filter(|last| !sealed && last.stencil == stencil);
-    let batch = |program| Batch { start, count: 1, program, texture, policy: None, gradient, paint: None, stencil };
-    // The two lean classes; an instance is at most one of them.
-    let lean = if plain_fill(&instance) {
+    let last = self.batches.last_mut().filter(|last| !sealed && last.stencil == stencil && last.blend == blend);
+    let batch =
+      |program| Batch { start, count: 1, program, texture, policy: None, gradient, paint: None, stencil, blend };
+    // The two lean classes; an instance is at most one of them, and under a
+    // mode other than source-over neither.
+    let lean = if blend != BlendMode::SourceOver {
+      None
+    } else if plain_fill(&instance) {
       Some(BatchProgram::Fill)
     } else if rounded_fill(&instance) {
       Some(BatchProgram::Rounded)
@@ -558,7 +589,7 @@ impl Walked {
           last.count += 1
         }
         _ => {
-          if self.join_before_last(&instance, own, gradient, stencil) {
+          if self.join_before_last(&instance, own, gradient, stencil, blend) {
             return;
           }
           self.open(Batch { texture: None, ..batch(own) })
@@ -583,15 +614,20 @@ impl Walked {
   }
 
   // Put the lean fill `instance` (of the program `own`, the gradient class
-  // `gradient`, at the stencil depth `stencil`) into the batch before the
-  // last one, in front of the last batch's run, when that changes no pixel
-  // (see `push`); false, changing nothing, when it may.
+  // `gradient`, at the stencil depth `stencil`, under the blend mode
+  // `blend`) into the batch before the last one, in front of the last
+  // batch's run, when that changes no pixel (see `push`); false, changing
+  // nothing, when it may. Both batches must be of the fill's blend mode: a
+  // simplification kept for clarity, not a painter's-order necessity (a
+  // fill disjoint from the last batch's run could join before a batch of
+  // another mode safely).
   fn join_before_last(
     &mut self,
     instance: &Instance,
     own: BatchProgram,
     gradient: Option<GradientClass>,
     stencil: u8,
+    blend: BlendMode,
   ) -> bool {
     let n = self.batches.len();
     if self.sealed || n < 2 {
@@ -601,13 +637,13 @@ impl Walked {
     let (prev, last) = (&mut before[n - 2], &mut after[0]);
     let quad =
       matches!(last.program, BatchProgram::Fill | BatchProgram::Rounded | BatchProgram::Shape | BatchProgram::Glyph);
-    if !quad {
+    if !quad || last.blend != blend {
       return false;
     }
     debug_assert_eq!(last.start + last.count, self.instances.len() + self.pending.len());
     // The stencil compare is defensive: a depth change always emits a `Clip`
     // batch between two quad batches.
-    if prev.program != own || prev.gradient != gradient || prev.stencil != stencil {
+    if prev.program != own || prev.gradient != gradient || prev.stencil != stencil || prev.blend != blend {
       return false;
     }
     // A fill or rounded batch directly before a quad batch: the two runs are
@@ -619,8 +655,8 @@ impl Walked {
     let own_box = device_box(instance);
     // An empty box draws nothing and meets nothing: every fragment centre
     // fails the clip test, the clip is a factor, not a discard, and under
-    // the premultiplied over blend a zero fragment changes no pixel (another
-    // blend mode would have to revisit this). An unbounded box (None) may
+    // the premultiplied over blend a zero fragment changes no pixel (a lean
+    // fill is always source-over, see `push`). An unbounded box (None) may
     // meet anything. `intersects` is strict: boxes that only share an
     // edge are disjoint, as a sample on that edge falls in exactly one of the
     // two quads (a split's plain pieces share their edges with its rim
@@ -662,7 +698,8 @@ impl Walked {
   // (sampled linearly) under `policy`. The run joins the current batch
   // when that batch is a glyph run over the same atlas under the same
   // policy at the same stencil depth, whatever either's gradient: the glyph
-  // program reads the gradient per instance.
+  // program reads the gradient per instance. A glyph run draws source-over,
+  // so it joins only a source-over batch.
   fn push_glyphs(&mut self, instances: Vec<Instance>, atlas: glow::NativeTexture, policy: CoveragePolicy, stencil: u8) {
     if instances.is_empty() {
       return;
@@ -675,6 +712,7 @@ impl Walked {
         && last.texture == texture
         && last.policy == Some(policy)
         && last.stencil == stencil
+        && last.blend == BlendMode::SourceOver
     };
     let sealed = self.sealed;
     match self.batches.last_mut().filter(|last| !sealed && joins(last)) {
@@ -688,6 +726,7 @@ impl Walked {
         gradient: None,
         paint: None,
         stencil,
+        blend: BlendMode::SourceOver,
       }),
     }
     self.boxes.extend(instances.iter().map(device_box));
@@ -708,6 +747,7 @@ impl Walked {
       gradient: None,
       paint: Some(paint),
       stencil,
+      blend: BlendMode::SourceOver,
     });
     self.sealed = true;
     self.boxes.push(device_box(&instance));
@@ -716,7 +756,8 @@ impl Walked {
 
   // Append one path op's mesh `draw` as a batch of its own: its map,
   // color, clips and source are the mesh program's uniforms, so no other
-  // path or quad shares its draw call; it tests the stencil at `stencil`.
+  // path or quad shares its draw call; it tests the stencil at `stencil`
+  // and blends by the draw's mode.
   fn push_mesh(&mut self, draw: MeshDraw, stencil: u8) {
     let start = self.mesh_draws.len();
     self.open(Batch {
@@ -728,6 +769,7 @@ impl Walked {
       gradient: draw.gradient.as_ref().map(GradientInstance::class),
       paint: None,
       stencil,
+      blend: draw.blend,
     });
     self.mesh_draws.push(draw);
   }
@@ -746,6 +788,7 @@ impl Walked {
       gradient: None,
       paint: None,
       stencil: 0,
+      blend: BlendMode::SourceOver,
     });
     self.clip_draws.push(draw);
   }
@@ -790,13 +833,14 @@ struct Saved {
   layer: Option<Open>,
 }
 
-/// An open layer: its `Walked::layers` index and alpha, its `LayerBegin`
-/// batch, and where its content starts in the instances, the mesh draws
-/// and the batches (a clip draw inside is a batch too, which blocks the
-/// fold, and bounds nothing).
+/// An open layer: its `Walked::layers` index, alpha and blend mode
+/// (`Layer::blend`), its `LayerBegin` batch, and where its content starts in
+/// the instances, the mesh draws and the batches (a clip draw inside is a
+/// batch too, which blocks the fold, and bounds nothing).
 struct Open {
   index: usize,
   alpha: f32,
+  blend: BlendMode,
   begin_batch: usize,
   instances_from: usize,
   meshes_from: usize,
@@ -867,7 +911,7 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
   for op in ops {
     match op {
       Op::Save => stack.push(Saved { state: *state, layer: None }),
-      Op::SaveLayer { alpha } => open_layer(*alpha, state, stack, out),
+      Op::SaveLayer { alpha } => open_layer(*alpha, BlendMode::SourceOver, state, stack, out),
       Op::Restore => {
         if stack.len() > base {
           let saved = stack.pop().expect("the stack holds more than this list's base");
@@ -890,26 +934,34 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
         clip(state, rect, geometry, *op, out)
       }
       Op::ClipOval { bounds, op, path } => clip(state, bounds, ClipGeometry::Oval(path), *op, out),
-      Op::DrawRect { rect, radii, color, stroke, source } => {
+      Op::DrawRect { rect, radii, color, stroke, source, blend } => {
         let kind = if radii.iter().all(|r| *r == 0.0) { KIND_RECT } else { KIND_ROUNDED_RECT };
-        push_shape(state, rect, kind, *radii, *color, *stroke, source.as_ref(), ramps, out)
+        blended(*blend, state, stack, out, |state, out, blend| {
+          push_shape(state, rect, kind, *radii, *color, *stroke, source.as_ref(), blend, ramps, out)
+        })
       }
-      Op::DrawOval { bounds, color, stroke, source } => {
-        push_shape(state, bounds, KIND_OVAL, [0.0; 4], *color, *stroke, source.as_ref(), ramps, out)
+      Op::DrawOval { bounds, color, stroke, source, blend } => {
+        blended(*blend, state, stack, out, |state, out, blend| {
+          push_shape(state, bounds, KIND_OVAL, [0.0; 4], *color, *stroke, source.as_ref(), blend, ramps, out)
+        })
       }
-      Op::DrawLine { from, to, color, width, cap, gradient } => {
-        push_line(state, *from, *to, *color, *width, *cap, gradient.as_ref(), ramps, out)
+      Op::DrawLine { from, to, color, width, cap, gradient, blend } => {
+        blended(*blend, state, stack, out, |state, out, blend| {
+          push_line(state, *from, *to, *color, *width, *cap, gradient.as_ref(), blend, ramps, out)
+        })
       }
-      Op::DrawTexture { texture, src, dst, sampling, alpha } => {
-        push_texture(state, texture, src, dst, *sampling, *alpha, out)
+      Op::DrawTexture { texture, src, dst, sampling, alpha, blend } => {
+        blended(*blend, state, stack, out, |state, out, blend| {
+          push_texture(state, texture, src, dst, *sampling, *alpha, blend, out)
+        })
       }
       Op::DrawGlyphs { atlas, quads, bounds, color, policy, gradient } => {
         push_glyphs(state, atlas, quads, bounds, *color, *policy, gradient.as_ref(), ramps, out)
       }
       Op::DrawShader { rect, shader, params, inputs } => push_paint(state, rect, shader, params, inputs, out),
-      Op::DrawPath { path, style, color, source } => {
-        push_path(state, path, *style, *color, source.as_ref(), ramps, out)
-      }
+      Op::DrawPath { path, style, color, source, blend } => blended(*blend, state, stack, out, |state, out, blend| {
+        push_path(state, path, *style, *color, source.as_ref(), blend, ramps, out)
+      }),
       Op::DrawList { list, opacity } => {
         // A group faded to nothing draws nothing; NaN draws in full. (A
         // `save_layer` at alpha 0 has no list to skip: `open_layer` culls
@@ -921,7 +973,7 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
         let layered = *opacity < 1.0;
         let saved = *state;
         if layered {
-          open_layer(*opacity, state, stack, out);
+          open_layer(*opacity, BlendMode::SourceOver, state, stack, out);
         }
         // Whatever the nested list leaves on the stack or in the state
         // ends with it, the stencil clips it left in effect and the layers
@@ -942,6 +994,49 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
   }
 }
 
+// One op that takes a paint, drawn by `draw` (given the state, the output
+// and the blend mode it pushes at) under the paint's `blend`: nothing for
+// Destination, which leaves the target as it is; the op at its mode for a
+// fixed-function mode (blend.rs `gl_factors`), which its batch sets; for a
+// shader mode, the op drawn source-over inside an implicit layer of its own
+// at alpha 1 whose composite blends by the mode (`Layer::blend`). The
+// layer's rect is the op's device box (`close_layer`). An op that pushes
+// nothing (culled by the clip, transparent, of zero width) opens no layer:
+// its markers and its table entry are taken back and the batch it found
+// open takes instances again, so it neither emits markers nor splits the
+// lean run around it. The walk's placement is each push function's own, so
+// the check is on what the op pushed, not a second copy of the clip test.
+fn blended(
+  blend: BlendMode,
+  state: &mut State,
+  stack: &mut Vec<Saved>,
+  out: &mut Walked,
+  draw: impl FnOnce(&State, &mut Walked, BlendMode),
+) {
+  if blend == BlendMode::Destination {
+    return;
+  }
+  if gl_factors(blend).is_some() {
+    draw(state, out, blend);
+    return;
+  }
+  let sealed = out.sealed;
+  open_layer(1.0, blend, state, stack, out);
+  draw(state, out, BlendMode::SourceOver);
+  let own = stack.pop().expect("the implicit blend layer is on the stack");
+  let open = own.layer.expect("the implicit blend layer's entry opens a layer");
+  if out.batches.len() == open.begin_batch + 1 {
+    // Nothing drawn: the `LayerBegin` is the last batch and the entry the
+    // last layer. `open` flushed the pending fills, which changes no run.
+    out.batches.pop();
+    out.layers.pop();
+    out.sealed = sealed;
+    *state = own.state;
+    return;
+  }
+  close_layer(own.state, open, state, out);
+}
+
 // Pop the save stack down to `base`, closing every layer an entry above it
 // opened (a plain entry needs nothing: the caller restores the state it
 // returns to, and a layer's close restores its opening state).
@@ -954,7 +1049,8 @@ fn unwind(stack: &mut Vec<Saved>, base: usize, state: &mut State, out: &mut Walk
   }
 }
 
-// Open a layer at `alpha` over `state`: the state saved with the layer's
+// Open a layer at `alpha` composited by `blend` (`Layer::blend`) over
+// `state`: the state saved with the layer's
 // bookkeeping, a `LayerBegin` batch, a placeholder table entry (filled at
 // the close), and the inner state. The clip box stays: it cuts the content
 // and bounds the layer. The rounded clip and the stencil clips apply at the
@@ -963,7 +1059,7 @@ fn unwind(stack: &mut Vec<Saved>, base: usize, state: &mut State, out: &mut Walk
 // faded to nothing, as a nested list at opacity 0 is skipped in `walk_ops`)
 // no layer opens: a plain save whose inner clip box is empty, so every draw
 // inside is culled, and the matching restore pops it as a plain save.
-fn open_layer(alpha: f32, state: &mut State, stack: &mut Vec<Saved>, out: &mut Walked) {
+fn open_layer(alpha: f32, blend: BlendMode, state: &mut State, stack: &mut Vec<Saved>, out: &mut Walked) {
   if alpha <= 0.0 {
     stack.push(Saved { state: *state, layer: None });
     state.clip = Box2D::zero();
@@ -979,14 +1075,16 @@ fn open_layer(alpha: f32, state: &mut State, stack: &mut Vec<Saved>, out: &mut W
     gradient: None,
     paint: None,
     stencil: 0,
+    blend: BlendMode::SourceOver,
   });
   let begin_batch = out.batches.len() - 1;
   let zeroed = clip_quad(&Projective::from_matrix(&Matrix::identity()), &Rect::zero(), [0.0; 4]);
-  out.layers.push(Layer { rect: Box2D::zero(), composite: zeroed, stencil: 0, folded: false });
+  out.layers.push(Layer { rect: Box2D::zero(), composite: zeroed, stencil: 0, folded: false, blend });
   // `open` flushed the pending fills: the content's instances start here.
   let open = Open {
     index,
     alpha,
+    blend,
     begin_batch,
     instances_from: out.instances.len(),
     meshes_from: out.mesh_draws.len(),
@@ -1050,7 +1148,7 @@ fn close_layer(popped: State, open: Open, state: &mut State, out: &mut Walked) {
   };
   let identity = Projective::from_matrix(&Matrix::identity());
   let composite = instance_under(popped.rounded, &identity, box_array(&clip), quad);
-  out.layers[open.index] = Layer { rect, composite, stencil: popped.depth, folded: false };
+  out.layers[open.index] = Layer { rect, composite, stencil: popped.depth, folded: false, blend: open.blend };
   out.open(Batch {
     start: open.index,
     count: 0,
@@ -1060,13 +1158,18 @@ fn close_layer(popped: State, open: Open, state: &mut State, out: &mut Walked) {
     gradient: None,
     paint: None,
     stencil: popped.depth,
+    blend: BlendMode::SourceOver,
   });
   *state = popped;
 }
 
-// The alpha fold: when the layer `open` (opened over `popped`) holds only
-// quad batches (no mesh, paint or clip draw, no inner layer that did not
-// fold itself), at most FOLD_SCAN_LIMIT instances whose device boxes are
+// The alpha fold: when the layer `open` (opened over `popped`) is a
+// source-over one (a shader-mode layer composites against the destination,
+// which no color can fold) and holds only source-over quad batches (no
+// mesh, paint or clip draw, no inner layer that did not fold itself, no
+// fixed-function mode other than source-over, which would blend with the
+// target where it blended with the layer's transparent pixels), at most
+// FOLD_SCAN_LIMIT instances whose device boxes are
 // pairwise disjoint, under no rounded clip, its alpha multiplies into its
 // instances' colors (all four channels of a premultiplied one, the alpha
 // alone of a glyph's straight one), its batches take the opening stencil
@@ -1078,11 +1181,13 @@ fn close_layer(popped: State, open: Open, state: &mut State, out: &mut Walked) {
 // meets everything, so it folds only alone. False, changing nothing,
 // otherwise.
 fn fold_layer(popped: &State, open: &Open, out: &mut Walked) -> bool {
-  if popped.rounded.is_some() {
+  if open.blend != BlendMode::SourceOver || popped.rounded.is_some() {
     return false;
   }
   let quads = out.batches[open.batches_from..].iter().all(|b| {
-    matches!(b.program, BatchProgram::Fill | BatchProgram::Rounded | BatchProgram::Shape | BatchProgram::Glyph)
+    let quad =
+      matches!(b.program, BatchProgram::Fill | BatchProgram::Rounded | BatchProgram::Shape | BatchProgram::Glyph);
+    quad && b.blend == BlendMode::SourceOver
   });
   let boxes = &out.boxes[open.instances_from..];
   if !quads || boxes.len() > FOLD_SCAN_LIMIT {
@@ -1114,7 +1219,8 @@ fn fold_layer(popped: &State, open: &Open, out: &mut Walked) -> bool {
   out.batches.remove(open.begin_batch);
   // The content's first batch now follows the batch before the layer: one
   // draw when both draw alike (the same program, gradient class, stencil,
-  // texture and policy; a quad batch's run is then adjacent to its own).
+  // texture, policy and blend mode; a quad batch's run is then adjacent to
+  // its own).
   let at = open.begin_batch;
   if at > 0 && at < out.batches.len() {
     let (before, after) = out.batches.split_at_mut(at);
@@ -1123,7 +1229,8 @@ fn fold_layer(popped: &State, open: &Open, out: &mut Walked) -> bool {
       && prev.gradient == first.gradient
       && prev.stencil == first.stencil
       && prev.texture == first.texture
-      && prev.policy == first.policy;
+      && prev.policy == first.policy
+      && prev.blend == first.blend;
     if alike {
       debug_assert_eq!(prev.start + prev.count, first.start);
       prev.count += first.count;
@@ -1339,8 +1446,10 @@ fn clip_stencil(
         return;
       }
       out.push_clip(ClipDraw::Raise { reference: depth, shape });
-      // The raise is not held to the box (neither program discards), so its
-      // area is the shape's bounds within the target, or the whole target.
+      // The raise is not held to the box (the fill program does not discard;
+      // the mesh program discards outside its clip box, which only narrows
+      // the raise), so its area is the shape's bounds within the target, or
+      // the whole target.
       let area = match bounds {
         Some(b) => b.intersection(&state.target),
         None => Some(state.target),
@@ -1376,8 +1485,8 @@ fn raise(state: &mut State, area: Option<Box2D<f32>>) {
 // saved depth, and only a raise since the depth was there left it so, so
 // an area larger than those raises (`raised` holds the saved state's own
 // too) changes nothing more. The raised area, not the popping state's clip
-// box: an intersect raise is not held to the box it was made in (neither
-// program discards), so a raise of a shape reaching past an outer clip's
+// box: an intersect raise is not held to the box it was made in (the fill
+// program does not discard), so a raise of a shape reaching past an outer clip's
 // box would outlive a restore over the box and reject the parent's later
 // draws there.
 fn restore_stencil(popped: &State, saved: &State, out: &mut Walked) {
@@ -1440,6 +1549,7 @@ fn clip_mesh(p: &Projective, path: &Path, clip: [f32; 4], out: &mut Walked) -> O
     gradient: None,
     texture: None,
     texel: None,
+    blend: BlendMode::SourceOver,
   }))
 }
 
@@ -1598,7 +1708,12 @@ fn instance_under(rounded: Option<RoundedClip>, p: &Projective, clip: [f32; 4], 
 // the radii, the rounded clip and the whole quad in `tex`, and draw through
 // the rounded program; its plain pieces are plain rect fills with no
 // rounded clip, the fill program's. Color, rows and the device clip are the
-// op's on every piece.
+// op's on every piece. Under `blend`, a fixed-function mode, which its
+// batch takes as a key: a transparent shape still draws where the mode
+// clears the destination under a zero source (blend.rs
+// `keeps_destination`), and a rounded fill under a mode other than
+// source-over does not split, since it never draws through the lean
+// programs (`Walked::push`).
 #[allow(clippy::too_many_arguments)]
 fn push_shape(
   state: &State,
@@ -1608,6 +1723,7 @@ fn push_shape(
   color: Premultiplied,
   stroke: Option<f32>,
   source: Option<&Source>,
+  blend: BlendMode,
   ramps: &mut RampTable,
   out: &mut Walked,
 ) {
@@ -1616,7 +1732,7 @@ fn push_shape(
   let grow = s * 0.5 + pad;
   let quad = rect.inflate(grow, grow);
   let Some((p, clip)) = placed(state, &quad) else { return };
-  if color[3] == 0.0 {
+  if color[3] == 0.0 && keeps_destination(blend) {
     return;
   }
   // The local space is the op's: the gradient's own rows.
@@ -1659,7 +1775,8 @@ fn push_shape(
   let tex = if fill { rect_array(&quad) } else { tex };
   let shape = instance(state, &p, clip, Quad { rect: quad, kind, stroke: s, color, tex, radii, rows });
   debug_assert_eq!(fill, rounded_fill(&shape));
-  if fill && p.is_axis_aligned() && device_area(&shape) >= ROUNDED_SPLIT_AREA {
+  let splits = blend == BlendMode::SourceOver && p.is_axis_aligned() && device_area(&shape) >= ROUNDED_SPLIT_AREA;
+  if fill && splits {
     let [m11, _, _, m22] = p.linear;
     // Non-zero: the device area is.
     let scale = m11.abs().min(m22.abs());
@@ -1676,7 +1793,7 @@ fn push_shape(
     // split saves no fragment and only adds instances: the fill stays one
     // rounded instance, whose coverage on the dropped cells is 0 anyway.
     if !pieces.iter().any(|(_, plain)| *plain) {
-      out.push(shape, texture, class, state.depth);
+      out.push(shape, texture, class, state.depth, blend);
       return;
     }
     // The rim first, then the plain pieces, which join the fill batch before
@@ -1689,16 +1806,16 @@ fn push_shape(
     for (piece, _) in pieces.iter().filter(|(_, plain)| !plain) {
       let Some(clip) = placed_under(state, &p, piece) else { continue };
       let rim = Quad { rect: *piece, kind, stroke: 0.0, color, tex, radii, rows };
-      out.push(instance(state, &p, clip, rim), None, class, state.depth);
+      out.push(instance(state, &p, clip, rim), None, class, state.depth, blend);
     }
     for (piece, _) in pieces.iter().filter(|(_, plain)| *plain) {
       let Some(clip) = placed_under(state, &p, piece) else { continue };
       let plain = Quad { rect: *piece, kind: KIND_RECT, stroke: 0.0, color, tex: [0.0; 4], radii: [0.0; 4], rows };
-      out.push(instance_under(None, &p, clip, plain), None, class, state.depth);
+      out.push(instance_under(None, &p, clip, plain), None, class, state.depth, blend);
     }
     return;
   }
-  out.push(shape, texture, class, state.depth);
+  out.push(shape, texture, class, state.depth, blend);
 }
 
 // `r` as `Instance::tex` carries a quad: x, y, w, h.
@@ -1914,7 +2031,8 @@ fn device_box(instance: &Instance) -> Option<Box2D<f32>> {
 // space, not the segment's frame, so its rows compose with the frame map
 // (quad frame to op space); the line then takes the gradient's color in a
 // batch of its gradient's kind and tile, its solid color past the ramp
-// table's rows.
+// table's rows. Under `blend` as a shape is (`push_shape`): a transparent
+// line still draws where the mode clears under a zero source.
 #[allow(clippy::too_many_arguments)]
 fn push_line(
   state: &State,
@@ -1924,10 +2042,11 @@ fn push_line(
   width: f32,
   cap: StrokeCap,
   gradient: Option<&Arc<RampGradient>>,
+  blend: BlendMode,
   ramps: &mut RampTable,
   out: &mut Walked,
 ) {
-  if width <= 0.0 || color[3] == 0.0 {
+  if width <= 0.0 || (color[3] == 0.0 && keeps_destination(blend)) {
     return;
   }
   let (dx, dy) = (to.x - from.x, to.y - from.y);
@@ -1950,7 +2069,7 @@ fn push_line(
   let rows = gradient_rows(gradient.as_ref());
   let quad = Quad { rect: local, kind: KIND_LINE, stroke: width, color, tex, radii: [0.0; 4], rows };
   let class = gradient.as_ref().map(GradientInstance::class);
-  out.push(instance(state, &p, clip, quad), None, class, state.depth);
+  out.push(instance(state, &p, clip, quad), None, class, state.depth, blend);
 }
 
 // The cap as the instance carries it.
@@ -1966,7 +2085,10 @@ fn cap_value(cap: StrokeCap) -> f32 {
 // state, faded by `alpha`, unless the clip rejects it or it is fully
 // transparent. Texel row 0 is the top of `src` (offscreen lists are
 // pre-flipped for it, a text layer's among them), so v is not flipped:
-// the top edge of `dst` samples `src.min_y()`.
+// the top edge of `dst` samples `src.min_y()`. Under `blend` as a shape is
+// (`push_shape`): faded to nothing it still draws where the mode clears
+// under a zero source.
+#[allow(clippy::too_many_arguments)]
 fn push_texture(
   state: &State,
   texture: &Texture,
@@ -1974,12 +2096,15 @@ fn push_texture(
   dst: &Rect,
   sampling: TextureSampling,
   alpha: f32,
+  blend: BlendMode,
   out: &mut Walked,
 ) {
   let Some((p, clip)) = placed(state, dst) else { return };
-  if alpha <= 0.0 {
+  if alpha <= 0.0 && keeps_destination(blend) {
     return;
   }
+  // Faded to nothing (a mode that clears under a zero source still draws).
+  let alpha = if alpha < 0.0 { 0.0 } else { alpha };
   // A texture's size is never zero: the registry refuses one, and a layer
   // is at least one texel.
   let size = texture.size();
@@ -2000,7 +2125,7 @@ fn push_texture(
     radii: [0.0; 4],
     rows: texel_rows(rows),
   };
-  out.push(instance(state, &p, clip, quad), Some((texture.name(), sampling)), None, state.depth);
+  out.push(instance(state, &p, clip, quad), Some((texture.name(), sampling)), None, state.depth, blend);
 }
 
 // One glyph run under the current state: rejected whole when its alpha is
@@ -2094,13 +2219,17 @@ fn push_paint(
 // one draw of its own. An image `source` carries its texture and the
 // path-space-to-texel rows, a gradient `source` its own rows over the
 // path's space; either fades by the color's alpha (in all four channels),
-// a gradient past the ramp table's rows draws the solid color.
+// a gradient past the ramp table's rows draws the solid color. The draw
+// blends by `blend`, a fixed-function mode; a transparent path still draws
+// where the mode clears under a zero source (`push_shape`).
+#[allow(clippy::too_many_arguments)]
 fn push_path(
   state: &State,
   path: &Path,
   style: MeshStyle,
   color: Premultiplied,
   source: Option<&Source>,
+  blend: BlendMode,
   ramps: &mut RampTable,
   out: &mut Walked,
 ) {
@@ -2114,7 +2243,7 @@ fn push_path(
   if placed_under(state, &p, &bounds.inflate(reach, reach).to_rect()).is_none() {
     return;
   }
-  if color[3] == 0.0 {
+  if color[3] == 0.0 && keeps_destination(blend) {
     return;
   }
   let (mesh, missed) = path.mesh(style, bucket);
@@ -2142,6 +2271,7 @@ fn push_path(
     },
     None => color,
   };
-  out.push_mesh(MeshDraw { mesh, map: p, color, clip, rounded: state.rounded, gradient, texture, texel }, state.depth);
+  let draw = MeshDraw { mesh, map: p, color, clip, rounded: state.rounded, gradient, texture, texel, blend };
+  out.push_mesh(draw, state.depth);
   out.meshes += 1;
 }

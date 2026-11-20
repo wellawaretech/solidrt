@@ -73,8 +73,9 @@ pub struct DisplayListBuilder {
 
 /// What anvil draws of a paint: its color, premultiplied, and the stroke
 /// width when the style strokes (an image or gradient source rides beside
-/// it, see `source_of`). A degenerate gradient source, a blend mode other
-/// than source-over and the filters were warned about when they were set.
+/// it, see `source_of`; the blend mode rides on every op the closures
+/// make). A degenerate gradient source and the filters were warned about
+/// when they were set.
 /// A stroke-and-fill covers the union of the fill and the stroke once: for
 /// the convex shapes here that is the fill outset by half the stroke width,
 /// its non-zero corner radii grown by the same (`fill` takes the outset and
@@ -301,6 +302,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       width: paint.stroke_width,
       cap: paint.stroke_cap,
       gradient: paint.gradient.clone(),
+      blend: paint.blend_mode,
     });
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawLine { from, to, paint: paint.log });
@@ -311,6 +313,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     warn_non_miter_join(paint);
     let rect = *rect;
     let source = source_of(paint);
+    let blend = paint.blend_mode;
     shape_ops(
       paint,
       [0.0; 4],
@@ -320,8 +323,9 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         color,
         stroke: None,
         source: source.clone(),
+        blend,
       },
-      |color, width| Op::DrawRect { rect, radii: [0.0; 4], color, stroke: Some(width), source: source.clone() },
+      |color, width| Op::DrawRect { rect, radii: [0.0; 4], color, stroke: Some(width), source: source.clone(), blend },
       &mut self.ops,
     );
     #[cfg(any(test, feature = "oplog"))]
@@ -332,6 +336,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   fn draw_oval(&mut self, bounds: &Rect, paint: &Paint) -> &mut Self {
     let bounds = *bounds;
     let source = source_of(paint);
+    let blend = paint.blend_mode;
     shape_ops(
       paint,
       [0.0; 4],
@@ -340,8 +345,9 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         color,
         stroke: None,
         source: source.clone(),
+        blend,
       },
-      |color, width| Op::DrawOval { bounds, color, stroke: Some(width), source: source.clone() },
+      |color, width| Op::DrawOval { bounds, color, stroke: Some(width), source: source.clone(), blend },
       &mut self.ops,
     );
     #[cfg(any(test, feature = "oplog"))]
@@ -355,6 +361,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     let rect = *rect;
     let clamped = clamp_radii(&rect, radii);
     let source = source_of(paint);
+    let blend = paint.blend_mode;
     shape_ops(
       paint,
       clamped,
@@ -364,8 +371,9 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         color,
         stroke: None,
         source: source.clone(),
+        blend,
       },
-      |color, width| Op::DrawRect { rect, radii: clamped, color, stroke: Some(width), source: source.clone() },
+      |color, width| Op::DrawRect { rect, radii: clamped, color, stroke: Some(width), source: source.clone(), blend },
       &mut self.ops,
     );
     #[cfg(any(test, feature = "oplog"))]
@@ -397,7 +405,13 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       DrawStyle::StrokeAndFill => &[MeshStyle::Fill],
     };
     for style in styles {
-      self.ops.push(Op::DrawPath { path: path.clone(), style: *style, color, source: source.clone() });
+      self.ops.push(Op::DrawPath {
+        path: path.clone(),
+        style: *style,
+        color,
+        source: source.clone(),
+        blend: paint.blend_mode,
+      });
     }
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawPath { path: path.log().clone(), paint: paint.log });
@@ -418,6 +432,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       dst: *dst,
       sampling,
       alpha: paint.map_or(1.0, |p| p.color.alpha),
+      blend: paint.map_or(BlendMode::SourceOver, |p| p.blend_mode),
     });
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawTextureRect { src: *src, dst: *dst, sampling, paint: paint.map(|p| p.log) });
@@ -483,7 +498,6 @@ pub struct Paint {
   /// draws. None for no source, an image source or a degenerate gradient.
   pub(super) gradient: Option<Arc<RampGradient>>,
   pub(super) draw_style: DrawStyle,
-  #[allow(dead_code)] // read by the executor once it blends other than source-over
   pub(super) blend_mode: BlendMode,
   pub(super) stroke_width: f32,
   pub(super) stroke_cap: StrokeCap,
@@ -554,9 +568,6 @@ impl contract::Paint for Paint {
   }
 
   fn set_blend_mode(&mut self, mode: BlendMode) -> &mut Self {
-    if mode != BlendMode::SourceOver {
-      unsupported!("a blend mode other than source-over", "the draw blends source-over");
-    }
     self.blend_mode = mode;
     #[cfg(any(test, feature = "oplog"))]
     {

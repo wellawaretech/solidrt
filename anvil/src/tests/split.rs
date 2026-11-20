@@ -9,8 +9,8 @@ use crate::renderer::walk::{
   split_rounded, walk, Batch, BatchProgram, GradientClass, Instance, Walked, JOIN_SCAN_LIMIT, KIND_RECT,
   KIND_ROUNDED_RECT, ROUNDED_QUAD_PAD, ROUNDED_SPLIT_AREA, ROUNDED_SPLIT_MARGIN, TILE_CLAMP,
 };
+use crate::{BlendMode, RoundingRadii, Size, TileMode};
 use crate::{ClipOperation, Color, ColorSource, DisplayListBuilder, GradientKind, ISize, Matrix, Paint, Point, Rect};
-use crate::{RoundingRadii, Size, TileMode};
 use euclid::default::Box2D;
 
 // How far a walked value may sit from the expected one: float noise.
@@ -94,7 +94,17 @@ fn quad(i: &Instance) -> Rect {
 }
 
 fn batch(start: usize, count: usize, program: BatchProgram, gradient: Option<GradientClass>) -> Batch {
-  Batch { start, count, program, texture: None, policy: None, gradient, paint: None, stencil: 0 }
+  Batch {
+    start,
+    count,
+    program,
+    texture: None,
+    policy: None,
+    gradient,
+    paint: None,
+    stencil: 0,
+    blend: BlendMode::SourceOver,
+  }
 }
 
 #[test]

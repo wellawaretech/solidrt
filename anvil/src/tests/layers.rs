@@ -11,8 +11,8 @@ use crate::renderer::walk::{
   walk, Batch, BatchProgram, ClipDraw, Instance, Walked, KIND_GLYPH, KIND_RECT, KIND_TEXTURED,
 };
 use crate::renderer::{report, rescale_composite, test_texture};
+use crate::{BlendMode, Matrix, Paint, PathBuilder, Point, Rect, RoundingRadii, Size, TextureSampling};
 use crate::{ClipOperation, Color, CoveragePolicy, DisplayList, DisplayListBuilder, FillType, GlyphQuad, ISize};
-use crate::{Matrix, Paint, PathBuilder, Point, Rect, RoundingRadii, Size, TextureSampling};
 use euclid::default::{Box2D, Point2D};
 use std::sync::Arc;
 
@@ -78,11 +78,31 @@ fn ibox(x0: i32, y0: i32, x1: i32, y1: i32) -> Box2D<i32> {
 }
 
 fn marker(program: BatchProgram, layer: usize, stencil: u8) -> Batch {
-  Batch { start: layer, count: 0, program, texture: None, policy: None, gradient: None, paint: None, stencil }
+  Batch {
+    start: layer,
+    count: 0,
+    program,
+    texture: None,
+    policy: None,
+    gradient: None,
+    paint: None,
+    stencil,
+    blend: BlendMode::SourceOver,
+  }
 }
 
 fn fills(start: usize, count: usize, stencil: u8) -> Batch {
-  Batch { start, count, program: BatchProgram::Fill, texture: None, policy: None, gradient: None, paint: None, stencil }
+  Batch {
+    start,
+    count,
+    program: BatchProgram::Fill,
+    texture: None,
+    policy: None,
+    gradient: None,
+    paint: None,
+    stencil,
+    blend: BlendMode::SourceOver,
+  }
 }
 
 // The programs and stencil depths of a walk's batches, in order.

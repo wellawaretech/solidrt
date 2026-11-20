@@ -1,7 +1,7 @@
 //! The GL half of a draw: the fill, rounded, shape and glyph programs (the
-//! fill, the rounded and the shape program each with a gradient variant)
-//! and the mesh program (with a gradient and a textured variant), ten
-//! programs in all; the
+//! fill, the rounded and the shape program each with a gradient variant),
+//! the mesh program (with a gradient and a textured variant) and the
+//! composite program of a shader blend mode, eleven programs in all; the
 //! paint shaders' programs linked behind anvil's vertex stage; two VAOs the
 //! executor owns, one over the instance buffer and one the path meshes'
 //! own vertex and index buffers are bound into per draw; and the draw that
@@ -25,9 +25,13 @@
 //! program, and every later batch tests the stencil at its depth. A layer
 //! (`walk::Layer`) draws its batches into a target of the layer pool
 //! (`super::layers`) under a shifted viewport (`Frame`), and its composite,
-//! a textured quad through the shape program, into the frame it opened on.
-//! Raster thread only, with the context current.
+//! a textured quad through the shape program, into the frame it opened on;
+//! a shader-mode layer's composite goes through the composite program
+//! instead, against a blitted copy of the destination under its rect. Every
+//! other batch blends by its fixed-function mode (`super::blend`), set where
+//! it changes. Raster thread only, with the context current.
 
+use super::blend::{gl_factors, shader_mode};
 use super::layers::{bucket, rescale_composite, LayerPool, LayerTarget};
 use super::mesh::{gpu_slot, GpuMesh, GpuSlot, Mesh};
 use super::ramps::{RampTable, RAMP_ROWS};
@@ -37,7 +41,7 @@ use super::walk::{self, Batch, BatchProgram, Instance, MeshDraw, MeshVertex, Pai
 use super::walk::{ClipDraw, ClipShape};
 use super::{DeletionQueue, Freed};
 use crate::contract::{DrawReport, Target};
-use crate::{CoveragePolicy, RAMP_WIDTH};
+use crate::{BlendMode, CoveragePolicy, RAMP_WIDTH};
 use crate::{TextureSampling, TextureWrap, UniformInfo, UniformKind};
 use euclid::default::{Box2D, Point2D};
 use glow::HasContext;
@@ -96,6 +100,9 @@ const ATTR_MESH_POS: u32 = 0;
 const TEXTURE_UNIT: u32 = 0;
 /// The texture unit `uRamp` samples: the ramp atlas.
 const RAMP_UNIT: u32 = 1;
+/// The texture unit `uBackdrop` samples: the destination copy a shader-mode
+/// layer's composite blends with.
+const BACKDROP_UNIT: u32 = 2;
 /// Bytes per rgba8 ramp texel.
 const BYTES_PER_RAMP_TEXEL: usize = 4;
 /// The texture units a paint shader's inputs may take, from unit 0 on: GLES
@@ -823,8 +830,12 @@ void main() {
 
 // A path mesh's fragment stage: the fill program's, a triangle's edges are
 // MSAA's and its coverage is 1 inside. The color and the clips are the
-// draw's uniforms (walk.rs MeshDraw); the clip box as a factor, never a
-// discard; the rounded clip's all-zero radii return before any derivative.
+// draw's uniforms (walk.rs MeshDraw); the clip box and the rounded clip a
+// factor, and a fragment whose factor is zero discards after every
+// derivative and sample, so a path under a blend mode other than
+// source-over writes nothing outside its clips (under Clear, Source and the
+// other modes `blend::keeps_destination` refuses, a zero fragment changes
+// the pixel); the rounded clip's all-zero radii return before any derivative.
 // The gradient variant (GRADIENT defined) takes the color from the gradient
 // at the parameter-space point MESH_VERTEX interpolates (`vGrad`), the
 // textured variant (TEXTURED defined) from the draw's texture at the
@@ -872,7 +883,173 @@ void main() {
 #else
   vec4 color = uColor;
 #endif
-  fragColor = color * inside * roundedClip();
+  float f = inside * roundedClip();
+  if (f <= 0.0) discard;
+  fragColor = color * f;
+}
+";
+
+// The shader blend modes, after SOURCE_HEADER: one function per mode over
+// premultiplied `src` and `dst` as the W3C Compositing and Blending Level 1
+// spec defines them, the separable ones through B(cb, cs) on
+// unpremultiplied color, the non-separable four through SetLum, SetSat and
+// ClipColor with the spec's luminance weights, the result premultiplied:
+// res.a = sa + da - sa * da, res.rgb = (1 - da) * src.rgb + (1 - sa) *
+// dst.rgb + sa * da * B(dst.rgb / da, src.rgb / sa), the divisions guarded
+// for zero alpha. A zero `src` returns `dst` exactly under every mode. The
+// mode constants are blend.rs BLEND_*, BlendMode's discriminants: they must
+// match.
+pub(crate) const COMPOSITE_BLEND: &str = r"
+uniform int uBlend;       // a BLEND_* below
+const int BLEND_OVERLAY = 15;
+const int BLEND_DARKEN = 16;
+const int BLEND_LIGHTEN = 17;
+const int BLEND_COLOR_DODGE = 18;
+const int BLEND_COLOR_BURN = 19;
+const int BLEND_HARD_LIGHT = 20;
+const int BLEND_SOFT_LIGHT = 21;
+const int BLEND_DIFFERENCE = 22;
+const int BLEND_EXCLUSION = 23;
+const int BLEND_MULTIPLY = 24;
+const int BLEND_HUE = 25;
+const int BLEND_SATURATION = 26;
+const int BLEND_COLOR = 27;
+const int BLEND_LUMINOSITY = 28;
+// The spec's luminance weights (Lum).
+const vec3 LUM_WEIGHTS = vec3(0.3, 0.59, 0.11);
+// The smallest alpha a premultiplied color is divided by, and the smallest
+// denominator ClipColor divides by: below it the color is taken as zero.
+const float BLEND_EPS = 1e-6;
+// A premultiplied color's straight color, within 0..1 (unorm8 rounding may
+// put a channel a hair above its alpha); zero for a transparent one.
+vec3 unpremultiply(vec4 c) {
+  return c.a > BLEND_EPS ? clamp(c.rgb / c.a, 0.0, 1.0) : vec3(0.0);
+}
+vec3 multiplyB(vec3 cb, vec3 cs) {
+  return cb * cs;
+}
+vec3 screenB(vec3 cb, vec3 cs) {
+  return cb + cs - cb * cs;
+}
+vec3 hardLightB(vec3 cb, vec3 cs) {
+  vec3 low = multiplyB(cb, 2.0 * cs);
+  vec3 high = screenB(cb, 2.0 * cs - 1.0);
+  return mix(low, high, vec3(greaterThan(cs, vec3(0.5))));
+}
+float colorDodge1(float cb, float cs) {
+  if (cb <= 0.0) return 0.0;
+  if (cs >= 1.0) return 1.0;
+  return min(1.0, cb / (1.0 - cs));
+}
+float colorBurn1(float cb, float cs) {
+  if (cb >= 1.0) return 1.0;
+  if (cs <= 0.0) return 0.0;
+  return 1.0 - min(1.0, (1.0 - cb) / cs);
+}
+float softLight1(float cb, float cs) {
+  if (cs <= 0.5) return cb - (1.0 - 2.0 * cs) * cb * (1.0 - cb);
+  float d = cb <= 0.25 ? ((16.0 * cb - 12.0) * cb + 4.0) * cb : sqrt(cb);
+  return cb + (2.0 * cs - 1.0) * (d - cb);
+}
+vec3 colorDodgeB(vec3 cb, vec3 cs) {
+  return vec3(colorDodge1(cb.r, cs.r), colorDodge1(cb.g, cs.g), colorDodge1(cb.b, cs.b));
+}
+vec3 colorBurnB(vec3 cb, vec3 cs) {
+  return vec3(colorBurn1(cb.r, cs.r), colorBurn1(cb.g, cs.g), colorBurn1(cb.b, cs.b));
+}
+vec3 softLightB(vec3 cb, vec3 cs) {
+  return vec3(softLight1(cb.r, cs.r), softLight1(cb.g, cs.g), softLight1(cb.b, cs.b));
+}
+float lum(vec3 c) {
+  return dot(c, LUM_WEIGHTS);
+}
+vec3 clipColor(vec3 c) {
+  float l = lum(c);
+  float n = min(min(c.r, c.g), c.b);
+  float x = max(max(c.r, c.g), c.b);
+  if (n < 0.0) c = l + (c - l) * l / max(l - n, BLEND_EPS);
+  if (x > 1.0) c = l + (c - l) * (1.0 - l) / max(x - l, BLEND_EPS);
+  return c;
+}
+vec3 setLum(vec3 c, float l) {
+  return clipColor(c + (l - lum(c)));
+}
+float sat(vec3 c) {
+  return max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
+}
+// The spec's SetSat: the largest channel to s, the smallest to 0, the
+// middle one scaled between; all zero for a gray.
+vec3 setSat(vec3 c, float s) {
+  float n = min(min(c.r, c.g), c.b);
+  float x = max(max(c.r, c.g), c.b);
+  return x > n ? (c - n) * s / (x - n) : vec3(0.0);
+}
+// B(cb, cs) of the mode `uBlend`, on straight color.
+vec3 blendColor(vec3 cb, vec3 cs) {
+  if (uBlend == BLEND_OVERLAY) return hardLightB(cs, cb);
+  if (uBlend == BLEND_DARKEN) return min(cb, cs);
+  if (uBlend == BLEND_LIGHTEN) return max(cb, cs);
+  if (uBlend == BLEND_COLOR_DODGE) return colorDodgeB(cb, cs);
+  if (uBlend == BLEND_COLOR_BURN) return colorBurnB(cb, cs);
+  if (uBlend == BLEND_HARD_LIGHT) return hardLightB(cb, cs);
+  if (uBlend == BLEND_SOFT_LIGHT) return softLightB(cb, cs);
+  if (uBlend == BLEND_DIFFERENCE) return abs(cb - cs);
+  if (uBlend == BLEND_EXCLUSION) return cb + cs - 2.0 * cb * cs;
+  if (uBlend == BLEND_MULTIPLY) return multiplyB(cb, cs);
+  if (uBlend == BLEND_HUE) return setLum(setSat(cs, sat(cb)), lum(cb));
+  if (uBlend == BLEND_SATURATION) return setLum(setSat(cb, sat(cs)), lum(cb));
+  if (uBlend == BLEND_COLOR) return setLum(cs, lum(cb));
+  if (uBlend == BLEND_LUMINOSITY) return setLum(cb, lum(cs));
+  // Never reached: the executor sets one of the above. The normal blend.
+  return cs;
+}
+// The premultiplied result of `src` blended onto `dst` by `uBlend`.
+vec4 blend(vec4 src, vec4 dst) {
+  float sa = src.a;
+  float da = dst.a;
+  vec3 b = blendColor(unpremultiply(dst), unpremultiply(src));
+  return vec4((1.0 - da) * src.rgb + (1.0 - sa) * dst.rgb + sa * da * b, sa + da - sa * da);
+}
+";
+
+// The composite of a shader-mode layer (walk.rs `Layer::blend`), drawn with
+// blending off over the layer's rect: the layer's texel, the destination's
+// under it from the resolve scratch, and the mode's result written, mixed
+// back to the destination by the clip box and the rounded clip of the state
+// the layer opened in (the stencil test still gates it). Outside the op's
+// coverage the layer is transparent and `blend` returns the destination
+// exactly, so the quad changes no pixel the op did not touch. `vUv`
+// (SHAPE_VERTEX's, from the composite's texel rows) addresses the layer;
+// the backdrop is read at the fragment's own window position: the
+// composite draws in the parent frame, and the executor resolved the region
+// into the scratch at the parent's window coordinates (`resolve_region`).
+// Its vertex stage is SHAPE_VERTEX; the linker drops what this stage does
+// not read.
+//
+// A known approximation of the fixed-function modes, not of this program:
+// a batch's analytic coverage (an oval's rim, a rounded edge, a stroke's
+// inner edge) is multiplied into the source, not applied as lerp(dst,
+// result, coverage) as Skia does, so rim pixels differ from Skia's under
+// the modes `blend::keeps_destination` refuses: Clear, Source, SourceIn,
+// DestinationIn, SourceOut, DestinationATop and Modulate. Coverage times
+// the source equals a coverage lerp of the result exactly whenever the
+// result is affine in the premultiplied source with a destination factor of
+// 1 at a zero source, which holds for the other eight fixed-function modes
+// and for every shader mode (the W3C composite is affine in the
+// premultiplied source, and B depends on Cs alone). The quads' own edges
+// are MSAA's and exact.
+//
+// After SOURCE_HEADER, the common fragment parts and COMPOSITE_BLEND.
+const COMPOSITE_FRAGMENT: &str = r"
+uniform sampler2D uTexture;   // the layer, premultiplied
+uniform sampler2D uBackdrop;  // the destination under the layer's rect, premultiplied
+void main() {
+  vec2 d = device();
+  float inside = float(all(greaterThanEqual(d, vClip.xy)) && all(lessThan(d, vClip.zw)));
+  float f = inside * roundedClip();
+  vec4 src = texture(uTexture, vUv) * vColor;
+  vec4 dst = texelFetch(uBackdrop, ivec2(gl_FragCoord.xy), 0);
+  fragColor = mix(dst, blend(src, dst), f);
 }
 ";
 
@@ -939,8 +1116,8 @@ impl PaintProgram {
   }
 }
 
-/// The GL half: the ten programs, the two VAOs and the instance buffer, and the
-/// draw. Lives
+/// The GL half: the eleven programs, the two VAOs and the instance buffer, and
+/// the draw. Lives
 /// as long as the renderer, which the raster thread drops before it releases
 /// the context (raster/recover.rs), so the GL names here die with it and
 /// Drop deletes nothing.
@@ -969,6 +1146,10 @@ pub(super) struct Executor {
   mesh_gradient: MeshProgram,
   /// A path mesh draw with a texture: a path filled with an image.
   mesh_textured: MeshProgram,
+  /// The composite of a shader-mode layer (COMPOSITE_FRAGMENT), and its
+  /// `uBlend`.
+  composite: Program,
+  composite_blend: glow::UniformLocation,
   /// The instance VAO: the instanced quad attributes over `instances`.
   vao: glow::VertexArray,
   instances: glow::Buffer,
@@ -995,6 +1176,9 @@ pub(super) struct Executor {
   ramps: RampTable,
   /// The layer targets, kept across draws (`super::layers`).
   layers: LayerPool,
+  /// The resolve scratch a shader-mode composite reads the destination
+  /// from, kept across draws.
+  scratch: ResolveScratch,
 }
 
 /// Where a draw's batches currently render: the target, or a layer's
@@ -1011,13 +1195,13 @@ pub(super) struct Executor {
 /// (fx + ox, oy + Hl - fy), which `device()` reads through `uFrag = (ox, oy
 /// + Hl)`: (0, H) on the target.
 #[derive(Clone, Copy)]
-struct Frame {
-  fbo: Option<glow::Framebuffer>,
-  origin: (i32, i32),
-  size: (i32, i32),
+pub(crate) struct Frame {
+  pub(crate) fbo: Option<glow::Framebuffer>,
+  pub(crate) origin: (i32, i32),
+  pub(crate) size: (i32, i32),
   /// The target itself, which draws inside the walk's scissor; a layer
   /// draws unscissored.
-  root: bool,
+  pub(crate) root: bool,
 }
 
 impl Frame {
@@ -1025,6 +1209,132 @@ impl Frame {
   fn frag(&self) -> [f32; 2] {
     [self.origin.0 as f32, (self.origin.1 + self.size.1) as f32]
   }
+}
+
+/// The read rect of a shader-mode layer's destination copy: the layer's
+/// device `rect` in `parent`'s GL window coordinates, (x, y, width, height),
+/// y up from the bottom. The parent draws device (x, y) at window (x - ox,
+/// Hp + oy - y) (`Frame`, its origin (ox, oy) and height Hp), so the rect's
+/// bottom edge, device y = rect.max.y, is window row Hp - (rect.max.y - oy).
+pub(crate) fn blit_rect(parent: &Frame, rect: Box2D<i32>) -> (i32, i32, i32, i32) {
+  let (w, h) = (rect.width(), rect.height());
+  let x = rect.min.x - parent.origin.0;
+  let y = parent.size.1 - (rect.min.y - parent.origin.1) - h;
+  (x, y, w, h)
+}
+
+/// The resolve scratch: one single-sample RGBA8 texture with its own
+/// framebuffer, at least the target's size (bucketed, `bucket`), grown when
+/// the target grows, kept across draws. A region of any frame resolves into
+/// it at the frame's own window coordinates (`resolve_region`), which lie
+/// inside the target's size for the root and for a layer frame alike. Its
+/// GL names die with the executor's context, as the programs do.
+#[derive(Default)]
+struct ResolveScratch {
+  current: Option<Scratch>,
+}
+
+/// The scratch's names and size.
+#[derive(Clone, Copy)]
+struct Scratch {
+  fbo: glow::Framebuffer,
+  color: glow::Texture,
+  size: (i32, i32),
+}
+
+impl ResolveScratch {
+  // The scratch covering `target`, made or grown now; None, warned once,
+  // when GL cannot make it. Leaves the framebuffer binding dirty and
+  // nothing bound on TEXTURE_2D of the active unit.
+  unsafe fn ensure(&mut self, gl: &glow::Context, target: (i32, i32)) -> Option<Scratch> {
+    if let Some(s) = self.current.filter(|s| s.size.0 >= target.0 && s.size.1 >= target.1) {
+      return Some(s);
+    }
+    let size = match self.current.take() {
+      Some(old) => {
+        gl.delete_framebuffer(old.fbo);
+        gl.delete_texture(old.color);
+        bucket((old.size.0.max(target.0), old.size.1.max(target.1)))
+      }
+      None => bucket(target),
+    };
+    let made = create_scratch(gl, size);
+    if made.is_none() {
+      warn_once!("[anvil] Renderer: the resolve scratch could not be created; shader blend modes do not draw");
+    }
+    self.current = made;
+    made
+  }
+}
+
+// A scratch of `size`: the RGBA8 texture (nearest, clamped) attached to a
+// new framebuffer; None when GL makes no name or the framebuffer is
+// incomplete.
+unsafe fn create_scratch(gl: &glow::Context, size: (i32, i32)) -> Option<Scratch> {
+  let color = gl.create_texture().ok()?;
+  let Ok(fbo) = gl.create_framebuffer() else {
+    gl.delete_texture(color);
+    return None;
+  };
+  gl.bind_texture(glow::TEXTURE_2D, Some(color));
+  gl.tex_image_2d(
+    glow::TEXTURE_2D,
+    0,
+    glow::RGBA8 as i32,
+    size.0,
+    size.1,
+    0,
+    glow::RGBA,
+    glow::UNSIGNED_BYTE,
+    glow::PixelUnpackData::Slice(None),
+  );
+  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
+  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
+  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+  gl.bind_texture(glow::TEXTURE_2D, None);
+  gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+  gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(color), 0);
+  if gl.check_framebuffer_status(glow::FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
+    gl.delete_framebuffer(fbo);
+    gl.delete_texture(color);
+    return None;
+  }
+  Some(Scratch { fbo, color, size })
+}
+
+// The destination under the device `rect`, resolved from `parent`'s
+// framebuffer into `scratch` with identical bounds, `rect` in the parent's
+// window coordinates (`blit_rect`), COLOR, NEAREST: identical bounds are
+// what GLES 3.0 requires of a blit that reads a multisampled framebuffer,
+// and an EXT_multisampled_render_to_texture parent resolves on the read
+// too. The blit honours the scissor, set only on the root (`scissored`),
+// so it is off for the blit. The parent is bound again after, its scissor
+// as it was.
+unsafe fn resolve_region(gl: &glow::Context, parent: &Frame, rect: Box2D<i32>, scratch: &Scratch, scissored: bool) {
+  let (x, y, w, h) = blit_rect(parent, rect);
+  let scissored = scissored && parent.root;
+  if scissored {
+    gl.disable(glow::SCISSOR_TEST);
+  }
+  gl.bind_framebuffer(glow::READ_FRAMEBUFFER, parent.fbo);
+  gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(scratch.fbo));
+  gl.blit_framebuffer(x, y, x + w, y + h, x, y, x + w, y + h, glow::COLOR_BUFFER_BIT, glow::NEAREST);
+  gl.bind_framebuffer(glow::FRAMEBUFFER, parent.fbo);
+  if scissored {
+    gl.enable(glow::SCISSOR_TEST);
+  }
+}
+
+/// Blend by `mode`, a fixed-function one (`super::blend::gl_factors`),
+/// unless `current` already is it; `current` is then `mode`.
+unsafe fn set_blend(gl: &glow::Context, current: &mut BlendMode, mode: BlendMode) {
+  if *current == mode {
+    return;
+  }
+  let (src, dst) = gl_factors(mode).expect("a batch blends by a fixed-function mode (walk.rs Batch)");
+  gl.blend_func(src, dst);
+  *current = mode;
 }
 
 /// A linked program, its `uSize` (the target in device pixels), its
@@ -1142,7 +1452,7 @@ struct GlyphUniforms {
 }
 
 impl Executor {
-  /// Over the context current on the calling thread; compiles the ten
+  /// Over the context current on the calling thread; compiles the eleven
   /// programs now (every frame draws shapes and most draw text, so the
   /// first frame must not pay them).
   ///
@@ -1241,6 +1551,13 @@ impl Executor {
       &[SOURCE_HEADER, TEXTURED_DEFINE, FRAGMENT_MATH, MESH_FRAGMENT],
       MeshVariant::Textured,
     )?;
+    let composite = Program::link(
+      &gl,
+      "composite",
+      &[SOURCE_HEADER, VERTEX_COMMON, SHAPE_VERTEX],
+      &[SOURCE_HEADER, FRAGMENT_INPUTS, FRAGMENT_MATH, FRAGMENT_ROUNDED_CLIP, COMPOSITE_BLEND, COMPOSITE_FRAGMENT],
+    )?;
+    let composite_blend = uniform(&gl, composite.program, "composite", "uBlend")?;
     let (gp, label) = (glyph.program, "glyph");
     let glyph_uniforms = GlyphUniforms {
       mode: uniform(&gl, gp, label, "uMode")?,
@@ -1255,13 +1572,21 @@ impl Executor {
     // rounded program sample nothing, and the shape program's gradient variant no
     // `uTexture` (it draws no image, so the compiler drops the sampler);
     // of the mesh programs only the textured variant samples `uTexture`.
-    for (program, label) in
-      [(shape.program, "shape"), (glyph.program, "glyph"), (mesh_textured.program.program, "mesh textured")]
-    {
+    // The composite program samples the layer on the one unit and the
+    // destination copy on its own.
+    for (program, label) in [
+      (shape.program, "shape"),
+      (glyph.program, "glyph"),
+      (mesh_textured.program.program, "mesh textured"),
+      (composite.program, "composite"),
+    ] {
       let texture_uniform = uniform(&gl, program, label, "uTexture")?;
       gl.use_program(Some(program));
       gl.uniform_1_i32(Some(&texture_uniform), TEXTURE_UNIT as i32);
     }
+    let backdrop_uniform = uniform(&gl, composite.program, "composite", "uBackdrop")?;
+    gl.use_program(Some(composite.program));
+    gl.uniform_1_i32(Some(&backdrop_uniform), BACKDROP_UNIT as i32);
     for (program, label) in [
       (fill_gradient.program, "fill gradient"),
       (rounded_gradient.program, "rounded gradient"),
@@ -1308,6 +1633,8 @@ impl Executor {
       mesh,
       mesh_gradient,
       mesh_textured,
+      composite,
+      composite_blend,
       vao,
       instances,
       mesh_vao,
@@ -1316,6 +1643,7 @@ impl Executor {
       ramp,
       ramps: RampTable::new(),
       layers,
+      scratch: ResolveScratch::default(),
     })
   }
 
@@ -1456,6 +1784,11 @@ impl Executor {
       // The shape program is in use, as the loop left it. None after a
       // paint batch: its program is the shader's, so the next batch binds.
       let mut in_use = Some(self.shape.program);
+      // The fixed-function blend mode set, source-over as set above: a quad
+      // or a mesh batch sets its own where it changes; the composites, the
+      // paint and glyph batches draw source-over (a clip batch writes no
+      // color). Source-over again on return.
+      let mut blending = BlendMode::SourceOver;
       gl.bind_vertex_array(Some(self.vao));
       gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
       // The stencil clips' quads ride in the one instance buffer after the
@@ -1570,10 +1903,24 @@ impl Executor {
         if batch.program == BatchProgram::LayerEnd {
           let storage = open.pop().expect("a layer's end marker closes its begin marker");
           let layer = &walked.layers[batch.start];
+          let content = (layer.rect.width(), layer.rect.height());
           frames.pop();
-          self.layers.finish(gl, &storage, (layer.rect.width(), layer.rect.height()));
+          self.layers.finish(gl, &storage, content);
+          let mode = shader_mode(layer.blend);
+          // A shader mode's destination: the resolve scratch, made or grown
+          // before the parent frame is bound again (it leaves the
+          // framebuffer binding dirty).
+          let backdrop = if mode.is_some() { self.scratch.ensure(gl, (width, height)) } else { None };
           let parent = *frames.last().expect("the target's frame is at the bottom of the stack");
           in_use = Some(self.set_frame(&parent, (width, height), scissor));
+          // GL could make no scratch (warned once): the layer does not draw.
+          if mode.is_some() && backdrop.is_none() {
+            self.layers.release(&storage);
+            continue;
+          }
+          if let Some(scratch) = &backdrop {
+            resolve_region(gl, &parent, layer.rect, scratch, scissor.is_some());
+          }
           if batch.stencil == 0 {
             gl.disable(glow::STENCIL_TEST);
           } else {
@@ -1587,11 +1934,32 @@ impl Executor {
             mesh_bound = false;
           }
           point_attributes(gl, layer_slots[batch.start].expect("a drawn layer has its composite's slot"));
-          // `set_frame` left the shape program in use; the texel rows sample
-          // the storage 1:1, so nearest is exact.
+          set_blend(gl, &mut blending, BlendMode::SourceOver);
+          // The texel rows sample the storage 1:1, so nearest is exact.
+          let nearest = self.sampler(TextureSampling::Nearest, TextureWrap::Clamp);
           gl.bind_texture(glow::TEXTURE_2D, Some(storage.color));
-          gl.bind_sampler(TEXTURE_UNIT, Some(self.sampler(TextureSampling::Nearest, TextureWrap::Clamp)));
-          gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, 1);
+          gl.bind_sampler(TEXTURE_UNIT, Some(nearest));
+          match (mode, &backdrop) {
+            (Some(mode), Some(scratch)) => {
+              gl.use_program(Some(self.composite.program));
+              in_use = Some(self.composite.program);
+              gl.uniform_1_i32(Some(&self.composite_blend), mode);
+              gl.active_texture(glow::TEXTURE0 + BACKDROP_UNIT);
+              gl.bind_texture(glow::TEXTURE_2D, Some(scratch.color));
+              // texelFetch ignores the filter; bound for a defined state.
+              gl.bind_sampler(BACKDROP_UNIT, Some(nearest));
+              // The fragment writes the mode's result: no fixed-function
+              // blend on top of it.
+              gl.disable(glow::BLEND);
+              gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, 1);
+              gl.enable(glow::BLEND);
+              gl.bind_sampler(BACKDROP_UNIT, None);
+              gl.bind_texture(glow::TEXTURE_2D, None);
+              gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
+            }
+            // `set_frame` left the shape program in use.
+            _ => gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, 1),
+          }
           // Unbound again: the next layer that takes the storage draws into
           // it.
           gl.bind_sampler(TEXTURE_UNIT, None);
@@ -1638,6 +2006,7 @@ impl Executor {
           gl.stencil_func(glow::EQUAL, batch.stencil as i32, STENCIL_ALL_BITS);
           gl.stencil_op(glow::KEEP, glow::KEEP, glow::KEEP);
         }
+        set_blend(gl, &mut blending, batch.blend);
         if batch.program == BatchProgram::Mesh {
           if !mesh_bound {
             gl.bind_vertex_array(Some(self.mesh_vao));
@@ -1702,6 +2071,7 @@ impl Executor {
         gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, batch.count as i32);
       }
       debug_assert!(frames.len() == 1 && open.is_empty(), "every layer closed: the target is bound again");
+      set_blend(gl, &mut blending, BlendMode::SourceOver);
       if ramped {
         gl.active_texture(glow::TEXTURE0 + RAMP_UNIT);
         gl.bind_sampler(RAMP_UNIT, None);
@@ -1760,10 +2130,11 @@ impl Executor {
     self.shape.program
   }
 
-  // The ten programs, the shape program last, so a loop over them leaves it
-  // in use.
-  fn programs(&self) -> [&Program; 10] {
+  // The eleven programs, the shape program last, so a loop over them leaves
+  // it in use.
+  fn programs(&self) -> [&Program; 11] {
     [
+      &self.composite,
       &self.glyph,
       &self.fill,
       &self.fill_gradient,

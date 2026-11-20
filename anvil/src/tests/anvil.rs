@@ -24,12 +24,12 @@ use crate::renderer::{
   paint_fragment_source, report, test_paint_shader, test_texture, DeletionQueue, Freed, PAINT_FRAGMENT_EPILOGUE,
   SOURCE_HEADER,
 };
+use crate::{BlendMode, CoverageMode, CoveragePolicy, GlyphQuad, GradientKind, RampGradient, RAMP_WIDTH};
 use crate::{
   ClipOperation, Color, ColorSource, DisplayList, DisplayListBuilder, DrawStyle, ISize, Matrix, Paint, PaintShader,
   Point, Rect, RoundingRadii, ShaderInput, ShaderParam, Size, StrokeCap, Texture, TextureSampling, TextureWrap,
   TileMode,
 };
-use crate::{CoverageMode, CoveragePolicy, GlyphQuad, GradientKind, RampGradient, RAMP_WIDTH};
 use euclid::default::{Box2D, Point2D};
 use std::sync::Arc;
 
@@ -113,7 +113,17 @@ fn image_paint(t: &Texture, sampling: TextureSampling, transform: Option<&Matrix
 
 // A batch of shapes and texture quads: no glyph policy, no gradient.
 fn shapes(start: usize, count: usize, texture: Option<(glow::NativeTexture, TextureSampling)>) -> Batch {
-  Batch { start, count, program: BatchProgram::Shape, texture, policy: None, gradient: None, paint: None, stencil: 0 }
+  Batch {
+    start,
+    count,
+    program: BatchProgram::Shape,
+    texture,
+    policy: None,
+    gradient: None,
+    paint: None,
+    stencil: 0,
+    blend: BlendMode::SourceOver,
+  }
 }
 
 // A batch of plain rect fills: no texture, no glyph policy, no gradient.
@@ -127,13 +137,24 @@ fn fills(start: usize, count: usize) -> Batch {
     gradient: None,
     paint: None,
     stencil: 0,
+    blend: BlendMode::SourceOver,
   }
 }
 
 // A batch of rounded fills: no texture, no glyph policy, of the gradient
 // class `gradient` or solid (None).
 fn roundeds(start: usize, count: usize, gradient: Option<GradientClass>) -> Batch {
-  Batch { start, count, program: BatchProgram::Rounded, texture: None, policy: None, gradient, paint: None, stencil: 0 }
+  Batch {
+    start,
+    count,
+    program: BatchProgram::Rounded,
+    texture: None,
+    policy: None,
+    gradient,
+    paint: None,
+    stencil: 0,
+    blend: BlendMode::SourceOver,
+  }
 }
 
 fn line(from: (f32, f32), to: (f32, f32), paint: &Paint) -> Vec<Instance> {
@@ -868,6 +889,7 @@ fn glyphs(start: usize, count: usize, atlas: &Texture, policy: CoveragePolicy) -
     gradient: None,
     paint: None,
     stencil: 0,
+    blend: BlendMode::SourceOver,
   }
 }
 
@@ -1269,6 +1291,7 @@ fn paint_batch(
     gradient: None,
     paint: Some(paint),
     stencil: 0,
+    blend: BlendMode::SourceOver,
   }
 }
 

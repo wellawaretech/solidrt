@@ -51,6 +51,7 @@ macro_rules! warn_once {
   }};
 }
 
+pub(crate) mod blend;
 mod exec;
 mod layers;
 pub(crate) mod mesh;
@@ -73,6 +74,11 @@ pub(crate) use exec::{paint_fragment_source, PAINT_FRAGMENT_EPILOGUE, SOURCE_HEA
 // function, for the tests.
 #[cfg(test)]
 pub(crate) use layers::rescale_composite;
+
+// The destination copy's read rect and the composite program's blend
+// functions, for the tests.
+#[cfg(test)]
+pub(crate) use exec::{blit_rect, Frame, COMPOSITE_BLEND};
 
 /// A GL name whose last handle dropped: a texture's, a paint shader's
 /// program, or a path mesh's vertex and index buffers.
