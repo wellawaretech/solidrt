@@ -28,6 +28,8 @@ Plugins (the `*/plugins/` modules that register `ffi`/global functions) should b
 
 The rendertree must stay engine-independent: no QuickJS/`rquickjs` (or any JavaScript) references. It should be usable from other engines, not even necessarily JavaScript. JS value parsing belongs in the plugin layer; rendertree methods take and return native Rust types only.
 
+Before GPU work (a new pass, framebuffer pattern, extension or GLSL feature), read `okf/notes/gpu-driver-faults.md` and name the entries that apply in the plan; a driver workaround in code names its entry there.
+
 `flux/src/` has four plugin layers, named for what they marshal (and a fifth, `test_plugins/`, for `flux:test`: behind the `test` feature, on the `flux` binary only, over flux's own facilities): `standards_plugins/` for web-standard JS APIs (e.g. `fetch`, `Response`, `Headers`, `console`, timers, `navigator`) whatever backs them, `forge_plugins/` for the `flux:*` capability modules (e.g. `serve`, `file`, `sqlite`) that marshal forge cores, `ore_plugins/` for the `flux:*` modules that marshal ore's OS facilities (e.g. `flux:link`), and `alloy_plugins/` (behind the `gui` feature, exported as `flux::gui`) for the alloy-backed render/capture bindings. A web standard goes in `standards_plugins/`; otherwise the crate marshalled decides. `flux/src/plugins/` holds only the shared marshalling toolkit (`js_error.rs`/`marshal.rs`/`value.rs`), the event bus mechanism (`events.rs`, no JS surface of its own) and context setup.
 
 ## Documentation
