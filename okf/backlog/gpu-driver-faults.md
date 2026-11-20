@@ -1,6 +1,6 @@
 ---
 title: Know the GPU drivers' faults, and see when one bites
-description: A register of known GPU driver faults on the GPUs we ship on, read before GPU work and when a device misbehaves, and device checks that catch a wrong picture, which today only someone looking at the device does.
+description: A register of known GPU driver faults on any GPU with OpenGL ES 3.0, read before GPU work and when a device misbehaves, and device checks that catch a wrong picture, which today only someone looking at the device does.
 created: 2026-11-20
 ---
 
@@ -35,8 +35,13 @@ The stage's device step was close to closing on those numbers.
 
 ## Done looks like
 
-- **A register** of the driver faults that matter on the GPUs we ship on
-  (Adreno, Mali, PowerVR, Mesa, NVIDIA, Apple, ANGLE on Windows). Per
+- **A register** of the driver faults on GL paths, the ones we use and
+  the ones we may use, on any GPU
+  with OpenGL ES 3.0 (the context ore asks for, native or through ANGLE).
+  The target is every such GPU, not a set of devices: the devices we test
+  on (a growing set) are where we can see a fault, not where we support
+  one. Faults cluster by vendor (Adreno, Mali, PowerVR, Mesa, NVIDIA,
+  Apple, ANGLE on Windows), but a vendor list is no boundary. Per
   entry: the symptom, the GPUs and driver versions, the source (a Chromium
   bug list id, a Skia `GrGLCaps` condition, an ANGLE feature, or our own
   find with its commit), the path of ours it touches, and our workaround
@@ -54,7 +59,10 @@ The stage's device step was close to closing on those numbers.
   - A presented-frame check behind a debug switch: the client compares the
     buffer it presents with what the frame drew (a few sampled pixels or a
     hash, read back before the swap) and counts the frames that differ, in
-    the stats beside the present counters.
+    the stats beside the present counters. Most GPUs we run on never
+    reach our hands, so the check is also how a fault on one of them
+    shows: it must be cheap enough to sample on an app's device, not only
+    on a bench.
   - The device bench scripts fail when that count is not zero, instead of
     reporting numbers. Where the device can record its screen, they keep
     the recording and check every frame for foreign frames (a brightness
@@ -75,10 +83,14 @@ The stage's device step was close to closing on those numbers.
   on `chromium/src` `gpu/config/gpu_driver_bug_list.json` and
   `gpu_workaround_list.txt`, `skia` `src/gpu/ganesh/gl/GrGLCaps.cpp`,
   `angle/angle` `src/libANGLE/renderer/gl/renderergl_utils.cpp` and
-  `include/platform/autogen/FeaturesGL_autogen.h`. Filter them to our GPUs
-  and our paths; do not copy them whole. The Vulkan lists wait for a
-  Vulkan backend.
-- The register is one file in `notes/`: it spans ore's window and EGL
+  `include/platform/autogen/FeaturesGL_autogen.h`. Sort them by path,
+  not by GPU, and keep the paths we do not use yet: the renderer grows,
+  and a new path must find its faults already listed. Each path says
+  whether we use it and where. Drop only the entries no OpenGL ES 3.0
+  GPU can meet (GPUs that cannot run it, faults of contexts below it).
+  Do not copy the lists whole: one line per entry, with its source id.
+  The Vulkan lists wait for a Vulkan backend.
+- The register is one file, `okf/notes/gpu-driver-faults.md`: it spans ore's window and EGL
   setup, alloy's rig and anvil, so it has no single code home.
 - The workarounds alloy already carries (the rig's MSAA latch, the
   multisampled window fast path, the readback paths) go in as the first
@@ -88,33 +100,11 @@ The stage's device step was close to closing on those numbers.
   multisampled window, needs a resolve; it must stay off the frames a
   bench measures, so how it samples is part of the work.
 
-## Entries known so far (2026-11-20)
+## State (2026-11-20)
 
-- Ours: Adreno 610, driver V@0502.0. A frame that leaves the multisampled
-  window's framebuffer for a layer and comes back presents a stale buffer
-  two frames in three, and a layer can composite black. Fixed by a
-  `glFlush` after each layer's passes (`anvil/src/renderer/exec.rs`).
-- ANGLE `flushBeforeDrawFramebufferChange`, PowerVR: a flush before
-  switching away from a non-default draw framebuffer, against "stale
-  cross-framebuffer attachment state". The same fix as ours, on another
-  vendor.
-- Skia, Adreno 615, 620 and 621: no multisampled offscreen targets at all
-  (b/143074513). The 610 is not listed; our layers use
-  `EXT_multisampled_render_to_texture` on it. Single-sample layers on
-  Adreno are the fallback if more faults show.
-- Skia, Adreno 620 and 640 with drivers below 571: render work is not
-  reordered across targets (skbug 40042245). Stage 6's proposed fix for
-  the layer cost (drawing layers in passes before the main pass) is that
-  reordering, and the tablet's driver is 502: try it on the tablet first.
-- Chromium 280, Adreno drivers above 237: ReadPixels is broken with
-  `EXT_multisampled_render_to_texture`. The backdrop capture and the
-  control API's readbacks are the paths to check.
-- Ours, not a fault: NVIDIA RTX 3070 on NVIDIA's desktop driver. A
-  composite into the multisampled window blends one level differently
-  on partially covered pixels after a resolve read earlier in the same
-  pass than in a pass that was never interrupted. The data drawn is the
-  same; a pixel diff across a change of pass structure (anvil's layers
-  drawn ahead, stage 6 step 6b) shows it as a one-level difference on
-  rounded edges, which is this and not a bug.
-- Chromium 103, Adreno 420: draws are dropped after a framebuffer
-  invalidation. Old, but anvil invalidates each layer's depth-stencil.
+The register is written: [gpu-driver-faults](../notes/gpu-driver-faults.md),
+with the path inventory, our 20 finds with their code sites, 338 upstream
+entries sorted by path, and its "Open checks": the upstream entries that
+touch a path we use on a GPU we run on, each waiting for a look at our
+code or a device. Open here: the checks, the CLAUDE.md line, and the
+detection.

@@ -581,9 +581,9 @@ Shaped, not started.
   additive with the default staying less. Split from gpu-pipeline-extensions
   2026-08-11.
 - **[Know the GPU drivers' faults, and see when one bites](backlog/gpu-driver-faults.md)** [2026-11-20]
-  A register of known GPU driver faults on the GPUs we ship on, read before
-  GPU work and when a device misbehaves, and device checks that catch a wrong
-  picture, which today only someone looking at the device does.
+  A register of known GPU driver faults on any GPU with OpenGL ES 3.0, read
+  before GPU work and when a device misbehaves, and device checks that catch a
+  wrong picture, which today only someone looking at the device does.
 - **[Refactor the fused creates over the raw shading layer](backlog/gpu-fused-create-refactor.md)** [2026-07-27]
   The naming collision and the iTime trap were resolved 2026-07-31
   (createShaderTexture/createPipelineTexture/createShaderTextureMemo, hard
@@ -3788,6 +3788,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   What a lost GL context looks like on ANGLE/D3D11 and what in-process
   recovery needs, measured on the Windows box (probe example and the built
   recovery, 2026-09/10).
+- **[The GPU driver faults register](notes/gpu-driver-faults.md)** [2026-11-20]
+  Known OpenGL ES and EGL driver faults on any GPU that runs OpenGL ES 3.0,
+  sorted by the GL path they touch, the paths we use and the ones we may use;
+  our own finds with their code sites, then the faults Chromium, ANGLE and
+  Skia work around. Read before GPU work and when a device misbehaves.
 - **[GPU stack review](notes/gpu-review.md)** [2026-07-30]
   "Merged review of the GPU stack: where it stands (retro-class 3D feasible,
   statuses refreshed), how its shape compares to WebGL2 and WebGPU (a retained
