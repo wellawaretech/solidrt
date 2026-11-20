@@ -163,3 +163,82 @@ fn color_matrix_composition() {
     }
   }
 }
+
+// The root's size in the shadow op-log cases.
+const FRAME: f32 = 200.0;
+
+fn headless() -> crate::Context {
+  let stats = std::sync::Arc::new(crate::raster::RasterStats::new());
+  let (tx, _rx) = std::sync::mpsc::channel();
+  crate::Context::new(crate::raster::RasterSender::new(tx, stats.clone()), stats, None)
+}
+
+// The ops of one frame whose root holds `node` at (20, 20), 100 x 100, and
+// the save layers it counted.
+fn shadow_frame(node: Element) -> (crate::renderer::DisplayList, u32) {
+  use crate::renderer::prelude::*;
+  use crate::renderer::DisplayListBuilder;
+  use crate::rendertree::composite::{apply_content_changes, paint_phase};
+  let mut tree = RenderTree::new();
+  tree.create_node(1, View::default().with_layout());
+  tree.create_node(2, node);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, FRAME, FRAME);
+  place(&mut tree, 2, 20.0, 20.0, 100.0, 100.0);
+  let platform = PlatformContext::new(Vec::new());
+  platform.set_window_size(FRAME, FRAME);
+  let alloy = headless();
+  apply_content_changes(&mut tree, &platform, &alloy);
+  crate::rendertree::counters::take();
+  let mut builder = DisplayListBuilder::new(None);
+  paint_phase(&mut builder, &mut tree, &platform, &alloy);
+  let save_layers = crate::rendertree::counters::take().save_layers;
+  (builder.build().expect("the frame builds"), save_layers)
+}
+
+// A blurred shadow records its casting box's difference clip and then the
+// shadow's draw with the mask filter on its paint, no layer of its own:
+// anvil takes a group's alpha on a blurred draw (the Impeller workaround
+// that drew it in a save_layer is gone).
+#[test]
+fn a_blurred_rect_shadow_is_a_masked_draw_under_a_difference_clip() {
+  use crate::renderer::oplog::{placed, Op};
+  use crate::renderer::prelude::*;
+  use crate::renderer::ClipOperation;
+  let mut r = Rectangle::default();
+  r.set_shadow(Some(shadow()));
+  let (list, save_layers) = shadow_frame(r.with_layout());
+  let ops: Vec<&Op> = placed(list.ops()).into_iter().map(|p| p.op).collect();
+  assert!(!ops.iter().any(|op| matches!(op, Op::SaveLayer { .. })), "{ops:?}");
+  assert_eq!(save_layers, 0);
+  let at = ops
+    .iter()
+    .position(|op| matches!(op, Op::ClipRect { op: ClipOperation::Difference, .. }))
+    .expect("the casting box is clipped out");
+  match ops.get(at + 1) {
+    Some(Op::DrawRect { paint, .. }) => assert!(paint.mask_filter, "{paint:?}"),
+    other => panic!("expected the shadow's draw_rect, got {other:?}"),
+  }
+}
+
+#[test]
+fn a_blurred_oval_shadow_is_a_masked_draw_under_a_difference_clip() {
+  use crate::renderer::oplog::{placed, Op};
+  use crate::renderer::prelude::*;
+  use crate::renderer::ClipOperation;
+  let mut o = Oval::default();
+  o.set_shadow(Some(shadow()));
+  let (list, save_layers) = shadow_frame(o.with_layout());
+  let ops: Vec<&Op> = placed(list.ops()).into_iter().map(|p| p.op).collect();
+  assert!(!ops.iter().any(|op| matches!(op, Op::SaveLayer { .. })), "{ops:?}");
+  assert_eq!(save_layers, 0);
+  let at = ops
+    .iter()
+    .position(|op| matches!(op, Op::ClipOval { op: ClipOperation::Difference, .. }))
+    .expect("the casting oval is clipped out");
+  match ops.get(at + 1) {
+    Some(Op::DrawOval { paint, .. }) => assert!(paint.mask_filter, "{paint:?}"),
+    other => panic!("expected the shadow's draw_oval, got {other:?}"),
+  }
+}

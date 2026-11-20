@@ -74,8 +74,9 @@ pub struct DisplayListBuilder {
 /// What anvil draws of a paint: its color, premultiplied, and the stroke
 /// width when the style strokes (an image or gradient source rides beside
 /// it, see `source_of`; the blend mode and the color filter's matrix ride
-/// on every op the closures make). A degenerate gradient source and a mask
-/// filter were warned about when they were set.
+/// on every op the closures make, and so does the mask filter's sigma,
+/// `mask_blur_of`). A degenerate gradient source was warned about when it
+/// was set.
 /// A stroke-and-fill covers the union of the fill and the stroke once: for
 /// the convex shapes here that is the fill outset by half the stroke width,
 /// its non-zero corner radii grown by the same (`fill` takes the outset and
@@ -179,6 +180,22 @@ fn blur_of(filter: &ImageFilter) -> Blur {
     }
   };
   Blur { sigma_x: filter.sigma_x, sigma_y: filter.sigma_y, tile }
+}
+
+/// The smallest mask filter sigma, in local units, a draw is blurred by:
+/// below it the blur is under a tenth of a pixel and the shape draws hard.
+pub(crate) const MASK_SIGMA_MIN: f32 = 0.1;
+
+/// The sigma of `paint`'s mask filter as the shape ops carry it
+/// (`Op::DrawRect::mask_blur`): 0 for no mask filter, and for a sigma below
+/// MASK_SIGMA_MIN (a negative one among them) or one that is not finite.
+fn mask_blur_of(paint: &Paint) -> f32 {
+  let sigma = paint.mask_filter.as_ref().map_or(0.0, |m| m.sigma);
+  if sigma.is_finite() && sigma >= MASK_SIGMA_MIN {
+    sigma
+  } else {
+    0.0
+  }
 }
 
 /// The color matrix a draw's `paint` filters its color through: its color
@@ -343,6 +360,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
       gradient: paint.gradient.clone(),
       blend: paint.blend_mode,
       matrix: draw_matrix(paint),
+      mask_blur: mask_blur_of(paint),
     });
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::DrawLine { from, to, paint: paint.log });
@@ -355,6 +373,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     let source = source_of(paint);
     let blend = paint.blend_mode;
     let matrix = draw_matrix(paint);
+    let mask_blur = mask_blur_of(paint);
     shape_ops(
       paint,
       [0.0; 4],
@@ -366,6 +385,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         source: source.clone(),
         blend,
         matrix,
+        mask_blur,
       },
       |color, width| Op::DrawRect {
         rect,
@@ -375,6 +395,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         source: source.clone(),
         blend,
         matrix,
+        mask_blur,
       },
       &mut self.ops,
     );
@@ -388,6 +409,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     let source = source_of(paint);
     let blend = paint.blend_mode;
     let matrix = draw_matrix(paint);
+    let mask_blur = mask_blur_of(paint);
     shape_ops(
       paint,
       [0.0; 4],
@@ -398,8 +420,17 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         source: source.clone(),
         blend,
         matrix,
+        mask_blur,
       },
-      |color, width| Op::DrawOval { bounds, color, stroke: Some(width), source: source.clone(), blend, matrix },
+      |color, width| Op::DrawOval {
+        bounds,
+        color,
+        stroke: Some(width),
+        source: source.clone(),
+        blend,
+        matrix,
+        mask_blur,
+      },
       &mut self.ops,
     );
     #[cfg(any(test, feature = "oplog"))]
@@ -415,6 +446,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     let source = source_of(paint);
     let blend = paint.blend_mode;
     let matrix = draw_matrix(paint);
+    let mask_blur = mask_blur_of(paint);
     shape_ops(
       paint,
       clamped,
@@ -426,6 +458,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         source: source.clone(),
         blend,
         matrix,
+        mask_blur,
       },
       |color, width| Op::DrawRect {
         rect,
@@ -435,6 +468,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         source: source.clone(),
         blend,
         matrix,
+        mask_blur,
       },
       &mut self.ops,
     );
@@ -450,6 +484,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     let color = premultiply(paint.color);
     let source = source_of(paint);
     let matrix = draw_matrix(paint);
+    let mask_blur = mask_blur_of(paint);
     let stroke = MeshStyle::Stroke {
       width: paint.stroke_width,
       cap: paint.stroke_cap,
@@ -475,6 +510,7 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
         source: source.clone(),
         blend: paint.blend_mode,
         matrix,
+        mask_blur,
       });
     }
     #[cfg(any(test, feature = "oplog"))]
@@ -490,6 +526,9 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
     sampling: TextureSampling,
     paint: Option<&Paint>,
   ) -> &mut Self {
+    if paint.is_some_and(|p| p.mask_filter.is_some()) {
+      unsupported!("a mask filter on a texture draw", "the texture draws unblurred");
+    }
     self.ops.push(Op::DrawTexture {
       texture: texture.clone(),
       src: *src,
@@ -555,7 +594,8 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
 /// How a draw paints, as plain data; the recording reads what anvil draws
 /// of it (the color, an image or gradient source, the draw style, the
 /// stroke width and cap, the blend mode, the color filter, a layer's image
-/// filter, and the join, to warn when it is not miter).
+/// filter, a shape's mask filter, and the join, to warn when it is not
+/// miter).
 pub struct Paint {
   pub(super) color: Color,
   pub(super) color_source: Option<ColorSource>,
@@ -571,7 +611,6 @@ pub struct Paint {
   pub(super) stroke_miter: f32,
   pub(super) color_filter: Option<ColorFilter>,
   pub(super) image_filter: Option<ImageFilter>,
-  #[allow(dead_code)] // read by the executor from stage 6 (filters)
   pub(super) mask_filter: Option<MaskFilter>,
   #[cfg(any(test, feature = "oplog"))]
   log: PaintLog,
@@ -695,7 +734,6 @@ impl contract::Paint for Paint {
   }
 
   fn set_mask_filter(&mut self, filter: &MaskFilter) -> &mut Self {
-    unsupported!("a paint mask filter", "the filter is ignored");
     self.mask_filter = Some(filter.clone());
     #[cfg(any(test, feature = "oplog"))]
     {
@@ -708,7 +746,8 @@ impl contract::Paint for Paint {
 // The sources and filters below hold their constructor arguments; an image
 // source is read at record time (`image_of`), a gradient when a paint takes
 // it (`gradient_of`), a color filter and an image filter by the layer and
-// draw ops that take the paint, a mask filter by nothing yet.
+// draw ops that take the paint, a mask filter by the shape ops
+// (`mask_blur_of`).
 
 /// What a paint draws with in place of its color.
 #[allow(dead_code)]
@@ -839,7 +878,6 @@ impl contract::ImageFilter for ImageFilter {
 }
 
 /// A gaussian blur over a draw's coverage mask.
-#[allow(dead_code)]
 #[derive(Clone)]
 pub struct MaskFilter {
   pub(super) sigma: f32,

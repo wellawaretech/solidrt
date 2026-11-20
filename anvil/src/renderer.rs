@@ -86,6 +86,13 @@ pub(crate) use exec::{blit_rect, Frame, COMPOSITE_BLEND};
 #[cfg(test)]
 pub(crate) use exec::{clamp_rect, fill_rects, matrix_uniforms};
 
+// The shadow program's fragment source and the recording's mask sigma
+// floor, for the tests.
+#[cfg(test)]
+pub(crate) use exec::SHADOW_FRAGMENT;
+#[cfg(test)]
+pub(crate) use record::MASK_SIGMA_MIN;
+
 /// A GL name whose last handle dropped: a texture's, a paint shader's
 /// program, or a path mesh's vertex and index buffers.
 #[derive(Clone, Copy, Debug, PartialEq)]

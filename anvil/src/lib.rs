@@ -45,9 +45,11 @@
 //! that is exact. Stage 6, step 3 draws every blend mode; step 4 a layer's
 //! gaussian blur (a `save_layer` paint's image filter), a color matrix (a
 //! layer's or a draw's color filter) and a backdrop layer, which starts
-//! from the target's pixels under its bounds. What does not draw yet (the
-//! mask filter among it) warns once per process, naming itself and what
-//! happens instead.
+//! from the target's pixels under its bounds; step 5 a paint's mask filter,
+//! the blurred coverage a shadow draws with: analytically on a rect or
+//! rounded rect fill through a shadow program of its own, through the layer
+//! blur on any other shape. What does not draw yet warns once per process,
+//! naming itself and what happens instead.
 //!
 //! With the `oplog` feature (alloy enables it for its tests only), and in
 //! this crate's own tests, the recording types also keep a plain-data log

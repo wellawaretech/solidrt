@@ -297,9 +297,8 @@ impl PaintState {
   // Whether the paint can put pixels on screen: a style that draws, with a
   // source that is not fully transparent (or a blend other than source-over,
   // which can change pixels whatever the source is). The display list elides
-  // a fully transparent source-over draw as a no-op, so a shape whose paint
-  // fails this emits its shadow with no own draw beside it - see
-  // ShadowState::needs_own_layer for why that matters.
+  // a fully transparent source-over draw as a no-op; a shape's shadow is
+  // emitted whether or not its own paint passes this.
   pub fn paints_visibly(&self) -> bool {
     self.painted_style().is_some()
       && (self.gradient.is_some() || self.color.alpha > 0.0 || self.blend_mode != BlendMode::SourceOver)

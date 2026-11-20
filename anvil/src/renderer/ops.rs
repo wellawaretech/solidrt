@@ -124,7 +124,10 @@ pub(super) enum Op {
   /// is a plain rect. `source` Some fills the coverage with the image's
   /// texels or the gradient's color, faded by `color`'s alpha. `blend` is
   /// the paint's, as on every op that takes a paint, and so is `matrix`,
-  /// the paint's color filter.
+  /// the paint's color filter. `mask_blur` is the sigma of the paint's mask
+  /// filter in local units, 0 for none (`record::mask_blur_of`), as on every
+  /// shape op: the coverage blurred, drawn analytically for a plain fill
+  /// (walk.rs `push_shadow`), through a layer blur otherwise (`masked`).
   DrawRect {
     rect: Rect,
     radii: Radii,
@@ -133,9 +136,10 @@ pub(super) enum Op {
     source: Option<Source>,
     blend: BlendMode,
     matrix: Option<ColorMatrix>,
+    mask_blur: f32,
   },
   /// `stroke` None fills; Some(width) strokes centered on the ellipse.
-  /// `source` as for `DrawRect`.
+  /// `source` and `mask_blur` as for `DrawRect`.
   DrawOval {
     bounds: Rect,
     color: Premultiplied,
@@ -143,11 +147,12 @@ pub(super) enum Op {
     source: Option<Source>,
     blend: BlendMode,
     matrix: Option<ColorMatrix>,
+    mask_blur: f32,
   },
   /// A segment stroked `width` wide, centered on it, ended by `cap` at
   /// both ends. A width of zero or below draws nothing (the walk skips it).
   /// `gradient` Some fills the coverage with the gradient's color, faded
-  /// by `color`'s alpha.
+  /// by `color`'s alpha. `mask_blur` as for `DrawRect`.
   DrawLine {
     from: Point,
     to: Point,
@@ -157,11 +162,12 @@ pub(super) enum Op {
     gradient: Option<Arc<RampGradient>>,
     blend: BlendMode,
     matrix: Option<ColorMatrix>,
+    mask_blur: f32,
   },
   /// A path's mesh under `style`, filled with `color`, or with `source`
   /// faded by `color`'s alpha. One op per style: a stroke-and-fill records
   /// a fill op and then a stroke op, so the stroke covers the fill as
-  /// Skia's does.
+  /// Skia's does. `mask_blur` as for `DrawRect`.
   DrawPath {
     path: Path,
     style: MeshStyle,
@@ -169,6 +175,7 @@ pub(super) enum Op {
     source: Option<Source>,
     blend: BlendMode,
     matrix: Option<ColorMatrix>,
+    mask_blur: f32,
   },
   /// `alpha` is the paint's alpha (1 without a paint): a texture's opacity
   /// is per op, not a group. `blend` is the paint's, source-over without

@@ -7,4 +7,5 @@ mod layers;
 mod mesh;
 mod ramps;
 mod renderer;
+mod shadow;
 mod split;

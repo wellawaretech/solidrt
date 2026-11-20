@@ -15,10 +15,13 @@
 //! layer around the op for the shader modes (`blended`), and a layer's
 //! effects: a blur (sized by its reach, `close_layer`), a color matrix (on
 //! a layer, or on an implicit layer around a draw whose paint has one) and
-//! the backdrop a `save_backdrop_layer` starts from (`open_layer`). No GL
-//! here, so the walk is unit-tested without a context (`tests/anvil.rs`,
-//! `tests/gradient.rs`, `tests/mesh.rs`, `tests/layers.rs`, `tests/blend.rs`,
-//! `tests/effects.rs`).
+//! the backdrop a `save_backdrop_layer` starts from (`open_layer`), and a
+//! paint's mask blur: an analytic shadow instance for a plain rect or
+//! rounded rect fill (`push_shadow`), an implicit blurred layer around any
+//! other op (`masked`). No GL here, so the walk is unit-tested without a
+//! context (`tests/anvil.rs`, `tests/gradient.rs`, `tests/mesh.rs`,
+//! `tests/layers.rs`, `tests/blend.rs`, `tests/effects.rs`,
+//! `tests/shadow.rs`).
 
 use super::blend::{gl_factors, keeps_destination};
 use super::blur::{blur_reach, DeviceBlur, BLUR_SIGMA_MIN};
@@ -48,7 +51,8 @@ pub struct Instance {
   /// (euclid's row-vector convention: device = local * m).
   pub linear: [f32; 4],
   /// m41, m42 (the map's translation), the shape kind, the stroke width
-  /// (0 = fill).
+  /// (0 = fill); a shadow (`KIND_SHADOW`), which never strokes, carries its
+  /// sigma in local units in the stroke slot.
   pub offset_kind_stroke: [f32; 4],
   /// Premultiplied color. The glyph kind alone carries straight alpha: its
   /// coverage policy reads the color's luminance and alpha apart, and the
@@ -64,8 +68,10 @@ pub struct Instance {
   /// shape quad in local space, x, y, w, h (for a rounded rect its padded
   /// quad): the rounded program measures the shape from it, so a piece of a
   /// split fill (`split_rounded`), whose `rect` is the piece, evaluates the
-  /// same distance as the whole quad. Unused, zero, for other untextured
-  /// rects and ovals.
+  /// same distance as the whole quad. For a shadow (`KIND_SHADOW`) the
+  /// shape's own rect in local space, x, y, w, h: the shadow program
+  /// measures the blurred box from it, its quad lying the reach outside.
+  /// Unused, zero, for other untextured rects and ovals.
   pub tex: [f32; 4],
   /// The clip in device pixels: x0, y0, x1, y1. Tested per fragment.
   pub clip: [f32; 4],
@@ -127,6 +133,10 @@ pub const KIND_ROUNDED_RECT: f32 = 4.0;
 /// A paint shader's quad. It draws through its shader's program, which
 /// never reads the kind; the shape program has no arm for it.
 pub const KIND_PAINT: f32 = 5.0;
+/// An analytic shadow: a rect or rounded rect fill under a mask blur
+/// (`push_shadow`). It draws through the shadow program, which never reads
+/// the kind; the shape program has no arm for it.
+pub const KIND_SHADOW: f32 = 6.0;
 /// Added to a shape kind when the instance samples its texture: coverage
 /// times texel. A texture quad is `KIND_RECT + KIND_TEXTURED`.
 pub const KIND_TEXTURED: f32 = 8.0;
@@ -181,6 +191,13 @@ pub const ROUNDED_SPLIT_MARGIN: f32 = 1.0;
 /// for overlap, which is quadratic. Past it the layer draws offscreen.
 pub const FOLD_SCAN_LIMIT: usize = 64;
 
+/// How many standard deviations an analytic shadow's quad reaches past its
+/// shape on every side (`push_shadow`): past three sigmas the residue is
+/// under half a percent of a channel step, the rule the layer blur sizes its
+/// reach by (blur.rs BLUR_REACH_SIGMAS). Not rounded to whole pixels: the
+/// quad is in local space. exec.rs's GLSL const SHADOW_REACH must match.
+pub const SHADOW_REACH_SIGMAS: f32 = 3.0;
+
 /// The tile modes, as `Instance::persp`'s last float and a batch's or a
 /// mesh draw's `uGradMeta` carry them. The `const int TILE_*`
 /// declarations in exec.rs's GRADIENT_COMMON must match them.
@@ -206,6 +223,9 @@ pub enum BatchProgram {
   Glyph,
   /// One paint shader draw: the program of the batch's `paint` shader.
   Paint,
+  /// Analytic shadows only (`push_shadow`): the shadow program, no texture,
+  /// source-over.
+  Shadow,
   /// One path mesh: the `Walked::mesh_draws` entry at the batch's start,
   /// drawn through the mesh program (its gradient or textured variant by
   /// the draw's `gradient` and `texture`).
@@ -383,7 +403,8 @@ pub struct Batch {
   /// The fixed-function blend mode the run draws by (blend.rs
   /// `gl_factors`), a key like `stencil`: a run takes a draw only of its
   /// own mode. A quad run's is its ops' paint's, a mesh run's its draw's;
-  /// source-over for every glyph, paint shader, clip and marker batch. Never
+  /// source-over for every glyph, paint shader, shadow, clip and marker
+  /// batch. Never
   /// a shader mode: an op under one draws source-over inside a layer of its
   /// own (`Layer::blend`).
   pub blend: BlendMode,
@@ -468,10 +489,11 @@ pub struct Layer {
   pub folded: bool,
   /// How the composite blends with the destination: source-over for a
   /// group's opacity, a backdrop and a blur; for the implicit layer around
-  /// one op (`blended`, alpha 1), the op's mode: a shader mode (blend.rs
+  /// one op (`layered`, alpha 1), the op's mode: a shader mode (blend.rs
   /// `shader_mode`), composited by the composite program against a copy of
   /// the destination under `rect`, or, around an op whose paint has a color
-  /// filter, any fixed-function mode, which the composite blends by. A layer
+  /// filter or a mask blur (`masked`), any fixed-function mode, which the
+  /// composite blends by. A layer
   /// of any mode but source-over never folds.
   pub blend: BlendMode,
   /// The layer starts from the target's pixels under `rect` (a
@@ -658,8 +680,10 @@ impl Walked {
     }
     let (before, after) = self.batches.split_at_mut(n - 1);
     let (prev, last) = (&mut before[n - 2], &mut after[0]);
-    let quad =
-      matches!(last.program, BatchProgram::Fill | BatchProgram::Rounded | BatchProgram::Shape | BatchProgram::Glyph);
+    let quad = matches!(
+      last.program,
+      BatchProgram::Fill | BatchProgram::Rounded | BatchProgram::Shape | BatchProgram::Glyph | BatchProgram::Shadow
+    );
     if !quad || last.blend != blend {
       return false;
     }
@@ -773,6 +797,32 @@ impl Walked {
       blend: BlendMode::SourceOver,
     });
     self.sealed = true;
+    self.boxes.push(device_box(&instance));
+    self.instances.push(instance);
+  }
+
+  // Append one analytic shadow `instance` (`push_shadow`) at the stencil
+  // depth `stencil`: it joins an open shadow batch at that depth, else opens
+  // one; never a lean or shape batch (their programs have no shadow arm),
+  // and no lean fill rides along in it. Always source-over.
+  fn push_shadow(&mut self, instance: Instance, stencil: u8) {
+    let start = self.len();
+    let sealed = self.sealed;
+    let joins = |last: &Batch| last.program == BatchProgram::Shadow && last.stencil == stencil;
+    match self.batches.last_mut().filter(|last| !sealed && joins(last)) {
+      Some(last) => last.count += 1,
+      None => self.open(Batch {
+        start,
+        count: 1,
+        program: BatchProgram::Shadow,
+        texture: None,
+        policy: None,
+        gradient: None,
+        paint: None,
+        stencil,
+        blend: BlendMode::SourceOver,
+      }),
+    }
     self.boxes.push(device_box(&instance));
     self.instances.push(instance);
   }
@@ -1006,19 +1056,26 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
         clip(state, rect, geometry, *op, out)
       }
       Op::ClipOval { bounds, op, path } => clip(state, bounds, ClipGeometry::Oval(path), *op, out),
-      Op::DrawRect { rect, radii, color, stroke, source, blend, matrix } => {
+      Op::DrawRect { rect, radii, color, stroke, source, blend, matrix, mask_blur } => {
+        // A plain fill under a mask blur draws analytically; any other
+        // masked rect through a layer blur (`masked`).
+        let plain = stroke.is_none() && source.is_none() && *blend == BlendMode::SourceOver && matrix.is_none();
+        if plain && *mask_blur > 0.0 {
+          push_shadow(state, rect, *radii, *color, *mask_blur, out);
+          continue;
+        }
         let kind = if radii.iter().all(|r| *r == 0.0) { KIND_RECT } else { KIND_ROUNDED_RECT };
-        blended(*blend, *matrix, state, stack, out, |state, out, blend| {
+        masked(*mask_blur, *blend, *matrix, state, stack, out, |state, out, blend| {
           push_shape(state, rect, kind, *radii, *color, *stroke, source.as_ref(), blend, ramps, out)
         })
       }
-      Op::DrawOval { bounds, color, stroke, source, blend, matrix } => {
-        blended(*blend, *matrix, state, stack, out, |state, out, blend| {
+      Op::DrawOval { bounds, color, stroke, source, blend, matrix, mask_blur } => {
+        masked(*mask_blur, *blend, *matrix, state, stack, out, |state, out, blend| {
           push_shape(state, bounds, KIND_OVAL, [0.0; 4], *color, *stroke, source.as_ref(), blend, ramps, out)
         })
       }
-      Op::DrawLine { from, to, color, width, cap, gradient, blend, matrix } => {
-        blended(*blend, *matrix, state, stack, out, |state, out, blend| {
+      Op::DrawLine { from, to, color, width, cap, gradient, blend, matrix, mask_blur } => {
+        masked(*mask_blur, *blend, *matrix, state, stack, out, |state, out, blend| {
           push_line(state, *from, *to, *color, *width, *cap, gradient.as_ref(), blend, ramps, out)
         })
       }
@@ -1031,8 +1088,8 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
         push_glyphs(state, atlas, quads, bounds, *color, *policy, gradient.as_ref(), ramps, out)
       }
       Op::DrawShader { rect, shader, params, inputs } => push_paint(state, rect, shader, params, inputs, out),
-      Op::DrawPath { path, style, color, source, blend, matrix } => {
-        blended(*blend, *matrix, state, stack, out, |state, out, blend| {
+      Op::DrawPath { path, style, color, source, blend, matrix, mask_blur } => {
+        masked(*mask_blur, *blend, *matrix, state, stack, out, |state, out, blend| {
           push_path(state, path, *style, *color, source.as_ref(), blend, ramps, out)
         })
       }
@@ -1076,12 +1133,7 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut R
 // under a matrix whatever the mode, the op drawn source-over inside an
 // implicit layer of its own at alpha 1 whose composite applies the matrix
 // to the op's color and then blends by the mode (`Layer::blend`), as Skia
-// applies a paint's color filter before its blend. The layer's rect is the
-// op's device box (`close_layer`). An op that pushes nothing (culled by the
-// clip, transparent, of zero width) opens no layer: its markers and its
-// table entry are taken back and the batch it found open takes instances
-// again, so it neither emits markers nor splits the lean run around it. The walk's placement is each push function's own, so
-// the check is on what the op pushed, not a second copy of the clip test.
+// applies a paint's color filter before its blend (`layered`).
 fn blended(
   blend: BlendMode,
   matrix: Option<ColorMatrix>,
@@ -1097,11 +1149,66 @@ fn blended(
     draw(state, out, blend);
     return;
   }
+  layered(Effect { blend, matrix, ..Effect::opacity(1.0) }, state, stack, out, draw);
+}
+
+// One op that takes a paint under a mask blur of `sigma` (local units, 0 for
+// none) and does not draw as an analytic shadow (`push_shadow`: a plain
+// rect or rounded rect fill): an oval, a line, a path, a stroked rect, a
+// rect with a source, a blend other than source-over or a color matrix.
+// With no blur, `blended`. With one, the op drawn hard and source-over
+// inside an implicit layer at alpha 1 (`layered`) whose pixels run through
+// a `Decal` gaussian of the sigma on both axes (scaled to device pixels as
+// a layer's blur is, `device_blur`) and whose composite then applies the
+// paint's matrix and blends by its mode: one layer for the blur and the
+// blend, the blur first. Blurring the hard op's layer is the convolution a
+// mask filter runs on its coverage. The layer's rect is the op's device box
+// grown by the blur's reach (`close_layer`), and it never folds. Nothing for
+// Destination; a sigma whose device blur no pass would draw (below
+// BLUR_SIGMA_MIN) draws the op hard, as `blended`.
+#[allow(clippy::too_many_arguments)]
+fn masked(
+  sigma: f32,
+  blend: BlendMode,
+  matrix: Option<ColorMatrix>,
+  state: &mut State,
+  stack: &mut Vec<Saved>,
+  out: &mut Walked,
+  draw: impl FnOnce(&State, &mut Walked, BlendMode),
+) {
+  let mask = Blur { sigma_x: sigma, sigma_y: sigma, tile: TileMode::Decal };
+  let blur = if sigma > 0.0 { device_blur(&state.matrix, &mask) } else { None };
+  let Some(blur) = blur else {
+    blended(blend, matrix, state, stack, out, draw);
+    return;
+  };
+  if blend == BlendMode::Destination {
+    return;
+  }
+  layered(Effect { blend, matrix, blur: Some(blur), ..Effect::opacity(1.0) }, state, stack, out, draw);
+}
+
+// The op `draw` pushes (at source-over) inside an implicit layer of its own
+// with `effect`, which is never the identity (`blended`'s shader mode or
+// matrix, `masked`'s blur). The layer's rect is the op's device box, grown
+// by a blur's reach (`close_layer`). An op that pushes nothing (culled by
+// the clip, transparent, of zero width) opens no layer: its markers and its
+// table entry are taken back and the batch it found open takes instances
+// again, so it neither emits markers nor splits the lean run around it. The
+// walk's placement is each push function's own, so the check is on what the
+// op pushed, not a second copy of the clip test.
+fn layered(
+  effect: Effect,
+  state: &mut State,
+  stack: &mut Vec<Saved>,
+  out: &mut Walked,
+  draw: impl FnOnce(&State, &mut Walked, BlendMode),
+) {
   let sealed = out.sealed;
-  open_layer(Effect { blend, matrix, ..Effect::opacity(1.0) }, state, stack, out);
+  open_layer(effect, state, stack, out);
   draw(state, out, BlendMode::SourceOver);
-  let own = stack.pop().expect("the implicit blend layer is on the stack");
-  let open = own.layer.expect("the implicit blend layer's entry opens a layer");
+  let own = stack.pop().expect("the implicit layer is on the stack");
+  let open = own.layer.expect("the implicit layer's entry opens a layer");
   if out.batches.len() == open.begin_batch + 1 {
     // Nothing drawn: the `LayerBegin` is the last batch and the entry the
     // last layer. `open` flushed the pending fills, which changes no run.
@@ -1286,7 +1393,8 @@ fn close_layer(popped: State, open: Open, state: &mut State, out: &mut Walked) {
 // source-over one (a shader-mode layer composites against the destination,
 // which no color can fold) with no blur, color matrix or backdrop (each
 // reads the layer's pixels as a whole) and holds only source-over quad
-// batches (no mesh, paint or clip draw, no inner layer that did not fold itself, no
+// batches (an analytic shadow's among them: a quad whose box is its blur's
+// reach; no mesh, paint or clip draw, no inner layer that did not fold itself, no
 // fixed-function mode other than source-over, which would blend with the
 // target where it blended with the layer's transparent pixels), at most
 // FOLD_SCAN_LIMIT instances whose device boxes are
@@ -1307,8 +1415,10 @@ fn fold_layer(popped: &State, open: &Open, out: &mut Walked) -> bool {
     return false;
   }
   let quads = out.batches[open.batches_from..].iter().all(|b| {
-    let quad =
-      matches!(b.program, BatchProgram::Fill | BatchProgram::Rounded | BatchProgram::Shape | BatchProgram::Glyph);
+    let quad = matches!(
+      b.program,
+      BatchProgram::Fill | BatchProgram::Rounded | BatchProgram::Shape | BatchProgram::Glyph | BatchProgram::Shadow
+    );
     quad && b.blend == BlendMode::SourceOver
   });
   let boxes = &out.boxes[open.instances_from..];
@@ -2142,6 +2252,31 @@ fn device_box(instance: &Instance) -> Option<Box2D<f32>> {
   let [x0, y0, x1, y1] = instance.clip;
   let clip = Box2D::new(Point2D::new(x0, y0), Point2D::new(x1, y1)).round_out();
   Some(bounds.intersection_unchecked(&clip))
+}
+
+// A rect or rounded rect fill (`radii` clamped, all zero for a rect) under a
+// mask blur of `sigma` (local units, above zero) as one analytic shadow
+// instance under the current state, unless the clip rejects it, it is fully
+// transparent or the rect is empty: a `KIND_SHADOW` quad over `rect` grown by
+// SHADOW_REACH_SIGMAS * sigma on every side, the shape's own rect in `tex`
+// and the sigma in the stroke slot, its color premultiplied, the clip and
+// the rounded clip as any instance's, in a shadow batch (`Walked::push_shadow`).
+// The shadow program evaluates the gaussian-blurred rounded box at the
+// fragment's local point (exec.rs SHADOW_FRAGMENT): the shape blurred in its
+// own space and then mapped, which is exact under any affine map (what a
+// transformed element's CSS shadow is: the blur turns and scales with it);
+// under perspective it is the approximation every per-instance quad makes,
+// the blur's sigma fixed in local units across the quad.
+fn push_shadow(state: &State, rect: &Rect, radii: Radii, color: Premultiplied, sigma: f32, out: &mut Walked) {
+  if color[3] == 0.0 || rect.is_empty() {
+    return;
+  }
+  let reach = SHADOW_REACH_SIGMAS * sigma;
+  let quad = rect.inflate(reach, reach);
+  let Some((p, clip)) = placed(state, &quad) else { return };
+  let shadow =
+    Quad { rect: quad, kind: KIND_SHADOW, stroke: sigma, color, tex: rect_array(rect), radii, rows: NO_ROWS };
+  out.push_shadow(instance(state, &p, clip, shadow), state.depth);
 }
 
 // A segment stroked `width` wide under the current state, unless it has no

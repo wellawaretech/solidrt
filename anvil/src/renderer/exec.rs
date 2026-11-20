@@ -2,7 +2,9 @@
 //! fill, the rounded and the shape program each with a gradient variant),
 //! the mesh program (with a gradient and a textured variant), the
 //! composite program of a layer's effects (a shader blend mode, a color
-//! matrix, a blurred image) and the blur program, twelve programs in all; the
+//! matrix, a blurred image), the blur program and the shadow program (a
+//! mask-blurred rect or rounded rect, evaluated analytically), thirteen
+//! programs in all; the
 //! paint shaders' programs linked behind anvil's vertex stage; two VAOs the
 //! executor owns, one over the instance buffer and one the path meshes'
 //! own vertex and index buffers are bound into per draw; and the draw that
@@ -256,17 +258,37 @@ void main() {
 // quad's size: the fragment's rounded-box distance is the same function
 // over the same points for a piece and for a whole quad alike. It writes
 // no vParams and no textured vUv; the linker drops what the fragment does
-// not read (vUv, vGradMeta).
-const ROUNDED_VERTEX: &str = r"
+// not read (vUv, vGradMeta). Two parts: ROUNDED_PLACE, the outputs and
+// `placeRounded()`, which the shadow program's vertex stage calls too
+// (SHADOW_VERTEX), and ROUNDED_VERTEX, the rounded program's `main`.
+const ROUNDED_PLACE: &str = r"
 layout(location = 6) in vec4 aRadii;     // corner radii in local pixels: tl, tr, br, bl
 out vec2 vLocal;                         // position within the shape quad, local pixels from its origin
 flat out vec4 vShape;                    // the shape quad's w, h; z, w unused
 flat out vec4 vRadii;
-void main() {
+void placeRounded() {
   vec2 p = place(quadCorner());
   vLocal = p - aTex.xy;
   vShape = vec4(aTex.zw, 0.0, 0.0);
   vRadii = aRadii;
+}
+";
+
+const ROUNDED_VERTEX: &str = r"
+void main() {
+  placeRounded();
+}
+";
+
+// The shadow program's vertex stage, after SOURCE_HEADER, VERTEX_COMMON and
+// ROUNDED_PLACE: the rounded program's, the shape measured from the
+// shape's own rect in `aTex` (walk.rs `push_shadow`: the quad lies the
+// blur's reach outside it), and the sigma from the stroke slot.
+const SHADOW_VERTEX: &str = r"
+flat out float vSigma;                   // the blur's sigma, local pixels
+void main() {
+  placeRounded();
+  vSigma = aOffset.w;
 }
 ";
 
@@ -701,6 +723,114 @@ void main() {
   vec4 color = vColor;
 #endif
   fragColor = color * c * inside;
+}
+";
+
+// An analytic shadow (walk.rs `push_shadow`): the coverage of a rect or
+// rounded rect blurred by a gaussian of sigma `vSigma`, evaluated at the
+// fragment's local point, after Evan Wallace's "Fast Rounded Rectangle
+// Shadows" (2016), generalized to per-corner radii. The blur of the box's
+// indicator is a 2D integral of the gaussian over the box. Along x a row of
+// the box is an interval, so its integral is a closed form in erf
+// (`shadowRow`); along y it is integrated numerically, SHADOW_SAMPLES
+// midpoint samples over the rows within +-SHADOW_REACH sigma of the
+// fragment (`shadowMask`). In local coordinates centred on the shape, y down.
+//
+// The row's mask at x: with g the gaussian and Phi(t) = 0.5 + 0.5 * erf(t /
+// sqrt 2) its standard CDF, the row [left, right] blurred along x is the
+// integral from left to right of g(t - x) dt = Phi((right - x) / sigma) -
+// Phi((left - x) / sigma), so erf's argument is (edge - x) / (sigma *
+// sqrt 2), (edge - x) * SQRT_HALF / sigma. Wallace's `roundedBoxShadowX`
+// writes erf((x + (-c, c)) * sqrt(0.5) / sigma) for his symmetric row (left
+// = -c, right = c), which is the same difference, erf being odd; his y loop
+// passes `point.y - y` as the row, as `shadowMask` does.
+//
+// Each side of a row is cut in where the row lies in a corner's reach:
+// the top corner of radius r covers the rows from the top edge to its arc's
+// centre, r below it, the bottom one likewise from the bottom edge, and the
+// clamped radii (record.rs `clamp_radii`: a side's two radii sum to at most
+// its length) keep the two reaches apart, so a row is in at most one per
+// side. That picks the corner by the row's place in the box, exact for any
+// clamped radii, where picking it by the row's half (Wallace's one radius
+// needs neither) would break at the middle row when a radius exceeds half
+// its side. With equal radii it is Wallace's row.
+//
+// The quad's edges lie SHADOW_REACH sigma out, where the mask is under
+// half a percent of a channel step: the clip box is a factor, the rounded
+// clip a product (the clip cuts the blurred shadow), no discard and no
+// derivative of its own (`roundedClip()` takes its own).
+//
+// After SOURCE_HEADER and the common fragment parts.
+pub(crate) const SHADOW_FRAGMENT: &str = r"
+in vec2 vLocal;
+flat in vec4 vShape;      // the shape's w, h; z, w unused
+flat in vec4 vRadii;      // corner radii, local pixels: tl, tr, br, bl
+flat in float vSigma;     // the blur's sigma, local pixels
+// How many sigmas the quad reaches past the shape, and the y integral's
+// half range (walk.rs SHADOW_REACH_SIGMAS must match).
+const float SHADOW_REACH = 3.0;
+// The y integral's midpoint samples, Wallace's count: the mask errs by up
+// to about 0.01 on rounded corners and 0.03 to 0.04 on a near-circular one
+// (8 samples halve that). The one knob of the shadow's accuracy.
+const int SHADOW_SAMPLES = 4;
+const float SQRT_HALF = 0.70710678118;
+const float INV_SQRT_TWO_PI = 0.39894228040;
+float gaussian(float x, float sigma) {
+  return exp(-(x * x) / (2.0 * sigma * sigma)) * INV_SQRT_TWO_PI / sigma;
+}
+// erf per component: Abramowitz and Stegun 7.1.27, the approximation
+// Wallace uses (error under 5e-4).
+vec2 erf2(vec2 x) {
+  vec2 s = sign(x), a = abs(x);
+  x = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+  x *= x;
+  return s - s / (x * x);
+}
+// How far one side of the row at height y (centred) of a box of half
+// height hy is cut in by the side's corners, the top one of radius `top`
+// (its arc's centre at y = top - hy) and the bottom one of radius `bottom`
+// (at y = hy - bottom): r - sqrt(r^2 - d^2) for the corner whose reach the
+// row lies in, d its distance past the arc's centre; 0 between them.
+float cornerInset(float y, float top, float bottom, float hy) {
+  float dt = max(top - hy - y, 0.0);
+  float db = max(y - hy + bottom, 0.0);
+  float it = top - sqrt(max(top * top - dt * dt, 0.0));
+  float ib = bottom - sqrt(max(bottom * bottom - db * db, 0.0));
+  return it + ib;
+}
+// The row at height y (centred) of the box of half size hs with the radii
+// r (tl, tr, br, bl), blurred along x and read at x: the gaussian's integral
+// from the row's left edge to its right edge.
+float shadowRow(float x, float y, float sigma, vec4 r, vec2 hs) {
+  float left = -hs.x + cornerInset(y, r.x, r.w, hs.y);
+  float right = hs.x - cornerInset(y, r.y, r.z, hs.y);
+  vec2 integral = 0.5 + 0.5 * erf2((vec2(left, right) - x) * (SQRT_HALF / sigma));
+  return integral.y - integral.x;
+}
+// The blurred mask at p (centred): the rows' masks weighted by the gaussian
+// of their distance y from p, the row at height p.y - y. The box's rows lie
+// at y in [p.y - hs.y, p.y + hs.y], the weight within +-SHADOW_REACH sigma:
+// the samples cover the overlap.
+float shadowMask(vec2 p, vec2 hs, vec4 r, float sigma) {
+  float low = p.y - hs.y;
+  float high = p.y + hs.y;
+  float start = clamp(-SHADOW_REACH * sigma, low, high);
+  float end = clamp(SHADOW_REACH * sigma, low, high);
+  float stride = (end - start) / float(SHADOW_SAMPLES);
+  float y = start + stride * 0.5;
+  float value = 0.0;
+  for (int i = 0; i < SHADOW_SAMPLES; i++) {
+    value += shadowRow(p.x, p.y - y, sigma, r, hs) * gaussian(y, sigma) * stride;
+    y += stride;
+  }
+  return value;
+}
+void main() {
+  vec2 dp = device();
+  float inside = float(all(greaterThanEqual(dp, vClip.xy)) && all(lessThan(dp, vClip.zw)));
+  vec2 hs = vShape.xy * 0.5;
+  float mask = clamp(shadowMask(vLocal - hs, hs, vRadii, vSigma), 0.0, 1.0);
+  fragColor = vColor * (mask * inside * roundedClip());
 }
 ";
 
@@ -1203,7 +1333,7 @@ impl PaintProgram {
   }
 }
 
-/// The GL half: the twelve programs, the two VAOs and the instance buffer, and
+/// The GL half: the thirteen programs, the two VAOs and the instance buffer, and
 /// the draw. Lives
 /// as long as the renderer, which the raster thread drops before it releases
 /// the context (raster/recover.rs), so the GL names here die with it and
@@ -1240,6 +1370,8 @@ pub(super) struct Executor {
   /// The blur passes, the downsamples and the backdrop fill
   /// (BLUR_FRAGMENT).
   blur: BlurProgram,
+  /// Every shadow batch: analytic shadows (SHADOW_FRAGMENT).
+  shadow: Program,
   /// The instance VAO: the instanced quad attributes over `instances`.
   vao: glow::VertexArray,
   instances: glow::Buffer,
@@ -1759,7 +1891,7 @@ struct GlyphUniforms {
 }
 
 impl Executor {
-  /// Over the context current on the calling thread; compiles the twelve
+  /// Over the context current on the calling thread; compiles the thirteen
   /// programs now (every frame draws shapes and most draw text, so the
   /// first frame must not pay them).
   ///
@@ -1790,13 +1922,13 @@ impl Executor {
     let rounded = Program::link(
       &gl,
       "rounded",
-      &[SOURCE_HEADER, VERTEX_COMMON, ROUNDED_VERTEX],
+      &[SOURCE_HEADER, VERTEX_COMMON, ROUNDED_PLACE, ROUNDED_VERTEX],
       &[SOURCE_HEADER, FRAGMENT_INPUTS, FRAGMENT_MATH, FRAGMENT_ROUNDED_CLIP, ROUNDED_FRAGMENT],
     )?;
     let rounded_gradient = Program::link(
       &gl,
       "rounded gradient",
-      &[SOURCE_HEADER, VERTEX_COMMON, ROUNDED_VERTEX],
+      &[SOURCE_HEADER, VERTEX_COMMON, ROUNDED_PLACE, ROUNDED_VERTEX],
       &[
         SOURCE_HEADER,
         GRADIENT_DEFINE,
@@ -1873,6 +2005,12 @@ impl Executor {
       extent: uniform(&gl, cp, label, "uExtent")?,
     };
     let blur = BlurProgram::link(&gl)?;
+    let shadow = Program::link(
+      &gl,
+      "shadow",
+      &[SOURCE_HEADER, VERTEX_COMMON, ROUNDED_PLACE, SHADOW_VERTEX],
+      &[SOURCE_HEADER, FRAGMENT_INPUTS, FRAGMENT_MATH, FRAGMENT_ROUNDED_CLIP, SHADOW_FRAGMENT],
+    )?;
     let (gp, label) = (glyph.program, "glyph");
     let glyph_uniforms = GlyphUniforms {
       mode: uniform(&gl, gp, label, "uMode")?,
@@ -1951,6 +2089,7 @@ impl Executor {
       composite,
       composite_uniforms,
       blur,
+      shadow,
       vao,
       instances,
       mesh_vao,
@@ -2436,6 +2575,7 @@ impl Executor {
           (BatchProgram::Shape, false) => &self.shape,
           (BatchProgram::Shape, true) => &self.shape_gradient,
           (BatchProgram::Glyph, _) => &self.glyph,
+          (BatchProgram::Shadow, _) => &self.shadow,
           (BatchProgram::Paint, _) => unreachable!("a paint batch carries its draw (walk.rs Batch)"),
           (BatchProgram::Mesh, _) => unreachable!("a mesh batch draws above"),
           (BatchProgram::Clip, _) => unreachable!("a clip batch draws above"),
@@ -2526,12 +2666,13 @@ impl Executor {
     self.shape.program
   }
 
-  // The eleven programs that read `uFrag` (the blur program places its quad
+  // The twelve programs that read `uFrag` (the blur program places its quad
   // from its own uniforms), the shape program last, so a loop over them
   // leaves it in use.
-  fn programs(&self) -> [&Program; 11] {
+  fn programs(&self) -> [&Program; 12] {
     [
       &self.composite,
+      &self.shadow,
       &self.glyph,
       &self.fill,
       &self.fill_gradient,
