@@ -438,7 +438,16 @@ when exactly one client is connected.
   per presented frame, count the path ops the renderer drew from their
   meshes and the meshes it tessellated (its mesh cache's misses): a
   retained screen of paths reads 0 tessellated per frame, a screen that
-  rewrites its paths reads one per path per frame. `textAtlasWidth` and
+  rewrites its paths reads one per path per frame. `rendererClips`,
+  `rendererLayers` and `rendererBlurPasses` (cumulative, beside them), and
+  `window.rendererLayersPerFrame` and `window.rendererBlurPassesPerFrame`
+  per presented frame, count the stencil clip draws, the layers the
+  renderer drew offscreen (a group fade whose draws overlap, a backdrop,
+  a blend the fixed-function stage cannot express, a blur) and the blur
+  passes it ran (a backdrop's capture copy, the halvings of a large blur
+  and its two gaussian passes): a fading card whose draws overlap reads
+  one layer per frame, a frosted pane one layer and three or more passes.
+  `textAtlasWidth` and
   `textAtlasHeight` are the text atlas's size in texels now (one byte a
   texel on the GPU): it grows by doubling up to a fixed side cap (4096, or
   the device's texture limit where that is lower) and at the cap evicts
