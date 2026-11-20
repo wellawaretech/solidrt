@@ -772,7 +772,12 @@ tablet.
   (a parent cannot sample the atlas it draws into), the inner level
   first. Blurred layers, backdrops and layers too large for an atlas
   stay as they are. Done when the TV's fade route at twelve cards is
-  read against 25 fps, with the device look.
+  read against 25 fps, with the device look. The glass route's cost on
+  the TV is the same per-pass overhead (stage 6 Findings, "The glass
+  stall on the TV": twelve coupled panes run 55 blur passes and twelve
+  captures a frame): the panes' blur passes share atlas passes the same
+  way, and captures of panes whose read regions do not depend on each
+  other group into one.
 - A card's shadow as a ring, measured in stage 6: the shadow quad
   reaches three sigmas past the card and most of it lies under the card,
   where the cutout now skips the integral but the quad is still
@@ -2360,10 +2365,11 @@ the TV held one frosted pane at 13 ms of GPU and dropped to 22 fps with
   re-filtering every frame (the blur's reach makes every pane's region
   damaged by its neighbour's) are beyond the TV under either renderer,
   but the frames of 670 ms with 140 to 200 ms of GPU and a raster thread
-  near idle are a wait this read did not explain: not the layer pool's
-  churn (a build that never deleted storage within a draw changed
-  nothing here and was dropped), and not present without the blur
-  passes.
+  near idle looked like a wait this read did not explain (not the layer
+  pool's churn: a build that never deleted storage within a draw changed
+  nothing and was dropped). Explained later the same day (below, "The
+  glass stall on the TV"): the TV's GPU timer reads frame pacing, not
+  GPU work, and the frames are GPU-bound.
 - The tablet's fade route flickered: its presented frames cycled the
   drawn frame, a black buffer and the player's start screen (a period of
   three, the window's buffer count), and a card's layer could composite
@@ -2471,8 +2477,39 @@ twelve 25, so about 2.5 ms per layer from six to twelve. A layer here is
 about 576 by 320 device pixels with a handful of draws, a fraction of a
 millisecond of fill on this GPU: the rest is the fixed cost of a render
 pass. Packing the layers drawn ahead into one atlas pass is recorded in
-stage 7, as is drawing a card's shadow as a ring; stage 6 closes on the
-glass stall.
+stage 7, as is drawing a card's shadow as a ring.
+
+**The glass stall on the TV.** The glass route by pane count (blur 16):
+
+| panes | fps | layers / frame | blur passes / frame | partial presents / frame |
+|---|---|---|---|---|
+| 1 | 45.5 | 0.2 | 1.2 | 0.75 |
+| 2 | 38 | 0.3 | 1.7 | 0.83 |
+| 4 | 20.5 | 2.6 | 13 | 0.69 |
+| 6 | 16 | 3.0 | 15 | 0.75 |
+| 8 | 9.7 | 3.9 | 19.6 | 0.68 |
+| 12 | 2.2 | 11.1 | 55.5 | 0.09 |
+
+Up to eight panes a frame redraws the panes the bar's damage reaches;
+at twelve almost every frame re-filters all of them: eleven layers, 55
+blur passes and twelve captures, each capture a store and reload of the
+1080p window, at about 2.5 ms of fixed cost per pass on this Mali. The
+client's slow-frame log reads "paint 383.7 ms" with the UI thread near
+idle and `rasterQueue` 1: paint waits on the raster thread, which waits
+on the GPU. So the stall is GPU work, not a wait; the first table's
+"140 to 200 ms of GPU" was the TV's timer reading pacing. All twelve
+re-filter because the panes are coupled: a pane drawn later reads the
+one before it within the blur's reach, so `expand_damage_for_backdrops`
+(alloy/src/rendertree/damage.rs) grows the damage pane by pane, and on
+the TV's 960 by 540 window the twelve panes cover about 90 percent of
+it, so the grown damage passes the half-window full-frame threshold on
+most frames; the desktop's 1280 by 720 window redraws 5 to 9 of twelve
+panes a frame, and a column straddling its edge (five columns) does not
+change that. Not explained: on the TV blur 8 stays mostly partial (12.3
+fps, 4.1 layers a frame) where blur 4 and 16 go full (1.5 and 2.2 fps).
+The remedy is the stage 7 atlas's: fewer passes (the panes' blur passes
+sharing atlas passes, the captures grouped). With this, stage 6 has no
+open item but its close.
 
 ### Where anvil lives (2026-11-18)
 
