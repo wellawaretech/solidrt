@@ -217,6 +217,12 @@ its workaround; a check that finds none says why here.
   calls `EXT_disjoint_timer_query` broken on non-Mesa Mali-T8xx and older
   (angle disableTimestampQueries), so the TV's Mali-T860 numbers may be
   garbage, beside what okf/done/gpu-timer-attribution.md found on Adreno.
+  Checked on the TV (Mali-T860, r20p0, 2026-11-20): the attribution probe
+  passes, yet `gpuFrameExecMs` reads whole vsync periods (20.0 and 40.0 ms
+  per frame on the effects bench), frame pacing rather than GPU work; a
+  client with the timer off reads the fade and shadow routes the same
+  (22.6 and 34.6 fps against 25 and 34.5), so the queries cost nothing
+  there. The numbers are the fault, not the cost; the timer is still on.
 - **A draw from a nonzero first vertex, on Adreno.** The GPU API's draw
   range passes `first_vertex` to `glDrawArrays(Instanced)`
   (`alloy/src/gl/pass.rs`); Skia calls that broken on every Adreno (skia
