@@ -2398,6 +2398,20 @@ The fade route went from 13 to 50 to 58 fps; the raster thread's share
 stayed, at four times the frames. Glass and shadow draw nothing ahead
 and read as before.
 
+**Step 6b on the TV** (client of 76b9151b): the fade probe's screen
+capture matches the arithmetic at every cell checked, and the
+maintainer saw the three routes draw with no flicker. The timed reads
+match the inline ones: fade 25.0 fps (11.7 layers per frame, all drawn
+ahead), glass 2.1 to 2.2, shadow 29.5 to 29.9. A client with every layer
+single-sample read the fade route the same (23 to 25 fps). So on the
+Mali-T860 neither the window's pass breaks nor the layers' MSAA is the
+fade route's cost: the shadow route, with no layer, holds only 30 fps on
+the bar's strip and 28 with every frame redrawn whole, so twelve layers
+cost the TV about 5 fps over a ceiling that comes from elsewhere in the
+bench's content (stage 5's path bench held 50 fps at about 60 draw
+calls). The TV's `gpuFrameExecMs` reads whole vsync periods here (20.0,
+40.0), frame pacing rather than GPU work, as the desktop's did.
+
 ### Where anvil lives (2026-11-18)
 
 anvil is a module behind the seam, `alloy/src/renderer/anvil/` (the plan
