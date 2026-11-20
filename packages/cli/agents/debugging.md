@@ -447,6 +447,11 @@ when exactly one client is connected.
   passes it ran (a backdrop's capture copy, the halvings of a large blur
   and its two gaussian passes): a fading card whose draws overlap reads
   one layer per frame, a frosted pane one layer and three or more passes.
+  `rendererLayersAhead` and `window.rendererLayersAheadPerFrame` count,
+  of those layers, the ones drawn before the frame they composite into,
+  so that frame's pass does not break for them: every layer but a
+  backdrop (a frosted pane reads the pixels beneath it, so it draws
+  where it sits). Twelve fading cards read 12 layers and 12 ahead.
   `textAtlasWidth` and
   `textAtlasHeight` are the text atlas's size in texels now (one byte a
   texel on the GPU): it grows by doubling up to a fixed side cap (4096, or

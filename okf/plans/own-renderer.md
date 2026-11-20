@@ -681,13 +681,27 @@ Step 5b, added after step 5's desktop read: the shadow's casting-box
 cutout as a per-instance field of the shadow program, in place of the
 three stencil draws the rendertree's difference clip costs per card.
 
-The layer cost the device reads found (a render-pass break per layer on
-a tiler, see Findings) has a candidate fix: draw every layer that does
-not read its parent in passes before the main pass. If this plan takes
-it on, it is tried on the tablet before anything builds on it: Skia
-stops exactly that reordering on Adreno 620 and 640 GL drivers below
-571, and the tablet's Adreno 610 runs driver 502
-([gpu-driver-faults](../backlog/gpu-driver-faults.md)).
+Step 6b, added after the device reads (a render-pass break per layer on
+a tiler: 40 ms of GPU per frame on the TV's fade route, the tablet's
+raster thread at 63 percent): every layer but a backdrop layer is drawn
+before the main pass, in the order the layers close (children before
+parents), into storage held until its composite; the window is then
+bound, cleared and drawn once, a drawn-ahead layer contributing only its
+composite. A backdrop layer stays inline in its parent's pass (it reads
+the pixels drawn so far), and a shader blend mode's composite still
+copies its destination where it draws. The pool's trim between draws
+keeps what the previous draw held instead of a fixed 16. One flush sits
+between the drawn-ahead layers and the main pass, in place of one per
+layer; the flush after an inline layer stays. The stats count the
+layers drawn ahead per frame. Done when the reference renders and the
+four stage 6 probes diff at zero against the inline order, and the
+maintainer has seen the routes draw on the tablet first (Skia stops
+this reordering on Adreno 620 and 640 GL drivers below 571; the
+tablet's Adreno 610 runs 502,
+[gpu-driver-faults](../backlog/gpu-driver-faults.md)), then on the TV,
+with the timed reads in Findings. If the Adreno misbehaves under it,
+drawing ahead is switched off there as a named entry of that register;
+the inline path stays for backdrop layers anyway.
 
 Steps 2 and 3's fixed-function half are independent; 4 needs 2; 5's
 layer half needs 4.
@@ -2346,6 +2360,25 @@ the TV held one frosted pane at 13 ms of GPU and dropped to 22 fps with
   matched them within noise: the flush costs nothing measurable). The
   device frame counters count presents, not correct pictures; the
   bench reads now need a look at the device.
+
+**Step 6b on the desktop** (2026-11-20): the schedule
+(`anvil/src/renderer/schedule.rs`, pure, its order tested on walks) draws
+the fade route's 12 layers ahead, `rendererLayersAhead` 12 of 12 per
+frame, at 60 fps. The 20 reference renders and the fade, blend and shadow
+probes are identical to the inline order. The glass probe differs on 61
+pixels by one level, in its two cells where a rounded pane's backdrop
+composites under a rounded stencil clip and its content then composites
+as a group at 0.5. Traced: the group's image and the window before the
+group's composite are byte-identical in both orders; a resolve read of
+the window inserted before that composite makes the drawn-ahead order
+render the inline result exactly. So the data is the same and the
+desktop GPU (NVIDIA RTX 3070, NVIDIA's driver) blends the composite one
+level differently on partially covered MSAA pixels after a mid-pass
+resolve than in an uninterrupted pass, which GL's precision allows. Pixel
+diffs across a change of pass structure on this machine carry that
+noise; it is recorded in
+[gpu-driver-faults](../backlog/gpu-driver-faults.md). `sol test`: the
+two failures known before the stage, 1173 passed.
 
 ### Where anvil lives (2026-11-18)
 

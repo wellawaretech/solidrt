@@ -56,6 +56,10 @@ pub struct DrawReport {
   /// layer whose alpha folded into its content is not one. Each composite
   /// is a draw call too, counted in `draw_calls`.
   pub layers: u32,
+  /// Of `layers`, those drawn ahead of the frame they composite into, so
+  /// that frame's pass does not break for them: every layer but a backdrop
+  /// layer, which reads the pixels drawn beneath it so far.
+  pub layers_ahead: u32,
   /// The blur passes the drawn layers ran: a backdrop layer's fill copy,
   /// each halving of a large blur's content and each horizontal and
   /// vertical gaussian pass, one draw each, not counted in `draw_calls`.

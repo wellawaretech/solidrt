@@ -44,6 +44,7 @@ use super::layers::{bucket, rescale_composite, LayerPool, LayerTarget};
 use super::mesh::{gpu_slot, GpuMesh, GpuSlot, Mesh};
 use super::ramps::{RampTable, RAMP_ROWS};
 use super::record::DisplayList;
+use super::schedule::{draws_ahead, schedule, Step};
 use super::walk::MESH_VERTEX_FLOATS;
 use super::walk::{self, Batch, BatchProgram, Instance, MeshDraw, MeshVertex, PaintDraw, Projective, Walked};
 use super::walk::{ClipDraw, ClipShape};
@@ -64,6 +65,12 @@ const FLOATS_PER_ATTRIBUTE: i32 = 4;
 /// Every bit of the 8-bit stencil (DEPTH24_STENCIL8): the write mask and
 /// the test mask of every stencil draw and test.
 const STENCIL_ALL_BITS: u32 = 0xFF;
+/// Whether a layer that does not read the pixels beneath it is drawn ahead
+/// of the frame it composites into (`schedule`), so that frame's pass does
+/// not break for it; false draws every layer inline, the walk's order. The
+/// switch a driver fault would turn off, as a named entry of the register
+/// (okf/backlog/gpu-driver-faults.md).
+const DRAW_AHEAD: bool = true;
 
 // The attribute locations. They must match the `layout(location = N)`
 // literals in VERTEX_COMMON, SHAPE_VERTEX and ROUNDED_VERTEX.
@@ -1452,6 +1459,24 @@ impl Frame {
   }
 }
 
+/// Clear the bound frame for a pass that starts: its color to transparent
+/// (unless `color` is false, a backdrop layer filled already), its depth,
+/// and its stencil to 0 with every bit writable, the color writes on. The
+/// stencil clips count up from 0; a list that ended with stencil clips in
+/// effect left them in the target's stencil, and this clear of the next
+/// draw takes them. Clearing the depth and stencil of a target that has
+/// none is a no-op; every target alloy draws into has DEPTH24_STENCIL8
+/// (gl/rig.rs, the window's stencil size 8), which the stencil clips need.
+/// A root frame's clear honours its scissor.
+unsafe fn clear_frame(gl: &glow::Context, color: bool) {
+  gl.color_mask(true, true, true, true);
+  gl.clear_color(0.0, 0.0, 0.0, 0.0);
+  gl.stencil_mask(STENCIL_ALL_BITS);
+  gl.clear_stencil(0);
+  let color = if color { glow::COLOR_BUFFER_BIT } else { 0 };
+  gl.clear(color | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+}
+
 /// The read rect of a shader-mode layer's destination copy: the layer's
 /// device `rect` in `parent`'s GL window coordinates, (x, y, width, height),
 /// y up from the bottom. The parent draws device (x, y) at window (x - ox,
@@ -2216,19 +2241,10 @@ impl Executor {
     let gl = &self.gl;
     unsafe {
       // The target bound, its viewport, every program's `uFrag` and the
-      // scissor.
+      // scissor: bound, not cleared, until the layers drawn ahead are drawn
+      // (`Step::Target`), so its pass starts once; bound now for the sample
+      // count a layer's storage takes.
       self.set_frame(&root, (width, height), scissor);
-      gl.color_mask(true, true, true, true);
-      gl.clear_color(0.0, 0.0, 0.0, 0.0);
-      // The stencil clear honours the write mask, and the clips count up
-      // from 0. A list that ends with stencil clips in effect leaves them in
-      // the stencil; this clear of the next draw takes them.
-      gl.stencil_mask(STENCIL_ALL_BITS);
-      gl.clear_stencil(0);
-      // Clearing the depth and stencil of a target that has none is a
-      // no-op; every target alloy draws into has DEPTH24_STENCIL8 (gl/rig.rs,
-      // the window's stencil size 8), which the stencil clips need.
-      gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
       // Premultiplied source-over in sRGB, no linear step.
       gl.enable(glow::BLEND);
       gl.blend_equation(glow::FUNC_ADD);
@@ -2248,6 +2264,7 @@ impl Executor {
       // which draws with none.
       let drawn = |l: &walk::Layer| !l.folded && !l.rect.is_empty();
       if instances.is_empty() && walked.mesh_draws.is_empty() && !walked.layers.iter().any(drawn) {
+        clear_frame(gl, true);
         gl.use_program(None);
         return Ok(DrawReport { draw_calls: 0, clips: 0, ..super::report(&walked) });
       }
@@ -2342,192 +2359,253 @@ impl Executor {
       // and op; every other batch tests at its depth (off at 0) and keeps
       // the stencil.
       let batches = &walked.batches;
-      let mut next = 0;
-      while next < batches.len() {
-        let batch = &batches[next];
-        next += 1;
-        if batch.program == BatchProgram::LayerBegin {
-          let layer = &walked.layers[batch.start];
-          let content = (layer.rect.width(), layer.rect.height());
-          // Nothing of it shows, or GL could make no storage for it (the pool
-          // warned): skip to its end marker, past the layers inside it.
-          let acquired = if layer.rect.is_empty() { None } else { self.layers.acquire(gl, bucket(content), samples) };
-          let Some(storage) = acquired else {
-            let mut depth = 1;
-            while depth > 0 {
-              match batches[next].program {
-                BatchProgram::LayerBegin => depth += 1,
-                BatchProgram::LayerEnd => depth -= 1,
-                _ => {}
+      // The steps in their order (`schedule`): the layers drawn ahead, each
+      // into its storage, then the target bound and cleared, then its pass.
+      let steps = schedule(batches, &walked.layers, DRAW_AHEAD);
+      // Each closed layer's image until its composite: the storage it
+      // samples (the layer's own, or its blur's last pass's) and the
+      // content's size in it. Indexed by layer.
+      let mut images: Vec<Option<(LayerTarget, (i32, i32))>> = vec![None; walked.layers.len()];
+      // The layer whose storage could not be taken (the pool warned): its
+      // steps up to its close are skipped, and the images of the layers
+      // drawn ahead inside it are released unused.
+      let mut skipping: Option<usize> = None;
+      // Whether a layer was drawn ahead, so the target's pass starts after a
+      // flush (see `Step::Target`).
+      let mut drew_ahead = false;
+      // Whether the bound framebuffer is not the frame on top of `frames`:
+      // a close (its finish and blur passes) and a destination copy's
+      // scratch leave it dirty, and a composite binds its frame again.
+      let mut dirty = false;
+      for &step in &steps {
+        if let Some(skipped) = skipping {
+          match step {
+            Step::Close(end) if batches[end].start == skipped => skipping = None,
+            Step::Composite(end) => {
+              if let Some((image, _)) = images[batches[end].start].take() {
+                self.layers.release(&image);
               }
-              next += 1;
             }
+            _ => {}
+          }
+          continue;
+        }
+        let index = match step {
+          Step::Batch(index) => index,
+          Step::Target => {
+            // A driver workaround, not a GL rule: on the Adreno 610 a layer
+            // sampled with its passes still queued composited black, and a
+            // frame that left the multisampled window's framebuffer for a
+            // layer and came back presented a stale buffer two frames in
+            // three. The layers drawn ahead are flushed once, before the
+            // window's pass starts; an inline layer flushes at its close.
+            if drew_ahead {
+              gl.flush();
+            }
+            in_use = Some(self.set_frame(&root, (width, height), scissor));
+            clear_frame(gl, true);
+            dirty = false;
             continue;
-          };
-          open.push(storage);
-          debug_assert_eq!(storage.size, bucket(content));
-          let parent = *frames.last().expect("the target's frame is at the bottom of the stack");
-          let frame =
-            Frame { fbo: Some(storage.fbo), origin: (layer.rect.min.x, layer.rect.min.y), size: content, root: false };
-          frames.push(frame);
-          // A backdrop layer starts from the parent's pixels under its rect:
-          // resolved into the scratch at the parent's window coordinates, then
-          // drawn into the storage's bottom-left corner by the blur program as
-          // a one-tap copy (a blit cannot write a multisampled storage under
-          // GLES 3.0). Without a scratch (warned once) it starts transparent.
-          let mut filled = false;
-          if layer.backdrop {
+          }
+          Step::Open(begin) => {
+            let layer = &walked.layers[batches[begin].start];
+            let content = (layer.rect.width(), layer.rect.height());
+            // GL could make no storage for it (the pool warned): skip to its
+            // close.
+            let Some(storage) = self.layers.acquire(gl, bucket(content), samples) else {
+              skipping = Some(batches[begin].start);
+              continue;
+            };
+            open.push(storage);
+            debug_assert_eq!(storage.size, bucket(content));
+            let parent = *frames.last().expect("the target's frame is at the bottom of the stack");
+            let frame = Frame {
+              fbo: Some(storage.fbo),
+              origin: (layer.rect.min.x, layer.rect.min.y),
+              size: content,
+              root: false,
+            };
+            frames.push(frame);
+            // A backdrop layer starts from the parent's pixels under its rect:
+            // resolved into the scratch at the parent's window coordinates,
+            // then drawn into the storage's bottom-left corner by the blur
+            // program as a one-tap copy (a blit cannot write a multisampled
+            // storage under GLES 3.0). Without a scratch (warned once) it
+            // starts transparent. It is never drawn ahead (`schedule`), so
+            // its parent is the frame drawing now.
+            let mut filled = false;
+            if layer.backdrop {
+              if mesh_bound {
+                gl.bind_vertex_array(Some(self.vao));
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
+                mesh_bound = false;
+              }
+              let samplers = self.pass_samplers();
+              if let Some(scratch) = self.scratch.ensure(gl, (width, height)) {
+                resolve_region(gl, &parent, layer.rect, &scratch, scissor.is_some());
+                let (source_rect, target_rect) = fill_rects(&parent, layer.rect);
+                let pass = BlurPass {
+                  source: scratch.color,
+                  source_size: scratch.size,
+                  source_rect,
+                  target: storage.fbo,
+                  target_size: storage.size,
+                  target_rect,
+                  clamp: None,
+                  direction: [0.0, 0.0],
+                  weights: &[1.0],
+                };
+                blur_pass(gl, &self.blur, samplers, &pass);
+                gl.bind_sampler(TEXTURE_UNIT, None);
+                gl.bind_texture(glow::TEXTURE_2D, None);
+                filled = true;
+              }
+            }
+            // Unscissored (`set_frame`); the layer's stencil clips count up
+            // from 0 again. A filled backdrop keeps its color.
+            in_use = Some(self.set_frame(&frame, (width, height), scissor));
+            clear_frame(gl, !filled);
+            dirty = false;
+            continue;
+          }
+          Step::Close(end) => {
+            let storage = open.pop().expect("a layer's close follows its open");
+            let layer = &walked.layers[batches[end].start];
+            let content = (layer.rect.width(), layer.rect.height());
+            frames.pop();
+            self.layers.finish(gl, &storage, content);
+            let ahead = DRAW_AHEAD && draws_ahead(layer);
+            if ahead {
+              drew_ahead = true;
+            } else {
+              // The Adreno workaround of `Step::Target`, for a layer whose
+              // parent's pass resumes right after it.
+              gl.flush();
+            }
+            // The blur passes draw from the instance VAO.
             if mesh_bound {
               gl.bind_vertex_array(Some(self.vao));
               gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
               mesh_bound = false;
             }
-            let samplers = self.pass_samplers();
-            if let Some(scratch) = self.scratch.ensure(gl, (width, height)) {
-              resolve_region(gl, &parent, layer.rect, &scratch, scissor.is_some());
-              let (source_rect, target_rect) = fill_rects(&parent, layer.rect);
-              let pass = BlurPass {
-                source: scratch.color,
-                source_size: scratch.size,
-                source_rect,
-                target: storage.fbo,
-                target_size: storage.size,
-                target_rect,
-                clamp: None,
-                direction: [0.0, 0.0],
-                weights: &[1.0],
-              };
-              blur_pass(gl, &self.blur, samplers, &pass);
-              gl.bind_sampler(TEXTURE_UNIT, None);
-              gl.bind_texture(glow::TEXTURE_2D, None);
-              filled = true;
-            }
+            // The image the composite samples: the layer's storage, or the
+            // last blur pass's (every other storage released already). None
+            // when GL could make no storage for a pass (the pool warned): the
+            // layer does not draw.
+            images[batches[end].start] = match layer.blur {
+              Some(blur) => {
+                let samplers = self.pass_samplers();
+                let clamp = layer.clamp.map(|c| clamp_rect(layer.rect, c));
+                run_blur(gl, &mut self.layers, &self.blur, samplers, (storage, content), clamp, blur)
+              }
+              None => Some((storage, content)),
+            };
+            dirty = true;
+            continue;
           }
-          in_use = Some(self.set_frame(&frame, (width, height), scissor));
-          // Unscissored (`set_frame`), the color writes on and every stencil
-          // bit writable, as the clear of the target found them; the layer's
-          // stencil clips count up from 0 again. A filled backdrop keeps its
-          // color.
-          gl.clear_color(0.0, 0.0, 0.0, 0.0);
-          gl.stencil_mask(STENCIL_ALL_BITS);
-          gl.clear_stencil(0);
-          let color = if filled { 0 } else { glow::COLOR_BUFFER_BIT };
-          gl.clear(color | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
-          continue;
-        }
-        if batch.program == BatchProgram::LayerEnd {
-          let storage = open.pop().expect("a layer's end marker closes its begin marker");
-          let layer = &walked.layers[batch.start];
-          let content = (layer.rect.width(), layer.rect.height());
-          frames.pop();
-          self.layers.finish(gl, &storage, content);
-          // A driver workaround, not a GL rule: on the Adreno 610, drawing
-          // straight into its multisampled window, a frame that left the
-          // window's framebuffer for a layer and came back presented a
-          // stale buffer two frames in three, and a layer could composite
-          // black. Flushing the layer's passes before the parent's pass
-          // resumes stops both.
-          gl.flush();
-          // The blur passes and the composite draw from the instance VAO.
-          if mesh_bound {
-            gl.bind_vertex_array(Some(self.vao));
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
-            mesh_bound = false;
-          }
-          let linear = self.sampler(TextureSampling::Linear, TextureWrap::Clamp);
-          let nearest = self.sampler(TextureSampling::Nearest, TextureWrap::Clamp);
-          // The image the composite samples: the layer's storage, or the last
-          // blur pass's (every other storage released already). None when GL
-          // could make no storage for a pass (the pool warned): the layer does
-          // not draw.
-          let image = match layer.blur {
-            Some(blur) => {
-              let samplers = self.pass_samplers();
-              let clamp = layer.clamp.map(|c| clamp_rect(layer.rect, c));
-              run_blur(gl, &mut self.layers, &self.blur, samplers, (storage, content), clamp, blur)
+          Step::Composite(end) => {
+            let batch = &batches[end];
+            let layer = &walked.layers[batch.start];
+            let image = images[batch.start].take();
+            // The composite draws from the instance VAO.
+            if mesh_bound {
+              gl.bind_vertex_array(Some(self.vao));
+              gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
+              mesh_bound = false;
             }
-            None => Some((storage, content)),
-          };
-          let mode = shader_mode(layer.blend);
-          // A shader mode's destination: the resolve scratch, made or grown
-          // before the parent frame is bound again (it leaves the
-          // framebuffer binding dirty).
-          let backdrop =
-            if mode.is_some() && image.is_some() { self.scratch.ensure(gl, (width, height)) } else { None };
-          let parent = *frames.last().expect("the target's frame is at the bottom of the stack");
-          in_use = Some(self.set_frame(&parent, (width, height), scissor));
-          let Some((image, shown)) = image else { continue };
-          // GL could make no scratch (warned once): the layer does not draw.
-          if mode.is_some() && backdrop.is_none() {
+            let linear = self.sampler(TextureSampling::Linear, TextureWrap::Clamp);
+            let nearest = self.sampler(TextureSampling::Nearest, TextureWrap::Clamp);
+            let mode = shader_mode(layer.blend);
+            // A shader mode's destination: the resolve scratch, made or grown
+            // before the frame is bound again (it leaves the framebuffer
+            // binding dirty).
+            let backdrop =
+              if mode.is_some() && image.is_some() { self.scratch.ensure(gl, (width, height)) } else { None };
+            dirty |= mode.is_some();
+            let parent = *frames.last().expect("the target's frame is at the bottom of the stack");
+            if dirty {
+              in_use = Some(self.set_frame(&parent, (width, height), scissor));
+              dirty = false;
+            }
+            let Some((image, shown)) = image else { continue };
+            // GL could make no scratch (warned once): the layer does not draw.
+            if mode.is_some() && backdrop.is_none() {
+              self.layers.release(&image);
+              continue;
+            }
+            // The composite's rows were rescaled to this size before the upload.
+            debug_assert_eq!(image.size, bucket(shown));
+            if let Some(scratch) = &backdrop {
+              resolve_region(gl, &parent, layer.rect, scratch, scissor.is_some());
+            }
+            if batch.stencil == 0 {
+              gl.disable(glow::STENCIL_TEST);
+            } else {
+              gl.enable(glow::STENCIL_TEST);
+              gl.stencil_func(glow::EQUAL, batch.stencil as i32, STENCIL_ALL_BITS);
+              gl.stencil_op(glow::KEEP, glow::KEEP, glow::KEEP);
+            }
+            point_attributes(gl, layer_slots[batch.start].expect("a drawn layer has its composite's slot"));
+            // A shader mode draws with blending off; every other composite
+            // blends by the layer's fixed-function mode (source-over but for
+            // the implicit layer around a draw with a color matrix).
+            set_blend(gl, &mut blending, if mode.is_some() { BlendMode::SourceOver } else { layer.blend });
+            // The texel rows sample the storage 1:1, where nearest is exact,
+            // unless the blur halved the content: then bilinear, the upsample.
+            let downsampled = layer.blur.is_some_and(|b| blur_levels(b.sigma_x, b.sigma_y) > 0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(image.color));
+            gl.bind_sampler(TEXTURE_UNIT, Some(if downsampled { linear } else { nearest }));
+            let composite = mode.is_some() || layer.matrix.is_some() || layer.blur.is_some();
+            if composite {
+              let u = &self.composite_uniforms;
+              gl.use_program(Some(self.composite.program));
+              in_use = Some(self.composite.program);
+              gl.uniform_1_i32(Some(&u.blend), mode.unwrap_or(BLEND_SOURCE_OVER));
+              match &layer.matrix {
+                Some(m) => {
+                  let (columns, offset) = matrix_uniforms(m);
+                  gl.uniform_1_i32(Some(&u.has_matrix), 1);
+                  gl.uniform_matrix_4_f32_slice(Some(&u.matrix), false, &columns);
+                  gl.uniform_4_f32_slice(Some(&u.offset), &offset);
+                }
+                None => gl.uniform_1_i32(Some(&u.has_matrix), 0),
+              }
+              let [x0, y0, x1, y1] = texel_extent([0, 0, shown.0, shown.1], image.size);
+              gl.uniform_4_f32(Some(&u.extent), x0, y0, x1, y1);
+            } else if in_use != Some(self.shape.program) {
+              // A plain composite is a textured quad of the shape program,
+              // whose `uFrag` the frame's `set_frame` set.
+              gl.use_program(Some(self.shape.program));
+              in_use = Some(self.shape.program);
+            }
+            match (composite, &backdrop) {
+              (true, Some(scratch)) => {
+                gl.active_texture(glow::TEXTURE0 + BACKDROP_UNIT);
+                gl.bind_texture(glow::TEXTURE_2D, Some(scratch.color));
+                // texelFetch ignores the filter; bound for a defined state.
+                gl.bind_sampler(BACKDROP_UNIT, Some(nearest));
+                // The fragment writes the mode's result: no fixed-function
+                // blend on top of it.
+                gl.disable(glow::BLEND);
+                gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, 1);
+                gl.enable(glow::BLEND);
+                gl.bind_sampler(BACKDROP_UNIT, None);
+                gl.bind_texture(glow::TEXTURE_2D, None);
+                gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
+              }
+              // The composite program blending by the layer's mode, or the
+              // shape program.
+              _ => gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, 1),
+            }
+            // Unbound again: the next layer that takes the storage draws into
+            // it.
+            gl.bind_sampler(TEXTURE_UNIT, None);
+            gl.bind_texture(glow::TEXTURE_2D, None);
             self.layers.release(&image);
             continue;
           }
-          // The composite's rows were rescaled to this size before the upload.
-          debug_assert_eq!(image.size, bucket(shown));
-          if let Some(scratch) = &backdrop {
-            resolve_region(gl, &parent, layer.rect, scratch, scissor.is_some());
-          }
-          if batch.stencil == 0 {
-            gl.disable(glow::STENCIL_TEST);
-          } else {
-            gl.enable(glow::STENCIL_TEST);
-            gl.stencil_func(glow::EQUAL, batch.stencil as i32, STENCIL_ALL_BITS);
-            gl.stencil_op(glow::KEEP, glow::KEEP, glow::KEEP);
-          }
-          point_attributes(gl, layer_slots[batch.start].expect("a drawn layer has its composite's slot"));
-          // A shader mode draws with blending off; every other composite
-          // blends by the layer's fixed-function mode (source-over but for
-          // the implicit layer around a draw with a color matrix).
-          set_blend(gl, &mut blending, if mode.is_some() { BlendMode::SourceOver } else { layer.blend });
-          // The texel rows sample the storage 1:1, where nearest is exact,
-          // unless the blur halved the content: then bilinear, the upsample.
-          let downsampled = layer.blur.is_some_and(|b| blur_levels(b.sigma_x, b.sigma_y) > 0);
-          gl.bind_texture(glow::TEXTURE_2D, Some(image.color));
-          gl.bind_sampler(TEXTURE_UNIT, Some(if downsampled { linear } else { nearest }));
-          let composite = mode.is_some() || layer.matrix.is_some() || layer.blur.is_some();
-          if composite {
-            let u = &self.composite_uniforms;
-            gl.use_program(Some(self.composite.program));
-            in_use = Some(self.composite.program);
-            gl.uniform_1_i32(Some(&u.blend), mode.unwrap_or(BLEND_SOURCE_OVER));
-            match &layer.matrix {
-              Some(m) => {
-                let (columns, offset) = matrix_uniforms(m);
-                gl.uniform_1_i32(Some(&u.has_matrix), 1);
-                gl.uniform_matrix_4_f32_slice(Some(&u.matrix), false, &columns);
-                gl.uniform_4_f32_slice(Some(&u.offset), &offset);
-              }
-              None => gl.uniform_1_i32(Some(&u.has_matrix), 0),
-            }
-            let [x0, y0, x1, y1] = texel_extent([0, 0, shown.0, shown.1], image.size);
-            gl.uniform_4_f32(Some(&u.extent), x0, y0, x1, y1);
-          }
-          match (composite, &backdrop) {
-            (true, Some(scratch)) => {
-              gl.active_texture(glow::TEXTURE0 + BACKDROP_UNIT);
-              gl.bind_texture(glow::TEXTURE_2D, Some(scratch.color));
-              // texelFetch ignores the filter; bound for a defined state.
-              gl.bind_sampler(BACKDROP_UNIT, Some(nearest));
-              // The fragment writes the mode's result: no fixed-function
-              // blend on top of it.
-              gl.disable(glow::BLEND);
-              gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, 1);
-              gl.enable(glow::BLEND);
-              gl.bind_sampler(BACKDROP_UNIT, None);
-              gl.bind_texture(glow::TEXTURE_2D, None);
-              gl.active_texture(glow::TEXTURE0 + TEXTURE_UNIT);
-            }
-            // The composite program blending by the layer's mode, or the
-            // shape program `set_frame` left in use.
-            _ => gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, 1),
-          }
-          // Unbound again: the next layer that takes the storage draws into
-          // it.
-          gl.bind_sampler(TEXTURE_UNIT, None);
-          gl.bind_texture(glow::TEXTURE_2D, None);
-          self.layers.release(&image);
-          continue;
-        }
+        };
+        let batch = &batches[index];
         if batch.program == BatchProgram::Clip {
           let ((func, reference, op), cover) = clip_test(&walked.clip_draws[batch.start]);
           gl.enable(glow::STENCIL_TEST);
@@ -2633,6 +2711,7 @@ impl Executor {
         gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, batch.count as i32);
       }
       debug_assert!(frames.len() == 1 && open.is_empty(), "every layer closed: the target is bound again");
+      debug_assert!(images.iter().all(Option::is_none), "every closed layer composited or released");
       set_blend(gl, &mut blending, BlendMode::SourceOver);
       if ramped {
         gl.active_texture(glow::TEXTURE0 + RAMP_UNIT);

@@ -109,5 +109,12 @@ The stage's device step was close to closing on those numbers.
 - Chromium 280, Adreno drivers above 237: ReadPixels is broken with
   `EXT_multisampled_render_to_texture`. The backdrop capture and the
   control API's readbacks are the paths to check.
+- Ours, not a fault: NVIDIA RTX 3070 on NVIDIA's desktop driver. A
+  composite into the multisampled window blends one level differently
+  on partially covered pixels after a resolve read earlier in the same
+  pass than in a pass that was never interrupted. The data drawn is the
+  same; a pixel diff across a change of pass structure (anvil's layers
+  drawn ahead, stage 6 step 6b) shows it as a one-level difference on
+  rounded edges, which is this and not a bug.
 - Chromium 103, Adreno 420: draws are dropped after a framebuffer
   invalidation. Old, but anvil invalidates each layer's depth-stencil.

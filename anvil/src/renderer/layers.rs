@@ -21,11 +21,15 @@ use std::os::raw::c_void;
 /// layer sizes (a fade over a card that grows) share storage.
 pub const LAYER_BUCKET: i32 = 64;
 
-/// The most layer targets the pool keeps across draws: a retention cap, not a
-/// nesting limit. A layer of a new bucket takes the storage of the least
-/// recently used free target once the pool holds this many, and grows the
-/// pool past it when every target is in use (layers nested deeper); `begin`
-/// trims the free targets back down to it.
+/// The fewest layer targets the pool may keep across draws: a retention cap,
+/// not a limit on the layers a draw holds. The cap is this or the most
+/// targets the previous draw held at once, whichever is larger, since a
+/// draw holds every layer drawn ahead until its composite (`schedule`), and
+/// a scene of more than this many fading cards would otherwise delete and
+/// recreate storage every frame. A layer of a new bucket takes the storage
+/// of the least recently used free target once the pool holds the cap, and
+/// grows the pool past it when every target is in use; `begin` trims the
+/// free targets back down to it.
 pub const LAYER_POOL_MAX: usize = 16;
 
 /// The draws a free layer target outlives unused before the pool deletes
@@ -175,6 +179,10 @@ pub(super) struct LayerPool {
   invalidate: bool,
   /// The draws begun so far: the clock `last_used` reads.
   draw: u64,
+  /// The most targets in use at once during the current draw, and during
+  /// the previous one (the retention cap's floor besides LAYER_POOL_MAX).
+  peak: usize,
+  last_peak: usize,
   /// Latched on the first incomplete multisampled framebuffer: a driver may
   /// report a sample count yet reject the configuration, and one rejection
   /// means every later attempt fails too, so the pool stays single-sample
@@ -191,16 +199,21 @@ impl LayerPool {
       msrtt: MsrttFns::load(gl, proc_address),
       invalidate: supports_invalidate(gl),
       draw: 0,
+      peak: 0,
+      last_peak: 0,
       single_sample: false,
     }
   }
 
   /// The start of a draw: every target is free again, one unused for
   /// LAYER_IDLE_DRAWS draws is deleted, and the least recently used ones go
-  /// while the pool holds more than LAYER_POOL_MAX. No target is handed out
+  /// while the pool holds more than its cap (`cap`). No target is handed out
   /// between draws, so no index a draw holds moves.
   pub(super) unsafe fn begin(&mut self, gl: &glow::Context) {
     self.draw += 1;
+    self.last_peak = self.peak;
+    self.peak = 0;
+    let cap = self.cap();
     let draw = self.draw;
     self.entries.retain_mut(|entry| {
       entry.in_use = false;
@@ -210,17 +223,23 @@ impl LayerPool {
       }
       keep
     });
-    while self.entries.len() > LAYER_POOL_MAX {
+    while self.entries.len() > cap {
       let oldest = (0..self.entries.len()).min_by_key(|&i| self.entries[i].last_used).expect("the pool is not empty");
       self.entries.remove(oldest).delete(gl);
     }
   }
 
+  // The retention cap: LAYER_POOL_MAX, or the most targets the previous
+  // draw held at once when that is more.
+  fn cap(&self) -> usize {
+    LAYER_POOL_MAX.max(self.last_peak)
+  }
+
   /// A free target of storage `size` (a bucket's, `bucket`) at the target's
   /// `samples` (0 or 1 for single-sample), marked in use: a free one of that
   /// size and sample count, else a new one, in place of the least recently
-  /// used free one when the pool holds LAYER_POOL_MAX, past the cap when none
-  /// is free. A replacement takes the old one's slot, so no index a live
+  /// used free one when the pool holds its cap (`cap`), past the cap when
+  /// none is free. A replacement takes the old one's slot, so no index a live
   /// `LayerTarget` holds moves during a draw. None only when GL cannot make
   /// one (warned once): the caller skips the layer. Leaves the framebuffer
   /// binding dirty; the caller binds its frame.
@@ -245,7 +264,7 @@ impl LayerPool {
           }
           Err(_) => return self.unavailable(),
         };
-        let free = if self.entries.len() >= LAYER_POOL_MAX {
+        let free = if self.entries.len() >= self.cap() {
           self.entries.iter().enumerate().filter(|(_, e)| !e.in_use).min_by_key(|(_, e)| e.last_used).map(|(i, _)| i)
         } else {
           None
@@ -266,7 +285,10 @@ impl LayerPool {
     let entry = &mut self.entries[index];
     entry.in_use = true;
     entry.last_used = draw;
-    Some(entry.target(index))
+    let target = entry.target(index);
+    let held = self.entries.iter().filter(|e| e.in_use).count();
+    self.peak = self.peak.max(held);
+    Some(target)
   }
 
   // No target could be made: warned once, and the layer is skipped.

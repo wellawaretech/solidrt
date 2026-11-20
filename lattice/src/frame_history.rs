@@ -174,8 +174,10 @@ pub struct RasterRates {
   pub renderer_meshes_per_frame: f32,
   pub renderer_tessellated_per_frame: f32,
   /// The layers the renderer drew offscreen (a group fade, a backdrop, a
-  /// blend or a blur) and the blur passes it ran per presented frame.
+  /// blend or a blur), those of them drawn ahead of the frame they
+  /// composite into, and the blur passes it ran per presented frame.
   pub renderer_layers_per_frame: f32,
+  pub renderer_layers_ahead_per_frame: f32,
   pub renderer_blur_passes_per_frame: f32,
   pub cmd_ms_per_sec: f32,
   /// The window's wall time per presented frame (ms): the span between its
@@ -302,6 +304,7 @@ impl FrameHistory {
           renderer_meshes_per_frame: d(first.raster.renderer_meshes, last.raster.renderer_meshes) / n,
           renderer_tessellated_per_frame: d(first.raster.renderer_tessellated, last.raster.renderer_tessellated) / n,
           renderer_layers_per_frame: d(first.raster.renderer_layers, last.raster.renderer_layers) / n,
+          renderer_layers_ahead_per_frame: d(first.raster.renderer_layers_ahead, last.raster.renderer_layers_ahead) / n,
           renderer_blur_passes_per_frame: d(first.raster.renderer_blur_passes, last.raster.renderer_blur_passes) / n,
           cmd_ms_per_sec: d(first.raster.cmd_micros, last.raster.cmd_micros) / 1000.0 / span_s,
           present_ms: span_s * 1000.0 / n,

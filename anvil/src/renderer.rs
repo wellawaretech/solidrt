@@ -60,6 +60,7 @@ mod ops;
 mod path;
 pub mod ramps;
 mod record;
+pub(crate) mod schedule;
 pub mod walk;
 
 pub use record::{
@@ -163,9 +164,10 @@ impl contract::Renderer for Renderer {
 /// or a stencil clip draw; a layer's two markers are one call, its
 /// composite, and an empty layer's markers and what lies between them none),
 /// the path meshes it drew, how many meshes it tessellated, the stencil clip
-/// draws it made, the layers it drew offscreen and their blur passes, a
-/// backdrop's fill copy among them (`blur::blur_passes`). The walk decides all seven, so the tests read the
-/// report off a walk with no GL.
+/// draws it made, the layers it drew offscreen, those of them drawn ahead
+/// of the frame they composite into (`schedule`), and their blur passes, a
+/// backdrop's fill copy among them (`blur::blur_passes`). The walk decides
+/// all eight, so the tests read the report off a walk with no GL.
 pub(crate) fn report(walked: &walk::Walked) -> contract::DrawReport {
   contract::DrawReport {
     instances: walked.instances.len() as u32,
@@ -174,6 +176,8 @@ pub(crate) fn report(walked: &walk::Walked) -> contract::DrawReport {
     tessellated: walked.tessellated,
     clips: walked.clip_draws.len() as u32,
     layers: walked.layers.iter().filter(|l| !l.folded && !l.rect.is_empty()).count() as u32,
+    layers_ahead: walked.layers.iter().filter(|l| !l.folded && !l.rect.is_empty() && schedule::draws_ahead(l)).count()
+      as u32,
     blur_passes: walked
       .layers
       .iter()
