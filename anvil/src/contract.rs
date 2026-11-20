@@ -52,6 +52,10 @@ pub struct DrawReport {
   /// into the stencil, and the reset of a restore out of one. Each is a
   /// draw call too, counted in `draw_calls`.
   pub clips: u32,
+  /// The layers drawn offscreen (a group's opacity) and composited; a
+  /// layer whose alpha folded into its content is not one. Each composite
+  /// is a draw call too, counted in `draw_calls`.
+  pub layers: u32,
 }
 
 /// The drawing half, owned by the raster thread beside the GL context.

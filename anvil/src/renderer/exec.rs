@@ -22,9 +22,13 @@
 //! any batch samples them. A stencil clip (`walk::ClipDraw`) draws into
 //! the stencil with the color writes off, a rect's quad through the fill
 //! program and a rounded rect's or an oval's mesh through the solid mesh
-//! program, and every later batch tests the stencil at its depth. Raster
-//! thread only, with the context current.
+//! program, and every later batch tests the stencil at its depth. A layer
+//! (`walk::Layer`) draws its batches into a target of the layer pool
+//! (`super::layers`) under a shifted viewport (`Frame`), and its composite,
+//! a textured quad through the shape program, into the frame it opened on.
+//! Raster thread only, with the context current.
 
+use super::layers::{bucket, rescale_composite, LayerPool, LayerTarget};
 use super::mesh::{gpu_slot, GpuMesh, GpuSlot, Mesh};
 use super::ramps::{RampTable, RAMP_ROWS};
 use super::record::DisplayList;
@@ -303,13 +307,14 @@ void main() {
 // shape does. The parts split at line ends: concatenated they are the one
 // text they were.
 const FRAGMENT_INPUTS: &str = r"
-uniform vec2 uSize;       // the target in device pixels, the vertex stage's
+uniform vec2 uFrag;       // the frame's window-to-device offset (exec.rs Frame)
 // The fragment's device position, y down. At a pixel center it equals the
 // device position the vertex stage once interpolated, exactly: gl_FragCoord
 // is that center. It is right under perspective too, where a linearly
 // interpolated device position would not be (GLSL ES 3.00 has no
-// noperspective qualifier).
-vec2 device() { return vec2(gl_FragCoord.x, uSize.y - gl_FragCoord.y); }
+// noperspective qualifier). uFrag is (0, H) on the target and (ox, oy + Hl)
+// in a layer (exec.rs `Frame` derives it).
+vec2 device() { return vec2(gl_FragCoord.x + uFrag.x, uFrag.y - gl_FragCoord.y); }
 in vec2 vUv;
 flat in vec4 vColor;
 flat in vec4 vClip;
@@ -605,8 +610,8 @@ void main() {
 // GRADIENT_COMMON and GRADIENT_BATCH.
 const FILL_FRAGMENT: &str = r"
 #ifndef GRADIENT
-uniform vec2 uSize;
-vec2 device() { return vec2(gl_FragCoord.x, uSize.y - gl_FragCoord.y); }
+uniform vec2 uFrag;
+vec2 device() { return vec2(gl_FragCoord.x + uFrag.x, uFrag.y - gl_FragCoord.y); }
 flat in vec4 vColor;
 flat in vec4 vClip;
 out vec4 fragColor;
@@ -836,8 +841,8 @@ void main() {
 // GRADIENT_COMMON and GRADIENT_BATCH; the textured variant after SOURCE_HEADER,
 // TEXTURED_DEFINE and FRAGMENT_MATH.
 const MESH_FRAGMENT: &str = r"
-uniform vec2 uSize;       // the target in device pixels, the vertex stage's
-vec2 device() { return vec2(gl_FragCoord.x, uSize.y - gl_FragCoord.y); }
+uniform vec2 uFrag;       // the frame's window-to-device offset (exec.rs Frame)
+vec2 device() { return vec2(gl_FragCoord.x + uFrag.x, uFrag.y - gl_FragCoord.y); }
 uniform vec4 uColor;      // premultiplied
 uniform vec4 uClip;       // x0, y0, x1, y1 in device pixels
 uniform vec4 uRClip;      // the draw's rounded clip in device pixels: x0, y0, x1, y1
@@ -906,25 +911,27 @@ pub(crate) fn paint_fragment_source(src: &str) -> Result<String, String> {
 type UniformTable = HashMap<String, (glow::UniformLocation, UniformKind, usize)>;
 
 /// A linked paint shader program and what a draw sets on it, as reflected
-/// at link: `uSize`, `iResolution` when the source reads it, and every
+/// at link: `uSize`, `uFrag`, `iResolution` when the source reads it, and every
 /// active uniform by name (`uniforms`, for params and inputs; `infos`, the
 /// same as the contract's `PaintShader::uniforms` returns them).
 pub(super) struct PaintProgram {
   pub(super) program: glow::Program,
   size: glow::UniformLocation,
+  frag: glow::UniformLocation,
   resolution: Option<glow::UniformLocation>,
   uniforms: UniformTable,
   pub(super) infos: Vec<UniformInfo>,
 }
 
 impl PaintProgram {
-  /// `program` with no uniforms and a placeholder `uSize`, for a test
-  /// handle no GL ever draws.
+  /// `program` with no uniforms and a placeholder `uSize` and `uFrag`, for
+  /// a test handle no GL ever draws.
   #[cfg(any(test, feature = "oplog"))]
   pub(super) fn without_gl(program: glow::Program) -> PaintProgram {
     PaintProgram {
       program,
       size: glow::NativeUniformLocation(0),
+      frag: glow::NativeUniformLocation(0),
       resolution: None,
       uniforms: HashMap::new(),
       infos: Vec::new(),
@@ -986,9 +993,42 @@ pub(super) struct Executor {
   ramp: glow::Texture,
   /// Which gradient holds which row of `ramp`, kept across draws.
   ramps: RampTable,
+  /// The layer targets, kept across draws (`super::layers`).
+  layers: LayerPool,
 }
 
-/// A linked program, its `uSize` (the target in device pixels), on the
+/// Where a draw's batches currently render: the target, or a layer's
+/// storage, with the layer's device origin (ox, oy) and size (Wl, Hl); the
+/// target is the frame at the origin of the target's own size. Every frame
+/// draws with the target's clip-space mapping (`uSize` is the target's, so
+/// no vertex stage changes): device (x, y) is clip (2x / W - 1, 1 - 2y / H),
+/// W and H the target's. The viewport (-ox, Hl + oy - H, W, H) maps that
+/// clip point to window (x - ox, Hl + oy - y), so the layer's device rect
+/// lands at window [0, Wl] x [0, Hl], the storage's bottom-left corner,
+/// device y = oy at its top row; negative viewport origins and a viewport
+/// past the framebuffer are legal GL, and what falls outside the
+/// framebuffer is discarded. A fragment at window (fx, fy) is then device
+/// (fx + ox, oy + Hl - fy), which `device()` reads through `uFrag = (ox, oy
+/// + Hl)`: (0, H) on the target.
+#[derive(Clone, Copy)]
+struct Frame {
+  fbo: Option<glow::Framebuffer>,
+  origin: (i32, i32),
+  size: (i32, i32),
+  /// The target itself, which draws inside the walk's scissor; a layer
+  /// draws unscissored.
+  root: bool,
+}
+
+impl Frame {
+  /// `uFrag` in this frame.
+  fn frag(&self) -> [f32; 2] {
+    [self.origin.0 as f32, (self.origin.1 + self.size.1) as f32]
+  }
+}
+
+/// A linked program, its `uSize` (the target in device pixels), its
+/// `uFrag` (the frame's window-to-device offset, `Frame`), on the
 /// programs that sample a gradient its `uRampRows` (read by the vertex
 /// stage, which computes the ramp row's v), and on the programs
 /// that link GRADIENT_BATCH (the fill, rounded, shape and mesh gradient
@@ -996,6 +1036,7 @@ pub(super) struct Executor {
 struct Program {
   program: glow::Program,
   size: glow::UniformLocation,
+  frag: glow::UniformLocation,
   ramp_rows: Option<glow::UniformLocation>,
   grad_meta: Option<glow::UniformLocation>,
 }
@@ -1254,6 +1295,7 @@ impl Executor {
     gl.enable_vertex_attrib_array(ATTR_MESH_POS);
     gl.bind_vertex_array(None);
     let samplers = HashMap::new();
+    let layers = LayerPool::new(&gl, proc_address);
     Ok(Executor {
       gl,
       fill,
@@ -1273,6 +1315,7 @@ impl Executor {
       glyph_uniforms,
       ramp,
       ramps: RampTable::new(),
+      layers,
     })
   }
 
@@ -1311,9 +1354,9 @@ impl Executor {
           e
         }
       })?;
-      let size = match uniform(gl, program, "paint", "uSize") {
-        Ok(size) => size,
-        Err(e) => {
+      let (size, frag) = match (uniform(gl, program, "paint", "uSize"), uniform(gl, program, "paint", "uFrag")) {
+        (Ok(size), Ok(frag)) => (size, frag),
+        (Err(e), _) | (_, Err(e)) => {
           gl.delete_program(program);
           return Err(e);
         }
@@ -1321,7 +1364,7 @@ impl Executor {
       // Optional: the compiler drops it when the source never reads it.
       let resolution = gl.get_uniform_location(program, "iResolution");
       let (uniforms, infos) = reflect_uniforms(gl, program);
-      Ok(PaintProgram { program, size, resolution, uniforms, infos })
+      Ok(PaintProgram { program, size, frag, resolution, uniforms, infos })
     }
   }
 
@@ -1334,10 +1377,13 @@ impl Executor {
   /// uploads at its first draw, its buffers' names to go back to `queue`,
   /// the drawing renderer's. The stencil test is off on return, its write
   /// mask every bit. Reports the instances written, the draw calls issued,
-  /// the path meshes drawn and tessellated and the stencil clip draws
-  /// (`super::report`), zeros for an empty list; no draw call and no clip
-  /// draw for a list that emits only clips (every draw culled), whose
-  /// batches are never issued.
+  /// the path meshes drawn and tessellated, the stencil clip draws and the
+  /// layers (`super::report`), zeros for an empty list; no draw call and no
+  /// clip draw for a list that emits only clips (every draw culled), whose
+  /// batches are never issued. A layer's content draws into a target of the
+  /// layer pool (`super::layers`) between its two marker batches, its
+  /// composite into the frame it opened on; the target is bound again on
+  /// return.
   pub(super) fn draw(
     &mut self,
     target: Target,
@@ -1353,27 +1399,23 @@ impl Executor {
     // atlas has free rows, and its upload may then wait on the draw before,
     // which sampled it.
     unsafe { self.upload_ramps() };
+    unsafe { self.layers.begin(&self.gl) };
     let instances = &walked.instances;
     let (width, height) = (target.size.width as i32, target.size.height as i32);
+    // The scissor is the union of the instances' clips (walk.rs), so a
+    // patch frame pays GPU, and on a tiler tile loads and stores, only
+    // inside the patch. The clear is scissored too: every caller in
+    // gl/draw.rs cleared the full target before the draw, so the pixels
+    // outside are already clear. An empty list (no scissor) clears the
+    // full target, as the contract says a draw does.
+    let full = Box2D::new(Point2D::new(0, 0), Point2D::new(width, height));
+    let scissor = walked.scissor.filter(|s| *s != full);
+    let root = Frame { fbo: target.framebuffer, origin: (0, 0), size: (width, height), root: true };
     let gl = &self.gl;
     unsafe {
-      gl.bind_framebuffer(glow::FRAMEBUFFER, target.framebuffer);
-      gl.viewport(0, 0, width, height);
-      // The scissor is the union of the instances' clips (walk.rs), so a
-      // patch frame pays GPU, and on a tiler tile loads and stores, only
-      // inside the patch. The clear is scissored too: every caller in
-      // gl/draw.rs cleared the full target before the draw, so the pixels
-      // outside are already clear. An empty list (no scissor) clears the
-      // full target, as the contract says a draw does.
-      let full = Box2D::new(Point2D::new(0, 0), Point2D::new(width, height));
-      match walked.scissor.filter(|s| *s != full) {
-        Some(s) => {
-          gl.enable(glow::SCISSOR_TEST);
-          // GL scissor is in window coordinates, y up from the bottom.
-          gl.scissor(s.min.x, height - s.max.y, s.width(), s.height());
-        }
-        None => gl.disable(glow::SCISSOR_TEST),
-      }
+      // The target bound, its viewport, every program's `uFrag` and the
+      // scissor.
+      self.set_frame(&root, (width, height), scissor);
       gl.color_mask(true, true, true, true);
       gl.clear_color(0.0, 0.0, 0.0, 0.0);
       // The stencil clear honours the write mask, and the clips count up
@@ -1401,21 +1443,10 @@ impl Executor {
       // draw call and no clip draw: a list whose every draw was culled
       // leaves its clip batches undrawn.
       if instances.is_empty() && walked.mesh_draws.is_empty() {
+        gl.use_program(None);
         return Ok(DrawReport { draw_calls: 0, clips: 0, ..super::report(&walked) });
       }
-      let programs = [
-        &self.glyph,
-        &self.fill,
-        &self.fill_gradient,
-        &self.rounded,
-        &self.rounded_gradient,
-        &self.shape_gradient,
-        &self.mesh.program,
-        &self.mesh_gradient.program,
-        &self.mesh_textured.program,
-        &self.shape,
-      ];
-      for program in programs {
+      for program in self.programs() {
         gl.use_program(Some(program.program));
         gl.uniform_2_f32(Some(&program.size), width as f32, height as f32);
         if let Some(rows) = &program.ramp_rows {
@@ -1428,31 +1459,54 @@ impl Executor {
       gl.bind_vertex_array(Some(self.vao));
       gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
       // The stencil clips' quads ride in the one instance buffer after the
-      // walk's instances: `clip_slots` holds each clip draw's quad index,
-      // None for a mesh.
-      let mut clip_quads = Vec::new();
+      // walk's instances, and the drawn layers' composites after them:
+      // `clip_slots` holds each clip draw's quad index, None for a mesh, and
+      // `layer_slots` each layer's composite index, None for a folded or
+      // empty one. A composite's texel rows are rescaled here to the storage
+      // its layer draws into, a bucket's (`super::layers`).
+      let mut tail = Vec::new();
       let clip_slots: Vec<Option<usize>> = walked
         .clip_draws
         .iter()
         .map(|clip| {
           let (_, Cover::Quad(quad)) = clip_test(clip) else { return None };
-          clip_quads.push(*quad);
-          Some(instances.len() + clip_quads.len() - 1)
+          tail.push(*quad);
+          Some(instances.len() + tail.len() - 1)
         })
         .collect();
-      if clip_quads.is_empty() {
+      let layer_slots: Vec<Option<usize>> = walked
+        .layers
+        .iter()
+        .map(|layer| {
+          if layer.folded || layer.rect.is_empty() {
+            return None;
+          }
+          let content = (layer.rect.width(), layer.rect.height());
+          tail.push(rescale_composite(&layer.composite, content, bucket(content)));
+          Some(instances.len() + tail.len() - 1)
+        })
+        .collect();
+      if tail.is_empty() {
         if !instances.is_empty() {
           gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, instance_bytes(instances), glow::STREAM_DRAW);
         }
       } else {
         let stride = std::mem::size_of::<Instance>();
-        let total = (instances.len() + clip_quads.len()) * stride;
+        let total = (instances.len() + tail.len()) * stride;
         gl.buffer_data_size(glow::ARRAY_BUFFER, total as i32, glow::STREAM_DRAW);
         if !instances.is_empty() {
           gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, instance_bytes(instances));
         }
-        gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, (instances.len() * stride) as i32, instance_bytes(&clip_quads));
+        gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, (instances.len() * stride) as i32, instance_bytes(&tail));
       }
+      // The target's sample count, which a layer's storage takes: queried
+      // with the target bound, once, and only when a layer draws.
+      let samples = if layer_slots.iter().any(Option::is_some) { gl.get_parameter_i32(glow::SAMPLES) } else { 0 };
+      // The frames drawn into, the target at the bottom, and the layers
+      // open, innermost last: each one's storage (a skipped layer opens
+      // none).
+      let mut frames = vec![root];
+      let mut open: Vec<LayerTarget> = Vec::new();
       // Whether the mesh VAO is bound; the instance VAO is, with its
       // buffer on ARRAY_BUFFER, when it is not.
       let mut mesh_bound = false;
@@ -1474,7 +1528,77 @@ impl Executor {
       // A stencil clip batch writes the stencil only, through its own test
       // and op; every other batch tests at its depth (off at 0) and keeps
       // the stencil.
-      for batch in &walked.batches {
+      let batches = &walked.batches;
+      let mut next = 0;
+      while next < batches.len() {
+        let batch = &batches[next];
+        next += 1;
+        if batch.program == BatchProgram::LayerBegin {
+          let layer = &walked.layers[batch.start];
+          let content = (layer.rect.width(), layer.rect.height());
+          // Nothing of it shows, or GL could make no storage for it (the pool
+          // warned): skip to its end marker, past the layers inside it.
+          let acquired = if layer.rect.is_empty() { None } else { self.layers.acquire(gl, bucket(content), samples) };
+          let Some(storage) = acquired else {
+            let mut depth = 1;
+            while depth > 0 {
+              match batches[next].program {
+                BatchProgram::LayerBegin => depth += 1,
+                BatchProgram::LayerEnd => depth -= 1,
+                _ => {}
+              }
+              next += 1;
+            }
+            continue;
+          };
+          open.push(storage);
+          // The composite's rows were rescaled to this size before the upload.
+          debug_assert_eq!(storage.size, bucket(content));
+          let frame =
+            Frame { fbo: Some(storage.fbo), origin: (layer.rect.min.x, layer.rect.min.y), size: content, root: false };
+          frames.push(frame);
+          in_use = Some(self.set_frame(&frame, (width, height), scissor));
+          // Unscissored (`set_frame`), the color writes on and every stencil
+          // bit writable, as the clear of the target found them; the layer's
+          // stencil clips count up from 0 again.
+          gl.clear_color(0.0, 0.0, 0.0, 0.0);
+          gl.stencil_mask(STENCIL_ALL_BITS);
+          gl.clear_stencil(0);
+          gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+          continue;
+        }
+        if batch.program == BatchProgram::LayerEnd {
+          let storage = open.pop().expect("a layer's end marker closes its begin marker");
+          let layer = &walked.layers[batch.start];
+          frames.pop();
+          self.layers.finish(gl, &storage, (layer.rect.width(), layer.rect.height()));
+          let parent = *frames.last().expect("the target's frame is at the bottom of the stack");
+          in_use = Some(self.set_frame(&parent, (width, height), scissor));
+          if batch.stencil == 0 {
+            gl.disable(glow::STENCIL_TEST);
+          } else {
+            gl.enable(glow::STENCIL_TEST);
+            gl.stencil_func(glow::EQUAL, batch.stencil as i32, STENCIL_ALL_BITS);
+            gl.stencil_op(glow::KEEP, glow::KEEP, glow::KEEP);
+          }
+          if mesh_bound {
+            gl.bind_vertex_array(Some(self.vao));
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instances));
+            mesh_bound = false;
+          }
+          point_attributes(gl, layer_slots[batch.start].expect("a drawn layer has its composite's slot"));
+          // `set_frame` left the shape program in use; the texel rows sample
+          // the storage 1:1, so nearest is exact.
+          gl.bind_texture(glow::TEXTURE_2D, Some(storage.color));
+          gl.bind_sampler(TEXTURE_UNIT, Some(self.sampler(TextureSampling::Nearest, TextureWrap::Clamp)));
+          gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, 1);
+          // Unbound again: the next layer that takes the storage draws into
+          // it.
+          gl.bind_sampler(TEXTURE_UNIT, None);
+          gl.bind_texture(glow::TEXTURE_2D, None);
+          self.layers.release(&storage);
+          continue;
+        }
         if batch.program == BatchProgram::Clip {
           let ((func, reference, op), cover) = clip_test(&walked.clip_draws[batch.start]);
           gl.enable(glow::STENCIL_TEST);
@@ -1530,7 +1654,8 @@ impl Executor {
         }
         point_attributes(gl, batch.start);
         if let Some(paint) = &batch.paint {
-          self.draw_paint(paint, [width as f32, height as f32], batch.count);
+          let frame = frames.last().expect("the target's frame is at the bottom of the stack");
+          self.draw_paint(paint, [width as f32, height as f32], frame.frag(), batch.count);
           // The paint inputs may have taken the ramp's unit.
           if ramped {
             self.bind_ramp();
@@ -1549,6 +1674,7 @@ impl Executor {
           (BatchProgram::Paint, _) => unreachable!("a paint batch carries its draw (walk.rs Batch)"),
           (BatchProgram::Mesh, _) => unreachable!("a mesh batch draws above"),
           (BatchProgram::Clip, _) => unreachable!("a clip batch draws above"),
+          (BatchProgram::LayerBegin | BatchProgram::LayerEnd, _) => unreachable!("a layer marker draws above"),
         };
         if in_use != Some(program.program) {
           gl.use_program(Some(program.program));
@@ -1575,6 +1701,7 @@ impl Executor {
         }
         gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, batch.count as i32);
       }
+      debug_assert!(frames.len() == 1 && open.is_empty(), "every layer closed: the target is bound again");
       if ramped {
         gl.active_texture(glow::TEXTURE0 + RAMP_UNIT);
         gl.bind_sampler(RAMP_UNIT, None);
@@ -1605,19 +1732,66 @@ impl Executor {
     // gl/draw.rs restore their own.
     Ok(super::report(&walked))
   }
+
+  // Render into `frame` from here on: its framebuffer bound, the viewport
+  // that puts its device rect at its storage's bottom-left (`Frame`), every
+  // program's `uFrag`, and the scissor: the walk's `scissor` on the target
+  // (None: off), off in a layer. `target` is the target's size. Returns the
+  // program it leaves in use, the shape program.
+  unsafe fn set_frame(&self, frame: &Frame, target: (i32, i32), scissor: Option<Box2D<i32>>) -> glow::Program {
+    let gl = &self.gl;
+    let (w, h) = target;
+    let (ox, oy) = frame.origin;
+    gl.bind_framebuffer(glow::FRAMEBUFFER, frame.fbo);
+    gl.viewport(-ox, frame.size.1 + oy - h, w, h);
+    let [fx, fy] = frame.frag();
+    for program in self.programs() {
+      gl.use_program(Some(program.program));
+      gl.uniform_2_f32(Some(&program.frag), fx, fy);
+    }
+    match scissor.filter(|_| frame.root) {
+      Some(s) => {
+        gl.enable(glow::SCISSOR_TEST);
+        // GL scissor is in window coordinates, y up from the bottom.
+        gl.scissor(s.min.x, h - s.max.y, s.width(), s.height());
+      }
+      None => gl.disable(glow::SCISSOR_TEST),
+    }
+    self.shape.program
+  }
+
+  // The ten programs, the shape program last, so a loop over them leaves it
+  // in use.
+  fn programs(&self) -> [&Program; 10] {
+    [
+      &self.glyph,
+      &self.fill,
+      &self.fill_gradient,
+      &self.rounded,
+      &self.rounded_gradient,
+      &self.shape_gradient,
+      &self.mesh.program,
+      &self.mesh_gradient.program,
+      &self.mesh_textured.program,
+      &self.shape,
+    ]
+  }
 }
 
 impl Executor {
   // Create the sampler objects the batches of `walked` bind and this
   // executor does not have yet: (sampling, clamp) for a texture batch (a
   // textured mesh batch among them) and for the ramp a glyph or gradient
-  // batch samples, each input's own for a paint batch.
+  // batch samples, each input's own for a paint batch, and (nearest, clamp)
+  // for a layer's composite.
   unsafe fn create_samplers(&mut self, walked: &Walked) -> Result<(), String> {
     for batch in &walked.batches {
       let ramp = needs_ramp(batch).then_some((TextureSampling::Linear, TextureWrap::Clamp));
       let texture = batch.texture.map(|(_, sampling)| (sampling, TextureWrap::Clamp));
       let inputs = batch.paint.iter().flat_map(|p| p.inputs.iter()).map(|i| (i.sampling, i.wrap));
-      for key in ramp.into_iter().chain(texture).chain(inputs) {
+      let composite =
+        (batch.program == BatchProgram::LayerEnd).then_some((TextureSampling::Nearest, TextureWrap::Clamp));
+      for key in ramp.into_iter().chain(texture).chain(inputs).chain(composite) {
         if !self.samplers.contains_key(&key) {
           let sampler = create_sampler(&self.gl, key.0, key.1)?;
           self.samplers.insert(key, sampler);
@@ -1678,12 +1852,13 @@ impl Executor {
   }
 
   // A paint batch of `count` instances into a target of `size` device
-  // pixels: the shader's program in use, its params set by its uniform
-  // table, `uSize` and `iResolution` set after them (so a param of either
-  // name cannot displace them), its inputs bound on units 0.. in order, one
+  // pixels, in the frame whose `uFrag` is `frag`: the shader's program in
+  // use, its params set by its uniform table, `uSize`, `uFrag` and
+  // `iResolution` set after them (so a param of any of those names cannot
+  // displace them), its inputs bound on units 0.. in order, one
   // draw, and the units it used unbound again. TEXTURE_UNIT is the active
   // unit before and after, with nothing bound on it.
-  unsafe fn draw_paint(&self, paint: &PaintDraw, size: [f32; 2], count: usize) {
+  unsafe fn draw_paint(&self, paint: &PaintDraw, size: [f32; 2], frag: [f32; 2], count: usize) {
     let gl = &self.gl;
     let shader = paint.shader.linked();
     gl.use_program(Some(shader.program));
@@ -1693,6 +1868,7 @@ impl Executor {
       apply_param(gl, &param.name, location, *kind, *elements, &param.value);
     }
     gl.uniform_2_f32(Some(&shader.size), size[0], size[1]);
+    gl.uniform_2_f32(Some(&shader.frag), frag[0], frag[1]);
     if let Some(resolution) = &shader.resolution {
       gl.uniform_2_f32(Some(resolution), paint.resolution[0], paint.resolution[1]);
     }
@@ -2041,14 +2217,16 @@ unsafe fn apply_param(
 
 impl Program {
   // The program `label` from the concatenated `vertex` and `fragment`
-  // source parts, linked, with its `uSize`, when it samples a gradient its
-  // `uRampRows`, and when it reads a batch's gradient its `uGradMeta`.
+  // source parts, linked, with its `uSize` and `uFrag`, when it samples a
+  // gradient its `uRampRows`, and when it reads a batch's gradient its
+  // `uGradMeta`.
   unsafe fn link(gl: &glow::Context, label: &str, vertex: &[&str], fragment: &[&str]) -> Result<Program, String> {
     let program = link_program(gl, label, &vertex.concat(), &fragment.concat())?;
     let size = uniform(gl, program, label, "uSize")?;
+    let frag = uniform(gl, program, label, "uFrag")?;
     let ramp_rows = gl.get_uniform_location(program, "uRampRows");
     let grad_meta = gl.get_uniform_location(program, "uGradMeta");
-    Ok(Program { program, size, ramp_rows, grad_meta })
+    Ok(Program { program, size, frag, ramp_rows, grad_meta })
   }
 }
 

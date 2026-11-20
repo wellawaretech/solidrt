@@ -8,8 +8,11 @@
 //! a gradient's rows and ramp row put on its instances and mesh draws, and
 //! the clips the device box and the per-instance rounded clip cannot take
 //! turned into stencil clip draws (`ClipDraw`) with the stencil depth every
-//! batch tests against. No GL here, so the walk is unit-tested without a context
-//! (`tests/anvil.rs`, `tests/gradient.rs`, `tests/mesh.rs`).
+//! batch tests against, and a group's opacity (`save_layer`, a nested list
+//! below opacity 1) as a layer between two marker batches, or folded into
+//! its content's colors where that is exact (`close_layer`). No GL here, so
+//! the walk is unit-tested without a context (`tests/anvil.rs`,
+//! `tests/gradient.rs`, `tests/mesh.rs`, `tests/layers.rs`).
 
 use super::mesh::{scale_bucket, Mesh, MeshStyle};
 use super::ops::{Op, Premultiplied, Radii, Source};
@@ -165,6 +168,11 @@ pub const ROUNDED_SPLIT_AREA: f32 = 16_384.0;
 /// exactly 1.
 pub const ROUNDED_SPLIT_MARGIN: f32 = 1.0;
 
+/// The most instances a layer may hold and still fold its alpha into their
+/// colors (`close_layer`): the fold tests every pair of their device boxes
+/// for overlap, which is quadratic. Past it the layer draws offscreen.
+pub const FOLD_SCAN_LIMIT: usize = 64;
+
 /// The tile modes, as `Instance::persp`'s last float and a batch's or a
 /// mesh draw's `uGradMeta` carry them. The `const int TILE_*`
 /// declarations in exec.rs's GRADIENT_COMMON must match them.
@@ -198,6 +206,14 @@ pub enum BatchProgram {
   /// start, its quad through the fill program or its mesh through the
   /// solid mesh program, the color writes off.
   Clip,
+  /// A layer opens: the `Walked::layers` entry at the batch's start, count
+  /// 0. The batches up to the matching `LayerEnd` draw into the layer's own
+  /// target, their stencil depths counted from 0.
+  LayerBegin,
+  /// The layer at the batch's start closes: its composite draws into the
+  /// target the layer opened on, testing the stencil at the batch's
+  /// `stencil`. Count 0; `texture` None (the executor binds the layer's).
+  LayerEnd,
 }
 
 /// What the executor needs for a paint batch beside its one instance: the
@@ -412,10 +428,31 @@ pub enum ClipDraw {
   Restore { to: u8, area: Instance },
 }
 
+/// One layer of a walk: a group drawn offscreen and composited as one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Layer {
+  /// The layer's device rect, whole pixels, within the target. Empty when
+  /// the content drew nothing visible: the executor then skips to the end
+  /// marker.
+  pub rect: Box2D<i32>,
+  /// The composite: one textured `KIND_RECT` instance over `rect` (identity
+  /// map) whose texel rows sample the layer's texture 1:1 over a unit square
+  /// (v flipped, see `close_layer`), which the executor rescales to the
+  /// storage it draws the layer into; color [alpha; 4]; the clip and the
+  /// rounded clip of the state that opened the layer. Drawn through the
+  /// shape program at `stencil`.
+  pub composite: Instance,
+  /// The stencil depth the composite tests at: the opening state's.
+  pub stencil: u8,
+  /// The alpha was folded into the content's colors and no layer is drawn:
+  /// no marker batch refers to this entry.
+  pub folded: bool,
+}
+
 /// What a walk produces: the instances, the path mesh draws and the
 /// stencil clip draws in painter's order and the batches over them, back
 /// to back and covering every instance, every mesh draw and every clip
-/// draw.
+/// draw, and the layers the marker batches refer to.
 #[derive(Default)]
 pub struct Walked {
   pub instances: Vec<Instance>,
@@ -424,13 +461,16 @@ pub struct Walked {
   /// The stencil clip draws, each its own `Clip` batch.
   pub clip_draws: Vec<ClipDraw>,
   pub batches: Vec<Batch>,
+  /// The layers, in the order they opened, each referred to by a
+  /// `LayerBegin` and a `LayerEnd` batch unless it folded.
+  pub layers: Vec<Layer>,
   /// The path ops drawn: one mesh each.
   pub meshes: u32,
   /// The meshes tessellated by this walk: the path caches' misses, a clip
   /// shape's among them.
   pub tessellated: u32,
-  /// The union of the emitted instances' and meshes' device clip boxes,
-  /// rounded outward to whole pixels: nothing draws outside it, so the
+  /// The union of the emitted instances', meshes' and layer composites'
+  /// device clip boxes, rounded outward to whole pixels: nothing draws outside it, so the
   /// executor scissors its clear and its draws to it. None when nothing
   /// was emitted.
   pub scissor: Option<Box2D<i32>>,
@@ -743,6 +783,26 @@ struct State {
   target: Box2D<f32>,
 }
 
+/// One entry of the save stack: the state `Save` pushed, and when the save
+/// opened a layer, what its restore needs to close it.
+struct Saved {
+  state: State,
+  layer: Option<Open>,
+}
+
+/// An open layer: its `Walked::layers` index and alpha, its `LayerBegin`
+/// batch, and where its content starts in the instances, the mesh draws
+/// and the batches (a clip draw inside is a batch too, which blocks the
+/// fold, and bounds nothing).
+struct Open {
+  index: usize,
+  alpha: f32,
+  begin_batch: usize,
+  instances_from: usize,
+  meshes_from: usize,
+  batches_from: usize,
+}
+
 /// An axis-aligned rounded clip, in device pixels: its rect and its corner
 /// radii in CSS order, at least one of them non-zero.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -779,17 +839,22 @@ pub fn walk(list: &DisplayList, size: ISize, ramps: &mut RampTable) -> Walked {
   let mut stack = Vec::new();
   let mut out = Walked::default();
   walk_ops(list.executable(), &mut state, &mut stack, ramps, &mut out);
+  // A layer the list left open closes at its end.
+  unwind(&mut stack, 0, &mut state, &mut out);
   out.flush();
-  out.scissor = scissor(&out.instances, &out.mesh_draws);
+  out.scissor = scissor(&out.instances, &out.mesh_draws, &out.layers);
   out
 }
 
-// The union of `instances`' and the mesh draws' device clips, rounded
-// outward to whole pixels; None for neither. Every clip is already
-// intersected with the target and finite (see `walk`), so the union lies
-// inside the target.
-fn scissor(instances: &[Instance], mesh_draws: &[MeshDraw]) -> Option<Box2D<i32>> {
-  let clips = instances.iter().map(|i| &i.clip).chain(mesh_draws.iter().map(|d| &d.clip));
+// The union of `instances`', the mesh draws' and the drawn layers'
+// composite device clips, rounded outward to whole pixels; None for none.
+// A composite is not among the instances (it lives in its layer), and a
+// layer with an empty rect draws none. Every clip is already intersected
+// with the target and finite (see `walk`), so the union lies inside the
+// target.
+fn scissor(instances: &[Instance], mesh_draws: &[MeshDraw], layers: &[Layer]) -> Option<Box2D<i32>> {
+  let composites = layers.iter().filter(|l| !l.folded && !l.rect.is_empty()).map(|l| &l.composite.clip);
+  let clips = instances.iter().map(|i| &i.clip).chain(mesh_draws.iter().map(|d| &d.clip)).chain(composites);
   let union = clips.map(|c| Box2D::new(Point2D::new(c[0], c[1]), Point2D::new(c[2], c[3])));
   union.reduce(|a, b| a.union(&b)).map(|b| b.round_out().to_i32())
 }
@@ -797,16 +862,21 @@ fn scissor(instances: &[Instance], mesh_draws: &[MeshDraw]) -> Option<Box2D<i32>
 // One list's ops. A restore pops only what this list saved (a restore with
 // nothing saved does nothing, as `oplog::walk` treats it), so a nested
 // list with an extra restore cannot pop its parent's save.
-fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, ramps: &mut RampTable, out: &mut Walked) {
+fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<Saved>, ramps: &mut RampTable, out: &mut Walked) {
   let base = stack.len();
   for op in ops {
     match op {
-      Op::Save => stack.push(*state),
+      Op::Save => stack.push(Saved { state: *state, layer: None }),
+      Op::SaveLayer { alpha } => open_layer(*alpha, state, stack, out),
       Op::Restore => {
         if stack.len() > base {
-          if let Some(saved) = stack.pop() {
-            restore_stencil(state, &saved, out);
-            *state = saved;
+          let saved = stack.pop().expect("the stack holds more than this list's base");
+          match saved.layer {
+            Some(open) => close_layer(saved.state, open, state, out),
+            None => {
+              restore_stencil(state, &saved.state, out);
+              *state = saved.state;
+            }
           }
         }
       }
@@ -841,20 +911,227 @@ fn walk_ops(ops: &[Op], state: &mut State, stack: &mut Vec<State>, ramps: &mut R
         push_path(state, path, *style, *color, source.as_ref(), ramps, out)
       }
       Op::DrawList { list, opacity } => {
-        if *opacity < 1.0 {
-          unsupported!("draw_display_list below opacity 1", "the nested list draws at full opacity");
+        // A group faded to nothing draws nothing; NaN draws in full. (A
+        // `save_layer` at alpha 0 has no list to skip: `open_layer` culls
+        // its content through an empty clip box instead.)
+        if *opacity <= 0.0 {
+          continue;
+        }
+        // Below 1 the nested list is a layer, closed as its restore would.
+        let layered = *opacity < 1.0;
+        let saved = *state;
+        if layered {
+          open_layer(*opacity, state, stack, out);
         }
         // Whatever the nested list leaves on the stack or in the state
-        // ends with it, the stencil clips it left in effect among it.
+        // ends with it, the stencil clips it left in effect and the layers
+        // it left open among it.
         let depth = stack.len();
-        let saved = *state;
         walk_ops(list.executable(), state, stack, ramps, out);
-        stack.truncate(depth);
-        restore_stencil(state, &saved, out);
-        *state = saved;
+        unwind(stack, depth, state, out);
+        if layered {
+          let own = stack.pop().expect("the nested list's layer is on the stack");
+          let open = own.layer.expect("the entry the nested list's layer pushed opens a layer");
+          close_layer(own.state, open, state, out);
+        } else {
+          restore_stencil(state, &saved, out);
+          *state = saved;
+        }
       }
     }
   }
+}
+
+// Pop the save stack down to `base`, closing every layer an entry above it
+// opened (a plain entry needs nothing: the caller restores the state it
+// returns to, and a layer's close restores its opening state).
+fn unwind(stack: &mut Vec<Saved>, base: usize, state: &mut State, out: &mut Walked) {
+  while stack.len() > base {
+    let saved = stack.pop().expect("the stack holds more than the base");
+    if let Some(open) = saved.layer {
+      close_layer(saved.state, open, state, out);
+    }
+  }
+}
+
+// Open a layer at `alpha` over `state`: the state saved with the layer's
+// bookkeeping, a `LayerBegin` batch, a placeholder table entry (filled at
+// the close), and the inner state. The clip box stays: it cuts the content
+// and bounds the layer. The rounded clip and the stencil clips apply at the
+// composite, not inside (a group is clipped after its effect, as CSS
+// clips), so the layer's own stencil starts at zero. At alpha 0 (a group
+// faded to nothing, as a nested list at opacity 0 is skipped in `walk_ops`)
+// no layer opens: a plain save whose inner clip box is empty, so every draw
+// inside is culled, and the matching restore pops it as a plain save.
+fn open_layer(alpha: f32, state: &mut State, stack: &mut Vec<Saved>, out: &mut Walked) {
+  if alpha <= 0.0 {
+    stack.push(Saved { state: *state, layer: None });
+    state.clip = Box2D::zero();
+    return;
+  }
+  let index = out.layers.len();
+  out.open(Batch {
+    start: index,
+    count: 0,
+    program: BatchProgram::LayerBegin,
+    texture: None,
+    policy: None,
+    gradient: None,
+    paint: None,
+    stencil: 0,
+  });
+  let begin_batch = out.batches.len() - 1;
+  let zeroed = clip_quad(&Projective::from_matrix(&Matrix::identity()), &Rect::zero(), [0.0; 4]);
+  out.layers.push(Layer { rect: Box2D::zero(), composite: zeroed, stencil: 0, folded: false });
+  // `open` flushed the pending fills: the content's instances start here.
+  let open = Open {
+    index,
+    alpha,
+    begin_batch,
+    instances_from: out.instances.len(),
+    meshes_from: out.mesh_draws.len(),
+    batches_from: begin_batch + 1,
+  };
+  stack.push(Saved { state: *state, layer: Some(open) });
+  state.rounded = None;
+  state.depth = 0;
+  state.raised = None;
+}
+
+// Close the layer `open`, opened over `popped`, and restore `popped` into
+// `state`. No stencil reset: whatever the content left raised is in the
+// layer's own stencil, which is thrown away, and the target's was never
+// touched by the content. The layer's rect is its content's device boxes
+// (an instance's `device_box`, the clip box for one behind the eye; a mesh
+// draw's bounds under its map within its clip; a drawn inner layer's rect)
+// cut to the opening clip box, rounded out to whole pixels within the
+// target. Then either the alpha folds into the content (`fold_layer`) and no
+// layer draws, or the entry takes its rect and composite and a `LayerEnd`
+// batch closes it.
+fn close_layer(popped: State, open: Open, state: &mut State, out: &mut Walked) {
+  out.flush();
+  let clip = popped.clip;
+  let instance_boxes = out.boxes[open.instances_from..].iter().map(|b| b.unwrap_or(clip));
+  let mesh_boxes = out.mesh_draws[open.meshes_from..].iter().map(|d| {
+    let [x0, y0, x1, y1] = d.clip;
+    let bounds = d.map.bounds(&d.mesh.bounds.to_rect()).unwrap_or(clip);
+    bounds.intersection_unchecked(&Box2D::new(Point2D::new(x0, y0), Point2D::new(x1, y1)))
+  });
+  let inner = out.layers[open.index + 1..].iter().filter(|l| !l.folded && !l.rect.is_empty()).map(|l| l.rect.to_f32());
+  let union = instance_boxes.chain(mesh_boxes).chain(inner).filter(|b| !b.is_empty()).reduce(|a, b| a.union(&b));
+  let rect = union
+    .map(|u| u.intersection_unchecked(&clip).round_out().intersection_unchecked(&popped.target))
+    .filter(|r| !r.is_empty())
+    .map_or(Box2D::zero(), |r| r.to_i32());
+  if fold_layer(&popped, &open, out) {
+    *state = popped;
+    return;
+  }
+  let (ox, oy) = (rect.min.x as f32, rect.min.y as f32);
+  let (w, h) = (rect.width() as f32, rect.height() as f32);
+  // The one place the layer's orientation is decided. The layer is drawn
+  // with the target's clip-space mapping (device y down, logical (0, 0) at
+  // clip y = +1), so its top row, device y = oy, lands at GL window y = H,
+  // the LAST texel row, and texel row 0 is its bottom, as GL counts rows:
+  // u = (x - ox) / W, v = 1 - (y - oy) / H over the composite's device
+  // space (its local space under the identity map). An empty rect draws no
+  // composite; its rows stay zero.
+  let rows = if rect.is_empty() { [[0.0; 3]; 2] } else { [[1.0 / w, 0.0, -ox / w], [0.0, -1.0 / h, 1.0 + oy / h]] };
+  let quad = Quad {
+    rect: rect.to_f32().to_rect(),
+    kind: KIND_RECT + KIND_TEXTURED,
+    stroke: 0.0,
+    // The texel is premultiplied: the alpha in all four channels fades it.
+    color: [open.alpha; 4],
+    // The corner texels, (u, v) at the top-left and the bottom-right.
+    tex: [0.0, 1.0, 1.0, 0.0],
+    radii: [0.0; 4],
+    rows: texel_rows(rows),
+  };
+  let identity = Projective::from_matrix(&Matrix::identity());
+  let composite = instance_under(popped.rounded, &identity, box_array(&clip), quad);
+  out.layers[open.index] = Layer { rect, composite, stencil: popped.depth, folded: false };
+  out.open(Batch {
+    start: open.index,
+    count: 0,
+    program: BatchProgram::LayerEnd,
+    texture: None,
+    policy: None,
+    gradient: None,
+    paint: None,
+    stencil: popped.depth,
+  });
+  *state = popped;
+}
+
+// The alpha fold: when the layer `open` (opened over `popped`) holds only
+// quad batches (no mesh, paint or clip draw, no inner layer that did not
+// fold itself), at most FOLD_SCAN_LIMIT instances whose device boxes are
+// pairwise disjoint, under no rounded clip, its alpha multiplies into its
+// instances' colors (all four channels of a premultiplied one, the alpha
+// alone of a glyph's straight one), its batches take the opening stencil
+// depth (they were recorded at 0, with no clip draw inside), and its
+// `LayerBegin` batch goes; true when it folded. Exact: in painter's order,
+// draws over disjoint footprints are a sum of non-overlapping
+// premultiplied colors, and (sum) * alpha is the sum of (each * alpha). An
+// empty box draws nothing and meets nothing; a box behind the eye (None)
+// meets everything, so it folds only alone. False, changing nothing,
+// otherwise.
+fn fold_layer(popped: &State, open: &Open, out: &mut Walked) -> bool {
+  if popped.rounded.is_some() {
+    return false;
+  }
+  let quads = out.batches[open.batches_from..].iter().all(|b| {
+    matches!(b.program, BatchProgram::Fill | BatchProgram::Rounded | BatchProgram::Shape | BatchProgram::Glyph)
+  });
+  let boxes = &out.boxes[open.instances_from..];
+  if !quads || boxes.len() > FOLD_SCAN_LIMIT {
+    return false;
+  }
+  let meets = |a: &Option<Box2D<f32>>, b: &Option<Box2D<f32>>| match (a, b) {
+    (Some(a), Some(b)) => !a.is_empty() && !b.is_empty() && a.intersects(b),
+    (Some(a), None) | (None, Some(a)) => !a.is_empty(),
+    (None, None) => true,
+  };
+  for (i, a) in boxes.iter().enumerate() {
+    if boxes[i + 1..].iter().any(|b| meets(a, b)) {
+      return false;
+    }
+  }
+  let alpha = open.alpha;
+  for instance in &mut out.instances[open.instances_from..] {
+    if instance.offset_kind_stroke[2] == KIND_GLYPH {
+      instance.color[3] *= alpha;
+    } else {
+      instance.color = instance.color.map(|c| c * alpha);
+    }
+  }
+  for batch in &mut out.batches[open.batches_from..] {
+    batch.stencil = popped.depth;
+  }
+  // No index into the instances, meshes, clips or layers shifts; only the
+  // later batches' positions do, which nothing stores.
+  out.batches.remove(open.begin_batch);
+  // The content's first batch now follows the batch before the layer: one
+  // draw when both draw alike (the same program, gradient class, stencil,
+  // texture and policy; a quad batch's run is then adjacent to its own).
+  let at = open.begin_batch;
+  if at > 0 && at < out.batches.len() {
+    let (before, after) = out.batches.split_at_mut(at);
+    let (prev, first) = (&mut before[at - 1], &after[0]);
+    let alike = prev.program == first.program
+      && prev.gradient == first.gradient
+      && prev.stencil == first.stencil
+      && prev.texture == first.texture
+      && prev.policy == first.policy;
+    if alike {
+      debug_assert_eq!(prev.start + prev.count, first.start);
+      prev.count += first.count;
+      out.batches.remove(at);
+    }
+  }
+  out.layers[open.index].folded = true;
+  true
 }
 
 /// A map from a draw's local space to device pixels as the instance

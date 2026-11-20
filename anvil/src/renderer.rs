@@ -52,6 +52,7 @@ macro_rules! warn_once {
 }
 
 mod exec;
+mod layers;
 pub(crate) mod mesh;
 mod ops;
 mod path;
@@ -67,6 +68,11 @@ pub use record::{
 // the tests.
 #[cfg(test)]
 pub(crate) use exec::{paint_fragment_source, PAINT_FRAGMENT_EPILOGUE, SOURCE_HEADER};
+
+// The composite's texel rows rescaled to a layer's storage, a pure
+// function, for the tests.
+#[cfg(test)]
+pub(crate) use layers::rescale_composite;
 
 /// A GL name whose last handle dropped: a texture's, a paint shader's
 /// program, or a path mesh's vertex and index buffers.
@@ -135,17 +141,40 @@ impl contract::Renderer for Renderer {
 
 /// What drawing `walked` issues: every instance it wrote, one draw call per
 /// batch (`exec` draws each batch once, instanced quads, a mesh's elements
-/// or a stencil clip draw), the path meshes it drew, how many meshes it
-/// tessellated and the stencil clip draws it made. The walk decides all
-/// five, so the tests read the report off a walk with no GL.
+/// or a stencil clip draw; a layer's two markers are one call, its
+/// composite, and an empty layer's markers and what lies between them none),
+/// the path meshes it drew, how many meshes it tessellated, the stencil clip
+/// draws it made and the layers it drew offscreen. The walk decides all
+/// six, so the tests read the report off a walk with no GL.
 pub(crate) fn report(walked: &walk::Walked) -> contract::DrawReport {
   contract::DrawReport {
     instances: walked.instances.len() as u32,
-    draw_calls: walked.batches.len() as u32,
+    draw_calls: draw_calls(walked),
     meshes: walked.meshes,
     tessellated: walked.tessellated,
     clips: walked.clip_draws.len() as u32,
+    layers: walked.layers.iter().filter(|l| !l.folded && !l.rect.is_empty()).count() as u32,
   }
+}
+
+// The draw calls `walked`'s batches issue, as `exec` skips and draws them:
+// one per batch, none for a `LayerBegin` (its `LayerEnd` draws the
+// composite), and none from an empty layer's `LayerBegin` through its
+// `LayerEnd` (`skip` counts the empty layers open).
+fn draw_calls(walked: &walk::Walked) -> u32 {
+  use walk::BatchProgram::{LayerBegin, LayerEnd};
+  let mut calls = 0;
+  let mut skip = 0usize;
+  for batch in &walked.batches {
+    match batch.program {
+      LayerBegin if skip > 0 || walked.layers[batch.start].rect.is_empty() => skip += 1,
+      LayerEnd if skip > 0 => skip -= 1,
+      _ if skip > 0 => {}
+      LayerBegin => {}
+      _ => calls += 1,
+    }
+  }
+  calls
 }
 
 /// A GL texture the lists draw: the name and its size, shared by handle.

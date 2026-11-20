@@ -39,9 +39,11 @@
 //! and batched like the quads. Stage 5, step 2 draws every clip (rect,
 //! rounded rect and oval, intersect and difference, under any transform,
 //! nested), those the device box and the per-instance rounded clip cannot
-//! take through the stencil. What does not draw yet (layers, group
-//! opacity, filters, blend modes) warns once per process,
-//! naming itself and what happens instead.
+//! take through the stencil. Stage 6, step 2 draws a group's opacity (a
+//! `save_layer` paint's alpha, a nested list below opacity 1) as a layer
+//! drawn offscreen and composited, or folded into its content's colors where
+//! that is exact. What does not draw yet (backdrop layers, filters, blend
+//! modes) warns once per process, naming itself and what happens instead.
 //!
 //! With the `oplog` feature (alloy enables it for its tests only), and in
 //! this crate's own tests, the recording types also keep a plain-data log

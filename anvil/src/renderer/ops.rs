@@ -51,6 +51,12 @@ pub(super) enum Source {
 /// One executable op of a list, in recording order.
 pub(super) enum Op {
   Save,
+  /// A save whose content draws offscreen and composites as one, faded by
+  /// `alpha` (straight, 0..1): group opacity. The matching `Restore` closes
+  /// it (the walk knows what it pops).
+  SaveLayer {
+    alpha: f32,
+  },
   Restore,
   Translate {
     x: f32,

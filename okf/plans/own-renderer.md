@@ -602,7 +602,7 @@ of the target being drawn (one `GL_SAMPLES` query per draw), in tile
 memory through `EXT_multisampled_render_to_texture` where present (anvil
 loads the two entry points itself through the proc address it already
 receives, as alloy's rig does). A layer is drawn with the viewport
-shifted by the layer's origin and a `uOrigin` uniform added in
+shifted by the layer's origin and a `uFrag` uniform added in
 `device()`, so no instance, mesh map or clip is rewritten for it. The
 clips in effect at `save_layer` (the device box, the rounded clip, the
 stencil depth) apply at the composite quad, so the layer's own stencil
@@ -659,7 +659,7 @@ first step.
    blur or grade can return later as a bundled shader source in the GPU
    layer, not as a renderer filter.
 2. Layers with opacity: the markers and the layer table, the pool, the
-   viewport shift and `uOrigin`, the composite program with alpha,
+   viewport shift and `uFrag`, the composite program with alpha,
    `save_layer` and `draw_display_list` below 1, the alpha fold. The
    components' fades and the player's start screen work from here.
 3. Blend modes: the fifteen fixed-function modes as a batch key, the

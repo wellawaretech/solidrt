@@ -187,8 +187,8 @@ fn warn_non_miter_join(paint: &Paint) {
   }
 }
 
-// The arguments of the ops anvil does not draw yet (the layers) are read
-// only by the test log.
+// The arguments anvil does not draw (a layer's bounds, a backdrop layer's
+// paint and filter) are read only by the test log.
 #[cfg_attr(not(any(test, feature = "oplog")), allow(unused_variables))]
 impl contract::DisplayListBuilder for DisplayListBuilder {
   fn new(_cull: Option<&Rect>) -> Self {
@@ -217,9 +217,16 @@ impl contract::DisplayListBuilder for DisplayListBuilder {
   }
 
   fn save_layer(&mut self, bounds: &Rect, paint: Option<&Paint>) -> &mut Self {
-    unsupported!("save_layer", "the content draws without a layer, at full opacity and unfiltered");
-    // A plain save, so the matching restore still pops.
-    self.ops.push(Op::Save);
+    // The bounds are not read: the rendertree passes an infinite rect, and
+    // the walk bounds a layer by its content. A paint's filters were warned
+    // about when they were set; the layer draws unfiltered, at its alpha. A
+    // group with no effect (no paint, or alpha 1 and no filter) is no group:
+    // a plain save, so the matching restore still pops.
+    let layer = paint.filter(|p| p.color.alpha < 1.0 || p.color_filter.is_some() || p.image_filter.is_some());
+    match layer {
+      Some(p) => self.ops.push(Op::SaveLayer { alpha: p.color.alpha.clamp(0.0, 1.0) }),
+      None => self.ops.push(Op::Save),
+    }
     #[cfg(any(test, feature = "oplog"))]
     self.log.push(LogOp::SaveLayer { bounds: *bounds, paint: paint.map(|p| p.log) });
     self
