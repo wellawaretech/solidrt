@@ -79,19 +79,14 @@ pub struct View {
   // Corner radii [top-left, top-right, bottom-right, bottom-left] for the
   // clip applied when overflow is non-visible. None clips to a plain rect.
   pub clip_radius: Option<[f32; 4]>,
-  // Subtree filter (CSS `filter` through the renderer's filters):
-  // children composited together, then color-transformed and blurred as a
-  // whole. Like opacity it is applied at composite time - on the boundary
-  // paths' quad/layer paint, via a save_layer otherwise.
-  pub filter: Option<FilterState>,
   // Backdrop filter (CSS `backdrop-filter`): the pixels already painted
   // beneath the view's box, filtered in place before the view's content
   // draws (composite::emit_backdrop). Reads the CURRENT target, so inside
   // a snapshot boundary it sees only that boundary's offscreen content -
-  // the same containment blend modes have - and under a filtered ancestor
-  // its effect layer. A fading ancestor (opacity below 1) is no
-  // containment: the walk emits the panel's layer ahead of the fading
-  // group, at the group's opacity (composite::emit_backdrops_below).
+  // the same containment blend modes have. A fading ancestor (opacity
+  // below 1) is no containment: the walk emits the panel's layer ahead of
+  // the fading group, at the group's opacity
+  // (composite::emit_backdrops_below).
   pub backdrop_filter: Option<FilterState>,
   // Design-space size for the children: everything under the view - layout,
   // paint, hit testing - happens in this w x h coordinate space, which is
@@ -409,19 +404,7 @@ impl View {
     self.opacity = v.map(|v| v.clamp(0.0, 1.0));
     Damage::Compose
   }
-  // Same damage class as opacity, and for the same reason: boundary paths
-  // apply the current filter around their cached content at composite time,
-  // and a non-boundary View's baked save_layer lives in the enclosing
-  // boundary's recording, which Compose's parent-up invalidation clears.
-  pub fn set_filter(&mut self, v: Option<FilterState>) -> Damage {
-    self.filter = v;
-    Damage::Compose
-  }
-  // The declared filter, None when unset or all-default (nothing to apply).
-  pub(crate) fn active_filter(&self) -> Option<&FilterState> {
-    self.filter.as_ref().filter(|f| !f.is_empty())
-  }
-  // Compose, like filter: every path emits the backdrop layer at composite
+  // Compose, like opacity: every path emits the backdrop layer at composite
   // time (or bakes it into the enclosing boundary's recording, which the
   // parent-up invalidation clears).
   pub fn set_backdrop_filter(&mut self, v: Option<FilterState>) -> Damage {

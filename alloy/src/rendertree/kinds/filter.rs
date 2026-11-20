@@ -12,11 +12,12 @@ const LUM_R: f32 = 0.213;
 const LUM_G: f32 = 0.715;
 const LUM_B: f32 = 0.072;
 
-/// A subtree filter on a view (CSS `filter` semantics through the
-/// renderer's filters): the composited children, run through the set color
-/// operations (one fused color matrix) and then the blur. Field semantics
-/// match the CSS filter functions of the same names; `hue_rotate` is radians
-/// (this API's rotate convention), `blur` a CSS-style radius in logical px.
+/// A view's backdrop filter (CSS `backdrop-filter` semantics through the
+/// renderer's filters): the pixels beneath the view's box, run through the
+/// blur and the set color operations (one fused color matrix). Field
+/// semantics match the CSS filter functions of the same names; `hue_rotate`
+/// is radians (this API's rotate convention), `blur` a CSS-style radius in
+/// logical px.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FilterState {
   pub blur: Option<f32>,
@@ -72,22 +73,13 @@ impl FilterState {
     *self == FilterState::default()
   }
 
-  /// The blur as an image filter; None when unset or zero. Decal
-  /// tiling keeps the region's surroundings transparent, so a blurred panel
-  /// fades at its edge instead of smearing clamped border pixels.
-  pub fn to_image_filter(&self) -> Option<ImageFilter> {
-    let radius = self.blur.filter(|r| *r > 0.0)?;
-    let sigma = radius * BLUR_RADIUS_TO_SIGMA;
-    Some(ImageFilter::gaussian_blur(sigma, sigma, TileMode::Decal))
-  }
-
   /// All set color operations fused into one color filter; None when no
   /// color key is set.
   pub fn to_color_filter(&self) -> Option<ColorFilter> {
     self.color_matrix().map(|m| ColorFilter::matrix(&m))
   }
 
-  /// How far the blur can paint past the subtree's extent, per side.
+  /// How far the blur reaches past the filtered region, per side.
   pub fn blur_outset(&self) -> f32 {
     blur_reach(self.blur.unwrap_or(0.0))
   }
@@ -95,10 +87,10 @@ impl FilterState {
   /// The filter a backdrop layer runs the captured pixels through: the
   /// blur, or None when only color keys are set (the color transform rides
   /// the restore paint, composite::emit_backdrop, and the layer captures
-  /// unfiltered). Clamp tiling: the backdrop is a filled surface, so
-  /// unlike the subtree blur there is no transparent edge for Decal to
-  /// preserve, and Decal would darken the region's border where the kernel
-  /// reads outside the captured bounds.
+  /// unfiltered). Clamp tiling: the backdrop is a filled surface, so there
+  /// is no transparent edge for Decal to preserve, and Decal would darken
+  /// the region's border where the kernel reads outside the captured
+  /// bounds.
   pub fn to_backdrop_image_filter(&self) -> Option<ImageFilter> {
     let radius = self.blur.filter(|r| *r > 0.0)?;
     let sigma = radius * BLUR_RADIUS_TO_SIGMA;

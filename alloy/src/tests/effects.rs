@@ -43,12 +43,9 @@ fn shadow() -> ShadowState {
 }
 
 #[test]
-fn shadow_and_filter_report_their_damage_class() {
+fn shadow_reports_its_damage_class() {
   let mut r = Rectangle::default();
   assert_eq!(r.set_shadow(Some(shadow())), Damage::Paint);
-  let mut v = View::default();
-  // Compose, like opacity: boundary caches stay valid, composite re-applies.
-  assert_eq!(v.set_filter(Some(FilterState { blur: Some(4.0), ..Default::default() })), Damage::Compose);
 }
 
 #[test]
@@ -69,35 +66,6 @@ fn shadow_grows_the_paint_envelope() {
   // side, AA on top: (-7,3,134,134). The union spans both.
   let env = bounded(envelope(&tree, 2, &platform, Size::new(400.0, 300.0)));
   assert!(close(env, rect(-7.0, -1.0, 134.0, 138.0)), "{env:?}");
-}
-
-#[test]
-fn filter_blur_grows_the_subtree_envelope() {
-  let mut tree = RenderTree::new();
-  tree.create_node(1, View::default().with_layout());
-  let mut v = View::default();
-  v.set_filter(Some(FilterState { blur: Some(8.0), ..Default::default() }));
-  tree.create_node(2, v.with_layout());
-  tree.create_node(3, Rectangle::default().with_layout());
-  tree.insert_node(1, 2, None).expect("insert");
-  tree.insert_node(2, 3, None).expect("insert");
-  tree.root = Some(1);
-  place(&mut tree, 1, 0.0, 0.0, 400.0, 300.0);
-  place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
-  place(&mut tree, 3, 0.0, 0.0, 100.0, 100.0);
-  let platform = PlatformContext::new(Vec::new());
-
-  // Child + AA is (-1,-1,102,102); the blur softens outward by its reach
-  // (8 * 0.5 * 3 = 12) on every side.
-  let env = bounded(envelope(&tree, 2, &platform, Size::new(400.0, 300.0)));
-  assert!(close(env, rect(-13.0, -13.0, 126.0, 126.0)), "{env:?}");
-
-  // A color-only filter has no reach.
-  let ElementKind::View(v) = &mut tree.node_mut(2).kind else { panic!("view") };
-  v.set_filter(Some(FilterState { grayscale: Some(1.0), ..Default::default() }));
-  tree.node(2).envelope.clear();
-  let env = bounded(envelope(&tree, 2, &platform, Size::new(400.0, 300.0)));
-  assert!(close(env, rect(-1.0, -1.0, 102.0, 102.0)), "{env:?}");
 }
 
 #[test]

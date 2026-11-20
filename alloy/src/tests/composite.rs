@@ -211,8 +211,8 @@ fn baked_backdrop_widens_reuse_frame_damage() {
 // Glass under a fading group (okf/done/backdrop-under-group-opacity.md):
 // the panels' backdrop layers are emitted ahead of the group's opacity
 // layer - on the inline path and on a Recording boundary's replay alike -
-// and only then: an opaque group, a fade without glass, and a filtered
-// group (a backdrop root by design) pre-emit nothing.
+// and only then: an opaque group and a fade without glass pre-emit
+// nothing.
 #[test]
 fn glass_under_a_fading_group_is_prepainted() {
   let mut tree = split();
@@ -248,20 +248,9 @@ fn glass_under_a_fading_group_is_prepainted() {
   set_opacity(&mut tree, 2, None);
   assert_eq!(paint(&mut tree).backdrops_prepainted, 0);
 
-  // A filtered group is a backdrop root: its panels see its effect layer.
-  set_opacity(&mut tree, 2, Some(0.5));
-  tree.edit(2, |el| match &mut el.kind {
-    ElementKind::View(v) => v.set_filter(Some(FilterState { blur: Some(2.0), ..Default::default() })),
-    _ => unreachable!(),
-  });
-  assert_eq!(paint(&mut tree).backdrops_prepainted, 0);
-  tree.edit(2, |el| match &mut el.kind {
-    ElementKind::View(v) => v.set_filter(None),
-    _ => unreachable!(),
-  });
-
   // A fading Recording boundary: the replay applies the opacity as a group
   // too, so the pass runs on the recording frame and on every reuse frame.
+  set_opacity(&mut tree, 2, Some(0.5));
   tree.edit(2, |el| {
     el.repaint_boundary = BoundaryMode::Recording;
     Damage::None

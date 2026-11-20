@@ -390,55 +390,6 @@ fn content_rect_under_a_repaint_boundary_maps_through_it() {
   assert_eq!(content_damage(&mut tree, &inside(10, 10, 5, 5)), FrameDamage::Rect(rect(17.0, 17.0, 16.0, 16.0)));
 }
 
-// A sample blur radius for the holder's filter, in logical px: any radius
-// with a reach shows the spread.
-const HOLDER_BLUR_RADIUS: f32 = 4.0;
-
-// Blurs the holder by HOLDER_BLUR_RADIUS and repaints; returns the blur's
-// reach past the holder's box, per side.
-fn blur_holder(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::Context) -> f32 {
-  let filter = FilterState { blur: Some(HOLDER_BLUR_RADIUS), ..Default::default() };
-  holder_of(tree, |v| {
-    v.set_filter(Some(filter));
-  });
-  paint(tree, platform, alloy);
-  filter.blur_outset()
-}
-
-#[test]
-fn content_rect_under_a_blur_is_the_blurred_view() {
-  let (mut tree, platform, alloy) = shown_texture();
-  let reach = blur_holder(&mut tree, &platform, &alloy);
-  let damage = content_damage(&mut tree, &inside(10, 10, 5, 5));
-  // The blur spreads the mapped 17..33 by its reach on every side.
-  assert!(covers(damage, rect(17.0, 17.0, 16.0, 16.0).inflate(reach, reach), WINDOW), "{damage:?}");
-  // Only the holder's extent holds that reach, so the change damages the
-  // whole holder: its 200x100 box and the reach past it.
-  assert!(covers(damage, rect(0.0, 0.0, 200.0 + reach, 100.0 + reach), WINDOW), "{damage:?}");
-}
-
-#[test]
-fn full_content_change_under_a_blur_reaches_past_the_node() {
-  let (mut tree, platform, alloy) = shown_texture();
-  let reach = blur_holder(&mut tree, &platform, &alloy);
-  // The texture's own extent stops at its 200x100 box; the blur paints the
-  // reach past it.
-  let damage = content_damage(&mut tree, &all_of());
-  assert!(covers(damage, rect(0.0, 0.0, 200.0 + reach, 100.0 + reach), WINDOW), "{damage:?}");
-}
-
-#[test]
-fn content_rect_under_a_color_filter_keeps_the_rect() {
-  let (mut tree, platform, alloy) = shown_texture();
-  // Full grayscale: each pixel maps onto itself, nothing spreads.
-  holder_of(&mut tree, |v| {
-    v.set_filter(Some(FilterState { grayscale: Some(1.0), ..Default::default() }));
-  });
-  paint(&mut tree, &platform, &alloy);
-  // The same rectangle as with no filter (content_rect_maps_through_the_fill).
-  assert_eq!(content_damage(&mut tree, &inside(10, 10, 5, 5)), FrameDamage::Rect(rect(17.0, 17.0, 16.0, 16.0)));
-}
-
 #[test]
 fn content_rect_before_any_walk_is_the_node() {
   let (mut tree, platform, alloy) = shown_texture();
@@ -597,31 +548,14 @@ fn content_rect_under_nested_recordings_follows_both_moves() {
   assert_eq!(content_damage(&mut tree, &inside(10, 10, 5, 5)), FrameDamage::Rect(rect(147.0, 137.0, 16.0, 16.0)));
 }
 
-// A blur for the nested case's views, with a reach.
-fn blur(tree: &mut RenderTree, id: u64) {
-  view_of(tree, id, |v| {
-    v.set_filter(Some(FilterState { blur: Some(HOLDER_BLUR_RADIUS), ..Default::default() }));
-  });
-}
-
 #[test]
-fn content_rect_under_a_snapshot_or_a_blur_on_a_recording_chain_is_the_outermost_node() {
-  // Each chain, outer node over inner node over the texture, and which of
-  // the two blurs. A snapshot is resampled at composite and a blur spreads
-  // the change, inside a recording or outside it: the outer node is the
-  // outermost on every chain, damaged whole.
-  let chains = [
-    (BoundaryMode::Snapshot, BoundaryMode::Recording, None),
-    (BoundaryMode::Recording, BoundaryMode::Snapshot, None),
-    (BoundaryMode::None, BoundaryMode::Recording, Some(2)),
-    (BoundaryMode::Recording, BoundaryMode::None, Some(4)),
-  ];
-  for (n, (outer, inner, blurred)) in chains.into_iter().enumerate() {
-    let (mut tree, platform, alloy) = nested_texture(outer, inner);
-    if let Some(id) = blurred {
-      blur(&mut tree, id);
-      paint(&mut tree, &platform, &alloy);
-    }
+fn content_rect_under_a_snapshot_on_a_recording_chain_is_the_outermost_node() {
+  // Each chain, outer node over inner node over the texture. A snapshot is
+  // resampled at composite, inside a recording or outside it: the outer
+  // node is the outermost on every chain, damaged whole.
+  let chains = [(BoundaryMode::Snapshot, BoundaryMode::Recording), (BoundaryMode::Recording, BoundaryMode::Snapshot)];
+  for (n, (outer, inner)) in chains.into_iter().enumerate() {
+    let (mut tree, _platform, _alloy) = nested_texture(outer, inner);
     tree.texture_content_changed(&inside(10, 10, 5, 5));
     // The outer node's whole 200x100 box, not the 16x16 rectangle, and
     // not the whole window either.

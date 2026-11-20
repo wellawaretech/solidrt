@@ -664,7 +664,7 @@ pub(super) fn decode_shadow(value: &PropValue, allow_spread: bool) -> Result<Opt
 }
 
 // { blur?, grayscale?, sepia?, saturate?, hueRotate?, brightness?,
-// contrast?, invert? } subtree filter on a view: CSS filter-function
+// contrast?, invert? } backdrop filter on a view: CSS filter-function
 // semantics with hueRotate in radians (this API's angle convention). Null,
 // or an object with nothing set, clears.
 pub(super) fn decode_filter(value: &PropValue) -> Result<Option<FilterState>, String> {

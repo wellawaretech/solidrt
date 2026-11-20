@@ -17,9 +17,9 @@ use crate::renderer::{
 
 use crate::rendertree::composite::{
   apply_clip, apply_scroll, effect_paint, emit_backdrop, record_node, service_captures_under_cache, snapped_own,
-  view_filter, view_opacity, CLIP_INF,
+  view_opacity,
 };
-use crate::rendertree::{grid, text, BuildContext, Element, ElementKind, FilterState, RenderTree, Vector};
+use crate::rendertree::{grid, text, BuildContext, Element, ElementKind, RenderTree, Vector};
 
 /// The narrowest side a snapshot raster made on an unrounded grid takes,
 /// in texels of its density: a positive side below one texel is one,
@@ -502,13 +502,12 @@ fn budgeted(
 }
 
 /// How a snapshot boundary's result is composited at its place in the tree:
-/// the hoisted transform, the backdrop layer, and the effect-carrying quad
+/// the hoisted transform, the backdrop layer, and the opacity-carrying quad
 /// (or the inline fallback), built once per visit so every cache state -
 /// reused, re-rendered, freshly rasterized, failed - draws through the same
-/// code. Group opacity and the view filter ride on the quad paint (white
-/// keeps the texture's colors, the alpha fades it, the filters transform the
-/// draw), so the texture itself stays effect-free and survives opacity and
-/// filter writes.
+/// code. Group opacity rides on the quad paint (white keeps the texture's
+/// colors, the alpha fades it), so the texture itself stays opacity-free and
+/// survives opacity writes.
 struct BoundaryComposite<'e> {
   element: &'e Element,
   /// The View's own box transform, hoisted out of the raster
@@ -525,7 +524,6 @@ struct BoundaryComposite<'e> {
   dst: Rect,
   quad_paint: Option<Paint>,
   opacity: f32,
-  filter: Option<&'e FilterState>,
   scale: f32,
   /// This frame's box over the key's, per axis: what the composite
   /// stretches the key's content box by to land it on this frame's box.
@@ -542,8 +540,7 @@ impl<'e> BoundaryComposite<'e> {
     key: &SnapshotKey,
   ) -> Self {
     let opacity = view_opacity(element);
-    let filter = view_filter(element);
-    let quad_paint = (opacity < 1.0 || filter.is_some()).then(|| effect_paint(1.0, opacity, filter));
+    let quad_paint = (opacity < 1.0).then(|| effect_paint(1.0, opacity));
     // The content occupies the top-left canvas*scale pixels of the
     // (ceil-padded) texture, the key's canvas; mapping exactly that region
     // onto the logical-size quad keeps the composite pixel-exact under the
@@ -573,7 +570,7 @@ impl<'e> BoundaryComposite<'e> {
       Point::new(offset.0 - margin.0, offset.1 - margin.1),
       Size::new(painted.width + 2.0 * margin.0, painted.height + 2.0 * margin.1),
     );
-    Self { element, own, frame, src, dst, quad_paint, opacity, filter, scale: key.scale, stretch }
+    Self { element, own, frame, src, dst, quad_paint, opacity, scale: key.scale, stretch }
   }
 
   // The shared prologue/epilogue of every composite leg: the hoisted matrix,
@@ -612,7 +609,7 @@ impl<'e> BoundaryComposite<'e> {
       b.save();
       b.translate(self.dst.origin.x, self.dst.origin.y);
       b.scale(self.stretch.0 / self.scale, self.stretch.1 / self.scale);
-      draw_dl_with_effects(b, dl, self.opacity, self.filter);
+      draw_dl_faded(b, dl, self.opacity);
       b.restore();
     });
   }
@@ -642,27 +639,11 @@ pub(super) fn painted_box(element: &Element, frame: Size) -> (f32, f32, (f32, f3
   }
 }
 
-// Replays a recorded display list under the view's composite-time effects: a
-// filter needs a save_layer carrying it (draw_display_list has only an
-// opacity argument), plain opacity stays on the cheap path.
-fn draw_dl_with_effects(
-  builder: &mut DisplayListBuilder,
-  dl: &DisplayList,
-  opacity: f32,
-  filter: Option<&FilterState>,
-) {
-  if filter.is_some() {
-    let paint = effect_paint(0.0, opacity, filter);
-    let bounds = Rect::new(Point::new(-CLIP_INF, -CLIP_INF), Size::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
-    crate::rendertree::counters::note_save_layer();
-    builder.save_layer(&bounds, Some(&paint));
-    crate::rendertree::counters::note_draw();
-    builder.draw_display_list(dl, 1.0);
-    builder.restore();
-  } else {
-    crate::rendertree::counters::note_draw();
-    builder.draw_display_list(dl, opacity);
-  }
+// Replays a recorded display list under the view's composite-time group
+// opacity (draw_display_list's opacity argument).
+fn draw_dl_faded(builder: &mut DisplayListBuilder, dl: &DisplayList, opacity: f32) {
+  crate::rendertree::counters::note_draw();
+  builder.draw_display_list(dl, opacity);
 }
 
 // Composites a Recording boundary's cached content. A View boundary's cache
@@ -679,7 +660,6 @@ pub(super) fn draw_cached_recording(
   size: Size,
 ) {
   let opacity = view_opacity(element);
-  let filter = view_filter(element);
   if let Some((m, scroll)) = hoisted {
     builder.save();
     builder.transform(&m);
@@ -688,10 +668,10 @@ pub(super) fn draw_cached_recording(
     // emission order.
     emit_backdrop(builder, element, size, 1.0);
     apply_scroll(builder, scroll);
-    draw_dl_with_effects(builder, dl, opacity, filter);
+    draw_dl_faded(builder, dl, opacity);
     builder.restore();
   } else {
-    draw_dl_with_effects(builder, dl, opacity, filter);
+    draw_dl_faded(builder, dl, opacity);
   }
 }
 

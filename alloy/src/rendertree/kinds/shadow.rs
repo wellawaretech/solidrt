@@ -11,7 +11,7 @@ pub const BLUR_RADIUS_TO_SIGMA: f32 = 0.5;
 pub const BLUR_EXTENT_SIGMAS: f32 = 3.0;
 
 /// How far a blur with the given CSS-style radius can paint past its
-/// geometry's edge. Shared by shadows and view filters.
+/// geometry's edge. Shared by shadows and backdrop filters.
 pub fn blur_reach(radius: f32) -> f32 {
   radius.max(0.0) * BLUR_RADIUS_TO_SIGMA * BLUR_EXTENT_SIGMAS
 }

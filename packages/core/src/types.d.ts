@@ -210,17 +210,15 @@ export interface ShadowProps {
 }
 
 /**
- * A subtree filter (the CSS filter functions, object form): the view's
- * children are composited together, run through the set color operations -
- * fused into one color matrix, applied in the fixed order grayscale, sepia,
- * saturate, hueRotate, brightness, contrast, invert - and then blurred.
- * `blur` is a CSS-style radius in logical px; `hueRotate` is radians (this
- * API's angle convention); the rest are the CSS amounts (1 = unchanged for
- * saturate/brightness/contrast, 0 = unchanged for the others; grayscale,
- * sepia and invert saturate at 1). There is no `opacity` key - the view's
- * own `opacity` prop is the same compositing layer. Like opacity, a filter
- * on a non-boundary view costs a save_layer; on a repaintBoundary view it
- * rides the composite for free. Hit testing is unaffected.
+ * The filter amounts of a view's `backdropFilter` (the CSS filter
+ * functions, object form): the pixels beneath the view are blurred, then
+ * run through the set color operations - fused into one color matrix,
+ * applied in the fixed order grayscale, sepia, saturate, hueRotate,
+ * brightness, contrast, invert. `blur` is a CSS-style radius in logical
+ * px; `hueRotate` is radians (this API's angle convention); the rest are
+ * the CSS amounts (1 = unchanged for saturate/brightness/contrast, 0 =
+ * unchanged for the others; grayscale, sepia and invert saturate at 1).
+ * There is no `opacity` key. Hit testing is unaffected.
  */
 export interface FilterProps {
   blur?: number
@@ -929,8 +927,8 @@ export interface ViewOwnProps extends TransformProps, InputProps {
    * in that frame, so freezing many at once over content that was live costs
    * one hitch. From then on the picture is held: a write inside repaints
    * nothing and damages nothing, and the held texture is shown at any scale
-   * and any box, stretched, never rasterized again. Its own transform,
-   * opacity and filter, its own shader and its backdrop stay live, and a
+   * and any box, stretched, never rasterized again. Its own transform and
+   * opacity, its own shader and its backdrop stay live, and a
    * change of its box (a relayout, a `layout` transition) stretches the
    * picture to the new box. A shader write that needs other storage (an
    * outset change, `previous` toggled, a shader first declared on the frozen
@@ -978,26 +976,26 @@ export interface ViewOwnProps extends TransformProps, InputProps {
    * unrotated, opaque content.
    */
   shader?: ViewShaderProps | null
-  filter?: FilterProps
   /**
    * Filters the pixels already painted BENEATH the view's box, in place,
    * before the view's own content draws - frosted glass over live content
-   * (CSS `backdrop-filter`). Same keys and semantics as `filter`. The
-   * region is the layout box; give the view an overflow clip with
-   * `clipRadius` for rounded glass. Costs an offscreen capture of the
-   * pixels beneath at that point in the frame, so treat it as a deliberate
-   * panel, not a casual style. Inside a `repaintBoundary="snapshot"`
-   * subtree it sees only that boundary's own offscreen content, never what
-   * is behind the boundary (the same containment `blendMode` has there),
-   * and under an ancestor with a `filter` it sees that ancestor's
-   * composited layer. An ancestor's `opacity` is not a containment: the
-   * glass keeps its blur through the fade (the runtime re-filters the
-   * window ahead of the fading group at the group's opacity), so a panel
-   * entering with `from: { opacity: 0 }` frosts in as it appears. That
-   * re-filter is an approximation: the group's sharp pixels then draw over
-   * the blurred ones at its opacity, so mid-fade the glass reads partly
-   * sharp, most at a low opacity; exact group blending would need the
-   * capture inside the group's layer, which the renderer cannot do.
+   * (CSS `backdrop-filter`). The keys are the CSS filter functions
+   * (`FilterProps`): blur, grayscale, sepia, saturate, hueRotate (radians),
+   * brightness, contrast, invert. The region is the layout box; give the
+   * view an overflow clip with `clipRadius` for rounded glass. Costs an
+   * offscreen capture of the pixels beneath at that point in the frame, so
+   * treat it as a deliberate panel, not a casual style. Inside a
+   * `repaintBoundary="snapshot"` subtree it sees only that boundary's own
+   * offscreen content, never what is behind the boundary (the same
+   * containment `blendMode` has there). An ancestor's `opacity` is not a
+   * containment: the glass keeps its blur through the fade (the runtime
+   * re-filters the window ahead of the fading group at the group's
+   * opacity), so a panel entering with `from: { opacity: 0 }` frosts in as
+   * it appears. That re-filter is an approximation: the group's sharp
+   * pixels then draw over the blurred ones at its opacity, so mid-fade the
+   * glass reads partly sharp, most at a low opacity; exact group blending
+   * would need the capture inside the group's layer, which the renderer
+   * cannot do.
    */
   backdropFilter?: FilterProps
 }

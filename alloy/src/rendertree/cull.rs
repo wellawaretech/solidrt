@@ -222,11 +222,11 @@ impl EnvelopeCache {
 /// below `node_id`, the node itself excluded: the gate for
 /// composite::emit_backdrops_below, so a fading subtree without glass costs
 /// nothing extra. Hidden subtrees are not looked into, nor are backdrop
-/// roots (a snapshot boundary, a filtered view): their panels never read the
-/// window, so there is nothing to emit for them. Cached on the element and
-/// cleared by every paint invalidation that reaches it - an insert, a
-/// removal, a backdrop or filter write anywhere below all walk up through
-/// invalidate_paint - so a change recomputes only the ancestor chain.
+/// roots (a snapshot boundary): their panels never read the window, so
+/// there is nothing to emit for them. Cached on the element and cleared by
+/// every paint invalidation that reaches it - an insert, a removal, a
+/// backdrop write anywhere below all walk up through invalidate_paint - so
+/// a change recomputes only the ancestor chain.
 pub fn backdrop_below(scene: &RenderTree, node_id: u64) -> bool {
   let element = scene.node(node_id);
   if let Some(below) = element.envelope.backdrop_below.get() {
@@ -245,12 +245,11 @@ pub fn backdrop_below(scene: &RenderTree, node_id: u64) -> bool {
 }
 
 /// A node whose subtree's backdrop panels read an offscreen of its own
-/// rather than the window: a snapshot boundary (its raster) or a filtered
-/// view (its effect layer). Its own backdrop is still live - emitted before
-/// the raster or the layer - so a root is looked at, never into.
+/// rather than the window: a snapshot boundary (its raster). Its own
+/// backdrop is still live - emitted before the raster - so a root is looked
+/// at, never into.
 pub(crate) fn is_backdrop_root(element: &Element) -> bool {
-  let filtered = matches!(&element.kind, ElementKind::View(v) if v.active_filter().is_some());
-  filtered || element.repaint_boundary == BoundaryMode::Snapshot
+  element.repaint_boundary == BoundaryMode::Snapshot
 }
 
 // The frame a node's detached children inherit, given the node's own box
@@ -383,21 +382,6 @@ fn compute_envelope(scene: &RenderTree, element: &Element, platform: &PlatformCo
       Extent::Unbounded => Extent::Bounded(clip),
       Extent::Bounded(r) => r.intersection(&clip).map(Extent::Bounded).unwrap_or(Extent::Empty),
     };
-  }
-
-  // A view filter's blur paints past the subtree it filters; grow the
-  // extent by its reach. After the clip cut (the blur samples the clipped
-  // composite and softens outward from it), before the own matrix (the
-  // filter is applied under the view's transform).
-  if let ElementKind::View(v) = &element.kind {
-    if let Some(f) = v.active_filter() {
-      let reach = f.blur_outset();
-      if reach > 0.0 {
-        if let Extent::Bounded(r) = extent {
-          extent = Extent::Bounded(r.inflate(reach, reach));
-        }
-      }
-    }
   }
 
   // Into the slot frame through the node's own matrix (Views only).

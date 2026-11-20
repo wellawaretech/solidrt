@@ -56,19 +56,21 @@ no matter how complex the effect, which is why the performance model
   readable text over any fill.
 - gradient background -> a gradient `color` on a `<rect detached>`
   (gradients are paint values, usable anywhere a color is)
-- `filter: blur/grayscale/hue-rotate/...` -> the `filter` prop on a view
-  (object form: `filter={{ blur: 4, grayscale: 1 }}`; hueRotate in radians).
-  For processing beyond the CSS filter functions, a `shader` on the view
-  (requires repaintBoundary="snapshot"), or on `<window>` for the whole frame
+- `filter: blur/grayscale/hue-rotate/...` -> there is no subtree filter
+  prop. To process a subtree's own pixels, put a `shader` on the view
+  (requires repaintBoundary="snapshot"), or on `<window>` for the whole
+  frame. A blur of what is behind a view is `backdropFilter` (below)
 - `box-shadow` -> the `shadow` prop on the shape that IS the surface:
   `<rect radius={12} color="white" shadow={{ y: 4, blur: 16, color:
   "#0006" }}/>` (also on oval and path; fields are CSS box-shadow's, color
   required). `text-shadow` / glow -> still no prop: draw an offset detached
   shape under the content, or a view shader with `outset` (the transparent
   margin an effect bleeds into)
-- `backdrop-filter` -> the `backdropFilter` prop on a view (same keys as
-  `filter`): frosted glass with real see-through semantics. It reads the
-  pixels already painted beneath, so it costs an offscreen capture - a
+- `backdrop-filter` -> the `backdropFilter` prop on a view (object form,
+  keys blur, grayscale, sepia, saturate, hueRotate in radians, brightness,
+  contrast, invert: `backdropFilter={{ blur: 16, saturate: 1.4 }}`):
+  frosted glass with real see-through semantics. It reads the pixels
+  already painted beneath, so it costs an offscreen capture - a
   deliberate panel, not a casual style - and inside a
   repaintBoundary="snapshot" subtree it sees only that boundary's own
   content. A view `shader` cannot do this at all (it sees only its own

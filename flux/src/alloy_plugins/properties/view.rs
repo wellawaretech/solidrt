@@ -50,7 +50,6 @@ pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Result<Option<Da
       view.set_design_size(Some((w, h)))
     }
     "shader" => view.set_shader(decode_shader(value)?),
-    "filter" => view.set_filter(decode_filter(value)?),
     "backdropFilter" => view.set_backdrop_filter(decode_filter(value)?),
     _ => return Ok(None),
   }))

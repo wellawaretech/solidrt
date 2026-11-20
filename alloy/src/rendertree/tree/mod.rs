@@ -1066,9 +1066,8 @@ impl RenderTree {
   /// Recording boundaries alone the same holds where the node shows now,
   /// composed up the boundaries' frames (`content_reach`), and a full change
   /// damages the node's drawn box there, not the boundary. Under a snapshot
-  /// boundary, or under a view whose filter blurs, or where a map on the
-  /// way is not known, the node is the outermost boundary or blurring view
-  /// above it, damaged whole (`content_reach` says why).
+  /// boundary, or where a map on the way is not known, the node is the
+  /// outermost boundary above it, damaged whole (`content_reach` says why).
   ///
   /// Baked pixels, the one consumer that goes stale. Two reference shapes,
   /// two costs: a texture element under a snapshot boundary is IN the bake
@@ -1186,11 +1185,10 @@ impl RenderTree {
   //
   // The node whose extent stands for the texture's pixels in a damage
   // resolve is the outermost node on it or above it that is a repaint
-  // boundary or a view whose filter blurs (`blurs_subtree`); the node
-  // itself under none. That extent is current: the outermost boundary's
-  // own is written by its parent's loop on every walk, where a replayed
-  // recording is not walked and the extents under it are those of the
-  // walk that recorded it.
+  // boundary; the node itself under none. That extent is current: the
+  // outermost boundary's own is written by its parent's loop on every
+  // walk, where a replayed recording is not walked and the extents under
+  // it are those of the walk that recorded it.
   //
   // Where the texture shows now, when that is known: the box frame's map
   // to the window. Under no boundary, the one the last walk built it with
@@ -1204,9 +1202,7 @@ impl RenderTree {
   // another (a capture's walk built the node outside the recording that
   // replays, a boundary came or went) breaks the chain, and the outermost
   // node is damaged whole. So does a snapshot boundary on the way (its
-  // raster is resampled, maybe shaded, at composite) and a blur (it
-  // spreads each changed pixel of its subtree by its reach, and only the
-  // filtered view's own extent is grown by it, cull::envelope).
+  // raster is resampled, maybe shaded, at composite).
   //
   // Baked is the nearest snapshot boundary's word: boundary MODE, not cache
   // presence (a declared boundary that has not baked yet has nothing
@@ -1225,8 +1221,7 @@ impl RenderTree {
     let shown = texture.shown.get();
     let mut reach = ContentReach { node: node_id, baked: false, placed: None, bounded: false, frozen: false };
     let mut snapshot_seen = false;
-    // A snapshot or a blur on the way, or a broken chain: the map is not
-    // known.
+    // A snapshot on the way, or a broken chain: the map is not known.
     let mut lost = shown.is_none();
     // The chain so far: the box frame's map to the frame of `within`, the
     // boundary the walk must meet next, and to the window once it is None.
@@ -1236,8 +1231,7 @@ impl RenderTree {
     let mut current = Some(node_id);
     while let Some(id) = current {
       let Some(element) = self.try_node(id) else { break };
-      let blurs = blurs_subtree(element);
-      if !matches!(element.repaint_boundary, BoundaryMode::None) || blurs {
+      if !matches!(element.repaint_boundary, BoundaryMode::None) {
         reach.node = id;
       }
       reach.frozen |= element.frozen();
@@ -1269,7 +1263,6 @@ impl RenderTree {
           }
         }
       }
-      lost |= blurs;
       current = element.parent;
     }
     if !lost && within.is_none() {
@@ -1356,11 +1349,4 @@ struct ContentReach {
   placed: Option<(Shown, euclid::default::Transform2D<f32>)>,
   bounded: bool,
   frozen: bool,
-}
-
-// Whether a view's filter paints past the subtree it filters: a blur with
-// a reach. The color operations map each pixel onto itself, so a filter
-// of only those keeps every changed pixel where it was.
-fn blurs_subtree(element: &Element) -> bool {
-  matches!(&element.kind, ElementKind::View(v) if v.active_filter().is_some_and(|f| f.blur_outset() > 0.0))
 }

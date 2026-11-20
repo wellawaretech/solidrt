@@ -1135,28 +1135,19 @@ fn shadow_decodes_and_validates() {
 }
 
 #[test]
-fn filter_decodes_and_validates() {
-  let good = map(&[("blur", num(4.0)), ("grayscale", num(1.0)), ("hueRotate", num(-0.5))]);
-  assert_eq!(apply("view", "filter", good), Ok(Damage::Compose));
-  assert_eq!(apply("view", "filter", PropValue::Null), Ok(Damage::Compose));
-  // Amounts cannot be negative; hueRotate is an angle and can (tested above).
-  let err = apply("view", "filter", map(&[("saturate", num(-1.0))])).unwrap_err();
-  assert!(err.contains("saturate"), "{err}");
-  let err = apply("view", "filter", map(&[("sharpen", num(1.0))])).unwrap_err();
-  assert!(err.contains("'sharpen'"), "{err}");
-  // Filters are view-level (subtree semantics), not per-shape.
-  let err = apply("rect", "filter", map(&[("blur", num(4.0))])).unwrap_err();
-  assert!(err.starts_with("Unknown property"), "{err}");
-}
-
-#[test]
-fn backdrop_filter_decodes_like_filter() {
-  let good = map(&[("blur", num(8.0)), ("saturate", num(1.4))]);
+fn backdrop_filter_decodes_and_validates() {
+  let good = map(&[("blur", num(8.0)), ("saturate", num(1.4)), ("hueRotate", num(-0.5))]);
   assert_eq!(apply("view", "backdropFilter", good), Ok(Damage::Compose));
   assert_eq!(apply("view", "backdropFilter", PropValue::Null), Ok(Damage::Compose));
+  // Amounts cannot be negative; hueRotate is an angle and can.
+  let err = apply("view", "backdropFilter", map(&[("saturate", num(-1.0))])).unwrap_err();
+  assert!(err.contains("saturate"), "{err}");
   let err = apply("view", "backdropFilter", map(&[("sharpen", num(1.0))])).unwrap_err();
   assert!(err.contains("'sharpen'"), "{err}");
   let err = apply("rect", "backdropFilter", map(&[("blur", num(4.0))])).unwrap_err();
+  assert!(err.starts_with("Unknown property"), "{err}");
+  // There is no subtree filter: a view's `filter` is not a property.
+  let err = apply("view", "filter", map(&[("blur", num(4.0))])).unwrap_err();
   assert!(err.starts_with("Unknown property"), "{err}");
 }
 

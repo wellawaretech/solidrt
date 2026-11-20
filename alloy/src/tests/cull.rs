@@ -299,8 +299,8 @@ fn glass(tree: &mut RenderTree, id: u64, on: bool) {
 
 // backdrop_below answers for the subtree below a node, never the node
 // itself, follows every write through the paint invalidation walk, and does
-// not look into hidden subtrees or backdrop roots (a filtered view, a
-// snapshot boundary), whose panels never read the window.
+// not look into hidden subtrees or backdrop roots (a snapshot boundary),
+// whose panels never read the window.
 #[test]
 fn backdrop_below_tracks_glass_in_the_subtree() {
   // 1 > 2 > 3 > 4
@@ -319,33 +319,23 @@ fn backdrop_below_tracks_glass_in_the_subtree() {
   assert!(backdrop_below(&tree, 3));
   assert!(!backdrop_below(&tree, 4), "the node itself does not count");
 
-  // A filtered view between them is a backdrop root: 1 no longer sees the
-  // panel through it, 2 (above the root's subtree) sees nothing either,
+  // A snapshot boundary between them is a backdrop root: 1 no longer sees
+  // the panel through it, 2 (above the root's subtree) sees nothing either,
   // while the root's own descendant answer is unchanged.
-  tree.edit(3, |el| match &mut el.kind {
-    ElementKind::View(v) => v.set_filter(Some(FilterState { blur: Some(2.0), ..Default::default() })),
-    _ => unreachable!(),
-  });
-  assert!(!backdrop_below(&tree, 1));
-  assert!(!backdrop_below(&tree, 2));
-  assert!(backdrop_below(&tree, 3));
-  tree.edit(3, |el| match &mut el.kind {
-    ElementKind::View(v) => v.set_filter(None),
-    _ => unreachable!(),
-  });
-  assert!(backdrop_below(&tree, 1));
-
-  // A snapshot boundary the same; a hidden subtree paints nothing.
   tree.edit(3, |el| {
     el.repaint_boundary = BoundaryMode::Snapshot;
     Damage::Compose
   });
   assert!(!backdrop_below(&tree, 1));
+  assert!(!backdrop_below(&tree, 2));
+  assert!(backdrop_below(&tree, 3));
   tree.edit(3, |el| {
     el.repaint_boundary = BoundaryMode::None;
     Damage::Compose
   });
   assert!(backdrop_below(&tree, 1));
+
+  // A hidden subtree paints nothing.
   tree.node_mut(3).style_mut().expect("laid out").display = taffy::style::Display::None;
   tree.edit(3, |_| Damage::Paint);
   assert!(!backdrop_below(&tree, 1));

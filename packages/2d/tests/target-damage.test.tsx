@@ -397,8 +397,6 @@ for (let kind of ["sprites", "records"] as const) {
 const MINIFIED = 0.25
 // How far the repaint boundary moves after its first frame, logical px.
 const BOUNDARY_MOVE = 40
-// A blur radius for the blurring view, logical px: any with a reach.
-const BLUR = 3
 // The share of the node's area a write's window damage stays under where
 // the rectangles map to the window (the patch is a few sprite boxes).
 const PATCH_SHARE = 0.05
@@ -428,7 +426,7 @@ const SPRITE_RIGHT = COLUMN * STEP + STEP / 2 + NUDGE + SPRITE / 2
 const SPRITE_BOTTOM = ROW * STEP + STEP / 2 + SPRITE / 2
 
 // What a checked frame's window damage must be: a few sprite boxes, the
-// whole node (a blur spreads the change, full dirt wins), the frosted
+// whole node (full dirt wins), the frosted
 // panel at least (a change under it re-filters it), or only some of the
 // window (the node is cut by the window's edge).
 type Bound = "rects" | "node" | "panel" | "some"
@@ -437,10 +435,9 @@ type Bound = "rects" | "node" | "panel" | "some"
 // inside its bound).
 type WindowStep = { act: (s: WindowScene) => void; check?: Bound }
 // How the scene wraps the node: bare, in a repaint boundary (a
-// recording) the steps can move, in a view with a blur filter, under a
-// frosted panel (a backdrop blur), or bare at the window's bottom-right
-// corner.
-type Wrap = "bare" | "boundary" | "blur" | "backdrop" | "corner"
+// recording) the steps can move, under a frosted panel (a backdrop blur),
+// or bare at the window's bottom-right corner.
+type Wrap = "bare" | "boundary" | "backdrop" | "corner"
 // `only` runs the case along one patch route alone.
 type WindowCase = { name: string; scale: number; wrap: Wrap; steps: WindowStep[]; only?: Patch }
 type WindowScene = { view: ViewHandle; sprite: Sprite; move: (by: number) => void }
@@ -459,7 +456,6 @@ const WINDOW_CASES: WindowCase[] = [
   { name: "minified", scale: MINIFIED, wrap: "bare", steps: [nudged, restored] },
   // The move replays the recording; the writes after it land where it moved.
   { name: "boundary", scale: 1, wrap: "boundary", steps: [{ act: s => s.move(BOUNDARY_MOVE) }, nudged, restored] },
-  { name: "blur", scale: 1, wrap: "blur", steps: [{ ...nudged, check: "node" }, { ...restored, check: "node" }] },
   // A write and a camera move in one frame: the move's full dirt wins.
   {
     name: "camera",
@@ -514,7 +510,6 @@ function windowScene(c: WindowCase, run: number, out: (s: WindowScene) => void) 
   let side = VIEW * c.scale
   let shown = <texture src={view.texture} width={side} height={side} />
   if (c.wrap === "boundary") return <view repaintBoundary x={offset()} y={offset()}>{shown}</view>
-  if (c.wrap === "blur") return <view filter={{ blur: BLUR }}>{shown}</view>
   if (c.wrap === "backdrop") {
     return (
       <view>

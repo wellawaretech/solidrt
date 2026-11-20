@@ -7,8 +7,8 @@ use crate::rendertree::boundary::{self, Hoist};
 use crate::rendertree::cull::{self, CullRect};
 use crate::rendertree::text;
 use crate::rendertree::{
-  grid, BackdropPass, BoundaryMode, BuildContext, Element, ElementKind, FilterState, FrameDamage, LayoutContext,
-  PaintCache, PlatformContext, RenderTree, Vector,
+  grid, BackdropPass, BoundaryMode, BuildContext, Element, ElementKind, FrameDamage, LayoutContext, PaintCache,
+  PlatformContext, RenderTree, Vector,
 };
 use crate::{CaptureDone, CaptureInfo};
 
@@ -478,31 +478,12 @@ pub(super) fn view_opacity(element: &Element) -> f32 {
   }
 }
 
-// A View's subtree filter; non-Views (and empty declarations) have none.
-// Hoisted like opacity: applied around cached content at composite time, so
-// a filter write replays the same cache.
-pub(super) fn view_filter(element: &Element) -> Option<&FilterState> {
-  match &element.kind {
-    ElementKind::View(v) => v.active_filter(),
-    _ => None,
-  }
-}
-
-// The paint carrying a view's composite-time effects: the group opacity in
-// the alpha (riding on `rgb` - black for a save_layer, white for a texture
-// quad, where white keeps the texture's colors), plus the filter's fused
-// color matrix and blur.
-pub(super) fn effect_paint(rgb: f32, opacity: f32, filter: Option<&FilterState>) -> Paint {
+// The paint carrying a view's composite-time group opacity in the alpha
+// (riding on `rgb` - black for a save_layer, white for a texture quad,
+// where white keeps the texture's colors).
+pub(super) fn effect_paint(rgb: f32, opacity: f32) -> Paint {
   let mut paint = Paint::default();
   paint.set_color(Color::new_srgba(rgb, rgb, rgb, opacity));
-  if let Some(f) = filter {
-    if let Some(cf) = f.to_color_filter() {
-      paint.set_color_filter(&cf);
-    }
-    if let Some(blur) = f.to_image_filter() {
-      paint.set_image_filter(&blur);
-    }
-  }
   paint
 }
 
@@ -586,8 +567,8 @@ pub(super) fn capture_pending_within(scene: &RenderTree, node_id: u64, alloy: &c
 
 // The opacity a view fades its subtree by as a group, when it does: below 1
 // (a fully transparent group has nothing to show) and not a backdrop root -
-// a filtered view's panels see its effect layer by design, and a snapshot's
-// see its raster (types.d.ts documents both), so neither is pre-emitted.
+// a snapshot's panels see its raster by design (types.d.ts documents it),
+// so they are not pre-emitted.
 fn fading_opacity(element: &Element) -> Option<f32> {
   let opacity = view_opacity(element);
   (opacity > 0.0 && opacity < 1.0 && !cull::is_backdrop_root(element)).then_some(opacity)
@@ -1183,14 +1164,6 @@ pub(super) fn record_node<'a>(
     if let Some(own) = &own {
       ctx.cull = ctx.cull.through(own);
     }
-    // A filter blur pulls just-offscreen content into view: widen what
-    // counts as visible by its reach so that content is not culled away.
-    if let Some(f) = view_filter(element) {
-      let reach = f.blur_outset();
-      if reach > 0.0 {
-        ctx.cull = ctx.cull.map(|r| r.inflate(reach, reach));
-      }
-    }
     if element.painted_size().is_some() {
       ctx.cull = ctx.cull.clipped(ctx.size, clip_x, clip_y);
       // The clip is the snapped box and this rect is stated in the
@@ -1209,16 +1182,15 @@ pub(super) fn record_node<'a>(
     }
   }
 
-  // A non-boundary View's group opacity and filter are baked here as a
-  // save_layer (the paint's alpha and filters composite the children as one
-  // group at the restore); boundary callers hoist both to composite time
-  // instead. The bounds are a formality: Impeller intersects them with the
-  // current clip coverage.
+  // A non-boundary View's group opacity is baked here as a save_layer (the
+  // paint's alpha composites the children as one group at the restore);
+  // boundary callers hoist it to composite time instead. The bounds are a
+  // formality: the renderer sizes the layer from its content and the clip
+  // in effect.
   let opacity = view_opacity(element);
-  let filter = view_filter(element);
-  let effect_layer = pass.is_none() && matches!(hoist, Hoist::None) && (opacity < 1.0 || filter.is_some());
+  let effect_layer = pass.is_none() && matches!(hoist, Hoist::None) && opacity < 1.0;
   if effect_layer {
-    let paint = effect_paint(0.0, opacity, filter);
+    let paint = effect_paint(0.0, opacity);
     let bounds = Rect::new(Point::new(-CLIP_INF, -CLIP_INF), Size::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
     crate::rendertree::counters::note_save_layer();
     builder.save_layer(&bounds, Some(&paint));
