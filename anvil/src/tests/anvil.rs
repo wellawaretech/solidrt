@@ -942,9 +942,11 @@ fn glyph_runs_and_shapes_take_separate_batches() {
   let quad = rect(0.0, 0.0, 10.0, 10.0);
   // A glyph run between two rects: the run draws through the glyph
   // program, so it is a batch of its own over the atlas, between two
-  // fill batches.
+  // fill batches. The second rect overlaps a glyph, so it cannot join the
+  // first fill batch in front of the run (the join rule of `Walked::push`).
+  let over = rect(0.0, 8.0, 10.0, 10.0);
   let mut b = DisplayListBuilder::new(None);
-  b.draw_rect(&quad, &opaque()).draw_glyphs(&atlas, &word(0.0), WHITE, policy, None).draw_rect(&quad, &opaque());
+  b.draw_rect(&quad, &opaque()).draw_glyphs(&atlas, &word(0.0), WHITE, policy, None).draw_rect(&over, &opaque());
   let out = walked_all(b);
   assert_eq!(out.batches, vec![fills(0, 1), glyphs(1, 2, &atlas, policy), fills(3, 1)]);
   let (glyph_quads, shape_quads) = (2, 2);
@@ -1181,16 +1183,18 @@ fn a_small_rounded_rect_rides_along_in_a_shape_batch() {
   assert_eq!(walked_all(b).batches, vec![shapes(0, 2, None)]);
 
   // A large one opens a rounded batch: 400 x 400 is past FILL_FOLD_AREA.
-  // It splits (past ROUNDED_SPLIT_AREA too): its eight rim pieces, small
-  // as they are, never ride along (the shape program measures a rounded
-  // rect from its quad, not the whole one in `tex`), and its three plain
-  // pieces open a fill batch after them.
+  // It splits (past ROUNDED_SPLIT_AREA too): its rim pieces, small as
+  // they are, never ride along (the shape program measures a rounded rect
+  // from its quad, not the whole one in `tex`), and its plain pieces open
+  // a fill batch after them. Only the pieces inside the 100 x 100 target
+  // are pushed: the top-left corner, the two edge bands beside it, and the
+  // two plain pieces they frame.
   let large = rect(0.0, 0.0, 400.0, 400.0);
   assert!(large.size.width * large.size.height >= FILL_FOLD_AREA);
   let mut b = DisplayListBuilder::new(None);
   b.draw_oval(&quad, &opaque());
   rounded(&mut b, large, [8.0; 4], &opaque());
-  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None), roundeds(1, 8, None), fills(9, 3)]);
+  assert_eq!(walked_all(b).batches, vec![shapes(0, 1, None), roundeds(1, 3, None), fills(4, 2)]);
 }
 
 #[test]

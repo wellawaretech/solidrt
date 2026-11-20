@@ -6,11 +6,12 @@
 use crate::prelude::*;
 use crate::renderer::ramps::RampTable;
 use crate::renderer::walk::{
-  split_rounded, walk, Batch, BatchProgram, GradientClass, Instance, Walked, KIND_RECT, KIND_ROUNDED_RECT,
-  ROUNDED_QUAD_PAD, ROUNDED_SPLIT_AREA, ROUNDED_SPLIT_MARGIN, TILE_CLAMP,
+  split_rounded, walk, Batch, BatchProgram, GradientClass, Instance, Walked, JOIN_SCAN_LIMIT, KIND_RECT,
+  KIND_ROUNDED_RECT, ROUNDED_QUAD_PAD, ROUNDED_SPLIT_AREA, ROUNDED_SPLIT_MARGIN, TILE_CLAMP,
 };
 use crate::{ClipOperation, Color, ColorSource, DisplayListBuilder, GradientKind, ISize, Matrix, Paint, Point, Rect};
 use crate::{RoundingRadii, Size, TileMode};
+use euclid::default::Box2D;
 
 // How far a walked value may sit from the expected one: float noise.
 const EPS: f32 = 1e-3;
@@ -32,6 +33,9 @@ const PANEL_RADIUS: f32 = 16.0;
 // (three plain ones).
 const PANEL_RIM: usize = 8;
 const PANEL_PLAIN: usize = 3;
+
+// The space between two panels side by side.
+const PANEL_GAP: f32 = 20.0;
 
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
   Rect::new(Point::new(x, y), Size::new(w, h))
@@ -393,4 +397,237 @@ fn a_rect_that_is_all_rim_stays_one_instance() {
   assert_eq!(out.instances.len(), 1);
   assert_eq!(out.instances[0].tex, out.instances[0].rect);
   assert_eq!(out.batches, vec![batch(0, 1, BatchProgram::Rounded, None)]);
+}
+
+fn panel_radii() -> RoundingRadii {
+  RoundingRadii::circular([PANEL_RADIUS; 4])
+}
+
+fn background() -> Rect {
+  rect(0.0, 0.0, TARGET, TARGET)
+}
+
+#[test]
+fn two_split_panels_draw_in_two_batches() {
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rounded_rect(&panel(), &panel_radii(), &opaque())
+    .save()
+    .translate(PANEL_W + PANEL_GAP, 0.0)
+    .draw_rounded_rect(&panel(), &panel_radii(), &opaque())
+    .restore();
+  let out = walked(b);
+  assert_eq!(
+    out.batches,
+    vec![
+      batch(0, 2 * PANEL_RIM, BatchProgram::Rounded, None),
+      batch(2 * PANEL_RIM, 2 * PANEL_PLAIN, BatchProgram::Fill, None)
+    ]
+  );
+  let (rims, plains) = out.instances.split_at(2 * PANEL_RIM);
+  assert!(rims.iter().all(|i| i.offset_kind_stroke[2] == KIND_ROUNDED_RECT));
+  assert!(plains.iter().all(|i| i.offset_kind_stroke[2] == KIND_RECT && i.rclip_radii == [0.0; 4]));
+}
+
+#[test]
+fn a_plain_piece_joins_the_fill_batch_before_the_rims() {
+  // The panel's plain pieces share their edges with its rim pieces, which
+  // counts as disjoint.
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&background(), &opaque()).draw_rounded_rect(&panel(), &panel_radii(), &opaque());
+  let out = walked(b);
+  assert_eq!(
+    out.batches,
+    vec![
+      batch(0, 1 + PANEL_PLAIN, BatchProgram::Fill, None),
+      batch(1 + PANEL_PLAIN, PANEL_RIM, BatchProgram::Rounded, None)
+    ]
+  );
+  assert_eq!(out.instances[0].rect, [0.0, 0.0, TARGET, TARGET]);
+}
+
+#[test]
+fn an_overlapping_fill_does_not_reorder() {
+  // Over the panel's bottom-right corner, one of its rim pieces.
+  let corner = rect(PANEL_W - PANEL_GAP, PANEL_H - PANEL_GAP, 2.0 * PANEL_GAP, 2.0 * PANEL_GAP);
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&background(), &opaque())
+    .draw_rounded_rect(&panel(), &panel_radii(), &opaque())
+    .draw_rect(&corner, &opaque());
+  let out = walked(b);
+  let fills = 1 + PANEL_PLAIN;
+  assert_eq!(
+    out.batches,
+    vec![
+      batch(0, fills, BatchProgram::Fill, None),
+      batch(fills, PANEL_RIM, BatchProgram::Rounded, None),
+      batch(fills + PANEL_RIM, 1, BatchProgram::Fill, None)
+    ]
+  );
+  let last = out.instances.last().expect("the walk drew instances");
+  assert_eq!(quad(last), corner);
+}
+
+#[test]
+fn a_fill_inside_a_stencil_clip_does_not_join_the_batch_before_the_clip() {
+  // An oval clip goes through the stencil (depth 1) and keeps the map 2D
+  // and axis-aligned, so the panel inside it still splits. Its plain pieces
+  // and the rect beside it do not move over the `Clip` batch into the
+  // background's batch: they draw in a fill batch of their own at depth 1.
+  let inside = panel().translate(euclid::vec2(PANEL_GAP, PANEL_GAP));
+  let beside = rect(PANEL_W + 2.0 * PANEL_GAP, PANEL_GAP, PANEL_GAP, PANEL_GAP);
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&background(), &opaque())
+    .save()
+    .clip_oval(&background(), ClipOperation::Intersect)
+    .draw_rounded_rect(&inside, &panel_radii(), &opaque())
+    .draw_rect(&beside, &opaque())
+    .restore();
+  let out = walked(b);
+  let programs: Vec<(BatchProgram, usize, u8)> = out.batches.iter().map(|b| (b.program, b.count, b.stencil)).collect();
+  assert_eq!(
+    programs,
+    vec![
+      (BatchProgram::Fill, 1, 0),
+      (BatchProgram::Clip, 1, 0),
+      (BatchProgram::Rounded, PANEL_RIM, 1),
+      (BatchProgram::Fill, PANEL_PLAIN + 1, 1),
+      (BatchProgram::Clip, 1, 0)
+    ]
+  );
+  // The background stays alone in the first batch.
+  assert_eq!(out.instances[0].rect, [0.0, 0.0, TARGET, TARGET]);
+  assert_eq!(quad(out.instances.last().expect("the walk drew instances")), beside);
+}
+
+// A background fill, `n` small rounded rects (each one instance, below
+// ROUNDED_SPLIT_AREA) in a grid, then a plain rect away from all of them.
+fn rounded_grid(n: usize) -> Walked {
+  // The grid's cell and the rounded rect in it, in device pixels.
+  let cell = 20.0;
+  let side = 10.0;
+  let columns = 40;
+  assert!(area(&padded(rect(0.0, 0.0, side, side))) < ROUNDED_SPLIT_AREA);
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&background(), &opaque());
+  for k in 0..n {
+    let (x, y) = ((k % columns) as f32 * cell, (k / columns) as f32 * cell);
+    b.draw_rounded_rect(&rect(x, y, side, side), &RoundingRadii::circular([2.0; 4]), &opaque());
+  }
+  let rows = n.div_ceil(columns) as f32;
+  assert!(rows * cell < TARGET - cell);
+  b.draw_rect(&rect(TARGET - cell, TARGET - cell, side, side), &opaque());
+  walked(b)
+}
+
+#[test]
+fn the_join_scan_is_bounded() {
+  // At the limit the plain rect joins the background's batch.
+  let out = rounded_grid(JOIN_SCAN_LIMIT);
+  assert_eq!(
+    out.batches,
+    vec![batch(0, 2, BatchProgram::Fill, None), batch(2, JOIN_SCAN_LIMIT, BatchProgram::Rounded, None)]
+  );
+  // Past it the plain rect opens a fill batch of its own.
+  let past = JOIN_SCAN_LIMIT + 1;
+  let out = rounded_grid(past);
+  assert_eq!(
+    out.batches,
+    vec![
+      batch(0, 1, BatchProgram::Fill, None),
+      batch(1, past, BatchProgram::Rounded, None),
+      batch(1 + past, 1, BatchProgram::Fill, None)
+    ]
+  );
+}
+
+#[test]
+fn pieces_outside_the_target_are_not_pushed() {
+  // The panel's lower half lies below the target.
+  let shift = euclid::vec2(0.0, TARGET - PANEL_H / 2.0);
+  let target = Box2D::from_size(Size::new(TARGET, TARGET));
+  let pieces = split_rounded(&padded(panel()), &[(panel(), [PANEL_RADIUS; 4])], MARGIN);
+  let kept: Vec<&(Rect, bool)> =
+    pieces.iter().filter(|(r, _)| r.translate(shift).to_box2d().intersects(&target)).collect();
+  assert!(kept.len() < pieces.len());
+  let (rims, plains) =
+    (kept.iter().filter(|(_, plain)| !plain).count(), kept.iter().filter(|(_, plain)| *plain).count());
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&background(), &opaque())
+    .save()
+    .translate(shift.x, shift.y)
+    .draw_rounded_rect(&panel(), &panel_radii(), &opaque())
+    .restore()
+    .draw_rounded_rect(&panel(), &panel_radii(), &opaque());
+  let out = walked(b);
+  // The count is the culling check: the batches below would read the same
+  // with the outside pieces pushed, as their empty boxes meet nothing.
+  assert_eq!(out.instances.len(), 1 + kept.len() + PANEL_RIM + PANEL_PLAIN);
+  // The second panel still joins: its rims the first one's, its plain
+  // pieces the background's.
+  let fills = 1 + plains + PANEL_PLAIN;
+  assert_eq!(
+    out.batches,
+    vec![batch(0, fills, BatchProgram::Fill, None), batch(fills, rims + PANEL_RIM, BatchProgram::Rounded, None)]
+  );
+}
+
+// The panel grid of a TV bench: a 5 x 6 grid of 160 x 90 panels at radius 6,
+// 8 apart and 8 in from the edges, under scale 2 in a 1920 x 1080 target, so
+// the sixth row is cut by the target's bottom edge.
+const GRID_COLUMNS: usize = 5;
+const GRID_PANELS: usize = 30;
+const GRID_PANEL_W: f32 = 160.0;
+const GRID_PANEL_H: f32 = 90.0;
+const GRID_RADIUS: f32 = 6.0;
+const GRID_GAP: f32 = 8.0;
+const GRID_SCALE: f32 = 2.0;
+const GRID_TARGET_W: i64 = 1920;
+const GRID_TARGET_H: i64 = 1080;
+// The alpha of the full-window rect drawn over the grid.
+const GRID_VEIL_ALPHA: f32 = 0.5;
+
+#[test]
+fn a_gradient_panel_grid_draws_in_four_batches() {
+  let full = rect(0.0, 0.0, GRID_TARGET_W as f32, GRID_TARGET_H as f32);
+  let mut graded = opaque();
+  graded.set_color_source(&ColorSource::linear_gradient(
+    Point::zero(),
+    Point::new(GRID_PANEL_W, 0.0),
+    &[Color::new_srgba(1.0, 0.0, 0.0, 1.0), Color::new_srgba(0.0, 0.0, 1.0, 1.0)],
+    &[0.0, 1.0],
+    TileMode::Clamp,
+    None,
+  ));
+  let mut veil = Paint::default();
+  veil.set_color(Color::new_srgba(0.0, 0.0, 0.0, GRID_VEIL_ALPHA));
+  let mut b = DisplayListBuilder::new(None);
+  b.draw_rect(&full, &opaque()).save().scale(GRID_SCALE, GRID_SCALE);
+  for k in 0..GRID_PANELS {
+    let (column, row) = ((k % GRID_COLUMNS) as f32, (k / GRID_COLUMNS) as f32);
+    let at = Point::new(GRID_GAP + column * (GRID_PANEL_W + GRID_GAP), GRID_GAP + row * (GRID_PANEL_H + GRID_GAP));
+    let card = Rect::new(at, Size::new(GRID_PANEL_W, GRID_PANEL_H));
+    b.draw_rounded_rect(&card, &RoundingRadii::circular([GRID_RADIUS; 4]), &graded);
+  }
+  b.restore().draw_rect(&full, &veil);
+  let out = walk(
+    &b.build().expect("a builder always builds a list"),
+    ISize::new(GRID_TARGET_W, GRID_TARGET_H),
+    &mut RampTable::new(),
+  );
+  let programs: Vec<(BatchProgram, bool)> = out.batches.iter().map(|b| (b.program, b.gradient.is_some())).collect();
+  assert_eq!(
+    programs,
+    vec![
+      (BatchProgram::Fill, false),
+      (BatchProgram::Rounded, true),
+      (BatchProgram::Fill, true),
+      (BatchProgram::Fill, false)
+    ]
+  );
+  let (rims, plains) = (&out.batches[1], &out.batches[2]);
+  assert_eq!((out.batches[0].count, out.batches[3].count), (1, 1));
+  assert_eq!(rims.count + plains.count, out.instances.len() - 2);
+  let run = |b: &Batch| &out.instances[b.start..b.start + b.count];
+  assert!(run(rims).iter().all(|i| i.offset_kind_stroke[2] == KIND_ROUNDED_RECT));
+  assert!(run(plains).iter().all(|i| i.offset_kind_stroke[2] == KIND_RECT && i.rclip_radii == [0.0; 4]));
 }

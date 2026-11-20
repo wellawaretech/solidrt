@@ -578,17 +578,38 @@ output before the stage (zero diff), except where a draw is new.
 
 ## Stage 6: layers and effects
 
+The stage keeps the effects only the compositor can provide: a group fade,
+a shadow under a shape, the pixels beneath a view, a blend against the
+frame. An effect over a view's own pixels is the app's: a snapshot
+boundary (`repaintBoundary="snapshot"`) with `shader` or
+`snapshotTexture(ref)` already rasterizes a subtree into a texture the
+app samples, so the renderer carries no image filter of its own.
+
+- First, before the stage builds on it: remove the subtree `filter` prop
+  (core's `FilterProps` on views, `kinds/filter.rs`, its branches in
+  `composite.rs`, the docs). Nothing in the repo uses it, and it is a
+  fixed policy over an effect `shader` already gives the app in full. A
+  built-in blur or grade can return later as a bundled shader source in
+  the GPU layer, not as a renderer filter. `backdropFilter` keeps the
+  `FilterProps` shape and semantics.
 - An offscreen target pool, sized and reused by bucket, for `save_layer`.
-- `save_layer` with group opacity and color filters, and
-  `draw_display_list` below opacity 1. The components' fades work from
-  here.
-- Gaussian blur as an image filter, the mask blur behind shadows,
-  `save_backdrop_layer`, the color matrix.
+- `save_layer` with group opacity, and `draw_display_list` below opacity
+  1. The components' fades and the player's start screen work from here.
+- One gaussian blur program over a layer, with two callers: the backdrop
+  layer (`save_backdrop_layer` behind `backdropFilter`, the components'
+  glass) and the mask blur behind a shadow too large or too shaped for
+  the analytic path. The color matrix (saturate, hueRotate, brightness,
+  contrast, grayscale, sepia, invert) is a 4x5 multiply in the same layer
+  restore, for the backdrop only.
 - Shadows of rects and rounded rects drawn analytically in the shape
   program where the shadow does not need its own layer (`kinds/shadow.rs`,
   `needs_own_layer`).
-- Blend modes beyond source-over: first the ones the apps and examples
-  emit; the rest of the contract's 29 after.
+- All 29 blend modes of the contract: the separable ones as GL blend
+  equations, the non-separable ones (hue, saturation, color, luminosity)
+  and the ones GL cannot express (the dodge/burn/soft-light family) in the
+  layer restore shader. The order of work follows what the apps and
+  examples emit (`plus` for stacked GPU passes first); none is left as a
+  warning.
 
 ## Stage 7: parity, platforms, merge
 
@@ -1881,7 +1902,7 @@ live route (2c-bis: 49 to 50). What the read says:
   meets none of that batch's instances (a bounded overlap test against
   the last batch alone, which is what Skia's op chaining does), so a
   grid of cards draws its plain and rim pieces in two batches, not two
-  per card. The `ROUNDED_SPLIT_AREA` threshold was not swept on the TV;
+  per card. Done the next day; see "Stage 5 follow-up" below. The `ROUNDED_SPLIT_AREA` threshold was not swept on the TV;
   16,384 is the brief's starting value and the bench's panels (57,600
   device pixels) are well above it. The tablet re-read of the rounded
   clip panes under the split did not happen: the tablet dropped off adb
@@ -1898,6 +1919,111 @@ recorded above); the stage 4 examples' pixels are unchanged against the
 branch's output before the stage except where a draw is new (the shadow
 cutouts of step 2a) or where the analytic coverage is now right (32
 pixels of `layout-slide` at step 2b, six of `view-layout` at 2d).
+
+### Stage 5 follow-up: a fill joins the batch before the open one (2026-11-20)
+
+The one follow-up the stage left open, done as its own step. A plain or
+rounded fill that can join neither the last batch nor an open solid
+shape batch tries the batch before the last one (`Walked::join_before_last`):
+when that batch is of its program, gradient class and stencil depth, the
+last batch is a quad batch (fills, rounded fills, shapes or glyphs, never
+a mesh, a clip draw or a paint draw) of at most `JOIN_SCAN_LIMIT` (1024)
+instances, and the fill's device box meets none of theirs, it is drawn
+before them. Painter's order between two draws whose device footprints
+are disjoint changes no pixel, and no stencil write lies between two
+adjacent quad batches, so the fill tests the same stencil there. The
+lookback is one batch, Skia's op chaining with a chain of one. What the
+implementation settled:
+
+- The device box of an instance (`device_box`, cached per instance in
+  `Walked::boxes`) is its quad's bounds under its map, cut to its device
+  clip rounded outward to whole pixels. The rounding is the review's
+  finding: the fragment stage tests the clip per fragment centre while a
+  passing fragment writes every sample of its pixel, so a box cut to a
+  fractional clip edge would read disjoint from a quad starting at that
+  edge while both write the same pixel. A box behind the eye (bounds
+  None) meets anything; an empty box meets nothing (every fragment
+  centre fails the clip, the clip is a factor, and under the
+  premultiplied over blend a zero fragment changes no pixel, which another
+  blend mode would have to revisit). Boxes that only share an edge are
+  disjoint: a sample on the edge falls in exactly one of the two quads,
+  and a split's plain pieces share their edges with its rim pieces.
+- A joined fill is not inserted into the instance stream (a memmove of
+  the whole open run per join, quadratic in a grid): it waits in
+  `Walked::pending`, credited to its batch, and one splice puts the
+  pending fills in front of the open run when the next batch opens or
+  the walk ends. `JOIN_SCAN_LIMIT` bounds the box compares only; past it
+  the join stops and a grid falls back to a batch per card.
+- The split's pieces outside the clip are no longer pushed: the TV's
+  bottom row of panels is cut by the window, its outside pieces reached
+  the stream with empty boxes, and the first build treated an empty box
+  as meeting everything, so the grid drew in 14 calls, not 4. Each piece
+  now goes through `placed_under` and is dropped when its bounds miss
+  the clip; the pieces that stay carry the op's clip as before.
+- The stencil compare in the join is defensive: a depth change always
+  emits a Clip batch between two quad batches, so two adjacent quad
+  batches and the fill share one depth.
+
+The seventeen reference renders (the six core examples, eleven package
+examples and probes with rounded fills, clips and shadows among them)
+diff at zero pixels against the renders of 579886a9. Unit tests cover
+two panels merging into two batches, the edge-sharing join of a card's
+plain pieces, an overlapping fill staying in painter's order, a fill
+inside a stencil clip, the scan bound at exactly 1024 and 1025 instances,
+the outside pieces, and the TV grid's shape (four batches).
+
+**TV** (the same machine, probe and method as the stage 5 tables; the
+client of this commit against a client of 579886a9 built and read the
+same morning, so the two rows of a pair share the TV's state; frames and
+missed presents per 10 s as counter deltas):
+
+| client | route | panel | variant | missed / 10 s | draw calls | instances | frame GPU ms | raster thread |
+|---|---|---|---|---|---|---|---|---|
+| 579886a9 | static | rounded, gradient | lines=0 | 190 to 235 | 62 | 332 | 26.1 to 29.4 | 22 to 24 % |
+| this commit | static | rounded, gradient | lines=0 | 184 to 213 | 4 | 307 to 312 | 25.5 to 28.2 | 18 to 20 % |
+| 579886a9 | static | rounded, solid | lines=0 gradient=0 | 64 to 66 | 61 | 332 | 21.8 | 21 % |
+| this commit | static | rounded, solid | lines=0 gradient=0 | 38 | 3 | 312 | 21.0 | 16 % |
+| this commit | static | plain, gradient | lines=0 radius=0 | 66 to 68 | 3 | 32 | 21.8 | 17 to 18 % |
+| this commit | static | rounded, gradient | | 204 | 91 | 309 | 26.3 to 26.5 | 28 to 29 % |
+| this commit | live | rounded, gradient | | 121 | 91 | 311 | 20.9 to 21.0 | 80 to 81 % |
+
+The missed presents of the gradient rows read far above yesterday's table
+(115 for the rounded gradient grid at 2c-ter, 41 to 45 for the plain
+one) with both clients, so the TV's state moved between the days and
+only the same-day pairs compare: the rounded gradient grid drops from
+62 draw calls to 4 and the raster thread from 22 to 24 percent to 18 to
+20, the solid one from 61 calls to 3, its missed presents from 64 to 38
+and the raster thread from 21 percent to 16, at the same GPU time, and
+the solid rounded grid now draws in the plain grid's three calls. The
+instance count falls from 332 to 312 because the cut bottom row's
+outside pieces are no longer pushed.
+
+With the sparklines nothing changes (91 calls on both routes, as before):
+a path mesh is its own batch between one card's rims and the next
+card's, and the lookback is one batch, so neither the rims nor the plain
+pieces of the next card reach a batch of their class. A deeper lookback
+(Skia's is ten) or a mesh-aware skip would merge those too; recorded, not
+done, as the live route is bound on the UI thread's points write.
+
+**Tablet** (Galaxy Tab A7, Adreno 610, the client of this commit;
+`probes/rounded-clip-panes.tsx`, ten panes, one 2 s slide per sample,
+three samples; SurfaceFlinger present timestamps of the player's BLAST
+layer over the slide, GPU span frameReady minus queue time, the raster
+thread's CPU from /proc over 3 s):
+
+| panes | presents in the slide | interval p50 / p90 | GPU span p50 | raster thread | draw calls at rest |
+|---|---|---|---|---|---|
+| rounded, with the slice | 122 | 16.7 / 17.1 to 17.3 ms | 13.2 to 16.2 ms | 28 to 32 % | 5 |
+| plain (radius 0), with the slice | 120 to 123 | 16.7 / 17.2 to 17.3 ms | 10.8 to 15.7 ms | 31 % | 2 |
+| rounded, flat fill only | 121 to 122 | 16.7 / 17.1 to 17.2 ms | 12.1 to 14.0 ms | 32 to 33 % | 3 |
+
+Every row holds 60 fps through the slide, as the 2b read did; this is
+the tablet re-read under the split that stage 5 left open. The GPU
+span's spread is the 3 s window mixing slide and rest frames. The ten
+rounded panes with their contents draw in 5 calls at rest (the
+background, the panes' rims, their plain pieces and the slices).
+
+Still open from the stage: the `ROUNDED_SPLIT_AREA` sweep on the TV.
 
 ### Where anvil lives (2026-11-18)
 

@@ -145,6 +145,12 @@ pub const CAP_ROUND: f32 = 2.0;
 /// value, to be re-read on the TV.
 pub const FILL_FOLD_AREA: f32 = 65_536.0;
 
+/// The most instances of the last batch a lean fill scans when it joins the
+/// batch before it (`Walked::push`): it bounds the box compares one push may
+/// cost. Past it the join stops and the fill opens a batch of its own, as
+/// without the join, which falls back to a batch per card in a grid.
+pub const JOIN_SCAN_LIMIT: usize = 1024;
+
 /// The device area, in device pixels, from which a rounded fill splits into
 /// plain pieces and a rim (`split_rounded`) instead of drawing as one
 /// rounded instance (128 x 128): below it the extra instances cost more
@@ -314,7 +320,9 @@ fn tile_value(tile: TileMode) -> f32 {
 /// ramp row. A paint shader draw is a run of its own, one
 /// instance. A path mesh is a run of its own too, one
 /// draw call per path op: its map, color, clips and source are the mesh
-/// program's uniforms (`MeshDraw`).
+/// program's uniforms (`MeshDraw`). An instance may be placed before a later
+/// batch's run when its device box meets none of that batch's instances
+/// (`Walked::push`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Batch {
   /// The run's first instance and its instance count for the quad
@@ -426,6 +434,21 @@ pub struct Walked {
   /// executor scissors its clear and its draws to it. None when nothing
   /// was emitted.
   pub scissor: Option<Box2D<i32>>,
+  /// The device box of each instance, parallel to `instances`: its quad's
+  /// bounds under its map within its device clip rounded outward to whole
+  /// pixels (`device_box`). None when the walk cannot bound it (a corner
+  /// behind the eye), which counts as meeting everything; an empty box (the
+  /// quad outside its clip) draws nothing and meets nothing. For `push`'s
+  /// join test.
+  boxes: Vec<Option<Box2D<f32>>>,
+  /// The fills `join_before_last` credited to the batch before the last one
+  /// while the last one stays open, with their device boxes, in push order:
+  /// they belong in front of the last batch's run and go there in one
+  /// splice when a batch opens or the walk ends (`flush`), not one move per
+  /// join. While it is not empty the batches count it in (`len`): the last
+  /// batch's run is `instances[last.start - pending.len()..]`, and its
+  /// boxes are `boxes`' same range.
+  pending: Vec<(Instance, Option<Box2D<f32>>)>,
   /// The last batch takes no further instance: a paint shader draw ended
   /// it.
   sealed: bool,
@@ -454,7 +477,15 @@ impl Walked {
   // (the shader branches on the kind; a bound sampler it never reads costs
   // nothing), so a texture change, a sampling change, a fill or rounded run
   // or a glyph run ends a run. `stencil` is a key too: a batch takes only an instance of its own
-  // stencil depth.
+  // stencil depth. A plain or rounded fill that joins neither way tries the
+  // batch before the last one (`join_before_last`) before it opens a batch:
+  // when that batch is of its program, gradient class and stencil depth, the
+  // last batch is a quad batch of at most JOIN_SCAN_LIMIT instances, and the
+  // fill's device box meets none of theirs, it is drawn before them (held in
+  // `pending` until the last batch ends). Painter's
+  // order between two draws whose device footprints are disjoint changes no
+  // pixel, and no stencil write lies between the two batches (the last one is
+  // not a `Clip` batch), so the fill tests the same stencil there.
   fn push(
     &mut self,
     instance: Instance,
@@ -462,7 +493,7 @@ impl Walked {
     gradient: Option<GradientClass>,
     stencil: u8,
   ) {
-    let start = self.instances.len();
+    let start = self.len();
     let sealed = self.sealed;
     let last = self.batches.last_mut().filter(|last| !sealed && last.stencil == stencil);
     let batch = |program| Batch { start, count: 1, program, texture, policy: None, gradient, paint: None, stencil };
@@ -486,8 +517,14 @@ impl Walked {
         {
           last.count += 1
         }
-        _ => self.open(Batch { texture: None, ..batch(own) }),
+        _ => {
+          if self.join_before_last(&instance, own, gradient, stencil) {
+            return;
+          }
+          self.open(Batch { texture: None, ..batch(own) })
+        }
       }
+      self.boxes.push(device_box(&instance));
       self.instances.push(instance);
       return;
     }
@@ -501,7 +538,84 @@ impl Walked {
       }
       Some(_) => self.open(batch(BatchProgram::Shape)),
     }
+    self.boxes.push(device_box(&instance));
     self.instances.push(instance);
+  }
+
+  // Put the lean fill `instance` (of the program `own`, the gradient class
+  // `gradient`, at the stencil depth `stencil`) into the batch before the
+  // last one, in front of the last batch's run, when that changes no pixel
+  // (see `push`); false, changing nothing, when it may.
+  fn join_before_last(
+    &mut self,
+    instance: &Instance,
+    own: BatchProgram,
+    gradient: Option<GradientClass>,
+    stencil: u8,
+  ) -> bool {
+    let n = self.batches.len();
+    if self.sealed || n < 2 {
+      return false;
+    }
+    let (before, after) = self.batches.split_at_mut(n - 1);
+    let (prev, last) = (&mut before[n - 2], &mut after[0]);
+    let quad =
+      matches!(last.program, BatchProgram::Fill | BatchProgram::Rounded | BatchProgram::Shape | BatchProgram::Glyph);
+    if !quad {
+      return false;
+    }
+    debug_assert_eq!(last.start + last.count, self.instances.len() + self.pending.len());
+    // The stencil compare is defensive: a depth change always emits a `Clip`
+    // batch between two quad batches.
+    if prev.program != own || prev.gradient != gradient || prev.stencil != stencil {
+      return false;
+    }
+    // A fill or rounded batch directly before a quad batch: the two runs are
+    // adjacent.
+    debug_assert_eq!(prev.start + prev.count, last.start);
+    if last.count > JOIN_SCAN_LIMIT {
+      return false;
+    }
+    let own_box = device_box(instance);
+    // An empty box draws nothing and meets nothing: every fragment centre
+    // fails the clip test, the clip is a factor, not a discard, and under
+    // the premultiplied over blend a zero fragment changes no pixel (another
+    // blend mode would have to revisit this). An unbounded box (None) may
+    // meet anything. `intersects` is strict: boxes that only share an
+    // edge are disjoint, as a sample on that edge falls in exactly one of the
+    // two quads (a split's plain pieces share their edges with its rim
+    // pieces).
+    let meets = |b: &Option<Box2D<f32>>| match (own_box, *b) {
+      (Some(a), Some(b)) => !a.is_empty() && !b.is_empty() && a.intersects(&b),
+      (Some(a), None) | (None, Some(a)) => !a.is_empty(),
+      (None, None) => true,
+    };
+    let run = last.start - self.pending.len();
+    if self.boxes[run..].iter().any(meets) {
+      return false;
+    }
+    self.pending.push((*instance, own_box));
+    prev.count += 1;
+    last.start += 1;
+    true
+  }
+
+  // The instances the batches count: the pushed ones and the pending ones.
+  fn len(&self) -> usize {
+    self.instances.len() + self.pending.len()
+  }
+
+  // Put the pending fills in front of the last batch's run, in one splice
+  // into `instances` and `boxes` each.
+  fn flush(&mut self) {
+    if self.pending.is_empty() {
+      return;
+    }
+    let last = self.batches.last().expect("a pending fill waits in front of the last batch");
+    let at = last.start - self.pending.len();
+    self.instances.splice(at..at, self.pending.iter().map(|(instance, _)| *instance));
+    self.boxes.splice(at..at, self.pending.iter().map(|(_, b)| *b));
+    self.pending.clear();
   }
 
   // Append one glyph op's surviving `instances` over the atlas `atlas`
@@ -513,7 +627,7 @@ impl Walked {
     if instances.is_empty() {
       return;
     }
-    let start = self.instances.len();
+    let start = self.len();
     let count = instances.len();
     let texture = Some((atlas, TextureSampling::Linear));
     let joins = |last: &Batch| {
@@ -536,6 +650,7 @@ impl Walked {
         stencil,
       }),
     }
+    self.boxes.extend(instances.iter().map(device_box));
     self.instances.extend(instances);
   }
 
@@ -543,7 +658,7 @@ impl Walked {
   // after it: the program is the shader's, so nothing before or after it
   // shares its draw.
   fn push_paint(&mut self, instance: Instance, paint: PaintDraw, stencil: u8) {
-    let start = self.instances.len();
+    let start = self.len();
     self.open(Batch {
       start,
       count: 1,
@@ -555,6 +670,7 @@ impl Walked {
       stencil,
     });
     self.sealed = true;
+    self.boxes.push(device_box(&instance));
     self.instances.push(instance);
   }
 
@@ -594,8 +710,10 @@ impl Walked {
     self.clip_draws.push(draw);
   }
 
-  // Open `batch` as the current one, which takes instances again.
+  // Open `batch` as the current one, which takes instances again, after the
+  // pending fills go in front of the run it ends.
   fn open(&mut self, batch: Batch) {
+    self.flush();
     self.batches.push(batch);
     self.sealed = false;
   }
@@ -661,6 +779,7 @@ pub fn walk(list: &DisplayList, size: ISize, ramps: &mut RampTable) -> Walked {
   let mut stack = Vec::new();
   let mut out = Walked::default();
   walk_ops(list.executable(), &mut state, &mut stack, ramps, &mut out);
+  out.flush();
   out.scissor = scissor(&out.instances, &out.mesh_draws);
   out
 }
@@ -1283,14 +1402,20 @@ fn push_shape(
       out.push(shape, texture, class, state.depth);
       return;
     }
-    // The rim first, then the plain pieces: a grid of panels alternates a
-    // rounded and a fill batch. The pieces do not overlap, so their order
-    // within the op changes no pixel.
+    // The rim first, then the plain pieces, which join the fill batch before
+    // the rounded one through `push`'s join rule (they meet no rim piece,
+    // only share its edges), so a grid of panels draws its rims and its
+    // plain pieces in two batches. The pieces do not overlap, so their
+    // order within the op changes no pixel.
+    // A piece the clip rejects (a panel cut by the target's edge) is not
+    // pushed.
     for (piece, _) in pieces.iter().filter(|(_, plain)| !plain) {
+      let Some(clip) = placed_under(state, &p, piece) else { continue };
       let rim = Quad { rect: *piece, kind, stroke: 0.0, color, tex, radii, rows };
       out.push(instance(state, &p, clip, rim), None, class, state.depth);
     }
     for (piece, _) in pieces.iter().filter(|(_, plain)| *plain) {
+      let Some(clip) = placed_under(state, &p, piece) else { continue };
       let plain = Quad { rect: *piece, kind: KIND_RECT, stroke: 0.0, color, tex: [0.0; 4], radii: [0.0; 4], rows };
       out.push(instance_under(None, &p, clip, plain), None, class, state.depth);
     }
@@ -1473,16 +1598,34 @@ fn rounded_piece(instance: &Instance) -> bool {
 fn device_area(instance: &Instance) -> f32 {
   let [x, y, w, h] = instance.rect;
   let [m11, m12, m21, m22] = instance.linear;
-  let [p1, p2, p3, _] = instance.persp;
-  let p = Projective {
-    linear: instance.linear,
-    offset: [instance.offset_kind_stroke[0], instance.offset_kind_stroke[1]],
-    persp: [p1, p2, p3],
-  };
+  let p = projective(instance);
   if p.is_affine() {
     return (m11 * m22 - m12 * m21).abs() * w * h;
   }
   p.bounds(&Rect::new(Point::new(x, y), Size::new(w, h))).map_or(0.0, |b| b.area())
+}
+
+// The map `instance` carries, local to device.
+fn projective(instance: &Instance) -> Projective {
+  let [p1, p2, p3, _] = instance.persp;
+  Projective {
+    linear: instance.linear,
+    offset: [instance.offset_kind_stroke[0], instance.offset_kind_stroke[1]],
+    persp: [p1, p2, p3],
+  }
+}
+
+// The device box `instance` can draw in: its quad's bounds under its map
+// within its device clip rounded outward to whole pixels (the fragment
+// stage tests the clip at the fragment's centre, and a fragment that passes
+// writes samples across its whole pixel, past a fractional clip edge). Empty
+// when the quad lies outside the clip; None when a corner is behind the eye.
+fn device_box(instance: &Instance) -> Option<Box2D<f32>> {
+  let [x, y, w, h] = instance.rect;
+  let bounds = projective(instance).bounds(&Rect::new(Point::new(x, y), Size::new(w, h)))?;
+  let [x0, y0, x1, y1] = instance.clip;
+  let clip = Box2D::new(Point2D::new(x0, y0), Point2D::new(x1, y1)).round_out();
+  Some(bounds.intersection_unchecked(&clip))
 }
 
 // A segment stroked `width` wide under the current state, unless it has no
