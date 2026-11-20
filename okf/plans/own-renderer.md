@@ -761,6 +761,25 @@ tablet.
 - The end state's TV read: the dense mover probe locked at 50 fps, with
   the patch fixed. [display-list-op-cost](display-list-op-cost.md), the
   performance case this plan started from, closes on it.
+- The layer atlas, measured in stage 6 (Findings, "Step 6b on the
+  TV"): on the TV's Mali-T860 each layer drawn ahead costs about 2.5 ms
+  of fixed render-pass overhead (the fade route holds 50 fps at one and
+  three cards, 39.5 at six, 25 at twelve; neither the window's pass
+  breaks, nor MSAA, nor the timer queries explain it). The drawn-ahead
+  layers of one nesting level share one atlas storage, each in its own
+  region under its own viewport offset and scissor, its stencil cleared
+  per region, drawn in one pass; each nesting level gets its own atlas
+  (a parent cannot sample the atlas it draws into), the inner level
+  first. Blurred layers, backdrops and layers too large for an atlas
+  stay as they are. Done when the TV's fade route at twelve cards is
+  read against 25 fps, with the device look.
+- A card's shadow as a ring, measured in stage 6: the shadow quad
+  reaches three sigmas past the card and most of it lies under the card,
+  where the cutout now skips the integral but the quad is still
+  rasterized and blended (the TV's shadow route reads 34.5 fps; with
+  the shadow fragment flat, about 42, against 50 with no shadow).
+  Drawing the shadow as a frame around its cutout leaves the area under
+  the card undrawn.
 - Android, Windows and macOS, and the TV again. Before each platform's
   read, its GPUs are checked against the driver faults
   ([gpu-driver-faults](../backlog/gpu-driver-faults.md)), and the read
@@ -2445,6 +2464,15 @@ shadow, glass and shadow-cutout probes, lit, theme-toggle) and seen
 correct on the TV by the maintainer. The shadow route at blur 16 goes
 from 28 to 30 fps to 34.5, at blur 0 from 34 to 41, without the stripes
 from 12 to 19.
+
+The layers' cost on the TV, by count (the fade route, the whole window
+redrawn every frame in each run): one card 50 fps, three 50, six 39.5,
+twelve 25, so about 2.5 ms per layer from six to twelve. A layer here is
+about 576 by 320 device pixels with a handful of draws, a fraction of a
+millisecond of fill on this GPU: the rest is the fixed cost of a render
+pass. Packing the layers drawn ahead into one atlas pass is recorded in
+stage 7, as is drawing a card's shadow as a ring; stage 6 closes on the
+glass stall.
 
 ### Where anvil lives (2026-11-18)
 
