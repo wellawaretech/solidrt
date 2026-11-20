@@ -580,6 +580,10 @@ Shaped, not started.
   knob, so a depthCompare option on createRenderPipeline is a parity gap,
   additive with the default staying less. Split from gpu-pipeline-extensions
   2026-08-11.
+- **[Know the GPU drivers' faults, and see when one bites](backlog/gpu-driver-faults.md)** [2026-11-20]
+  A register of known GPU driver faults on the GPUs we ship on, read before
+  GPU work and when a device misbehaves, and device checks that catch a wrong
+  picture, which today only someone looking at the device does.
 - **[Refactor the fused creates over the raw shading layer](backlog/gpu-fused-create-refactor.md)** [2026-07-27]
   The naming collision and the iTime trap were resolved 2026-07-31
   (createShaderTexture/createPipelineTexture/createShaderTextureMemo, hard
