@@ -578,38 +578,121 @@ output before the stage (zero diff), except where a draw is new.
 
 ## Stage 6: layers and effects
 
-The stage keeps the effects only the compositor can provide: a group fade,
-a shadow under a shape, the pixels beneath a view, a blend against the
-frame. An effect over a view's own pixels is the app's: a snapshot
-boundary (`repaintBoundary="snapshot"`) with `shader` or
+Goal: every layer and effect the contract takes draws, with no "not
+supported yet" warning left for `save_layer`, `save_backdrop_layer`,
+`draw_display_list` below opacity 1, the blend modes and the three paint
+filters. The stage keeps the effects only the compositor can provide: a
+group fade, a shadow under a shape, the pixels beneath a view, a blend
+against the frame. An effect over a view's own pixels is the app's: a
+snapshot boundary (`repaintBoundary="snapshot"`) with `shader` or
 `snapshotTexture(ref)` already rasterizes a subtree into a texture the
 app samples, so the renderer carries no image filter of its own.
 
-- First, before the stage builds on it: remove the subtree `filter` prop
-  (core's `FilterProps` on views, `kinds/filter.rs`, its branches in
-  `composite.rs`, the docs). Nothing in the repo uses it, and it is a
-  fixed policy over an effect `shader` already gives the app in full. A
-  built-in blur or grade can return later as a bundled shader source in
-  the GPU layer, not as a renderer filter. `backdropFilter` keeps the
-  `FilterProps` shape and semantics.
-- An offscreen target pool, sized and reused by bucket, for `save_layer`.
-- `save_layer` with group opacity, and `draw_display_list` below opacity
-  1. The components' fades and the player's start screen work from here.
-- One gaussian blur program over a layer, with two callers: the backdrop
-  layer (`save_backdrop_layer` behind `backdropFilter`, the components'
-  glass) and the mask blur behind a shadow too large or too shaped for
-  the analytic path. The color matrix (saturate, hueRotate, brightness,
-  contrast, grayscale, sepia, invert) is a 4x5 multiply in the same layer
-  restore, for the backdrop only.
-- Shadows of rects and rounded rects drawn analytically in the shape
-  program where the shadow does not need its own layer (`kinds/shadow.rs`,
-  `needs_own_layer`).
-- All 29 blend modes of the contract: the separable ones as GL blend
-  equations, the non-separable ones (hue, saturation, color, luminosity)
-  and the ones GL cannot express (the dodge/burn/soft-light family) in the
-  layer restore shader. The order of work follows what the apps and
-  examples emit (`plus` for stacked GPU passes first); none is left as a
-  warning.
+**The design.** A layer lives inside anvil's one `draw`. The walk emits a
+begin and an end marker in the batch sequence and a layer table (the
+device rect, the paint's alpha and color matrix, a blur, a blend mode).
+A layer's device rect is the union of its content's device boxes
+(`device_box`, which the stage 5 join already computes per instance),
+inflated by the blur reach where a blur applies, cut to the clip in
+effect and the target: never the `save_layer` bounds, which the
+rendertree passes as an infinite rect, so a fading card gets a
+card-sized layer. The executor keeps a pool of layer targets by 64 px
+bucket, each a color attachment and a depth-stencil at the sample count
+of the target being drawn (one `GL_SAMPLES` query per draw), in tile
+memory through `EXT_multisampled_render_to_texture` where present (anvil
+loads the two entry points itself through the proc address it already
+receives, as alloy's rig does). A layer is drawn with the viewport
+shifted by the layer's origin and a `uOrigin` uniform added in
+`device()`, so no instance, mesh map or clip is rewritten for it. The
+clips in effect at `save_layer` (the device box, the rounded clip, the
+stencil depth) apply at the composite quad, so the layer's own stencil
+starts at zero and its inner clips count up from there. The composite is
+one program: the layer texture, the alpha, a 4x5 color matrix in
+straight alpha, and optionally a destination copy with a shader blend
+mode. One separable gaussian program blurs a layer in two passes,
+downsampled when the kernel radius would exceed a fixed cap; `Decal`
+comes from the layer being inflated by the reach and drawing nothing
+there, `Clamp` from the sampler. The rig and `gl/draw.rs` stay in alloy
+for this stage; the Findings record what the pool answers to the open
+question in "Where anvil lives".
+
+**Blend modes** split by what GL's fixed-function blend stage expresses
+on premultiplied color, not by separability: the twelve Porter-Duff
+modes, `Plus`, `Modulate` and `Screen` are a batch key and a
+`glBlendFuncSeparate` per batch; `Overlay`, `Darken`, `Lighten`,
+`ColorDodge`, `ColorBurn`, `HardLight`, `SoftLight`, `Difference`,
+`Exclusion`, `Multiply`, `Hue`, `Saturation`, `Color` and `Luminosity`
+draw as an implicit layer around the op, composited with a copy of the
+destination under the layer's rect and the blend evaluated in the
+composite program (Skia's non-coherent blends). A transparent source
+leaves the destination unchanged under every formula, so the composite
+quad covers the layer rect.
+
+**Shadows.** A mask-blurred rect or rounded rect (what `kinds/rect.rs`
+records for a shadow) draws through a shadow program of its own over the
+rounded vertex stage: the gaussian of a rounded box evaluated
+analytically, the quad inflated by three sigma. A mask-blurred oval or
+path draws through the layer blur. `needs_own_layer`, `to_layer_paint`
+and `to_hard_paint` in `kinds/shadow.rs` go: they worked around
+Impeller's opacity peephole refusing a mask-blurred draw, and in anvil a
+blurred shadow is an instance like any other, so every shadow draws
+through `to_paint` and a glass card's shadow costs no layer.
+
+**Two peepholes** the pure walk can afford. A layer whose paint is alpha
+alone, source-over, and whose instances are quads with pairwise disjoint
+device boxes, with no mesh, paint or clip draw inside, folds the alpha
+into its colors and opens no layer (Impeller's opacity peephole, done
+once, in one place). A shadow under its casting box's difference clip
+(three stencil draws and a batch break per shadow since stage 5's step
+2a) can take the cutout as a per-instance rounded box in the shadow
+program; this one is a measured follow-up, after the TV read, not a
+first step.
+
+**Steps**, one commit each:
+
+1. Remove the subtree `filter` prop: `View::filter` and its decode in
+   flux, `filter` on core's view props (`FilterProps` stays for
+   `backdropFilter`), `effect_paint`'s filter (alpha only from here),
+   the cull's filtered root and `blurs_subtree`, the painting doc's
+   bullet, the "blur" wrap case of `packages/2d/tests/target-damage.test.tsx`.
+   Nothing in core, the components or the examples uses it. A built-in
+   blur or grade can return later as a bundled shader source in the GPU
+   layer, not as a renderer filter.
+2. Layers with opacity: the markers and the layer table, the pool, the
+   viewport shift and `uOrigin`, the composite program with alpha,
+   `save_layer` and `draw_display_list` below 1, the alpha fold. The
+   components' fades and the player's start screen work from here.
+3. Blend modes: the fifteen fixed-function modes as a batch key, the
+   fourteen shader modes as an implicit layer with a destination copy.
+   `plus` for stacked GPU passes (`packages/core/examples/gpu-texture-blend.tsx`)
+   and `destination-out` are the cases the examples emit.
+4. Blur and the backdrop: the gaussian program, `save_backdrop_layer`
+   capturing by a blit from the target (a resolve where the target is
+   multisampled, a tile flush on a tiler, as Impeller's capture was),
+   the color matrix in the composite, an image filter on a `save_layer`
+   paint through the same blur (no caller in the tree after step 1, but
+   the contract keeps it). The components' glass works from here.
+5. Shadows: the shadow program for rects and rounded rects, the layer
+   blur for ovals and paths, the three Impeller workarounds in
+   `kinds/shadow.rs` removed.
+6. Measure and close.
+
+Steps 2 and 3's fixed-function half are independent; 4 needs 2; 5's
+layer half needs 4.
+
+**Measure.** On the desktop and the TV: a grid of fading groups (cards
+with a background and text under a `draw_display_list` opacity, the
+components' fade), the glass (ten frosted panes over moving content,
+the components' glass idiom), and a shadow grid (rounded cards with a
+blurred shadow, with and without the cutout peephole); the tablet's
+glass read. The stage 5 thread still open, the `ROUNDED_SPLIT_AREA`
+sweep, rides the TV session. Into Findings, with draw calls, layers per
+frame, GPU ms and the raster thread.
+
+**Done.** The contract's layers, blend modes and filters draw, with no
+"not supported yet" warning left for them; the seventeen reference
+renders diff at zero against the renders of 0e6ab617 except where a
+draw is new (a fade, a blend, a shadow); the TV reads are in Findings.
 
 ## Stage 7: parity, platforms, merge
 
