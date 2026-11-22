@@ -44,7 +44,7 @@ glow = "=0.17.0"
 # CSS color-string grammar (hex, rgb()/hsl()/hwb(), named colors) for the
 # color property and the parseColor binding; the color math itself (oklab,
 # mixing) is ours in src/color.rs. Replaced the JS-side colord dependency.
-csscolorparser = { version = "=0.9.1", default-features = false, features = ["named-colors"] }
+csscolorparser = { version = "=0.9.2", default-features = false, features = ["named-colors"] }
 # QR decoding for camera streams. Chosen over rqrr after a tolerance probe on
 # camera-realistic frames (blur + noise + low contrast): rxing decoded 9/9,
 # rqrr 3/9. ~3.4ms/frame with a code present, ~0.75ms without (desktop release).
@@ -90,12 +90,12 @@ half = "=2.7.1"
 # headless (ANGLE). libloading is khronos-egl's loader, reused for the GLES
 # client library fallback.
 khronos-egl = { version = "=6.0.0", default-features = false, features = ["dynamic", "1_5"] }
-libloading = "=0.9.0"
+libloading = "=0.9.1"
 
 [build-dependencies]
 # Compiles the vendored msdfgen core and the C shim over it (build.rs), the
 # glyph engine's distance-field generator; forge's pin.
-cc = "=1.11.1"
+cc = "=1.11.2"
 
 [dev-dependencies]
 # PNG dumps of captured pixels in the examples (image::save_buffer).

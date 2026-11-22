@@ -82,13 +82,13 @@ resvg = { version = "=0.49.0", default-features = false, optional = true }
 reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls"], optional = true }
 
 # Process stats for the debug overlay: RSS via sysinfo, CPU% via cpu_time.
-sysinfo = { version = "=0.40.3", default-features = false, features = ["system"] }
+sysinfo = { version = "=0.40.4", default-features = false, features = ["system"] }
 cpu-time = "=1.0.0"
 
 # Preloading the packed-in GL libraries (ANGLE) after extraction, so SDL's
 # later load-by-name resolves to them (src/gl_libs.rs).
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
-libloading = "=0.9.0"
+libloading = "=0.9.1"
 
 # mDNS / DNS-SD dev-server discovery for the go client (see src/go/connection.rs).
 # Android reaches the dev server via the adb-reverse loopback instead, and
