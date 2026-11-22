@@ -118,7 +118,7 @@ rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", 
 # The issuer and subject of a certificate (forge::tls::is_self_signed),
 # behind `tls`: rustls's own certificate parser, already in the tree under
 # rustls, with the features rustls turns on.
-rustls-webpki = { version = "=0.103.16", default-features = false, features = ["alloc"], optional = true }
+rustls-webpki = { version = "=0.103.17", default-features = false, features = ["alloc"], optional = true }
 # The validity dates of a generated certificate (`std` for the clock).
 # Already in the tree (rcgen depends on it).
 time = { version = "=0.3.55", default-features = false, features = ["std"], optional = true }
@@ -130,7 +130,7 @@ sha2 = "=0.11.1"
 # zlib format and the gzip framing's CRC-32, on the pure-Rust backend. Already
 # in the tree (image -> png depends on it).
 flate2 = "=1.1.11"
-bytes = "=1.12.1"
+bytes = "=1.12.2"
 futures-core = "=0.3.34"
 # Jitter for the fetch 429 backoff, behind `http`. Already in the tree
 # (tokio and others depend on it).
@@ -162,7 +162,7 @@ glob = "=0.3.4"
 # channel feature: events cross to the caller on a tokio channel.
 notify = { version = "=8.2.2", default-features = false, features = ["macos_fsevent"] }
 # Current-process stats for flux:process (memoryUsage rss).
-sysinfo = { version = "=0.40.3", default-features = false, features = ["system"] }
+sysinfo = { version = "=0.40.4", default-features = false, features = ["system"] }
 # WebSocket framing for the client and the server, behind `http`.
 fastwebsockets = { version = "=0.10.0", features = ["upgrade", "unstable-split"], optional = true }
 # The p2p core behind `p2p` (forge::p2p).
@@ -175,11 +175,11 @@ netwatch = { version = "=0.19.3", optional = true }
 # The relay's access token behind `p2p-relay`: a fresh secret key's bytes,
 # from the CSPRNG iroh draws its own keys from. `key` is what iroh-relay
 # turns on already, so this adds nothing to the tree.
-iroh-base = { version = "=1.4.1", default-features = false, features = ["key"], optional = true }
+iroh-base = { version = "=1.5.0", default-features = false, features = ["key"], optional = true }
 # The relay server behind `p2p-relay`. `default-features = false` as iroh
 # declares the crate; `server` is the HTTP relay, and the metrics and ring
 # TLS it implies are what iroh picks for the client half too.
-iroh-relay = { version = "=1.4.1", default-features = false, features = ["server"], optional = true }
+iroh-relay = { version = "=1.4.2", default-features = false, features = ["server"], optional = true }
 # Cross-platform PATH lookup for the subprocess `which` (handles Windows PATHEXT).
 which = "=8.0.6"
 # UDP socket options the flux:net multicast beacon needs (SO_REUSEADDR/REUSEPORT)
@@ -266,7 +266,7 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Stor
 [build-dependencies]
 # Compiles the vendored opusfile and Basis Universal sources, supplies
 # libvpx's CC, and finds MSBuild on Windows (build.rs).
-cc = "=1.11.1"
+cc = "=1.11.2"
 # Drives the vendored libopus's CMake project (build.rs); already in the tree
 # (sdl3-sys builds SDL with it).
 cmake = "=0.1.58"
