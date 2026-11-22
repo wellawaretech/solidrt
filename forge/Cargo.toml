@@ -242,7 +242,7 @@ jni = "=0.22.4"
 # compilation; `wat` so text sources parse on this lane too. Measured at
 # +7.8 MB of runtime.
 [target.'cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(target_os = "ios")))'.dependencies]
-wasmtime = { version = "=49.0.3", default-features = false, features = ["runtime", "std", "cranelift", "wat"], optional = true }
+wasmtime = { version = "=50.0.2", default-features = false, features = ["runtime", "std", "cranelift", "wat"], optional = true }
 
 # The foreground-job check behind forge::tty::is_terminal (tcgetpgrp /
 # getpgrp, safe wrappers), and CLOCK_MONOTONIC for forge::video's transport
