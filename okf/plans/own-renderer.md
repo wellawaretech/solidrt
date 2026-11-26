@@ -2511,6 +2511,64 @@ The remedy is the stage 7 atlas's: fewer passes (the panes' blur passes
 sharing atlas passes, the captures grouped). With this, stage 6 has no
 open item but its close.
 
+### What stage 6 taught
+
+- On a tiler the unit of cost is the render pass, not the pixel. Twelve
+  card-sized layers cost the TV 40 ms of GPU and the tablet 63 percent
+  of its raster thread, where the same cards drawn flat cost nothing
+  measurable. Drawing the layers ahead of the frame removed the parent's
+  store and reload per layer (the tablet's fade route from 13 to 50 to 58
+  fps) and left the Mali's fixed cost per pass, about 2.5 ms; packing the
+  layers into one pass is the move left, and it is stage 7's.
+- Which pass a draw lands in is the executor's decision, not the walk's.
+  The viewport shift with `uFrag` kept every instance, mesh map and clip
+  as recorded, and the schedule reorders passes without touching the
+  batch sequence; the walk (what to draw) and `schedule.rs` (in which
+  pass) are both pure and tested apart, which is why step 6b was a
+  one-day change verified at zero diffs.
+- Read GLES 3.0's restrictions before designing around a copy. A blit
+  that reads a multisampled framebuffer needs identical bounds (so the
+  destination copy is one single-sample scratch at the target's size, read
+  by `texelFetch` at the fragment's own coordinate), and a blit into a
+  multisampled framebuffer is refused (so the backdrop fill, the
+  downsamples and the gaussian passes are all draws of one program).
+- The GPU timer lied on two of the three devices: on the desktop's
+  vsync-paced client `gpuFrameExecMs` spans the frame period, on the
+  Mali-T860 it reads whole vsync periods. Step 5b was built on that lead
+  and survives on its own merits. The measures that held are missed
+  presents, draw calls, layers and passes per frame, and the raster
+  thread's share; and frames plus missed presents over a window must sum
+  to the refresh rate times the window, the check that caught the reads
+  scaled 1.6 times high.
+- Counters count presents, not pictures. The tablet's first reads came
+  from a client that presented the drawn frame once in three; a device
+  read counts only after the maintainer's look at the device, and the
+  workaround (a `glFlush` after each layer's passes on the Adreno 610) is
+  a named entry of the driver faults register, anvil's first.
+- A peephole done once, in one place, replaces workarounds spread over
+  the tree: the alpha fold in the walk stands in for Impeller's opacity
+  peephole, and the cutout as a field of the shadow program replaced
+  three stencil draws per card and the three `kinds/shadow.rs` workarounds
+  with them. The pure walk can afford peepholes the retained-state
+  renderer could not.
+- Explain a stall from the thread that waits, not from a timer: the glass
+  route's 700 ms frames read as a wait until the slow-frame log showed
+  paint waiting on raster and raster on the GPU, with twelve coupled
+  backdrop panes re-filtering as one because each lies within the next
+  one's blur reach. The damage of a coupled effect grows across the
+  coupling, and that is a property of the scene the renderer cannot
+  undo; fewer passes per pane is what it can do.
+
+**Stage 6 is done** (2026-11-20, closed 2026-11-26). Its Done criteria
+hold: `save_layer`, `save_backdrop_layer`, `draw_display_list` below
+opacity 1, the 29 blend modes and the three paint filters draw with no
+"not supported yet" warning left; the reference renders diff at zero
+against the renders of 0e6ab617 except the lit example, whose shadows
+blur now; the TV and tablet reads are above; the maintainer has seen the
+fade, glass and shadow routes draw correctly on both devices on the
+client of 76b9151b and the TV on e9cff7cf. What the reads opened, the
+layer atlas and the shadow ring, is written into stage 7.
+
 ### Where anvil lives (2026-11-18)
 
 anvil is a module behind the seam, `alloy/src/renderer/anvil/` (the plan
