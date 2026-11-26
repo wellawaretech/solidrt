@@ -5,7 +5,9 @@
 //! read back and compared pixel for pixel with the same cells composited on
 //! the CPU - which checks the orientation, the atlas mapping and the
 //! premultiplied blend at once. Then a half-transparent red run over it,
-//! and a gradient run whose color follows the ramp across the word.
+//! every coverage mode against the same cells remapped on the CPU, for a
+//! light word and a dark one, and a gradient run whose color follows the
+//! ramp across the word.
 //!
 //! Run: cargo run -p alloy --example glyph_run
 
@@ -41,6 +43,9 @@ const AA: bool = true;
 const INK_MIN: u8 = 200;
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const HALF_RED: [f32; 4] = [1.0, 0.0, 0.0, 0.5];
+// A dark, opaque text color: below LIGHT_TEXT_LUMA, so the polarity-aware
+// modes take their dark branch.
+const DARK: [f32; 4] = [0.1, 0.1, 0.2, 1.0];
 
 fn word_quads(shaped: &ShapedGlyphs, atlas: &GlyphAtlas<u16>, pen_x: f32, baseline: f32) -> Vec<GlyphQuad> {
   let mut quads = Vec::new();
@@ -59,9 +64,64 @@ fn word_quads(shaped: &ShapedGlyphs, atlas: &GlyphAtlas<u16>, pen_x: f32, baseli
   quads
 }
 
-// The runs' quads composited on the CPU in their runs' colors:
-// premultiplied source-over in floats.
-fn composite(runs: &[Run], packer: &AtlasPacker<u16>) -> Vec<f32> {
+// Rec. 709 luminance weights and the lightness past which text is light
+// to the polarity-aware modes; DirectWrite's lightness and intensity
+// weights and its contrast fade (anvil's glyph program, exec.rs
+// GLYPH_FRAGMENT, holds the same constants).
+const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
+const LIGHT_TEXT_LUMA: f32 = 0.5;
+const DWRITE_LIGHTNESS: [f32; 3] = [0.30, 0.59, 0.11];
+const DWRITE_FADE_SLOPE: f32 = 4.0;
+const DWRITE_FADE_END: f32 = 3.0;
+const DWRITE_INTENSITY: [f32; 3] = [0.25, 0.5, 0.25];
+
+fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+  a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+// A coverage byte's value under `policy` for text of `color`, as
+// `CoverageMode` defines each mode: the CPU reference the GPU's glyph
+// program is checked against.
+fn remap(c: f32, color: [f32; 4], policy: CoveragePolicy) -> f32 {
+  let rgb = [color[0], color[1], color[2]];
+  let light = dot3(rgb, LUMA) > LIGHT_TEXT_LUMA;
+  let g = policy.gamma;
+  match policy.mode {
+    CoverageMode::Naive => c,
+    CoverageMode::LinearLight => {
+      if light {
+        c.powf(1.0 / g)
+      } else {
+        1.0 - (1.0 - c).powf(1.0 / g)
+      }
+    }
+    CoverageMode::PolarityRemap => {
+      if light {
+        (1.0 - (1.0 - c).powf(g)).powf(1.0 / g)
+      } else {
+        c
+      }
+    }
+    CoverageMode::PolarityLinear => {
+      if light {
+        c.powf(1.0 / g)
+      } else {
+        c
+      }
+    }
+    CoverageMode::DirectWrite => {
+      let k = policy.contrast * (dot3(rgb, DWRITE_LIGHTNESS) * -DWRITE_FADE_SLOPE + DWRITE_FADE_END).clamp(0.0, 1.0);
+      let f = dot3(rgb, DWRITE_INTENSITY);
+      let r = policy.gamma_ratios();
+      let c = c * (k + 1.0) / (c * k + 1.0);
+      c + c * (1.0 - c) * ((r[0] * f + r[1]) * c + (r[2] * f + r[3]))
+    }
+  }
+}
+
+// The runs' quads composited on the CPU in their runs' colors, their
+// coverage under `policy`: premultiplied source-over in floats.
+fn composite(runs: &[Run], packer: &AtlasPacker<u16>, policy: CoveragePolicy) -> Vec<f32> {
   let (atlas_w, _) = packer.size();
   let texels = packer.texels();
   let mut out = vec![0f32; (FRAME_W * FRAME_H) as usize * 4];
@@ -76,7 +136,7 @@ fn composite(runs: &[Run], packer: &AtlasPacker<u16>) -> Vec<f32> {
         }
         // A mask atlas holds one coverage byte per texel.
         let texel = ((sy + j) * atlas_w + sx + i) as usize;
-        let coverage = texels[texel] as f32 / 255.0;
+        let coverage = remap(texels[texel] as f32 / 255.0, color, policy);
         let a = coverage * color[3];
         let src = [color[0] * a, color[1] * a, color[2] * a, a];
         let px = (y as u32 * FRAME_W + x as u32) as usize * 4;
@@ -200,7 +260,7 @@ fn main() {
     let naive = CoveragePolicy { mode: CoverageMode::Naive, gamma: REMAP_GAMMA, ..CoveragePolicy::default() };
     let white_pixels = draw_runs(&ctx, &handle, &[solid(white.clone(), WHITE)], naive);
     report.check("the white word has ink", (alpha_sum(&white_pixels) == 0).then(|| "no ink".to_string()));
-    let expected = composite(&[solid(white.clone(), WHITE)], atlas.packer());
+    let expected = composite(&[solid(white.clone(), WHITE)], atlas.packer(), naive);
     report.check(
       "white word, naive, matches the CPU composite",
       mismatch(&white_pixels, expected.iter().map(|v| (v * 255.0).round() as i32)),
@@ -211,11 +271,42 @@ fn main() {
     let red = word_quads(&shaped, &atlas, RED_PEN_X, BASELINE_Y);
     let both = [solid(white.clone(), WHITE), solid(red, HALF_RED)];
     let both_pixels = draw_runs(&ctx, &handle, &both, naive);
-    let expected = composite(&both, atlas.packer());
+    let expected = composite(&both, atlas.packer(), naive);
     report.check(
       "white and half red, naive, matches the CPU composite",
       mismatch(&both_pixels, expected.iter().map(|v| (v * 255.0).round() as i32)),
     );
+
+    // Every other coverage mode, for a light word and a dark one (the
+    // polarity-aware modes branch on the text's lightness), each against the
+    // CPU remap; the remap modes at the gamma they were tuned around, the
+    // DirectWrite mode at its default policy.
+    let modes = [
+      (
+        "linear light",
+        CoveragePolicy { mode: CoverageMode::LinearLight, gamma: REMAP_GAMMA, ..CoveragePolicy::default() },
+      ),
+      (
+        "polarity remap",
+        CoveragePolicy { mode: CoverageMode::PolarityRemap, gamma: REMAP_GAMMA, ..CoveragePolicy::default() },
+      ),
+      (
+        "polarity linear",
+        CoveragePolicy { mode: CoverageMode::PolarityLinear, gamma: REMAP_GAMMA, ..CoveragePolicy::default() },
+      ),
+      ("DirectWrite", CoveragePolicy::default()),
+    ];
+    for (name, policy) in modes {
+      for (polarity, color) in [("light", WHITE), ("dark", DARK)] {
+        let runs = [solid(white.clone(), color)];
+        let pixels = draw_runs(&ctx, &handle, &runs, policy);
+        let expected = composite(&runs, atlas.packer(), policy);
+        report.check(
+          &format!("{polarity} word, {name}, matches the CPU remap"),
+          mismatch(&pixels, expected.iter().map(|v| (v * 255.0).round() as i32)),
+        );
+      }
+    }
 
     // A gradient run: red at the word's pen to blue at its advance, so its
     // first stem reads red and its last reads blue, and the coverage still

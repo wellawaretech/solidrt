@@ -47,10 +47,11 @@ function moved(a: Ink, b: Ink): number {
  * The most the frame a track settles on may move the ink: its `roundings`
  * (the box's own, and one more for each translate above it, which rounds
  * as a movement), on top of the motion's own last step, which is no larger
- * than the step of the frame before it.
+ * than the step of the frame before it, and the renderer's resampling of
+ * the quads at their new place (SMOOTH_PX).
  */
 function settleBound(reads: Ink[], settle: number, roundings: number): number {
-  return roundings * ROUNDING_PX + moved(reads[settle - 2]!, reads[settle - 1]!) + ALIKE_PX
+  return roundings * ROUNDING_PX + moved(reads[settle - 2]!, reads[settle - 1]!) + SMOOTH_PX
 }
 
 /** Whether rows [from, to) hold a pixel that is neither empty nor fully covered. */
@@ -105,11 +106,15 @@ const SPLIT_PX = Math.round(((SNAPPED_LEFT + TITLE.width + FREE_LEFT) / 2) * FIT
 const APART_PX = (FREE_LEFT - SNAPPED_LEFT) * FIT
 // The hover holds this long, the release is read for this long (past the
 // longest spring), and from TAIL_FROM on the springs move the letter by
-// less than SMOOTH_PX a frame: a larger move there is a step.
+// less than SMOOTH_PX a frame: a larger move there is a step. The bound
+// leaves room for the renderer's resampling: a glyph quad drawn under a
+// transform is sampled anew each frame, and its edge pixels can move the
+// ink's centre by a tenth of a pixel as the last track ends, which is no
+// rounding (a rounding moves it by up to half a pixel).
 const HOVER_FRAMES = 40
 const RELEASE_FRAMES = 70
 const TAIL_FROM = 20
-const SMOOTH_PX = 0.05
+const SMOOTH_PX = 0.12
 // The raster a release makes for the scale it ends at falls in its first
 // frames, at the turn, where the motion hides it.
 const TURN_FRAMES = 5

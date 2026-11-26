@@ -736,23 +736,33 @@ tablet.
   motion with no step under pixelSnap={false}", fails on the branch: the
   last frame of the motion steps 0.073 px against the test's 0.05 bound.
   It failed before the text cleanup (1a90d625) and after it, and still
-  fails on 2026-11-19. Whether anvil places the glyph quads differently
-  from Impeller's text layers, or the bound was fitted to Impeller, is
-  open. A second one, `packages/test/tests/readers.test.tsx`, "gpu is
-  the inventory the control API reports": the inventory has carried a
-  `paintShaders` key since stage 3 and the test's key list does not;
-  the list is updated. Both are the suite's only failures on
-  2026-11-20 after stage 6's step 4 (1173 passed).
+  fails on 2026-11-19. Explained 2026-11-26: the bound was fitted to
+  Impeller. The tail's two larger steps (0.073 and 0.097 px) are not
+  re-rasters (the raster count stays zero) and move the snapped and the
+  free letter alike: the letter's glyph quads are resampled under the
+  transform each frame, and as the rotate track ends their edge columns
+  change by a few hundred alpha levels, a tenth of a pixel of centre,
+  where Impeller's one text-layer texture resampled smoother. A tenth
+  of a pixel is no rounding (half a pixel), so the test's smoothness
+  bound widened to 0.12 and its settle bound carries the same
+  allowance; pixel parity with Impeller is not a goal. A second one,
+  `packages/test/tests/readers.test.tsx`, "gpu is the inventory the
+  control API reports": the inventory has carried a `paintShaders` key
+  since stage 3 and the test's key list did not; the list is updated.
+  Both were the suite's only failures on 2026-11-20 after stage 6's
+  step 4 (1173 passed); both pass on 2026-11-26.
 - Before the diff runs: main's reference client in `target/main-ref/`
   rebuilt from a main checkout built whole (its own core), since the
   2026-11-18 copy predates stage 3's `flux:gpu` exports and refuses a
   bundle built from today's core; and the alloy examples the branch broke
-  made whole. `texture_paint.rs` panics at its half-alpha precheck (127
-  against 128, the unorm8 tie rounding) and gets a tolerance of one
-  level, the same rule the renders get. `glyph_run.rs` lost its per-mode
-  pixel checks with the GL glyph pass and gets a CPU reference per
-  coverage mode. `text_layer.rs` (untracked) drew through the retired
-  glyph pass and is rewritten over `draw_glyphs` or deleted.
+  made whole. `texture_paint.rs` panicked at its half-alpha precheck (127
+  against 128, the unorm8 tie rounding) and has a tolerance of one
+  level, the same rule the renders get (2026-11-26). `glyph_run.rs` lost
+  its per-mode pixel checks with the GL glyph pass and has a CPU remap
+  per coverage mode, checked for a light and a dark word (2026-11-26;
+  every mode matches within the example's three levels). `text_layer.rs`
+  (untracked) drew through the retired glyph pass and is rewritten over
+  `draw_glyphs` or deleted.
 - [repaint-patch-union](repaint-patch-union.md) first: the mover probes'
   repaint patch is a third of the window under both renderers, so every
   mover read so far measured that patch, not the mover. Then damage and
