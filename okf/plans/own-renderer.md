@@ -763,11 +763,16 @@ tablet.
   every mode matches within the example's three levels). `text_layer.rs`
   (untracked) drew through the retired glyph pass and is rewritten over
   `draw_glyphs` or deleted.
-- [repaint-patch-union](repaint-patch-union.md) first: the mover probes'
-  repaint patch is a third of the window under both renderers, so every
-  mover read so far measured that patch, not the mover. Then damage and
-  partial repaint on the rig path and buffer age, re-verified against the
-  new renderer's output.
+- [repaint-patch-union](../done/repaint-patch-union.md) first: the mover
+  probes' repaint patch was a third of the window under both renderers, so
+  every mover read so far measured that patch, not the mover. Closed
+  2026-11-26: the partner of the union was the dev session's badge overlay
+  at the top right, in every frame's damage; the overlay now draws only
+  inside the frame's patch and a changed overlay folds its own rectangle
+  in. The desktop mover probe draws about 100 instances a frame where it
+  drew 570. Then damage and partial repaint on the rig path and buffer
+  age, re-verified against the new renderer's output; the TV mover reads
+  are retaken on the device.
 - The end state's TV read: the dense mover probe locked at 50 fps, with
   the patch fixed. [display-list-op-cost](display-list-op-cost.md), the
   performance case this plan started from, closes on it.
@@ -1363,7 +1368,7 @@ repaint and with the window patch off: the dense mover and the prose
 bench run locked at 50 fps on the TV, and a screen of prose draws in two
 or three batches. Open from the stage, into the backlog or later stages:
 the partial-repaint patch that is a third of the window on the mover
-probes under both renderers (`okf/plans/repaint-patch-union.md`); the
+probes under both renderers (`okf/done/repaint-patch-union.md`); the
 sampler-array TV read, not taken (its design is above); `FILL_FOLD_AREA`
 not yet re-read on the TV.
 

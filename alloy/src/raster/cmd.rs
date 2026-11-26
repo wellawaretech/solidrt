@@ -73,6 +73,18 @@ impl DamageRect {
     Some(DamageRect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 })
   }
 
+  /// The part of the rect inside `other`; None when they do not overlap.
+  pub fn clamped_to(self, other: DamageRect) -> Option<DamageRect> {
+    let x0 = self.x.max(other.x);
+    let y0 = self.y.max(other.y);
+    let x1 = (self.x + self.width).min(other.x + other.width);
+    let y1 = (self.y + self.height).min(other.y + other.height);
+    if x1 <= x0 || y1 <= y0 {
+      return None;
+    }
+    Some(DamageRect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 })
+  }
+
   /// True when the rect covers the whole `width` x `height` surface.
   pub fn covers(self, width: i32, height: i32) -> bool {
     self.x <= 0 && self.y <= 0 && self.x + self.width >= width && self.y + self.height >= height

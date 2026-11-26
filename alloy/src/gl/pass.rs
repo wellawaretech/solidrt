@@ -348,21 +348,21 @@ pub fn render_program_to_window(
 
 /// Composite `program`'s output over the window framebuffer's existing
 /// contents (`window` as in `render_program_to_window`) at the viewport
-/// rectangle `origin`/`width` x `height` (GL bottom-up coordinates): no
-/// clear, premultiplied-alpha blending - the stats overlay draw over the
-/// finished frame. A rectangle partly outside the window is clipped by the
-/// viewport transform.
+/// rectangle `origin`/`size` (GL bottom-up coordinates), inside `scissor`
+/// where one is given: no clear, premultiplied-alpha blending - the stats
+/// overlay draw over the finished frame. A rectangle partly outside the
+/// window is clipped by the viewport transform.
 pub fn composite_program_over_window(
   gl: &glow::Context,
   program: &ShaderProgram,
   window: Option<glow::Framebuffer>,
   origin: (i32, i32),
-  width: u32,
-  height: u32,
+  size: (u32, u32),
+  scissor: Option<(i32, i32, i32, i32)>,
   textures: &[PassInput],
 ) {
   let draw = PassDraw::Fullscreen { program, params: &[], textures, vertex_count: 3, clear: None, blend: true };
-  run_pass(gl, window, origin, width, height, None, draw);
+  run_pass(gl, window, origin, size.0, size.1, scissor, draw);
 }
 
 /// Replace the window framebuffer's pixels (`window` as in

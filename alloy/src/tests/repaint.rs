@@ -27,6 +27,8 @@ const WRITE: DamageRect = DamageRect { x: 20, y: 200, width: 10, height: 10 };
 // A swapchain two buffers deep: every back buffer holds the frame before
 // last.
 const AGE_TWO: i32 = 2;
+// A back buffer that held the previous frame.
+const AGE_ONE: i32 = 1;
 
 // One frame as frame.rs runs it on a `buffer` window: `damage` folds in
 // with the frame, the frame takes everything pending, is routed with
@@ -79,19 +81,31 @@ const OVERLAY_MOVED: DamageRect = DamageRect { x: 220, ..OVERLAY };
 const OVERLAY_GROWN: DamageRect = DamageRect { width: 160, ..OVERLAY };
 
 #[test]
-fn an_overlay_that_leaves_its_rectangle_repairs_it() {
-  let old = Some(PresentDamage::Rect(OVERLAY));
-  assert_eq!(overlay_repair(Some(OVERLAY), None), old, "removed");
-  assert_eq!(overlay_repair(Some(OVERLAY), Some(OVERLAY_MOVED)), old, "moved");
-  assert_eq!(overlay_repair(Some(OVERLAY), Some(OVERLAY_GROWN)), old, "resized");
+fn an_overlay_that_arrives_changes_or_leaves_repairs_its_rectangles() {
+  let rect = |r: DamageRect| Some(PresentDamage::Rect(r));
+  assert_eq!(overlay_repair(Some(OVERLAY), None), rect(OVERLAY), "removed");
+  assert_eq!(overlay_repair(None, Some(OVERLAY)), rect(OVERLAY), "first install");
+  // A new declaration over the same rectangle changed its content: the
+  // overlay is blended only where a frame redraws, so the rectangle is
+  // damage of its own.
+  assert_eq!(overlay_repair(Some(OVERLAY), Some(OVERLAY)), rect(OVERLAY), "content only");
+  assert_eq!(overlay_repair(Some(OVERLAY), Some(OVERLAY_MOVED)), rect(OVERLAY.union(OVERLAY_MOVED)), "moved");
+  assert_eq!(overlay_repair(Some(OVERLAY), Some(OVERLAY_GROWN)), rect(OVERLAY_GROWN), "resized");
+  assert_eq!(overlay_repair(None, None), None, "no overlay");
 }
 
 #[test]
-fn an_overlay_that_keeps_its_rectangle_or_arrives_repairs_nothing() {
-  // A new declaration over the same rectangle changed only its content:
-  // the frame's own damage holds the rectangle.
-  assert_eq!(overlay_repair(Some(OVERLAY), Some(OVERLAY)), None, "content only");
-  assert_eq!(overlay_repair(None, Some(OVERLAY)), None, "first install");
+fn a_frame_with_an_overlay_installed_patches_its_own_damage_alone() {
+  // The overlay's rectangle is not in a frame's own damage: a frame that
+  // changes a small box far from the overlay patches that box, not the
+  // union of the two.
+  let mut tracker = started(AGE_ONE);
+  tracker.fold(overlay_repair(None, Some(OVERLAY)).expect("an install repairs"));
+  frame(&mut tracker, PresentDamage::Rect(WRITE), AGE_ONE);
+  match frame(&mut tracker, PresentDamage::Rect(WRITE), AGE_ONE) {
+    WindowRoute::Rig(Some(patch)) => assert_eq!(patch, WRITE, "{patch:?}"),
+    other => panic!("expected the write's patch, got {other:?}"),
+  }
 }
 
 #[test]

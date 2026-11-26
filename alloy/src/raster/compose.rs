@@ -255,7 +255,15 @@ impl RasterState {
   }
 
   /// Composite the installed overlay over the finished frame in the window
-  /// framebuffer (`window`, see `window_framebuffer`; `size` the window's).
+  /// framebuffer (`window`, see `window_framebuffer`; `size` the window's),
+  /// inside `patch` where the frame redrew a patch of the window (None: the
+  /// whole window). The overlay is blended, so it lands once on every
+  /// pixel: the pixels the frame redrew take it now, and the pixels
+  /// outside the patch keep the composite an earlier frame left, which
+  /// stays right while the declaration stands (a new declaration folds its
+  /// rectangle in as damage, `set_overlay`, so the frame that applies it
+  /// redraws every pixel under it). A patch that misses the overlay's
+  /// rectangle draws nothing.
   /// A stale declaration is rasterized into the retained layer first - drawn
   /// UNFLIPPED on purpose: the wrapped layer FBO is a bottom-up window
   /// target, so its rows come out in the window framebuffer's own convention
@@ -264,12 +272,27 @@ impl RasterState {
   /// premultiplied-alpha blended draw at the declared window rectangle
   /// (converted here to GL's bottom-up viewport origin). Failures warn and
   /// skip: a lost overlay frame must never cost the app frame.
-  pub(super) fn draw_overlay(&mut self, size: ISize, window: Option<glow::NativeFramebuffer>) {
+  pub(super) fn draw_overlay(
+    &mut self,
+    size: ISize,
+    window: Option<glow::NativeFramebuffer>,
+    patch: Option<DamageRect>,
+  ) {
     let Some(ov) = &mut self.overlay else { return };
     let (width, height) = (ov.decl.width, ov.decl.height);
     if width == 0 || height == 0 {
       return;
     }
+    // The part of the overlay the frame redrew, as the composite's scissor
+    // in GL's bottom-up coordinates; None of it, nothing to draw.
+    let window_height = size.height as i32;
+    let scissor = match patch {
+      None => None,
+      Some(patch) => match overlay_rect(&ov.decl).clamped_to(patch) {
+        None => return,
+        Some(shown) => Some((shown.x, window_height - (shown.y + shown.height), shown.width, shown.height)),
+      },
+    };
     if ov.stale || ov.layer.is_none() {
       if ov.layer.is_none() {
         match crate::gl::create_layer_target(&self.gl, width, height, [0.0, 0.0, 0.0, 0.0]) {
@@ -306,9 +329,9 @@ impl RasterState {
       }
     };
     let layer = ov.layer.as_ref().expect("rasterized above");
-    let origin = (ov.decl.x, size.height as i32 - (ov.decl.y + height as i32));
+    let origin = (ov.decl.x, window_height - (ov.decl.y + height as i32));
     let input = PassInput::d2("uSrc", layer.tex, None);
-    crate::gl::composite_program_over_window(&self.gl, &program, window, origin, width, height, &[input]);
+    crate::gl::composite_program_over_window(&self.gl, &program, window, origin, (width, height), scissor, &[input]);
   }
 
   /// A patch-layer frame (`WindowRoute::PatchLayer`): draw the part of
@@ -451,13 +474,6 @@ impl RasterState {
   }
 }
 
-/// The window rectangle an overlay is composited over, as damage: the
-/// pixels under it re-raster every frame it is installed for, since it is
-/// blended over the frame (frame.rs), and once more where it leaves.
-pub(super) fn overlay_damage(overlay: &crate::context::Overlay) -> PresentDamage {
-  PresentDamage::Rect(overlay_rect(overlay))
-}
-
 // The window rectangle an overlay is composited over.
 fn overlay_rect(overlay: &crate::context::Overlay) -> DamageRect {
   DamageRect { x: overlay.x, y: overlay.y, width: overlay.width as i32, height: overlay.height as i32 }
@@ -465,13 +481,16 @@ fn overlay_rect(overlay: &crate::context::Overlay) -> DamageRect {
 
 /// The damage an overlay's new declaration folds in, from the rectangle
 /// of the one installed (`old`, None before the first) and the new one's
-/// (`new`, None for a removal). A frame's own damage holds the overlay's
-/// rectangle only while it is installed, and the back buffers still show
-/// it where it was: a removed, moved or resized overlay folds its old
-/// rectangle in, which the ring then carries to every aged buffer. Nothing
-/// for a first install, or a new declaration over the same rectangle (its
-/// content changed: the frame's own damage holds the rectangle).
+/// (`new`, None for a removal): both. The overlay is blended over the
+/// frame only where the frame redraws (`draw_overlay`), so its rectangle
+/// is not in any frame's own damage; a declaration that arrives, changes
+/// its figures, moves, resizes or leaves is a change of the pixels under
+/// its old and its new rectangle, which the ring then carries to every
+/// aged buffer. None when there is no overlay on either side.
 pub(crate) fn overlay_repair(old: Option<DamageRect>, new: Option<DamageRect>) -> Option<PresentDamage> {
-  let old = old?;
-  (new != Some(old)).then_some(PresentDamage::Rect(old))
+  match (old, new) {
+    (None, None) => None,
+    (Some(r), None) | (None, Some(r)) => Some(PresentDamage::Rect(r)),
+    (Some(a), Some(b)) => Some(PresentDamage::Rect(a.union(b))),
+  }
 }

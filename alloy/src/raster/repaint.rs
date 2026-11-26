@@ -107,6 +107,15 @@ impl WindowRoute {
   pub(super) fn is_patch(self) -> bool {
     matches!(self, WindowRoute::Rig(Some(_)) | WindowRoute::PatchLayer(_))
   }
+
+  /// The window rectangle the frame redraws, in physical pixels with a
+  /// top-left origin; None when it redraws the window whole.
+  pub(super) fn patch(self) -> Option<DamageRect> {
+    match self {
+      WindowRoute::Rig(Some(patch)) | WindowRoute::PatchLayer(patch) => Some(patch),
+      WindowRoute::FastPath | WindowRoute::Rig(None) => None,
+    }
+  }
 }
 
 /// Partial-repaint state for the window. Protocol, in frame order: `fold`

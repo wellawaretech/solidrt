@@ -141,14 +141,11 @@ impl RasterState {
     self.flush_dirty();
     let (width, height) = crate::backend::unpack_size(self.surface_size.load(Ordering::Acquire));
     let size = ISize::new(width as i64, height as i64);
-    // This frame's content delta: its own damage plus any load-shed frames',
-    // plus the overlay's rect while one is active - the overlay is BLENDED
-    // over the frame, so the pixels under it must re-raster every frame or
-    // last frame's composite would stack.
+    // This frame's content delta: its own damage plus any load-shed frames'.
+    // The overlay's rectangle is not in it: the overlay is blended over
+    // the frame only where the frame redraws (`draw_overlay`), and a change
+    // of the overlay folds its rectangle in on its own (`set_overlay`).
     let mut own_damage = self.damage.take();
-    if let Some(ov) = &self.overlay {
-      own_damage = own_damage.union(super::compose::overlay_damage(&ov.decl));
-    }
     // The window framebuffer: FBO 0, or the headless window target at this
     // frame's size. A target that cannot be allocated (a size past the
     // device's limits) skips the frame like a failed draw, with the reason.
@@ -224,11 +221,11 @@ impl RasterState {
     let draw_ms = draw_start.elapsed().as_secs_f32() * 1000.0;
     // The overlay composites over the finished frame (shaded or not), so a
     // headless window readback carries it too. Excluded from draw_ms: it is
-    // diagnostics, not the app's frame cost. Its rectangle is in the
-    // frame's own damage, so a patch-layer frame's patch (and the damage
-    // region declared from it) contains every pixel it writes.
+    // diagnostics, not the app's frame cost. It writes only inside the
+    // route's patch, so a patch-layer frame's patch (and the damage region
+    // declared from it) contains every pixel it writes.
     if drawn {
-      self.draw_overlay(size, window);
+      self.draw_overlay(size, window, route.patch());
       // The frame as it goes to the window, for the window taps: the read
       // is asynchronous, completed at the next frame.
       self.issue_window_taps(window, (width, height), ore::time::ticks_ns());
