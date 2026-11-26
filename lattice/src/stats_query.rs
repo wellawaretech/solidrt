@@ -131,6 +131,7 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
     put("rendererClips", rc.renderer_clips.into());
     put("rendererLayers", rc.renderer_layers.into());
     put("rendererLayersAhead", rc.renderer_layers_ahead.into());
+    put("rendererLayerPasses", rc.renderer_layer_passes.into());
     put("rendererBlurPasses", rc.renderer_blur_passes.into());
     // Integer ms: sub-ms increments accumulate in the microsecond counters
     // before this division, so the cumulative rounding loss stays under 1ms.
@@ -281,6 +282,7 @@ fn window_json(
     put("rendererTessellatedPerFrame", round2(r.renderer_tessellated_per_frame).into());
     put("rendererLayersPerFrame", round2(r.renderer_layers_per_frame).into());
     put("rendererLayersAheadPerFrame", round2(r.renderer_layers_ahead_per_frame).into());
+    put("rendererLayerPassesPerFrame", round2(r.renderer_layer_passes_per_frame).into());
     put("rendererBlurPassesPerFrame", round2(r.renderer_blur_passes_per_frame).into());
     put("gpuPassIssueMsPerFrame", round2(r.pass_issue_ms_per_frame).into());
     if let Some(exec) = r.pass_exec_ms_per_frame {

@@ -786,13 +786,16 @@ tablet.
   per region, drawn in one pass; each nesting level gets its own atlas
   (a parent cannot sample the atlas it draws into), the inner level
   first. Blurred layers, backdrops and layers too large for an atlas
-  stay as they are. Done when the TV's fade route at twelve cards is
-  read against 25 fps, with the device look. The glass route's cost on
-  the TV is the same per-pass overhead (stage 6 Findings, "The glass
-  stall on the TV": twelve coupled panes run 55 blur passes and twelve
-  captures a frame): the panes' blur passes share atlas passes the same
-  way, and captures of panes whose read regions do not depend on each
-  other group into one.
+  stay as they are. Landed on the desktop 2026-11-26 (Findings, "Stage
+  7: the layer atlas"): the fade route draws its twelve layers in one
+  pass, and `rendererLayerPasses` counts the passes. Done when the TV's
+  fade route at twelve cards is read against 25 fps, with the device
+  look, which waits for the maintainer. The glass route's cost on the TV
+  is the same per-pass overhead (stage 6 Findings, "The glass stall on
+  the TV": twelve coupled panes run 55 blur passes and twelve captures a
+  frame): the panes' blur passes share atlas passes the same way, and
+  captures of panes whose read regions do not depend on each other group
+  into one; not started.
 - A card's shadow as a ring, measured in stage 6: the shadow quad
   reaches three sigmas past the card and most of it lies under the card,
   where the cutout now skips the integral but the quad is still
@@ -2583,6 +2586,58 @@ blur now; the TV and tablet reads are above; the maintainer has seen the
 fade, glass and shadow routes draw correctly on both devices on the
 client of 76b9151b and the TV on e9cff7cf. What the reads opened, the
 layer atlas and the shadow ring, is written into stage 7.
+
+### Stage 7: the layer atlas (2026-11-26)
+
+The schedule (`anvil/src/renderer/schedule.rs`, pure) now groups the
+layers drawn ahead by nesting level and packs the plain ones of each
+level into atlases: shelf packing in the layers' close order into a
+storage the target's bucket in size (`pack`), another atlas when a row
+does not fit, the deepest level first, so a layer samples the atlas its
+inner layers drew into and nothing samples the atlas it draws into. A
+blurred layer keeps storage of its own (its blur passes read the storage
+whole), a backdrop stays inline, and both still take a pass each. A
+region draws under the viewport moved by its offset (`Frame::offset`:
+`uFrag` moves with it, so no instance changes), scissored to its own
+rectangle, its color, depth and stencil cleared through that scissor; its
+composite's texel rows are placed in the atlas before the upload
+(`rescale_composite` with an offset), and `blit_rect` adds the offset for
+a backdrop or a destination copy inside a region. The atlas is finished
+(resolved where MSAA is explicit, its depth-stencil invalidated) once at
+its end and released when the draw ends. `DrawReport::layer_passes`
+counts the passes the layers took, through `rendererLayerPasses` and
+`window.rendererLayerPassesPerFrame` in the stats, so the TV read has a
+number to read the layers' cost by. `ATLAS` in exec.rs is the switch,
+beside `DRAW_AHEAD`, for a driver that misdraws the scissored regions.
+
+Register entries named for this step (okf/notes/gpu-driver-faults.md):
+scissored clears (fbo, Skia's color clears as draws on ANGLE D3D11, where
+partial clears "clear too much"; the device check is the fade probe's
+cell arithmetic on Windows), the clear dedup across an invalidate on Mali
+and Adreno 6xx (fbo, one invalidate per atlas now where there was one
+per layer), the 4k render-target preference on Mali-G71 (the atlas is
+the target's bucket, never larger), and the open check on work reordered
+across targets on Adreno 620 and 640 (fewer targets now).
+
+Desktop reads (NVIDIA RTX 3070, 1280x720 at 60 Hz, the effects bench
+with 12 cards, 120-frame windows):
+
+| route | layers / frame | ahead | passes / frame | blur passes | draw calls | missed |
+|---|---|---|---|---|---|---|
+| fade | 12 | 12 | 1 | 0 | 61 | 0 |
+| glass | 10.7 | 0 | 10.7 | 42.8 | 75.8 | 0 |
+| shadow | 0 | 0 | 0 | 0 | 14.6 | 0 |
+
+The fade route's twelve layers take one pass where they took twelve;
+glass and shadow are unchanged (a backdrop is inline, a pass of its own,
+by design). The reference set (hello-world, 31 core and components
+examples that settle, the fade, blend, glass and shadow probes and the
+shadow-cutout probe, 61 frames each) renders identical to the client
+before the atlas, after two renders of the same client showed the set
+deterministic to the pixel; the examples that never settle (the GPU
+API's, the shaders, the frame animation) are outside the set. `sol
+test` passes whole. The TV read of the fade route against its 25 fps
+waits for the maintainer's look at the device, as the stage 6 reads did.
 
 ### Where anvil lives (2026-11-18)
 

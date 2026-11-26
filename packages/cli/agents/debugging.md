@@ -451,7 +451,11 @@ when exactly one client is connected.
   of those layers, the ones drawn before the frame they composite into,
   so that frame's pass does not break for them: every layer but a
   backdrop (a frosted pane reads the pixels beneath it, so it draws
-  where it sits). Twelve fading cards read 12 layers and 12 ahead.
+  where it sits). `rendererLayerPasses` and
+  `window.rendererLayerPassesPerFrame` count the render passes those
+  layers took: the plain layers drawn ahead at one nesting level share
+  one atlas pass, a blurred layer and a backdrop take a pass each. Twelve
+  fading cards read 12 layers, 12 ahead and 1 pass.
   `textAtlasWidth` and
   `textAtlasHeight` are the text atlas's size in texels now (one byte a
   texel on the GPU): it grows by doubling up to a fixed side cap (4096, or

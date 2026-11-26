@@ -44,7 +44,7 @@ use super::layers::{bucket, rescale_composite, LayerPool, LayerTarget};
 use super::mesh::{gpu_slot, GpuMesh, GpuSlot, Mesh};
 use super::ramps::{RampTable, RAMP_ROWS};
 use super::record::DisplayList;
-use super::schedule::{draws_ahead, schedule, Step};
+use super::schedule::{draws_ahead, schedule, Place, Step};
 use super::walk::MESH_VERTEX_FLOATS;
 use super::walk::{self, Batch, BatchProgram, Instance, MeshDraw, MeshVertex, PaintDraw, Projective, Walked};
 use super::walk::{ClipDraw, ClipShape};
@@ -71,6 +71,11 @@ const STENCIL_ALL_BITS: u32 = 0xFF;
 /// switch a driver fault would turn off, as a named entry of the register
 /// (okf/backlog/gpu-driver-faults.md).
 const DRAW_AHEAD: bool = true;
+/// Whether the layers drawn ahead of one nesting level share one atlas
+/// storage, drawn in one pass (`schedule`); false draws each in storage of
+/// its own, a pass each. A switch for a device whose driver misdraws the
+/// scissored regions (okf/notes/gpu-driver-faults.md, fbo: partial clears).
+const ATLAS: bool = true;
 
 // The attribute locations. They must match the `layout(location = N)`
 // literals in VERTEX_COMMON, SHAPE_VERTEX and ROUNDED_VERTEX.
@@ -1450,22 +1455,39 @@ pub(super) struct Executor {
 /// framebuffer is discarded. A fragment at window (fx, fy) is then device
 /// (fx + ox, oy + Hl - fy), which `device()` reads through `uFrag = (ox, oy
 /// + Hl)`: (0, H) on the target.
+///
+/// A region of an atlas (`schedule::Place::Region`) lands at the region's
+/// `offset` (ax, ay) instead of the storage's corner: the viewport moves
+/// by it, to (ax - ox, Hl + oy - H + ay, W, H), a fragment at window (fx,
+/// fy) is device (fx - ax + ox, oy + Hl + ay - fy), so `uFrag = (ox - ax,
+/// oy + Hl + ay)`, and the region draws scissored to its own rectangle,
+/// [ax, ax + Wl] x [ay, ay + Hl] of the atlas.
 #[derive(Clone, Copy)]
 pub(crate) struct Frame {
   pub(crate) fbo: Option<glow::Framebuffer>,
   pub(crate) origin: (i32, i32),
   pub(crate) size: (i32, i32),
-  /// The target itself, which draws inside the walk's scissor; a layer
-  /// draws unscissored.
+  /// The target itself, which draws inside the walk's scissor; a layer in
+  /// storage of its own draws unscissored.
   pub(crate) root: bool,
+  /// Where the frame's bottom-left corner lands in its storage, window
+  /// pixels: (0, 0) but for a region of an atlas.
+  pub(crate) offset: (i32, i32),
+  /// A region of an atlas: scissored to its own rectangle.
+  pub(crate) region: bool,
 }
 
 impl Frame {
   /// `uFrag` in this frame.
   fn frag(&self) -> [f32; 2] {
-    [self.origin.0 as f32, (self.origin.1 + self.size.1) as f32]
+    [(self.origin.0 - self.offset.0) as f32, (self.origin.1 + self.size.1 + self.offset.1) as f32]
   }
 }
+
+/// A closed layer's image until its composite: the storage it samples (the
+/// layer's own, its blur's last pass's, or its atlas), the content's size
+/// in it and its place in it.
+type Image = (LayerTarget, (i32, i32), Place);
 
 /// Clear the bound frame for a pass that starts: its color to transparent
 /// (unless `color` is false, a backdrop layer filled already), its depth,
@@ -1489,11 +1511,12 @@ unsafe fn clear_frame(gl: &glow::Context, color: bool) {
 /// device `rect` in `parent`'s GL window coordinates, (x, y, width, height),
 /// y up from the bottom. The parent draws device (x, y) at window (x - ox,
 /// Hp + oy - y) (`Frame`, its origin (ox, oy) and height Hp), so the rect's
-/// bottom edge, device y = rect.max.y, is window row Hp - (rect.max.y - oy).
+/// bottom edge, device y = rect.max.y, is window row Hp - (rect.max.y - oy);
+/// a parent that is a region of an atlas adds its offset.
 pub(crate) fn blit_rect(parent: &Frame, rect: Box2D<i32>) -> (i32, i32, i32, i32) {
   let (w, h) = (rect.width(), rect.height());
-  let x = rect.min.x - parent.origin.0;
-  let y = parent.size.1 - (rect.min.y - parent.origin.1) - h;
+  let x = rect.min.x - parent.origin.0 + parent.offset.0;
+  let y = parent.size.1 - (rect.min.y - parent.origin.1) - h + parent.offset.1;
   (x, y, w, h)
 }
 
@@ -2245,8 +2268,17 @@ impl Executor {
     // full target, as the contract says a draw does.
     let full = Box2D::new(Point2D::new(0, 0), Point2D::new(width, height));
     let scissor = walked.scissor.filter(|s| *s != full);
-    let root = Frame { fbo: target.framebuffer, origin: (0, 0), size: (width, height), root: true };
+    let root = Frame {
+      fbo: target.framebuffer,
+      origin: (0, 0),
+      size: (width, height),
+      root: true,
+      offset: (0, 0),
+      region: false,
+    };
     let gl = &self.gl;
+    // The render passes the layers took (`layer_passes`), from the schedule.
+    let passes: u32;
     unsafe {
       // The target bound, its viewport, every program's `uFrag` and the
       // scissor: bound, not cleared, until the layers drawn ahead are drawn
@@ -2301,6 +2333,21 @@ impl Executor {
       // it samples, a bucket's (`super::layers`): the layer's own, or for a
       // blurred layer the last pass's, at the content halved by the blur's
       // levels (`run_blur`).
+      let batches = &walked.batches;
+      // The steps in their order (`schedule`): the layers drawn ahead, each
+      // into its place (storage of its own, or a region of its nesting
+      // level's atlas, `ATLAS`, an atlas the target's bucket in size), then
+      // the target bound and cleared, then its pass. Scheduled before the
+      // upload: a composite's texel rows are placed where its layer draws.
+      let atlas = if ATLAS { Some(bucket((width, height))) } else { None };
+      let steps = schedule(batches, &walked.layers, DRAW_AHEAD, atlas);
+      passes = layer_passes(&steps);
+      let mut places: Vec<Place> = vec![Place::Own; walked.layers.len()];
+      for step in &steps {
+        if let Step::Open(begin, place) = step {
+          places[batches[*begin].start] = *place;
+        }
+      }
       let mut tail = Vec::new();
       let clip_slots: Vec<Option<usize>> = walked
         .clip_draws
@@ -2314,13 +2361,18 @@ impl Executor {
       let layer_slots: Vec<Option<usize>> = walked
         .layers
         .iter()
-        .map(|layer| {
+        .enumerate()
+        .map(|(index, layer)| {
           if layer.folded || layer.rect.is_empty() {
             return None;
           }
           let content = (layer.rect.width(), layer.rect.height());
           let shown = layer.blur.map_or(content, |b| halved(content, blur_levels(b.sigma_x, b.sigma_y)));
-          tail.push(rescale_composite(&layer.composite, shown, bucket(shown)));
+          let (alloc, offset) = match places[index] {
+            Place::Own => (bucket(shown), (0, 0)),
+            Place::Region { offset, .. } => (atlas.expect("a region is placed in an atlas"), offset),
+          };
+          tail.push(rescale_composite(&layer.composite, shown, alloc, offset));
           Some(instances.len() + tail.len() - 1)
         })
         .collect();
@@ -2366,14 +2418,12 @@ impl Executor {
       // A stencil clip batch writes the stencil only, through its own test
       // and op; every other batch tests at its depth (off at 0) and keeps
       // the stencil.
-      let batches = &walked.batches;
-      // The steps in their order (`schedule`): the layers drawn ahead, each
-      // into its storage, then the target bound and cleared, then its pass.
-      let steps = schedule(batches, &walked.layers, DRAW_AHEAD);
-      // Each closed layer's image until its composite: the storage it
-      // samples (the layer's own, or its blur's last pass's) and the
-      // content's size in it. Indexed by layer.
-      let mut images: Vec<Option<(LayerTarget, (i32, i32))>> = vec![None; walked.layers.len()];
+      // Each closed layer's image until its composite, indexed by layer.
+      let mut images: Vec<Option<Image>> = vec![None; walked.layers.len()];
+      // The atlases taken so far, by number (`Step::AtlasBegin`), held until
+      // the draw ends; None where GL could make no storage (the pool
+      // warned): its regions are skipped.
+      let mut atlases: Vec<Option<LayerTarget>> = Vec::new();
       // The layer whose storage could not be taken (the pool warned): its
       // steps up to its close are skipped, and the images of the layers
       // drawn ahead inside it are released unused.
@@ -2388,9 +2438,9 @@ impl Executor {
       for &step in &steps {
         if let Some(skipped) = skipping {
           match step {
-            Step::Close(end) if batches[end].start == skipped => skipping = None,
+            Step::Close(end, _) if batches[end].start == skipped => skipping = None,
             Step::Composite(end) => {
-              if let Some((image, _)) = images[batches[end].start].take() {
+              if let Some((image, _, Place::Own)) = images[batches[end].start].take() {
                 self.layers.release(&image);
               }
             }
@@ -2415,23 +2465,58 @@ impl Executor {
             dirty = false;
             continue;
           }
-          Step::Open(begin) => {
+          Step::AtlasBegin { atlas: number, size } => {
+            // The atlas's storage, held until the draw ends: its regions'
+            // composites sample it one after another.
+            let storage = self.layers.acquire(gl, size, samples);
+            if atlases.len() <= number {
+              atlases.resize(number + 1, None);
+            }
+            atlases[number] = storage;
+            continue;
+          }
+          Step::AtlasEnd(number) => {
+            if let Some(storage) = atlases[number] {
+              self.layers.finish(gl, &storage, storage.size);
+              drew_ahead = true;
+              dirty = true;
+            }
+            continue;
+          }
+          Step::Open(begin, place) => {
             let layer = &walked.layers[batches[begin].start];
             let content = (layer.rect.width(), layer.rect.height());
-            // GL could make no storage for it (the pool warned): skip to its
-            // close.
-            let Some(storage) = self.layers.acquire(gl, bucket(content), samples) else {
-              skipping = Some(batches[begin].start);
-              continue;
+            // A region draws into its atlas, scissored to itself; any other
+            // layer takes storage of its own. GL could make no storage (the
+            // pool warned): skip to its close.
+            let (storage, offset) = match place {
+              Place::Region { atlas: number, offset } => match atlases.get(number).copied().flatten() {
+                Some(storage) => (storage, offset),
+                None => {
+                  skipping = Some(batches[begin].start);
+                  continue;
+                }
+              },
+              Place::Own => match self.layers.acquire(gl, bucket(content), samples) {
+                Some(storage) => {
+                  debug_assert_eq!(storage.size, bucket(content));
+                  (storage, (0, 0))
+                }
+                None => {
+                  skipping = Some(batches[begin].start);
+                  continue;
+                }
+              },
             };
             open.push(storage);
-            debug_assert_eq!(storage.size, bucket(content));
             let parent = *frames.last().expect("the target's frame is at the bottom of the stack");
             let frame = Frame {
               fbo: Some(storage.fbo),
               origin: (layer.rect.min.x, layer.rect.min.y),
               size: content,
               root: false,
+              offset,
+              region: matches!(place, Place::Region { .. }),
             };
             frames.push(frame);
             // A backdrop layer starts from the parent's pixels under its rect:
@@ -2476,11 +2561,17 @@ impl Executor {
             dirty = false;
             continue;
           }
-          Step::Close(end) => {
+          Step::Close(end, place) => {
             let storage = open.pop().expect("a layer's close follows its open");
             let layer = &walked.layers[batches[end].start];
             let content = (layer.rect.width(), layer.rect.height());
             frames.pop();
+            // A region is left as drawn: its atlas finishes at the atlas's
+            // end, and its composite samples the region.
+            if let Place::Region { .. } = place {
+              images[batches[end].start] = Some((storage, content, place));
+              continue;
+            }
             self.layers.finish(gl, &storage, content);
             let ahead = DRAW_AHEAD && draws_ahead(layer);
             if ahead {
@@ -2505,8 +2596,9 @@ impl Executor {
                 let samplers = self.pass_samplers();
                 let clamp = layer.clamp.map(|c| clamp_rect(layer.rect, c));
                 run_blur(gl, &mut self.layers, &self.blur, samplers, (storage, content), clamp, blur)
+                  .map(|(image, shown)| (image, shown, Place::Own))
               }
-              None => Some((storage, content)),
+              None => Some((storage, content, Place::Own)),
             };
             dirty = true;
             continue;
@@ -2535,14 +2627,21 @@ impl Executor {
               in_use = Some(self.set_frame(&parent, (width, height), scissor));
               dirty = false;
             }
-            let Some((image, shown)) = image else { continue };
+            let Some((image, shown, place)) = image else { continue };
+            let offset = match place {
+              Place::Own => (0, 0),
+              Place::Region { offset, .. } => offset,
+            };
             // GL could make no scratch (warned once): the layer does not draw.
             if mode.is_some() && backdrop.is_none() {
-              self.layers.release(&image);
+              if place == Place::Own {
+                self.layers.release(&image);
+              }
               continue;
             }
-            // The composite's rows were rescaled to this size before the upload.
-            debug_assert_eq!(image.size, bucket(shown));
+            // The composite's rows were placed in this storage before the
+            // upload: the layer's own bucket, or the atlas.
+            debug_assert_eq!(image.size, if place == Place::Own { bucket(shown) } else { atlas.unwrap_or(image.size) });
             if let Some(scratch) = &backdrop {
               resolve_region(gl, &parent, layer.rect, scratch, scissor.is_some());
             }
@@ -2578,7 +2677,8 @@ impl Executor {
                 }
                 None => gl.uniform_1_i32(Some(&u.has_matrix), 0),
               }
-              let [x0, y0, x1, y1] = texel_extent([0, 0, shown.0, shown.1], image.size);
+              let [x0, y0, x1, y1] =
+                texel_extent([offset.0, offset.1, offset.0 + shown.0, offset.1 + shown.1], image.size);
               gl.uniform_4_f32(Some(&u.extent), x0, y0, x1, y1);
             } else if in_use != Some(self.shape.program) {
               // A plain composite is a textured quad of the shape program,
@@ -2606,10 +2706,12 @@ impl Executor {
               _ => gl.draw_arrays_instanced(glow::TRIANGLES, 0, VERTICES_PER_QUAD, 1),
             }
             // Unbound again: the next layer that takes the storage draws into
-            // it.
+            // it. An atlas is released when the draw ends.
             gl.bind_sampler(TEXTURE_UNIT, None);
             gl.bind_texture(glow::TEXTURE_2D, None);
-            self.layers.release(&image);
+            if place == Place::Own {
+              self.layers.release(&image);
+            }
             continue;
           }
         };
@@ -2720,6 +2822,9 @@ impl Executor {
       }
       debug_assert!(frames.len() == 1 && open.is_empty(), "every layer closed: the target is bound again");
       debug_assert!(images.iter().all(Option::is_none), "every closed layer composited or released");
+      for atlas in atlases.into_iter().flatten() {
+        self.layers.release(&atlas);
+      }
       set_blend(gl, &mut blending, BlendMode::SourceOver);
       if ramped {
         gl.active_texture(glow::TEXTURE0 + RAMP_UNIT);
@@ -2749,7 +2854,7 @@ impl Executor {
     }
     // The framebuffer stays bound as the target: the callers in
     // gl/draw.rs restore their own.
-    Ok(super::report(&walked))
+    Ok(DrawReport { layer_passes: passes, ..super::report(&walked) })
   }
 
   // Render into `frame` from here on: its framebuffer bound, the viewport
@@ -2761,20 +2866,27 @@ impl Executor {
     let gl = &self.gl;
     let (w, h) = target;
     let (ox, oy) = frame.origin;
+    let (ax, ay) = frame.offset;
     gl.bind_framebuffer(glow::FRAMEBUFFER, frame.fbo);
-    gl.viewport(-ox, frame.size.1 + oy - h, w, h);
+    gl.viewport(ax - ox, frame.size.1 + oy - h + ay, w, h);
     let [fx, fy] = frame.frag();
     for program in self.programs() {
       gl.use_program(Some(program.program));
       gl.uniform_2_f32(Some(&program.frag), fx, fy);
     }
-    match scissor.filter(|_| frame.root) {
-      Some(s) => {
-        gl.enable(glow::SCISSOR_TEST);
-        // GL scissor is in window coordinates, y up from the bottom.
-        gl.scissor(s.min.x, h - s.max.y, s.width(), s.height());
+    // GL scissor is in window coordinates, y up from the bottom: the walk's
+    // box on the target, the region's own rectangle in an atlas.
+    if frame.region {
+      gl.enable(glow::SCISSOR_TEST);
+      gl.scissor(ax, ay, frame.size.0, frame.size.1);
+    } else {
+      match scissor.filter(|_| frame.root) {
+        Some(s) => {
+          gl.enable(glow::SCISSOR_TEST);
+          gl.scissor(s.min.x, h - s.max.y, s.width(), s.height());
+        }
+        None => gl.disable(glow::SCISSOR_TEST),
       }
-      None => gl.disable(glow::SCISSOR_TEST),
     }
     self.shape.program
   }
@@ -3090,6 +3202,12 @@ fn clip_test(clip: &ClipDraw) -> ((u32, u8, u32), Cover<'_>) {
 }
 
 // `instances` as the bytes the instance buffer takes.
+/// The render passes the layers of a draw take (`DrawReport::layer_passes`):
+/// each atlas and each layer in storage of its own, drawn ahead or inline.
+pub(crate) fn layer_passes(steps: &[Step]) -> u32 {
+  steps.iter().filter(|s| matches!(s, Step::AtlasBegin { .. } | Step::Open(_, Place::Own))).count() as u32
+}
+
 fn instance_bytes(instances: &[Instance]) -> &[u8] {
   // Sound: Instance is repr(C) with every field an f32, so it has no
   // padding (walk.rs asserts its size) and any byte view of it is

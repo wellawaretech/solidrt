@@ -64,6 +64,13 @@ pub struct DrawReport {
   /// each halving of a large blur's content and each horizontal and
   /// vertical gaussian pass, one draw each, not counted in `draw_calls`.
   pub blur_passes: u32,
+  /// The render passes the layers took: each atlas (the plain layers drawn
+  /// ahead at one nesting level, sharing one storage), each layer in
+  /// storage of its own (a blurred one, or every one with the atlas off)
+  /// and each inline layer (a backdrop). On a tiler a pass costs a fixed
+  /// amount beyond its pixels, so a scene of layers is read by this. Twelve
+  /// fading cards read 12 layers, 12 ahead and 1 pass.
+  pub layer_passes: u32,
 }
 
 /// The drawing half, owned by the raster thread beside the GL context.

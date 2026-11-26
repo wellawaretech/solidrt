@@ -31,6 +31,8 @@ const QUARTER: f32 = 0.25;
 // The storage a 30-pixel square layer takes: one bucket (renderer/layers.rs
 // LAYER_BUCKET).
 const STORAGE: i32 = 64;
+// A layer atlas a region is placed in, device pixels a side.
+const LAYER_ATLAS_SIDE: i32 = 256;
 
 // The texture the texture quad case samples: its GL name and side.
 const TEXTURE_NAME: u32 = 9;
@@ -474,7 +476,7 @@ fn the_composite_rows_rescale_to_the_storage() {
   let out = walked(b);
   let layer = &out.layers[0];
   let content = (layer.rect.width(), layer.rect.height());
-  let scaled = rescale_composite(&layer.composite, content, (content.0 * 2, content.1 * 2));
+  let scaled = rescale_composite(&layer.composite, content, (content.0 * 2, content.1 * 2), (0, 0));
   let (ox, oy) = (layer.rect.min.x as f32, layer.rect.min.y as f32);
   let (x1, y1) = (layer.rect.max.x as f32, layer.rect.max.y as f32);
   let (u, v) = texel(&scaled, ox, oy);
@@ -564,13 +566,42 @@ fn the_composite_rows_sample_texel_centres_in_a_bucket() {
   let layer = &out.layers[0];
   let content = (layer.rect.width(), layer.rect.height());
   assert_eq!(content, (30, 30));
-  let scaled = rescale_composite(&layer.composite, content, (STORAGE, STORAGE));
+  let scaled = rescale_composite(&layer.composite, content, (STORAGE, STORAGE), (0, 0));
   let (ox, oy) = (layer.rect.min.x as f32, layer.rect.min.y as f32);
   let side = STORAGE as f32;
   let (u, v) = texel(&scaled, ox + 0.5, oy + 0.5);
   assert!((u - 0.5 / side).abs() < EPS && (v - 29.5 / side).abs() < EPS, "{u} {v}");
   let (u, v) = texel(&scaled, ox + 29.5, oy + 29.5);
   assert!((u - 29.5 / side).abs() < EPS && (v - 0.5 / side).abs() < EPS, "{u} {v}");
+}
+
+#[test]
+fn the_composite_rows_move_to_a_region_of_an_atlas() {
+  let mut b = DisplayListBuilder::new(None);
+  b.save_layer(&Rect::zero(), Some(&paint(HALF)));
+  overlapping(&mut b);
+  b.restore();
+  let out = walked(b);
+  let layer = &out.layers[0];
+  let content = (layer.rect.width(), layer.rect.height());
+  assert_eq!(content, (30, 30));
+  // A region at (64, 128) of a 256 by 256 atlas: the layer's top-left
+  // device corner samples the region's top-left texel, its bottom-right the
+  // region's bottom-right one (v up from the atlas's bottom).
+  let (ax, ay) = (64, 128);
+  let placed = rescale_composite(&layer.composite, content, (LAYER_ATLAS_SIDE, LAYER_ATLAS_SIDE), (ax, ay));
+  let (ox, oy) = (layer.rect.min.x as f32, layer.rect.min.y as f32);
+  let side = LAYER_ATLAS_SIDE as f32;
+  let (u, v) = texel(&placed, ox + 0.5, oy + 0.5);
+  assert!(((u - (ax as f32 + 0.5) / side).abs() < EPS) && ((v - (ay as f32 + 29.5) / side).abs() < EPS), "{u} {v}");
+  let (u, v) = texel(&placed, ox + 29.5, oy + 29.5);
+  assert!(((u - (ax as f32 + 29.5) / side).abs() < EPS) && ((v - (ay as f32 + 0.5) / side).abs() < EPS), "{u} {v}");
+  let [u0, v0, u1, v1] = placed.tex;
+  assert!(
+    approx([u0, v0, u1, v1], [ax as f32 / side, (ay + 30) as f32 / side, (ax + 30) as f32 / side, ay as f32 / side]),
+    "{:?}",
+    placed.tex
+  );
 }
 
 #[test]

@@ -350,14 +350,18 @@ fn a_texture_quad_takes_its_paints_mode() {
 #[test]
 fn the_destination_copy_reads_the_layer_rect_in_window_coordinates() {
   // The target: device y down from the top, window y up from the bottom.
-  let root = Frame { fbo: None, origin: (0, 0), size: (100, 80), root: true };
+  let root = Frame { fbo: None, origin: (0, 0), size: (100, 80), root: true, offset: (0, 0), region: false };
   assert_eq!(blit_rect(&root, ibox(10, 20, 40, 30)), (10, 50, 30, 10));
   // A layer frame at device (20, 10), 50 by 40: its device rect at window
   // [0, 50] x [0, 40], its top row at window y 40.
-  let nested = Frame { fbo: None, origin: (20, 10), size: (50, 40), root: false };
+  let nested = Frame { fbo: None, origin: (20, 10), size: (50, 40), root: false, offset: (0, 0), region: false };
   assert_eq!(blit_rect(&nested, ibox(30, 15, 45, 25)), (10, 25, 15, 10));
   // The whole frame is its whole window.
   assert_eq!(blit_rect(&nested, ibox(20, 10, 70, 50)), (0, 0, 50, 40));
+  // The same layer as a region of an atlas at (100, 200): everything moves
+  // by the offset.
+  let region = Frame { fbo: None, origin: (20, 10), size: (50, 40), root: false, offset: (100, 200), region: true };
+  assert_eq!(blit_rect(&region, ibox(30, 15, 45, 25)), (110, 225, 15, 10));
 }
 
 #[test]

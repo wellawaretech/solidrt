@@ -80,7 +80,7 @@ pub(crate) use layers::rescale_composite;
 // The destination copy's read rect and the composite program's blend
 // functions, for the tests.
 #[cfg(test)]
-pub(crate) use exec::{blit_rect, Frame, COMPOSITE_BLEND};
+pub(crate) use exec::{blit_rect, layer_passes, Frame, COMPOSITE_BLEND};
 
 // The backdrop fill's rects and the color matrix's uniforms, pure
 // functions, for the tests.
@@ -187,6 +187,9 @@ pub(crate) fn report(walked: &walk::Walked) -> contract::DrawReport {
         blur::blur_passes(sx, sy, l.backdrop)
       })
       .sum(),
+    // The executor's, from its schedule (`exec::layer_passes`): the
+    // schedule needs the atlas size, which the walk does not know.
+    layer_passes: 0,
   }
 }
 

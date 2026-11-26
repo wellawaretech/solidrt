@@ -95,21 +95,30 @@ pub(super) fn bucket(size: (i32, i32)) -> (i32, i32) {
 
 /// The composite instance `composite`, whose texel rows the walk wrote over
 /// a unit square (u and v from 0 to 1 across the layer's rect), rescaled to
-/// a layer of `content` pixels drawn into storage of `alloc` pixels: the
-/// content occupies the storage's bottom-left `content` texels (the viewport
-/// puts the layer's bottom edge at window row 0, exec.rs `Frame`), so u
-/// scales by content.0 / alloc.0 and v by content.1 / alloc.1. The corner
-/// texels in `tex` scale with them.
-pub(crate) fn rescale_composite(composite: &Instance, content: (i32, i32), alloc: (i32, i32)) -> Instance {
+/// a layer of `content` pixels drawn into storage of `alloc` pixels at
+/// `offset` (window pixels from the storage's bottom-left corner, y up):
+/// the content occupies the `content` texels there (the viewport puts the
+/// layer's bottom edge at window row offset.1, exec.rs `Frame`), so u
+/// scales by content.0 / alloc.0 and moves by offset.0 / alloc.0, v
+/// likewise. The corner texels in `tex` scale and move with them.
+pub(crate) fn rescale_composite(
+  composite: &Instance,
+  content: (i32, i32),
+  alloc: (i32, i32),
+  offset: (i32, i32),
+) -> Instance {
   let sx = content.0 as f32 / alloc.0 as f32;
   let sy = content.1 as f32 / alloc.1 as f32;
+  let (dx, dy) = (offset.0 as f32 / alloc.0 as f32, offset.1 as f32 / alloc.1 as f32);
   let mut out = *composite;
   for k in 0..3 {
     out.grad_x[k] *= sx;
     out.grad_y[k] *= sy;
   }
+  out.grad_x[2] += dx;
+  out.grad_y[2] += dy;
   let [u0, v0, u1, v1] = composite.tex;
-  out.tex = [u0 * sx, v0 * sy, u1 * sx, v1 * sy];
+  out.tex = [u0 * sx + dx, v0 * sy + dy, u1 * sx + dx, v1 * sy + dy];
   out
 }
 

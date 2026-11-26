@@ -345,10 +345,17 @@ fn a_mirror_or_repeat_blur_clamps() {
 #[test]
 fn the_backdrop_fill_is_a_translation_into_the_storage_corner() {
   let rect = ibox(20, 25, 60, 60);
-  let root = Frame { fbo: None, origin: (0, 0), size: (TARGET as i32, TARGET as i32), root: true };
+  let root = Frame {
+    fbo: None,
+    origin: (0, 0),
+    size: (TARGET as i32, TARGET as i32),
+    root: true,
+    offset: (0, 0),
+    region: false,
+  };
   // Window row 100 - 60 = 40 is the rect's bottom edge.
   assert_eq!(fill_rects(&root, rect), ([20, 40, 60, 75], [0, 0, 40, 35]));
-  let layer = Frame { fbo: None, origin: (10, 10), size: (70, 70), root: false };
+  let layer = Frame { fbo: None, origin: (10, 10), size: (70, 70), root: false, offset: (0, 0), region: false };
   // Inside a layer at (10, 10): x - 10, and 70 - (60 - 10) = 20.
   assert_eq!(fill_rects(&layer, rect), ([10, 20, 50, 55], [0, 0, 40, 35]));
 }
